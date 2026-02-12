@@ -1,0 +1,2572 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CSM — Claude Session Manager</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anybody:wght@400;600;800&family=Geist+Mono:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /* ============================================
+   CSS CUSTOM PROPERTIES
+   ============================================ */
+      :root {
+        /* Base palette */
+        --bg-void: #06090f;
+        --bg-base: #0b1019;
+        --bg-surface: #111825;
+        --bg-raised: #172033;
+        --bg-hover: #1c2841;
+
+        /* Borders */
+        --border-subtle: #1a2338;
+        --border-default: #243048;
+        --border-strong: #2e3d5c;
+
+        /* Accent: Electric Cyan */
+        --cyan: #00e5ff;
+        --cyan-dim: #00b8cc;
+        --cyan-glow: rgba(0, 229, 255, 0.15);
+        --cyan-glow-strong: rgba(0, 229, 255, 0.3);
+        --cyan-glow-text: rgba(0, 229, 255, 0.6);
+
+        /* Accent: Amber */
+        --amber: #ffb300;
+        --amber-dim: #cc8f00;
+        --amber-glow: rgba(255, 179, 0, 0.15);
+
+        /* Accent: Green */
+        --green: #00e676;
+        --green-dim: #00b85c;
+        --green-glow: rgba(0, 230, 118, 0.15);
+
+        /* Accent: Red */
+        --red: #ff3d5a;
+        --red-dim: #cc3148;
+        --red-glow: rgba(255, 61, 90, 0.12);
+
+        /* Text */
+        --text-primary: #dce2f0;
+        --text-secondary: #7b899f;
+        --text-tertiary: #4d5a72;
+        --text-inverse: #06090f;
+
+        /* Typography */
+        --font-display: "Anybody", sans-serif;
+        --font-body: "Manrope", sans-serif;
+        --font-mono: "Geist Mono", monospace;
+
+        /* Spacing */
+        --space-xs: 4px;
+        --space-sm: 8px;
+        --space-md: 16px;
+        --space-lg: 24px;
+        --space-xl: 32px;
+        --space-2xl: 48px;
+        --space-3xl: 64px;
+
+        /* Radii */
+        --radius-sm: 4px;
+        --radius-md: 6px;
+        --radius-lg: 10px;
+      }
+
+      /* ============================================
+   RESET + BASE
+   ============================================ */
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html {
+        font-size: 15px;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      body {
+        font-family: var(--font-body);
+        background: var(--bg-void);
+        color: var(--text-primary);
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      /* Noise texture overlay */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        pointer-events: none;
+        opacity: 0.025;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+        background-size: 256px;
+      }
+
+      /* Subtle scan lines */
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 9998;
+        pointer-events: none;
+        background: repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 2px,
+          rgba(0, 0, 0, 0.03) 2px,
+          rgba(0, 0, 0, 0.03) 4px
+        );
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      button {
+        cursor: pointer;
+        font-family: inherit;
+      }
+      input,
+      textarea {
+        font-family: inherit;
+      }
+
+      /* ============================================
+   LAYOUT
+   ============================================ */
+      .app {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+
+      /* Top bar */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 56px;
+        padding: 0 var(--space-lg);
+        background: rgba(11, 16, 25, 0.85);
+        backdrop-filter: blur(16px) saturate(140%);
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .topbar-brand {
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+      }
+
+      .topbar-logo {
+        font-family: var(--font-display);
+        font-weight: 800;
+        font-size: 1.1rem;
+        letter-spacing: -0.02em;
+        color: var(--cyan);
+        text-shadow: 0 0 20px var(--cyan-glow-text);
+      }
+
+      .topbar-divider {
+        width: 1px;
+        height: 20px;
+        background: var(--border-default);
+      }
+
+      .topbar-breadcrumb {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        font-weight: 400;
+        color: var(--text-secondary);
+      }
+
+      .topbar-breadcrumb span {
+        color: var(--text-tertiary);
+      }
+
+      .topbar-breadcrumb a:hover {
+        color: var(--text-primary);
+      }
+
+      .topbar-status {
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+      }
+
+      /* Context-aware topbar: default vs session-detail */
+      .topbar-status-default,
+      .topbar-status-session {
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+      }
+
+      .app:not([data-page="detail"]) .topbar-status-session {
+        display: none;
+      }
+
+      .app[data-page="detail"] .topbar-status-default {
+        display: none;
+      }
+
+      /* Breadcrumb session name highlight on detail page */
+      .topbar-breadcrumb .bc-session {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+
+      /* Compact icon-only buttons for topbar */
+      .btn-icon-only {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        transition: all 0.15s ease;
+        position: relative;
+      }
+
+      .btn-icon-only:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+        border-color: var(--border-strong);
+      }
+
+      .btn-icon-only.danger:hover {
+        background: var(--red-glow);
+        color: var(--red);
+        border-color: var(--red-dim);
+      }
+
+      .btn-icon-only::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 4px 8px;
+        background: var(--bg-raised);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-sm);
+        font-family: var(--font-mono);
+        font-size: 0.62rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s ease;
+        z-index: 10;
+      }
+
+      .btn-icon-only:hover::after {
+        opacity: 1;
+      }
+
+      .topbar-sep {
+        width: 1px;
+        height: 24px;
+        background: var(--border-default);
+        flex-shrink: 0;
+      }
+
+      .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-secondary);
+      }
+
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow:
+          0 0 8px var(--green-glow),
+          0 0 3px var(--green);
+        animation: pulse-dot 2.5s ease-in-out infinite;
+      }
+
+      @keyframes pulse-dot {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      .status-dot.warning {
+        background: var(--amber);
+        box-shadow:
+          0 0 8px var(--amber-glow),
+          0 0 3px var(--amber);
+      }
+
+      /* Main content */
+      .main {
+        flex: 1;
+        padding: var(--space-lg) var(--space-lg);
+        width: 100%;
+      }
+
+      /* Tighter padding when in session detail */
+      .app[data-page="detail"] .main {
+        padding: var(--space-md) var(--space-lg);
+      }
+
+      /* ============================================
+   PAGE: PROJECTS LIST
+   ============================================ */
+      .page-header {
+        margin-bottom: var(--space-2xl);
+      }
+
+      .page-title {
+        font-family: var(--font-display);
+        font-weight: 800;
+        font-size: 2.4rem;
+        letter-spacing: -0.03em;
+        line-height: 1.1;
+        color: var(--text-primary);
+        margin-bottom: var(--space-sm);
+      }
+
+      .page-title .accent {
+        color: var(--cyan);
+        text-shadow: 0 0 30px var(--cyan-glow-text);
+      }
+
+      .page-subtitle {
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        color: var(--text-secondary);
+        font-weight: 400;
+      }
+
+      /* Project cards grid */
+      .projects-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: var(--space-md);
+      }
+
+      .project-card {
+        position: relative;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        padding: var(--space-lg);
+        transition: all 0.2s ease;
+        cursor: pointer;
+        overflow: hidden;
+      }
+
+      .project-card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--cyan-dim),
+          transparent
+        );
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+
+      .project-card:hover {
+        border-color: var(--border-strong);
+        background: var(--bg-raised);
+        transform: translateY(-1px);
+      }
+
+      .project-card:hover::before {
+        opacity: 1;
+      }
+
+      .project-card-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        margin-bottom: var(--space-md);
+      }
+
+      .project-name {
+        font-family: var(--font-mono);
+        font-weight: 600;
+        font-size: 1.05rem;
+        color: var(--text-primary);
+        letter-spacing: -0.01em;
+      }
+
+      .project-badge {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 10px;
+        border-radius: 100px;
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+      }
+
+      .project-badge.active {
+        background: var(--cyan-glow);
+        color: var(--cyan);
+        border: 1px solid rgba(0, 229, 255, 0.2);
+      }
+
+      .project-badge.idle {
+        background: rgba(123, 137, 159, 0.1);
+        color: var(--text-secondary);
+        border: 1px solid var(--border-subtle);
+      }
+
+      .project-path {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        color: var(--text-tertiary);
+        margin-bottom: var(--space-lg);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .project-stats {
+        display: flex;
+        gap: var(--space-lg);
+        padding-top: var(--space-md);
+        border-top: 1px solid var(--border-subtle);
+      }
+
+      .stat {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .stat-value {
+        font-family: var(--font-mono);
+        font-weight: 700;
+        font-size: 1.2rem;
+        color: var(--text-primary);
+      }
+
+      .stat-label {
+        font-family: var(--font-mono);
+        font-size: 0.65rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-tertiary);
+      }
+
+      /* ============================================
+   PAGE: SESSION LIST
+   ============================================ */
+      .session-actions-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: var(--space-lg);
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-sm);
+        padding: 10px 18px;
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        background: var(--bg-surface);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        font-weight: 500;
+        transition: all 0.15s ease;
+      }
+
+      .btn:hover {
+        background: var(--bg-raised);
+        border-color: var(--border-strong);
+      }
+
+      .btn-primary {
+        background: var(--cyan);
+        color: var(--text-inverse);
+        border-color: var(--cyan);
+        font-weight: 600;
+      }
+
+      .btn-primary:hover {
+        background: var(--cyan-dim);
+        border-color: var(--cyan-dim);
+        box-shadow: 0 0 20px var(--cyan-glow);
+      }
+
+      .btn-danger {
+        border-color: rgba(255, 61, 90, 0.3);
+        color: var(--red);
+      }
+
+      .btn-danger:hover {
+        background: var(--red-glow);
+        border-color: var(--red-dim);
+      }
+
+      .btn-sm {
+        padding: 6px 12px;
+        font-size: 0.72rem;
+      }
+
+      .btn-icon {
+        font-size: 1em;
+      }
+
+      /* Sessions table */
+      .sessions-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .sessions-table th {
+        font-family: var(--font-mono);
+        font-size: 0.65rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--text-tertiary);
+        text-align: left;
+        padding: var(--space-sm) var(--space-md);
+        border-bottom: 1px solid var(--border-default);
+      }
+
+      .sessions-table td {
+        padding: var(--space-md);
+        border-bottom: 1px solid var(--border-subtle);
+        font-size: 0.88rem;
+      }
+
+      .sessions-table tr {
+        transition: background 0.1s ease;
+        cursor: pointer;
+      }
+
+      .sessions-table tbody tr:hover {
+        background: var(--bg-surface);
+      }
+
+      .session-name-cell {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+      }
+
+      .session-name {
+        font-family: var(--font-mono);
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      .session-branch {
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        color: var(--text-tertiary);
+        padding: 2px 8px;
+        background: var(--bg-raised);
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border-subtle);
+      }
+
+      .session-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .session-status .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+      }
+
+      .session-status.running .dot {
+        background: var(--cyan);
+        box-shadow: 0 0 6px var(--cyan);
+        animation: pulse-dot 1.5s ease-in-out infinite;
+      }
+
+      .session-status.running {
+        color: var(--cyan);
+      }
+
+      .session-status.idle .dot {
+        background: var(--text-tertiary);
+      }
+
+      .session-status.idle {
+        color: var(--text-tertiary);
+      }
+
+      .session-status.ready .dot {
+        background: var(--green);
+        box-shadow: 0 0 6px var(--green);
+      }
+
+      .session-status.ready {
+        color: var(--green);
+      }
+
+      .session-time {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+      }
+
+      /* Create session modal */
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        background: rgba(6, 9, 15, 0.8);
+        backdrop-filter: blur(8px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: fadeIn 0.15s ease;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      .modal {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-lg);
+        padding: var(--space-xl);
+        width: 100%;
+        max-width: 480px;
+        animation: slideUp 0.2s ease;
+      }
+
+      @keyframes slideUp {
+        from {
+          transform: translateY(10px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+
+      .modal-title {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 1.2rem;
+        margin-bottom: var(--space-lg);
+      }
+
+      .form-group {
+        margin-bottom: var(--space-lg);
+      }
+
+      .form-label {
+        display: block;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-secondary);
+        margin-bottom: var(--space-sm);
+      }
+
+      .form-input {
+        width: 100%;
+        padding: 10px 14px;
+        background: var(--bg-base);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: 0.88rem;
+        outline: none;
+        transition: all 0.15s ease;
+      }
+
+      .form-input:focus {
+        border-color: var(--cyan-dim);
+        box-shadow: 0 0 0 3px var(--cyan-glow);
+      }
+
+      .form-input::placeholder {
+        color: var(--text-tertiary);
+      }
+
+      .form-hint {
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        color: var(--text-tertiary);
+        margin-top: var(--space-xs);
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--space-sm);
+      }
+
+      /* ============================================
+   PAGE: SESSION DETAIL
+   ============================================ */
+      .session-detail-layout {
+        display: grid;
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+        gap: var(--space-sm);
+        height: calc(100vh - 56px - var(--space-md) * 2);
+        min-height: 500px;
+      }
+
+      /* Session info strip — ultra-compact */
+      .session-info-strip {
+        display: flex;
+        align-items: center;
+        gap: var(--space-lg);
+        padding: 5px var(--space-md);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-sm);
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+      }
+
+      .session-info-strip .si-item {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .session-info-strip .si-label {
+        color: var(--text-tertiary);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-size: 0.58rem;
+      }
+
+      .session-info-strip .si-val {
+        color: var(--text-secondary);
+      }
+
+      .session-info-strip .si-sep {
+        width: 1px;
+        height: 12px;
+        background: var(--border-subtle);
+        flex-shrink: 0;
+      }
+
+      /* Content area for panels */
+      .session-content-area {
+        display: grid;
+        gap: var(--space-md);
+        min-height: 0;
+        transition: grid-template-columns 0.25s ease;
+      }
+
+      /* Layout modes */
+      .session-content-area[data-layout="default"] {
+        grid-template-columns: 1fr 420px;
+      }
+
+      .session-content-area[data-layout="split"] {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .session-content-area[data-layout="conversation"] {
+        grid-template-columns: 1fr;
+      }
+
+      .session-content-area[data-layout="conversation"] .sidebar-diff-panel {
+        display: none;
+      }
+
+      .session-content-area[data-layout="diff"] {
+        grid-template-columns: 1fr;
+      }
+
+      .session-content-area[data-layout="diff"] .prompt-panel {
+        display: none;
+      }
+
+      /* Layout switcher control */
+      .layout-switcher {
+        display: flex;
+        gap: 2px;
+        padding: 3px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+      }
+
+      .layout-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 26px;
+        padding: 0;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-tertiary);
+        transition: all 0.15s ease;
+        position: relative;
+      }
+
+      .layout-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-secondary);
+      }
+
+      .layout-btn.active {
+        background: var(--cyan);
+        color: var(--text-inverse);
+      }
+
+      .layout-btn svg {
+        width: 18px;
+        height: 12px;
+      }
+
+      /* Tooltip for layout buttons */
+      .layout-btn::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 4px 8px;
+        background: var(--bg-raised);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-sm);
+        font-family: var(--font-mono);
+        font-size: 0.62rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s ease;
+      }
+
+      .layout-btn:hover::after {
+        opacity: 1;
+      }
+
+      /* Prompt area (main column, top) */
+      .prompt-panel {
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: var(--space-md) var(--space-lg);
+        border-bottom: 1px solid var(--border-subtle);
+        background: rgba(17, 24, 37, 0.5);
+      }
+
+      .panel-title {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-secondary);
+      }
+
+      .panel-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: var(--space-lg);
+      }
+
+      /* Conversation thread */
+      .conversation {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-lg);
+      }
+
+      .message {
+        position: relative;
+      }
+
+      .message-role {
+        font-family: var(--font-mono);
+        font-size: 0.65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 6px;
+      }
+
+      .message.user .message-role {
+        color: var(--amber);
+      }
+
+      .message.assistant .message-role {
+        color: var(--cyan);
+      }
+
+      .message-content {
+        font-family: var(--font-body);
+        font-size: 0.9rem;
+        line-height: 1.65;
+        color: var(--text-primary);
+      }
+
+      .message.assistant .message-content {
+        padding-left: var(--space-md);
+        border-left: 2px solid var(--border-default);
+      }
+
+      .message-content code {
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        background: var(--bg-raised);
+        padding: 2px 6px;
+        border-radius: 3px;
+        color: var(--cyan);
+      }
+
+      .message-content pre {
+        margin-top: var(--space-sm);
+        background: var(--bg-base);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+        padding: var(--space-md);
+        overflow-x: auto;
+      }
+
+      .message-content pre code {
+        background: none;
+        padding: 0;
+        font-size: 0.8rem;
+        line-height: 1.55;
+        color: var(--text-primary);
+      }
+
+      /* Prompt input area */
+      .prompt-input-area {
+        padding: var(--space-md) var(--space-lg);
+        border-top: 1px solid var(--border-subtle);
+        background: var(--bg-base);
+      }
+
+      .prompt-input-wrapper {
+        display: flex;
+        gap: var(--space-sm);
+        align-items: flex-end;
+      }
+
+      .prompt-textarea {
+        flex: 1;
+        resize: none;
+        min-height: 48px;
+        max-height: 160px;
+        padding: 12px 14px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: 0.85rem;
+        line-height: 1.5;
+        outline: none;
+        transition: all 0.15s ease;
+      }
+
+      .prompt-textarea:focus {
+        border-color: var(--cyan-dim);
+        box-shadow: 0 0 0 3px var(--cyan-glow);
+      }
+
+      .prompt-textarea::placeholder {
+        color: var(--text-tertiary);
+      }
+
+      .send-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 48px;
+        height: 48px;
+        border: none;
+        border-radius: var(--radius-md);
+        background: var(--cyan);
+        color: var(--text-inverse);
+        font-size: 1.1rem;
+        transition: all 0.15s ease;
+        flex-shrink: 0;
+      }
+
+      .send-btn:hover {
+        background: var(--cyan-dim);
+        box-shadow: 0 0 24px var(--cyan-glow-strong);
+      }
+
+      .send-btn.busy {
+        background: var(--bg-raised);
+        color: var(--cyan);
+        border: 1px solid var(--cyan-dim);
+        animation: pulse-border 1.5s ease-in-out infinite;
+      }
+
+      @keyframes pulse-border {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 var(--cyan-glow);
+        }
+        50% {
+          box-shadow: 0 0 16px var(--cyan-glow-strong);
+        }
+      }
+
+      /* Diff panel */
+      .sidebar-diff-panel {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+
+      /* Diff view */
+      .diff-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0;
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        line-height: 1.7;
+      }
+
+      .diff-file-section {
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .diff-file-section:last-child {
+        border-bottom: none;
+      }
+
+      .diff-file-header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        padding: var(--space-sm) var(--space-md);
+        background: var(--bg-raised);
+        border-bottom: 1px solid var(--border-subtle);
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 0.72rem;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
+        transition: background 0.1s ease;
+      }
+
+      .diff-file-header:hover {
+        background: var(--bg-hover);
+      }
+
+      .diff-file-chevron {
+        font-size: 0.65rem;
+        transition: transform 0.15s ease;
+        color: var(--text-tertiary);
+        flex-shrink: 0;
+        line-height: 1;
+      }
+
+      .diff-file-header.collapsed .diff-file-chevron {
+        transform: rotate(-90deg);
+      }
+
+      .diff-file-name {
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .diff-file-stat {
+        font-size: 0.62rem;
+        font-weight: 400;
+        flex-shrink: 0;
+      }
+
+      .diff-file-stat .add-count {
+        color: var(--green);
+      }
+
+      .diff-file-stat .rm-count {
+        color: var(--red);
+      }
+
+      .diff-file-lines.collapsed {
+        display: none;
+      }
+
+      .diff-line {
+        padding: 0 var(--space-md);
+        white-space: pre;
+        border-left: 3px solid transparent;
+      }
+
+      .diff-line.add {
+        background: rgba(0, 230, 118, 0.06);
+        border-left-color: var(--green);
+        color: var(--green);
+      }
+
+      .diff-line.remove {
+        background: rgba(255, 61, 90, 0.06);
+        border-left-color: var(--red);
+        color: var(--red);
+      }
+
+      .diff-line.context {
+        color: var(--text-tertiary);
+      }
+
+      .diff-line.hunk {
+        color: var(--cyan-dim);
+        background: var(--cyan-glow);
+        font-weight: 500;
+      }
+
+      /* Info value helpers */
+      .info-value.truncate {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Running indicator */
+      .running-indicator {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+        padding: var(--space-md) var(--space-lg);
+        background: var(--cyan-glow);
+        border: 1px solid rgba(0, 229, 255, 0.15);
+        border-radius: var(--radius-md);
+        margin-bottom: var(--space-md);
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--cyan);
+        animation: fadeIn 0.3s ease;
+      }
+
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(0, 229, 255, 0.2);
+        border-top-color: var(--cyan);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* Hooks banner */
+      .hooks-banner {
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+        padding: var(--space-md) var(--space-lg);
+        background: var(--amber-glow);
+        border: 1px solid rgba(255, 179, 0, 0.2);
+        border-radius: var(--radius-md);
+        margin-bottom: var(--space-lg);
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--amber);
+      }
+
+      .hooks-banner .banner-icon {
+        font-size: 1.1rem;
+        flex-shrink: 0;
+      }
+
+      .hooks-banner .banner-text {
+        flex: 1;
+      }
+
+      .hooks-banner .banner-action {
+        flex-shrink: 0;
+      }
+
+      /* ============================================
+   EMPTY STATE
+   ============================================ */
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: var(--space-3xl) var(--space-xl);
+        text-align: center;
+      }
+
+      .empty-state-icon {
+        font-size: 2.5rem;
+        margin-bottom: var(--space-lg);
+        opacity: 0.3;
+      }
+
+      .empty-state-title {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 1.1rem;
+        color: var(--text-secondary);
+        margin-bottom: var(--space-sm);
+      }
+
+      .empty-state-desc {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--text-tertiary);
+        max-width: 320px;
+      }
+
+      /* ============================================
+   MESSAGE NAVIGATION
+   ============================================ */
+      .msg-nav {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+
+      .nav-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-tertiary);
+        font-size: 0.55rem;
+        transition: all 0.15s ease;
+      }
+
+      .nav-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-secondary);
+        border-color: var(--border-default);
+      }
+
+      .msg-counter {
+        font-family: var(--font-mono);
+        font-size: 0.62rem;
+        color: var(--text-tertiary);
+        min-width: 28px;
+        text-align: center;
+        letter-spacing: 0.02em;
+      }
+
+      /* ============================================
+   DIFF TOOLBAR
+   ============================================ */
+      .diff-toolbar {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+        padding: 4px var(--space-md);
+        border-bottom: 1px solid var(--border-subtle);
+        background: rgba(17, 24, 37, 0.3);
+        flex-shrink: 0;
+      }
+
+      .diff-toolbar-group {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .diff-toolbar-label {
+        font-family: var(--font-mono);
+        font-size: 0.58rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-tertiary);
+        margin: 0 3px;
+      }
+
+      .diff-toolbar-sep {
+        width: 1px;
+        height: 16px;
+        background: var(--border-subtle);
+        flex-shrink: 0;
+        margin: 0 2px;
+      }
+
+      .diff-nav-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 22px;
+        height: 22px;
+        padding: 0 5px;
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-tertiary);
+        font-family: var(--font-mono);
+        font-size: 0.65rem;
+        font-weight: 500;
+        transition: all 0.15s ease;
+        cursor: pointer;
+      }
+
+      .diff-nav-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-secondary);
+        border-color: var(--border-default);
+      }
+
+      /* ============================================
+   SCROLLBAR
+   ============================================ */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background: var(--border-default);
+        border-radius: 3px;
+      }
+
+      ::-webkit-scrollbar-thumb:hover {
+        background: var(--border-strong);
+      }
+
+      /* ============================================
+   PAGE TRANSITIONS (staggered)
+   ============================================ */
+      .stagger-in > * {
+        opacity: 0;
+        transform: translateY(8px);
+        animation: staggerReveal 0.35s ease forwards;
+      }
+
+      .stagger-in > *:nth-child(1) {
+        animation-delay: 0ms;
+      }
+      .stagger-in > *:nth-child(2) {
+        animation-delay: 50ms;
+      }
+      .stagger-in > *:nth-child(3) {
+        animation-delay: 100ms;
+      }
+      .stagger-in > *:nth-child(4) {
+        animation-delay: 150ms;
+      }
+      .stagger-in > *:nth-child(5) {
+        animation-delay: 200ms;
+      }
+      .stagger-in > *:nth-child(6) {
+        animation-delay: 250ms;
+      }
+      .stagger-in > *:nth-child(7) {
+        animation-delay: 300ms;
+      }
+      .stagger-in > *:nth-child(8) {
+        animation-delay: 350ms;
+      }
+
+      @keyframes staggerReveal {
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      /* ============================================
+   RESPONSIVE
+   ============================================ */
+      @media (max-width: 900px) {
+        .session-content-area[data-layout="default"],
+        .session-content-area[data-layout="split"] {
+          grid-template-columns: 1fr;
+        }
+
+        .projects-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .session-info-strip {
+          flex-wrap: wrap;
+          gap: var(--space-xs) var(--space-md);
+        }
+
+        .topbar-status-session {
+          gap: var(--space-sm);
+        }
+      }
+
+      /* ============================================
+   HIDE/SHOW PAGES
+   ============================================ */
+      .page {
+        display: none;
+      }
+      .page.active {
+        display: block;
+      }
+      .page.active.is-grid {
+        display: block;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="app">
+      <!-- ===================== TOP BAR ===================== -->
+      <header class="topbar">
+        <div class="topbar-brand">
+          <div class="topbar-logo">CSM</div>
+          <div class="topbar-divider"></div>
+          <nav class="topbar-breadcrumb" id="breadcrumb">
+            <a href="#" onclick="showPage('projects')">projects</a>
+          </nav>
+        </div>
+        <div class="topbar-status">
+          <!-- Default status (non-session pages) -->
+          <div class="topbar-status-default">
+            <div class="status-indicator">
+              <div class="status-dot"></div>
+              hooks active
+            </div>
+            <div class="status-indicator">
+              <div class="status-dot warning"></div>
+              1 session running
+            </div>
+          </div>
+
+          <!-- Session detail controls -->
+          <div class="topbar-status-session">
+            <div class="status-indicator">
+              <div
+                class="status-dot"
+                style="
+                  background: var(--cyan);
+                  box-shadow:
+                    0 0 8px var(--cyan-glow),
+                    0 0 3px var(--cyan);
+                "
+              ></div>
+              running
+            </div>
+
+            <div class="topbar-sep"></div>
+
+            <!-- Layout switcher -->
+            <div class="layout-switcher">
+              <button
+                class="layout-btn"
+                data-layout="conversation"
+                data-tooltip="Conversation only"
+                onclick="setLayout('conversation')"
+              >
+                <svg viewBox="0 0 18 12" fill="none">
+                  <rect
+                    x="0.5"
+                    y="0.5"
+                    width="17"
+                    height="11"
+                    rx="1.5"
+                    fill="currentColor"
+                    opacity="0.9"
+                  />
+                </svg>
+              </button>
+              <button
+                class="layout-btn active"
+                data-layout="default"
+                data-tooltip="Default split"
+                onclick="setLayout('default')"
+              >
+                <svg viewBox="0 0 18 12" fill="none">
+                  <rect
+                    x="0.5"
+                    y="0.5"
+                    width="11"
+                    height="11"
+                    rx="1.5"
+                    fill="currentColor"
+                    opacity="0.9"
+                  />
+                  <rect
+                    x="13"
+                    y="0.5"
+                    width="4.5"
+                    height="11"
+                    rx="1.5"
+                    fill="currentColor"
+                    opacity="0.4"
+                  />
+                </svg>
+              </button>
+              <button
+                class="layout-btn"
+                data-layout="split"
+                data-tooltip="50 / 50 split"
+                onclick="setLayout('split')"
+              >
+                <svg viewBox="0 0 18 12" fill="none">
+                  <rect
+                    x="0.5"
+                    y="0.5"
+                    width="7.5"
+                    height="11"
+                    rx="1.5"
+                    fill="currentColor"
+                    opacity="0.9"
+                  />
+                  <rect
+                    x="10"
+                    y="0.5"
+                    width="7.5"
+                    height="11"
+                    rx="1.5"
+                    fill="currentColor"
+                    opacity="0.9"
+                  />
+                </svg>
+              </button>
+              <button
+                class="layout-btn"
+                data-layout="diff"
+                data-tooltip="Diff only"
+                onclick="setLayout('diff')"
+              >
+                <svg viewBox="0 0 18 12" fill="none">
+                  <rect
+                    x="0.5"
+                    y="0.5"
+                    width="17"
+                    height="11"
+                    rx="1.5"
+                    fill="currentColor"
+                    opacity="0.4"
+                  />
+                  <line
+                    x1="3"
+                    y1="4"
+                    x2="15"
+                    y2="4"
+                    stroke="currentColor"
+                    stroke-width="1"
+                    opacity="0.7"
+                  />
+                  <line
+                    x1="3"
+                    y1="6.5"
+                    x2="12"
+                    y2="6.5"
+                    stroke="currentColor"
+                    stroke-width="1"
+                    opacity="0.7"
+                  />
+                  <line
+                    x1="3"
+                    y1="9"
+                    x2="14"
+                    y2="9"
+                    stroke="currentColor"
+                    stroke-width="1"
+                    opacity="0.7"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div class="topbar-sep"></div>
+
+            <button
+              class="btn-icon-only"
+              data-tooltip="Refresh"
+              onclick="void 0"
+            >
+              &#8635;
+            </button>
+            <button
+              class="btn-icon-only danger"
+              data-tooltip="Delete session"
+              onclick="void 0"
+            >
+              &#10005;
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main class="main">
+        <!-- ===================== PAGE: PROJECTS ===================== -->
+        <div class="page active" id="page-projects">
+          <div class="page-header stagger-in">
+            <h1 class="page-title">
+              Ground <span class="accent">Control</span>
+            </h1>
+            <p class="page-subtitle">
+              ~/github &mdash; 6 repositories discovered
+            </p>
+          </div>
+
+          <div class="projects-grid stagger-in">
+            <div class="project-card" onclick="showPage('sessions')">
+              <div class="project-card-header">
+                <div class="project-name">remote-ai-manager</div>
+                <div class="project-badge active">2 active</div>
+              </div>
+              <div class="project-path">~/github/remote-ai-manager</div>
+              <div class="project-stats">
+                <div class="stat">
+                  <span class="stat-value">2</span>
+                  <span class="stat-label">Sessions</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">14</span>
+                  <span class="stat-label">Prompts</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">3m</span>
+                  <span class="stat-label">Last active</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="project-card">
+              <div class="project-card-header">
+                <div class="project-name">solana-trading-bot</div>
+                <div class="project-badge active">1 active</div>
+              </div>
+              <div class="project-path">~/github/solana-trading-bot</div>
+              <div class="project-stats">
+                <div class="stat">
+                  <span class="stat-value">1</span>
+                  <span class="stat-label">Sessions</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">8</span>
+                  <span class="stat-label">Prompts</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">1h</span>
+                  <span class="stat-label">Last active</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="project-card">
+              <div class="project-card-header">
+                <div class="project-name">personal-site</div>
+                <div class="project-badge idle">idle</div>
+              </div>
+              <div class="project-path">~/github/personal-site</div>
+              <div class="project-stats">
+                <div class="stat">
+                  <span class="stat-value">0</span>
+                  <span class="stat-label">Sessions</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span>
+                  <span class="stat-label">Prompts</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span>
+                  <span class="stat-label">Last active</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="project-card">
+              <div class="project-card-header">
+                <div class="project-name">dotfiles</div>
+                <div class="project-badge idle">idle</div>
+              </div>
+              <div class="project-path">~/github/dotfiles</div>
+              <div class="project-stats">
+                <div class="stat">
+                  <span class="stat-value">0</span>
+                  <span class="stat-label">Sessions</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span>
+                  <span class="stat-label">Prompts</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span>
+                  <span class="stat-label">Last active</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="project-card">
+              <div class="project-card-header">
+                <div class="project-name">api-gateway</div>
+                <div class="project-badge active">1 active</div>
+              </div>
+              <div class="project-path">~/github/api-gateway</div>
+              <div class="project-stats">
+                <div class="stat">
+                  <span class="stat-value">1</span>
+                  <span class="stat-label">Sessions</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">22</span>
+                  <span class="stat-label">Prompts</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">12m</span>
+                  <span class="stat-label">Last active</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="project-card">
+              <div class="project-card-header">
+                <div class="project-name">ml-experiments</div>
+                <div class="project-badge idle">idle</div>
+              </div>
+              <div class="project-path">~/github/ml-experiments</div>
+              <div class="project-stats">
+                <div class="stat">
+                  <span class="stat-value">0</span>
+                  <span class="stat-label">Sessions</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span>
+                  <span class="stat-label">Prompts</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span>
+                  <span class="stat-label">Last active</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===================== PAGE: SESSIONS LIST ===================== -->
+        <div class="page" id="page-sessions">
+          <div class="page-header stagger-in">
+            <h1 class="page-title">
+              remote-ai-<span class="accent">manager</span>
+            </h1>
+            <p class="page-subtitle">
+              ~/github/remote-ai-manager &mdash; 2 sessions
+            </p>
+          </div>
+
+          <div class="stagger-in">
+            <div class="session-actions-bar">
+              <div style="display: flex; gap: var(--space-sm)">
+                <button class="btn btn-sm" style="color: var(--text-tertiary)">
+                  <span class="btn-icon">&#8635;</span> Refresh
+                </button>
+              </div>
+              <button
+                class="btn btn-primary btn-sm"
+                onclick="toggleModal(true)"
+              >
+                <span class="btn-icon">+</span> New Session
+              </button>
+            </div>
+
+            <table class="sessions-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Branch</th>
+                  <th>Status</th>
+                  <th>Last Activity</th>
+                  <th>Prompts</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr onclick="showPage('detail')">
+                  <td>
+                    <div class="session-name-cell">
+                      <span class="session-name">implement-ui</span>
+                    </div>
+                  </td>
+                  <td><span class="session-branch">csm/implement-ui</span></td>
+                  <td>
+                    <span class="session-status running">
+                      <span class="dot"></span> Running
+                    </span>
+                  </td>
+                  <td><span class="session-time">2 min ago</span></td>
+                  <td><span class="session-time">8</span></td>
+                  <td>
+                    <button
+                      class="btn btn-danger btn-sm"
+                      onclick="event.stopPropagation()"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="session-name-cell">
+                      <span class="session-name">fix-auth-flow</span>
+                    </div>
+                  </td>
+                  <td><span class="session-branch">csm/fix-auth-flow</span></td>
+                  <td>
+                    <span class="session-status ready">
+                      <span class="dot"></span> Ready
+                    </span>
+                  </td>
+                  <td><span class="session-time">1 hour ago</span></td>
+                  <td><span class="session-time">6</span></td>
+                  <td>
+                    <button
+                      class="btn btn-danger btn-sm"
+                      onclick="event.stopPropagation()"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ===================== PAGE: SESSION DETAIL ===================== -->
+        <div class="page" id="page-detail">
+          <div class="session-detail-layout stagger-in">
+            <!-- Compact session info strip -->
+            <div class="session-info-strip">
+              <div class="si-item">
+                <span class="si-label">Branch</span>
+                <span class="si-val">csm/implement-ui</span>
+              </div>
+              <div class="si-sep"></div>
+              <div class="si-item">
+                <span class="si-label">Created</span>
+                <span class="si-val">Feb 12, 15:20</span>
+              </div>
+              <div class="si-sep"></div>
+              <div class="si-item">
+                <span class="si-label">Prompts</span>
+                <span class="si-val">8</span>
+              </div>
+              <div class="si-sep"></div>
+              <div class="si-item">
+                <span class="si-label">Worktree</span>
+                <span class="si-val" style="opacity: 0.6"
+                  >~/.local/share/csm/worktrees/a3f1c2/implement-ui</span
+                >
+              </div>
+            </div>
+
+            <!-- Content area: conversation + diff panels -->
+            <div
+              class="session-content-area"
+              id="session-content"
+              data-layout="default"
+            >
+              <!-- Prompt + conversation panel -->
+              <div class="prompt-panel">
+                <div class="panel-header">
+                  <span class="panel-title">Conversation</span>
+                  <div class="msg-nav">
+                    <button
+                      class="nav-btn"
+                      onclick="scrollToMessage(-1)"
+                      title="Previous message"
+                    >
+                      &#9652;
+                    </button>
+                    <span class="msg-counter" id="msg-counter">1 / 4</span>
+                    <button
+                      class="nav-btn"
+                      onclick="scrollToMessage(1)"
+                      title="Next message"
+                    >
+                      &#9662;
+                    </button>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <div class="running-indicator">
+                    <div class="spinner"></div>
+                    Claude is working&hellip; building session detail page
+                    component
+                  </div>
+
+                  <div class="conversation">
+                    <div class="message user">
+                      <div class="message-role">You</div>
+                      <div class="message-content">
+                        Create the session detail page with a prompt input area,
+                        conversation history panel, and a git diff sidebar. Use
+                        the existing design tokens and component patterns.
+                      </div>
+                    </div>
+
+                    <div class="message assistant">
+                      <div class="message-role">Claude</div>
+                      <div class="message-content">
+                        <p>
+                          I'll create the session detail page with three main
+                          sections. Let me start by reading the existing
+                          components to understand the patterns.
+                        </p>
+                        <pre><code>// Created: app/projects/[projectId]/sessions/[name]/page.tsx
+export default function SessionDetail({ params }) {
+  const { projectId, name } = params
+  // fetch session, history, diff data
+  ...
+}</code></pre>
+                        <p>
+                          The page uses a two-column layout with the
+                          conversation panel on the left and the diff viewer on
+                          the right. The prompt input is fixed at the bottom of
+                          the conversation panel.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="message user">
+                      <div class="message-role">You</div>
+                      <div class="message-content">
+                        Now add polling for the run status. When a prompt is
+                        submitted, poll <code>/api/runs/:runId</code> every
+                        500ms until the status is no longer "running".
+                      </div>
+                    </div>
+
+                    <div class="message assistant">
+                      <div class="message-role">Claude</div>
+                      <div class="message-content">
+                        <p>
+                          I've added the polling mechanism using
+                          <code>useEffect</code> with a cleanup interval. The
+                          flow is:
+                        </p>
+                        <p>
+                          1. Submit prompt &rarr; POST to
+                          <code>/api/.../prompt</code> &rarr; receive
+                          <code>runId</code><br />
+                          2. Start polling <code>/api/runs/:runId</code> at
+                          500ms intervals<br />
+                          3. On <code>"succeeded"</code>: display
+                          <code>finalText</code>, refresh history<br />
+                          4. On <code>"failed"</code>: show error state
+                        </p>
+                        <pre><code>const pollRun = useCallback(async (runId: string) => {
+  const interval = setInterval(async () => {
+    const res = await fetch(`/api/runs/${runId}`)
+    const run = await res.json()
+    if (run.status !== 'running') {
+      clearInterval(interval)
+      if (run.status === 'succeeded') {
+        setMessages(prev => [...prev, {
+          role: 'assistant', text: run.finalText
+        }])
+      }
+    }
+  }, 500)
+  return () => clearInterval(interval)
+}, [])</code></pre>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="prompt-input-area">
+                  <div class="prompt-input-wrapper">
+                    <textarea
+                      class="prompt-textarea"
+                      placeholder="Send a prompt to Claude..."
+                      rows="2"
+                    ></textarea>
+                    <button class="send-btn busy" title="Session is busy">
+                      <div
+                        class="spinner"
+                        style="
+                          border-color: rgba(0, 229, 255, 0.3);
+                          border-top-color: var(--cyan);
+                          width: 18px;
+                          height: 18px;
+                        "
+                      ></div>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Diff panel -->
+              <div class="sidebar-diff-panel">
+                <div class="panel-header">
+                  <span class="panel-title">Diff vs main</span>
+                  <span
+                    style="
+                      font-family: var(--font-mono);
+                      font-size: 0.68rem;
+                      color: var(--text-tertiary);
+                    "
+                    ><span style="color: var(--green)">+47</span>
+                    <span style="color: var(--red)">-12</span> &middot; 2
+                    files</span
+                  >
+                </div>
+                <div class="diff-toolbar">
+                  <div class="diff-toolbar-group">
+                    <button
+                      class="diff-nav-btn"
+                      onclick="toggleAllFiles(true)"
+                      title="Collapse all files"
+                    >
+                      &#9643;
+                    </button>
+                    <button
+                      class="diff-nav-btn"
+                      onclick="toggleAllFiles(false)"
+                      title="Expand all files"
+                    >
+                      &#9642;
+                    </button>
+                  </div>
+                  <div class="diff-toolbar-sep"></div>
+                  <div class="diff-toolbar-group">
+                    <button
+                      class="diff-nav-btn"
+                      onclick="navigateDiff('file', -1)"
+                    >
+                      &#8249;
+                    </button>
+                    <span class="diff-toolbar-label">Files</span>
+                    <button
+                      class="diff-nav-btn"
+                      onclick="navigateDiff('file', 1)"
+                    >
+                      &#8250;
+                    </button>
+                  </div>
+                  <div class="diff-toolbar-sep"></div>
+                  <div class="diff-toolbar-group">
+                    <button
+                      class="diff-nav-btn"
+                      onclick="navigateDiff('hunk', -1)"
+                    >
+                      &#8249;
+                    </button>
+                    <span class="diff-toolbar-label">Changes</span>
+                    <button
+                      class="diff-nav-btn"
+                      onclick="navigateDiff('hunk', 1)"
+                    >
+                      &#8250;
+                    </button>
+                  </div>
+                </div>
+                <div class="diff-content">
+                  <!-- File 1 -->
+                  <div class="diff-file-section">
+                    <div
+                      class="diff-file-header"
+                      onclick="toggleFileCollapse(this)"
+                    >
+                      <span class="diff-file-chevron">&#9662;</span>
+                      <span class="diff-file-name"
+                        >app/projects/[projectId]/sessions/[name]/page.tsx</span
+                      >
+                      <span class="diff-file-stat"
+                        ><span class="add-count">+33</span>
+                        <span class="rm-count">-2</span></span
+                      >
+                    </div>
+                    <div class="diff-file-lines">
+                      <div class="diff-line hunk">@@ -1,5 +1,18 @@</div>
+                      <div class="diff-line context">
+                        import { useEffect, useState, useCallback } from 'react'
+                      </div>
+                      <div class="diff-line remove">
+                        -import { SessionHeader } from '@/components/session'
+                      </div>
+                      <div class="diff-line add">
+                        +import { SessionHeader, DiffViewer } from
+                        '@/components/session'
+                      </div>
+                      <div class="diff-line add">
+                        +import { useRunPoller } from '@/hooks/useRunPoller'
+                      </div>
+                      <div class="diff-line add">
+                        +import { ConversationThread } from
+                        '@/components/conversation'
+                      </div>
+                      <div class="diff-line context"></div>
+                      <div class="diff-line context">
+                        export default function SessionDetail({ params }) {
+                      </div>
+                      <div class="diff-line add">
+                        + const [messages, setMessages] = useState([])
+                      </div>
+                      <div class="diff-line add">
+                        + const [runId, setRunId] = useState(null)
+                      </div>
+                      <div class="diff-line add">
+                        + const { status } = useRunPoller(runId)
+                      </div>
+                      <div class="diff-line context">
+                        const { projectId, name } = params
+                      </div>
+                      <div class="diff-line context"></div>
+                      <div class="diff-line hunk">@@ -22,4 +35,19 @@</div>
+                      <div class="diff-line add">
+                        + const handleSubmit = async (prompt: string) =&gt; {
+                      </div>
+                      <div class="diff-line add">
+                        + const res = await fetch(
+                      </div>
+                      <div class="diff-line add">
+                        + `/api/projects/${projectId}/sessions/${name}/prompt`,
+                      </div>
+                      <div class="diff-line add">
+                        + { method: 'POST', body: JSON.stringify({ prompt }) }
+                      </div>
+                      <div class="diff-line add">+ )</div>
+                      <div class="diff-line add">
+                        + const { runId } = await res.json()
+                      </div>
+                      <div class="diff-line add">+ setRunId(runId)</div>
+                      <div class="diff-line add">+ }</div>
+                      <div class="diff-line context"></div>
+                      <div class="diff-line context">return (</div>
+                      <div class="diff-line remove">
+                        - &lt;div&gt;TODO&lt;/div&gt;
+                      </div>
+                      <div class="diff-line add">
+                        + &lt;div className="session-detail-layout"&gt;
+                      </div>
+                      <div class="diff-line add">
+                        + &lt;ConversationThread messages={messages} /&gt;
+                      </div>
+                      <div class="diff-line add">
+                        + &lt;DiffViewer projectId={projectId} name={name} /&gt;
+                      </div>
+                      <div class="diff-line add">+ &lt;/div&gt;</div>
+                      <div class="diff-line context">)</div>
+                      <div class="diff-line context">}</div>
+                    </div>
+                  </div>
+
+                  <!-- File 2 -->
+                  <div class="diff-file-section">
+                    <div
+                      class="diff-file-header"
+                      onclick="toggleFileCollapse(this)"
+                    >
+                      <span class="diff-file-chevron">&#9662;</span>
+                      <span class="diff-file-name"
+                        >src/hooks/useRunPoller.ts
+                        <span
+                          style="
+                            color: var(--green);
+                            font-weight: 400;
+                            font-size: 0.62rem;
+                          "
+                          >(new)</span
+                        ></span
+                      >
+                      <span class="diff-file-stat"
+                        ><span class="add-count">+24</span></span
+                      >
+                    </div>
+                    <div class="diff-file-lines">
+                      <div class="diff-line hunk">@@ -0,0 +1,24 @@</div>
+                      <div class="diff-line add">
+                        +import { useState, useEffect } from 'react'
+                      </div>
+                      <div class="diff-line add">+</div>
+                      <div class="diff-line add">
+                        +export function useRunPoller(runId: string | null) {
+                      </div>
+                      <div class="diff-line add">
+                        + const [status, setStatus] = useState('idle')
+                      </div>
+                      <div class="diff-line add">
+                        + const [result, setResult] = useState(null)
+                      </div>
+                      <div class="diff-line add">+</div>
+                      <div class="diff-line add">+ useEffect(() =&gt; {</div>
+                      <div class="diff-line add">+ if (!runId) return</div>
+                      <div class="diff-line add">+ setStatus('running')</div>
+                      <div class="diff-line add">
+                        + const id = setInterval(async () =&gt; {
+                      </div>
+                      <div class="diff-line add">
+                        + const res = await fetch(`/api/runs/${runId}`)
+                      </div>
+                      <div class="diff-line add">
+                        + const run = await res.json()
+                      </div>
+                      <div class="diff-line add">
+                        + if (run.status !== 'running') {
+                      </div>
+                      <div class="diff-line add">+ clearInterval(id)</div>
+                      <div class="diff-line add">+ setStatus(run.status)</div>
+                      <div class="diff-line add">+ setResult(run)</div>
+                      <div class="diff-line add">+ }</div>
+                      <div class="diff-line add">+ }, 500)</div>
+                      <div class="diff-line add">
+                        + return () =&gt; clearInterval(id)
+                      </div>
+                      <div class="diff-line add">+ }, [runId])</div>
+                      <div class="diff-line add">+</div>
+                      <div class="diff-line add">
+                        + return { status, result }
+                      </div>
+                      <div class="diff-line add">+}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- ===================== MODAL: CREATE SESSION ===================== -->
+    <div class="modal-overlay" id="modal" style="display: none">
+      <div class="modal">
+        <div class="modal-title">New Session</div>
+        <div class="form-group">
+          <label class="form-label">Session Name</label>
+          <input
+            class="form-input"
+            type="text"
+            placeholder="e.g. implement-auth"
+            autofocus
+          />
+          <div class="form-hint">
+            Branch will be created as csm/&lt;session-name&gt;
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-sm" onclick="toggleModal(false)">
+            Cancel
+          </button>
+          <button class="btn btn-primary btn-sm" onclick="toggleModal(false)">
+            Create Session
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Layout switcher for session detail
+      function setLayout(mode) {
+        const content = document.getElementById("session-content");
+        if (content) {
+          content.setAttribute("data-layout", mode);
+        }
+        // Update active button
+        document.querySelectorAll(".layout-btn").forEach((btn) => {
+          btn.classList.toggle(
+            "active",
+            btn.getAttribute("data-layout") === mode,
+          );
+        });
+      }
+
+      // Simple page switching for design prototype
+      function showPage(page) {
+        // Set page context on app element (controls topbar)
+        document.querySelector(".app").setAttribute("data-page", page);
+
+        document
+          .querySelectorAll(".page")
+          .forEach((p) => p.classList.remove("active"));
+        document.getElementById("page-" + page).classList.add("active");
+
+        // Update breadcrumb
+        const bc = document.getElementById("breadcrumb");
+        if (page === "projects") {
+          bc.innerHTML =
+            '<a href="#" onclick="showPage(\'projects\')">projects</a>';
+        } else if (page === "sessions") {
+          bc.innerHTML =
+            '<a href="#" onclick="showPage(\'projects\')">projects</a> <span>/</span> <a href="#" onclick="showPage(\'sessions\')">remote-ai-manager</a>';
+        } else if (page === "detail") {
+          bc.innerHTML =
+            '<a href="#" onclick="showPage(\'projects\')">projects</a> <span>/</span> <a href="#" onclick="showPage(\'sessions\')">remote-ai-manager</a> <span>/</span> <a class="bc-session" href="#" onclick="showPage(\'detail\')">implement-ui</a>';
+        }
+
+        // Re-trigger stagger animations
+        document.querySelectorAll(".stagger-in > *").forEach((el) => {
+          el.style.animation = "none";
+          el.offsetHeight; // reflow
+          el.style.animation = "";
+        });
+      }
+
+      function toggleModal(show) {
+        document.getElementById("modal").style.display = show ? "flex" : "none";
+      }
+
+      // Close modal on overlay click
+      document.getElementById("modal").addEventListener("click", function (e) {
+        if (e.target === this) toggleModal(false);
+      });
+
+      // Escape key closes modal
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") toggleModal(false);
+      });
+
+      // ===================== MESSAGE NAVIGATION =====================
+      let currentMsgIndex = 0;
+
+      function scrollToMessage(dir) {
+        const panel = document.querySelector(".panel-body");
+        if (!panel) return;
+        const messages = panel.querySelectorAll(".message");
+        if (!messages.length) return;
+
+        currentMsgIndex = Math.max(
+          0,
+          Math.min(messages.length - 1, currentMsgIndex + dir),
+        );
+        messages[currentMsgIndex].scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+        updateMsgCounter();
+      }
+
+      function updateMsgCounter() {
+        const panel = document.querySelector(".panel-body");
+        if (!panel) return;
+        const messages = panel.querySelectorAll(".message");
+        const counter = document.getElementById("msg-counter");
+        if (counter && messages.length) {
+          counter.textContent = currentMsgIndex + 1 + " / " + messages.length;
+        }
+      }
+
+      // Update counter on conversation scroll (detect visible message)
+      (function () {
+        const panel = document.querySelector(".panel-body");
+        if (!panel) return;
+        let ticking = false;
+        panel.addEventListener("scroll", function () {
+          if (!ticking) {
+            requestAnimationFrame(function () {
+              const messages = panel.querySelectorAll(".message");
+              const panelTop = panel.getBoundingClientRect().top;
+              let closest = 0;
+              let closestDist = Infinity;
+              messages.forEach(function (msg, i) {
+                const dist = Math.abs(
+                  msg.getBoundingClientRect().top - panelTop,
+                );
+                if (dist < closestDist) {
+                  closestDist = dist;
+                  closest = i;
+                }
+              });
+              currentMsgIndex = closest;
+              updateMsgCounter();
+              ticking = false;
+            });
+            ticking = true;
+          }
+        });
+      })();
+
+      // ===================== DIFF FILE COLLAPSE =====================
+      function toggleFileCollapse(headerEl) {
+        const section = headerEl.closest(".diff-file-section");
+        if (!section) return;
+        const lines = section.querySelector(".diff-file-lines");
+        if (!lines) return;
+        const isCollapsed = lines.classList.toggle("collapsed");
+        headerEl.classList.toggle("collapsed", isCollapsed);
+      }
+
+      function toggleAllFiles(collapse) {
+        document
+          .querySelectorAll(".diff-file-section")
+          .forEach(function (section) {
+            const header = section.querySelector(".diff-file-header");
+            const lines = section.querySelector(".diff-file-lines");
+            if (header && lines) {
+              if (collapse) {
+                lines.classList.add("collapsed");
+                header.classList.add("collapsed");
+              } else {
+                lines.classList.remove("collapsed");
+                header.classList.remove("collapsed");
+              }
+            }
+          });
+      }
+
+      // ===================== DIFF NAVIGATION =====================
+      function navigateDiff(type, dir) {
+        const container = document.querySelector(".diff-content");
+        if (!container) return;
+
+        // Determine target elements based on type
+        let selector;
+        if (type === "file") {
+          selector = ".diff-file-header";
+        } else if (type === "hunk") {
+          selector = ".diff-line.hunk";
+        } else {
+          return;
+        }
+
+        const targets = Array.from(container.querySelectorAll(selector));
+        if (!targets.length) return;
+
+        // Find the first target that is below or at the current scroll position
+        const scrollTop = container.scrollTop;
+        const threshold = 4; // small tolerance in px
+
+        let currentIdx = -1;
+        for (let i = 0; i < targets.length; i++) {
+          const top = targets[i].offsetTop - container.offsetTop;
+          if (top <= scrollTop + threshold) {
+            currentIdx = i;
+          }
+        }
+
+        let nextIdx;
+        if (dir > 0) {
+          // Next: find first target below current scroll
+          nextIdx = currentIdx + 1;
+          if (nextIdx >= targets.length) nextIdx = targets.length - 1;
+        } else {
+          // Prev: go to previous target
+          nextIdx = currentIdx - 1;
+          if (nextIdx < 0) nextIdx = 0;
+        }
+
+        // If navigating to a file, ensure it's expanded
+        if (type === "file") {
+          const section = targets[nextIdx].closest(".diff-file-section");
+          if (section) {
+            const lines = section.querySelector(".diff-file-lines");
+            const header = section.querySelector(".diff-file-header");
+            if (lines && lines.classList.contains("collapsed")) {
+              lines.classList.remove("collapsed");
+              if (header) header.classList.remove("collapsed");
+            }
+          }
+        }
+
+        // If navigating to a hunk, ensure parent file is expanded
+        if (type === "hunk") {
+          const section = targets[nextIdx].closest(".diff-file-section");
+          if (section) {
+            const lines = section.querySelector(".diff-file-lines");
+            const header = section.querySelector(".diff-file-header");
+            if (lines && lines.classList.contains("collapsed")) {
+              lines.classList.remove("collapsed");
+              if (header) header.classList.remove("collapsed");
+            }
+          }
+        }
+
+        targets[nextIdx].scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    </script>
+  </body>
+</html>
