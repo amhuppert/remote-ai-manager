@@ -10,7 +10,7 @@ import { readState, writeState } from "./state";
 const execFileAsync = promisify(execFile);
 
 /** Sanitize a session name into a valid git branch suffix */
-function sanitizeBranchName(sessionName: string): string {
+export function sanitizeBranchName(sessionName: string): string {
   return sessionName
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")
@@ -19,7 +19,7 @@ function sanitizeBranchName(sessionName: string): string {
 }
 
 /** Validate session name: non-empty, reasonable length, no weird chars */
-function validateSessionName(name: string): string | null {
+export function validateSessionName(name: string): string | null {
   if (!name || name.trim().length === 0) {
     return "Session name cannot be empty";
   }

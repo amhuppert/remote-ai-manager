@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { parseDiff } from "./diff";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { parseDiff, computeDiff } from "./diff";
 
 describe("parseDiff", () => {
   it("returns empty diff for empty input", () => {
@@ -121,5 +121,185 @@ index 0000000..abc1234
     expect(result.files).toHaveLength(1);
     expect(result.files[0]!.filePath).toBe("new.ts");
     expect(result.files[0]!.additions).toBe(2);
+  });
+
+  // ==========================================================================
+  // 4.1 – parseDiff edge cases (Req 2.6, 2.7, 3.4)
+  // ==========================================================================
+
+  it("skips deleted file mode metadata lines", () => {
+    const raw = `diff --git a/old.ts b/old.ts
+deleted file mode 100644
+index abc1234..0000000
+--- a/old.ts
++++ /dev/null
+@@ -1,2 +0,0 @@
+-line1
+-line2`;
+
+    const result = parseDiff(raw);
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0]!.filePath).toBe("old.ts");
+    expect(result.files[0]!.deletions).toBe(2);
+  });
+
+  it("skips old mode / new mode metadata lines", () => {
+    const raw = `diff --git a/script.sh b/script.sh
+old mode 100644
+new mode 100755
+index abc..def
+--- a/script.sh
++++ b/script.sh
+@@ -1,2 +1,3 @@
+ #!/bin/bash
++echo "hello"
+ exit 0`;
+
+    const result = parseDiff(raw);
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0]!.additions).toBe(1);
+    expect(result.files[0]!.deletions).toBe(0);
+  });
+
+  it("computes totalAdditions and totalDeletions correctly across files", () => {
+    const raw = `diff --git a/a.ts b/a.ts
+index abc..def 100644
+--- a/a.ts
++++ b/a.ts
+@@ -1,2 +1,4 @@
+ line1
++add1
++add2
+ line2
+diff --git a/b.ts b/b.ts
+index abc..def 100644
+--- a/b.ts
++++ b/b.ts
+@@ -1,4 +1,2 @@
+ line1
+-del1
+-del2
+ line2`;
+
+    const result = parseDiff(raw);
+    expect(result.totalAdditions).toBe(2);
+    expect(result.totalDeletions).toBe(2);
+    expect(result.files[0]!.additions).toBe(2);
+    expect(result.files[1]!.deletions).toBe(2);
+  });
+
+  it("preserves file ordering from diff output", () => {
+    const raw = `diff --git a/z-last.ts b/z-last.ts
+index abc..def 100644
+--- a/z-last.ts
++++ b/z-last.ts
+@@ -1 +1,2 @@
+ x
++y
+diff --git a/a-first.ts b/a-first.ts
+index abc..def 100644
+--- a/a-first.ts
++++ b/a-first.ts
+@@ -1 +1,2 @@
+ x
++y`;
+
+    const result = parseDiff(raw);
+    expect(result.files[0]!.filePath).toBe("z-last.ts");
+    expect(result.files[1]!.filePath).toBe("a-first.ts");
+  });
+});
+
+// ===========================================================================
+// 4.2 – computeDiff integration (Req 1.1, 1.2, 1.4, 1.5)
+// ===========================================================================
+
+const { execFileMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn(),
+}));
+
+vi.mock("node:child_process", () => ({
+  execFile: execFileMock,
+}));
+
+describe("computeDiff", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns parsed diff from git output (Req 1.1, 1.2)", async () => {
+    const diffOutput = `diff --git a/src/app.ts b/src/app.ts
+index abc..def 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -1,2 +1,3 @@
+ line1
++new line
+ line2`;
+
+    execFileMock.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: unknown,
+        cb?: (
+          err: Error | null,
+          result: { stdout: string; stderr: string },
+        ) => void,
+      ) => {
+        if (cb) cb(null, { stdout: diffOutput, stderr: "" });
+      },
+    );
+
+    const result = await computeDiff("/projects/repo/.worktrees/test");
+
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0]!.filePath).toBe("src/app.ts");
+    expect(result.totalAdditions).toBe(1);
+
+    // Verify cwd is set to worktree path
+    const callOpts = execFileMock.mock.calls[0]![2] as { cwd: string };
+    expect(callOpts.cwd).toBe("/projects/repo/.worktrees/test");
+  });
+
+  it("returns empty diff on git failure (Req 1.4)", async () => {
+    execFileMock.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: unknown,
+        cb?: (
+          err: Error | null,
+          result: { stdout: string; stderr: string },
+        ) => void,
+      ) => {
+        if (cb) cb(new Error("git failed"), { stdout: "", stderr: "" });
+      },
+    );
+
+    const result = await computeDiff("/projects/repo/.worktrees/test");
+    expect(result.files).toHaveLength(0);
+    expect(result.totalAdditions).toBe(0);
+    expect(result.totalDeletions).toBe(0);
+  });
+
+  it("returns empty diff for empty git output (Req 1.5)", async () => {
+    execFileMock.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: unknown,
+        cb?: (
+          err: Error | null,
+          result: { stdout: string; stderr: string },
+        ) => void,
+      ) => {
+        if (cb) cb(null, { stdout: "", stderr: "" });
+      },
+    );
+
+    const result = await computeDiff("/projects/repo/.worktrees/test");
+    expect(result.files).toHaveLength(0);
+    expect(result.totalAdditions).toBe(0);
   });
 });

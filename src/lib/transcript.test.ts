@@ -133,4 +133,85 @@ describe("readTranscript", () => {
     const result = await readTranscript(filePath);
     expect(result).toEqual([]);
   });
+
+  // ==========================================================================
+  // 3.1 – extractContent edge cases (Req 4.1, 4.3, 4.4)
+  // ==========================================================================
+
+  it("trims leading/trailing whitespace from string content (Req 4.1)", async () => {
+    const filePath = path.join(TEST_DIR, "trim.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        message: { content: "  padded content  " },
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readTranscript(filePath);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.content).toBe("padded content");
+  });
+
+  it("returns null for array with only tool_use/tool_result blocks (Req 4.3)", async () => {
+    const filePath = path.join(TEST_DIR, "tool-only.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", text: undefined },
+            { type: "tool_result", text: undefined },
+          ],
+        },
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readTranscript(filePath);
+    expect(result).toHaveLength(0);
+  });
+
+  it("returns null for array with empty text blocks (Req 4.4)", async () => {
+    const filePath = path.join(TEST_DIR, "empty-text.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "" },
+            { type: "text", text: "   " },
+          ],
+        },
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readTranscript(filePath);
+    expect(result).toHaveLength(0);
+  });
+
+  // ==========================================================================
+  // 3.1 – message.role fallback (Req 3.2)
+  // ==========================================================================
+
+  it("processes entries using message.role fallback when type is absent (Req 3.2)", async () => {
+    const filePath = path.join(TEST_DIR, "role-fallback.jsonl");
+    const lines = [
+      JSON.stringify({
+        message: { role: "user", content: "user via role" },
+      }),
+      JSON.stringify({
+        message: { role: "assistant", content: "assistant via role" },
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readTranscript(filePath);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.role).toBe("user");
+    expect(result[0]!.content).toBe("user via role");
+    expect(result[1]!.role).toBe("assistant");
+    expect(result[1]!.content).toBe("assistant via role");
+  });
 });

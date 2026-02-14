@@ -1,3 +1,4 @@
 {
+  "contextFile": "./voice-context.md",
   "outputFile": "PROMPT.md"
 }

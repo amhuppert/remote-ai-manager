@@ -85,4 +85,53 @@ describe("config", () => {
     const dir = getConfigDirPath();
     expect(dir).toContain(TEST_DIR);
   });
+
+  it("getConfigDirPath follows Linux XDG convention when platform is linux", async () => {
+    // OS mock is set to linux, no XDG_CONFIG_HOME set
+    const { getConfigDirPath } = await import("./config");
+    const dir = getConfigDirPath();
+    expect(dir).toBe(path.join(TEST_DIR, ".config", "csm"));
+  });
+
+  it("readConfig handles malformed config by merging valid fields with defaults", async () => {
+    const { readConfig, getConfigDirPath } = await import("./config");
+    // Create the config dir first
+    await readConfig();
+
+    const configDir = getConfigDirPath();
+    const configFile = path.join(configDir, "config.json");
+
+    // Write a config with one valid field and one extra unknown field
+    await writeFile(
+      configFile,
+      JSON.stringify({ baseDir: "/valid/path", unknownField: "ignored" }),
+      "utf-8",
+    );
+
+    vi.resetModules();
+    const { readConfig: readAgain } = await import("./config");
+    const config = await readAgain();
+
+    expect(config.baseDir).toBe("/valid/path");
+    // Defaults fill in missing fields
+    expect(config.claudeTimeoutMs).toBe(300_000);
+    expect(config.ignorePatterns).toContain("node_modules");
+  });
+
+  it("readConfig creates default config with expected ignore patterns", async () => {
+    const { readConfig } = await import("./config");
+    const config = await readConfig();
+
+    const expectedPatterns = [
+      "node_modules",
+      ".next",
+      "dist",
+      "build",
+      "target",
+      ".cache",
+      ".turbo",
+      ".venv",
+    ];
+    expect(config.ignorePatterns).toEqual(expectedPatterns);
+  });
 });
