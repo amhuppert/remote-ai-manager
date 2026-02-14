@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { SessionState } from "@/types";
 import CreateSessionModal from "./CreateSessionModal";
-import ConfirmDialog from "./ConfirmDialog";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 interface SessionsListProps {
   projectName: string;
@@ -35,7 +35,7 @@ function StatusBadge({ status }: { status: SessionState["status"] }) {
 export default function SessionsList({
   projectName,
   initialSessions,
-}: SessionsListProps) {
+}: SessionsListProps): React.JSX.Element {
   const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);

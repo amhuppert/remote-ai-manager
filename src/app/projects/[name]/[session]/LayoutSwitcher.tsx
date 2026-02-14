@@ -1,6 +1,6 @@
 "use client";
 
-type LayoutMode = "conversation" | "default" | "split" | "diff";
+import type { LayoutMode } from "@/types";
 
 interface LayoutSwitcherProps {
   activeLayout: LayoutMode;
@@ -127,7 +127,7 @@ const layouts: { mode: LayoutMode; tooltip: string; icon: React.ReactNode }[] =
 export default function LayoutSwitcher({
   activeLayout,
   onLayoutChange,
-}: LayoutSwitcherProps) {
+}: LayoutSwitcherProps): React.JSX.Element {
   return (
     <div className="layout-switcher">
       {layouts.map(({ mode, tooltip, icon }) => (

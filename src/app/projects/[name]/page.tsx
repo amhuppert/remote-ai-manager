@@ -3,7 +3,7 @@ import { resolveProjectPath } from "@/lib/project-resolver";
 import { getProjectSessions } from "@/lib/state";
 import { detectHooksStatus } from "@/lib/hooks";
 import Topbar from "@/components/Topbar";
-import SessionsList from "@/components/SessionsList";
+import SessionsList from "./SessionsList";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,9 @@ interface PageProps {
   params: Promise<{ name: string }>;
 }
 
-export default async function SessionsPage({ params }: PageProps) {
+export default async function SessionsPage({
+  params,
+}: PageProps): Promise<React.JSX.Element> {
   const { name } = await params;
   const projectPath = await resolveProjectPath(name);
 

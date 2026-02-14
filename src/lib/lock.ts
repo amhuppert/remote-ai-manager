@@ -40,7 +40,7 @@ export function acquireSessionLock(
     throw new Error("Session is busy — a prompt is already running");
   }
 
-  let releaseFn: () => void;
+  let releaseFn: (() => void) | undefined;
   const promise = new Promise<void>((resolve) => {
     releaseFn = resolve;
   });
@@ -49,6 +49,6 @@ export function acquireSessionLock(
 
   return () => {
     activeLocks.delete(key);
-    releaseFn!();
+    releaseFn?.();
   };
 }

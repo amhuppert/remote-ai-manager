@@ -7,7 +7,9 @@ interface ProjectCardProps {
   project: DiscoveredProject;
 }
 
-export default function ProjectCard({ project }: ProjectCardProps) {
+export default function ProjectCard({
+  project,
+}: ProjectCardProps): React.JSX.Element {
   const badgeClass =
     project.activeSessions > 0 ? "project-badge active" : "project-badge idle";
   const badgeText =

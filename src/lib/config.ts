@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { globalConfigSchema } from "./schemas";
 import type { GlobalConfig } from "@/types";
 
 /** Returns the OS-appropriate config directory for CSM */
@@ -61,7 +62,7 @@ export async function readConfig(): Promise<GlobalConfig> {
   const parsed: unknown = JSON.parse(raw);
 
   // Merge with defaults to handle missing fields from older configs
-  return { ...defaultConfig(), ...(parsed as Partial<GlobalConfig>) };
+  return { ...defaultConfig(), ...globalConfigSchema.partial().parse(parsed) };
 }
 
 /** Write the global config to disk */

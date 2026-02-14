@@ -14,7 +14,7 @@ export default function CreateSessionModal({
   open,
   onClose,
   onCreated,
-}: CreateSessionModalProps) {
+}: CreateSessionModalProps): React.JSX.Element | null {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);

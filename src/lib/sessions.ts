@@ -3,7 +3,8 @@ import { existsSync } from "node:fs";
 import { rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { SessionState, PerRepoConfig } from "@/types";
+import type { SessionState } from "@/types";
+import { perRepoConfigSchema, type PerRepoConfig } from "./schemas";
 import { readState, writeState } from "./state";
 
 const execFileAsync = promisify(execFile);
@@ -37,7 +38,7 @@ async function readRepoConfig(repoRoot: string): Promise<PerRepoConfig | null> {
   if (!existsSync(configPath)) return null;
 
   const raw = await readFile(configPath, "utf-8");
-  return JSON.parse(raw) as PerRepoConfig;
+  return perRepoConfigSchema.parse(JSON.parse(raw));
 }
 
 /** Execute a git command in the given working directory */
@@ -164,10 +165,8 @@ export async function createSession(
       sessions: {},
     };
   }
-  const proj = state.projects[projectPath];
-  if (proj) {
-    proj.sessions[sessionName] = session;
-  }
+  // Safe to assert: we just ensured the project exists above
+  state.projects[projectPath]!.sessions[sessionName] = session;
   await writeState(state);
 
   return session;

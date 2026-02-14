@@ -2,13 +2,16 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
+import type {
+  SessionState,
+  SessionDiff,
+  TranscriptMessage,
+  LayoutMode,
+} from "@/types";
 import Topbar from "@/components/Topbar";
-import LayoutSwitcher from "@/components/LayoutSwitcher";
-import DiffPanel from "@/components/DiffPanel";
+import LayoutSwitcher from "./LayoutSwitcher";
+import DiffPanel from "./DiffPanel";
 import ConfirmDialog from "@/components/ConfirmDialog";
-
-type LayoutMode = "conversation" | "default" | "split" | "diff";
 type MobilePanel = "chat" | "diff";
 
 interface Props {
@@ -33,7 +36,7 @@ export default function SessionDetailPage({
   session,
   messages,
   diff,
-}: Props) {
+}: Props): React.JSX.Element {
   const router = useRouter();
   const storageKey = `csm-layout-${projectName}-${session.sessionName}`;
   const [layout, setLayout] = useState<LayoutMode>("default");
@@ -61,10 +64,8 @@ export default function SessionDetailPage({
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const idx = Number(
-              (entry.target as HTMLElement).dataset["msgIndex"],
-            );
+          if (entry.isIntersecting && entry.target instanceof HTMLElement) {
+            const idx = Number(entry.target.dataset["msgIndex"]);
             if (!Number.isNaN(idx)) {
               setCurrentMsgIndex(idx);
             }

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { SessionState } from "@/types";
 import { readConfig } from "./config";
-import { readState, writeState } from "./state";
+import { getSession, updateSession } from "./state";
 import { acquireSessionLock } from "./lock";
 
 const execFileAsync = promisify(execFile);
@@ -29,7 +29,9 @@ export async function executePrompt(
 
   try {
     // Mark session as running
-    await setSessionStatus(projectPath, session.sessionName, "running");
+    await mutateSession(projectPath, session.sessionName, (s) => {
+      s.status = "running";
+    });
 
     // Build CLI args
     const args: string[] = [];
@@ -54,7 +56,9 @@ export async function executePrompt(
     });
 
     // Increment prompt count and update activity timestamp
-    await incrementPromptCount(projectPath, session.sessionName);
+    await mutateSession(projectPath, session.sessionName, (s) => {
+      s.promptCount++;
+    });
 
     return { output: stdout };
   } catch (err) {
@@ -63,46 +67,25 @@ export async function executePrompt(
     throw new Error(`Prompt execution failed: ${message}`);
   } finally {
     // Always mark session as ready when done (even on error)
-    await setSessionStatus(projectPath, session.sessionName, "ready").catch(
-      () => {
-        // best-effort status reset
-      },
-    );
+    await mutateSession(projectPath, session.sessionName, (s) => {
+      s.status = "ready";
+    }).catch(() => {
+      // best-effort status reset
+    });
     release();
   }
 }
 
-/** Update session status in persisted state */
-async function setSessionStatus(
+/** Read a session, apply a mutation, and persist via updateSession */
+async function mutateSession(
   projectPath: string,
   sessionName: string,
-  status: SessionState["status"],
+  mutate: (session: SessionState) => void,
 ): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) return;
-
-  const session = project.sessions[sessionName];
+  const session = await getSession(projectPath, sessionName);
   if (!session) return;
 
-  session.status = status;
+  mutate(session);
   session.lastActivityAt = new Date().toISOString();
-  await writeState(state);
-}
-
-/** Increment prompt count and update last activity */
-async function incrementPromptCount(
-  projectPath: string,
-  sessionName: string,
-): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) return;
-
-  const session = project.sessions[sessionName];
-  if (!session) return;
-
-  session.promptCount++;
-  session.lastActivityAt = new Date().toISOString();
-  await writeState(state);
+  await updateSession(projectPath, session);
 }

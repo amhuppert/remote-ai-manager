@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { acquireSessionLock, isSessionBusy } from "../lock";
+import { acquireSessionLock, isSessionBusy } from "./lock";
 
 describe("lock", () => {
   const project = "/tmp/test-project";

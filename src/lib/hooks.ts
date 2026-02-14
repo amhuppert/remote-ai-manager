@@ -2,18 +2,22 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { z } from "zod";
 import { readState, writeState } from "./state";
+import type { HookEventData } from "./schemas";
+import type { ManagerState, SessionState } from "@/types";
 
-/**
- * Shape of the hook event data received from Claude Code hooks.
- * Hooks fire with JSON on stdin, which the hook command can forward
- * to our HTTP endpoint as a POST body.
- */
-export interface HookEventData {
-  session_id?: string;
-  transcript_path?: string;
-  cwd?: string;
-  hook_event_name?: string;
+/** Find the session whose worktreePath matches the given cwd */
+function findSessionByCwd(
+  state: ManagerState,
+  cwd: string,
+): SessionState | null {
+  for (const project of Object.values(state.projects)) {
+    for (const session of Object.values(project.sessions)) {
+      if (session.worktreePath === cwd) return session;
+    }
+  }
+  return null;
 }
 
 /**
@@ -33,31 +37,16 @@ export async function processHookEvent(data: HookEventData): Promise<boolean> {
   if (!cwd) return false;
 
   const state = await readState();
-  let updated = false;
+  const session = findSessionByCwd(state, cwd);
 
-  // Find the session whose worktreePath matches the hook's cwd
-  for (const project of Object.values(state.projects)) {
-    for (const session of Object.values(project.sessions)) {
-      if (session.worktreePath === cwd) {
-        if (session_id) {
-          session.claudeSessionId = session_id;
-        }
-        if (transcript_path) {
-          session.transcriptPath = transcript_path;
-        }
-        session.lastActivityAt = new Date().toISOString();
-        updated = true;
-        break;
-      }
-    }
-    if (updated) break;
-  }
+  if (!session) return false;
 
-  if (updated) {
-    await writeState(state);
-  }
+  if (session_id) session.claudeSessionId = session_id;
+  if (transcript_path) session.transcriptPath = transcript_path;
+  session.lastActivityAt = new Date().toISOString();
 
-  return updated;
+  await writeState(state);
+  return true;
 }
 
 /**
@@ -77,16 +66,34 @@ export async function detectHooksStatus(): Promise<{
     return { installed: false, hasUserPromptSubmit: false, hasStop: false };
   }
 
+  const claudeSettingsSchema = z.object({
+    hooks: z
+      .record(
+        z.string(),
+        z.array(
+          z.object({
+            hooks: z
+              .array(
+                z.object({
+                  type: z.string().optional(),
+                  command: z.string().optional(),
+                }),
+              )
+              .optional(),
+          }),
+        ),
+      )
+      .optional(),
+  });
+
   try {
     const raw = await readFile(settingsPath, "utf-8");
-    const settings = JSON.parse(raw) as {
-      hooks?: Record<
-        string,
-        Array<{ hooks?: Array<{ type?: string; command?: string }> }>
-      >;
-    };
+    const result = claudeSettingsSchema.safeParse(JSON.parse(raw));
+    if (!result.success) {
+      return { installed: false, hasUserPromptSubmit: false, hasStop: false };
+    }
 
-    const hooks = settings.hooks;
+    const hooks = result.data.hooks;
     if (!hooks) {
       return { installed: false, hasUserPromptSubmit: false, hasStop: false };
     }
@@ -100,6 +107,7 @@ export async function detectHooksStatus(): Promise<{
       hasStop,
     };
   } catch {
+    // Config file missing or unreadable — treat hooks as not installed
     return { installed: false, hasUserPromptSubmit: false, hasStop: false };
   }
 }

@@ -2,14 +2,18 @@ import { NextResponse, type NextRequest } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getProjectSessions } from "@/lib/state";
 import { createSession, deleteSession } from "@/lib/sessions";
-import type { CreateSessionRequest, ApiError } from "@/types";
+import { createSessionRequestSchema } from "@/lib/schemas";
+import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
 type RouteParams = { params: Promise<{ name: string }> };
 
 /** GET /api/projects/[name]/sessions — list all sessions */
-export async function GET(_request: NextRequest, { params }: RouteParams) {
+export async function GET(
+  _request: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
   const { name } = await params;
   const projectPath = await resolveProjectPath(name);
   if (!projectPath) {
@@ -24,7 +28,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 }
 
 /** POST /api/projects/[name]/sessions — create a new session */
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export async function POST(
+  request: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
   const { name } = await params;
   const projectPath = await resolveProjectPath(name);
   if (!projectPath) {
@@ -34,17 +41,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  let body: CreateSessionRequest;
+  let body: { sessionName: string };
   try {
-    body = (await request.json()) as CreateSessionRequest;
+    body = createSessionRequestSchema.parse(await request.json());
   } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON body" } satisfies ApiError,
-      { status: 400 },
-    );
-  }
-
-  if (!body.sessionName || typeof body.sessionName !== "string") {
     return NextResponse.json(
       { error: "sessionName is required" } satisfies ApiError,
       { status: 400 },
@@ -64,7 +64,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 }
 
 /** DELETE /api/projects/[name]/sessions?sessionName=xxx — delete a session */
-export async function DELETE(request: NextRequest, { params }: RouteParams) {
+export async function DELETE(
+  request: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
   const { name } = await params;
   const projectPath = await resolveProjectPath(name);
   if (!projectPath) {

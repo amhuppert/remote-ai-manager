@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDiff } from "../diff";
+import { parseDiff } from "./diff";
 
 describe("parseDiff", () => {
   it("returns empty diff for empty input", () => {

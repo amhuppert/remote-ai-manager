@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { readTranscript } from "../transcript";
+import { readTranscript } from "./transcript";
 
 const TEST_DIR = path.join("/tmp", "csm-transcript-test-" + Date.now());
 

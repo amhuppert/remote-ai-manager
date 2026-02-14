@@ -1,28 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import type { TranscriptMessage } from "@/types";
-
-/**
- * Content block in a Claude transcript message.
- * Only text blocks are extracted; tool_use, tool_result, etc. are ignored.
- */
-interface ContentBlock {
-  type: string;
-  text?: string;
-}
-
-/**
- * Shape of a transcript JSONL entry that contains a message.
- * Not all entries have messages — tool events, permission events, etc. are skipped.
- */
-interface TranscriptEntry {
-  type?: string;
-  message?: {
-    role?: string;
-    content?: string | ContentBlock[];
-  };
-  timestamp?: string;
-}
+import {
+  transcriptEntrySchema,
+  type ContentBlock,
+  type TranscriptEntry,
+} from "./schemas";
 
 /**
  * Read and parse a Claude transcript JSONL file into structured messages.
@@ -49,7 +32,9 @@ export async function readTranscript(
   for (const line of lines) {
     let entry: TranscriptEntry;
     try {
-      entry = JSON.parse(line) as TranscriptEntry;
+      const result = transcriptEntrySchema.safeParse(JSON.parse(line));
+      if (!result.success) continue;
+      entry = result.data;
     } catch {
       // Skip malformed lines
       continue;
@@ -66,8 +51,10 @@ export async function readTranscript(
       continue;
     }
 
+    // role is narrowed to "user" | "assistant" by the guard above
+    const narrowedRole: "user" | "assistant" = role;
     messages.push({
-      role: role as "user" | "assistant",
+      role: narrowedRole,
       content,
       timestamp: entry.timestamp ?? null,
     });
@@ -81,7 +68,7 @@ export async function readTranscript(
  * Handles both string and array-of-blocks formats.
  */
 function extractContent(
-  content: string | ContentBlock[] | undefined,
+  content: string | readonly ContentBlock[] | undefined,
 ): string | null {
   if (!content) return null;
 
@@ -91,8 +78,11 @@ function extractContent(
 
   if (Array.isArray(content)) {
     const textParts = content
-      .filter((block) => block.type === "text" && block.text)
-      .map((block) => block.text!);
+      .filter(
+        (block): block is ContentBlock & { text: string } =>
+          block.type === "text" && typeof block.text === "string",
+      )
+      .map((block) => block.text);
 
     const joined = textParts.join("\n").trim();
     return joined || null;

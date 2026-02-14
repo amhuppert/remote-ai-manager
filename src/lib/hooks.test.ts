@@ -4,12 +4,11 @@ import path from "node:path";
 import type { ManagerState } from "@/types";
 
 const TEST_DIR = path.join("/tmp", "csm-hooks-test-" + Date.now());
-const STATE_FILE = path.join(TEST_DIR, "state.json");
 
 // Track state in memory for assertions
 let mockState: ManagerState = { projects: {} };
 
-vi.mock("../state", () => ({
+vi.mock("./state", () => ({
   readState: vi.fn(() => Promise.resolve(mockState)),
   writeState: vi.fn((state: ManagerState) => {
     mockState = state;
@@ -28,7 +27,7 @@ afterEach(async () => {
 
 describe("processHookEvent", () => {
   it("returns false when cwd is missing", async () => {
-    const { processHookEvent } = await import("../hooks");
+    const { processHookEvent } = await import("./hooks");
     const result = await processHookEvent({ session_id: "abc" });
     expect(result).toBe(false);
   });
@@ -56,7 +55,7 @@ describe("processHookEvent", () => {
       },
     };
 
-    const { processHookEvent } = await import("../hooks");
+    const { processHookEvent } = await import("./hooks");
     const result = await processHookEvent({
       cwd: "/some/other/path",
       session_id: "abc",
@@ -87,7 +86,7 @@ describe("processHookEvent", () => {
       },
     };
 
-    const { processHookEvent } = await import("../hooks");
+    const { processHookEvent } = await import("./hooks");
     const result = await processHookEvent({
       cwd: "/project/.worktrees/test",
       session_id: "claude-session-123",
@@ -126,7 +125,7 @@ describe("processHookEvent", () => {
       },
     };
 
-    const { processHookEvent } = await import("../hooks");
+    const { processHookEvent } = await import("./hooks");
     await processHookEvent({
       cwd: "/proj/.worktrees/s1",
       transcript_path: "/new/path.jsonl",

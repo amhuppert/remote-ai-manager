@@ -23,7 +23,7 @@ export default function Topbar({
   page,
   sessionControls,
   globalStatus,
-}: TopbarProps) {
+}: TopbarProps): React.JSX.Element {
   return (
     <header className="topbar">
       <div className="topbar-brand">

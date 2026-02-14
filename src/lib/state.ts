@@ -2,6 +2,7 @@ import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { ManagerState, ProjectState, SessionState } from "@/types";
+import { managerStateSchema } from "./schemas";
 import { readConfig } from "./config";
 
 /** Default empty manager state */
@@ -20,7 +21,8 @@ export async function readState(): Promise<ManagerState> {
 
   const raw = await readFile(statePath, "utf-8");
   const parsed: unknown = JSON.parse(raw);
-  return parsed as ManagerState;
+  const result = managerStateSchema.safeParse(parsed);
+  return result.success ? result.data : emptyState();
 }
 
 /**
@@ -78,10 +80,8 @@ export async function updateSession(
     };
   }
 
-  const project = state.projects[projectPath];
-  if (project) {
-    project.sessions[session.sessionName] = session;
-  }
+  // Safe to assert: we just ensured the project exists above
+  state.projects[projectPath]!.sessions[session.sessionName] = session;
 
   await writeState(state);
 }

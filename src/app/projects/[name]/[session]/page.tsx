@@ -11,7 +11,9 @@ interface PageProps {
   params: Promise<{ name: string; session: string }>;
 }
 
-export default async function SessionPage({ params }: PageProps) {
+export default async function SessionPage({
+  params,
+}: PageProps): Promise<React.JSX.Element> {
   const { name, session: sessionName } = await params;
   const decodedSessionName = decodeURIComponent(sessionName);
 

@@ -6,7 +6,7 @@ const TEST_DIR = path.join("/tmp", "csm-state-test-" + Date.now());
 const STATE_FILE = path.join(TEST_DIR, "state.json");
 
 // Mock config to return our test state file path
-vi.mock("../config", () => ({
+vi.mock("./config", () => ({
   readConfig: vi.fn().mockResolvedValue({
     baseDir: "/tmp/projects",
     ignorePatterns: [],
@@ -26,13 +26,13 @@ afterEach(async () => {
 
 describe("state", () => {
   it("readState returns empty state when file does not exist", async () => {
-    const { readState } = await import("../state");
+    const { readState } = await import("./state");
     const state = await readState();
     expect(state.projects).toEqual({});
   });
 
   it("writeState and readState roundtrip", async () => {
-    const { readState, writeState } = await import("../state");
+    const { readState, writeState } = await import("./state");
     await writeState({
       projects: {
         "/some/project": {
@@ -48,7 +48,7 @@ describe("state", () => {
   });
 
   it("getOrCreateProject creates new project entry", async () => {
-    const { getOrCreateProject, readState } = await import("../state");
+    const { getOrCreateProject, readState } = await import("./state");
     const project = await getOrCreateProject("/new/project");
 
     expect(project.rootPath).toBe("/new/project");
@@ -59,7 +59,7 @@ describe("state", () => {
   });
 
   it("getOrCreateProject returns existing project", async () => {
-    const { getOrCreateProject, writeState } = await import("../state");
+    const { getOrCreateProject, writeState } = await import("./state");
     await writeState({
       projects: {
         "/existing": {
@@ -87,7 +87,7 @@ describe("state", () => {
   });
 
   it("updateSession creates project and session if needed", async () => {
-    const { updateSession, getSession } = await import("../state");
+    const { updateSession, getSession } = await import("./state");
     const session = {
       sessionName: "new-session",
       worktreePath: "/proj/.worktrees/new-session",
@@ -110,7 +110,7 @@ describe("state", () => {
 
   it("removeSession deletes session from state", async () => {
     const { updateSession, removeSession, getSession } =
-      await import("../state");
+      await import("./state");
     const session = {
       sessionName: "to-delete",
       worktreePath: "/proj/.worktrees/to-delete",
@@ -132,7 +132,7 @@ describe("state", () => {
   });
 
   it("getProjectSessions returns all sessions for a project", async () => {
-    const { updateSession, getProjectSessions } = await import("../state");
+    const { updateSession, getProjectSessions } = await import("./state");
 
     const baseSession = {
       worktreePath: "",
@@ -164,13 +164,13 @@ describe("state", () => {
   });
 
   it("getSession returns null for non-existent project", async () => {
-    const { getSession } = await import("../state");
+    const { getSession } = await import("./state");
     const result = await getSession("/nonexistent", "anything");
     expect(result).toBeNull();
   });
 
   it("getProjectSessions returns empty array for non-existent project", async () => {
-    const { getProjectSessions } = await import("../state");
+    const { getProjectSessions } = await import("./state");
     const result = await getProjectSessions("/nonexistent");
     expect(result).toEqual([]);
   });

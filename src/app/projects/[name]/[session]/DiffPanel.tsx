@@ -7,7 +7,7 @@ interface DiffPanelProps {
   diff: SessionDiff;
 }
 
-export default function DiffPanel({ diff }: DiffPanelProps) {
+export default function DiffPanel({ diff }: DiffPanelProps): React.JSX.Element {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<number>>(new Set());
   const contentRef = useRef<HTMLDivElement>(null);
   const fileHeaderRefs = useRef<(HTMLDivElement | null)[]>([]);

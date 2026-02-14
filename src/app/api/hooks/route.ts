@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { processHookEvent, type HookEventData } from "@/lib/hooks";
+import { processHookEvent } from "@/lib/hooks";
+import { hookEventDataSchema } from "@/lib/schemas";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -16,10 +17,10 @@ export const dynamic = "force-dynamic";
  * The endpoint matches the `cwd` to a managed session's worktreePath
  * and updates the session's claudeSessionId and transcriptPath.
  */
-export async function POST(request: NextRequest) {
-  let body: HookEventData;
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  let body;
   try {
-    body = (await request.json()) as HookEventData;
+    body = hookEventDataSchema.parse(await request.json());
   } catch {
     return NextResponse.json(
       { error: "Invalid JSON body" } satisfies ApiError,

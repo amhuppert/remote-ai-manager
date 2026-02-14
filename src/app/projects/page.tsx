@@ -2,11 +2,11 @@ import { discoverProjects } from "@/lib/discovery";
 import { readConfig } from "@/lib/config";
 import { detectHooksStatus } from "@/lib/hooks";
 import Topbar from "@/components/Topbar";
-import ProjectCard from "@/components/ProjectCard";
+import ProjectCard from "./ProjectCard";
 
 export const dynamic = "force-dynamic";
 
-export default async function ProjectsPage() {
+export default async function ProjectsPage(): Promise<React.JSX.Element> {
   const [projects, config, hooksStatus] = await Promise.all([
     discoverProjects(),
     readConfig(),

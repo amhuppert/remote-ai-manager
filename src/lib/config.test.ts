@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { writeFile, mkdir, rm, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { writeFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 const TEST_DIR = path.join("/tmp", "csm-config-test-" + Date.now());
@@ -32,7 +31,7 @@ afterEach(async () => {
 
 describe("config", () => {
   it("readConfig creates default config when none exists", async () => {
-    const { readConfig } = await import("../config");
+    const { readConfig } = await import("./config");
     const config = await readConfig();
 
     expect(config.baseDir).toContain("projects");
@@ -42,7 +41,7 @@ describe("config", () => {
   });
 
   it("readConfig returns saved config after writeConfig", async () => {
-    const { readConfig, writeConfig } = await import("../config");
+    const { readConfig, writeConfig } = await import("./config");
     const original = await readConfig();
 
     const modified = {
@@ -58,7 +57,7 @@ describe("config", () => {
   });
 
   it("readConfig merges defaults for missing fields in older configs", async () => {
-    const { readConfig, getConfigDirPath } = await import("../config");
+    const { readConfig, getConfigDirPath } = await import("./config");
     // First create the config dir
     await readConfig();
 
@@ -73,7 +72,7 @@ describe("config", () => {
     );
 
     vi.resetModules();
-    const { readConfig: readAgain } = await import("../config");
+    const { readConfig: readAgain } = await import("./config");
     const config = await readAgain();
 
     expect(config.baseDir).toBe("/old/path");
@@ -82,7 +81,7 @@ describe("config", () => {
   });
 
   it("getConfigDirPath returns a path under home", async () => {
-    const { getConfigDirPath } = await import("../config");
+    const { getConfigDirPath } = await import("./config");
     const dir = getConfigDirPath();
     expect(dir).toContain(TEST_DIR);
   });

@@ -22,7 +22,7 @@ export default function ConfirmDialog({
   danger = false,
   onConfirm,
   onCancel,
-}: ConfirmDialogProps) {
+}: ConfirmDialogProps): React.JSX.Element | null {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();

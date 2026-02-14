@@ -1,65 +1,15 @@
 // ============================================================
-// CSM Data Entities
+// CSM Data Entities (derived from Zod schemas)
 // ============================================================
 
-/** Global application configuration stored in OS config directory */
-export interface GlobalConfig {
-  /** Path to directory containing git repositories to manage */
-  baseDir: string;
-  /** Glob patterns for directories to skip during project discovery */
-  ignorePatterns: string[];
-  /** Path to the manager state JSON file */
-  stateFilePath: string;
-  /** Timeout in ms for Claude CLI invocations (default: 300000) */
-  claudeTimeoutMs: number;
-}
-
-/** Session status lifecycle */
-export type SessionStatus = "idle" | "ready" | "running";
-
-/** State for a single coding session within a project */
-export interface SessionState {
-  /** Human-readable session name (unique within project) */
-  sessionName: string;
-  /** Absolute path to the git worktree for this session */
-  worktreePath: string;
-  /** Git branch name (e.g., csm/feature-auth) */
-  branchName: string;
-  /** Claude CLI session ID (populated after first prompt via hooks) */
-  claudeSessionId: string | null;
-  /** Path to Claude transcript file (populated via hooks) */
-  transcriptPath: string | null;
-  /** Current session status */
-  status: SessionStatus;
-  /** ISO 8601 timestamp of session creation */
-  createdAt: string;
-  /** ISO 8601 timestamp of last activity */
-  lastActivityAt: string;
-  /** Total number of prompts sent to this session */
-  promptCount: number;
-  /** Whether the session has been archived */
-  archived: boolean;
-}
-
-/** State for a single discovered project */
-export interface ProjectState {
-  /** Absolute path to the repository root */
-  rootPath: string;
-  /** Map of sessionName → SessionState */
-  sessions: Record<string, SessionState>;
-}
-
-/** Top-level manager state persisted to disk */
-export interface ManagerState {
-  /** Map of projectPath → ProjectState */
-  projects: Record<string, ProjectState>;
-}
-
-/** Per-repository configuration (ClaudeSessionManager.json at repo root) */
-export interface PerRepoConfig {
-  /** Path to init script (relative to repo root or absolute), null if none */
-  initScriptPath: string | null;
-}
+export type {
+  GlobalConfig,
+  SessionStatus,
+  SessionState,
+  ProjectState,
+  ManagerState,
+  PerRepoConfig,
+} from "@/lib/schemas";
 
 // ============================================================
 // API Types
@@ -77,11 +27,7 @@ export interface DiscoveredProject {
   hasRunningSession: boolean;
 }
 
-/** Request body for creating a new session */
-export interface CreateSessionRequest {
-  /** Desired session name */
-  sessionName: string;
-}
+export type { CreateSessionRequest } from "@/lib/schemas";
 
 /** Parsed transcript message */
 export interface TranscriptMessage {
@@ -131,11 +77,10 @@ export interface SessionDiff {
   totalDeletions: number;
 }
 
-/** Prompt execution request */
-export interface RunPromptRequest {
-  /** The prompt text to send to Claude */
-  prompt: string;
-}
+export type { RunPromptRequest } from "@/lib/schemas";
+
+/** Layout mode for the session detail view */
+export type LayoutMode = "conversation" | "default" | "split" | "diff";
 
 /** Prompt execution response */
 export interface RunPromptResponse {

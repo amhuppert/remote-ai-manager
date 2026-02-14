@@ -3,7 +3,8 @@ import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
 import { executePrompt } from "@/lib/prompt";
 import { isSessionBusy } from "@/lib/lock";
-import type { RunPromptRequest, RunPromptResponse, ApiError } from "@/types";
+import { runPromptRequestSchema } from "@/lib/schemas";
+import type { RunPromptResponse, ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,10 @@ type RouteParams = {
 };
 
 /** POST /api/projects/[name]/sessions/[session]/prompt — execute a prompt */
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export async function POST(
+  request: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
   const { name, session: sessionSlug } = await params;
   const sessionName = decodeURIComponent(sessionSlug);
 
@@ -43,17 +47,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  let body: RunPromptRequest;
+  let body: { prompt: string };
   try {
-    body = (await request.json()) as RunPromptRequest;
+    body = runPromptRequestSchema.parse(await request.json());
   } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON body" } satisfies ApiError,
-      { status: 400 },
-    );
-  }
-
-  if (!body.prompt || typeof body.prompt !== "string" || !body.prompt.trim()) {
     return NextResponse.json(
       {
         error: "prompt is required and must be a non-empty string",
