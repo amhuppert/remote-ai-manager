@@ -9,7 +9,8 @@
     "lint": "next lint",
     "test": "vitest",
     "test:run": "vitest run",
-    "typecheck": "tsc --noEmit --pretty"
+    "typecheck": "tsc --noEmit --pretty",
+    "install-hooks": "npx tsx src/lib/install-hooks.ts"
   },
   "dependencies": {
     "next": "^15.1.0",
@@ -27,6 +28,7 @@
     "eslint": "^9.16.0",
     "eslint-config-next": "^15.1.0",
     "jsdom": "^28.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   }

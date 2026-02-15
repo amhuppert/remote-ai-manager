@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import DiffPanel from "./DiffPanel";
 import type { SessionDiff } from "@/types";
@@ -18,30 +18,30 @@ const sampleDiff: SessionDiff = {
   files: [
     {
       filePath: "src/index.ts",
-      mode: "modified",
       additions: 10,
       deletions: 3,
       hunks: [
         {
+          header: "@@ -1,5 +1,7 @@",
           lines: [
             { type: "hunk-header", content: "@@ -1,5 +1,7 @@" },
             { type: "context", content: " import { foo } from 'bar'" },
-            { type: "addition", content: "+const x = 1" },
-            { type: "deletion", content: "-const y = 2" },
+            { type: "add", content: "+const x = 1" },
+            { type: "remove", content: "-const y = 2" },
           ],
         },
       ],
     },
     {
       filePath: "README.md",
-      mode: "new",
       additions: 5,
       deletions: 0,
       hunks: [
         {
+          header: "@@ -0,0 +1,5 @@",
           lines: [
             { type: "hunk-header", content: "@@ -0,0 +1,5 @@" },
-            { type: "addition", content: "+# README" },
+            { type: "add", content: "+# README" },
           ],
         },
       ],

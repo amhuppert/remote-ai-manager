@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { NextRequest } from "next/server";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -36,7 +37,7 @@ vi.mock("@/lib/prompt", () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeRequest(body: unknown): Request {
+function makeRequest(body: unknown): NextRequest {
   return new Request(
     "http://localhost/api/projects/my-project/sessions/test-session/prompt",
     {
@@ -44,7 +45,7 @@ function makeRequest(body: unknown): Request {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     },
-  );
+  ) as unknown as NextRequest;
 }
 
 function makeParams(name = "my-project", session = "test-session") {

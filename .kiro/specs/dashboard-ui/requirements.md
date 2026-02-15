@@ -105,3 +105,59 @@ The Dashboard UI is the primary user interface for the Claude Session Manager (C
 1. When hooks are not installed, the Projects Page shall display a warning banner with setup guidance.
 2. When hooks are not installed, the Sessions Page shall display a warning banner.
 3. The Topbar shall display a hook status indicator ("hooks active" or "hooks missing").
+
+### Requirement 9: Project Search
+
+**Objective:** As a developer, I want to filter the project list by name, so that I can quickly find a specific project when managing many repositories.
+
+#### Acceptance Criteria
+
+1. The Projects Page shall display a search input field above the project cards grid.
+2. When the user types in the search field, the Projects Page shall filter visible project cards to only those whose name contains the search query (case-insensitive).
+3. The Projects Page shall filter results in real time as the user types, without requiring form submission.
+4. When the search field contains text, the Projects Page shall display a clear button that resets the search query and restores all projects.
+5. When no projects match the search query combined with active filters, the Projects Page shall display a "no results" empty state with guidance to adjust filters.
+6. The search filter shall combine with status filters and archive visibility — only projects matching all active criteria shall be displayed.
+
+### Requirement 10: Project Status Filters
+
+**Objective:** As a developer, I want to filter projects by their activity status, so that I can focus on active projects or review idle ones separately.
+
+#### Acceptance Criteria
+
+1. The Projects Page shall display status filter controls above the project cards grid, alongside the search field.
+2. The status filters shall provide options for: All, Active (projects with running sessions), and Idle (projects with no running sessions).
+3. When the user selects a status filter, the Projects Page shall display only project cards matching the selected status.
+4. Each status filter option shall display a count of matching non-archived projects.
+5. When projects are archived or unarchived, the Dashboard shall update filter counts to reflect the current state.
+6. The "All" filter shall be selected by default on page load.
+7. The status filter shall combine with the search query and archive visibility — only projects matching all active criteria shall be displayed.
+
+### Requirement 11: Project Archive
+
+**Objective:** As a developer, I want to archive projects I no longer actively use, so that the Ground Control screen only shows projects I care about.
+
+#### Acceptance Criteria
+
+1. Each project card shall provide an action to archive the project, accessible via a context menu on the card.
+2. When the user archives a project, the Dashboard shall mark the project as archived and hide it from the default project view.
+3. When a project is archived, the Dashboard shall persist the archived state so it survives page reloads.
+4. The Projects Page shall display an "Archived" toggle control that shows the count of archived projects.
+5. When the user enables the "Archived" toggle, the Projects Page shall display archived projects alongside non-archived projects.
+6. While displayed, archived project cards shall be visually distinct from non-archived projects (reduced opacity, dashed border, "archived" badge).
+7. Each archived project card shall provide an action to unarchive the project, accessible via the same context menu.
+8. When the user unarchives a project, the Dashboard shall restore the project to the default view and remove the archived visual treatment.
+9. The archive state shall not affect the project's underlying data, sessions, or git repositories.
+
+### Requirement 12: Project Card Context Menu
+
+**Objective:** As a developer, I want an extensible action menu on each project card, so that I can perform project-level operations without navigating away from the dashboard.
+
+#### Acceptance Criteria
+
+1. Each project card shall display a menu trigger button (three-dot icon) in the card header.
+2. The menu trigger button shall be visible on card hover and when the menu is open.
+3. When the user clicks the menu trigger, the Dashboard shall display a dropdown menu with available actions for that project.
+4. When the user clicks outside the dropdown menu or presses the Escape key, the Dashboard shall close the menu.
+5. The Dashboard shall allow only one project card menu to be open at a time.
+6. When the user clicks a menu item, the Dashboard shall execute the corresponding action and close the menu.

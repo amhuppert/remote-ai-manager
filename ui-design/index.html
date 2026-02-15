@@ -1469,6 +1469,387 @@
       }
 
       /* ============================================
+   CONTROLS BAR (Search + Filters + Archive)
+   ============================================ */
+      .controls-bar {
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+        margin-bottom: var(--space-lg);
+        flex-wrap: wrap;
+      }
+
+      /* Search */
+      .search-wrapper {
+        position: relative;
+        flex: 0 1 260px;
+        min-width: 180px;
+      }
+
+      .search-icon {
+        position: absolute;
+        left: 11px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-tertiary);
+        font-size: 0.78rem;
+        pointer-events: none;
+        transition: color 0.15s ease;
+      }
+
+      .search-input {
+        width: 100%;
+        padding: 8px 12px 8px 32px;
+        background: var(--bg-base);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        font-weight: 400;
+        outline: none;
+        transition: all 0.15s ease;
+      }
+
+      .search-input:hover {
+        border-color: var(--border-default);
+      }
+
+      .search-input:focus {
+        border-color: var(--cyan-dim);
+        box-shadow: 0 0 0 3px var(--cyan-glow);
+      }
+
+      .search-input:focus + .search-icon {
+        color: var(--cyan-dim);
+      }
+
+      .search-input::placeholder {
+        color: var(--text-tertiary);
+        font-weight: 400;
+      }
+
+      .search-clear {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: var(--bg-hover);
+        color: var(--text-tertiary);
+        font-size: 0.6rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .search-clear:hover {
+        background: var(--border-default);
+        color: var(--text-secondary);
+      }
+
+      .search-wrapper.has-value .search-clear {
+        display: flex;
+      }
+
+      /* Status filter pills */
+      .filter-group {
+        display: flex;
+        gap: 2px;
+        padding: 3px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+      }
+
+      .filter-pill {
+        padding: 5px 14px;
+        border: 1px solid transparent;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-tertiary);
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        white-space: nowrap;
+      }
+
+      .filter-pill:hover {
+        color: var(--text-secondary);
+        background: var(--bg-hover);
+      }
+
+      .filter-pill.active {
+        color: var(--cyan);
+        background: var(--cyan-glow);
+        border-color: rgba(0, 229, 255, 0.15);
+      }
+
+      .filter-pill .pill-count {
+        display: inline-block;
+        margin-left: 5px;
+        padding: 1px 5px;
+        border-radius: 100px;
+        background: var(--bg-hover);
+        font-size: 0.6rem;
+        font-weight: 500;
+        color: var(--text-tertiary);
+      }
+
+      .filter-pill.active .pill-count {
+        background: rgba(0, 229, 255, 0.15);
+        color: var(--cyan-dim);
+      }
+
+      /* Archive toggle */
+      .archive-toggle {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+      }
+
+      .archive-btn-toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+        background: transparent;
+        color: var(--text-tertiary);
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        font-weight: 500;
+        letter-spacing: 0.03em;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .archive-btn-toggle:hover {
+        border-color: var(--border-default);
+        color: var(--text-secondary);
+        background: var(--bg-surface);
+      }
+
+      .archive-btn-toggle.showing {
+        border-color: rgba(255, 179, 0, 0.25);
+        color: var(--amber);
+        background: var(--amber-glow);
+      }
+
+      .archive-btn-toggle .archive-count {
+        padding: 1px 6px;
+        border-radius: 100px;
+        background: var(--bg-hover);
+        font-size: 0.6rem;
+        font-weight: 600;
+      }
+
+      .archive-btn-toggle.showing .archive-count {
+        background: rgba(255, 179, 0, 0.15);
+        color: var(--amber-dim);
+      }
+
+      /* Card actions: badge + menu */
+      .card-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      /* Three-dot menu trigger */
+      .card-menu-wrap {
+        position: relative;
+      }
+
+      .card-menu-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-tertiary);
+        font-family: var(--font-mono);
+        font-size: 1rem;
+        line-height: 1;
+        letter-spacing: 0.05em;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        opacity: 0;
+      }
+
+      .project-card:hover .card-menu-btn {
+        opacity: 1;
+      }
+
+      .card-menu-btn:hover,
+      .card-menu-btn.open {
+        background: var(--bg-hover);
+        border-color: var(--border-default);
+        color: var(--text-secondary);
+      }
+
+      .card-menu-btn.open {
+        opacity: 1;
+      }
+
+      /* Dropdown menu */
+      .card-dropdown {
+        position: absolute;
+        top: calc(100% + 4px);
+        right: 0;
+        z-index: 50;
+        min-width: 180px;
+        padding: 4px;
+        background: var(--bg-raised);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        box-shadow:
+          0 8px 24px rgba(0, 0, 0, 0.35),
+          0 2px 8px rgba(0, 0, 0, 0.2);
+        opacity: 0;
+        transform: translateY(-4px) scale(0.97);
+        pointer-events: none;
+        transition:
+          opacity 0.12s ease,
+          transform 0.12s ease;
+      }
+
+      .card-dropdown.open {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        pointer-events: auto;
+      }
+
+      .card-dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 7px 10px;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        font-weight: 500;
+        text-align: left;
+        cursor: pointer;
+        transition: all 0.1s ease;
+        white-space: nowrap;
+      }
+
+      .card-dropdown-item:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .card-dropdown-item .item-icon {
+        font-size: 0.82rem;
+        width: 16px;
+        text-align: center;
+        flex-shrink: 0;
+        color: var(--text-tertiary);
+        transition: color 0.1s ease;
+      }
+
+      .card-dropdown-item:hover .item-icon {
+        color: var(--text-secondary);
+      }
+
+      .card-dropdown-item.danger:hover {
+        background: var(--red-glow);
+        color: var(--red);
+      }
+
+      .card-dropdown-item.danger:hover .item-icon {
+        color: var(--red);
+      }
+
+      /* Archived card state */
+      .project-card.archived {
+        opacity: 0.4;
+        border-style: dashed;
+      }
+
+      .project-card.archived::before {
+        display: none;
+      }
+
+      .project-card.archived:hover {
+        opacity: 0.6;
+        transform: none;
+      }
+
+      .project-card.archived .card-menu-btn {
+        opacity: 1;
+      }
+
+      .project-badge.archived-badge {
+        background: rgba(123, 137, 159, 0.08);
+        color: var(--text-tertiary);
+        border: 1px dashed var(--border-default);
+        font-size: 0.62rem;
+        letter-spacing: 0.06em;
+      }
+
+      /* Hidden card (filtered out) */
+      .project-card.filtered-out {
+        display: none;
+      }
+
+      /* No results state */
+      .no-results {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: var(--space-3xl) var(--space-xl);
+        text-align: center;
+        grid-column: 1 / -1;
+      }
+
+      .no-results.visible {
+        display: flex;
+      }
+
+      .no-results-icon {
+        font-size: 1.8rem;
+        margin-bottom: var(--space-md);
+        opacity: 0.25;
+      }
+
+      .no-results-text {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--text-tertiary);
+      }
+
+      .no-results-hint {
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        color: var(--text-tertiary);
+        opacity: 0.6;
+        margin-top: var(--space-xs);
+      }
+
+      /* ============================================
    RESPONSIVE
    ============================================ */
       @media (max-width: 900px) {
@@ -1488,6 +1869,18 @@
 
         .topbar-status-session {
           gap: var(--space-sm);
+        }
+
+        .controls-bar {
+          gap: var(--space-sm);
+        }
+
+        .search-wrapper {
+          flex: 1 1 100%;
+        }
+
+        .archive-toggle {
+          margin-left: 0;
         }
       }
 
@@ -1695,141 +2088,479 @@
             <h1 class="page-title">
               Ground <span class="accent">Control</span>
             </h1>
-            <p class="page-subtitle">
+            <p class="page-subtitle" id="projects-subtitle">
               ~/github &mdash; 6 repositories discovered
             </p>
           </div>
 
-          <div class="projects-grid stagger-in">
-            <div class="project-card" onclick="showPage('sessions')">
+          <!-- Controls bar: search + status filters + archive toggle -->
+          <div class="controls-bar stagger-in">
+            <div class="search-wrapper" id="search-wrapper">
+              <input
+                class="search-input"
+                id="project-search"
+                type="text"
+                placeholder="Filter projects…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <span class="search-icon">&#9906;</span>
+              <button
+                class="search-clear"
+                id="search-clear"
+                onclick="clearSearch()"
+              >
+                &#10005;
+              </button>
+            </div>
+
+            <div class="filter-group" id="status-filters">
+              <button
+                class="filter-pill active"
+                data-filter="all"
+                onclick="setStatusFilter('all')"
+              >
+                All <span class="pill-count" id="count-all">8</span>
+              </button>
+              <button
+                class="filter-pill"
+                data-filter="active"
+                onclick="setStatusFilter('active')"
+              >
+                Active <span class="pill-count" id="count-active">3</span>
+              </button>
+              <button
+                class="filter-pill"
+                data-filter="idle"
+                onclick="setStatusFilter('idle')"
+              >
+                Idle <span class="pill-count" id="count-idle">3</span>
+              </button>
+            </div>
+
+            <div class="archive-toggle">
+              <button
+                class="archive-btn-toggle"
+                id="archive-toggle"
+                onclick="toggleShowArchived()"
+              >
+                <span>&#9744;</span>
+                Archived
+                <span class="archive-count" id="archive-count">2</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="projects-grid stagger-in" id="projects-grid">
+            <!-- Active project cards -->
+            <div
+              class="project-card"
+              data-status="active"
+              data-name="remote-ai-manager"
+              onclick="showPage('sessions')"
+            >
               <div class="project-card-header">
                 <div class="project-name">remote-ai-manager</div>
-                <div class="project-badge active">2 active</div>
+                <div class="card-actions">
+                  <div class="project-badge active">2 active</div>
+                  <div class="card-menu-wrap">
+                    <button
+                      class="card-menu-btn"
+                      onclick="
+                        event.stopPropagation();
+                        toggleCardMenu(this);
+                      "
+                    >
+                      &#8942;
+                    </button>
+                    <div class="card-dropdown">
+                      <button
+                        class="card-dropdown-item"
+                        onclick="
+                          event.stopPropagation();
+                          archiveProject(this);
+                        "
+                      >
+                        <span class="item-icon">&#8615;</span> Archive Project
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div class="project-path">~/github/remote-ai-manager</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">2</span>
-                  <span class="stat-label">Sessions</span>
+                  <span class="stat-value">2</span
+                  ><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">14</span>
-                  <span class="stat-label">Prompts</span>
+                  <span class="stat-value">14</span
+                  ><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">3m</span>
-                  <span class="stat-label">Last active</span>
+                  <span class="stat-value">3m</span
+                  ><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
 
-            <div class="project-card">
+            <div
+              class="project-card"
+              data-status="active"
+              data-name="solana-trading-bot"
+            >
               <div class="project-card-header">
                 <div class="project-name">solana-trading-bot</div>
-                <div class="project-badge active">1 active</div>
+                <div class="card-actions">
+                  <div class="project-badge active">1 active</div>
+                  <div class="card-menu-wrap">
+                    <button
+                      class="card-menu-btn"
+                      onclick="
+                        event.stopPropagation();
+                        toggleCardMenu(this);
+                      "
+                    >
+                      &#8942;
+                    </button>
+                    <div class="card-dropdown">
+                      <button
+                        class="card-dropdown-item"
+                        onclick="
+                          event.stopPropagation();
+                          archiveProject(this);
+                        "
+                      >
+                        <span class="item-icon">&#8615;</span> Archive Project
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div class="project-path">~/github/solana-trading-bot</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">1</span>
-                  <span class="stat-label">Sessions</span>
+                  <span class="stat-value">1</span
+                  ><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">8</span>
-                  <span class="stat-label">Prompts</span>
+                  <span class="stat-value">8</span
+                  ><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">1h</span>
-                  <span class="stat-label">Last active</span>
+                  <span class="stat-value">1h</span
+                  ><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
 
-            <div class="project-card">
+            <div
+              class="project-card"
+              data-status="idle"
+              data-name="personal-site"
+            >
               <div class="project-card-header">
                 <div class="project-name">personal-site</div>
-                <div class="project-badge idle">idle</div>
+                <div class="card-actions">
+                  <div class="project-badge idle">idle</div>
+                  <div class="card-menu-wrap">
+                    <button
+                      class="card-menu-btn"
+                      onclick="
+                        event.stopPropagation();
+                        toggleCardMenu(this);
+                      "
+                    >
+                      &#8942;
+                    </button>
+                    <div class="card-dropdown">
+                      <button
+                        class="card-dropdown-item"
+                        onclick="
+                          event.stopPropagation();
+                          archiveProject(this);
+                        "
+                      >
+                        <span class="item-icon">&#8615;</span> Archive Project
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div class="project-path">~/github/personal-site</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">0</span>
-                  <span class="stat-label">Sessions</span>
+                  <span class="stat-value">0</span
+                  ><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span>
-                  <span class="stat-label">Prompts</span>
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span>
-                  <span class="stat-label">Last active</span>
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
 
-            <div class="project-card">
+            <div class="project-card" data-status="idle" data-name="dotfiles">
               <div class="project-card-header">
                 <div class="project-name">dotfiles</div>
-                <div class="project-badge idle">idle</div>
+                <div class="card-actions">
+                  <div class="project-badge idle">idle</div>
+                  <div class="card-menu-wrap">
+                    <button
+                      class="card-menu-btn"
+                      onclick="
+                        event.stopPropagation();
+                        toggleCardMenu(this);
+                      "
+                    >
+                      &#8942;
+                    </button>
+                    <div class="card-dropdown">
+                      <button
+                        class="card-dropdown-item"
+                        onclick="
+                          event.stopPropagation();
+                          archiveProject(this);
+                        "
+                      >
+                        <span class="item-icon">&#8615;</span> Archive Project
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div class="project-path">~/github/dotfiles</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">0</span>
-                  <span class="stat-label">Sessions</span>
+                  <span class="stat-value">0</span
+                  ><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span>
-                  <span class="stat-label">Prompts</span>
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span>
-                  <span class="stat-label">Last active</span>
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
 
-            <div class="project-card">
+            <div
+              class="project-card"
+              data-status="active"
+              data-name="api-gateway"
+            >
               <div class="project-card-header">
                 <div class="project-name">api-gateway</div>
-                <div class="project-badge active">1 active</div>
+                <div class="card-actions">
+                  <div class="project-badge active">1 active</div>
+                  <div class="card-menu-wrap">
+                    <button
+                      class="card-menu-btn"
+                      onclick="
+                        event.stopPropagation();
+                        toggleCardMenu(this);
+                      "
+                    >
+                      &#8942;
+                    </button>
+                    <div class="card-dropdown">
+                      <button
+                        class="card-dropdown-item"
+                        onclick="
+                          event.stopPropagation();
+                          archiveProject(this);
+                        "
+                      >
+                        <span class="item-icon">&#8615;</span> Archive Project
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div class="project-path">~/github/api-gateway</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">1</span>
-                  <span class="stat-label">Sessions</span>
+                  <span class="stat-value">1</span
+                  ><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">22</span>
-                  <span class="stat-label">Prompts</span>
+                  <span class="stat-value">22</span
+                  ><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">12m</span>
-                  <span class="stat-label">Last active</span>
+                  <span class="stat-value">12m</span
+                  ><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
 
-            <div class="project-card">
+            <div
+              class="project-card"
+              data-status="idle"
+              data-name="ml-experiments"
+            >
               <div class="project-card-header">
                 <div class="project-name">ml-experiments</div>
-                <div class="project-badge idle">idle</div>
+                <div class="card-actions">
+                  <div class="project-badge idle">idle</div>
+                  <div class="card-menu-wrap">
+                    <button
+                      class="card-menu-btn"
+                      onclick="
+                        event.stopPropagation();
+                        toggleCardMenu(this);
+                      "
+                    >
+                      &#8942;
+                    </button>
+                    <div class="card-dropdown">
+                      <button
+                        class="card-dropdown-item"
+                        onclick="
+                          event.stopPropagation();
+                          archiveProject(this);
+                        "
+                      >
+                        <span class="item-icon">&#8615;</span> Archive Project
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div class="project-path">~/github/ml-experiments</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">0</span>
-                  <span class="stat-label">Sessions</span>
+                  <span class="stat-value">0</span
+                  ><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span>
-                  <span class="stat-label">Prompts</span>
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span>
-                  <span class="stat-label">Last active</span>
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Last active</span>
                 </div>
+              </div>
+            </div>
+
+            <!-- Archived project cards (hidden by default) -->
+            <div
+              class="project-card archived"
+              data-status="idle"
+              data-name="old-blog"
+              data-archived="true"
+              style="display: none"
+            >
+              <div class="project-card-header">
+                <div class="project-name">old-blog</div>
+                <div class="card-actions">
+                  <div class="project-badge archived-badge">archived</div>
+                  <div class="card-menu-wrap">
+                    <button
+                      class="card-menu-btn"
+                      onclick="
+                        event.stopPropagation();
+                        toggleCardMenu(this);
+                      "
+                    >
+                      &#8942;
+                    </button>
+                    <div class="card-dropdown">
+                      <button
+                        class="card-dropdown-item"
+                        onclick="
+                          event.stopPropagation();
+                          archiveProject(this);
+                        "
+                      >
+                        <span class="item-icon">&#8613;</span> Unarchive Project
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="project-path">~/github/old-blog</div>
+              <div class="project-stats">
+                <div class="stat">
+                  <span class="stat-value">0</span
+                  ><span class="stat-label">Sessions</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Prompts</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Last active</span>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="project-card archived"
+              data-status="idle"
+              data-name="react-playground"
+              data-archived="true"
+              style="display: none"
+            >
+              <div class="project-card-header">
+                <div class="project-name">react-playground</div>
+                <div class="card-actions">
+                  <div class="project-badge archived-badge">archived</div>
+                  <div class="card-menu-wrap">
+                    <button
+                      class="card-menu-btn"
+                      onclick="
+                        event.stopPropagation();
+                        toggleCardMenu(this);
+                      "
+                    >
+                      &#8942;
+                    </button>
+                    <div class="card-dropdown">
+                      <button
+                        class="card-dropdown-item"
+                        onclick="
+                          event.stopPropagation();
+                          archiveProject(this);
+                        "
+                      >
+                        <span class="item-icon">&#8613;</span> Unarchive Project
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="project-path">~/github/react-playground</div>
+              <div class="project-stats">
+                <div class="stat">
+                  <span class="stat-value">0</span
+                  ><span class="stat-label">Sessions</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Prompts</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value">&mdash;</span
+                  ><span class="stat-label">Last active</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- No results message -->
+            <div class="no-results" id="no-results">
+              <div class="no-results-icon">&#9906;</div>
+              <div class="no-results-text">No projects match your filters</div>
+              <div class="no-results-hint">
+                Try adjusting your search or filters
               </div>
             </div>
           </div>
@@ -2567,6 +3298,227 @@ export default function SessionDetail({ params }) {
 
         targets[nextIdx].scrollIntoView({ behavior: "smooth", block: "start" });
       }
+
+      // ===================== PROJECT SEARCH + FILTERS + ARCHIVE =====================
+      let currentStatusFilter = "all";
+      let showingArchived = false;
+
+      // Search input handling
+      const searchInput = document.getElementById("project-search");
+      const searchWrapper = document.getElementById("search-wrapper");
+
+      searchInput.addEventListener("input", function () {
+        searchWrapper.classList.toggle("has-value", this.value.length > 0);
+        applyFilters();
+      });
+
+      function clearSearch() {
+        searchInput.value = "";
+        searchWrapper.classList.remove("has-value");
+        searchInput.focus();
+        applyFilters();
+      }
+
+      // Keyboard shortcut: / to focus search (when not already in an input)
+      document.addEventListener("keydown", function (e) {
+        if (
+          e.key === "/" &&
+          !e.ctrlKey &&
+          !e.metaKey &&
+          document.activeElement.tagName !== "INPUT" &&
+          document.activeElement.tagName !== "TEXTAREA"
+        ) {
+          e.preventDefault();
+          searchInput.focus();
+        }
+      });
+
+      // Status filter
+      function setStatusFilter(filter) {
+        currentStatusFilter = filter;
+        document.querySelectorAll(".filter-pill").forEach(function (pill) {
+          pill.classList.toggle(
+            "active",
+            pill.getAttribute("data-filter") === filter,
+          );
+        });
+        applyFilters();
+      }
+
+      // Archive toggle (toolbar)
+      function toggleShowArchived() {
+        showingArchived = !showingArchived;
+        const btn = document.getElementById("archive-toggle");
+        btn.classList.toggle("showing", showingArchived);
+        btn.querySelector("span:first-child").innerHTML = showingArchived
+          ? "&#9746;"
+          : "&#9744;";
+        applyFilters();
+      }
+
+      // ===================== CARD DROPDOWN MENU =====================
+      function closeAllMenus() {
+        document.querySelectorAll(".card-dropdown.open").forEach(function (d) {
+          d.classList.remove("open");
+        });
+        document.querySelectorAll(".card-menu-btn.open").forEach(function (b) {
+          b.classList.remove("open");
+        });
+      }
+
+      function toggleCardMenu(btnEl) {
+        const dropdown = btnEl.nextElementSibling;
+        const isOpen = dropdown.classList.contains("open");
+
+        // Close any other open menus first
+        closeAllMenus();
+
+        if (!isOpen) {
+          dropdown.classList.add("open");
+          btnEl.classList.add("open");
+        }
+      }
+
+      // Close menus on outside click
+      document.addEventListener("click", function (e) {
+        if (!e.target.closest(".card-menu-wrap")) {
+          closeAllMenus();
+        }
+      });
+
+      // Close menus on Escape
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeAllMenus();
+      });
+
+      // Archive / unarchive via dropdown menu item
+      function archiveProject(itemEl) {
+        const card = itemEl.closest(".project-card");
+        if (!card) return;
+
+        closeAllMenus();
+
+        const isArchived = card.hasAttribute("data-archived");
+        const badge = card.querySelector(".project-badge");
+        const menuItem = card.querySelector(".card-dropdown-item");
+
+        if (isArchived) {
+          // Unarchive
+          card.removeAttribute("data-archived");
+          card.classList.remove("archived");
+          const status = card.getAttribute("data-status");
+          if (badge) {
+            badge.className = "project-badge " + status;
+            badge.textContent = status === "active" ? "active" : "idle";
+          }
+          if (menuItem) {
+            menuItem.innerHTML =
+              '<span class="item-icon">&#8615;</span> Archive Project';
+          }
+        } else {
+          // Archive
+          card.setAttribute("data-archived", "true");
+          card.classList.add("archived");
+          if (badge) {
+            badge.className = "project-badge archived-badge";
+            badge.textContent = "archived";
+          }
+          if (menuItem) {
+            menuItem.innerHTML =
+              '<span class="item-icon">&#8613;</span> Unarchive Project';
+          }
+        }
+
+        updateCounts();
+        applyFilters();
+      }
+
+      // Core filter logic — combines search, status filter, and archive visibility
+      function applyFilters() {
+        const query = searchInput.value.toLowerCase().trim();
+        const grid = document.getElementById("projects-grid");
+        const cards = grid.querySelectorAll(".project-card");
+        let visibleCount = 0;
+
+        cards.forEach(function (card) {
+          const name = (card.getAttribute("data-name") || "").toLowerCase();
+          const status = card.getAttribute("data-status");
+          const isArchived = card.hasAttribute("data-archived");
+
+          // Check archive visibility
+          if (isArchived && !showingArchived) {
+            card.style.display = "none";
+            return;
+          }
+
+          // Check search match
+          const matchesSearch = !query || name.includes(query);
+
+          // Check status filter
+          let matchesStatus = true;
+          if (currentStatusFilter !== "all") {
+            matchesStatus = status === currentStatusFilter;
+          }
+
+          if (matchesSearch && matchesStatus) {
+            card.style.display = "";
+            visibleCount++;
+          } else {
+            card.style.display = "none";
+          }
+        });
+
+        // Show/hide no-results
+        const noResults = document.getElementById("no-results");
+        if (noResults) {
+          noResults.classList.toggle("visible", visibleCount === 0);
+        }
+
+        updateCounts();
+      }
+
+      // Update filter pill counts and subtitle
+      function updateCounts() {
+        const cards = document.querySelectorAll("#projects-grid .project-card");
+        let total = 0;
+        let activeCount = 0;
+        let idleCount = 0;
+        let archivedCount = 0;
+
+        cards.forEach(function (card) {
+          const isArchived = card.hasAttribute("data-archived");
+          if (isArchived) {
+            archivedCount++;
+            return;
+          }
+          total++;
+          const status = card.getAttribute("data-status");
+          if (status === "active") activeCount++;
+          if (status === "idle") idleCount++;
+        });
+
+        const countAll = document.getElementById("count-all");
+        const countActive = document.getElementById("count-active");
+        const countIdle = document.getElementById("count-idle");
+        const archiveCountEl = document.getElementById("archive-count");
+
+        if (countAll) countAll.textContent = total;
+        if (countActive) countActive.textContent = activeCount;
+        if (countIdle) countIdle.textContent = idleCount;
+        if (archiveCountEl) archiveCountEl.textContent = archivedCount;
+
+        // Update subtitle
+        const subtitle = document.getElementById("projects-subtitle");
+        if (subtitle) {
+          const repoCount = total + archivedCount;
+          const repoWord = repoCount === 1 ? "repository" : "repositories";
+          subtitle.textContent =
+            "~/github \u2014 " + repoCount + " " + repoWord + " discovered";
+        }
+      }
+
+      // Initialize counts on load
+      updateCounts();
     </script>
   </body>
 </html>

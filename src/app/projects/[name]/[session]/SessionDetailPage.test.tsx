@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import SessionDetailPage from "./SessionDetailPage";
 import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
 
