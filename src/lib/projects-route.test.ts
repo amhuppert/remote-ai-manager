@@ -5,6 +5,19 @@ vi.mock("@/lib/discovery", () => ({
   discoverProjects: vi.fn(),
 }));
 
+// Mock logging to avoid file I/O during tests
+vi.mock("@/lib/logging", () => ({
+  withTracing: (handler: Function) => handler,
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
+const emptyContext = { params: Promise.resolve({}) };
+
 describe("GET /api/projects", () => {
   it("returns JSON array of discovered projects with status 200", async () => {
     const { discoverProjects } = await import("@/lib/discovery");
@@ -18,7 +31,10 @@ describe("GET /api/projects", () => {
     ]);
 
     const { GET } = await import("@/app/api/projects/route");
-    const response = await GET();
+    const response = await GET(
+      new Request("http://localhost/api/projects"),
+      emptyContext,
+    );
 
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -41,7 +57,10 @@ describe("GET /api/projects", () => {
     );
 
     const { GET } = await import("@/app/api/projects/route");
-    const response = await GET();
+    const response = await GET(
+      new Request("http://localhost/api/projects"),
+      emptyContext,
+    );
 
     expect(response.status).toBe(500);
     const body = await response.json();
@@ -54,7 +73,10 @@ describe("GET /api/projects", () => {
     vi.mocked(discoverProjects).mockRejectedValue("string error");
 
     const { GET } = await import("@/app/api/projects/route");
-    const response = await GET();
+    const response = await GET(
+      new Request("http://localhost/api/projects"),
+      emptyContext,
+    );
 
     expect(response.status).toBe(500);
     const body = await response.json();

@@ -1,0 +1,222 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { withTracing } from "./tracing";
+import { _resetLoggerForTesting } from "./logger";
+
+const tmpDir = path.join(os.tmpdir(), "csm-tracing-test");
+const testLogFile = path.join(tmpDir, "test.log");
+
+function readLogLines(): Record<string, unknown>[] {
+  const content = readFileSync(testLogFile, "utf-8").trim();
+  if (!content) return [];
+  return content.split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function cleanup(): void {
+  try {
+    if (existsSync(testLogFile)) unlinkSync(testLogFile);
+  } catch {
+    // ignore
+  }
+}
+
+function makeRequest(
+  url: string,
+  options?: {
+    method?: string;
+    headers?: Record<string, string>;
+  },
+): Request {
+  return new Request(url, {
+    method: options?.method ?? "GET",
+    headers: options?.headers ?? {},
+  });
+}
+
+function makeParams(
+  params: Record<string, string> = {},
+): { params: Promise<Record<string, string>> } {
+  return { params: Promise.resolve(params) };
+}
+
+describe("withTracing", () => {
+  beforeEach(() => {
+    cleanup();
+    _resetLoggerForTesting();
+    process.env["CSM_LOG_FILE"] = testLogFile;
+    process.env["CSM_LOG_LEVEL"] = "debug";
+    if (!existsSync(tmpDir)) {
+      mkdirSync(tmpDir, { recursive: true });
+    }
+  });
+
+  afterEach(() => {
+    cleanup();
+    _resetLoggerForTesting();
+    delete process.env["CSM_LOG_FILE"];
+    delete process.env["CSM_LOG_LEVEL"];
+    vi.restoreAllMocks();
+  });
+
+  it("extracts trace ID from X-Trace-Id header", async () => {
+    const handler = vi.fn(async () => new Response("ok"));
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest("http://localhost:3000/api/test", {
+      headers: { "x-trace-id": "my-trace-123" },
+    });
+
+    const response = await wrapped(req, makeParams());
+
+    expect(response.headers.get("x-trace-id")).toBe("my-trace-123");
+
+    const lines = readLogLines();
+    const startLog = lines.find((l) => l["message"] === "request.start");
+    expect(startLog?.["traceId"]).toBe("my-trace-123");
+  });
+
+  it("generates new trace ID when header is absent", async () => {
+    const handler = vi.fn(async () => new Response("ok"));
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest("http://localhost:3000/api/test");
+    const response = await wrapped(req, makeParams());
+
+    const traceId = response.headers.get("x-trace-id");
+    expect(traceId).toBeTruthy();
+    // Should be a valid UUID format
+    expect(traceId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("includes X-Trace-Id in response header", async () => {
+    const handler = vi.fn(async () => new Response("ok"));
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest("http://localhost:3000/api/test", {
+      headers: { "x-trace-id": "resp-trace" },
+    });
+
+    const response = await wrapped(req, makeParams());
+    expect(response.headers.get("x-trace-id")).toBe("resp-trace");
+  });
+
+  it("logs request start and completion with method, path, status, duration", async () => {
+    const handler = vi.fn(
+      async () => new Response("ok", { status: 200 }),
+    );
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest("http://localhost:3000/api/projects", {
+      method: "GET",
+      headers: { "x-trace-id": "lifecycle-trace" },
+    });
+
+    await wrapped(req, makeParams());
+
+    const lines = readLogLines();
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+
+    const startLog = lines.find((l) => l["message"] === "request.start");
+    expect(startLog).toBeDefined();
+    expect(startLog?.["method"]).toBe("GET");
+    expect(startLog?.["path"]).toBe("/api/projects");
+    expect(startLog?.["module"]).toBe("tracing");
+
+    const completeLog = lines.find((l) => l["message"] === "request.complete");
+    expect(completeLog).toBeDefined();
+    expect(completeLog?.["method"]).toBe("GET");
+    expect(completeLog?.["path"]).toBe("/api/projects");
+    expect(completeLog?.["status"]).toBe(200);
+    expect(typeof completeLog?.["durationMs"]).toBe("number");
+  });
+
+  it("logs error with full context before re-throwing", async () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const testError = new Error("handler exploded");
+    const handler = vi.fn(async () => {
+      throw testError;
+    });
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest("http://localhost:3000/api/test", {
+      method: "POST",
+      headers: { "x-trace-id": "error-trace" },
+    });
+
+    await expect(wrapped(req, makeParams())).rejects.toThrow("handler exploded");
+
+    const lines = readLogLines();
+    const errorLog = lines.find((l) => l["message"] === "request.error");
+    expect(errorLog).toBeDefined();
+    expect(errorLog?.["traceId"]).toBe("error-trace");
+    expect(errorLog?.["method"]).toBe("POST");
+    expect(errorLog?.["error"]).toBe("handler exploded");
+    expect(errorLog?.["stack"]).toMatch(/Error: handler exploded/);
+    expect(typeof errorLog?.["durationMs"]).toBe("number");
+
+    stderrSpy.mockRestore();
+  });
+
+  it("extracts projectName and sessionName from URL params", async () => {
+    const handler = vi.fn(async () => new Response("ok"));
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest(
+      "http://localhost:3000/api/projects/my-project/sessions/my-session/prompt",
+      {
+        method: "POST",
+        headers: { "x-trace-id": "params-trace" },
+      },
+    );
+
+    await wrapped(
+      req,
+      makeParams({ name: "my-project", session: "my-session" }),
+    );
+
+    const lines = readLogLines();
+    const startLog = lines.find((l) => l["message"] === "request.start");
+    expect(startLog?.["projectName"]).toBe("my-project");
+    expect(startLog?.["sessionName"]).toBe("my-session");
+  });
+
+  it("extracts X-Action header into trace context", async () => {
+    const handler = vi.fn(async () => new Response("ok"));
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest("http://localhost:3000/api/test", {
+      headers: {
+        "x-trace-id": "action-trace",
+        "x-action": "send-prompt",
+      },
+    });
+
+    await wrapped(req, makeParams());
+
+    const lines = readLogLines();
+    const startLog = lines.find((l) => l["message"] === "request.start");
+    expect(startLog?.["action"]).toBe("send-prompt");
+  });
+
+  it("handles routes without params gracefully", async () => {
+    const handler = vi.fn(async () => new Response("ok"));
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest("http://localhost:3000/api/hooks", {
+      method: "POST",
+    });
+
+    // Simulate no params by providing a rejecting promise
+    const ctx = { params: Promise.reject(new Error("no params")) };
+
+    const response = await wrapped(req, ctx);
+    expect(response.status).toBe(200);
+
+    const lines = readLogLines();
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+  });
+});

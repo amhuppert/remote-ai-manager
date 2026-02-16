@@ -7,6 +7,10 @@
  * than queuing a second invocation.
  */
 
+import { createLogger } from "./logging";
+
+const logger = createLogger("lock");
+
 const activeLocks = new Map<string, Promise<void>>();
 
 /**
@@ -37,6 +41,10 @@ export function acquireSessionLock(
   const key = lockKey(projectPath, sessionName);
 
   if (activeLocks.has(key)) {
+    logger.warn("lock.rejected", {
+      projectPath,
+      sessionName,
+    });
     throw new Error("Session is busy — a prompt is already running");
   }
 
@@ -46,9 +54,11 @@ export function acquireSessionLock(
   });
 
   activeLocks.set(key, promise);
+  logger.debug("lock.acquired", { projectPath, sessionName });
 
   return () => {
     activeLocks.delete(key);
     releaseFn?.();
+    logger.debug("lock.released", { projectPath, sessionName });
   };
 }

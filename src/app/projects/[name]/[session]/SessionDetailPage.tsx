@@ -12,6 +12,7 @@ import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
 import DiffPanel from "./DiffPanel";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { tracedFetch } from "@/lib/traced-fetch";
 type MobilePanel = "chat" | "diff";
 
 interface Props {
@@ -131,8 +132,9 @@ export default function SessionDetailPage({
     setSending(true);
 
     try {
-      const res = await fetch(
+      const res = await tracedFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/prompt`,
+        "send-prompt",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -152,8 +154,9 @@ export default function SessionDetailPage({
 
   const handleDelete = useCallback(async () => {
     try {
-      const res = await fetch(
+      const res = await tracedFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions?sessionName=${encodeURIComponent(session.sessionName)}`,
+        "delete-session",
         { method: "DELETE" },
       );
       if (res.ok) {

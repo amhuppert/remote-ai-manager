@@ -6,6 +6,9 @@ import { promisify } from "node:util";
 import type { SessionState } from "@/types";
 import { perRepoConfigSchema, type PerRepoConfig } from "./schemas";
 import { readState, writeState } from "./state";
+import { createLogger } from "./logging";
+
+const logger = createLogger("sessions");
 
 const execFileAsync = promisify(execFile);
 
@@ -86,6 +89,13 @@ export async function createSession(
 
   try {
     // Create worktree + branch from main
+    logger.info("session.create", {
+      projectName: projectPath,
+      sessionName,
+      worktreePath,
+      branchName,
+    });
+
     await git(projectPath, [
       "worktree",
       "add",
@@ -119,6 +129,13 @@ export async function createSession(
       });
     }
   } catch (err) {
+    logger.error("session.create_failure", {
+      projectName: projectPath,
+      sessionName,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+
     // Rollback: remove the worktree if it was created
     try {
       if (existsSync(worktreePath)) {
@@ -194,6 +211,7 @@ export async function deleteSession(
   }
 
   // Remove worktree
+  let worktreeCleanup = "skipped";
   if (existsSync(session.worktreePath)) {
     try {
       await git(projectPath, [
@@ -202,13 +220,25 @@ export async function deleteSession(
         "--force",
         session.worktreePath,
       ]);
-    } catch {
+      worktreeCleanup = "success";
+    } catch (err) {
+      logger.error("session.worktree_remove_failure", {
+        sessionName,
+        worktreePath: session.worktreePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
       // Fallback: manual removal
       await rm(session.worktreePath, { recursive: true, force: true });
+      worktreeCleanup = "fallback";
     }
   }
 
   // Remove from state
   delete project.sessions[sessionName];
   await writeState(state);
+
+  logger.info("session.delete", {
+    sessionName,
+    worktreeCleanup,
+  });
 }

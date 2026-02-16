@@ -1,23 +1,19 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
 import { executePrompt } from "@/lib/prompt";
 import { isSessionBusy } from "@/lib/lock";
 import { runPromptRequestSchema } from "@/lib/schemas";
+import { withTracing } from "@/lib/logging";
 import type { RunPromptResponse, ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-type RouteParams = {
-  params: Promise<{ name: string; session: string }>;
-};
-
 /** POST /api/projects/[name]/sessions/[session]/prompt — execute a prompt */
-export async function POST(
-  request: NextRequest,
-  { params }: RouteParams,
-): Promise<NextResponse> {
-  const { name, session: sessionSlug } = await params;
+export const POST = withTracing(async (request, { params }) => {
+  const resolvedParams = await params;
+  const name = resolvedParams["name"] ?? "";
+  const sessionSlug = resolvedParams["session"] ?? "";
   const sessionName = decodeURIComponent(sessionSlug);
 
   const projectPath = await resolveProjectPath(name);
@@ -88,4 +84,4 @@ export async function POST(
       status: 500,
     });
   }
-}
+});

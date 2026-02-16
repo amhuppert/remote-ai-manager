@@ -2,7 +2,7 @@
 
 ## Organization Philosophy
 
-Hybrid approach: **feature-colocated components** within App Router pages, **shared components** in a central directory, and **domain logic** in a flat `lib/` layer.
+Hybrid approach: **feature-colocated components** within App Router pages, **shared components** in a central directory, and **domain logic** in `lib/`.
 
 ## Directory Patterns
 
@@ -27,8 +27,8 @@ Hybrid approach: **feature-colocated components** within App Router pages, **sha
 ### Domain Logic (`src/lib/`)
 
 **Location**: `src/lib/`
-**Purpose**: All business logic, data access, and utilities — flat structure (no subdirectories)
-**Pattern**: One module per domain concept (e.g., `sessions.ts`, `state.ts`, `config.ts`, `hooks.ts`)
+**Purpose**: All business logic, data access, and utilities
+**Pattern**: One module per domain concept (e.g., `sessions.ts`, `state.ts`, `config.ts`, `hooks.ts`); use nested directories when a domain has multiple related files (e.g., `src/lib/logging/`)
 
 ### API Routes (`src/app/api/`)
 
@@ -77,7 +77,7 @@ import { someHelper } from "./helper";
 
 - **Schema-first**: Data entities start as Zod schemas; types are derived, never hand-written duplicates
 - **Colocation**: Components live next to the page that uses them; shared components are promoted to `src/components/` only when reused
-- **Flat lib**: No nested directories in `src/lib/` — modules are flat and focused on a single domain concept
+- **Organized lib**: Modules are focused on a single domain concept; use nested directories when a domain has multiple related files
 - **API mirrors resources**: API route structure follows REST resource hierarchy (`/api/projects/[name]/sessions/[session]/prompt`)
 
 ---

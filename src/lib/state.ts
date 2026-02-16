@@ -4,6 +4,9 @@ import path from "node:path";
 import type { ManagerState, ProjectState, SessionState } from "@/types";
 import { managerStateSchema } from "./schemas";
 import { readConfig } from "./config";
+import { createLogger } from "./logging";
+
+const logger = createLogger("state");
 
 /** Default empty manager state */
 function emptyState(): ManagerState {
@@ -19,10 +22,20 @@ export async function readState(): Promise<ManagerState> {
     return emptyState();
   }
 
-  const raw = await readFile(statePath, "utf-8");
-  const parsed: unknown = JSON.parse(raw);
-  const result = managerStateSchema.safeParse(parsed);
-  return result.success ? result.data : emptyState();
+  try {
+    const raw = await readFile(statePath, "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    const result = managerStateSchema.safeParse(parsed);
+    return result.success ? result.data : emptyState();
+  } catch (err) {
+    logger.error("state.read_failure", {
+      errorType: err instanceof Error ? err.constructor.name : typeof err,
+      filePath: statePath,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return emptyState();
+  }
 }
 
 /**
@@ -42,8 +55,36 @@ export async function writeState(state: ManagerState): Promise<void> {
   const tmpPath = `${statePath}.tmp.${Date.now()}`;
   const json = JSON.stringify(state, null, 2);
 
+  const projectCount = Object.keys(state.projects).length;
+  let sessionCount = 0;
+  for (const project of Object.values(state.projects)) {
+    sessionCount += Object.keys(project.sessions).length;
+  }
+
+  logger.debug("state.write", {
+    projectCount,
+    sessionCount,
+    fileSize: json.length,
+  });
+
   await writeFile(tmpPath, json, "utf-8");
-  await rename(tmpPath, statePath);
+
+  logger.debug("state.atomic_write", {
+    tmpPath,
+    finalPath: statePath,
+  });
+
+  try {
+    await rename(tmpPath, statePath);
+  } catch (err) {
+    logger.error("state.rename_failure", {
+      tmpPath,
+      finalPath: statePath,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    throw err;
+  }
 }
 
 /** Get or create a ProjectState entry for a given project path */

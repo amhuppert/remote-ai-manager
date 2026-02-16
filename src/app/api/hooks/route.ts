@@ -1,9 +1,12 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { processHookEvent } from "@/lib/hooks";
 import { hookEventDataSchema } from "@/lib/schemas";
+import { withTracing, createLogger } from "@/lib/logging";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
+
+const logger = createLogger("hooks.route");
 
 /**
  * POST /api/hooks — receive Claude Code hook events.
@@ -17,11 +20,16 @@ export const dynamic = "force-dynamic";
  * The endpoint matches the `cwd` to a managed session's worktreePath
  * and updates the session's claudeSessionId and transcriptPath.
  */
-export async function POST(request: NextRequest): Promise<NextResponse> {
+export const POST = withTracing(async (request: Request) => {
+  let rawPayload: unknown;
   let body;
   try {
-    body = hookEventDataSchema.parse(await request.json());
+    rawPayload = await request.json();
+    body = hookEventDataSchema.parse(rawPayload);
   } catch {
+    logger.warn("hook.validation_failure", {
+      rawPayload,
+    });
     return NextResponse.json(
       { error: "Invalid JSON body" } satisfies ApiError,
       { status: 400 },
@@ -38,4 +46,4 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       status: 500,
     });
   }
-}
+});
