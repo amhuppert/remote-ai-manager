@@ -41,6 +41,11 @@ Claude Session Manager (CSM) — A Next.js application that manages Claude AI se
 - **/kiro:steering** - Manage .kiro/steering/ as persistent project knowledge
 - **/kiro:steering-custom** - Create custom steering documents for specialized project contexts
 
+## Notable Files and Directories
+
+- `ui-design/index.html` - The design prototype file
+- `memory-bank/design-system.md` - The design system file
+
 ## Naming Conventions
 
 Camel case for variables and functions (e.g., `sessionName`, `claudeTimeoutMs`, `baseDir`). Pascal case for types and schema names (e.g., `SessionState`, `GlobalConfig`, `ProjectState`). Boolean fields use "is" or "has" prefixes sparingly.
