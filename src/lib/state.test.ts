@@ -40,6 +40,7 @@ describe("state", () => {
           sessions: {},
         },
       },
+      archivedProjects: [],
     });
 
     const state = await readState();
@@ -80,6 +81,7 @@ describe("state", () => {
           },
         },
       },
+      archivedProjects: [],
     });
 
     const project = await getOrCreateProject("/existing");
@@ -173,5 +175,88 @@ describe("state", () => {
     const { getProjectSessions } = await import("./state");
     const result = await getProjectSessions("/nonexistent");
     expect(result).toEqual([]);
+  });
+});
+
+describe("archive helpers", () => {
+  it("getArchivedProjects returns empty set for fresh state", async () => {
+    const { getArchivedProjects } = await import("./state");
+    const archived = await getArchivedProjects();
+    expect(archived.size).toBe(0);
+  });
+
+  it("setProjectArchived adds a project path to the archive set", async () => {
+    const { setProjectArchived, getArchivedProjects } =
+      await import("./state");
+
+    await setProjectArchived("/some/project", true);
+
+    const archived = await getArchivedProjects();
+    expect(archived.has("/some/project")).toBe(true);
+    expect(archived.size).toBe(1);
+  });
+
+  it("setProjectArchived removes a project path from the archive set", async () => {
+    const { setProjectArchived, getArchivedProjects, writeState } =
+      await import("./state");
+
+    // Seed state with an archived project
+    await writeState({
+      projects: {},
+      archivedProjects: ["/some/project"],
+    });
+
+    await setProjectArchived("/some/project", false);
+
+    const archived = await getArchivedProjects();
+    expect(archived.has("/some/project")).toBe(false);
+    expect(archived.size).toBe(0);
+  });
+
+  it("archiving does not alter existing project entries or session data", async () => {
+    const { setProjectArchived, readState, writeState } =
+      await import("./state");
+
+    const session = {
+      sessionName: "test",
+      worktreePath: "/proj/.worktrees/test",
+      branchName: "csm/test",
+      claudeSessionId: null,
+      transcriptPath: null,
+      status: "ready" as const,
+      createdAt: "2024-01-01T00:00:00Z",
+      lastActivityAt: "2024-01-01T00:00:00Z",
+      promptCount: 3,
+      archived: false,
+    };
+
+    await writeState({
+      projects: {
+        "/proj": {
+          rootPath: "/proj",
+          sessions: { test: session },
+        },
+      },
+      archivedProjects: [],
+    });
+
+    await setProjectArchived("/proj", true);
+
+    const state = await readState();
+    const savedSession = state.projects["/proj"]!.sessions["test"]!;
+    expect(savedSession.sessionName).toBe("test");
+    expect(savedSession.promptCount).toBe(3);
+    expect(savedSession.status).toBe("ready");
+    expect(state.archivedProjects).toContain("/proj");
+  });
+
+  it("archiving the same project twice does not create duplicates", async () => {
+    const { setProjectArchived, readState } = await import("./state");
+
+    await setProjectArchived("/proj", true);
+    await setProjectArchived("/proj", true);
+
+    const state = await readState();
+    expect(state.archivedProjects.filter((p) => p === "/proj")).toHaveLength(1);
   });
 });

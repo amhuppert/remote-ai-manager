@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import SessionDetailPage from "./SessionDetailPage";
 import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
 
@@ -241,5 +241,36 @@ describe("SessionDetailPage", () => {
     const layoutBtns = container.querySelectorAll(".layout-btn");
     // 4 layout modes: conversation, default, split, diff
     expect(layoutBtns.length).toBe(4);
+  });
+
+  it("enables send button when prompt text is entered (Req 3.5)", () => {
+    const { container } = render(
+      <SessionDetailPage
+        projectName="repo"
+        session={baseSession}
+        messages={[]}
+        diff={emptyDiff}
+      />,
+    );
+    const textarea = container.querySelector(".prompt-textarea")!;
+    fireEvent.change(textarea, { target: { value: "Hello" } });
+    const sendBtn = container.querySelector(".send-btn");
+    expect(sendBtn?.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("prompt textarea accepts text input (Req 3.4)", () => {
+    const { container } = render(
+      <SessionDetailPage
+        projectName="repo"
+        session={baseSession}
+        messages={[]}
+        diff={emptyDiff}
+      />,
+    );
+    const textarea = container.querySelector(
+      ".prompt-textarea",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "Fix the bug" } });
+    expect(textarea.value).toBe("Fix the bug");
   });
 });

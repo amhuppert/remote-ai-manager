@@ -53,7 +53,7 @@ import {
 // ---------------------------------------------------------------------------
 
 function emptyState() {
-  return { projects: {} };
+  return { projects: {}, archivedProjects: [] as string[] };
 }
 
 function stateWithSession(
@@ -82,6 +82,7 @@ function stateWithSession(
         },
       },
     },
+    archivedProjects: [] as string[],
   };
 }
 
@@ -632,6 +633,7 @@ describe("deleteSession", () => {
           sessions: {},
         },
       },
+      archivedProjects: [],
     });
     await expect(deleteSession("/projects/repo", "ghost")).rejects.toThrow(
       'Session "ghost" not found in project',

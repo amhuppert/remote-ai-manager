@@ -1,16 +1,18 @@
 import { discoverProjects } from "@/lib/discovery";
 import { readConfig } from "@/lib/config";
 import { detectHooksStatus } from "@/lib/hooks";
+import { getArchivedProjects } from "@/lib/state";
 import Topbar from "@/components/Topbar";
-import ProjectCard from "./ProjectCard";
+import ProjectsGridClient from "./ProjectsGridClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage(): Promise<React.JSX.Element> {
-  const [projects, config, hooksStatus] = await Promise.all([
+  const [projects, config, hooksStatus, archivedSet] = await Promise.all([
     discoverProjects(),
     readConfig(),
     detectHooksStatus(),
+    getArchivedProjects(),
   ]);
 
   const projectCount = projects.length;
@@ -64,11 +66,10 @@ export default async function ProjectsPage(): Promise<React.JSX.Element> {
         </div>
 
         {projectCount > 0 ? (
-          <div className="projects-grid stagger-in">
-            {projects.map((project) => (
-              <ProjectCard key={project.path} project={project} />
-            ))}
-          </div>
+          <ProjectsGridClient
+            projects={projects}
+            archivedPaths={[...archivedSet]}
+          />
         ) : (
           <div className="empty-state">
             <div className="empty-state-icon">&#128269;</div>

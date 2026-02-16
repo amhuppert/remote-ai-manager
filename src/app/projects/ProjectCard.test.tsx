@@ -20,6 +20,13 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+const defaultProps = {
+  archived: false,
+  menuOpen: false,
+  onMenuToggle: vi.fn(),
+  onArchive: vi.fn(),
+};
+
 describe("ProjectCard", () => {
   // =========================================================================
   // 6.3 – ProjectCard (Req 1.2–1.4)
@@ -28,6 +35,7 @@ describe("ProjectCard", () => {
   it("displays project name, path, and session count (Req 1.2)", () => {
     render(
       <ProjectCard
+        {...defaultProps}
         project={{
           name: "my-project",
           path: "/home/user/projects/my-project",
@@ -44,6 +52,7 @@ describe("ProjectCard", () => {
   it("links to /projects/[name] (Req 1.3)", () => {
     const { container } = render(
       <ProjectCard
+        {...defaultProps}
         project={{
           name: "my-project",
           path: "/path",
@@ -59,6 +68,7 @@ describe("ProjectCard", () => {
   it("shows active badge when sessions exist (Req 1.4)", () => {
     const { container } = render(
       <ProjectCard
+        {...defaultProps}
         project={{
           name: "proj",
           path: "/path",
@@ -75,6 +85,7 @@ describe("ProjectCard", () => {
   it("shows idle badge when no sessions (Req 1.4)", () => {
     const { container } = render(
       <ProjectCard
+        {...defaultProps}
         project={{
           name: "proj",
           path: "/path",
@@ -86,5 +97,40 @@ describe("ProjectCard", () => {
     const badge = container.querySelector(".project-badge");
     expect(badge?.className).toContain("idle");
     expect(badge?.textContent).toBe("idle");
+  });
+
+  it("shows archived badge and dashed border when archived (Req 11.6)", () => {
+    const { container } = render(
+      <ProjectCard
+        {...defaultProps}
+        archived={true}
+        project={{
+          name: "proj",
+          path: "/path",
+          activeSessions: 0,
+          hasRunningSession: false,
+        }}
+      />,
+    );
+    const card = container.querySelector(".project-card");
+    expect(card?.className).toContain("archived");
+    const badge = container.querySelector(".project-badge");
+    expect(badge?.textContent).toBe("archived");
+  });
+
+  it("renders context menu trigger button (Req 12.1)", () => {
+    const { container } = render(
+      <ProjectCard
+        {...defaultProps}
+        project={{
+          name: "proj",
+          path: "/path",
+          activeSessions: 0,
+          hasRunningSession: false,
+        }}
+      />,
+    );
+    const menuBtn = container.querySelector(".card-menu-btn");
+    expect(menuBtn).toBeDefined();
   });
 });

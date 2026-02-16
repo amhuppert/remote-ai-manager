@@ -7,7 +7,7 @@ import { readConfig } from "./config";
 
 /** Default empty manager state */
 function emptyState(): ManagerState {
-  return { projects: {} };
+  return { projects: {}, archivedProjects: [] };
 }
 
 /** Read the manager state from disk, returning empty state if file missing */
@@ -120,4 +120,28 @@ export async function getSession(
   if (!project) return null;
 
   return project.sessions[sessionName] ?? null;
+}
+
+/** Read archived project paths from persisted state */
+export async function getArchivedProjects(): Promise<Set<string>> {
+  const state = await readState();
+  return new Set(state.archivedProjects);
+}
+
+/** Add or remove a project path from the archived set */
+export async function setProjectArchived(
+  projectPath: string,
+  archived: boolean,
+): Promise<void> {
+  const state = await readState();
+  const current = new Set(state.archivedProjects);
+
+  if (archived) {
+    current.add(projectPath);
+  } else {
+    current.delete(projectPath);
+  }
+
+  state.archivedProjects = [...current];
+  await writeState(state);
 }

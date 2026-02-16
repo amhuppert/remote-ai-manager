@@ -69,6 +69,9 @@ bun run typecheck
 
 # Lint
 bun run lint
+
+# Install Claude Code hooks for CSM event ingestion
+npm run install-hooks
 ```
 
 ## Key Technical Decisions

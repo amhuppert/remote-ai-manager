@@ -6,7 +6,7 @@ import type { ManagerState } from "@/types";
 const TEST_DIR = path.join("/tmp", "csm-hooks-test-" + Date.now());
 
 // Track state in memory for assertions
-let mockState: ManagerState = { projects: {} };
+let mockState: ManagerState = { projects: {}, archivedProjects: [] };
 
 vi.mock("./state", () => ({
   readState: vi.fn(() => Promise.resolve(mockState)),
@@ -18,7 +18,7 @@ vi.mock("./state", () => ({
 
 beforeEach(async () => {
   await mkdir(TEST_DIR, { recursive: true });
-  mockState = { projects: {} };
+  mockState = { projects: {}, archivedProjects: [] };
 });
 
 afterEach(async () => {
@@ -53,6 +53,7 @@ describe("processHookEvent", () => {
           },
         },
       },
+      archivedProjects: [],
     };
 
     const { processHookEvent } = await import("./hooks");
@@ -84,6 +85,7 @@ describe("processHookEvent", () => {
           },
         },
       },
+      archivedProjects: [],
     };
 
     const { processHookEvent } = await import("./hooks");
@@ -123,6 +125,7 @@ describe("processHookEvent", () => {
           },
         },
       },
+      archivedProjects: [],
     };
 
     const { processHookEvent } = await import("./hooks");

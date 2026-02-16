@@ -143,4 +143,16 @@ describe("SessionsList", () => {
     // ConfirmDialog should appear with message
     expect(screen.getByText("Delete Session")).toBeDefined();
   });
+
+  it("renders table with all column headers (Req 2.1)", () => {
+    const sessions = makeSessions(1);
+    render(
+      <SessionsList projectName="my-project" initialSessions={sessions} />,
+    );
+    expect(screen.getByText("Session")).toBeDefined();
+    expect(screen.getByText("Branch")).toBeDefined();
+    expect(screen.getByText("Status")).toBeDefined();
+    expect(screen.getByText("Last Activity")).toBeDefined();
+    expect(screen.getByText("Prompts")).toBeDefined();
+  });
 });
