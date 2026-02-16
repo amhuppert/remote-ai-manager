@@ -22,6 +22,135 @@
 - Adding new design tokens or components not already implemented
 - Building a component library or Storybook
 
+## Design Language Reference
+
+This section captures the design intent, usage contracts, and decision rules that CSS cannot express. It replaces `memory-bank/design-system.md` as the canonical reference for the CSM visual identity.
+
+### Vision: "Ground Control"
+
+The aesthetic is **mission control for code** — a dark, high-density interface that feels like monitoring a fleet of autonomous coding agents from a command center. It is utilitarian but not cold; the electric cyan accents and subtle atmospheric effects (noise grain, scan lines) give it character without sacrificing information density.
+
+Key qualities:
+
+- **Data-dense**: mono-spaced metadata, compact strips, no wasted whitespace
+- **Dark-first**: deep blue-black base, never pure black (#06090f, not #000000)
+- **Glowing accents**: cyan as the dominant accent with colored glow halos — not flat color
+- **Atmospheric texture**: subtle SVG noise overlay + CSS scan-line effect on `body` pseudo-elements; these should be barely perceptible
+- **Restrained motion**: staggered reveals on page load, smooth transitions on interactions, pulsing status dots — never gratuitous animation
+
+### Design Principles
+
+1. **Vertical space is sacred.** The session detail view must maximize content area. Every pixel of chrome must earn its place. Controls live in the topbar or inline panel headers — never in standalone toolbars that consume full rows.
+
+2. **Context-aware topbar.** The topbar right side swaps content based on the current page (controlled by `data-page` attribute on `.app`). Non-detail pages show global status; detail pages show session-specific controls (layout switcher, refresh, delete). The topbar is always the sole persistent navigation surface — never add secondary navigation bars, tab strips, or view switchers below it.
+
+3. **Information hierarchy through typography.** Three fonts, three roles, no exceptions:
+   - **Display** (`Anybody`): page titles, logo, modal titles, empty-state titles only
+   - **Mono** (`Geist Mono`): everything else — buttons, labels, nav, metadata, code, tables, badges, inputs, diffs, breadcrumbs, status indicators, timestamps, counters
+   - **Body** (`Manrope`): conversation message prose content only
+   - Violating these assignments breaks the visual identity.
+
+4. **Progressive density.** Information density increases as the user drills deeper:
+   - **Projects list** — spacious: cards with breathing room, generous padding, grid layout
+   - **Sessions list** — moderate: table rows, compact headers, inline actions
+   - **Session detail** — maximum density: ultra-compact info strip (~28px), full-bleed panels, minimal chrome
+
+5. **No redundant information.** If the breadcrumb shows the session name, no heading repeats it. If status is visible in the topbar, it does not also appear in the panel. Each datum appears once.
+
+6. **Semantic color, not decorative color.** Color conveys meaning:
+   - **Cyan** = active, primary, running, interactive focus
+   - **Green** = ready, success, diff additions
+   - **Amber** = warning, user-authored content
+   - **Red** = danger, error, diff deletions
+   - These meanings are consistent everywhere. Using a color outside its semantic role is a design violation.
+
+7. **Responsive, not stripped down.** Mobile is a first-class experience, not a degraded desktop view. Every feature is accessible on every screen size; nothing is hidden or removed. Desktop uses density and side-by-side panels; mobile uses vertical stacking and panel switching with full-width controls.
+
+### Elevation Model
+
+The five background levels form a visual depth stack. Use the correct level for each context:
+
+| Level | Token | When to use |
+|-------|-------|-------------|
+| Void | `--bg-void` | Page background — the deepest layer, only on `body` |
+| Base | `--bg-base` | Inset/recessed areas — input backgrounds, prompt input area, code block backgrounds |
+| Surface | `--bg-surface` | Default component surfaces — cards, panels, topbar (with alpha), modals |
+| Raised | `--bg-raised` | Elevated elements — tooltips, file headers, branch chips, hover states on base |
+| Hover | `--bg-hover` | Hover states on surface-level elements — card hover, button hover, row hover |
+
+Depth increases from void → hover. Never skip levels (e.g., don't use raised for a card that should be surface).
+
+### Border Intensity Guide
+
+| Level | Token | When to use |
+|-------|-------|-------------|
+| Subtle | `--border-subtle` | Default borders on panels, cards, file sections, info strip separators |
+| Default | `--border-default` | Input borders, table header borders, button borders, topbar divider |
+| Strong | `--border-strong` | Hover/focused borders — appears on interaction, never at rest |
+
+### Glow Effect Semantics
+
+Glow effects (using `box-shadow`, `background` tint, or `text-shadow`) are not decorative — they reinforce semantic color meaning:
+
+- **Cyan glow** (`--cyan-glow`, `--cyan-glow-strong`): Primary action hover/focus, active states, logo text-shadow, running status dot halos
+- **Green glow** (`--green-glow`): Ready/success state dot halos
+- **Amber glow** (`--amber-glow`): Warning banner backgrounds
+- **Red glow** (`--red-glow`): Danger button hover backgrounds
+
+Apply as `box-shadow` on dots/buttons, `background` tint on banners/badges, and `text-shadow` on the logo.
+
+### Typography Patterns Quick Reference
+
+These recipes are the canonical typographic treatments. Use them consistently:
+
+| Pattern | Font | Weight | Size | Extras |
+|---------|------|--------|------|--------|
+| Page title | Display | 800 | 2.4rem | -0.03em tracking, 1.1 line-height |
+| Logo | Display | 800 | 1.1rem | Cyan color, text-shadow glow |
+| Modal title | Display | 700 | 1.2rem | — |
+| Empty-state title | Display | 700 | 1.1rem | Secondary color |
+| Section/panel label | Mono | 600 | 0.72rem | Uppercase, 0.08em tracking |
+| Metadata label (tiny) | Mono | 600 | 0.58–0.65rem | Uppercase, 0.06–0.1em tracking |
+| Button text | Mono | 500 | 0.78rem / 0.72rem (sm) | — |
+| Data values | Mono | 400–600 | varies | — |
+| Conversation prose | Body | 400 | 0.9rem | 1.65 line-height |
+| Inline code | Mono | — | 0.82rem | Raised bg, cyan color, 2px 6px padding |
+| Code blocks | Mono | — | 0.8rem | 1.55 line-height, base bg |
+| Diff content | Mono | — | 0.75rem | 1.7 line-height |
+
+### Navigation Philosophy
+
+The breadcrumb in the topbar is the sole navigation mechanism. No other navigation bars, tab strips, or view switchers exist in the application (the mobile panel tab switcher is a content switcher within a view, not navigation).
+
+Breadcrumb format by depth:
+- Projects: `projects`
+- Sessions: `projects / {project-name}`
+- Detail: `projects / {project-name} / {session-name}`
+
+Each segment is a clickable link. Separator characters (`/`) are in tertiary color. The deepest segment (session name) is visually emphasized (brighter, bolder via `.bc-session`). On mobile, intermediate segments are hidden — only a back-arrow + current segment name is shown.
+
+### Responsive Philosophy
+
+Three tiers, each with a clear role:
+
+- **Desktop (>900px)**: Full experience — side-by-side panels, table layouts, compact controls, hover interactions, tooltip labels, `30px` icon buttons
+- **Tablet (768–900px)**: Transitional — split layouts stack vertically, grids collapse, spacing tightens, but controls remain desktop-sized
+- **Mobile (≤768px)**: Transformed — single panel with tab switcher, bottom action bar, bottom-sheet modals, `44px` touch targets on all interactive elements, prompt input pinned to viewport bottom, session info strip collapses to expandable summary
+
+The mobile experience does not remove features — it repositions and resizes them. Every control, action, and information display available on desktop is also available on mobile through adapted UI patterns.
+
+### Implementation Rules
+
+These rules cannot be expressed in CSS and must be enforced through code review:
+
+1. **Token-only values**: Never hard-code hex colors, pixel sizes, or font-family names in component styles. Always reference `--bg-*`, `--border-*`, `--text-*`, `--space-*`, `--radius-*`, `--font-*` tokens.
+2. **Font variable indirection**: Components reference semantic aliases (`--font-display`, `--font-body`, `--font-mono`). Never reference raw `--font-anybody`, `--font-manrope`, `--font-geist-mono` variables directly.
+3. **Class naming**: All CSS classes use kebab-case BEM-style names (e.g., `project-card-header`, `topbar-breadcrumb`, `diff-file-stat`).
+4. **No secondary navigation**: The topbar + breadcrumb is the only navigation surface. Do not add nav bars, tab strips, or sidebar navigation.
+5. **Layout state via data attributes**: Use `data-page`, `data-layout`, `data-mobile-panel` attributes on parent elements for CSS-driven state switching. Do not use inline styles or conditional class concatenation for layout mode changes.
+6. **Diff collapse state**: Scoped per-session. When file/change navigation buttons target a collapsed section, auto-expand it before scrolling.
+7. **Layout persistence**: Layout switcher selection persists per-session (localStorage or URL param).
+
 ## Architecture
 
 ### Existing Architecture Analysis

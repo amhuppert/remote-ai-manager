@@ -15,6 +15,9 @@
 - Display conversation transcripts and git diffs with flexible layout modes
 - Support responsive design across desktop, tablet, and mobile viewports
 - Show hook installation status with actionable warnings
+- Enable fast project discovery via search and status filtering
+- Allow archiving projects to reduce dashboard clutter
+- Provide extensible context menu for project-level actions
 
 ### Non-Goals
 
@@ -22,6 +25,8 @@
 - Light theme or theme switching
 - Drag-and-drop panel resizing
 - Progressive Web App (PWA) support
+- Full-text search across session transcripts (search is name-only)
+- Server-side filter persistence (search/filter state is ephemeral)
 
 ## Architecture
 
@@ -38,7 +43,8 @@ The dashboard is fully implemented with a clear Server/Client component split:
 
 **Client Components** (interactivity):
 
-- `src/app/projects/ProjectCard.tsx` — Project card with navigation
+- `src/app/projects/ProjectCard.tsx` — Project card with navigation and context menu
+- `src/app/projects/ProjectsGridClient.tsx` — **NEW** Client wrapper managing search, filters, archive toggle
 - `src/app/projects/[name]/SessionsList.tsx` — Sessions table with CRUD
 - `src/app/projects/[name]/CreateSessionModal.tsx` — Session creation form
 - `src/app/projects/[name]/[session]/SessionDetailPage.tsx` — Main session orchestrator
@@ -49,6 +55,7 @@ The dashboard is fully implemented with a clear Server/Client component split:
 
 - `src/components/Topbar.tsx` — Navigation with breadcrumbs
 - `src/components/ConfirmDialog.tsx` — Destructive action confirmation
+- `src/components/CardContextMenu.tsx` — **NEW** Reusable dropdown context menu
 
 Key patterns preserved:
 
@@ -70,6 +77,7 @@ graph TB
     end
 
     subgraph ClientComponents [Client Components]
+        GridClient[ProjectsGridClient]
         ProjectCard[ProjectCard]
         SessionsList[SessionsList]
         CreateModal[CreateSessionModal]
@@ -81,10 +89,12 @@ graph TB
     subgraph Shared [Shared Components]
         Topbar[Topbar]
         ConfirmDialog[ConfirmDialog]
+        ContextMenu[CardContextMenu]
     end
 
     subgraph API [API Routes]
         ProjectsAPI[GET /api/projects]
+        ArchiveAPI[POST/DELETE .../archive]
         SessionsAPI[CRUD /api/projects/name/sessions]
         PromptAPI[POST .../prompt]
         HooksAPI[GET /api/hooks/status]
@@ -101,7 +111,9 @@ graph TB
     end
 
     Home --> Projects
-    Projects --> ProjectCard
+    Projects --> GridClient
+    GridClient --> ProjectCard
+    ProjectCard --> ContextMenu
     Sessions --> SessionsList
     SessionsList --> CreateModal
     Detail --> DetailPage
@@ -114,11 +126,13 @@ graph TB
     SessionsList --> ConfirmDialog
     DetailPage --> ConfirmDialog
 
+    GridClient --> ArchiveAPI
     SessionsList --> SessionsAPI
     CreateModal --> SessionsAPI
     DetailPage --> PromptAPI
 
     Projects --> Discovery
+    Projects --> State
     Projects --> Hooks
     Sessions --> State
     Sessions --> Hooks
@@ -199,6 +213,28 @@ sequenceDiagram
     Detail->>Detail: router.refresh() → re-fetch transcript/diff
 ```
 
+### Project Archive Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Grid as ProjectsGridClient
+    participant Menu as CardContextMenu
+    participant API as POST /api/projects/name/archive
+    participant State as state.ts
+
+    User->>Menu: Click three-dot menu
+    Menu->>Menu: Open dropdown
+    User->>Menu: Click "Archive Project"
+    Menu->>Grid: onArchive(projectPath)
+    Grid->>API: POST { archived: true }
+    API->>State: addArchivedProject(path)
+    State-->>API: Updated state
+    API-->>Grid: 200 success
+    Grid->>Grid: router.refresh() re-fetches projects
+    Grid->>Grid: Card hidden (archive toggle off)
+```
+
 ## Requirements Traceability
 
 | Requirement | Summary                               | Components         | Interfaces     | Flows      |
@@ -247,32 +283,111 @@ sequenceDiagram
 | 8.1         | Projects page hook warning            | ProjectsPage       | React          | Hooks      |
 | 8.2         | Sessions page hook warning            | SessionsPage       | React          | Hooks      |
 | 8.3         | Hook status indicator in Topbar       | Topbar             | React          | Hooks      |
+| 9.1         | Search input above grid               | ProjectsGridClient | React          | Filter     |
+| 9.2         | Filter by name (case-insensitive)     | ProjectsGridClient | React          | Filter     |
+| 9.3         | Real-time filtering on input          | ProjectsGridClient | React          | Filter     |
+| 9.4         | Clear button resets search            | ProjectsGridClient | React          | Filter     |
+| 9.5         | No-results empty state                | ProjectsGridClient | React          | Filter     |
+| 9.6         | Combined filter logic                 | ProjectsGridClient | React          | Filter     |
+| 10.1        | Status filter controls                | ProjectsGridClient | React          | Filter     |
+| 10.2        | All / Active / Idle options           | ProjectsGridClient | React          | Filter     |
+| 10.3        | Filter by selected status             | ProjectsGridClient | React          | Filter     |
+| 10.4        | Filter counts per option              | ProjectsGridClient | React          | Filter     |
+| 10.5        | Update counts on archive change       | ProjectsGridClient | React          | Filter     |
+| 10.6        | "All" selected by default             | ProjectsGridClient | React          | Filter     |
+| 10.7        | Combined filter logic                 | ProjectsGridClient | React          | Filter     |
+| 11.1        | Archive action in context menu        | ProjectCard, CardContextMenu | React | Archive |
+| 11.2        | Hide archived from default view       | ProjectsGridClient | React          | Archive    |
+| 11.3        | Persist archive state (server)        | ArchiveAPI, state.ts | API          | Archive    |
+| 11.4        | Archived toggle with count            | ProjectsGridClient | React          | Archive    |
+| 11.5        | Show archived when toggle enabled     | ProjectsGridClient | React          | Archive    |
+| 11.6        | Archived cards visually distinct      | ProjectCard        | CSS            | Archive    |
+| 11.7        | Unarchive action in context menu      | ProjectCard, CardContextMenu | React | Archive |
+| 11.8        | Restore unarchived to default view    | ProjectsGridClient | React          | Archive    |
+| 11.9        | Archive does not affect data          | state.ts           | —              | Archive    |
+| 12.1        | Three-dot menu trigger                | ProjectCard, CardContextMenu | React | Menu    |
+| 12.2        | Visible on hover and when open        | CardContextMenu    | CSS            | Menu       |
+| 12.3        | Dropdown with available actions       | CardContextMenu    | React          | Menu       |
+| 12.4        | Close on outside click / Escape       | CardContextMenu    | React          | Menu       |
+| 12.5        | Single menu open at a time            | ProjectsGridClient | React          | Menu       |
+| 12.6        | Execute action and close              | CardContextMenu    | React          | Menu       |
 
 ## Components and Interfaces
 
-| Component          | Domain/Layer    | Intent                              | Req Coverage              | Key Dependencies                 | Contracts |
-| ------------------ | --------------- | ----------------------------------- | ------------------------- | -------------------------------- | --------- |
-| ProjectsPage       | SSR / page      | Discover and list projects          | 1.1–1.6, 8.1              | discovery.ts, hooks.ts           | —         |
-| ProjectCard        | UI / client     | Render project with navigation      | 1.2–1.4                   | None (props-driven)              | —         |
-| SessionsPage       | SSR / page      | Load and list sessions              | 2.1, 8.2                  | state.ts, hooks.ts               | —         |
-| SessionsList       | UI / client     | Sessions table with CRUD            | 2.1–2.9                   | API routes                       | —         |
-| CreateSessionModal | UI / client     | Session creation form               | 2.2–2.3, 2.5              | API routes                       | —         |
-| SessionPage        | SSR / page      | Load session data for detail view   | 3.1–3.3                   | state.ts, diff.ts, transcript.ts | —         |
-| SessionDetailPage  | UI / client     | Orchestrate session detail panels   | 3.1–3.6, 4.2–4.3, 6.2–6.3 | DiffPanel, LayoutSwitcher        | —         |
-| DiffPanel          | UI / client     | Render interactive git diff         | 3.3                       | None (props-driven)              | —         |
-| LayoutSwitcher     | UI / client     | Layout mode selection               | 4.1, 4.4                  | None (props-driven)              | —         |
-| Topbar             | Shared / client | Navigation breadcrumbs and controls | 5.1–5.5, 6.1              | None (props-driven)              | —         |
-| ConfirmDialog      | Shared / client | Destructive action confirmation     | 7.1–7.4                   | None (props-driven)              | —         |
+| Component          | Domain/Layer    | Intent                                  | Req Coverage                       | Key Dependencies                 | Contracts |
+| ------------------ | --------------- | --------------------------------------- | ---------------------------------- | -------------------------------- | --------- |
+| ProjectsPage       | SSR / page      | Discover and list projects              | 1.1–1.6, 8.1                       | discovery.ts, hooks.ts, state.ts | —         |
+| ProjectsGridClient | UI / client     | Search, filter, archive toggle for grid | 9.1–9.6, 10.1–10.7, 11.2–11.5, 12.5 | ProjectCard, ArchiveAPI       | State     |
+| ProjectCard        | UI / client     | Render project with context menu        | 1.2–1.4, 11.1, 11.6–11.7, 12.1    | CardContextMenu                  | —         |
+| CardContextMenu    | Shared / client | Reusable dropdown context menu          | 12.1–12.4, 12.6                    | None (props-driven)              | —         |
+| SessionsPage       | SSR / page      | Load and list sessions                  | 2.1, 8.2                           | state.ts, hooks.ts               | —         |
+| SessionsList       | UI / client     | Sessions table with CRUD                | 2.1–2.9                            | API routes                       | —         |
+| CreateSessionModal | UI / client     | Session creation form                   | 2.2–2.3, 2.5                       | API routes                       | —         |
+| SessionPage        | SSR / page      | Load session data for detail view       | 3.1–3.3                            | state.ts, diff.ts, transcript.ts | —         |
+| SessionDetailPage  | UI / client     | Orchestrate session detail panels       | 3.1–3.6, 4.2–4.3, 6.2–6.3          | DiffPanel, LayoutSwitcher        | —         |
+| DiffPanel          | UI / client     | Render interactive git diff             | 3.3                                | None (props-driven)              | —         |
+| LayoutSwitcher     | UI / client     | Layout mode selection                   | 4.1, 4.4                           | None (props-driven)              | —         |
+| Topbar             | Shared / client | Navigation breadcrumbs and controls     | 5.1–5.5, 6.1                       | None (props-driven)              | —         |
+| ConfirmDialog      | Shared / client | Destructive action confirmation         | 7.1–7.4                            | None (props-driven)              | —         |
 
 ### Component Interfaces
+
+#### ProjectsGridClient
+
+| Field | Detail |
+|-------|--------|
+| Intent | Manage search, status filtering, archive visibility, and render filtered project cards |
+| Requirements | 9.1–9.6, 10.1–10.7, 11.2–11.5, 12.5 |
+
+**Responsibilities & Constraints**
+- Receives full project list (including archived flag) from server via props
+- Manages search query, active status filter, and archive toggle as local React state
+- Computes filtered project list by combining all three filter dimensions
+- Computes per-filter counts from the unfiltered project list (excluding archived from counts)
+- Enforces single-menu-open-at-a-time constraint (12.5) via `openMenuId` state
+- Calls archive API on archive/unarchive actions, then triggers `router.refresh()`
+
+**Dependencies**
+- Inbound: ProjectsPage — provides `projects` and `archivedPaths` props (P0)
+- Outbound: ProjectCard — renders each filtered project (P0)
+- Outbound: Archive API — POST/DELETE for archive mutations (P1)
+
+**Contracts**: State [x]
+
+##### State Management
+- `searchQuery: string` — current search input value
+- `statusFilter: "all" | "active" | "idle"` — selected filter pill
+- `showArchived: boolean` — archive toggle state
+- `openMenuId: string | null` — project path of the currently open context menu
+
+```typescript
+interface ProjectsGridClientProps {
+  projects: DiscoveredProject[];
+  archivedPaths: Set<string>;
+}
+```
+
+**Implementation Notes**
+- Filter logic: `project.name.toLowerCase().includes(query)` AND status match AND archive visibility
+- Counts exclude archived projects: `countActive` = non-archived with `hasRunningSession`, `countIdle` = non-archived without
+- `router.refresh()` after archive API call re-fetches server data with updated archive state
 
 #### ProjectCard
 
 ```typescript
 interface ProjectCardProps {
   project: DiscoveredProject;
+  archived: boolean;
+  menuOpen: boolean;
+  onMenuToggle: () => void;
+  onArchive: (projectPath: string) => void;
 }
 ```
+
+**Implementation Notes**
+- When `archived` is true: render with reduced opacity, dashed border, "archived" badge
+- Context menu trigger uses `event.stopPropagation()` to prevent `<Link>` navigation
+- Menu items array is built dynamically: "Archive Project" or "Unarchive Project" based on `archived` prop
 
 #### SessionsList
 
@@ -340,25 +455,105 @@ interface ConfirmDialogProps {
 }
 ```
 
+#### CardContextMenu
+
+| Field | Detail |
+|-------|--------|
+| Intent | Reusable three-dot dropdown menu for card-level actions |
+| Requirements | 12.1–12.4, 12.6 |
+
+**Responsibilities & Constraints**
+- Renders a three-dot trigger button and a positioned dropdown
+- Dropdown opens/closes based on `open` prop (controlled component)
+- Closes on click-outside and Escape key via `useEffect` event listeners
+- All click handlers call `event.stopPropagation()` to prevent parent Link navigation
+
+**Dependencies**
+- Inbound: ProjectCard (or any card component) — passes `items` and `open`/`onToggle` (P0)
+- External: None
+
+**Contracts**: Service [x]
+
+##### Service Interface
+
+```typescript
+interface ContextMenuItem {
+  label: string;
+  icon?: string;
+  danger?: boolean;
+  onAction: () => void;
+}
+
+interface CardContextMenuProps {
+  items: ContextMenuItem[];
+  open: boolean;
+  onToggle: () => void;
+}
+```
+
+- Preconditions: `items` array has at least one entry
+- Postconditions: `onToggle` called when trigger clicked; `onAction` called when item clicked, menu closes
+- Invariants: Only renders dropdown when `open` is true
+
+**Implementation Notes**
+- Trigger: vertical ellipsis character (`⋮`) in a 24x24px button
+- Dropdown: positioned `absolute`, anchored to top-right of trigger, min-width 180px
+- CSS animation: fade + slight scale on open (0.12s ease)
+- Escape key listener attached only while `open` is true
+
 ## Data Models
 
-All data models are defined in `src/types/index.ts` and `src/lib/schemas.ts`. The dashboard consumes these types — it does not define new data models. Key types used:
+Existing types consumed by the dashboard (defined in `src/types/index.ts` and `src/lib/schemas.ts`):
 
-- `DiscoveredProject` — project list items
+- `DiscoveredProject` — project list items (name, path, activeSessions, hasRunningSession)
 - `SessionState` — session metadata and status
 - `TranscriptMessage` — parsed conversation messages
 - `SessionDiff` — structured git diff data
 - `LayoutMode` — `"conversation" | "default" | "split" | "diff"`
 - `RunPromptResponse` — prompt execution result
 
+### New Data Model Changes (Req 11)
+
+**ManagerState extension** — Add `archivedProjects` field:
+
+```typescript
+// In src/lib/schemas.ts — extend managerStateSchema
+const managerStateSchema = z.object({
+  projects: z.record(z.string(), projectStateSchema),
+  archivedProjects: z.array(z.string()).default([]),  // NEW: absolute paths
+});
+```
+
+**Domain module extension** — Add archive helpers in `src/lib/state.ts`:
+
+```typescript
+function getArchivedProjects(): Promise<Set<string>>;
+function setProjectArchived(projectPath: string, archived: boolean): Promise<void>;
+```
+
+- `getArchivedProjects` reads `state.archivedProjects` and returns as `Set<string>`
+- `setProjectArchived` adds/removes the path from the array and writes state atomically
+
+### API Contract (Req 11.3)
+
+| Method | Endpoint                           | Request                    | Response         | Errors   |
+|--------|------------------------------------|----------------------------|------------------|----------|
+| POST   | `/api/projects/[name]/archive`     | `{ archived: boolean }`    | `{ ok: true }`   | 404, 500 |
+
+- POST with `archived: true` archives the project; `archived: false` unarchives
+- Resolves project name to absolute path via `discoverProjects()` lookup
+- Returns 404 if project name does not match any discovered project
+
 ## Error Handling
 
 ### Error Strategy
 
 - **API errors**: Client components handle fetch errors with inline error messages (e.g., CreateSessionModal shows validation errors)
+- **Archive API errors**: If archive POST fails, `ProjectsGridClient` displays a transient inline error. The UI state does not change on failure (optimistic updates are not used).
 - **No error boundaries**: No `error.tsx` files exist. Next.js default error handling is used. Acceptable for a local developer tool.
 - **No loading states**: No `loading.tsx` files exist. Server Components render synchronously.
 - **Confirmation dialogs**: Prevent accidental destructive actions (session deletion)
+- **Stale archive paths**: If an archived project path no longer matches a discovered project, the path is silently ignored during filtering. No cleanup is performed automatically.
 
 ## Testing Strategy
 
@@ -368,5 +563,16 @@ No UI-level tests exist currently. The dashboard is the largest untested surface
 
 - **Client components** are testable in isolation with props-based rendering
 - **Server components** are harder to test directly (require mocking domain modules)
-- **Shared components** (Topbar, ConfirmDialog) have the highest reuse and are good candidates for unit tests
+- **Shared components** (Topbar, ConfirmDialog, CardContextMenu) have the highest reuse and are good candidates for unit tests
 - **User interaction flows** (create session, delete session, send prompt) are candidates for integration tests
+
+### New Feature Testing Focus
+
+- **Unit Tests**:
+  - `state.ts`: `getArchivedProjects`, `setProjectArchived` — verify add/remove/persist behavior
+  - Filter logic in `ProjectsGridClient`: combined search + status + archive filtering
+  - `CardContextMenu`: open/close, Escape key, click-outside dismissal
+
+- **Integration Tests**:
+  - Archive API route: POST with `archived: true/false`, 404 for unknown project
+  - `ProjectsPage` → `ProjectsGridClient` → `ProjectCard` data flow with archived projects

@@ -80,11 +80,78 @@
 - **Selected Approach**: No global state — data flows from server via props, local state in client components
 - **Rationale**: The app has minimal cross-component state needs. Layout mode is per-session (localStorage). Session list and detail pages fetch fresh data on navigation. No real-time updates require shared state.
 
+### Project Archive State Persistence (Req 11)
+
+- **Context**: Projects are discovered via filesystem scan. `DiscoveredProject` is a plain interface with no `archived` field. Sessions already have `archived: boolean` in `SessionState`. Where should project-level archive state live?
+- **Sources Consulted**: `src/lib/state.ts`, `src/lib/discovery.ts`, `src/lib/schemas.ts`, `src/types/index.ts`
+- **Findings**:
+  - `ManagerState.projects` is keyed by absolute path, but only contains projects that have had sessions created
+  - Projects without sessions have no entry in state — they're ephemeral filesystem scan results
+  - `SessionState.archived` already exists and works by excluding from `activeSessions` count
+  - State is persisted via atomic JSON writes to `~/.config/csm/state.json`
+- **Implications**: Need a top-level `archivedProjects` array in `ManagerState` to store project paths, since project entries may not exist in `projects` map. This avoids creating empty project entries just to hold an archive flag.
+
+### Client-Side Filtering Architecture (Req 9, 10)
+
+- **Context**: Search and status filters operate on the project list. Currently `ProjectsPage` is a Server Component that renders all projects.
+- **Findings**:
+  - Server Component cannot hold interactive state (search query, active filter)
+  - Need a Client Component wrapper between `ProjectsPage` and the cards grid
+  - All projects (including archived) must be passed to the client to enable archive toggle without server round-trip
+  - `discoverProjects()` currently excludes archived sessions from counts but returns all discovered repos
+- **Implications**: Introduce a `ProjectsGridClient` wrapper that receives all projects + archived set as props, manages search/filter state locally, and renders filtered `ProjectCard` components.
+
+### Context Menu Pattern (Req 12)
+
+- **Context**: Project cards need an extensible action menu. Currently `ProjectCard` is a simple `<Link>` wrapper with no interactivity beyond navigation.
+- **Findings**:
+  - `ProjectCard` is wrapped in `<Link>` — context menu clicks must call `event.preventDefault()` / `event.stopPropagation()` to avoid navigation
+  - Existing button patterns: `btn-icon-only` (30x24px) for topbar, `btn-danger btn-sm` for session delete
+  - No existing dropdown/popover component in the codebase
+  - Menu needs to be positioned relative to the trigger, anchored right to avoid overflow
+- **Implications**: New `CardContextMenu` component needed. Must handle: open/close state, click-outside dismissal, Escape key, single-open-at-a-time constraint, and event propagation (parent Link navigation).
+
+## Design Decisions
+
+### Decision: Top-Level archivedProjects Array
+
+- **Context**: Where to persist project archive state
+- **Alternatives Considered**:
+  1. Add `archived` flag to `ProjectState` in `ManagerState.projects[path]` — requires creating entries for projects without sessions
+  2. Add `archivedProjects: string[]` at top level of `ManagerState` — clean, no empty entries
+  3. Separate preferences file — overengineered for a single boolean per project
+- **Selected Approach**: Option 2 — `archivedProjects` string array at top level of `ManagerState`
+- **Rationale**: Simplest approach. Avoids creating empty project entries. Array of absolute paths is unambiguous. Backward compatible (new field, optional).
+- **Trade-offs**: Separate from session data structure; paths must be kept consistent with filesystem scan results.
+
+### Decision: Client-Side Filtering with Server Data
+
+- **Context**: How search and status filters apply to the project list
+- **Alternatives Considered**:
+  1. URL query params with server-side filtering — requires full page re-render per keystroke
+  2. Client component wrapper with local state — instant filtering, no server round-trip
+  3. API endpoint for filtered results — overengineered for small dataset
+- **Selected Approach**: Option 2 — Client component wrapper manages filter state, receives full project list from server
+- **Rationale**: Project lists are small (tens, not thousands). Client-side filtering provides instant feedback. Search query and filter selection are ephemeral UI state, not worth persisting to URL/server.
+- **Trade-offs**: All projects loaded on initial render regardless of filters. Acceptable for the expected scale.
+
+### Decision: Composable Context Menu Component
+
+- **Context**: How to implement the extensible action menu on project cards
+- **Alternatives Considered**:
+  1. Inline dropdown in each `ProjectCard` — duplicates logic, not reusable
+  2. Separate `CardContextMenu` component accepting `items` prop — reusable, testable
+  3. Headless UI library (Radix, etc.) — adds dependency, overengineered
+- **Selected Approach**: Option 2 — `CardContextMenu` with typed `items` array prop
+- **Rationale**: Keeps `ProjectCard` focused on presentation. Menu items can be composed by the parent. No new dependencies.
+
 ## Risks & Mitigations
 
 - **No loading states** — No `loading.tsx` or `error.tsx` files exist. Next.js default handling is used. This is acceptable for a local-first tool but could be improved.
 - **Manual refresh** — Session status doesn't auto-update. Users must refresh the page. Acceptable for MVP.
 - **No error boundaries** — Component errors could crash the page. Low risk for a developer tool with trusted data.
+- **Link + context menu conflict** — `ProjectCard` wraps in `<Link>`. Menu button clicks must stop propagation. Mitigated by `event.stopPropagation()` on the menu trigger and all menu items.
+- **Archive data consistency** — If a project directory is renamed/moved, archived path becomes stale. Mitigated by checking archived paths against current discovery results during render.
 
 ## References
 
