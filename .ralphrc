@@ -3,8 +3,8 @@
 # Documentation: https://github.com/frankbria/ralph-claude-code
 
 # Project identification
-PROJECT_NAME="remote-ai-manager"
-PROJECT_TYPE="nextjs-webapp"
+PROJECT_NAME="e2e-debugging-instrumentation"
+PROJECT_TYPE="typescript"
 
 # Loop settings
 MAX_CALLS_PER_HOUR=100

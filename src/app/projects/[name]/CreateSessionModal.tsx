@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { tracedFetch } from "@/lib/traced-fetch";
 
 interface CreateSessionModalProps {
   projectName: string;
@@ -55,8 +56,9 @@ export default function CreateSessionModal({
     setCreating(true);
 
     try {
-      const res = await fetch(
+      const res = await tracedFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions`,
+        "create-session",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

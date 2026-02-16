@@ -62,7 +62,11 @@ describe("CardContextMenu", () => {
   it("stops propagation on trigger click", () => {
     const onToggle = vi.fn();
     const { container } = render(
-      <div onClick={() => { throw new Error("Should not propagate"); }}>
+      <div
+        onClick={() => {
+          throw new Error("Should not propagate");
+        }}
+      >
         <CardContextMenu items={baseItems} open={false} onToggle={onToggle} />
       </div>,
     );
@@ -76,7 +80,11 @@ describe("CardContextMenu", () => {
     const actionFn = vi.fn();
     const items = [{ label: "Action", onAction: actionFn }];
     const { container } = render(
-      <div onClick={() => { throw new Error("Should not propagate"); }}>
+      <div
+        onClick={() => {
+          throw new Error("Should not propagate");
+        }}
+      >
         <CardContextMenu items={items} open={true} onToggle={vi.fn()} />
       </div>,
     );

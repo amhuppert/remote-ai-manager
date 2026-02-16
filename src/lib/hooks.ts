@@ -6,6 +6,9 @@ import { z } from "zod";
 import { readState, writeState } from "./state";
 import type { HookEventData } from "./schemas";
 import type { ManagerState, SessionState } from "@/types";
+import { createLogger } from "./logging";
+
+const logger = createLogger("hooks");
 
 /** Find the session whose worktreePath matches the given cwd */
 function findSessionByCwd(
@@ -31,7 +34,13 @@ function findSessionByCwd(
  * Returns true if a matching session was found and updated.
  */
 export async function processHookEvent(data: HookEventData): Promise<boolean> {
-  const { session_id, transcript_path, cwd } = data;
+  const { session_id, transcript_path, cwd, hook_event_name } = data;
+
+  logger.info("hook.event_received", {
+    eventType: hook_event_name,
+    sessionId: session_id,
+    timestamp: new Date().toISOString(),
+  });
 
   // cwd is required to match against managed sessions
   if (!cwd) return false;
@@ -39,7 +48,13 @@ export async function processHookEvent(data: HookEventData): Promise<boolean> {
   const state = await readState();
   const session = findSessionByCwd(state, cwd);
 
-  if (!session) return false;
+  if (!session) {
+    logger.warn("hook.unknown_session", {
+      cwd,
+      eventType: hook_event_name,
+    });
+    return false;
+  }
 
   if (session_id) session.claudeSessionId = session_id;
   if (transcript_path) session.transcriptPath = transcript_path;

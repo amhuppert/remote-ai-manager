@@ -85,14 +85,9 @@ export default function ProjectsGridClient({
     [archivedSet, router],
   );
 
-  const handleMenuToggle = useCallback(
-    (projectPath: string) => {
-      setOpenMenuId((current) =>
-        current === projectPath ? null : projectPath,
-      );
-    },
-    [],
-  );
+  const handleMenuToggle = useCallback((projectPath: string) => {
+    setOpenMenuId((current) => (current === projectPath ? null : projectPath));
+  }, []);
 
   return (
     <>

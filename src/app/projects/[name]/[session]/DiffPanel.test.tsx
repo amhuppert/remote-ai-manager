@@ -85,11 +85,11 @@ describe("DiffPanel", () => {
 
   it("renders diff lines with correct type classes (Req 5.3)", () => {
     const { container } = render(<DiffPanel diff={sampleDiff} />);
-    const additions = container.querySelectorAll(".diff-line.addition");
-    const deletions = container.querySelectorAll(".diff-line.deletion");
+    const additions = container.querySelectorAll(".diff-line.add");
+    const deletions = container.querySelectorAll(".diff-line.remove");
     const hunkHeaders = container.querySelectorAll(".diff-line.hunk-header");
-    expect(additions.length).toBe(2); // "+const x = 1" and "+# README"
-    expect(deletions.length).toBe(1); // "-const y = 2"
+    expect(additions.length).toBe(2); // "+const x = 1" and "+# README" (type: "add")
+    expect(deletions.length).toBe(1); // "-const y = 2" (type: "remove")
     expect(hunkHeaders.length).toBe(2); // Two hunk headers
   });
 

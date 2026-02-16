@@ -15,9 +15,22 @@ vi.mock("@/lib/hooks", () => ({
   detectHooksStatus: detectHooksStatusMock,
 }));
 
+// Mock logging to avoid file I/O during tests
+vi.mock("@/lib/logging", () => ({
+  withTracing: (handler: Function) => handler,
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const emptyContext = { params: Promise.resolve({}) };
 
 function makePostRequest(body: unknown): NextRequest {
   return new Request("http://localhost/api/hooks", {
@@ -55,6 +68,7 @@ describe("POST /api/hooks", () => {
         cwd: "/project/.worktrees/test",
         session_id: "abc",
       }),
+      emptyContext,
     );
 
     expect(response.status).toBe(200);
@@ -65,7 +79,10 @@ describe("POST /api/hooks", () => {
   it("returns 200 with { matched: false } when no match (Req 1.3)", async () => {
     processHookEventMock.mockResolvedValue(false);
     const { POST } = await import("@/app/api/hooks/route");
-    const response = await POST(makePostRequest({ cwd: "/unknown/path" }));
+    const response = await POST(
+      makePostRequest({ cwd: "/unknown/path" }),
+      emptyContext,
+    );
 
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -79,7 +96,7 @@ describe("POST /api/hooks", () => {
       headers: { "Content-Type": "application/json" },
       body: "not valid json",
     }) as unknown as NextRequest;
-    const response = await POST(badRequest);
+    const response = await POST(badRequest, emptyContext);
 
     expect(response.status).toBe(400);
     const body = await response.json();
@@ -95,7 +112,10 @@ describe("GET /api/hooks/status", () => {
       hasStop: true,
     });
     const { GET } = await import("@/app/api/hooks/status/route");
-    const response = await GET();
+    const response = await GET(
+      new Request("http://localhost/api/hooks/status"),
+      emptyContext,
+    );
 
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -111,7 +131,10 @@ describe("GET /api/hooks/status", () => {
       hasStop: false,
     });
     const { GET } = await import("@/app/api/hooks/status/route");
-    const response = await GET();
+    const response = await GET(
+      new Request("http://localhost/api/hooks/status"),
+      emptyContext,
+    );
 
     expect(response.status).toBe(200);
     const body = await response.json();

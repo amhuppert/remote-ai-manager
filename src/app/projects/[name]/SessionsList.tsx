@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { SessionState } from "@/types";
 import CreateSessionModal from "./CreateSessionModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { tracedFetch } from "@/lib/traced-fetch";
 
 interface SessionsListProps {
   projectName: string;
@@ -48,8 +49,9 @@ export default function SessionsList({
   const handleDelete = useCallback(
     async (sessionName: string) => {
       try {
-        const res = await fetch(
+        const res = await tracedFetch(
           `/api/projects/${encodeURIComponent(projectName)}/sessions?sessionName=${encodeURIComponent(sessionName)}`,
+          "delete-session",
           { method: "DELETE" },
         );
         if (res.ok) {

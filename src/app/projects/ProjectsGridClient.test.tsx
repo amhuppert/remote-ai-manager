@@ -65,9 +65,7 @@ beforeEach(() => {
 
 describe("ProjectsGridClient", () => {
   it("renders all non-archived projects by default", () => {
-    render(
-      <ProjectsGridClient projects={projects} archivedPaths={[]} />,
-    );
+    render(<ProjectsGridClient projects={projects} archivedPaths={[]} />);
     expect(screen.getByText("alpha")).toBeDefined();
     expect(screen.getByText("beta")).toBeDefined();
     expect(screen.getByText("gamma")).toBeDefined();
@@ -75,9 +73,7 @@ describe("ProjectsGridClient", () => {
   });
 
   it("search filters projects by name case-insensitively (Req 9.2)", () => {
-    render(
-      <ProjectsGridClient projects={projects} archivedPaths={[]} />,
-    );
+    render(<ProjectsGridClient projects={projects} archivedPaths={[]} />);
     const input = screen.getByPlaceholderText("Search projects...");
     fireEvent.change(input, { target: { value: "alph" } });
 
@@ -87,9 +83,7 @@ describe("ProjectsGridClient", () => {
   });
 
   it("search is case-insensitive", () => {
-    render(
-      <ProjectsGridClient projects={projects} archivedPaths={[]} />,
-    );
+    render(<ProjectsGridClient projects={projects} archivedPaths={[]} />);
     const input = screen.getByPlaceholderText("Search projects...");
     fireEvent.change(input, { target: { value: "BETA" } });
 
@@ -98,9 +92,7 @@ describe("ProjectsGridClient", () => {
   });
 
   it("shows no-results state when nothing matches (Req 9.5)", () => {
-    render(
-      <ProjectsGridClient projects={projects} archivedPaths={[]} />,
-    );
+    render(<ProjectsGridClient projects={projects} archivedPaths={[]} />);
     const input = screen.getByPlaceholderText("Search projects...");
     fireEvent.change(input, { target: { value: "nonexistent" } });
 

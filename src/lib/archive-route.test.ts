@@ -29,9 +29,7 @@ describe("POST /api/projects/[name]/archive", () => {
     vi.mocked(resolveProjectPath).mockResolvedValue("/home/projects/test-proj");
     vi.mocked(setProjectArchived).mockResolvedValue(undefined);
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/archive/route"
-    );
+    const { POST } = await import("@/app/api/projects/[name]/archive/route");
     const response = await POST(makeRequest({ archived: true }), {
       params: Promise.resolve({ name: "test-proj" }),
     });
@@ -50,9 +48,7 @@ describe("POST /api/projects/[name]/archive", () => {
     vi.mocked(resolveProjectPath).mockResolvedValue("/home/projects/test-proj");
     vi.mocked(setProjectArchived).mockResolvedValue(undefined);
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/archive/route"
-    );
+    const { POST } = await import("@/app/api/projects/[name]/archive/route");
     const response = await POST(makeRequest({ archived: false }), {
       params: Promise.resolve({ name: "test-proj" }),
     });
@@ -68,9 +64,7 @@ describe("POST /api/projects/[name]/archive", () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
     vi.mocked(resolveProjectPath).mockResolvedValue(null);
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/archive/route"
-    );
+    const { POST } = await import("@/app/api/projects/[name]/archive/route");
     const response = await POST(makeRequest({ archived: true }), {
       params: Promise.resolve({ name: "nonexistent" }),
     });
@@ -84,9 +78,7 @@ describe("POST /api/projects/[name]/archive", () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
     vi.mocked(resolveProjectPath).mockResolvedValue("/home/projects/test-proj");
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/archive/route"
-    );
+    const { POST } = await import("@/app/api/projects/[name]/archive/route");
     const response = await POST(makeRequest({ invalid: "data" }), {
       params: Promise.resolve({ name: "test-proj" }),
     });

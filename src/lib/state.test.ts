@@ -186,8 +186,7 @@ describe("archive helpers", () => {
   });
 
   it("setProjectArchived adds a project path to the archive set", async () => {
-    const { setProjectArchived, getArchivedProjects } =
-      await import("./state");
+    const { setProjectArchived, getArchivedProjects } = await import("./state");
 
     await setProjectArchived("/some/project", true);
 

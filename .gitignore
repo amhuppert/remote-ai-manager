@@ -30,5 +30,7 @@ bun.lock
 .voice-last.json
 PROMPT.md
 
+.cursor/ralph-scripts/
 .ralph/**
 !.ralph/AGENT.md
+RALPH_TASK.md
