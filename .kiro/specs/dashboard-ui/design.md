@@ -17,6 +17,7 @@
 - Show hook installation status with actionable warnings
 - Enable fast project discovery via search and status filtering
 - Allow archiving projects to reduce dashboard clutter
+- Allow pinning important projects for persistent quick access
 - Provide extensible context menu for project-level actions
 
 ### Non-Goals
@@ -27,6 +28,7 @@
 - Progressive Web App (PWA) support
 - Full-text search across session transcripts (search is name-only)
 - Server-side filter persistence (search/filter state is ephemeral)
+- Drag-and-drop reordering of pinned projects (pinned order follows discovery sort)
 
 ## Architecture
 
@@ -94,7 +96,8 @@ graph TB
 
     subgraph API [API Routes]
         ProjectsAPI[GET /api/projects]
-        ArchiveAPI[POST/DELETE .../archive]
+        ArchiveAPI[POST .../archive]
+        PinAPI[POST .../pin]
         SessionsAPI[CRUD /api/projects/name/sessions]
         PromptAPI[POST .../prompt]
         HooksAPI[GET /api/hooks/status]
@@ -127,6 +130,7 @@ graph TB
     DetailPage --> ConfirmDialog
 
     GridClient --> ArchiveAPI
+    GridClient --> PinAPI
     SessionsList --> SessionsAPI
     CreateModal --> SessionsAPI
     DetailPage --> PromptAPI
@@ -235,6 +239,28 @@ sequenceDiagram
     Grid->>Grid: Card hidden (archive toggle off)
 ```
 
+### Project Pin Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Grid as ProjectsGridClient
+    participant Menu as CardContextMenu
+    participant API as POST /api/projects/name/pin
+    participant State as state.ts
+
+    User->>Menu: Click three-dot menu
+    Menu->>Menu: Open dropdown
+    User->>Menu: Click "Pin Project"
+    Menu->>Grid: onPin(projectPath)
+    Grid->>API: POST { pinned: true }
+    API->>State: setProjectPinned(path, true)
+    State-->>API: Updated state
+    API-->>Grid: 200 success
+    Grid->>Grid: router.refresh() re-fetches projects
+    Grid->>Grid: Project moves to Pinned section
+```
+
 ## Requirements Traceability
 
 | Requirement | Summary                               | Components         | Interfaces     | Flows      |
@@ -311,14 +337,27 @@ sequenceDiagram
 | 12.4        | Close on outside click / Escape       | CardContextMenu    | React          | Menu       |
 | 12.5        | Single menu open at a time            | ProjectsGridClient | React          | Menu       |
 | 12.6        | Execute action and close              | CardContextMenu    | React          | Menu       |
+| 13.1        | Pin action in context menu            | ProjectCard        | React          | Pin        |
+| 13.2        | Mark as pinned, move to section       | ProjectsGridClient | API, React     | Pin        |
+| 13.3        | Persist pinned state (server)         | PinAPI, state.ts   | API            | Pin        |
+| 13.4        | Unpin action in context menu          | ProjectCard        | React          | Pin        |
+| 13.5        | Remove from Pinned section            | ProjectsGridClient | API, React     | Pin        |
+| 13.6        | Pin does not affect data              | state.ts           | —              | Pin        |
+| 14.1        | Pinned section when projects pinned   | ProjectsGridClient | React          | Pin        |
+| 14.2        | Pinned section grid of cards          | ProjectsGridClient | React          | Pin        |
+| 14.3        | Section header label                  | ProjectsGridClient | React/CSS      | Pin        |
+| 14.4        | Section visible regardless of filters | ProjectsGridClient | React          | Pin        |
+| 14.5        | No duplication in main grid           | ProjectsGridClient | React          | Pin        |
+| 14.6        | No section when nothing pinned        | ProjectsGridClient | React          | Pin        |
+| 14.7        | No section when all pinned archived   | ProjectsGridClient | React          | Pin        |
 
 ## Components and Interfaces
 
 | Component          | Domain/Layer    | Intent                                  | Req Coverage                       | Key Dependencies                 | Contracts |
 | ------------------ | --------------- | --------------------------------------- | ---------------------------------- | -------------------------------- | --------- |
 | ProjectsPage       | SSR / page      | Discover and list projects              | 1.1–1.6, 8.1                       | discovery.ts, hooks.ts, state.ts | —         |
-| ProjectsGridClient | UI / client     | Search, filter, archive toggle for grid | 9.1–9.6, 10.1–10.7, 11.2–11.5, 12.5 | ProjectCard, ArchiveAPI       | State     |
-| ProjectCard        | UI / client     | Render project with context menu        | 1.2–1.4, 11.1, 11.6–11.7, 12.1    | CardContextMenu                  | —         |
+| ProjectsGridClient | UI / client     | Search, filter, archive toggle, pinned section for grid | 9.1–9.6, 10.1–10.7, 11.2–11.5, 12.5, 13.2, 13.5, 14.1–14.7 | ProjectCard, ArchiveAPI, PinAPI | State |
+| ProjectCard        | UI / client     | Render project with context menu        | 1.2–1.4, 11.1, 11.6–11.7, 12.1, 13.1, 13.4 | CardContextMenu             | —         |
 | CardContextMenu    | Shared / client | Reusable dropdown context menu          | 12.1–12.4, 12.6                    | None (props-driven)              | —         |
 | SessionsPage       | SSR / page      | Load and list sessions                  | 2.1, 8.2                           | state.ts, hooks.ts               | —         |
 | SessionsList       | UI / client     | Sessions table with CRUD                | 2.1–2.9                            | API routes                       | —         |
@@ -336,21 +375,24 @@ sequenceDiagram
 
 | Field | Detail |
 |-------|--------|
-| Intent | Manage search, status filtering, archive visibility, and render filtered project cards |
-| Requirements | 9.1–9.6, 10.1–10.7, 11.2–11.5, 12.5 |
+| Intent | Manage search, status filtering, archive visibility, pinned section, and render filtered project cards |
+| Requirements | 9.1–9.6, 10.1–10.7, 11.2–11.5, 12.5, 13.2, 13.5, 14.1–14.7 |
 
 **Responsibilities & Constraints**
-- Receives full project list (including archived flag) from server via props
+- Receives full project list (including archived and pinned flags) from server via props
 - Manages search query, active status filter, and archive toggle as local React state
-- Computes filtered project list by combining all three filter dimensions
+- Computes two separate lists: `visiblePinnedProjects` (filter-independent) and `filteredProjects` (excludes pinned)
 - Computes per-filter counts from the unfiltered project list (excluding archived from counts)
 - Enforces single-menu-open-at-a-time constraint (12.5) via `openMenuId` state
 - Calls archive API on archive/unarchive actions, then triggers `router.refresh()`
+- Calls pin API on pin/unpin actions, then triggers `router.refresh()`
+- Renders Pinned section above main grid when `visiblePinnedProjects` is non-empty
 
 **Dependencies**
-- Inbound: ProjectsPage — provides `projects` and `archivedPaths` props (P0)
+- Inbound: ProjectsPage — provides `projects`, `archivedPaths`, and `pinnedPaths` props (P0)
 - Outbound: ProjectCard — renders each filtered project (P0)
-- Outbound: Archive API — POST/DELETE for archive mutations (P1)
+- Outbound: Archive API — POST for archive mutations (P1)
+- Outbound: Pin API — POST for pin mutations (P1)
 
 **Contracts**: State [x]
 
@@ -363,14 +405,18 @@ sequenceDiagram
 ```typescript
 interface ProjectsGridClientProps {
   projects: DiscoveredProject[];
-  archivedPaths: Set<string>;
+  archivedPaths: string[];
+  pinnedPaths: string[];
 }
 ```
 
 **Implementation Notes**
-- Filter logic: `project.name.toLowerCase().includes(query)` AND status match AND archive visibility
+- `visiblePinnedProjects`: pinned projects filtered only by archive visibility (not search/status) — satisfies 14.4
+- `filteredProjects`: non-pinned projects filtered by search + status + archive visibility — satisfies 14.5 (no duplication)
+- Both `visiblePinnedProjects` and `filteredProjects` are computed via `useMemo`
+- Pinned section renders when `visiblePinnedProjects.length > 0` (14.1, 14.6, 14.7)
 - Counts exclude archived projects: `countActive` = non-archived with `hasRunningSession`, `countIdle` = non-archived without
-- `router.refresh()` after archive API call re-fetches server data with updated archive state
+- `router.refresh()` after archive or pin API call re-fetches server data with updated state
 
 #### ProjectCard
 
@@ -378,16 +424,20 @@ interface ProjectsGridClientProps {
 interface ProjectCardProps {
   project: DiscoveredProject;
   archived: boolean;
+  pinned: boolean;
   menuOpen: boolean;
   onMenuToggle: () => void;
   onArchive: (projectPath: string) => void;
+  onPin: (projectPath: string) => void;
 }
 ```
 
 **Implementation Notes**
 - When `archived` is true: render with reduced opacity, dashed border, "archived" badge
 - Context menu trigger uses `event.stopPropagation()` to prevent `<Link>` navigation
-- Menu items array is built dynamically: "Archive Project" or "Unarchive Project" based on `archived` prop
+- Menu items array is built dynamically:
+  - First item: "Pin Project" or "Unpin Project" based on `pinned` prop (13.1, 13.4)
+  - Second item: "Archive Project" or "Unarchive Project" based on `archived` prop
 
 #### SessionsList
 
@@ -534,6 +584,30 @@ function setProjectArchived(projectPath: string, archived: boolean): Promise<voi
 - `getArchivedProjects` reads `state.archivedProjects` and returns as `Set<string>`
 - `setProjectArchived` adds/removes the path from the array and writes state atomically
 
+### New Data Model Changes (Req 13)
+
+**ManagerState extension** — Add `pinnedProjects` field:
+
+```typescript
+// In src/lib/schemas.ts — extend managerStateSchema
+const managerStateSchema = z.object({
+  projects: z.record(z.string(), projectStateSchema),
+  archivedProjects: z.array(z.string()).default([]),
+  pinnedProjects: z.array(z.string()).default([]),  // NEW: absolute paths
+});
+```
+
+**Domain module extension** — Add pin helpers in `src/lib/state.ts`:
+
+```typescript
+function getPinnedProjects(): Promise<Set<string>>;
+function setProjectPinned(projectPath: string, pinned: boolean): Promise<void>;
+```
+
+- `getPinnedProjects` reads `state.pinnedProjects` and returns as `Set<string>`
+- `setProjectPinned` adds/removes the path from the array and writes state atomically
+- Mirrors the `getArchivedProjects`/`setProjectArchived` pattern exactly
+
 ### API Contract (Req 11.3)
 
 | Method | Endpoint                           | Request                    | Response         | Errors   |
@@ -544,16 +618,29 @@ function setProjectArchived(projectPath: string, archived: boolean): Promise<voi
 - Resolves project name to absolute path via `discoverProjects()` lookup
 - Returns 404 if project name does not match any discovered project
 
+### API Contract (Req 13.3)
+
+| Method | Endpoint                           | Request                    | Response         | Errors   |
+|--------|------------------------------------|----------------------------|------------------|----------|
+| POST   | `/api/projects/[name]/pin`         | `{ pinned: boolean }`      | `{ ok: true }`   | 400, 404, 500 |
+
+- POST with `pinned: true` pins the project; `pinned: false` unpins
+- Resolves project name to absolute path via `resolveProjectPath()` lookup
+- Returns 404 if project name does not match any discovered project
+- Mirrors the archive API route structure exactly
+
 ## Error Handling
 
 ### Error Strategy
 
 - **API errors**: Client components handle fetch errors with inline error messages (e.g., CreateSessionModal shows validation errors)
 - **Archive API errors**: If archive POST fails, `ProjectsGridClient` displays a transient inline error. The UI state does not change on failure (optimistic updates are not used).
+- **Pin API errors**: If pin POST fails, same behavior as archive — no optimistic update, UI stays as-is.
 - **No error boundaries**: No `error.tsx` files exist. Next.js default error handling is used. Acceptable for a local developer tool.
 - **No loading states**: No `loading.tsx` files exist. Server Components render synchronously.
 - **Confirmation dialogs**: Prevent accidental destructive actions (session deletion)
 - **Stale archive paths**: If an archived project path no longer matches a discovered project, the path is silently ignored during filtering. No cleanup is performed automatically.
+- **Stale pinned paths**: Same behavior as archive — silently ignored during filtering if the project directory no longer exists.
 
 ## Testing Strategy
 
@@ -570,9 +657,12 @@ No UI-level tests exist currently. The dashboard is the largest untested surface
 
 - **Unit Tests**:
   - `state.ts`: `getArchivedProjects`, `setProjectArchived` — verify add/remove/persist behavior
+  - `state.ts`: `getPinnedProjects`, `setProjectPinned` — verify add/remove/persist behavior (mirrors archive tests)
   - Filter logic in `ProjectsGridClient`: combined search + status + archive filtering
+  - Pin section logic in `ProjectsGridClient`: `visiblePinnedProjects` computation, filter independence (14.4), no duplication (14.5), hidden when empty (14.6), hidden when all pinned are archived (14.7)
   - `CardContextMenu`: open/close, Escape key, click-outside dismissal
 
 - **Integration Tests**:
   - Archive API route: POST with `archived: true/false`, 404 for unknown project
-  - `ProjectsPage` → `ProjectsGridClient` → `ProjectCard` data flow with archived projects
+  - Pin API route: POST with `pinned: true/false`, 404 for unknown project (mirrors archive route tests)
+  - `ProjectsPage` → `ProjectsGridClient` → `ProjectCard` data flow with archived and pinned projects

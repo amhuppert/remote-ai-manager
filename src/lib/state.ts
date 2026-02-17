@@ -10,7 +10,7 @@ const logger = createLogger("state");
 
 /** Default empty manager state */
 function emptyState(): ManagerState {
-  return { projects: {}, archivedProjects: [] };
+  return { projects: {}, archivedProjects: [], pinnedProjects: [] };
 }
 
 /** Read the manager state from disk, returning empty state if file missing */
@@ -184,5 +184,29 @@ export async function setProjectArchived(
   }
 
   state.archivedProjects = [...current];
+  await writeState(state);
+}
+
+/** Read pinned project paths from persisted state */
+export async function getPinnedProjects(): Promise<Set<string>> {
+  const state = await readState();
+  return new Set(state.pinnedProjects);
+}
+
+/** Add or remove a project path from the pinned set */
+export async function setProjectPinned(
+  projectPath: string,
+  pinned: boolean,
+): Promise<void> {
+  const state = await readState();
+  const current = new Set(state.pinnedProjects);
+
+  if (pinned) {
+    current.add(projectPath);
+  } else {
+    current.delete(projectPath);
+  }
+
+  state.pinnedProjects = [...current];
   await writeState(state);
 }

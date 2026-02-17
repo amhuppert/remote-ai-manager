@@ -46,6 +46,7 @@ export type ProjectState = z.infer<typeof projectStateSchema>;
 export const managerStateSchema = z.object({
   projects: z.record(z.string(), projectStateSchema),
   archivedProjects: z.array(z.string()).default([]),
+  pinnedProjects: z.array(z.string()).default([]),
 });
 export type ManagerState = z.infer<typeof managerStateSchema>;
 

@@ -173,3 +173,74 @@
   - Verify no-results state appears when no projects match
   - Verify filter counts exclude archived projects from totals
   - _Requirements: 9.2, 9.5, 9.6, 10.3, 10.4, 10.7, 11.2, 11.4_
+
+> **Note**: Tasks 12–16 implement the project pinning feature (Requirements 13–14).
+
+- [x] 12. Add project pin data layer
+- [x] 12.1 (P) Extend state schema and add pin helper functions
+  - Add a `pinnedProjects` string array with empty default to the manager state schema
+  - Implement a function to read pinned project paths from persisted state and return as a Set
+  - Implement a function to add or remove a project path from the pinned set with atomic state write
+  - Ensure pin operations do not modify existing project entries or session data
+  - _Requirements: 13.3, 13.6_
+  - _Contracts: state.ts pin helpers_
+
+- [x] 12.2 Write unit tests for pin state helpers
+  - Verify adding a project path to the pinned set persists correctly
+  - Verify removing a project path from the pinned set persists correctly
+  - Verify pinning does not alter existing project entries or session data
+  - Verify reading pinned projects from fresh state returns an empty set
+  - _Requirements: 13.3, 13.6_
+
+- [x] 13. (P) Create pin API endpoint
+  - Implement a POST route that accepts `{ pinned: boolean }` to pin or unpin a project
+  - Resolve the project name parameter to an absolute path using project discovery
+  - Call the pin state helper to persist the change
+  - Return 400 if the request body is invalid
+  - Return 404 if the project name does not match any discovered project
+  - Return success response on completion
+  - Depends on task 12 (pin state helpers must exist)
+  - _Requirements: 13.3_
+  - _Contracts: POST /api/projects/[name]/pin_
+
+- [x] 14. Update dashboard components for pinning
+- [x] 14.1 Add pin/unpin action to ProjectCard context menu
+  - Extend the card component to accept a pinned boolean and a pin callback prop
+  - Add "Pin Project" or "Unpin Project" as the first context menu item based on pin state
+  - Keep the existing archive menu item as the second item
+  - _Requirements: 13.1, 13.4_
+  - _Contracts: ProjectCardProps_
+
+- [x] 14.2 Add pinned section and pin API integration to ProjectsGridClient
+  - Accept a `pinnedPaths` prop and compute a pinned set from it
+  - Compute visible pinned projects: pinned projects filtered only by archive visibility, not by search query or status filter
+  - Compute filtered non-pinned projects: exclude pinned projects from the main grid to prevent duplication
+  - Render a "Pinned" section with a header label above the main projects grid when visible pinned projects exist
+  - Display pinned project cards in their own grid within the pinned section
+  - Hide the pinned section when no projects are pinned or when all pinned projects are archived with the archive toggle off
+  - On pin or unpin action from a card's context menu, POST to the pin API and refresh page data
+  - Add CSS for the pinned section header and section separator
+  - _Requirements: 13.2, 13.5, 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7_
+
+- [x] 15. Integrate pinned paths into the projects page
+  - Update the server component to read pinned project paths from state alongside archived paths
+  - Pass the pinned paths as a prop to ProjectsGridClient
+  - Depends on task 14 (ProjectsGridClient must accept pinnedPaths)
+  - _Requirements: 14.1_
+
+- [x] 16. Add tests for pinning features
+- [x] 16.1 (P) Test pin API endpoint
+  - Verify POST with pinned:true adds the project to the pinned set
+  - Verify POST with pinned:false removes the project from the pinned set
+  - Verify 404 response for an unknown project name
+  - Verify 400 response for invalid request body
+  - _Requirements: 13.3_
+
+- [x] 16.2 (P) Test ProjectsGridClient pinned section logic
+  - Verify pinned section appears when projects are pinned
+  - Verify pinned section is hidden when no projects are pinned
+  - Verify pinned section remains visible regardless of search query or status filter
+  - Verify pinned projects do not appear in the main projects grid
+  - Verify pinned section hides when all pinned projects are archived and archive toggle is off
+  - Verify pin/unpin context menu item toggles correctly based on pin state
+  - _Requirements: 13.1, 13.4, 14.1, 14.2, 14.4, 14.5, 14.6, 14.7_

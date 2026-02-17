@@ -7,17 +7,21 @@ import CardContextMenu from "@/components/CardContextMenu";
 interface ProjectCardProps {
   project: DiscoveredProject;
   archived: boolean;
+  pinned: boolean;
   menuOpen: boolean;
   onMenuToggle: () => void;
   onArchive: (projectPath: string) => void;
+  onPin: (projectPath: string) => void;
 }
 
 export default function ProjectCard({
   project,
   archived,
+  pinned,
   menuOpen,
   onMenuToggle,
   onArchive,
+  onPin,
 }: ProjectCardProps): React.JSX.Element {
   const badgeClass = project.hasRunningSession
     ? "project-badge active"
@@ -31,6 +35,10 @@ export default function ProjectCard({
       : "idle";
 
   const menuItems = [
+    {
+      label: pinned ? "Unpin Project" : "Pin Project",
+      onAction: () => onPin(project.path),
+    },
     {
       label: archived ? "Unarchive Project" : "Archive Project",
       onAction: () => onArchive(project.path),

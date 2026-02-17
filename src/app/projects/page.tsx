@@ -1,19 +1,21 @@
 import { discoverProjects } from "@/lib/discovery";
 import { readConfig } from "@/lib/config";
 import { detectHooksStatus } from "@/lib/hooks";
-import { getArchivedProjects } from "@/lib/state";
+import { getArchivedProjects, getPinnedProjects } from "@/lib/state";
 import Topbar from "@/components/Topbar";
 import ProjectsGridClient from "./ProjectsGridClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage(): Promise<React.JSX.Element> {
-  const [projects, config, hooksStatus, archivedSet] = await Promise.all([
-    discoverProjects(),
-    readConfig(),
-    detectHooksStatus(),
-    getArchivedProjects(),
-  ]);
+  const [projects, config, hooksStatus, archivedSet, pinnedSet] =
+    await Promise.all([
+      discoverProjects(),
+      readConfig(),
+      detectHooksStatus(),
+      getArchivedProjects(),
+      getPinnedProjects(),
+    ]);
 
   const projectCount = projects.length;
   const subtitle = `${config.baseDir} — ${projectCount} ${projectCount === 1 ? "repository" : "repositories"} discovered`;
@@ -69,6 +71,7 @@ export default async function ProjectsPage(): Promise<React.JSX.Element> {
           <ProjectsGridClient
             projects={projects}
             archivedPaths={[...archivedSet]}
+            pinnedPaths={[...pinnedSet]}
           />
         ) : (
           <div className="empty-state">
