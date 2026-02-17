@@ -34,3 +34,5 @@ PROMPT.md
 .ralph/**
 !.ralph/AGENT.md
 RALPH_TASK.md
+
+.worktrees/
