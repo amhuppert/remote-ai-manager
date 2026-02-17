@@ -460,4 +460,48 @@ describe("squashMerge", () => {
     const result = await squashMerge("/project", "csm/branch", "Merge");
     expect(result.mergeHash).toBe("");
   });
+
+  it("detects merge conflicts, aborts, and throws descriptive error", async () => {
+    mockExecFileSequence([
+      // git status --porcelain (clean)
+      { stdout: "" },
+      // git merge --squash → conflict
+      {
+        error: new Error(
+          "CONFLICT (content): Merge conflict in src/index.ts\nAutomatic merge failed; fix conflicts and then commit the result.",
+        ),
+      },
+      // git merge --abort (cleanup)
+      { stdout: "" },
+      // git reset --hard HEAD (cleanup)
+      { stdout: "" },
+    ]);
+
+    await expect(
+      squashMerge("/project", "csm/branch", "Merge"),
+    ).rejects.toThrow("Merge conflicts detected");
+
+    // Verify cleanup: merge --abort and reset --hard were called
+    expect(execFileMock.mock.calls[2]![1]).toEqual(["merge", "--abort"]);
+    expect(execFileMock.mock.calls[3]![1]).toEqual([
+      "reset",
+      "--hard",
+      "HEAD",
+    ]);
+  });
+
+  it("re-throws non-conflict merge errors without conflict message", async () => {
+    mockExecFileSequence([
+      { stdout: "" },
+      // git merge --squash → non-conflict error
+      { error: new Error("fatal: not a valid branch name") },
+      // cleanup calls
+      { stdout: "" },
+      { stdout: "" },
+    ]);
+
+    await expect(
+      squashMerge("/project", "csm/branch", "Merge"),
+    ).rejects.toThrow("fatal: not a valid branch name");
+  });
 });

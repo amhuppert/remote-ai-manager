@@ -254,7 +254,26 @@ export async function squashMerge(
   logger.info("git.merge", { projectPath, branchName });
 
   // Execute squash merge
-  await git(projectPath, ["merge", "--squash", branchName]);
+  try {
+    await git(projectPath, ["merge", "--squash", branchName]);
+  } catch (err) {
+    const stderr =
+      err instanceof Error ? err.message : String(err);
+    const isConflict =
+      stderr.includes("CONFLICT") || stderr.includes("merge conflict");
+
+    // Abort the failed merge to leave the project root clean
+    await git(projectPath, ["merge", "--abort"]).catch(() => {});
+    // Reset any staged changes from the failed squash
+    await git(projectPath, ["reset", "--hard", "HEAD"]).catch(() => {});
+
+    if (isConflict) {
+      throw new Error(
+        "Merge conflicts detected between this session and main. Resolve the conflicts in the worktree and try again.",
+      );
+    }
+    throw err;
+  }
 
   // Commit the squash merge
   const { stdout: commitOutput } = await git(projectPath, [

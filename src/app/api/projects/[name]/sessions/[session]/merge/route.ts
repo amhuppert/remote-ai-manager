@@ -110,6 +110,13 @@ export const POST = withTracing(async (request, { params }) => {
       err instanceof Error ? err.message : "Failed to merge session";
 
     // Surface specific pre-condition errors as 409
+    if (message.includes("Merge conflicts detected")) {
+      return NextResponse.json(
+        { error: message, code: "MERGE_CONFLICT" } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
     if (
       message.includes("Main branch has uncommitted changes") ||
       message.includes("uncommitted")
