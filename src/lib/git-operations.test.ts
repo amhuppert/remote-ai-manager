@@ -159,7 +159,6 @@ describe("commitChanges", () => {
       "commit",
       "-m",
       "Add feature",
-      "--format=%H",
     ]);
   });
 

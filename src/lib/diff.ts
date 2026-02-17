@@ -1,31 +1,45 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { unlink } from "node:fs/promises";
 import type { SessionDiff, FileDiff, DiffHunk, DiffLine } from "@/types";
 
 const execFileAsync = promisify(execFile);
 
+const MAX_BUFFER = 10 * 1024 * 1024;
+
 /**
- * Compute a git diff of the session worktree vs the merge-base with main.
- * Uses the point where the branch diverged from main, so only the branch's
- * own changes are shown (excludes unrelated commits added to main since).
+ * Compute a git diff of uncommitted changes in the session worktree.
+ * Uses a temporary index so that untracked files are included in the diff
+ * without modifying the real index. Diffs the working tree against HEAD
+ * so only truly uncommitted changes are shown.
  */
 export async function computeDiff(worktreePath: string): Promise<SessionDiff> {
   let rawDiff: string;
+  const tmpIndex = join(tmpdir(), `csm-diff-${randomUUID()}`);
   try {
-    const { stdout: mergeBase } = await execFileAsync(
-      "git",
-      ["merge-base", "main", "HEAD"],
-      { cwd: worktreePath, maxBuffer: 10 * 1024 * 1024 },
-    );
+    const opts = { cwd: worktreePath, maxBuffer: MAX_BUFFER };
+    const tmpEnv = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+    const tmpOpts = { ...opts, env: tmpEnv };
+
+    // Build a temp index: seed from HEAD tree, then update with working tree
+    await execFileAsync("git", ["read-tree", "HEAD"], tmpOpts);
+    await execFileAsync("git", ["add", "-A"], tmpOpts);
+
+    // Diff the temp index (working tree) against HEAD — uncommitted changes only
     const { stdout } = await execFileAsync(
       "git",
-      ["diff", mergeBase.trim(), "--unified=3"],
-      { cwd: worktreePath, maxBuffer: 10 * 1024 * 1024 },
+      ["diff", "--cached", "HEAD", "--unified=3"],
+      tmpOpts,
     );
     rawDiff = stdout;
   } catch {
-    // If merge-base or diff fails (e.g., no main branch), return empty
+    // If diff fails, return empty
     return { files: [], totalAdditions: 0, totalDeletions: 0 };
+  } finally {
+    await unlink(tmpIndex).catch(() => {});
   }
 
   if (!rawDiff.trim()) {

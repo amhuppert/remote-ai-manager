@@ -214,20 +214,53 @@ index abc..def 100644
 // 4.2 – computeDiff integration (Req 1.1, 1.2, 1.4, 1.5)
 // ===========================================================================
 
-const { execFileMock } = vi.hoisted(() => ({
+const { execFileMock, unlinkMock } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
+  unlinkMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
   execFile: execFileMock,
 }));
 
+vi.mock("node:fs/promises", () => ({
+  unlink: unlinkMock,
+}));
+
+/** Make execFileMock resolve in sequence for successive calls */
+function mockExecSequence(
+  results: Array<{ error?: Error; stdout?: string }>,
+) {
+  let callIndex = 0;
+  execFileMock.mockImplementation(
+    (
+      _cmd: string,
+      _args: string[],
+      _opts: unknown,
+      cb?: (
+        err: Error | null,
+        result: { stdout: string; stderr: string },
+      ) => void,
+    ) => {
+      if (!cb) return;
+      const r = results[callIndex] ?? results[results.length - 1]!;
+      callIndex++;
+      if (r.error) {
+        cb(r.error, { stdout: "", stderr: "" });
+      } else {
+        cb(null, { stdout: r.stdout ?? "", stderr: "" });
+      }
+    },
+  );
+}
+
 describe("computeDiff", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    unlinkMock.mockResolvedValue(undefined);
   });
 
-  it("computes merge-base then diffs against it (Req 1.1, 1.2)", async () => {
+  it("uses temp index to diff working tree against HEAD (Req 1.1, 1.2)", async () => {
     const diffOutput = `diff --git a/src/app.ts b/src/app.ts
 index abc..def 100644
 --- a/src/app.ts
@@ -237,29 +270,14 @@ index abc..def 100644
 +new line
  line2`;
 
-    let callIndex = 0;
-    execFileMock.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _opts: unknown,
-        cb?: (
-          err: Error | null,
-          result: { stdout: string; stderr: string },
-        ) => void,
-      ) => {
-        if (!cb) return;
-        if (callIndex === 0) {
-          // git merge-base main HEAD
-          callIndex++;
-          cb(null, { stdout: "abc123def456\n", stderr: "" });
-        } else {
-          // git diff <merge-base> --unified=3
-          callIndex++;
-          cb(null, { stdout: diffOutput, stderr: "" });
-        }
-      },
-    );
+    mockExecSequence([
+      // 0: git read-tree HEAD
+      { stdout: "" },
+      // 1: git add -A
+      { stdout: "" },
+      // 2: git diff --cached HEAD --unified=3
+      { stdout: diffOutput },
+    ]);
 
     const result = await computeDiff("/projects/repo/.worktrees/test");
 
@@ -267,65 +285,48 @@ index abc..def 100644
     expect(result.files[0]!.filePath).toBe("src/app.ts");
     expect(result.totalAdditions).toBe(1);
 
-    // Verify merge-base call
-    expect(execFileMock.mock.calls[0]![1]).toEqual([
-      "merge-base",
-      "main",
-      "HEAD",
-    ]);
-    const mergeBaseOpts = execFileMock.mock.calls[0]![2] as { cwd: string };
-    expect(mergeBaseOpts.cwd).toBe("/projects/repo/.worktrees/test");
+    // Verify read-tree seeds the temp index from HEAD
+    expect(execFileMock.mock.calls[0]![1]).toEqual(["read-tree", "HEAD"]);
 
-    // Verify diff call uses the merge-base hash
-    expect(execFileMock.mock.calls[1]![1]).toEqual([
+    // Verify add -A stages everything into temp index
+    expect(execFileMock.mock.calls[1]![1]).toEqual(["add", "-A"]);
+
+    // Verify diff --cached against HEAD
+    expect(execFileMock.mock.calls[2]![1]).toEqual([
       "diff",
-      "abc123def456",
+      "--cached",
+      "HEAD",
       "--unified=3",
     ]);
+
+    // Verify temp index env is set for all calls
+    for (const i of [0, 1, 2]) {
+      const opts = execFileMock.mock.calls[i]![2] as { env: Record<string, string> };
+      expect(opts.env.GIT_INDEX_FILE).toMatch(/csm-diff-/);
+    }
+
+    // Verify temp index cleanup
+    expect(unlinkMock).toHaveBeenCalledTimes(1);
   });
 
-  it("returns empty diff on merge-base failure (Req 1.5)", async () => {
-    execFileMock.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _opts: unknown,
-        cb?: (
-          err: Error | null,
-          result: { stdout: string; stderr: string },
-        ) => void,
-      ) => {
-        if (cb) cb(new Error("git failed"), { stdout: "", stderr: "" });
-      },
-    );
+  it("returns empty diff on read-tree failure (Req 1.5)", async () => {
+    mockExecSequence([{ error: new Error("git failed") }]);
 
     const result = await computeDiff("/projects/repo/.worktrees/test");
     expect(result.files).toHaveLength(0);
     expect(result.totalAdditions).toBe(0);
     expect(result.totalDeletions).toBe(0);
+
+    // Temp index cleanup still called
+    expect(unlinkMock).toHaveBeenCalledTimes(1);
   });
 
   it("returns empty diff for empty git diff output (Req 1.6)", async () => {
-    let callIndex = 0;
-    execFileMock.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _opts: unknown,
-        cb?: (
-          err: Error | null,
-          result: { stdout: string; stderr: string },
-        ) => void,
-      ) => {
-        if (!cb) return;
-        if (callIndex === 0) {
-          callIndex++;
-          cb(null, { stdout: "abc123\n", stderr: "" });
-        } else {
-          cb(null, { stdout: "", stderr: "" });
-        }
-      },
-    );
+    mockExecSequence([
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "" },
+    ]);
 
     const result = await computeDiff("/projects/repo/.worktrees/test");
     expect(result.files).toHaveLength(0);

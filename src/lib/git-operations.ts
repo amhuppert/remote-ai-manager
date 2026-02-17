@@ -58,7 +58,6 @@ export async function commitChanges(
     "commit",
     "-m",
     message,
-    "--format=%H",
   ]);
 
   // Extract commit hash from output — git commit prints it in the first line
