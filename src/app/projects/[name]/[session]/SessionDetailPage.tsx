@@ -16,6 +16,7 @@ import CommitDialog from "./CommitDialog";
 import MergeDialog from "./MergeDialog";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MarkdownContent from "@/components/MarkdownContent";
+import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import { tracedFetch } from "@/lib/traced-fetch";
 type MobilePanel = "chat" | "diff";
 
@@ -230,6 +231,14 @@ export default function SessionDetailPage({
       // TODO: show error
     }
   }, [projectName, session.sessionName, router]);
+
+  const handleVoiceResult = useCallback((text: string) => {
+    setPromptText((prev) => (prev.trim() ? `${prev}\n${text}` : text));
+  }, []);
+
+  const handleVoiceError = useCallback((error: string) => {
+    setPromptError(error);
+  }, []);
 
   const decodedProjectName = decodeURIComponent(projectName);
   const isFinished = session.finished;
@@ -477,6 +486,12 @@ export default function SessionDetailPage({
                       }
                     }}
                     disabled={isFinished}
+                  />
+                  <VoiceRecordButton
+                    projectName={projectName}
+                    onResult={handleVoiceResult}
+                    onError={handleVoiceError}
+                    disabled={sending}
                   />
                   <button
                     className={`send-btn${sending ? " busy" : ""}`}
