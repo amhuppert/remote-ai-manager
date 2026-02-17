@@ -6,3 +6,4 @@ build/
 bun.lock
 package-lock.json
 *.md
+.worktrees/
