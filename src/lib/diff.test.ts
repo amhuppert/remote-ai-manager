@@ -227,7 +227,7 @@ describe("computeDiff", () => {
     vi.clearAllMocks();
   });
 
-  it("returns parsed diff from git output (Req 1.1, 1.2)", async () => {
+  it("computes merge-base then diffs against it (Req 1.1, 1.2)", async () => {
     const diffOutput = `diff --git a/src/app.ts b/src/app.ts
 index abc..def 100644
 --- a/src/app.ts
@@ -237,6 +237,7 @@ index abc..def 100644
 +new line
  line2`;
 
+    let callIndex = 0;
     execFileMock.mockImplementation(
       (
         _cmd: string,
@@ -247,7 +248,16 @@ index abc..def 100644
           result: { stdout: string; stderr: string },
         ) => void,
       ) => {
-        if (cb) cb(null, { stdout: diffOutput, stderr: "" });
+        if (!cb) return;
+        if (callIndex === 0) {
+          // git merge-base main HEAD
+          callIndex++;
+          cb(null, { stdout: "abc123def456\n", stderr: "" });
+        } else {
+          // git diff <merge-base> --unified=3
+          callIndex++;
+          cb(null, { stdout: diffOutput, stderr: "" });
+        }
       },
     );
 
@@ -257,12 +267,16 @@ index abc..def 100644
     expect(result.files[0]!.filePath).toBe("src/app.ts");
     expect(result.totalAdditions).toBe(1);
 
-    // Verify cwd is set to worktree path
-    const callOpts = execFileMock.mock.calls[0]![2] as { cwd: string };
-    expect(callOpts.cwd).toBe("/projects/repo/.worktrees/test");
+    // Verify merge-base call
+    expect(execFileMock.mock.calls[0]![1]).toEqual(["merge-base", "main", "HEAD"]);
+    const mergeBaseOpts = execFileMock.mock.calls[0]![2] as { cwd: string };
+    expect(mergeBaseOpts.cwd).toBe("/projects/repo/.worktrees/test");
+
+    // Verify diff call uses the merge-base hash
+    expect(execFileMock.mock.calls[1]![1]).toEqual(["diff", "abc123def456", "--unified=3"]);
   });
 
-  it("returns empty diff on git failure (Req 1.4)", async () => {
+  it("returns empty diff on merge-base failure (Req 1.5)", async () => {
     execFileMock.mockImplementation(
       (
         _cmd: string,
@@ -283,7 +297,8 @@ index abc..def 100644
     expect(result.totalDeletions).toBe(0);
   });
 
-  it("returns empty diff for empty git output (Req 1.5)", async () => {
+  it("returns empty diff for empty git diff output (Req 1.6)", async () => {
+    let callIndex = 0;
     execFileMock.mockImplementation(
       (
         _cmd: string,
@@ -294,7 +309,13 @@ index abc..def 100644
           result: { stdout: string; stderr: string },
         ) => void,
       ) => {
-        if (cb) cb(null, { stdout: "", stderr: "" });
+        if (!cb) return;
+        if (callIndex === 0) {
+          callIndex++;
+          cb(null, { stdout: "abc123\n", stderr: "" });
+        } else {
+          cb(null, { stdout: "", stderr: "" });
+        }
       },
     );
 

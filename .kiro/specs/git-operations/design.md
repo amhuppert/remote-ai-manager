@@ -192,9 +192,11 @@ sequenceDiagram
 | 3.1 | Commit history list | CommitHistory, DiffPanel | getCommitLog | — |
 | 3.2 | Entry: hash, message, date, files | CommitHistory | CommitLogEntry | — |
 | 3.3 | Expand to show per-commit diff | CommitHistory | getCommitDiff | — |
-| 3.4 | Collapse on re-click | CommitHistory | — | — |
-| 3.5 | Empty state for no commits | CommitHistory | — | — |
-| 3.6 | Update after new commit | SessionDetailPage | router.refresh | Commit Flow |
+| 3.4 | First commit diffs against merge-base | git-operations.ts | getCommitDiff | — |
+| 3.5 | Subsequent commits diff against parent | git-operations.ts | getCommitDiff | — |
+| 3.6 | Collapse on re-click | CommitHistory | — | — |
+| 3.7 | Empty state for no commits | CommitHistory | — | — |
+| 3.8 | Update after new commit | SessionDetailPage | router.refresh | Commit Flow |
 | 4.1 | Archive/unarchive action in sessions list | SessionsList | — | Archive Flow |
 | 4.2 | Archived sessions hidden by default | SessionsList | — | — |
 | 4.3 | Unarchive restores to default view | SessionsList | — | Archive Flow |
@@ -211,7 +213,7 @@ sequenceDiagram
 
 | Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|-------------|--------|--------------|------------------|-----------|
-| git-operations.ts | Domain | Git commit, merge, and log operations | 1.2, 2.2, 2.4, 3.1, 3.3 | diff.ts (P1) | Service |
+| git-operations.ts | Domain | Git commit, merge, and log operations | 1.2, 2.2, 2.4, 3.1, 3.3–3.5 | diff.ts (P1) | Service |
 | state.ts (extended) | Domain | Session archive + finished state persistence | 2.3, 4.1–4.3, 5.1 | — | Service |
 | POST commit route | API | Commit all changes in session worktree | 1.2, 1.5, 1.7 | git-operations (P0), lock (P0) | API |
 | POST merge route | API | Squash merge session branch into main | 2.2–2.5, 2.8 | git-operations (P0), lock (P0), state (P0) | API |
@@ -220,9 +222,9 @@ sequenceDiagram
 | PATCH session archive route | API | Archive/unarchive a session | 4.1–4.3 | state (P0) | API |
 | CommitDialog | UI | Modal for entering commit message | 1.1, 1.3, 1.5 | — | — |
 | MergeDialog | UI | Modal for entering merge message | 2.1, 2.5 | — | — |
-| CommitHistory | UI | Expandable commit list with diffs | 3.1–3.5 | — | — |
-| DiffPanel (modified) | UI | Tabbed panel: Uncommitted + Commits | 3.1, 3.6 | CommitHistory (P1) | — |
-| SessionDetailPage (modified) | UI | Orchestrates commit/merge flows, finished state | 1.3–1.4, 1.6–1.7, 2.3, 2.6–2.8, 3.6, 4.6, 5.2–5.3, 5.5 | All dialogs (P0) | — |
+| CommitHistory | UI | Expandable commit list with diffs | 3.1–3.7 | — | — |
+| DiffPanel (modified) | UI | Tabbed panel: Uncommitted + Commits | 3.1, 3.8 | CommitHistory (P1) | — |
+| SessionDetailPage (modified) | UI | Orchestrates commit/merge flows, finished state | 1.3–1.4, 1.6–1.7, 2.3, 2.6–2.8, 3.8, 4.6, 5.2–5.3, 5.5 | All dialogs (P0) | — |
 | SessionsList (modified) | UI | Archive filter + finished badges | 4.1–4.5, 5.4 | — | — |
 
 ### Domain Layer
@@ -232,7 +234,7 @@ sequenceDiagram
 | Field | Detail |
 |-------|--------|
 | Intent | Execute git commit, squash merge, and log commands for session worktrees |
-| Requirements | 1.2, 2.2, 2.4, 3.1, 3.3 |
+| Requirements | 1.2, 2.2, 2.4, 3.1, 3.3–3.5 |
 
 **Responsibilities & Constraints**
 - Owns all git command execution for session-level operations (commit, merge, log)
@@ -299,7 +301,7 @@ function squashMerge(
 - `commitChanges`: `git add -A && git commit -m <message>` in worktree
 - `getCommitLog`: `git log main..HEAD --format=<format>` in worktree, parse output
 - `squashMerge`: `git merge --squash <branch> && git commit -m <message>` in project root
-- `getCommitDiff`: `git diff <hash>~1..<hash>` piped through existing `parseDiff()`; for first commit after divergence use `git diff main..<hash>`
+- `getCommitDiff`: `git diff <hash>~1..<hash>` piped through existing `parseDiff()`; for first commit after divergence use `git diff $(git merge-base main <hash>)..<hash>` to compare against the branch's divergence point rather than the current tip of `main`
 
 #### state.ts (extended)
 
@@ -441,7 +443,7 @@ Summary-only component. Displays branch name and commit count as read-only conte
 | Field | Detail |
 |-------|--------|
 | Intent | Scrollable list of commits with expand-to-diff capability |
-| Requirements | 3.1–3.5 |
+| Requirements | 3.1–3.7 |
 
 **Responsibilities & Constraints**
 - Renders list of `CommitLogEntry` items passed as props

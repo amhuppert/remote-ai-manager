@@ -10,7 +10,7 @@
 
 ### Goals
 
-- Compute diffs by running `git diff main` in session worktrees
+- Compute diffs against the merge-base (where the branch diverged from `main`)
 - Parse unified diff format into structured file/hunk/line data
 - Render interactive diff panel with collapsible sections and navigation
 - Support multiple layout modes for flexible viewing
@@ -91,12 +91,14 @@ sequenceDiagram
 
     Browser->>Page: Navigate to session detail
     Page->>Diff: computeDiff(worktreePath)
-    Diff->>Git: execFile("git", ["diff", "main", "--unified=3"], {cwd: worktreePath})
+    Diff->>Git: execFile("git", ["merge-base", "main", "HEAD"], {cwd: worktreePath})
+    Git-->>Diff: merge-base hash
+    Diff->>Git: execFile("git", ["diff", "<merge-base>", "--unified=3"], {cwd: worktreePath})
     alt git succeeds
         Git-->>Diff: Raw unified diff text
         Diff->>Diff: parseDiff(raw) — state machine parser
         Diff-->>Page: SessionDiff {files, totalAdditions, totalDeletions}
-    else git fails
+    else git fails (merge-base or diff)
         Git-->>Diff: Error
         Diff-->>Page: Empty SessionDiff {files: [], totals: 0}
     end
@@ -129,11 +131,12 @@ stateDiagram-v2
 
 | Requirement | Summary                              | Components        | Interfaces   | Flows     |
 | ----------- | ------------------------------------ | ----------------- | ------------ | --------- |
-| 1.1         | Execute git diff in worktree         | computeDiff       | Git CLI      | Compute   |
-| 1.2         | Use execFile for safety              | computeDiff       | Node.js      | Compute   |
-| 1.3         | 10 MB max buffer                     | computeDiff       | Node.js      | Compute   |
-| 1.4         | Empty diff on git failure            | computeDiff       | —            | Compute   |
-| 1.5         | Empty diff on empty output           | computeDiff       | —            | Compute   |
+| 1.1         | Compute merge-base then diff         | computeDiff       | Git CLI      | Compute   |
+| 1.2         | Only branch changes shown            | computeDiff       | Git CLI      | Compute   |
+| 1.3         | Use execFile for safety              | computeDiff       | Node.js      | Compute   |
+| 1.4         | 10 MB max buffer                     | computeDiff       | Node.js      | Compute   |
+| 1.5         | Empty diff on git failure            | computeDiff       | —            | Compute   |
+| 1.6         | Empty diff on empty output           | computeDiff       | —            | Compute   |
 | 2.1         | Extract file paths from headers      | parseDiff         | —            | Parsing   |
 | 2.2         | Identify hunk boundaries             | parseDiff         | —            | Parsing   |
 | 2.3         | Classify additions, strip prefix     | parseDiff         | —            | Parsing   |
@@ -164,7 +167,7 @@ stateDiagram-v2
 
 | Component         | Domain/Layer          | Intent                                | Req Coverage | Key Dependencies            | Contracts |
 | ----------------- | --------------------- | ------------------------------------- | ------------ | --------------------------- | --------- |
-| computeDiff       | Domain / diff.ts      | Execute git diff in worktree          | 1.1–1.5      | Git CLI (P0)                | Service   |
+| computeDiff       | Domain / diff.ts      | Compute merge-base and diff in worktree | 1.1–1.6    | Git CLI (P0)                | Service   |
 | parseDiff         | Domain / diff.ts      | Parse unified diff into structures    | 2.1–3.4      | None                        | Service   |
 | Session Page      | SSR / page.tsx        | Load diff data for rendering          | 1.1          | diff.ts (P0), state.ts (P0) | —         |
 | DiffPanel         | UI / client component | Render interactive diff panel         | 4.1–5.5      | None (props-driven)         | —         |
@@ -177,8 +180,8 @@ stateDiagram-v2
 
 | Field        | Detail                                                   |
 | ------------ | -------------------------------------------------------- |
-| Intent       | Execute `git diff main` in worktree and parse the result |
-| Requirements | 1.1, 1.2, 1.3, 1.4, 1.5                                  |
+| Intent       | Compute merge-base, execute `git diff <merge-base>` in worktree, and parse the result |
+| Requirements | 1.1, 1.2, 1.3, 1.4, 1.5, 1.6                              |
 
 ##### Service Interface
 
@@ -254,8 +257,8 @@ interface DiffLine {
 
 ### Error Strategy
 
-- **Git failure resilience**: `computeDiff` catches all errors from `execFile` and returns empty diff
-- **No main branch**: If worktree has no `main` reference, git diff fails gracefully
+- **Git failure resilience**: `computeDiff` catches all errors from `execFile` (including merge-base failures) and returns empty diff
+- **No main branch**: If worktree has no `main` reference, merge-base or diff fails gracefully
 - **Empty output**: Empty string from git diff produces empty diff structure
 - **No runtime validation**: Data is generated internally from trusted git output, not from external sources
 

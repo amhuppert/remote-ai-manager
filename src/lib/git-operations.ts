@@ -176,7 +176,7 @@ export async function getCommitDiff(
   commitHash: string,
 ): Promise<SessionDiff> {
   // Check if the commit's parent is reachable from main — if not,
-  // this is the first commit after divergence and we diff against main
+  // this is the first commit after divergence and we diff against merge-base
   let diffArgs: string[];
 
   try {
@@ -195,15 +195,25 @@ export async function getCommitDiff(
         parentHash.trim(),
         "main",
       ]);
-      // Parent IS an ancestor of main → first commit after divergence, diff against main
-      diffArgs = ["diff", `main..${commitHash}`, "--unified=3"];
+      // Parent IS an ancestor of main → first commit after divergence, diff against merge-base
+      const { stdout: mergeBase } = await git(worktreePath, [
+        "merge-base",
+        "main",
+        commitHash,
+      ]);
+      diffArgs = ["diff", `${mergeBase.trim()}..${commitHash}`, "--unified=3"];
     } catch {
       // Parent is NOT an ancestor of main → normal diff against parent
       diffArgs = ["diff", `${commitHash}~1..${commitHash}`, "--unified=3"];
     }
   } catch {
-    // No parent (shouldn't normally happen) — diff against main
-    diffArgs = ["diff", `main..${commitHash}`, "--unified=3"];
+    // No parent (shouldn't normally happen) — diff against merge-base
+    const { stdout: mergeBase } = await git(worktreePath, [
+      "merge-base",
+      "main",
+      commitHash,
+    ]);
+    diffArgs = ["diff", `${mergeBase.trim()}..${commitHash}`, "--unified=3"];
   }
 
   const { stdout } = await git(worktreePath, diffArgs);

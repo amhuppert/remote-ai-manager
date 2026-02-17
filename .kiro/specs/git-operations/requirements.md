@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This specification covers adding git operations and session lifecycle states to the Claude Session Manager (CSM). Currently, CSM creates isolated coding sessions backed by git worktrees and branches (`csm/<name>`), and displays uncommitted diffs against `main`. These new capabilities allow users to commit changes within a worktree, squash-merge the session branch back into `main`, view the commit history for a session, archive sessions, and distinguish between active, archived, and finished (merged) sessions.
+This specification covers adding git operations and session lifecycle states to the Claude Session Manager (CSM). Currently, CSM creates isolated coding sessions backed by git worktrees and branches (`csm/<name>`), and displays uncommitted diffs against the merge-base (the point where the session branch diverged from `main`). These new capabilities allow users to commit changes within a worktree, squash-merge the session branch back into `main`, view the commit history for a session, archive sessions, and distinguish between active, archived, and finished (merged) sessions.
 
 Two new session lifecycle concepts are introduced:
 - **Archived** — User-initiated soft hide. Archived sessions are still fully editable (prompts, commits, merges all work). They are simply filtered out of the default sessions view.
@@ -50,9 +50,11 @@ A session can be both archived and finished (e.g., merged then archived).
 1. The session detail page shall display a commit history list showing all commits on the session branch since it diverged from `main`.
 2. Each commit entry in the list shall display the abbreviated commit hash, commit message, relative timestamp, and number of files changed.
 3. When the user clicks on a commit entry, CSM shall expand it to show the per-file diff for that commit.
-4. When a commit entry is expanded, clicking it again shall collapse the diff view.
-5. If the session branch has no commits beyond `main`, the commit history shall display an empty state indicating no commits have been made yet.
-6. When a new commit is created (via Requirement 1), the commit history list shall update to include the new commit without requiring a full page reload.
+4. For the first commit after the branch diverged from `main`, the per-commit diff shall compare against the merge-base (not the current tip of `main`), so that only the branch's own changes are shown.
+5. For subsequent commits on the branch, the per-commit diff shall compare against the commit's immediate parent.
+6. When a commit entry is expanded, clicking it again shall collapse the diff view.
+7. If the session branch has no commits beyond `main`, the commit history shall display an empty state indicating no commits have been made yet.
+8. When a new commit is created (via Requirement 1), the commit history list shall update to include the new commit without requiring a full page reload.
 
 ### Requirement 4: Session Archiving
 

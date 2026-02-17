@@ -2,21 +2,22 @@
 
 ## Introduction
 
-The Diff Viewer feature computes and renders git diffs for Claude Code sessions. Each session operates within a git worktree branched from `main`, and the diff viewer shows what Claude Code has changed by running `git diff main` in the worktree. The feature covers the full pipeline: executing the git diff command, parsing unified diff format into structured data, and rendering an interactive diff panel with collapsible file sections, line-level syntax highlighting (additions/deletions/context), and navigation controls. The diff panel is integrated into the session detail page alongside the transcript viewer.
+The Diff Viewer feature computes and renders git diffs for Claude Code sessions. Each session operates within a git worktree branched from `main`, and the diff viewer shows what Claude Code has changed by comparing the worktree branch against the point where it diverged from `main` (the merge-base). This ensures only the branch's own changes are shown, excluding any unrelated commits that may have been added to `main` after the branch was created. The feature covers the full pipeline: executing the git diff command, parsing unified diff format into structured data, and rendering an interactive diff panel with collapsible file sections, line-level syntax highlighting (additions/deletions/context), and navigation controls. The diff panel is integrated into the session detail page alongside the transcript viewer.
 
 ## Requirements
 
 ### Requirement 1: Git Diff Computation
 
-**Objective:** As a developer, I want diffs to be computed against the main branch in the session's worktree, so that I can see exactly what Claude Code has changed.
+**Objective:** As a developer, I want diffs to be computed against the merge-base (the point where the session branch diverged from `main`), so that I can see exactly what Claude Code has changed on this branch without noise from unrelated commits on `main`.
 
 #### Acceptance Criteria
 
-1. When a diff is requested, the Diff Engine shall execute `git diff main --unified=3` in the session's worktree directory.
-2. The Diff Engine shall use `execFile` (not `exec`) for subprocess spawning to prevent shell injection.
-3. The Diff Engine shall configure a maximum output buffer of 10 MB for the git process.
-4. If the git diff command fails, the Diff Engine shall return an empty diff (no files, zero additions, zero deletions).
-5. If the diff output is empty, the Diff Engine shall return an empty diff structure.
+1. When a diff is requested, the Diff Engine shall first compute the merge-base between `main` and `HEAD` in the session's worktree, then execute `git diff <merge-base> --unified=3` to produce the diff.
+2. The diff shall show only changes made on the session branch since it diverged from `main`, excluding any commits added to `main` after the branch was created.
+3. The Diff Engine shall use `execFile` (not `exec`) for subprocess spawning to prevent shell injection.
+4. The Diff Engine shall configure a maximum output buffer of 10 MB for the git process.
+5. If the git diff or merge-base command fails, the Diff Engine shall return an empty diff (no files, zero additions, zero deletions).
+6. If the diff output is empty, the Diff Engine shall return an empty diff structure.
 
 ### Requirement 2: Unified Diff Parsing
 

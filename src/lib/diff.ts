@@ -5,20 +5,26 @@ import type { SessionDiff, FileDiff, DiffHunk, DiffLine } from "@/types";
 const execFileAsync = promisify(execFile);
 
 /**
- * Compute a git diff of the session worktree vs main.
- * Returns parsed diff with per-file breakdowns.
+ * Compute a git diff of the session worktree vs the merge-base with main.
+ * Uses the point where the branch diverged from main, so only the branch's
+ * own changes are shown (excludes unrelated commits added to main since).
  */
 export async function computeDiff(worktreePath: string): Promise<SessionDiff> {
   let rawDiff: string;
   try {
+    const { stdout: mergeBase } = await execFileAsync(
+      "git",
+      ["merge-base", "main", "HEAD"],
+      { cwd: worktreePath, maxBuffer: 10 * 1024 * 1024 },
+    );
     const { stdout } = await execFileAsync(
       "git",
-      ["diff", "main", "--unified=3"],
+      ["diff", mergeBase.trim(), "--unified=3"],
       { cwd: worktreePath, maxBuffer: 10 * 1024 * 1024 },
     );
     rawDiff = stdout;
   } catch {
-    // If diff fails (e.g., no main branch), return empty
+    // If merge-base or diff fails (e.g., no main branch), return empty
     return { files: [], totalAdditions: 0, totalDeletions: 0 };
   }
 

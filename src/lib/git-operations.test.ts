@@ -307,13 +307,15 @@ describe("getCommitDiff", () => {
     totalDeletions: 0,
   };
 
-  it("diffs against main for first commit after divergence", async () => {
+  it("diffs against merge-base for first commit after divergence", async () => {
     mockExecFileSequence([
       // rev-parse --verify <hash>^ → parent hash
       { stdout: "parenthash123\n" },
       // merge-base --is-ancestor parent main → success means parent IS ancestor of main
       { stdout: "" },
-      // git diff main..<hash>
+      // merge-base main <hash> → merge-base hash
+      { stdout: "mergebase789\n" },
+      // git diff <merge-base>..<hash>
       { stdout: "diff --git a/file.ts b/file.ts\n" },
     ]);
     parseDiffMock.mockReturnValue(mockDiff);
@@ -321,9 +323,13 @@ describe("getCommitDiff", () => {
     const result = await getCommitDiff("/worktree", "abc1234");
     expect(result).toEqual(mockDiff);
 
-    // Verify diff was against main
-    const diffCall = execFileMock.mock.calls[2]!;
-    expect(diffCall[1]).toEqual(["diff", "main..abc1234", "--unified=3"]);
+    // Verify merge-base was computed
+    const mergeBaseCall = execFileMock.mock.calls[2]!;
+    expect(mergeBaseCall[1]).toEqual(["merge-base", "main", "abc1234"]);
+
+    // Verify diff was against merge-base
+    const diffCall = execFileMock.mock.calls[3]!;
+    expect(diffCall[1]).toEqual(["diff", "mergebase789..abc1234", "--unified=3"]);
   });
 
   it("diffs against parent for subsequent commits", async () => {
@@ -348,11 +354,13 @@ describe("getCommitDiff", () => {
     ]);
   });
 
-  it("falls back to diff against main when rev-parse fails", async () => {
+  it("falls back to diff against merge-base when rev-parse fails", async () => {
     mockExecFileSequence([
       // rev-parse fails (no parent)
       { error: new Error("no parent") },
-      // git diff main..<hash>
+      // merge-base main <hash> → merge-base hash
+      { stdout: "mergebase789\n" },
+      // git diff <merge-base>..<hash>
       { stdout: "diff output" },
     ]);
     parseDiffMock.mockReturnValue(mockDiff);
@@ -360,8 +368,13 @@ describe("getCommitDiff", () => {
     const result = await getCommitDiff("/worktree", "abc1234");
     expect(result).toEqual(mockDiff);
 
-    const diffCall = execFileMock.mock.calls[1]!;
-    expect(diffCall[1]).toEqual(["diff", "main..abc1234", "--unified=3"]);
+    // Verify merge-base was computed
+    const mergeBaseCall = execFileMock.mock.calls[1]!;
+    expect(mergeBaseCall[1]).toEqual(["merge-base", "main", "abc1234"]);
+
+    // Verify diff was against merge-base
+    const diffCall = execFileMock.mock.calls[2]!;
+    expect(diffCall[1]).toEqual(["diff", "mergebase789..abc1234", "--unified=3"]);
   });
 
   it("returns empty diff when git diff output is empty", async () => {
