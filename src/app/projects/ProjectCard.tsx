@@ -48,11 +48,25 @@ export default function ProjectCard({
   return (
     <Link
       href={`/projects/${encodeURIComponent(project.name)}`}
-      className={`project-card${archived ? " archived" : ""}`}
+      className={`project-card${archived ? " archived" : ""}${pinned ? " pinned" : ""}`}
     >
       <div className="project-card-header">
         <div className="project-name">{project.name}</div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <button
+            className={`pin-toggle-btn${pinned ? " is-pinned" : ""}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onPin(project.path);
+            }}
+            title={pinned ? "Unpin project" : "Pin project"}
+            type="button"
+          >
+            <span className="pin-icon">
+              {pinned ? "\u2605" : "\u2606"}
+            </span>
+          </button>
           {archived ? (
             <div className="project-badge archived-badge">archived</div>
           ) : (

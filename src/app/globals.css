@@ -576,17 +576,122 @@ textarea {
    ============================================================ */
 
 .pinned-section {
-  margin-bottom: var(--space-lg);
+  margin-bottom: 0;
 }
 
 .pinned-section-header {
-  font-family: var(--font-body);
-  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  margin-bottom: var(--space-sm);
+  letter-spacing: 0.1em;
+  color: var(--amber);
+  margin-bottom: var(--space-md);
+}
+
+.pinned-section-header .pinned-star {
+  font-size: 0.85rem;
+  line-height: 1;
+  filter: drop-shadow(0 0 4px rgba(255, 179, 0, 0.5));
+}
+
+.pinned-section-header .pinned-count {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  font-size: 0.62rem;
+}
+
+/* Pinned card enhancements */
+.project-card.pinned {
+  border-color: rgba(255, 179, 0, 0.15);
+}
+
+.project-card.pinned::before {
+  background: linear-gradient(90deg, transparent, var(--amber-dim), transparent);
+  opacity: 0.5;
+}
+
+.project-card.pinned:hover {
+  border-color: rgba(255, 179, 0, 0.3);
+}
+
+.project-card.pinned:hover::before {
+  opacity: 1;
+}
+
+/* Separator between pinned and unpinned */
+.pinned-separator {
+  position: relative;
+  height: 1px;
+  margin: var(--space-xl) 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--border-default),
+    var(--border-strong),
+    var(--border-default),
+    transparent
+  );
+}
+
+.pinned-separator::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 179, 0, 0.12),
+    rgba(0, 229, 255, 0.08),
+    transparent
+  );
+  filter: blur(2px);
+}
+
+/* Pin/Unpin toggle button on cards */
+.pin-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+/* Unpinned state: outline star, subtle */
+.pin-toggle-btn .pin-icon {
+  color: var(--text-tertiary);
+  transition: all 0.15s ease;
+}
+
+.pin-toggle-btn:hover .pin-icon {
+  color: var(--amber);
+  filter: drop-shadow(0 0 3px rgba(255, 179, 0, 0.4));
+}
+
+/* Pinned state: filled amber star with glow */
+.pin-toggle-btn.is-pinned .pin-icon {
+  color: var(--amber);
+  filter: drop-shadow(0 0 4px rgba(255, 179, 0, 0.5));
+}
+
+.pin-toggle-btn.is-pinned:hover .pin-icon {
+  color: var(--amber-dim);
+  filter: drop-shadow(0 0 6px rgba(255, 179, 0, 0.6));
 }
 
 .projects-grid {

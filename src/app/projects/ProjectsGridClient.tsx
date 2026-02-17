@@ -187,23 +187,34 @@ export default function ProjectsGridClient({
       </div>
 
       {showPinnedSection && (
-        <div className="pinned-section">
-          <div className="pinned-section-header">Pinned</div>
-          <div className="projects-grid stagger-in">
-            {visiblePinnedProjects.map((project) => (
-              <ProjectCard
-                key={project.path}
-                project={project}
-                archived={archivedSet.has(project.path)}
-                pinned={true}
-                menuOpen={openMenuId === project.path}
-                onMenuToggle={() => handleMenuToggle(project.path)}
-                onArchive={handleArchive}
-                onPin={handlePin}
-              />
-            ))}
+        <>
+          <div className="pinned-section">
+            <div className="pinned-section-header">
+              <span className="pinned-star">&#9733;</span>
+              <span>Pinned</span>
+              <span className="pinned-count">
+                {visiblePinnedProjects.length}
+              </span>
+            </div>
+            <div className="projects-grid stagger-in">
+              {visiblePinnedProjects.map((project) => (
+                <ProjectCard
+                  key={project.path}
+                  project={project}
+                  archived={archivedSet.has(project.path)}
+                  pinned={true}
+                  menuOpen={openMenuId === project.path}
+                  onMenuToggle={() => handleMenuToggle(project.path)}
+                  onArchive={handleArchive}
+                  onPin={handlePin}
+                />
+              ))}
+            </div>
           </div>
-        </div>
+          {filteredProjects.length > 0 && (
+            <div className="pinned-separator" />
+          )}
+        </>
       )}
 
       {filteredProjects.length > 0 ? (

@@ -1847,6 +1847,134 @@
         letter-spacing: 0.06em;
       }
 
+      /* ============================================
+   PINNED SECTION
+   ============================================ */
+
+      .pinned-section {
+        margin-bottom: 0;
+      }
+
+      .pinned-section-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--amber);
+        margin-bottom: var(--space-md);
+      }
+
+      .pinned-section-header .pinned-star {
+        font-size: 0.85rem;
+        line-height: 1;
+        filter: drop-shadow(0 0 4px rgba(255, 179, 0, 0.5));
+      }
+
+      .pinned-section-header .pinned-count {
+        color: var(--text-tertiary);
+        font-weight: 500;
+        font-size: 0.62rem;
+      }
+
+      /* Pinned card enhancements */
+      .project-card.pinned {
+        border-color: rgba(255, 179, 0, 0.15);
+      }
+
+      .project-card.pinned::before {
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--amber-dim),
+          transparent
+        );
+        opacity: 0.5;
+      }
+
+      .project-card.pinned:hover {
+        border-color: rgba(255, 179, 0, 0.3);
+      }
+
+      .project-card.pinned:hover::before {
+        opacity: 1;
+      }
+
+      /* Separator between pinned and unpinned */
+      .pinned-separator {
+        position: relative;
+        height: 1px;
+        margin: var(--space-xl) 0;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--border-default),
+          var(--border-strong),
+          var(--border-default),
+          transparent
+        );
+      }
+
+      .pinned-separator::before {
+        content: "";
+        position: absolute;
+        top: -1px;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(255, 179, 0, 0.12),
+          rgba(0, 229, 255, 0.08),
+          transparent
+        );
+        filter: blur(2px);
+      }
+
+      /* Pin/Unpin toggle button on cards */
+      .pin-toggle-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        flex-shrink: 0;
+        font-size: 0.9rem;
+        line-height: 1;
+      }
+
+      /* Unpinned state: outline star, subtle */
+      .pin-toggle-btn .pin-icon {
+        color: var(--text-tertiary);
+        transition: all 0.15s ease;
+      }
+
+      .pin-toggle-btn:hover .pin-icon {
+        color: var(--amber);
+        filter: drop-shadow(0 0 3px rgba(255, 179, 0, 0.4));
+      }
+
+      /* Pinned state: filled amber star with glow */
+      .pin-toggle-btn.is-pinned .pin-icon {
+        color: var(--amber);
+        filter: drop-shadow(0 0 4px rgba(255, 179, 0, 0.5));
+      }
+
+      .pin-toggle-btn.is-pinned:hover .pin-icon {
+        color: var(--amber-dim);
+        filter: drop-shadow(0 0 6px rgba(255, 179, 0, 0.6));
+      }
+
       /* Hidden card (filtered out) */
       .project-card.filtered-out {
         display: none;
@@ -2189,109 +2317,166 @@
             </div>
           </div>
 
+          <!-- Pinned Projects Section -->
+          <div class="pinned-section" id="pinned-section">
+            <div class="pinned-section-header">
+              <span class="pinned-star">&#9733;</span>
+              <span>Pinned</span>
+              <span class="pinned-count" id="pinned-count">3</span>
+            </div>
+            <div class="projects-grid stagger-in" id="pinned-grid">
+              <!-- Pinned: remote-ai-manager -->
+              <div
+                class="project-card pinned"
+                data-status="active"
+                data-name="remote-ai-manager"
+                data-pinned="true"
+                onclick="showPage('sessions')"
+              >
+                <div class="project-card-header">
+                  <div class="project-name">remote-ai-manager</div>
+                  <div class="card-actions">
+                    <button
+                      class="pin-toggle-btn is-pinned"
+                      onclick="event.stopPropagation(); togglePin(this);"
+                      title="Unpin project"
+                    >
+                      <span class="pin-icon">&#9733;</span>
+                    </button>
+                    <div class="project-badge active">2 active</div>
+                    <div class="card-menu-wrap">
+                      <button
+                        class="card-menu-btn"
+                        onclick="event.stopPropagation(); toggleCardMenu(this);"
+                      >&#8942;</button>
+                      <div class="card-dropdown">
+                        <button class="card-dropdown-item" onclick="event.stopPropagation(); togglePinFromMenu(this);">
+                          <span class="item-icon">&#9734;</span> Unpin Project
+                        </button>
+                        <button class="card-dropdown-item" onclick="event.stopPropagation(); archiveProject(this);">
+                          <span class="item-icon">&#8615;</span> Archive Project
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="project-path">~/github/remote-ai-manager</div>
+                <div class="project-stats">
+                  <div class="stat">
+                    <span class="stat-value">2</span><span class="stat-label">Sessions</span>
+                  </div>
+                  <div class="stat">
+                    <span class="stat-value">14</span><span class="stat-label">Prompts</span>
+                  </div>
+                  <div class="stat">
+                    <span class="stat-value">3m</span><span class="stat-label">Last active</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Pinned: solana-trading-bot -->
+              <div
+                class="project-card pinned"
+                data-status="active"
+                data-name="solana-trading-bot"
+                data-pinned="true"
+              >
+                <div class="project-card-header">
+                  <div class="project-name">solana-trading-bot</div>
+                  <div class="card-actions">
+                    <button
+                      class="pin-toggle-btn is-pinned"
+                      onclick="event.stopPropagation(); togglePin(this);"
+                      title="Unpin project"
+                    >
+                      <span class="pin-icon">&#9733;</span>
+                    </button>
+                    <div class="project-badge active">1 active</div>
+                    <div class="card-menu-wrap">
+                      <button
+                        class="card-menu-btn"
+                        onclick="event.stopPropagation(); toggleCardMenu(this);"
+                      >&#8942;</button>
+                      <div class="card-dropdown">
+                        <button class="card-dropdown-item" onclick="event.stopPropagation(); togglePinFromMenu(this);">
+                          <span class="item-icon">&#9734;</span> Unpin Project
+                        </button>
+                        <button class="card-dropdown-item" onclick="event.stopPropagation(); archiveProject(this);">
+                          <span class="item-icon">&#8615;</span> Archive Project
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="project-path">~/github/solana-trading-bot</div>
+                <div class="project-stats">
+                  <div class="stat">
+                    <span class="stat-value">1</span><span class="stat-label">Sessions</span>
+                  </div>
+                  <div class="stat">
+                    <span class="stat-value">8</span><span class="stat-label">Prompts</span>
+                  </div>
+                  <div class="stat">
+                    <span class="stat-value">1h</span><span class="stat-label">Last active</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Pinned: api-gateway -->
+              <div
+                class="project-card pinned"
+                data-status="active"
+                data-name="api-gateway"
+                data-pinned="true"
+              >
+                <div class="project-card-header">
+                  <div class="project-name">api-gateway</div>
+                  <div class="card-actions">
+                    <button
+                      class="pin-toggle-btn is-pinned"
+                      onclick="event.stopPropagation(); togglePin(this);"
+                      title="Unpin project"
+                    >
+                      <span class="pin-icon">&#9733;</span>
+                    </button>
+                    <div class="project-badge active">1 active</div>
+                    <div class="card-menu-wrap">
+                      <button
+                        class="card-menu-btn"
+                        onclick="event.stopPropagation(); toggleCardMenu(this);"
+                      >&#8942;</button>
+                      <div class="card-dropdown">
+                        <button class="card-dropdown-item" onclick="event.stopPropagation(); togglePinFromMenu(this);">
+                          <span class="item-icon">&#9734;</span> Unpin Project
+                        </button>
+                        <button class="card-dropdown-item" onclick="event.stopPropagation(); archiveProject(this);">
+                          <span class="item-icon">&#8615;</span> Archive Project
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="project-path">~/github/api-gateway</div>
+                <div class="project-stats">
+                  <div class="stat">
+                    <span class="stat-value">1</span><span class="stat-label">Sessions</span>
+                  </div>
+                  <div class="stat">
+                    <span class="stat-value">22</span><span class="stat-label">Prompts</span>
+                  </div>
+                  <div class="stat">
+                    <span class="stat-value">12m</span><span class="stat-label">Last active</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Separator between pinned and unpinned -->
+          <div class="pinned-separator" id="pinned-separator"></div>
+
+          <!-- Unpinned Projects -->
           <div class="projects-grid stagger-in" id="projects-grid">
-            <!-- Active project cards -->
-            <div
-              class="project-card"
-              data-status="active"
-              data-name="remote-ai-manager"
-              onclick="showPage('sessions')"
-            >
-              <div class="project-card-header">
-                <div class="project-name">remote-ai-manager</div>
-                <div class="card-actions">
-                  <div class="project-badge active">2 active</div>
-                  <div class="card-menu-wrap">
-                    <button
-                      class="card-menu-btn"
-                      onclick="
-                        event.stopPropagation();
-                        toggleCardMenu(this);
-                      "
-                    >
-                      &#8942;
-                    </button>
-                    <div class="card-dropdown">
-                      <button
-                        class="card-dropdown-item"
-                        onclick="
-                          event.stopPropagation();
-                          archiveProject(this);
-                        "
-                      >
-                        <span class="item-icon">&#8615;</span> Archive Project
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="project-path">~/github/remote-ai-manager</div>
-              <div class="project-stats">
-                <div class="stat">
-                  <span class="stat-value">2</span
-                  ><span class="stat-label">Sessions</span>
-                </div>
-                <div class="stat">
-                  <span class="stat-value">14</span
-                  ><span class="stat-label">Prompts</span>
-                </div>
-                <div class="stat">
-                  <span class="stat-value">3m</span
-                  ><span class="stat-label">Last active</span>
-                </div>
-              </div>
-            </div>
-
-            <div
-              class="project-card"
-              data-status="active"
-              data-name="solana-trading-bot"
-            >
-              <div class="project-card-header">
-                <div class="project-name">solana-trading-bot</div>
-                <div class="card-actions">
-                  <div class="project-badge active">1 active</div>
-                  <div class="card-menu-wrap">
-                    <button
-                      class="card-menu-btn"
-                      onclick="
-                        event.stopPropagation();
-                        toggleCardMenu(this);
-                      "
-                    >
-                      &#8942;
-                    </button>
-                    <div class="card-dropdown">
-                      <button
-                        class="card-dropdown-item"
-                        onclick="
-                          event.stopPropagation();
-                          archiveProject(this);
-                        "
-                      >
-                        <span class="item-icon">&#8615;</span> Archive Project
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="project-path">~/github/solana-trading-bot</div>
-              <div class="project-stats">
-                <div class="stat">
-                  <span class="stat-value">1</span
-                  ><span class="stat-label">Sessions</span>
-                </div>
-                <div class="stat">
-                  <span class="stat-value">8</span
-                  ><span class="stat-label">Prompts</span>
-                </div>
-                <div class="stat">
-                  <span class="stat-value">1h</span
-                  ><span class="stat-label">Last active</span>
-                </div>
-              </div>
-            </div>
-
             <div
               class="project-card"
               data-status="idle"
@@ -2300,25 +2485,24 @@
               <div class="project-card-header">
                 <div class="project-name">personal-site</div>
                 <div class="card-actions">
+                  <button
+                    class="pin-toggle-btn"
+                    onclick="event.stopPropagation(); togglePin(this);"
+                    title="Pin project"
+                  >
+                    <span class="pin-icon">&#9734;</span>
+                  </button>
                   <div class="project-badge idle">idle</div>
                   <div class="card-menu-wrap">
                     <button
                       class="card-menu-btn"
-                      onclick="
-                        event.stopPropagation();
-                        toggleCardMenu(this);
-                      "
-                    >
-                      &#8942;
-                    </button>
+                      onclick="event.stopPropagation(); toggleCardMenu(this);"
+                    >&#8942;</button>
                     <div class="card-dropdown">
-                      <button
-                        class="card-dropdown-item"
-                        onclick="
-                          event.stopPropagation();
-                          archiveProject(this);
-                        "
-                      >
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); togglePinFromMenu(this);">
+                        <span class="item-icon">&#9733;</span> Pin Project
+                      </button>
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); archiveProject(this);">
                         <span class="item-icon">&#8615;</span> Archive Project
                       </button>
                     </div>
@@ -2328,16 +2512,13 @@
               <div class="project-path">~/github/personal-site</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">0</span
-                  ><span class="stat-label">Sessions</span>
+                  <span class="stat-value">0</span><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Prompts</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Last active</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
@@ -2346,25 +2527,24 @@
               <div class="project-card-header">
                 <div class="project-name">dotfiles</div>
                 <div class="card-actions">
+                  <button
+                    class="pin-toggle-btn"
+                    onclick="event.stopPropagation(); togglePin(this);"
+                    title="Pin project"
+                  >
+                    <span class="pin-icon">&#9734;</span>
+                  </button>
                   <div class="project-badge idle">idle</div>
                   <div class="card-menu-wrap">
                     <button
                       class="card-menu-btn"
-                      onclick="
-                        event.stopPropagation();
-                        toggleCardMenu(this);
-                      "
-                    >
-                      &#8942;
-                    </button>
+                      onclick="event.stopPropagation(); toggleCardMenu(this);"
+                    >&#8942;</button>
                     <div class="card-dropdown">
-                      <button
-                        class="card-dropdown-item"
-                        onclick="
-                          event.stopPropagation();
-                          archiveProject(this);
-                        "
-                      >
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); togglePinFromMenu(this);">
+                        <span class="item-icon">&#9733;</span> Pin Project
+                      </button>
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); archiveProject(this);">
                         <span class="item-icon">&#8615;</span> Archive Project
                       </button>
                     </div>
@@ -2374,66 +2554,13 @@
               <div class="project-path">~/github/dotfiles</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">0</span
-                  ><span class="stat-label">Sessions</span>
+                  <span class="stat-value">0</span><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Prompts</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Last active</span>
-                </div>
-              </div>
-            </div>
-
-            <div
-              class="project-card"
-              data-status="active"
-              data-name="api-gateway"
-            >
-              <div class="project-card-header">
-                <div class="project-name">api-gateway</div>
-                <div class="card-actions">
-                  <div class="project-badge active">1 active</div>
-                  <div class="card-menu-wrap">
-                    <button
-                      class="card-menu-btn"
-                      onclick="
-                        event.stopPropagation();
-                        toggleCardMenu(this);
-                      "
-                    >
-                      &#8942;
-                    </button>
-                    <div class="card-dropdown">
-                      <button
-                        class="card-dropdown-item"
-                        onclick="
-                          event.stopPropagation();
-                          archiveProject(this);
-                        "
-                      >
-                        <span class="item-icon">&#8615;</span> Archive Project
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="project-path">~/github/api-gateway</div>
-              <div class="project-stats">
-                <div class="stat">
-                  <span class="stat-value">1</span
-                  ><span class="stat-label">Sessions</span>
-                </div>
-                <div class="stat">
-                  <span class="stat-value">22</span
-                  ><span class="stat-label">Prompts</span>
-                </div>
-                <div class="stat">
-                  <span class="stat-value">12m</span
-                  ><span class="stat-label">Last active</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
@@ -2446,25 +2573,24 @@
               <div class="project-card-header">
                 <div class="project-name">ml-experiments</div>
                 <div class="card-actions">
+                  <button
+                    class="pin-toggle-btn"
+                    onclick="event.stopPropagation(); togglePin(this);"
+                    title="Pin project"
+                  >
+                    <span class="pin-icon">&#9734;</span>
+                  </button>
                   <div class="project-badge idle">idle</div>
                   <div class="card-menu-wrap">
                     <button
                       class="card-menu-btn"
-                      onclick="
-                        event.stopPropagation();
-                        toggleCardMenu(this);
-                      "
-                    >
-                      &#8942;
-                    </button>
+                      onclick="event.stopPropagation(); toggleCardMenu(this);"
+                    >&#8942;</button>
                     <div class="card-dropdown">
-                      <button
-                        class="card-dropdown-item"
-                        onclick="
-                          event.stopPropagation();
-                          archiveProject(this);
-                        "
-                      >
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); togglePinFromMenu(this);">
+                        <span class="item-icon">&#9733;</span> Pin Project
+                      </button>
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); archiveProject(this);">
                         <span class="item-icon">&#8615;</span> Archive Project
                       </button>
                     </div>
@@ -2474,16 +2600,13 @@
               <div class="project-path">~/github/ml-experiments</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">0</span
-                  ><span class="stat-label">Sessions</span>
+                  <span class="stat-value">0</span><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Prompts</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Last active</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
@@ -2499,25 +2622,24 @@
               <div class="project-card-header">
                 <div class="project-name">old-blog</div>
                 <div class="card-actions">
+                  <button
+                    class="pin-toggle-btn"
+                    onclick="event.stopPropagation(); togglePin(this);"
+                    title="Pin project"
+                  >
+                    <span class="pin-icon">&#9734;</span>
+                  </button>
                   <div class="project-badge archived-badge">archived</div>
                   <div class="card-menu-wrap">
                     <button
                       class="card-menu-btn"
-                      onclick="
-                        event.stopPropagation();
-                        toggleCardMenu(this);
-                      "
-                    >
-                      &#8942;
-                    </button>
+                      onclick="event.stopPropagation(); toggleCardMenu(this);"
+                    >&#8942;</button>
                     <div class="card-dropdown">
-                      <button
-                        class="card-dropdown-item"
-                        onclick="
-                          event.stopPropagation();
-                          archiveProject(this);
-                        "
-                      >
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); togglePinFromMenu(this);">
+                        <span class="item-icon">&#9733;</span> Pin Project
+                      </button>
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); archiveProject(this);">
                         <span class="item-icon">&#8613;</span> Unarchive Project
                       </button>
                     </div>
@@ -2527,16 +2649,13 @@
               <div class="project-path">~/github/old-blog</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">0</span
-                  ><span class="stat-label">Sessions</span>
+                  <span class="stat-value">0</span><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Prompts</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Last active</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
@@ -2551,25 +2670,24 @@
               <div class="project-card-header">
                 <div class="project-name">react-playground</div>
                 <div class="card-actions">
+                  <button
+                    class="pin-toggle-btn"
+                    onclick="event.stopPropagation(); togglePin(this);"
+                    title="Pin project"
+                  >
+                    <span class="pin-icon">&#9734;</span>
+                  </button>
                   <div class="project-badge archived-badge">archived</div>
                   <div class="card-menu-wrap">
                     <button
                       class="card-menu-btn"
-                      onclick="
-                        event.stopPropagation();
-                        toggleCardMenu(this);
-                      "
-                    >
-                      &#8942;
-                    </button>
+                      onclick="event.stopPropagation(); toggleCardMenu(this);"
+                    >&#8942;</button>
                     <div class="card-dropdown">
-                      <button
-                        class="card-dropdown-item"
-                        onclick="
-                          event.stopPropagation();
-                          archiveProject(this);
-                        "
-                      >
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); togglePinFromMenu(this);">
+                        <span class="item-icon">&#9733;</span> Pin Project
+                      </button>
+                      <button class="card-dropdown-item" onclick="event.stopPropagation(); archiveProject(this);">
                         <span class="item-icon">&#8613;</span> Unarchive Project
                       </button>
                     </div>
@@ -2579,16 +2697,13 @@
               <div class="project-path">~/github/react-playground</div>
               <div class="project-stats">
                 <div class="stat">
-                  <span class="stat-value">0</span
-                  ><span class="stat-label">Sessions</span>
+                  <span class="stat-value">0</span><span class="stat-label">Sessions</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Prompts</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Prompts</span>
                 </div>
                 <div class="stat">
-                  <span class="stat-value">&mdash;</span
-                  ><span class="stat-label">Last active</span>
+                  <span class="stat-value">&mdash;</span><span class="stat-label">Last active</span>
                 </div>
               </div>
             </div>
@@ -3537,6 +3652,88 @@ export default function SessionDetail({ params }) {
         }
       }
 
+      // ===================== PIN / UNPIN =====================
+      function togglePin(btnEl) {
+        const card = btnEl.closest('.project-card');
+        if (!card) return;
+        closeAllMenus();
+
+        const isPinned = card.hasAttribute('data-pinned');
+        const pinnedGrid = document.getElementById('pinned-grid');
+        const unpinnedGrid = document.getElementById('projects-grid');
+
+        if (isPinned) {
+          // Unpin: move card from pinned grid to unpinned grid (at the top)
+          card.removeAttribute('data-pinned');
+          card.classList.remove('pinned');
+          btnEl.classList.remove('is-pinned');
+          btnEl.title = 'Pin project';
+          btnEl.querySelector('.pin-icon').innerHTML = '&#9734;';
+
+          // Update context menu text
+          const menuPinItem = card.querySelector('.card-dropdown-item');
+          if (menuPinItem) {
+            menuPinItem.innerHTML = '<span class="item-icon">&#9733;</span> Pin Project';
+          }
+
+          // Move to unpinned grid (before no-results)
+          const noResults = unpinnedGrid.querySelector('.no-results');
+          if (noResults) {
+            unpinnedGrid.insertBefore(card, noResults);
+          } else {
+            unpinnedGrid.appendChild(card);
+          }
+        } else {
+          // Pin: move card from unpinned grid to pinned grid
+          card.setAttribute('data-pinned', 'true');
+          card.classList.add('pinned');
+          btnEl.classList.add('is-pinned');
+          btnEl.title = 'Unpin project';
+          btnEl.querySelector('.pin-icon').innerHTML = '&#9733;';
+
+          // Update context menu text
+          const menuPinItem = card.querySelector('.card-dropdown-item');
+          if (menuPinItem) {
+            menuPinItem.innerHTML = '<span class="item-icon">&#9734;</span> Unpin Project';
+          }
+
+          pinnedGrid.appendChild(card);
+        }
+
+        updatePinnedSection();
+        applyFilters();
+      }
+
+      function togglePinFromMenu(itemEl) {
+        const card = itemEl.closest('.project-card');
+        if (!card) return;
+        const pinBtn = card.querySelector('.pin-toggle-btn');
+        if (pinBtn) {
+          closeAllMenus();
+          togglePin(pinBtn);
+        }
+      }
+
+      function updatePinnedSection() {
+        const pinnedGrid = document.getElementById('pinned-grid');
+        const pinnedSection = document.getElementById('pinned-section');
+        const separator = document.getElementById('pinned-separator');
+        const pinnedCards = pinnedGrid.querySelectorAll('.project-card');
+        const count = pinnedCards.length;
+
+        // Update count
+        const countEl = document.getElementById('pinned-count');
+        if (countEl) countEl.textContent = count;
+
+        // Show/hide pinned section and separator
+        const hasPinned = count > 0;
+        pinnedSection.style.display = hasPinned ? '' : 'none';
+        separator.style.display = hasPinned ? '' : 'none';
+      }
+
+      // Initialize pinned section state
+      updatePinnedSection();
+
       // ===================== CARD DROPDOWN MENU =====================
       function closeAllMenus() {
         document.querySelectorAll(".card-dropdown.open").forEach(function (d) {
@@ -3581,7 +3778,6 @@ export default function SessionDetail({ params }) {
 
         const isArchived = card.hasAttribute("data-archived");
         const badge = card.querySelector(".project-badge");
-        const menuItem = card.querySelector(".card-dropdown-item");
 
         if (isArchived) {
           // Unarchive
@@ -3592,10 +3788,8 @@ export default function SessionDetail({ params }) {
             badge.className = "project-badge " + status;
             badge.textContent = status === "active" ? "active" : "idle";
           }
-          if (menuItem) {
-            menuItem.innerHTML =
-              '<span class="item-icon">&#8615;</span> Archive Project';
-          }
+          itemEl.innerHTML =
+            '<span class="item-icon">&#8615;</span> Archive Project';
         } else {
           // Archive
           card.setAttribute("data-archived", "true");
@@ -3604,10 +3798,8 @@ export default function SessionDetail({ params }) {
             badge.className = "project-badge archived-badge";
             badge.textContent = "archived";
           }
-          if (menuItem) {
-            menuItem.innerHTML =
-              '<span class="item-icon">&#8613;</span> Unarchive Project';
-          }
+          itemEl.innerHTML =
+            '<span class="item-icon">&#8613;</span> Unarchive Project';
         }
 
         updateCounts();
@@ -3615,16 +3807,18 @@ export default function SessionDetail({ params }) {
       }
 
       // Core filter logic — combines search, status filter, and archive visibility
+      // Applies to both pinned and unpinned grids
       function applyFilters() {
         const query = searchInput.value.toLowerCase().trim();
-        const grid = document.getElementById("projects-grid");
-        const cards = grid.querySelectorAll(".project-card");
+        const allCards = document.querySelectorAll("#pinned-grid .project-card, #projects-grid .project-card");
         let visibleCount = 0;
+        let visiblePinnedCount = 0;
 
-        cards.forEach(function (card) {
+        allCards.forEach(function (card) {
           const name = (card.getAttribute("data-name") || "").toLowerCase();
           const status = card.getAttribute("data-status");
           const isArchived = card.hasAttribute("data-archived");
+          const isPinned = card.hasAttribute("data-pinned");
 
           // Check archive visibility
           if (isArchived && !showingArchived) {
@@ -3644,12 +3838,20 @@ export default function SessionDetail({ params }) {
           if (matchesSearch && matchesStatus) {
             card.style.display = "";
             visibleCount++;
+            if (isPinned) visiblePinnedCount++;
           } else {
             card.style.display = "none";
           }
         });
 
-        // Show/hide no-results
+        // Show/hide pinned section based on visible pinned cards
+        const pinnedSection = document.getElementById("pinned-section");
+        const separator = document.getElementById("pinned-separator");
+        const hasPinnedVisible = visiblePinnedCount > 0;
+        pinnedSection.style.display = hasPinnedVisible ? "" : "none";
+        separator.style.display = hasPinnedVisible ? "" : "none";
+
+        // Show/hide no-results (only when total visible is 0)
         const noResults = document.getElementById("no-results");
         if (noResults) {
           noResults.classList.toggle("visible", visibleCount === 0);
@@ -3660,13 +3862,13 @@ export default function SessionDetail({ params }) {
 
       // Update filter pill counts and subtitle
       function updateCounts() {
-        const cards = document.querySelectorAll("#projects-grid .project-card");
+        const allCards = document.querySelectorAll("#pinned-grid .project-card, #projects-grid .project-card");
         let total = 0;
         let activeCount = 0;
         let idleCount = 0;
         let archivedCount = 0;
 
-        cards.forEach(function (card) {
+        allCards.forEach(function (card) {
           const isArchived = card.hasAttribute("data-archived");
           if (isArchived) {
             archivedCount++;
