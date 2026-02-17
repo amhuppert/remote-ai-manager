@@ -1913,53 +1913,64 @@ textarea {
   min-height: 0;
 }
 
+/* Diff tab bar */
+.diff-tab-bar {
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(17, 24, 37, 0.3);
+  flex-shrink: 0;
+}
+
 .diff-toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: 4px var(--space-md);
+  padding: var(--space-sm) var(--space-md);
   border-bottom: 1px solid var(--border-subtle);
-  background: rgba(17, 24, 37, 0.3);
+  background: var(--bg-raised);
   flex-shrink: 0;
 }
 
 .diff-toolbar-group {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
+  padding: 2px;
+  background: rgba(11, 16, 25, 0.4);
+  border-radius: var(--radius-sm);
 }
 
 .diff-toolbar-label {
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.65rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-tertiary);
-  margin: 0 3px;
+  color: var(--text-secondary);
+  margin: 0 var(--space-xs);
 }
 
 .diff-toolbar-sep {
   width: 1px;
-  height: 16px;
-  background: var(--border-subtle);
+  height: 20px;
+  background: var(--border-default);
   flex-shrink: 0;
-  margin: 0 2px;
+  margin: 0 var(--space-xs);
 }
 
 .diff-nav-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 5px;
-  border: 1px solid var(--border-subtle);
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   font-weight: 500;
   transition: all 0.15s ease;
   cursor: pointer;
@@ -1967,8 +1978,15 @@ textarea {
 
 .diff-nav-btn:hover {
   background: var(--bg-hover);
-  color: var(--text-secondary);
-  border-color: var(--border-default);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  box-shadow: 0 0 8px var(--cyan-glow);
+}
+
+.diff-nav-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 /* Diff content */
