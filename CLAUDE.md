@@ -46,9 +46,11 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 
 ## Steering Configuration
 
-- Load entire `.kiro/steering/` as project memory
-- Default files: `product.md`, `tech.md`, `structure.md`
-- Custom files are supported (managed via `/kiro:steering-custom`)
+Project steering files are loaded automatically below. Custom files are supported (managed via `/kiro:steering-custom`).
+
+@.kiro/steering/product.md
+@.kiro/steering/tech.md
+@.kiro/steering/structure.md
 
 ## Next.js MCP Tools
 
