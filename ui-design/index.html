@@ -506,8 +506,45 @@
       .session-actions-bar {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        gap: var(--space-sm);
         margin-bottom: var(--space-lg);
+      }
+
+      .session-actions-bar .archive-toggle {
+        margin-left: auto;
+      }
+
+      .session-actions-bar .btn-primary {
+        margin-left: 0;
+      }
+
+      /* Archived session row styling */
+      .session-row-archived {
+        opacity: 0.4;
+      }
+
+      .session-row-archived:hover {
+        opacity: 0.65;
+      }
+
+      .session-row-archived td {
+        border-bottom-style: dashed;
+      }
+
+      .session-archived-badge {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 1px 7px;
+        border-radius: 100px;
+        border: 1px dashed var(--border-default);
+        background: rgba(123, 137, 159, 0.08);
+        color: var(--text-tertiary);
+        font-family: var(--font-mono);
+        font-size: 0.58rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        vertical-align: middle;
       }
 
       .btn {
@@ -1564,7 +1601,7 @@
         gap: 2px;
         padding: 3px;
         background: var(--bg-surface);
-        border: 1px solid var(--border-subtle);
+        border: 1px solid var(--border-default);
         border-radius: var(--radius-md);
       }
 
@@ -1573,7 +1610,7 @@
         border: 1px solid transparent;
         border-radius: var(--radius-sm);
         background: transparent;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         font-family: var(--font-mono);
         font-size: 0.68rem;
         font-weight: 600;
@@ -1585,7 +1622,7 @@
       }
 
       .filter-pill:hover {
-        color: var(--text-secondary);
+        color: var(--text-primary);
         background: var(--bg-hover);
       }
 
@@ -1603,7 +1640,7 @@
         background: var(--bg-hover);
         font-size: 0.6rem;
         font-weight: 500;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       .filter-pill.active .pill-count {
@@ -1624,10 +1661,10 @@
         align-items: center;
         gap: 6px;
         padding: 6px 14px;
-        border: 1px solid var(--border-subtle);
+        border: 1px solid var(--border-default);
         border-radius: var(--radius-md);
         background: transparent;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         font-family: var(--font-mono);
         font-size: 0.68rem;
         font-weight: 500;
@@ -1637,8 +1674,8 @@
       }
 
       .archive-btn-toggle:hover {
-        border-color: var(--border-default);
-        color: var(--text-secondary);
+        border-color: var(--border-strong);
+        color: var(--text-primary);
         background: var(--bg-surface);
       }
 
@@ -1654,6 +1691,7 @@
         background: var(--bg-hover);
         font-size: 0.6rem;
         font-weight: 600;
+        color: var(--text-secondary);
       }
 
       .archive-btn-toggle.showing .archive-count {
@@ -2580,10 +2618,23 @@
           <div class="stagger-in">
             <div class="session-actions-bar">
               <div style="display: flex; gap: var(--space-sm)">
-                <button class="btn btn-sm" style="color: var(--text-tertiary)">
+                <button class="btn btn-sm" style="color: var(--text-secondary)">
                   <span class="btn-icon">&#8635;</span> Refresh
                 </button>
               </div>
+
+              <div class="archive-toggle">
+                <button
+                  class="archive-btn-toggle"
+                  id="session-archive-toggle"
+                  onclick="toggleSessionArchived()"
+                >
+                  <span>&#9744;</span>
+                  Archived
+                  <span class="archive-count" id="session-archive-count">2</span>
+                </button>
+              </div>
+
               <button
                 class="btn btn-primary btn-sm"
                 onclick="toggleModal(true)"
@@ -2603,7 +2654,7 @@
                   <th></th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="sessions-tbody">
                 <tr onclick="showPage('detail')">
                   <td>
                     <div class="session-name-cell">
@@ -2647,6 +2698,56 @@
                       onclick="event.stopPropagation()"
                     >
                       Delete
+                    </button>
+                  </td>
+                </tr>
+
+                <!-- Archived sessions (hidden by default) -->
+                <tr class="session-row-archived" data-archived="true" style="display: none">
+                  <td>
+                    <div class="session-name-cell">
+                      <span class="session-name">setup-ci-pipeline</span>
+                      <span class="session-archived-badge">archived</span>
+                    </div>
+                  </td>
+                  <td><span class="session-branch">csm/setup-ci</span></td>
+                  <td>
+                    <span class="session-status finished">
+                      <span class="dot"></span> Finished
+                    </span>
+                  </td>
+                  <td><span class="session-time">3 days ago</span></td>
+                  <td><span class="session-time">14</span></td>
+                  <td>
+                    <button
+                      class="btn btn-sm"
+                      onclick="event.stopPropagation(); toggleSessionArchiveRow(this)"
+                    >
+                      Unarchive
+                    </button>
+                  </td>
+                </tr>
+                <tr class="session-row-archived" data-archived="true" style="display: none">
+                  <td>
+                    <div class="session-name-cell">
+                      <span class="session-name">refactor-db-layer</span>
+                      <span class="session-archived-badge">archived</span>
+                    </div>
+                  </td>
+                  <td><span class="session-branch">csm/refactor-db</span></td>
+                  <td>
+                    <span class="session-status finished">
+                      <span class="dot"></span> Finished
+                    </span>
+                  </td>
+                  <td><span class="session-time">1 week ago</span></td>
+                  <td><span class="session-time">22</span></td>
+                  <td>
+                    <button
+                      class="btn btn-sm"
+                      onclick="event.stopPropagation(); toggleSessionArchiveRow(this)"
+                    >
+                      Unarchive
                     </button>
                   </td>
                 </tr>
@@ -3354,6 +3455,86 @@ export default function SessionDetail({ params }) {
           ? "&#9746;"
           : "&#9744;";
         applyFilters();
+      }
+
+      // ===================== SESSION ARCHIVE TOGGLE =====================
+      let showingSessionArchived = false;
+
+      function toggleSessionArchived() {
+        showingSessionArchived = !showingSessionArchived;
+        const btn = document.getElementById("session-archive-toggle");
+        btn.classList.toggle("showing", showingSessionArchived);
+        btn.querySelector("span:first-child").innerHTML = showingSessionArchived
+          ? "&#9746;"
+          : "&#9744;";
+
+        const rows = document.querySelectorAll("#sessions-tbody tr[data-archived]");
+        rows.forEach(function (row) {
+          row.style.display = showingSessionArchived ? "" : "none";
+        });
+
+        updateSessionSubtitle();
+      }
+
+      function toggleSessionArchiveRow(btnEl) {
+        const row = btnEl.closest("tr");
+        if (!row) return;
+        const isArchived = row.hasAttribute("data-archived");
+
+        if (isArchived) {
+          // Unarchive
+          row.removeAttribute("data-archived");
+          row.classList.remove("session-row-archived");
+          const badge = row.querySelector(".session-archived-badge");
+          if (badge) badge.remove();
+          btnEl.textContent = "Archive";
+        } else {
+          // Archive
+          row.setAttribute("data-archived", "true");
+          row.classList.add("session-row-archived");
+          const nameCell = row.querySelector(".session-name-cell");
+          if (nameCell && !nameCell.querySelector(".session-archived-badge")) {
+            const badge = document.createElement("span");
+            badge.className = "session-archived-badge";
+            badge.textContent = "archived";
+            nameCell.appendChild(badge);
+          }
+          btnEl.textContent = "Unarchive";
+          if (!showingSessionArchived) {
+            row.style.display = "none";
+          }
+        }
+
+        updateSessionArchiveCount();
+        updateSessionSubtitle();
+      }
+
+      function updateSessionArchiveCount() {
+        const archivedRows = document.querySelectorAll("#sessions-tbody tr[data-archived]");
+        const countEl = document.getElementById("session-archive-count");
+        if (countEl) countEl.textContent = archivedRows.length;
+
+        // Hide/show the toggle button based on archive count
+        const toggleWrapper = document.getElementById("session-archive-toggle");
+        if (toggleWrapper) {
+          toggleWrapper.closest(".archive-toggle").style.display =
+            archivedRows.length > 0 ? "" : "none";
+        }
+      }
+
+      function updateSessionSubtitle() {
+        // Count only non-archived sessions for the subtitle
+        const allRows = document.querySelectorAll("#sessions-tbody tr");
+        let activeCount = 0;
+        allRows.forEach(function (row) {
+          if (!row.hasAttribute("data-archived")) activeCount++;
+        });
+        // Update subtitle text
+        const subtitle = document.querySelector("#page-sessions .page-subtitle");
+        if (subtitle) {
+          subtitle.textContent =
+            "~/github/remote-ai-manager \u2014 " + activeCount + " session" + (activeCount !== 1 ? "s" : "");
+        }
       }
 
       // ===================== CARD DROPDOWN MENU =====================

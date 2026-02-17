@@ -25,7 +25,7 @@ export default async function SessionsPage({
     getProjectSessions(projectPath),
     detectHooksStatus(),
   ]);
-  const activeSessions = sessions.filter((s) => !s.archived);
+  const activeCount = sessions.filter((s) => !s.archived).length;
 
   return (
     <div className="app" data-page="sessions">
@@ -63,12 +63,12 @@ export default async function SessionsPage({
         <div className="page-header stagger-in">
           <h1 className="page-title">{decodeURIComponent(name)}</h1>
           <p className="page-subtitle">
-            {projectPath} &mdash; {activeSessions.length} session
-            {activeSessions.length !== 1 ? "s" : ""}
+            {projectPath} &mdash; {activeCount} session
+            {activeCount !== 1 ? "s" : ""}
           </p>
         </div>
 
-        <SessionsList projectName={name} initialSessions={activeSessions} />
+        <SessionsList projectName={name} initialSessions={sessions} />
       </main>
     </div>
   );

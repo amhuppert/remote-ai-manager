@@ -51,6 +51,9 @@ export default function SessionDetailPage({
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
   const [promptText, setPromptText] = useState("");
   const [sending, setSending] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const promptTextRef = useRef(promptText);
+  promptTextRef.current = promptText;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCommitDialog, setShowCommitDialog] = useState(false);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
@@ -182,8 +185,9 @@ export default function SessionDetailPage({
   );
 
   const handleSendPrompt = useCallback(async () => {
-    if (!promptText.trim() || sending) return;
-    const text = promptText.trim();
+    const currentText = promptTextRef.current;
+    if (!currentText.trim() || sending) return;
+    const text = currentText.trim();
 
     // Optimistic: add user message immediately and clear input
     setOptimisticMessages((prev) => [
@@ -215,7 +219,7 @@ export default function SessionDetailPage({
       setSending(false);
       router.refresh();
     }
-  }, [promptText, sending, projectName, session.sessionName, router]);
+  }, [sending, projectName, session.sessionName, router]);
 
   const handleDelete = useCallback(async () => {
     try {
@@ -234,6 +238,8 @@ export default function SessionDetailPage({
 
   const handleVoiceResult = useCallback((text: string) => {
     setPromptText((prev) => (prev.trim() ? `${prev}\n${text}` : text));
+    // Focus textarea so Enter key submits instead of re-triggering voice button
+    requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
   const handleVoiceError = useCallback((error: string) => {
@@ -470,6 +476,7 @@ export default function SessionDetailPage({
               <div className="prompt-input-area">
                 <div className="prompt-input-wrapper">
                   <textarea
+                    ref={textareaRef}
                     className="prompt-textarea"
                     placeholder={
                       isFinished

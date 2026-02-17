@@ -903,7 +903,7 @@ textarea {
   gap: 2px;
   padding: 3px;
   background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
 }
 
@@ -915,7 +915,7 @@ textarea {
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 0.68rem;
   font-weight: 600;
@@ -927,7 +927,7 @@ textarea {
 
 .filter-pill:hover {
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .filter-pill.active {
@@ -945,10 +945,10 @@ textarea {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 0.68rem;
   font-weight: 600;
@@ -959,8 +959,8 @@ textarea {
 
 .archive-toggle:hover {
   background: var(--bg-hover);
-  color: var(--text-secondary);
-  border-color: var(--border-default);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
 }
 
 .archive-toggle.active {

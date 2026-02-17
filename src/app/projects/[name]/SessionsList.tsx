@@ -118,7 +118,7 @@ export default function SessionsList({
           >
             <button
               className="btn btn-sm"
-              style={{ color: "var(--text-tertiary)" }}
+              style={{ color: "var(--text-secondary)" }}
               onClick={() => router.refresh()}
             >
               <span className="btn-icon">&#8635;</span> Refresh
