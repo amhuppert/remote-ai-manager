@@ -3,7 +3,7 @@
 # Documentation: https://github.com/frankbria/ralph-claude-code
 
 # Project identification
-PROJECT_NAME="e2e-debugging-instrumentation"
+PROJECT_NAME="git-operations"
 PROJECT_TYPE="typescript"
 
 # Loop settings

@@ -74,6 +74,7 @@ const baseSession: SessionState = {
   lastActivityAt: "2024-06-15T12:00:00Z",
   promptCount: 5,
   archived: false,
+              finished: false,
   messages: [],
 };
 
@@ -105,6 +106,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={sampleMessages}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     // User messages show "You", assistant shows "Claude"
@@ -121,6 +123,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={sampleMessages}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     expect(screen.getByText("Hello Claude")).toBeDefined();
@@ -135,6 +138,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={[]}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     expect(screen.getByText("No messages yet")).toBeDefined();
@@ -150,6 +154,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={[]}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     // Branch name
@@ -169,6 +174,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={sampleMessages}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     expect(screen.getByText("1 / 3")).toBeDefined();
@@ -181,6 +187,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={[]}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     expect(screen.getByText("0 / 0")).toBeDefined();
@@ -193,6 +200,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={sampleMessages}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     const prevBtn = screen.getByTitle("Previous message");
@@ -210,6 +218,7 @@ describe("SessionDetailPage", () => {
         session={{ ...baseSession, status: "running" }}
         messages={[]}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     const indicator = container.querySelector(".typing-indicator");
@@ -226,6 +235,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={sampleMessages}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     const indicator = container.querySelector(".typing-indicator");
@@ -239,6 +249,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={[]}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     const sendBtn = container.querySelector(".send-btn");
@@ -252,6 +263,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={[]}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     const layoutBtns = container.querySelectorAll(".layout-btn");
@@ -266,6 +278,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={[]}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     const textarea = container.querySelector(".prompt-textarea")!;
@@ -281,6 +294,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={[]}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
     const textarea = container.querySelector(
@@ -301,6 +315,7 @@ describe("SessionDetailPage", () => {
         session={baseSession}
         messages={[]}
         diff={emptyDiff}
+        commits={[]}
       />,
     );
 

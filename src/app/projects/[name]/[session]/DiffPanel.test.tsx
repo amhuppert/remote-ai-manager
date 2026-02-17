@@ -54,9 +54,12 @@ const sampleDiff: SessionDiff = {
 describe("DiffPanel", () => {
   it("renders empty state when no diff files (Req 5.6)", () => {
     render(<DiffPanel diff={emptyDiff} />);
+    // With no diff files, DiffPanel defaults to "Commits" tab
+    // Click the "Uncommitted" tab to see the empty diff state
+    fireEvent.click(screen.getByText("Uncommitted"));
     expect(screen.getByText("No changes")).toBeDefined();
     expect(
-      screen.getByText("This session has no diff vs main yet."),
+      screen.getByText("This session has no uncommitted changes."),
     ).toBeDefined();
   });
 

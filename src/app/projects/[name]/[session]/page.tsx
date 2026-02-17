@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
 import { computeDiff } from "@/lib/diff";
+import { getCommitLog } from "@/lib/git-operations";
 import SessionDetailPage from "./SessionDetailPage";
 import type { TranscriptMessage } from "@/types";
 
@@ -30,6 +31,9 @@ export default async function SessionPage({
   // Compute diff — safe to fail (returns empty)
   const diff = await computeDiff(sessionState.worktreePath);
 
+  // Fetch commit log — safe to fail (returns empty)
+  const commits = await getCommitLog(sessionState.worktreePath);
+
   // Read conversation messages directly from session state
   const messages: TranscriptMessage[] = (sessionState.messages ?? []).map(
     (m) => ({
@@ -45,6 +49,7 @@ export default async function SessionPage({
       session={sessionState}
       messages={messages}
       diff={diff}
+      commits={commits}
     />
   );
 }

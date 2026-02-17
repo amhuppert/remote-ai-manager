@@ -28,7 +28,13 @@ export interface DiscoveredProject {
   hasRunningSession: boolean;
 }
 
-export type { CreateSessionRequest } from "@/lib/schemas";
+export type {
+  CreateSessionRequest,
+  CommitRequest,
+  MergeRequest,
+  SessionArchiveRequest,
+  CommitLogEntry,
+} from "@/lib/schemas";
 
 /** Parsed transcript message */
 export interface TranscriptMessage {

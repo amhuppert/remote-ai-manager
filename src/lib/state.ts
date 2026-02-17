@@ -163,6 +163,48 @@ export async function getSession(
   return project.sessions[sessionName] ?? null;
 }
 
+/** Set a session's archived flag */
+export async function setSessionArchived(
+  projectPath: string,
+  sessionName: string,
+  archived: boolean,
+): Promise<void> {
+  const state = await readState();
+  const project = state.projects[projectPath];
+  if (!project) {
+    throw new Error(`Project not found: ${projectPath}`);
+  }
+
+  const session = project.sessions[sessionName];
+  if (!session) {
+    throw new Error(`Session "${sessionName}" not found in project`);
+  }
+
+  session.archived = archived;
+  await writeState(state);
+}
+
+/** Mark a session as finished (merged) and archived atomically */
+export async function setSessionFinished(
+  projectPath: string,
+  sessionName: string,
+): Promise<void> {
+  const state = await readState();
+  const project = state.projects[projectPath];
+  if (!project) {
+    throw new Error(`Project not found: ${projectPath}`);
+  }
+
+  const session = project.sessions[sessionName];
+  if (!session) {
+    throw new Error(`Session "${sessionName}" not found in project`);
+  }
+
+  session.finished = true;
+  session.archived = true;
+  await writeState(state);
+}
+
 /** Read archived project paths from persisted state */
 export async function getArchivedProjects(): Promise<Set<string>> {
   const state = await readState();

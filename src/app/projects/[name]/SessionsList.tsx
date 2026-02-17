@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { SessionState } from "@/types";
@@ -24,11 +24,19 @@ function formatRelativeTime(isoDate: string): string {
   return `${days}d ago`;
 }
 
-function StatusBadge({ status }: { status: SessionState["status"] }) {
+function StatusBadge({ session }: { session: SessionState }) {
+  if (session.finished) {
+    return (
+      <span className="session-status merged">
+        <span className="dot" />
+        merged
+      </span>
+    );
+  }
   return (
-    <span className={`session-status ${status}`}>
+    <span className={`session-status ${session.status}`}>
       <span className="dot" />
-      {status}
+      {session.status}
     </span>
   );
 }
@@ -40,7 +48,18 @@ export default function SessionsList({
   const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const sessions = initialSessions;
+
+  const archivedCount = useMemo(
+    () => sessions.filter((s) => s.archived).length,
+    [sessions],
+  );
+
+  const filteredSessions = useMemo(() => {
+    if (showArchived) return sessions;
+    return sessions.filter((s) => !s.archived);
+  }, [sessions, showArchived]);
 
   const handleCreated = useCallback(() => {
     router.refresh();
@@ -58,7 +77,29 @@ export default function SessionsList({
           router.refresh();
         }
       } catch {
-        // Silently fail — could add error toast later
+        // Silently fail
+      }
+    },
+    [projectName, router],
+  );
+
+  const handleArchive = useCallback(
+    async (sessionName: string, archived: boolean) => {
+      try {
+        const res = await tracedFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/archive`,
+          "archive-session",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ archived }),
+          },
+        );
+        if (res.ok) {
+          router.refresh();
+        }
+      } catch {
+        // Silently fail
       }
     },
     [projectName, router],
@@ -68,7 +109,7 @@ export default function SessionsList({
     <>
       <div className="stagger-in">
         <div className="session-actions-bar">
-          <div style={{ display: "flex", gap: "var(--space-sm)" }}>
+          <div style={{ display: "flex", gap: "var(--space-sm)", alignItems: "center" }}>
             <button
               className="btn btn-sm"
               style={{ color: "var(--text-tertiary)" }}
@@ -76,6 +117,15 @@ export default function SessionsList({
             >
               <span className="btn-icon">&#8635;</span> Refresh
             </button>
+            {archivedCount > 0 && (
+              <button
+                className={`archive-toggle${showArchived ? " active" : ""}`}
+                onClick={() => setShowArchived((v) => !v)}
+                type="button"
+              >
+                Archived ({archivedCount})
+              </button>
+            )}
           </div>
           <button
             className="btn btn-primary btn-sm"
@@ -85,7 +135,7 @@ export default function SessionsList({
           </button>
         </div>
 
-        {sessions.length > 0 ? (
+        {filteredSessions.length > 0 ? (
           <table className="sessions-table">
             <thead>
               <tr>
@@ -98,8 +148,11 @@ export default function SessionsList({
               </tr>
             </thead>
             <tbody>
-              {sessions.map((session) => (
-                <tr key={session.sessionName}>
+              {filteredSessions.map((session) => (
+                <tr
+                  key={session.sessionName}
+                  className={session.archived ? "archived" : ""}
+                >
                   <td>
                     <Link
                       href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`}
@@ -108,13 +161,16 @@ export default function SessionsList({
                       <span className="session-name">
                         {session.sessionName}
                       </span>
+                      {session.finished && (
+                        <span className="session-badge merged">merged</span>
+                      )}
                     </Link>
                   </td>
                   <td>
                     <span className="session-branch">{session.branchName}</span>
                   </td>
                   <td>
-                    <StatusBadge status={session.status} />
+                    <StatusBadge session={session} />
                   </td>
                   <td>
                     <span className="session-time">
@@ -125,15 +181,29 @@ export default function SessionsList({
                     <span className="session-time">{session.promptCount}</span>
                   </td>
                   <td>
-                    <button
-                      className="btn btn-danger btn-sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteTarget(session.sessionName);
-                      }}
-                    >
-                      Delete
-                    </button>
+                    <div style={{ display: "flex", gap: "var(--space-xs)" }}>
+                      <button
+                        className="btn btn-sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleArchive(
+                            session.sessionName,
+                            !session.archived,
+                          );
+                        }}
+                      >
+                        {session.archived ? "Unarchive" : "Archive"}
+                      </button>
+                      <button
+                        className="btn btn-danger btn-sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteTarget(session.sessionName);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

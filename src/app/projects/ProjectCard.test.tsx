@@ -22,6 +22,7 @@ vi.mock("next/link", () => ({
 
 const defaultProps = {
   archived: false,
+              finished: false,
   menuOpen: false,
   onMenuToggle: vi.fn(),
   onArchive: vi.fn(),

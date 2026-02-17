@@ -57,6 +57,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     lastActivityAt: "2024-01-01T00:00:00Z",
     promptCount: 0,
     archived: false,
+              finished: false,
     messages: [],
     ...overrides,
   };

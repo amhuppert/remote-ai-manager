@@ -33,6 +33,7 @@ export const sessionStateSchema = z.object({
   lastActivityAt: z.string(),
   promptCount: z.number(),
   archived: z.boolean(),
+  finished: z.boolean().default(false),
   messages: z.array(conversationMessageSchema).default([]),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
@@ -67,6 +68,36 @@ export const runPromptRequestSchema = z.object({
   prompt: z.string().trim().min(1),
 });
 export type RunPromptRequest = z.infer<typeof runPromptRequestSchema>;
+
+export const commitRequestSchema = z.object({
+  message: z.string().trim().min(1),
+});
+export type CommitRequest = z.infer<typeof commitRequestSchema>;
+
+export const mergeRequestSchema = z.object({
+  message: z.string().trim().min(1),
+});
+export type MergeRequest = z.infer<typeof mergeRequestSchema>;
+
+export const sessionArchiveRequestSchema = z.object({
+  archived: z.boolean(),
+});
+export type SessionArchiveRequest = z.infer<
+  typeof sessionArchiveRequestSchema
+>;
+
+// ============================================================
+// Git Operations Schemas
+// ============================================================
+
+export const commitLogEntrySchema = z.object({
+  hash: z.string(),
+  fullHash: z.string(),
+  message: z.string(),
+  date: z.string(),
+  filesChanged: z.number(),
+});
+export type CommitLogEntry = z.infer<typeof commitLogEntrySchema>;
 
 // ============================================================
 // Transcript Schemas

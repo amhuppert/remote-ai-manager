@@ -173,6 +173,7 @@ export async function createSession(
     lastActivityAt: now,
     promptCount: 0,
     archived: false,
+    finished: false,
     messages: [],
   };
 

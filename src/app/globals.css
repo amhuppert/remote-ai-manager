@@ -1208,6 +1208,34 @@ textarea {
   gap: var(--space-sm);
 }
 
+.merge-info {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.merge-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.merge-info-label {
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.62rem;
+}
+
+.merge-info-value {
+  color: var(--text-secondary);
+}
+
 .confirm-modal {
   max-width: 400px;
 }
@@ -1372,6 +1400,17 @@ textarea {
   font-size: 0.5rem;
   color: var(--text-tertiary);
   margin-left: auto;
+}
+
+.finished-banner {
+  background: rgba(0, 229, 255, 0.08);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 8px var(--space-md);
+  font-size: 0.75rem;
+  color: var(--cyan);
+  text-align: center;
+  font-family: var(--font-mono);
 }
 
 /* Content area for panels */

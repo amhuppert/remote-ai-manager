@@ -7,10 +7,13 @@ import type {
   SessionDiff,
   TranscriptMessage,
   LayoutMode,
+  CommitLogEntry,
 } from "@/types";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
 import DiffPanel from "./DiffPanel";
+import CommitDialog from "./CommitDialog";
+import MergeDialog from "./MergeDialog";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MarkdownContent from "@/components/MarkdownContent";
 import { tracedFetch } from "@/lib/traced-fetch";
@@ -21,6 +24,7 @@ interface Props {
   session: SessionState;
   messages: TranscriptMessage[];
   diff: SessionDiff;
+  commits: CommitLogEntry[];
 }
 
 function formatDate(iso: string): string {
@@ -38,6 +42,7 @@ export default function SessionDetailPage({
   session,
   messages,
   diff,
+  commits,
 }: Props): React.JSX.Element {
   const router = useRouter();
   const storageKey = `csm-layout-${projectName}-${session.sessionName}`;
@@ -46,6 +51,8 @@ export default function SessionDetailPage({
   const [promptText, setPromptText] = useState("");
   const [sending, setSending] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCommitDialog, setShowCommitDialog] = useState(false);
+  const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [infoExpanded, setInfoExpanded] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
   const [optimisticMessages, setOptimisticMessages] = useState<
@@ -225,8 +232,26 @@ export default function SessionDetailPage({
   }, [projectName, session.sessionName, router]);
 
   const decodedProjectName = decodeURIComponent(projectName);
-  const displayStatus = sending ? "running" : session.status;
-  const statusDotClass = displayStatus === "running" ? "cyan" : "";
+  const isFinished = session.finished;
+  const isBusy = sending || session.status === "running";
+  const hasUncommittedChanges = diff.files.length > 0;
+  const hasCommits = commits.length > 0;
+
+  const commitDisabled = !hasUncommittedChanges || isBusy || isFinished;
+  const mergeDisabled =
+    !hasCommits || hasUncommittedChanges || isBusy || isFinished;
+
+  const displayStatus = isFinished
+    ? "merged"
+    : sending
+      ? "running"
+      : session.status;
+  const statusDotClass =
+    displayStatus === "running"
+      ? "cyan"
+      : displayStatus === "merged"
+        ? "green"
+        : "";
 
   return (
     <div className="app" data-page="detail" data-mobile-panel={mobilePanel}>
@@ -255,6 +280,23 @@ export default function SessionDetailPage({
               activeLayout={layout}
               onLayoutChange={handleLayoutChange}
             />
+            <div className="topbar-sep" />
+            <button
+              className="btn btn-sm"
+              data-tooltip="Commit changes"
+              disabled={commitDisabled}
+              onClick={() => setShowCommitDialog(true)}
+            >
+              Commit
+            </button>
+            <button
+              className="btn btn-sm btn-primary"
+              data-tooltip="Merge into main"
+              disabled={mergeDisabled}
+              onClick={() => setShowMergeDialog(true)}
+            >
+              Merge
+            </button>
             <div className="topbar-sep" />
             <button
               className="btn-icon-only"
@@ -317,6 +359,13 @@ export default function SessionDetailPage({
               </div>
             </div>
           </div>
+
+          {/* Finished banner */}
+          {isFinished && (
+            <div className="finished-banner">
+              This session has been merged into main and is read-only.
+            </div>
+          )}
 
           {/* Content area */}
           <div className="session-content-area" data-layout={layout}>
@@ -411,7 +460,11 @@ export default function SessionDetailPage({
                 <div className="prompt-input-wrapper">
                   <textarea
                     className="prompt-textarea"
-                    placeholder="Send a prompt to Claude..."
+                    placeholder={
+                      isFinished
+                        ? "Session is merged and read-only"
+                        : "Send a prompt to Claude..."
+                    }
                     rows={2}
                     value={promptText}
                     onChange={(e) => setPromptText(e.target.value)}
@@ -421,12 +474,19 @@ export default function SessionDetailPage({
                         void handleSendPrompt();
                       }
                     }}
+                    disabled={isFinished}
                   />
                   <button
                     className={`send-btn${sending ? " busy" : ""}`}
-                    disabled={!promptText.trim() || sending}
+                    disabled={!promptText.trim() || sending || isFinished}
                     onClick={() => void handleSendPrompt()}
-                    title={sending ? "Session is busy" : "Send prompt"}
+                    title={
+                      isFinished
+                        ? "Session is read-only"
+                        : sending
+                          ? "Session is busy"
+                          : "Send prompt"
+                    }
                   >
                     {sending ? (
                       <div
@@ -447,7 +507,12 @@ export default function SessionDetailPage({
             </div>
 
             {/* Diff panel */}
-            <DiffPanel diff={diff} />
+            <DiffPanel
+              diff={diff}
+              commits={commits}
+              projectName={projectName}
+              sessionName={session.sessionName}
+            />
           </div>
         </div>
       </main>
@@ -469,6 +534,20 @@ export default function SessionDetailPage({
           </button>
         </div>
         <div className="mobile-actions">
+          <button
+            className="btn btn-sm"
+            disabled={commitDisabled}
+            onClick={() => setShowCommitDialog(true)}
+          >
+            Commit
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            disabled={mergeDisabled}
+            onClick={() => setShowMergeDialog(true)}
+          >
+            Merge
+          </button>
           <button className="btn-icon-only" onClick={() => router.refresh()}>
             &#8635;
           </button>
@@ -492,6 +571,30 @@ export default function SessionDetailPage({
           void handleDelete();
         }}
         onCancel={() => setShowDeleteConfirm(false)}
+      />
+
+      <CommitDialog
+        open={showCommitDialog}
+        onClose={() => setShowCommitDialog(false)}
+        onSuccess={() => {
+          setShowCommitDialog(false);
+          router.refresh();
+        }}
+        projectName={projectName}
+        sessionName={session.sessionName}
+      />
+
+      <MergeDialog
+        open={showMergeDialog}
+        onClose={() => setShowMergeDialog(false)}
+        onSuccess={() => {
+          setShowMergeDialog(false);
+          router.push(`/projects/${encodeURIComponent(projectName)}`);
+        }}
+        projectName={projectName}
+        sessionName={session.sessionName}
+        branchName={session.branchName}
+        commitCount={commits.length}
       />
     </div>
   );
