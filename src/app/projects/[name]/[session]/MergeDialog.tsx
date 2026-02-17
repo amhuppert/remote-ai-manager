@@ -66,9 +66,7 @@ export default function MergeDialog({
       if (res.ok) {
         onSuccess();
       } else {
-        const data = await res
-          .json()
-          .catch(() => ({ error: "Merge failed" }));
+        const data = await res.json().catch(() => ({ error: "Merge failed" }));
         setError(data.error || "Merge failed");
       }
     } catch {
@@ -122,7 +120,11 @@ export default function MergeDialog({
         {error && <div className="form-error">{error}</div>}
 
         <div className="modal-actions">
-          <button className="btn btn-sm" onClick={onClose} disabled={submitting}>
+          <button
+            className="btn btn-sm"
+            onClick={onClose}
+            disabled={submitting}
+          >
             Cancel
           </button>
           <button

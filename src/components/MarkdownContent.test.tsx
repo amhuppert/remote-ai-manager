@@ -5,18 +5,22 @@ import MarkdownContent from "./MarkdownContent";
 
 describe("MarkdownContent", () => {
   it("renders fenced code blocks with syntax-highlighted tokens", () => {
-    const md = '```typescript\nfunction hello(): string {\n  return "world";\n}\n```';
+    const md =
+      '```typescript\nfunction hello(): string {\n  return "world";\n}\n```';
     const { container } = render(<MarkdownContent content={md} />);
 
     // SyntaxHighlighter wraps code in a div (PreTag="div") with spans for tokens
     const tokenSpans = container.querySelectorAll("span");
     const hasKeyword = Array.from(tokenSpans).some(
-      (span) => span.className.includes("keyword") || span.textContent === "function",
+      (span) =>
+        span.className.includes("keyword") || span.textContent === "function",
     );
     expect(hasKeyword).toBe(true);
 
     // Verify the language-specific tokens exist (not just plain text)
-    const allClasses = Array.from(tokenSpans).map((s) => s.className).join(" ");
+    const allClasses = Array.from(tokenSpans)
+      .map((s) => s.className)
+      .join(" ");
     expect(allClasses).toContain("token");
   });
 

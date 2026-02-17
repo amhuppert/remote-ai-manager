@@ -62,9 +62,7 @@ export default function CommitDialog({
       if (res.ok) {
         onSuccess();
       } else {
-        const data = await res
-          .json()
-          .catch(() => ({ error: "Commit failed" }));
+        const data = await res.json().catch(() => ({ error: "Commit failed" }));
         setError(data.error || "Commit failed");
       }
     } catch {
@@ -105,7 +103,11 @@ export default function CommitDialog({
         {error && <div className="form-error">{error}</div>}
 
         <div className="modal-actions">
-          <button className="btn btn-sm" onClick={onClose} disabled={submitting}>
+          <button
+            className="btn btn-sm"
+            onClick={onClose}
+            disabled={submitting}
+          >
             Cancel
           </button>
           <button

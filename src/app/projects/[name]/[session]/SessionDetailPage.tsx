@@ -406,7 +406,9 @@ export default function SessionDetailPage({
                 {promptError && (
                   <div className="prompt-error">
                     <span>{promptError}</span>
-                    <button onClick={() => setPromptError(null)}>&times;</button>
+                    <button onClick={() => setPromptError(null)}>
+                      &times;
+                    </button>
                   </div>
                 )}
                 <div className="conversation">

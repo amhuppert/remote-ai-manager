@@ -152,9 +152,64 @@
 - **No error boundaries** — Component errors could crash the page. Low risk for a developer tool with trusted data.
 - **Link + context menu conflict** — `ProjectCard` wraps in `<Link>`. Menu button clicks must stop propagation. Mitigated by `event.stopPropagation()` on the menu trigger and all menu items.
 - **Archive data consistency** — If a project directory is renamed/moved, archived path becomes stale. Mitigated by checking archived paths against current discovery results during render.
+- **Stale pinned paths** — Same as archive: if a pinned project's directory is deleted/moved, the path becomes stale. Silently ignored during filtering.
+- **Pin + Archive interaction** — A project can be both pinned and archived. Pinned section hides it when archive toggle is off (14.7), same behavior as main grid.
+
+---
+
+## Project Pinning Extension Research
+
+### Existing Archive Pattern as Blueprint
+- **Context**: Requirements 13–14 describe pinning behavior structurally identical to archiving (Req 11)
+- **Sources Consulted**: `src/lib/schemas.ts`, `src/lib/state.ts`, `src/app/api/projects/[name]/archive/route.ts`, `ProjectsGridClient.tsx`, `ProjectCard.tsx`
+- **Findings**:
+  - `ManagerState` uses `archivedProjects: z.array(z.string()).default([])` — paths array pattern
+  - `state.ts` exports `getArchivedProjects()` → `Set<string>` and `setProjectArchived(path, bool)` — read/toggle helpers
+  - Archive API route: Zod-validated `{ archived: boolean }` body, uses `resolveProjectPath()` for name→path lookup
+  - `ProjectsGridClient` receives `archivedPaths: string[]`, converts to `Set`, passes `archived` boolean per card
+  - `ProjectCard` builds `menuItems` array dynamically based on `archived` prop
+- **Implications**: The pin feature follows this exact pattern end-to-end with zero architectural novelty
+
+### Pinned Section Filter Independence
+- **Context**: Requirement 14.4 states the pinned section remains visible regardless of search/status filters
+- **Findings**:
+  - Current `filteredProjects` in `ProjectsGridClient` applies search + status + archive filters in one pass
+  - Pinned section needs its own filtered set (only archive-visibility filtering, no search/status)
+  - Main grid must exclude pinned projects to prevent duplication (14.5)
+  - Two computed lists needed: `visiblePinnedProjects` and `filteredProjects` (excluding pinned)
+- **Implications**: Slightly more complex `useMemo` logic, but straightforward — no state management changes needed
+
+### Context Menu Item Ordering
+- **Context**: Pin/unpin and archive/unarchive both appear in the same context menu
+- **Findings**:
+  - `CardContextMenu` renders items in array order
+  - Pin is a positive/organizational action; archive is a dismissive action
+  - Pin should appear first, archive second — natural priority ordering
+- **Implications**: `menuItems` array in `ProjectCard` gains a new first element
+
+### Pinning Extension Design Decisions
+
+#### Decision: Mirror Archive Pattern Exactly
+- **Context**: Pinning is structurally identical to archiving — a project-level boolean flag stored as a path array
+- **Alternatives Considered**:
+  1. New field in `DiscoveredProject` type populated during discovery — couples discovery to pin state
+  2. localStorage-only persistence — wouldn't survive across devices/sessions, inconsistent with archive pattern
+- **Selected Approach**: `pinnedProjects: string[]` in `ManagerState`, with `getPinnedProjects()`/`setProjectPinned()` helpers, and a `/api/projects/[name]/pin` route
+- **Rationale**: Exact symmetry with the working archive feature minimizes cognitive overhead, testing surface, and risk
+- **Trade-offs**: Slightly more state.json fields, but complexity is bounded and consistent
+
+#### Decision: Two-Pass Render for Pinned Section
+- **Context**: Pinned section is filter-independent (14.4) but must not duplicate in main grid (14.5)
+- **Alternatives Considered**:
+  1. Single filtered list with CSS-based separation — fragile, order-dependent
+  2. Separate component for pinned section — over-engineered for a filtered subset
+- **Selected Approach**: Two `useMemo` computations in `ProjectsGridClient`: one for visible pinned projects, one for filtered non-pinned projects
+- **Rationale**: Keeps all filter logic co-located in one component, consistent with existing pattern
+- **Trade-offs**: Two `.filter()` calls instead of one — negligible for typical project counts (<100)
 
 ## References
 
-- Next.js 15 App Router — Server/Client component model
+- Next.js 16 App Router — Server/Client component model
 - CSS Custom Properties — for design system tokens
 - localStorage — for layout mode persistence
+- Existing archive implementation: `src/lib/state.ts:167-188`, `src/app/api/projects/[name]/archive/route.ts`

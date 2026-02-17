@@ -161,3 +161,30 @@ The Dashboard UI is the primary user interface for the Claude Session Manager (C
 4. When the user clicks outside the dropdown menu or presses the Escape key, the Dashboard shall close the menu.
 5. The Dashboard shall allow only one project card menu to be open at a time.
 6. When the user clicks a menu item, the Dashboard shall execute the corresponding action and close the menu.
+
+### Requirement 13: Project Pinning
+
+**Objective:** As a developer, I want to pin important projects so that they appear in a dedicated section above the rest, giving me quick access to the repositories I use most.
+
+#### Acceptance Criteria
+
+1. Each project card shall provide a "Pin Project" action in the context menu.
+2. When the user selects "Pin Project" from the context menu, the Dashboard shall mark the project as pinned and move it to the Pinned section.
+3. When a project is pinned, the Dashboard shall persist the pinned state so it survives page reloads.
+4. Each pinned project card shall provide an "Unpin Project" action in the context menu, replacing the "Pin Project" action.
+5. When the user selects "Unpin Project" from the context menu, the Dashboard shall remove the project from the Pinned section and return it to the main projects grid.
+6. The pinned state shall not affect the project's underlying data, sessions, or git repositories.
+
+### Requirement 14: Pinned Projects Section
+
+**Objective:** As a developer, I want pinned projects displayed in a visually distinct section above the main grid, so that I can always see and access my most important projects at a glance.
+
+#### Acceptance Criteria
+
+1. When one or more projects are pinned, the Projects Page shall display a "Pinned" section above the main projects grid.
+2. The Pinned section shall display its own grid of project cards for all pinned projects.
+3. The Pinned section shall display a section header label identifying it as the pinned area.
+4. The Pinned section shall remain visible regardless of the active search query or status filter.
+5. While search or status filters are active, pinned project cards in the Pinned section shall not be duplicated in the main projects grid below.
+6. When no projects are pinned, the Projects Page shall not display the Pinned section.
+7. When all pinned projects are archived and the archive toggle is off, the Projects Page shall not display the Pinned section.

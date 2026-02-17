@@ -285,10 +285,7 @@ describe("getCommitLog", () => {
     const logOutput =
       'abc1234\x00a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\x00Fix "quotes" & <angles>\x002024-06-15T10:00:00Z\x00';
 
-    mockExecFileSequence([
-      { stdout: logOutput },
-      { stdout: "" },
-    ]);
+    mockExecFileSequence([{ stdout: logOutput }, { stdout: "" }]);
 
     const entries = await getCommitLog("/worktree");
     expect(entries).toHaveLength(1);
@@ -329,7 +326,11 @@ describe("getCommitDiff", () => {
 
     // Verify diff was against merge-base
     const diffCall = execFileMock.mock.calls[3]!;
-    expect(diffCall[1]).toEqual(["diff", "mergebase789..abc1234", "--unified=3"]);
+    expect(diffCall[1]).toEqual([
+      "diff",
+      "mergebase789..abc1234",
+      "--unified=3",
+    ]);
   });
 
   it("diffs against parent for subsequent commits", async () => {
@@ -347,11 +348,7 @@ describe("getCommitDiff", () => {
     expect(result).toEqual(mockDiff);
 
     const diffCall = execFileMock.mock.calls[2]!;
-    expect(diffCall[1]).toEqual([
-      "diff",
-      "def5678~1..def5678",
-      "--unified=3",
-    ]);
+    expect(diffCall[1]).toEqual(["diff", "def5678~1..def5678", "--unified=3"]);
   });
 
   it("falls back to diff against merge-base when rev-parse fails", async () => {
@@ -374,7 +371,11 @@ describe("getCommitDiff", () => {
 
     // Verify diff was against merge-base
     const diffCall = execFileMock.mock.calls[2]!;
-    expect(diffCall[1]).toEqual(["diff", "mergebase789..abc1234", "--unified=3"]);
+    expect(diffCall[1]).toEqual([
+      "diff",
+      "mergebase789..abc1234",
+      "--unified=3",
+    ]);
   });
 
   it("returns empty diff when git diff output is empty", async () => {
@@ -435,12 +436,12 @@ describe("squashMerge", () => {
   });
 
   it("throws when merge message is empty", async () => {
-    await expect(
-      squashMerge("/project", "csm/branch", ""),
-    ).rejects.toThrow("Merge message cannot be empty");
-    await expect(
-      squashMerge("/project", "csm/branch", "   "),
-    ).rejects.toThrow("Merge message cannot be empty");
+    await expect(squashMerge("/project", "csm/branch", "")).rejects.toThrow(
+      "Merge message cannot be empty",
+    );
+    await expect(squashMerge("/project", "csm/branch", "   ")).rejects.toThrow(
+      "Merge message cannot be empty",
+    );
   });
 
   it("throws when project root has uncommitted changes", async () => {

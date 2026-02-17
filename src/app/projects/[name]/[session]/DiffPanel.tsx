@@ -19,8 +19,7 @@ export default function DiffPanel({
   projectName = "",
   sessionName = "",
 }: DiffPanelProps): React.JSX.Element {
-  const defaultTab: DiffTab =
-    diff.files.length > 0 ? "uncommitted" : "commits";
+  const defaultTab: DiffTab = diff.files.length > 0 ? "uncommitted" : "commits";
   const [activeTab, setActiveTab] = useState<DiffTab>(defaultTab);
   const [collapsedFiles, setCollapsedFiles] = useState<Set<number>>(new Set());
   const contentRef = useRef<HTMLDivElement>(null);
@@ -176,10 +175,7 @@ export default function DiffPanel({
             </div>
             <div className="diff-toolbar-sep" />
             <div className="diff-toolbar-group">
-              <button
-                className="diff-nav-btn"
-                onClick={() => navigateFile(-1)}
-              >
+              <button className="diff-nav-btn" onClick={() => navigateFile(-1)}>
                 &#8249;
               </button>
               <span className="diff-toolbar-label">Files</span>
@@ -189,10 +185,7 @@ export default function DiffPanel({
             </div>
             <div className="diff-toolbar-sep" />
             <div className="diff-toolbar-group">
-              <button
-                className="diff-nav-btn"
-                onClick={() => navigateHunk(-1)}
-              >
+              <button className="diff-nav-btn" onClick={() => navigateHunk(-1)}>
                 &#8249;
               </button>
               <span className="diff-toolbar-label">Changes</span>

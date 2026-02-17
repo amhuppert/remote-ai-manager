@@ -65,7 +65,13 @@ beforeEach(() => {
 
 describe("ProjectsGridClient", () => {
   it("renders all non-archived projects by default", () => {
-    render(<ProjectsGridClient projects={projects} archivedPaths={[]} />);
+    render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={[]}
+      />,
+    );
     expect(screen.getByText("alpha")).toBeDefined();
     expect(screen.getByText("beta")).toBeDefined();
     expect(screen.getByText("gamma")).toBeDefined();
@@ -73,7 +79,13 @@ describe("ProjectsGridClient", () => {
   });
 
   it("search filters projects by name case-insensitively (Req 9.2)", () => {
-    render(<ProjectsGridClient projects={projects} archivedPaths={[]} />);
+    render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={[]}
+      />,
+    );
     const input = screen.getByPlaceholderText("Search projects...");
     fireEvent.change(input, { target: { value: "alph" } });
 
@@ -83,7 +95,13 @@ describe("ProjectsGridClient", () => {
   });
 
   it("search is case-insensitive", () => {
-    render(<ProjectsGridClient projects={projects} archivedPaths={[]} />);
+    render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={[]}
+      />,
+    );
     const input = screen.getByPlaceholderText("Search projects...");
     fireEvent.change(input, { target: { value: "BETA" } });
 
@@ -92,7 +110,13 @@ describe("ProjectsGridClient", () => {
   });
 
   it("shows no-results state when nothing matches (Req 9.5)", () => {
-    render(<ProjectsGridClient projects={projects} archivedPaths={[]} />);
+    render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={[]}
+      />,
+    );
     const input = screen.getByPlaceholderText("Search projects...");
     fireEvent.change(input, { target: { value: "nonexistent" } });
 
@@ -101,7 +125,11 @@ describe("ProjectsGridClient", () => {
 
   it("status filter shows only active projects (Req 10.3)", () => {
     const { container } = render(
-      <ProjectsGridClient projects={projects} archivedPaths={[]} />,
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={[]}
+      />,
     );
     const activePill = container.querySelectorAll(".filter-pill")[1]!;
     fireEvent.click(activePill);
@@ -115,7 +143,11 @@ describe("ProjectsGridClient", () => {
 
   it("status filter shows only idle projects", () => {
     const { container } = render(
-      <ProjectsGridClient projects={projects} archivedPaths={[]} />,
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={[]}
+      />,
     );
     const idlePill = container.querySelectorAll(".filter-pill")[2]!;
     fireEvent.click(idlePill);
@@ -131,6 +163,7 @@ describe("ProjectsGridClient", () => {
       <ProjectsGridClient
         projects={projects}
         archivedPaths={["/projects/beta"]}
+        pinnedPaths={[]}
       />,
     );
     expect(screen.getByText("alpha")).toBeDefined();
@@ -142,6 +175,7 @@ describe("ProjectsGridClient", () => {
       <ProjectsGridClient
         projects={projects}
         archivedPaths={["/projects/beta"]}
+        pinnedPaths={[]}
       />,
     );
     const toggle = container.querySelector(".archive-toggle")!;
@@ -156,6 +190,7 @@ describe("ProjectsGridClient", () => {
       <ProjectsGridClient
         projects={projects}
         archivedPaths={["/projects/beta"]}
+        pinnedPaths={[]}
       />,
     );
     const pills = container.querySelectorAll(".filter-pill");
@@ -166,7 +201,11 @@ describe("ProjectsGridClient", () => {
 
   it("combines search + status filter (Req 10.7)", () => {
     const { container } = render(
-      <ProjectsGridClient projects={projects} archivedPaths={[]} />,
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={[]}
+      />,
     );
     // Set status to "active"
     const activePill = container.querySelectorAll(".filter-pill")[1]!;
@@ -188,6 +227,7 @@ describe("ProjectsGridClient", () => {
       <ProjectsGridClient
         projects={projects}
         archivedPaths={["/projects/beta", "/projects/delta"]}
+        pinnedPaths={[]}
       />,
     );
     const toggle = container.querySelector(".archive-toggle");
@@ -197,9 +237,151 @@ describe("ProjectsGridClient", () => {
 
   it("does not show archive toggle when no projects are archived", () => {
     const { container } = render(
-      <ProjectsGridClient projects={projects} archivedPaths={[]} />,
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={[]}
+      />,
     );
     const toggle = container.querySelector(".archive-toggle");
     expect(toggle).toBeNull();
+  });
+});
+
+describe("ProjectsGridClient — pinned section", () => {
+  it("shows pinned section when projects are pinned (Req 14.1)", () => {
+    const { container } = render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={["/projects/alpha"]}
+      />,
+    );
+    const section = container.querySelector(".pinned-section");
+    expect(section).not.toBeNull();
+    expect(section!.textContent).toContain("Pinned");
+    expect(section!.textContent).toContain("alpha");
+  });
+
+  it("hides pinned section when no projects are pinned (Req 14.6)", () => {
+    const { container } = render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={[]}
+      />,
+    );
+    const section = container.querySelector(".pinned-section");
+    expect(section).toBeNull();
+  });
+
+  it("pinned projects do not appear in the main grid (Req 14.5)", () => {
+    const { container } = render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={["/projects/alpha"]}
+      />,
+    );
+    // "alpha" should only appear in the pinned section, not the main grid
+    const grids = container.querySelectorAll(".projects-grid");
+    // First grid is inside .pinned-section, second is the main grid
+    expect(grids.length).toBe(2);
+    const mainGrid = grids[1]!;
+    expect(mainGrid.textContent).not.toContain("alpha");
+    expect(mainGrid.textContent).toContain("beta");
+  });
+
+  it("pinned section remains visible regardless of search query (Req 14.4)", () => {
+    const { container } = render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={["/projects/alpha"]}
+      />,
+    );
+    // Search for something that doesn't match "alpha"
+    const input = screen.getByPlaceholderText("Search projects...");
+    fireEvent.change(input, { target: { value: "delta" } });
+
+    const section = container.querySelector(".pinned-section");
+    expect(section).not.toBeNull();
+    expect(section!.textContent).toContain("alpha");
+  });
+
+  it("pinned section remains visible regardless of status filter (Req 14.4)", () => {
+    const { container } = render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={["/projects/beta"]}
+      />,
+    );
+    // Set filter to "active" — beta is idle, but should still show in pinned
+    const activePill = container.querySelectorAll(".filter-pill")[1]!;
+    fireEvent.click(activePill);
+
+    const section = container.querySelector(".pinned-section");
+    expect(section).not.toBeNull();
+    expect(section!.textContent).toContain("beta");
+  });
+
+  it("hides pinned section when all pinned are archived and archive toggle off (Req 14.7)", () => {
+    const { container } = render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={["/projects/alpha"]}
+        pinnedPaths={["/projects/alpha"]}
+      />,
+    );
+    // alpha is both pinned and archived, archive toggle is off by default
+    const section = container.querySelector(".pinned-section");
+    expect(section).toBeNull();
+  });
+
+  it("shows pinned archived project when archive toggle is on", () => {
+    const { container } = render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={["/projects/alpha"]}
+        pinnedPaths={["/projects/alpha"]}
+      />,
+    );
+    // Enable archive toggle
+    const toggle = container.querySelector(".archive-toggle")!;
+    fireEvent.click(toggle);
+
+    const section = container.querySelector(".pinned-section");
+    expect(section).not.toBeNull();
+    expect(section!.textContent).toContain("alpha");
+  });
+
+  it("pin/unpin context menu item toggles based on pin state (Req 13.1, 13.4)", () => {
+    const { container } = render(
+      <ProjectsGridClient
+        projects={projects}
+        archivedPaths={[]}
+        pinnedPaths={["/projects/alpha"]}
+      />,
+    );
+    // Find menu buttons - pinned section card should have "Unpin Project"
+    const menuBtns = container.querySelectorAll(".card-menu-btn");
+    // Click the first menu button (alpha in pinned section)
+    fireEvent.click(menuBtns[0]!);
+
+    const dropdownItems = container.querySelectorAll(".card-dropdown-item");
+    expect(dropdownItems[0]!.textContent).toBe("Unpin Project");
+
+    // Click second menu button (beta in main grid — not pinned)
+    fireEvent.click(menuBtns[1]!);
+    const allDropdowns = container.querySelectorAll(
+      ".card-dropdown.open .card-dropdown-item",
+    );
+    // The open dropdown should show "Pin Project" for non-pinned
+    // Since only one menu open at a time, check all visible items
+    const visibleItems = container.querySelectorAll(".card-dropdown-item");
+    // beta's first item should be "Pin Project"
+    const betaItems = Array.from(visibleItems).slice(2); // skip alpha's items
+    expect(betaItems[0]!.textContent).toBe("Pin Project");
   });
 });

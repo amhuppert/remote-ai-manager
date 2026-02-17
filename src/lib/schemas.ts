@@ -47,6 +47,7 @@ export type ProjectState = z.infer<typeof projectStateSchema>;
 export const managerStateSchema = z.object({
   projects: z.record(z.string(), projectStateSchema),
   archivedProjects: z.array(z.string()).default([]),
+  pinnedProjects: z.array(z.string()).default([]),
 });
 export type ManagerState = z.infer<typeof managerStateSchema>;
 
@@ -82,9 +83,7 @@ export type MergeRequest = z.infer<typeof mergeRequestSchema>;
 export const sessionArchiveRequestSchema = z.object({
   archived: z.boolean(),
 });
-export type SessionArchiveRequest = z.infer<
-  typeof sessionArchiveRequestSchema
->;
+export type SessionArchiveRequest = z.infer<typeof sessionArchiveRequestSchema>;
 
 // ============================================================
 // Git Operations Schemas

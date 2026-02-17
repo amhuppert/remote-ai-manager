@@ -57,7 +57,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     lastActivityAt: "2024-01-01T00:00:00Z",
     promptCount: 0,
     archived: false,
-              finished: false,
+    finished: false,
     messages: [],
     ...overrides,
   };
@@ -340,11 +340,7 @@ describe("executePrompt", () => {
 
   it("falls back to raw stdout when JSON parsing fails", async () => {
     mockExecFileSuccess("plain text response");
-    const result = await executePrompt(
-      "/projects/repo",
-      makeSession(),
-      "test",
-    );
+    const result = await executePrompt("/projects/repo", makeSession(), "test");
 
     expect(result.claudeResponse).toBe("plain text response");
   });

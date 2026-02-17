@@ -74,7 +74,7 @@ const baseSession: SessionState = {
   lastActivityAt: "2024-06-15T12:00:00Z",
   promptCount: 5,
   archived: false,
-              finished: false,
+  finished: false,
   messages: [],
 };
 
@@ -306,7 +306,9 @@ describe("SessionDetailPage", () => {
 
   it("adds optimistic user message on submit and clears input", async () => {
     // Mock fetch to delay resolution
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({}) });
     vi.stubGlobal("fetch", fetchMock);
 
     const { container } = render(
@@ -319,7 +321,9 @@ describe("SessionDetailPage", () => {
       />,
     );
 
-    const textarea = container.querySelector(".prompt-textarea") as HTMLTextAreaElement;
+    const textarea = container.querySelector(
+      ".prompt-textarea",
+    ) as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "Test prompt" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 

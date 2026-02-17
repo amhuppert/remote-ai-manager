@@ -103,7 +103,7 @@ describe("state", () => {
       lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 0,
       archived: false,
-              finished: false,
+      finished: false,
       messages: [],
     };
 
@@ -128,7 +128,7 @@ describe("state", () => {
       lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 0,
       archived: false,
-              finished: false,
+      finished: false,
       messages: [],
     };
 
@@ -152,7 +152,7 @@ describe("state", () => {
       lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 0,
       archived: false,
-              finished: false,
+      finished: false,
       messages: [],
     };
 
@@ -235,7 +235,7 @@ describe("archive helpers", () => {
       lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 3,
       archived: false,
-              finished: false,
+      finished: false,
       messages: [],
     };
 
@@ -267,5 +267,89 @@ describe("archive helpers", () => {
 
     const state = await readState();
     expect(state.archivedProjects.filter((p) => p === "/proj")).toHaveLength(1);
+  });
+});
+
+describe("pin helpers", () => {
+  it("getPinnedProjects returns empty set for fresh state", async () => {
+    const { getPinnedProjects } = await import("./state");
+    const pinned = await getPinnedProjects();
+    expect(pinned.size).toBe(0);
+  });
+
+  it("setProjectPinned adds a project path to the pinned set", async () => {
+    const { setProjectPinned, getPinnedProjects } = await import("./state");
+
+    await setProjectPinned("/some/project", true);
+
+    const pinned = await getPinnedProjects();
+    expect(pinned.has("/some/project")).toBe(true);
+    expect(pinned.size).toBe(1);
+  });
+
+  it("setProjectPinned removes a project path from the pinned set", async () => {
+    const { setProjectPinned, getPinnedProjects, writeState } =
+      await import("./state");
+
+    // Seed state with a pinned project
+    await writeState({
+      projects: {},
+      archivedProjects: [],
+      pinnedProjects: ["/some/project"],
+    });
+
+    await setProjectPinned("/some/project", false);
+
+    const pinned = await getPinnedProjects();
+    expect(pinned.has("/some/project")).toBe(false);
+    expect(pinned.size).toBe(0);
+  });
+
+  it("pinning does not alter existing project entries or session data", async () => {
+    const { setProjectPinned, readState, writeState } = await import("./state");
+
+    const session = {
+      sessionName: "test",
+      worktreePath: "/proj/.worktrees/test",
+      branchName: "csm/test",
+      claudeSessionId: null,
+      transcriptPath: null,
+      status: "ready" as const,
+      createdAt: "2024-01-01T00:00:00Z",
+      lastActivityAt: "2024-01-01T00:00:00Z",
+      promptCount: 3,
+      archived: false,
+      messages: [],
+    };
+
+    await writeState({
+      projects: {
+        "/proj": {
+          rootPath: "/proj",
+          sessions: { test: session },
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    });
+
+    await setProjectPinned("/proj", true);
+
+    const state = await readState();
+    const savedSession = state.projects["/proj"]!.sessions["test"]!;
+    expect(savedSession.sessionName).toBe("test");
+    expect(savedSession.promptCount).toBe(3);
+    expect(savedSession.status).toBe("ready");
+    expect(state.pinnedProjects).toContain("/proj");
+  });
+
+  it("pinning the same project twice does not create duplicates", async () => {
+    const { setProjectPinned, readState } = await import("./state");
+
+    await setProjectPinned("/proj", true);
+    await setProjectPinned("/proj", true);
+
+    const state = await readState();
+    expect(state.pinnedProjects.filter((p) => p === "/proj")).toHaveLength(1);
   });
 });

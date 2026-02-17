@@ -10,11 +10,13 @@ type StatusFilter = "all" | "active" | "idle";
 interface ProjectsGridClientProps {
   projects: DiscoveredProject[];
   archivedPaths: string[];
+  pinnedPaths: string[];
 }
 
 export default function ProjectsGridClient({
   projects,
   archivedPaths,
+  pinnedPaths,
 }: ProjectsGridClientProps): React.JSX.Element {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
@@ -23,6 +25,7 @@ export default function ProjectsGridClient({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   const archivedSet = useMemo(() => new Set(archivedPaths), [archivedPaths]);
+  const pinnedSet = useMemo(() => new Set(pinnedPaths), [pinnedPaths]);
 
   // Compute filter counts (exclude archived from counts)
   const counts = useMemo(() => {
@@ -39,10 +42,23 @@ export default function ProjectsGridClient({
     [projects, archivedSet],
   );
 
-  // Combined filter logic
+  // Pinned projects: filtered only by archive visibility, not by search/status (Req 14.4)
+  const visiblePinnedProjects = useMemo(() => {
+    return projects.filter((p) => {
+      if (!pinnedSet.has(p.path)) return false;
+      const isArchived = archivedSet.has(p.path);
+      if (isArchived && !showArchived) return false;
+      return true;
+    });
+  }, [projects, pinnedSet, archivedSet, showArchived]);
+
+  // Main grid: excludes pinned projects to prevent duplication (Req 14.5)
   const filteredProjects = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
     return projects.filter((p) => {
+      // Exclude pinned from main grid
+      if (pinnedSet.has(p.path)) return false;
+
       const isArchived = archivedSet.has(p.path);
 
       // Archive visibility
@@ -59,7 +75,14 @@ export default function ProjectsGridClient({
 
       return true;
     });
-  }, [projects, archivedSet, searchQuery, statusFilter, showArchived]);
+  }, [
+    projects,
+    pinnedSet,
+    archivedSet,
+    searchQuery,
+    statusFilter,
+    showArchived,
+  ]);
 
   const handleArchive = useCallback(
     async (projectPath: string) => {
@@ -85,9 +108,35 @@ export default function ProjectsGridClient({
     [archivedSet, router],
   );
 
+  const handlePin = useCallback(
+    async (projectPath: string) => {
+      const isCurrentlyPinned = pinnedSet.has(projectPath);
+      try {
+        const projectName = projectPath.split("/").pop() ?? "";
+        const res = await fetch(
+          `/api/projects/${encodeURIComponent(projectName)}/pin`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pinned: !isCurrentlyPinned }),
+          },
+        );
+        if (res.ok) {
+          router.refresh();
+        }
+      } catch {
+        // Silently fail — no optimistic update, UI stays as-is
+      }
+      setOpenMenuId(null);
+    },
+    [pinnedSet, router],
+  );
+
   const handleMenuToggle = useCallback((projectPath: string) => {
     setOpenMenuId((current) => (current === projectPath ? null : projectPath));
   }, []);
+
+  const showPinnedSection = visiblePinnedProjects.length > 0;
 
   return (
     <>
@@ -137,6 +186,26 @@ export default function ProjectsGridClient({
         )}
       </div>
 
+      {showPinnedSection && (
+        <div className="pinned-section">
+          <div className="pinned-section-header">Pinned</div>
+          <div className="projects-grid stagger-in">
+            {visiblePinnedProjects.map((project) => (
+              <ProjectCard
+                key={project.path}
+                project={project}
+                archived={archivedSet.has(project.path)}
+                pinned={true}
+                menuOpen={openMenuId === project.path}
+                onMenuToggle={() => handleMenuToggle(project.path)}
+                onArchive={handleArchive}
+                onPin={handlePin}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {filteredProjects.length > 0 ? (
         <div className="projects-grid stagger-in">
           {filteredProjects.map((project) => (
@@ -144,13 +213,15 @@ export default function ProjectsGridClient({
               key={project.path}
               project={project}
               archived={archivedSet.has(project.path)}
+              pinned={false}
               menuOpen={openMenuId === project.path}
               onMenuToggle={() => handleMenuToggle(project.path)}
               onArchive={handleArchive}
+              onPin={handlePin}
             />
           ))}
         </div>
-      ) : (
+      ) : !showPinnedSection ? (
         <div className="no-results">
           <div className="no-results-title">No projects match</div>
           <div className="no-results-desc">
@@ -158,7 +229,7 @@ export default function ProjectsGridClient({
             looking for.
           </div>
         </div>
-      )}
+      ) : null}
     </>
   );
 }

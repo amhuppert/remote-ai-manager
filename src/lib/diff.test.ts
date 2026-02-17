@@ -268,12 +268,20 @@ index abc..def 100644
     expect(result.totalAdditions).toBe(1);
 
     // Verify merge-base call
-    expect(execFileMock.mock.calls[0]![1]).toEqual(["merge-base", "main", "HEAD"]);
+    expect(execFileMock.mock.calls[0]![1]).toEqual([
+      "merge-base",
+      "main",
+      "HEAD",
+    ]);
     const mergeBaseOpts = execFileMock.mock.calls[0]![2] as { cwd: string };
     expect(mergeBaseOpts.cwd).toBe("/projects/repo/.worktrees/test");
 
     // Verify diff call uses the merge-base hash
-    expect(execFileMock.mock.calls[1]![1]).toEqual(["diff", "abc123def456", "--unified=3"]);
+    expect(execFileMock.mock.calls[1]![1]).toEqual([
+      "diff",
+      "abc123def456",
+      "--unified=3",
+    ]);
   });
 
   it("returns empty diff on merge-base failure (Req 1.5)", async () => {

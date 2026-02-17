@@ -109,7 +109,13 @@ export default function SessionsList({
     <>
       <div className="stagger-in">
         <div className="session-actions-bar">
-          <div style={{ display: "flex", gap: "var(--space-sm)", alignItems: "center" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: "var(--space-sm)",
+              alignItems: "center",
+            }}
+          >
             <button
               className="btn btn-sm"
               style={{ color: "var(--text-tertiary)" }}
