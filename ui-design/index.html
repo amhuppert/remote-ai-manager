@@ -1244,6 +1244,257 @@
         font-weight: 500;
       }
 
+      /* ============================================================
+         Commit History — Timeline View
+         ============================================================ */
+
+      .diff-commits-view {
+        flex: 1;
+        overflow-y: auto;
+      }
+
+      .commit-history {
+        padding: var(--space-sm) 0;
+      }
+
+      /* --- Individual commit entry --- */
+      .commit-entry {
+        position: relative;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .commit-entry:last-child {
+        border-bottom: none;
+      }
+
+      /* Timeline rail — continuous vertical line */
+      .commit-entry::before {
+        content: "";
+        position: absolute;
+        left: 18px;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: var(--border-default);
+        z-index: 0;
+      }
+
+      .commit-entry:first-child::before {
+        top: 50%;
+      }
+
+      .commit-entry:last-child::before {
+        bottom: 50%;
+      }
+
+      /* Timeline node — dot on the rail */
+      .commit-entry::after {
+        content: "";
+        position: absolute;
+        left: 14px;
+        top: 50%;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--bg-surface);
+        border: 2px solid var(--border-strong);
+        transform: translateY(-50%);
+        z-index: 1;
+        transition: all 0.2s ease;
+      }
+
+      /* When commit has expanded content, position node at header center */
+      .commit-entry:has(.commit-header.expanded)::after {
+        top: 20px;
+        transform: translateY(0);
+      }
+
+      .commit-entry:has(.commit-header.expanded)::before {
+        top: 0;
+      }
+
+      .commit-entry:first-child:has(.commit-header.expanded)::before {
+        top: 20px;
+      }
+
+      /* --- Commit header (clickable row) --- */
+      .commit-header {
+        display: grid;
+        grid-template-columns: 16px auto 1fr;
+        grid-template-rows: auto auto;
+        column-gap: 8px;
+        row-gap: 2px;
+        align-items: center;
+        padding: 10px var(--space-md) 10px 32px;
+        cursor: pointer;
+        transition: background 0.15s ease;
+        user-select: none;
+        position: relative;
+        z-index: 1;
+      }
+
+      .commit-header:hover {
+        background: var(--bg-hover);
+      }
+
+      .commit-header:hover .commit-hash {
+        color: var(--cyan);
+        background: var(--cyan-glow);
+        border-color: rgba(0, 229, 255, 0.25);
+      }
+
+      .commit-header:hover .commit-expand-indicator {
+        color: var(--text-secondary);
+      }
+
+      .commit-header:active {
+        background: rgba(28, 40, 65, 0.8);
+      }
+
+      /* Expand/collapse chevron */
+      .commit-expand-indicator {
+        grid-row: 1 / 3;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-tertiary);
+        transition: all 0.2s ease;
+      }
+
+      .commit-expand-indicator svg {
+        transition: transform 0.2s ease;
+      }
+
+      .commit-header.expanded .commit-expand-indicator svg {
+        transform: rotate(90deg);
+      }
+
+      .commit-header.expanded .commit-expand-indicator {
+        color: var(--cyan-dim);
+      }
+
+      /* Hash badge */
+      .commit-hash {
+        grid-column: 2;
+        grid-row: 1;
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        color: var(--cyan-dim);
+        background: rgba(0, 229, 255, 0.07);
+        border: 1px solid rgba(0, 229, 255, 0.12);
+        border-radius: 3px;
+        padding: 1px 6px;
+        width: fit-content;
+        transition: all 0.2s ease;
+      }
+
+      /* Commit message */
+      .commit-message {
+        grid-column: 3;
+        grid-row: 1;
+        font-family: var(--font-body);
+        font-size: 0.78rem;
+        font-weight: 500;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.3;
+      }
+
+      /* Metadata row */
+      .commit-meta {
+        grid-column: 2 / 4;
+        grid-row: 2;
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+        font-family: var(--font-mono);
+        font-size: 0.65rem;
+        color: var(--text-tertiary);
+        padding-top: 1px;
+      }
+
+      .commit-files {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+
+      .commit-files svg {
+        opacity: 0.5;
+      }
+
+      .commit-date {
+        opacity: 0.7;
+      }
+
+      .commit-meta .commit-files::after {
+        content: "\00b7";
+        margin-left: 4px;
+        opacity: 0.4;
+      }
+
+      /* --- Expanded state highlights --- */
+      .commit-header.expanded {
+        background: rgba(0, 229, 255, 0.04);
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .commit-header.expanded .commit-hash {
+        color: var(--cyan);
+        background: var(--cyan-glow);
+        border-color: rgba(0, 229, 255, 0.3);
+        box-shadow: 0 0 8px rgba(0, 229, 255, 0.1);
+      }
+
+      .commit-entry:has(.commit-header.expanded)::after {
+        border-color: var(--cyan-dim);
+        background: var(--cyan-glow);
+        box-shadow: 0 0 6px rgba(0, 229, 255, 0.3);
+      }
+
+      /* --- Inline diff area --- */
+      .commit-diff-inline {
+        position: relative;
+        margin-left: 32px;
+        border-left: 1px solid var(--border-subtle);
+        background: rgba(6, 9, 15, 0.3);
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        line-height: 1.7;
+      }
+
+      .commit-diff-inline .diff-file-section {
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .commit-diff-inline .diff-file-section:last-child {
+        border-bottom: none;
+      }
+
+      .commit-diff-loading {
+        padding: var(--space-lg) var(--space-md);
+        color: var(--text-tertiary);
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+      }
+
+      .commit-diff-loading::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        border: 2px solid var(--border-default);
+        border-top-color: var(--cyan-dim);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+      }
+
       /* Info value helpers */
       .info-value.truncate {
         white-space: nowrap;
@@ -3072,11 +3323,110 @@ export default function SessionDetail({ params }) {
                 <!-- Tab bar: Uncommitted / Commits -->
                 <div class="diff-tab-bar">
                   <div class="filter-pills">
-                    <button class="filter-pill active">Uncommitted <span class="filter-pill-count">1</span></button>
-                    <button class="filter-pill">Commits</button>
+                    <button class="filter-pill" onclick="showDiffTab('uncommitted')">Uncommitted <span class="filter-pill-count">1</span></button>
+                    <button class="filter-pill active" onclick="showDiffTab('commits')">Commits <span class="filter-pill-count">4</span></button>
                   </div>
                 </div>
 
+                <!-- ===== COMMITS VIEW ===== -->
+                <div class="diff-commits-view" id="commits-view">
+                  <div class="commit-history">
+
+                    <!-- Commit 1 — expanded -->
+                    <div class="commit-entry">
+                      <div class="commit-header expanded" onclick="toggleCommitExpand(this)">
+                        <span class="commit-expand-indicator">
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,2 7,5 3,8" /></svg>
+                        </span>
+                        <span class="commit-hash">a3f82c1</span>
+                        <span class="commit-message">Add real-time polling for session status updates</span>
+                        <span class="commit-meta">
+                          <span class="commit-files">
+                            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/></svg>
+                            3 files
+                          </span>
+                          <span class="commit-date">12m ago</span>
+                        </span>
+                      </div>
+                      <div class="commit-diff-inline">
+                        <div class="diff-file-section">
+                          <div class="diff-file-header">
+                            <span class="diff-file-chevron">&#9662;</span>
+                            <span class="diff-file-name">src/hooks/useRunPoller.ts <span style="color: var(--green); font-weight: 400; font-size: 0.62rem">(new)</span></span>
+                            <span class="diff-file-stat"><span class="add-count">+24</span></span>
+                          </div>
+                          <div class="diff-file-lines">
+                            <div class="diff-line hunk-header">@@ -0,0 +1,24 @@</div>
+                            <div class="diff-line add">+import { useState, useEffect } from 'react'</div>
+                            <div class="diff-line add">+</div>
+                            <div class="diff-line add">+export function useRunPoller(runId: string | null) {</div>
+                            <div class="diff-line add">+  const [status, setStatus] = useState('idle')</div>
+                            <div class="diff-line add">+  return { status }</div>
+                            <div class="diff-line add">+}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Commit 2 -->
+                    <div class="commit-entry">
+                      <div class="commit-header" onclick="toggleCommitExpand(this)">
+                        <span class="commit-expand-indicator">
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,2 7,5 3,8" /></svg>
+                        </span>
+                        <span class="commit-hash">e7b4f09</span>
+                        <span class="commit-message">Refactor conversation thread component to use SSE</span>
+                        <span class="commit-meta">
+                          <span class="commit-files">
+                            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/></svg>
+                            5 files
+                          </span>
+                          <span class="commit-date">1h ago</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Commit 3 -->
+                    <div class="commit-entry">
+                      <div class="commit-header" onclick="toggleCommitExpand(this)">
+                        <span class="commit-expand-indicator">
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,2 7,5 3,8" /></svg>
+                        </span>
+                        <span class="commit-hash">9c12d5a</span>
+                        <span class="commit-message">Fix API route handling for project deletion edge case</span>
+                        <span class="commit-meta">
+                          <span class="commit-files">
+                            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/></svg>
+                            1 file
+                          </span>
+                          <span class="commit-date">3h ago</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Commit 4 -->
+                    <div class="commit-entry">
+                      <div class="commit-header" onclick="toggleCommitExpand(this)">
+                        <span class="commit-expand-indicator">
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,2 7,5 3,8" /></svg>
+                        </span>
+                        <span class="commit-hash">1fd83bb</span>
+                        <span class="commit-message">Initial session detail page scaffold</span>
+                        <span class="commit-meta">
+                          <span class="commit-files">
+                            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/></svg>
+                            8 files
+                          </span>
+                          <span class="commit-date">1d ago</span>
+                        </span>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
+                <!-- ===== UNCOMMITTED VIEW (hidden by default for prototype) ===== -->
+                <div class="diff-uncommitted-view" id="uncommitted-view" style="display: none">
                 <div class="diff-toolbar">
                   <div class="diff-toolbar-group">
                     <button
@@ -3305,6 +3655,7 @@ export default function SessionDetail({ params }) {
                     </div>
                   </div>
                 </div>
+                </div><!-- /diff-uncommitted-view -->
               </div>
             </div>
           </div>
@@ -3459,6 +3810,44 @@ export default function SessionDetail({ params }) {
           }
         });
       })();
+
+      // ===================== COMMIT VIEW TOGGLE =====================
+      function toggleCommitExpand(headerEl) {
+        const entry = headerEl.closest('.commit-entry');
+        const diffInline = entry.querySelector('.commit-diff-inline');
+        const isExpanded = headerEl.classList.toggle('expanded');
+        if (diffInline) {
+          diffInline.style.display = isExpanded ? '' : 'none';
+        }
+        // Collapse other commits
+        if (isExpanded) {
+          document.querySelectorAll('.commit-entry').forEach(e => {
+            if (e !== entry) {
+              const h = e.querySelector('.commit-header');
+              const d = e.querySelector('.commit-diff-inline');
+              if (h) h.classList.remove('expanded');
+              if (d) d.style.display = 'none';
+            }
+          });
+        }
+      }
+
+      function showDiffTab(tab) {
+        const commitsView = document.getElementById('commits-view');
+        const uncommittedView = document.getElementById('uncommitted-view');
+        const pills = document.querySelectorAll('.diff-tab-bar .filter-pill');
+        if (tab === 'commits') {
+          commitsView.style.display = '';
+          uncommittedView.style.display = 'none';
+          pills[0].classList.remove('active');
+          pills[1].classList.add('active');
+        } else {
+          commitsView.style.display = 'none';
+          uncommittedView.style.display = '';
+          pills[0].classList.add('active');
+          pills[1].classList.remove('active');
+        }
+      }
 
       // ===================== DIFF FILE COLLAPSE =====================
       function toggleFileCollapse(headerEl) {

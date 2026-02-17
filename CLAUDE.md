@@ -61,4 +61,4 @@ Use MCP tools when: diagnosing build/runtime errors, verifying UI after changes,
 ## UI Design Rules
 
 - Use the `ui-design/index.html` file as the design prototype. Make changes to that file first so that the user can review the design.
-- UI design must follow the design system in `memory-bank/design-system.md`.
+- UI design must follow the design system in `.kiro/specs/ui-design-system/design.md`.
