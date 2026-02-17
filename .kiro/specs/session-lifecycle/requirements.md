@@ -82,7 +82,7 @@ The Session Lifecycle feature manages the full create/monitor/delete lifecycle o
 #### Acceptance Criteria
 
 1. When a session is successfully created, the Session Manager shall persist the session record to the JSON state file.
-2. The Session Manager shall store the following session properties: `sessionName`, `worktreePath`, `branchName`, `claudeSessionId` (null), `transcriptPath` (null), `status` ("ready"), `createdAt`, `lastActivityAt`, `promptCount` (0), and `archived` (false).
+2. The Session Manager shall store the following session properties: `sessionName`, `worktreePath`, `branchName`, `claudeSessionId` (null), `transcriptPath` (null), `status` ("ready"), `createdAt`, `lastActivityAt`, `promptCount` (0), `archived` (false), and `messages` (empty array).
 3. When a session is created for a project not yet in state, the Session Manager shall create the project entry automatically.
 4. The Session Manager shall record ISO 8601 timestamps for `createdAt` and `lastActivityAt` at the time of creation.
 

@@ -2,8 +2,8 @@ import { notFound } from "next/navigation";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
 import { computeDiff } from "@/lib/diff";
-import { readTranscript } from "@/lib/transcript";
 import SessionDetailPage from "./SessionDetailPage";
+import type { TranscriptMessage } from "@/types";
 
 export const dynamic = "force-dynamic";
 
@@ -30,10 +30,14 @@ export default async function SessionPage({
   // Compute diff — safe to fail (returns empty)
   const diff = await computeDiff(sessionState.worktreePath);
 
-  // Read transcript messages if transcript path is known (set via hooks)
-  const messages = sessionState.transcriptPath
-    ? await readTranscript(sessionState.transcriptPath)
-    : [];
+  // Read conversation messages directly from session state
+  const messages: TranscriptMessage[] = (sessionState.messages ?? []).map(
+    (m) => ({
+      role: m.role,
+      content: m.content,
+      timestamp: m.timestamp,
+    }),
+  );
 
   return (
     <SessionDetailPage

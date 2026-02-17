@@ -19,14 +19,19 @@ const execFileAsync = promisify(execFile);
  * The `-c` flag continues the most recent conversation in the cwd.
  * Because each session has its own worktree, `-c` is unambiguous.
  *
+ * Uses `--dangerously-skip-permissions` to avoid interactive permission
+ * prompts that hang in headless mode, and `--output-format json` to get
+ * structured output with `result` and `session_id`.
+ *
  * Acquires a single-flight lock so only one prompt runs per session.
  * Updates session status (running → ready) and prompt count in state.
+ * Stores user and assistant messages directly in session state.
  */
 export async function executePrompt(
   projectPath: string,
   session: SessionState,
   promptText: string,
-): Promise<{ output: string }> {
+): Promise<{ output: string; claudeResponse: string }> {
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
 
@@ -35,12 +40,23 @@ export async function executePrompt(
   if (session.promptCount > 0) {
     args.push("-c");
   }
-  args.push("-p", promptText);
+  args.push(
+    "-p",
+    promptText,
+    "--dangerously-skip-permissions",
+    "--output-format",
+    "json",
+    "--max-turns",
+    "50",
+  );
+
+  const now = new Date().toISOString();
 
   try {
-    // Mark session as running
+    // Mark session as running and store the user message immediately
     await mutateSession(projectPath, session.sessionName, (s) => {
       s.status = "running";
+      s.messages.push({ role: "user", content: promptText, timestamp: now });
     });
 
     // Log CLI args excluding prompt content for security
@@ -53,17 +69,22 @@ export async function executePrompt(
 
     const promptStart = Date.now();
 
-    // Spawn Claude CLI in the worktree directory
-    const { stdout, stderr } = await execFileAsync("claude", args, {
+    // Spawn Claude CLI in the worktree directory.
+    // Close stdin immediately so the CLI doesn't block waiting for input.
+    const execPromise = execFileAsync("claude", args, {
       cwd: session.worktreePath,
       timeout: config.claudeTimeoutMs,
       maxBuffer: 10 * 1024 * 1024, // 10 MB
       env: {
-        ...process.env,
-        // Ensure Claude doesn't try to open a browser or ask for input
-        CI: "1",
-      },
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([key]) => !key.startsWith("CLAUDE"),
+          ),
+        ),
+      } as NodeJS.ProcessEnv,
     });
+    execPromise.child.stdin?.end();
+    const { stdout, stderr } = await execPromise;
 
     const durationMs = Date.now() - promptStart;
     logger.info("prompt.complete", {
@@ -74,12 +95,39 @@ export async function executePrompt(
       stderrSize: stderr.length,
     });
 
-    // Increment prompt count and update activity timestamp
+    // Parse JSON output from Claude CLI
+    let claudeResponse = stdout;
+    let sessionId: string | null = null;
+    try {
+      const parsed = JSON.parse(stdout) as {
+        result?: string;
+        session_id?: string;
+      };
+      claudeResponse = parsed.result ?? stdout;
+      sessionId = parsed.session_id ?? null;
+    } catch {
+      // If JSON parsing fails, use raw stdout as the response
+      logger.warn("prompt.json_parse_failed", {
+        sessionName: session.sessionName,
+        stdoutPrefix: stdout.slice(0, 200),
+      });
+    }
+
+    // Store assistant response and update session metadata
+    const responseTimestamp = new Date().toISOString();
     await mutateSession(projectPath, session.sessionName, (s) => {
       s.promptCount++;
+      s.messages.push({
+        role: "assistant",
+        content: claudeResponse,
+        timestamp: responseTimestamp,
+      });
+      if (sessionId) {
+        s.claudeSessionId = sessionId;
+      }
     });
 
-    return { output: stdout };
+    return { output: stdout, claudeResponse };
   } catch (err) {
     const cliArgsForLog = args.filter((a) => a !== promptText);
     logger.error("prompt.failure", {

@@ -14,9 +14,9 @@ The Prompt Execution feature enables developers to send prompts to Claude Code C
 
 1. When a prompt is submitted, the Prompt Executor shall spawn the `claude` CLI process with the `-p` flag and the prompt text as arguments.
 2. When a prompt is submitted, the Prompt Executor shall set the working directory of the spawned process to the session's worktree path.
-3. The Prompt Executor shall set the `CI` environment variable to `"1"` to prevent interactive prompts or browser launches.
-4. The Prompt Executor shall inherit the parent process environment variables in addition to any overrides.
-5. The Prompt Executor shall capture and return the standard output of the Claude CLI process.
+3. The Prompt Executor shall pass `--dangerously-skip-permissions` to prevent interactive permission prompts that hang in headless mode, `--output-format json` to receive structured output, and `--max-turns 50` as a safety limit against runaway execution.
+4. The Prompt Executor shall inherit the parent process environment variables, filtering out any `CLAUDE`-prefixed variables to avoid inheriting the parent Claude Code session context.
+5. The Prompt Executor shall capture standard output, parse it as JSON to extract the `result` (response text) and `session_id`, and return both the raw output and the extracted response.
 
 ### Requirement 2: Conversation Continuity
 
@@ -82,5 +82,17 @@ The Prompt Execution feature enables developers to send prompts to Claude Code C
 3. When the project is not found, the Prompt API shall return a 404 error with the message "Project not found".
 4. When the session is not found, the Prompt API shall return a 404 error with the message "Session not found".
 5. When the session is busy (lock held), the Prompt API shall return a 409 error with error code "SESSION_BUSY" and the message "Session is busy — a prompt is already running".
-6. When prompt execution succeeds, the Prompt API shall return a 200 response with `{ success: true }` and include the output length in the `X-Claude-Output-Length` response header.
+6. When prompt execution succeeds, the Prompt API shall return a 200 response with `{ success: true, claudeResponse: string }` and include the output length in the `X-Claude-Output-Length` response header.
 7. When prompt execution fails with a non-busy error, the Prompt API shall return a 500 error with the failure message.
+
+### Requirement 8: Conversation Message Storage
+
+**Objective:** As a developer, I want user prompts and Claude responses to be stored directly in the session state, so that the conversation is immediately available for display without depending on external transcript files or hooks.
+
+#### Acceptance Criteria
+
+1. When a prompt execution begins, the Prompt Executor shall append the user's message (with role, content, and timestamp) to the session's `messages` array before spawning the CLI process.
+2. When a prompt execution completes successfully, the Prompt Executor shall append Claude's response (with role, content, and timestamp) to the session's `messages` array.
+3. When the Claude CLI returns JSON output, the Prompt Executor shall extract the `result` field as the assistant message content. If JSON parsing fails, the Prompt Executor shall use the raw stdout as the response content.
+4. When the Claude CLI returns a `session_id` in the JSON output, the Prompt Executor shall set the session's `claudeSessionId` from that value.
+5. If a prompt execution fails, the Prompt Executor shall not append an assistant message (the user message persisted before execution is retained).

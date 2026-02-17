@@ -17,7 +17,7 @@ vi.mock("@/lib/hooks", () => ({
 
 // Mock logging to avoid file I/O during tests
 vi.mock("@/lib/logging", () => ({
-  withTracing: (handler: Function) => handler,
+  withTracing: (handler: (...args: unknown[]) => unknown) => handler,
   createLogger: () => ({
     debug: vi.fn(),
     info: vi.fn(),

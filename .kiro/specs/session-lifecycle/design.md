@@ -437,6 +437,7 @@ erDiagram
         string lastActivityAt
         number promptCount
         boolean archived
+        array messages
     }
     PerRepoConfig {
         string initScriptPath
@@ -450,6 +451,7 @@ erDiagram
 - Session names are unique within a project
 - `status` is one of `"idle" | "ready" | "running"`
 - `worktreePath` and `branchName` are derived deterministically from `sessionName`
+- `messages` is an array of `ConversationMessage` objects (defaults to empty on creation; populated by prompt execution)
 
 ### Logical Data Model
 

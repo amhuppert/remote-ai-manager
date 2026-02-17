@@ -35,7 +35,7 @@ vi.mock("@/lib/prompt", () => ({
 
 // Mock logging to avoid file I/O during tests
 vi.mock("@/lib/logging", () => ({
-  withTracing: (handler: Function) => handler,
+  withTracing: (handler: (...args: unknown[]) => unknown) => handler,
   createLogger: () => ({
     debug: vi.fn(),
     info: vi.fn(),
@@ -74,6 +74,7 @@ const testSession = {
   lastActivityAt: "2024-01-01T00:00:00Z",
   promptCount: 0,
   archived: false,
+  messages: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -86,7 +87,10 @@ beforeEach(() => {
   resolveProjectPathMock.mockResolvedValue("/projects/my-project");
   getSessionMock.mockResolvedValue(testSession);
   isSessionBusyMock.mockReturnValue(false);
-  executePromptMock.mockResolvedValue({ output: "Claude says hello" });
+  executePromptMock.mockResolvedValue({
+    output: '{"result":"Claude says hello","session_id":"sess-123"}',
+    claudeResponse: "Claude says hello",
+  });
 });
 
 // ===========================================================================
@@ -108,7 +112,10 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
   });
 
   it("includes X-Claude-Output-Length header (Req 7.6)", async () => {
-    executePromptMock.mockResolvedValue({ output: "12345" });
+    executePromptMock.mockResolvedValue({
+      output: "12345",
+      claudeResponse: "12345",
+    });
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
     const response = await POST(makeRequest({ prompt: "test" }), makeParams());

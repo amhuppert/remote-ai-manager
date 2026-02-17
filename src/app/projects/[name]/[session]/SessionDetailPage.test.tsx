@@ -31,6 +31,11 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
+// Mock MarkdownContent to avoid pulling in react-markdown in tests
+vi.mock("@/components/MarkdownContent", () => ({
+  default: ({ content }: { content: string }) => <span>{content}</span>,
+}));
+
 // Mock IntersectionObserver
 beforeEach(() => {
   vi.clearAllMocks();
@@ -39,6 +44,8 @@ beforeEach(() => {
     unobserve: vi.fn(),
     disconnect: vi.fn(),
   }));
+  // Mock scrollIntoView (not available in jsdom)
+  Element.prototype.scrollIntoView = vi.fn();
   // Mock localStorage
   const storage: Record<string, string> = {};
   vi.stubGlobal("localStorage", {
@@ -67,6 +74,7 @@ const baseSession: SessionState = {
   lastActivityAt: "2024-06-15T12:00:00Z",
   promptCount: 5,
   archived: false,
+  messages: [],
 };
 
 const emptyDiff: SessionDiff = {
@@ -195,15 +203,7 @@ describe("SessionDetailPage", () => {
     expect(nextBtn.hasAttribute("disabled")).toBe(false);
   });
 
-  it("shows running indicator when session status is running (Req 4.4)", () => {
-    render(
-      <SessionDetailPage
-        projectName="repo"
-        session={{ ...baseSession, status: "running" }}
-        messages={[]}
-        diff={emptyDiff}
-      />,
-    );
+  it("shows typing indicator when session status is running (Req 4.4)", () => {
     const { container } = render(
       <SessionDetailPage
         projectName="repo"
@@ -212,8 +212,24 @@ describe("SessionDetailPage", () => {
         diff={emptyDiff}
       />,
     );
-    const indicator = container.querySelector(".running-indicator");
+    const indicator = container.querySelector(".typing-indicator");
     expect(indicator).not.toBeNull();
+    const dots = container.querySelector(".typing-dots");
+    expect(dots).not.toBeNull();
+    expect(dots?.querySelectorAll("span").length).toBe(3);
+  });
+
+  it("does not show typing indicator when session is idle", () => {
+    const { container } = render(
+      <SessionDetailPage
+        projectName="repo"
+        session={baseSession}
+        messages={sampleMessages}
+        diff={emptyDiff}
+      />,
+    );
+    const indicator = container.querySelector(".typing-indicator");
+    expect(indicator).toBeNull();
   });
 
   it("disables send button when prompt text is empty (Req 3.5)", () => {
@@ -272,5 +288,29 @@ describe("SessionDetailPage", () => {
     ) as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "Fix the bug" } });
     expect(textarea.value).toBe("Fix the bug");
+  });
+
+  it("adds optimistic user message on submit and clears input", async () => {
+    // Mock fetch to delay resolution
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <SessionDetailPage
+        projectName="repo"
+        session={baseSession}
+        messages={[]}
+        diff={emptyDiff}
+      />,
+    );
+
+    const textarea = container.querySelector(".prompt-textarea") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "Test prompt" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    // Input should be cleared immediately
+    expect(textarea.value).toBe("");
+    // Optimistic message should appear
+    expect(screen.getByText("Test prompt")).toBeDefined();
   });
 });

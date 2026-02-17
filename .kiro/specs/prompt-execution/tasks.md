@@ -30,7 +30,7 @@
   - Verify `lastActivityAt` is updated on each state mutation
   - Verify prompt count is incremented by one on success
   - Verify the Claude CLI stdout is returned as the output
-  - _Requirements: 1.1, 1.2, 1.5, 4.1, 4.2, 4.4, 2.3_
+  - _Requirements: 1.1, 1.2, 1.5, 4.1, 4.2, 4.4, 2.3, 8.1, 8.2_
 
 - [x] 2.2 Test conversation continuity flag behavior
   - Verify first prompt (promptCount = 0) invokes CLI without `-c` flag
@@ -40,8 +40,9 @@
 
 - [x] 2.3 Test CLI environment and configuration
   - Verify the working directory is set to the session's worktree path
-  - Verify the `CI` environment variable is set to `"1"`
-  - Verify parent process environment variables are inherited
+  - Verify `CLAUDE`-prefixed environment variables are filtered out
+  - Verify `--dangerously-skip-permissions`, `--output-format json`, and `--max-turns 50` flags are passed
+  - Verify parent process environment variables are inherited (minus CLAUDE-prefixed)
   - Verify the timeout matches the `claudeTimeoutMs` config value
   - Verify the max buffer is set to 10 MB
   - _Requirements: 1.2, 1.3, 1.4, 5.1, 5.3_
@@ -93,3 +94,25 @@
   - Mock `executePrompt` to throw a non-busy error
   - Verify response is 500 with the error message
   - _Requirements: 7.7_
+
+- [x] 5. Add tests for conversation message storage and JSON output parsing
+- [x] 5.1 Test user message stored before CLI execution
+  - Verify the first `mutateSession` call appends a user message with role, content, and timestamp to `session.messages`
+  - Verify the user message is stored before the CLI subprocess is spawned
+  - _Requirements: 8.1_
+
+- [x] 5.2 Test assistant message stored after successful execution
+  - Verify the second `mutateSession` call appends an assistant message with the parsed `result` from JSON output
+  - Verify the assistant message timestamp is set
+  - _Requirements: 8.2_
+
+- [x] 5.3 Test claudeSessionId set from JSON output
+  - Mock CLI to return JSON with `session_id` field
+  - Verify `claudeSessionId` is set on the session state from the parsed value
+  - _Requirements: 8.4_
+
+- [x] 5.4 (P) Test fallback to raw stdout when JSON parsing fails
+  - Mock CLI to return non-JSON stdout
+  - Verify `claudeResponse` falls back to the raw stdout string
+  - Verify no error is thrown (graceful degradation)
+  - _Requirements: 8.3_

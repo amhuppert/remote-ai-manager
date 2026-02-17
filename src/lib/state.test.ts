@@ -77,6 +77,7 @@ describe("state", () => {
               lastActivityAt: "2024-01-01T00:00:00Z",
               promptCount: 0,
               archived: false,
+              messages: [],
             },
           },
         },
@@ -101,6 +102,7 @@ describe("state", () => {
       lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 0,
       archived: false,
+      messages: [],
     };
 
     await updateSession("/proj", session);
@@ -124,6 +126,7 @@ describe("state", () => {
       lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 0,
       archived: false,
+      messages: [],
     };
 
     await updateSession("/proj", session);
@@ -146,6 +149,7 @@ describe("state", () => {
       lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 0,
       archived: false,
+      messages: [],
     };
 
     await updateSession("/proj2", {
@@ -227,6 +231,7 @@ describe("archive helpers", () => {
       lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 3,
       archived: false,
+      messages: [],
     };
 
     await writeState({

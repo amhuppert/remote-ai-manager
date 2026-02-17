@@ -62,7 +62,10 @@ export const POST = withTracing(async (request, { params }) => {
       body.prompt.trim(),
     );
 
-    const response: RunPromptResponse = { success: true };
+    const response: RunPromptResponse = {
+      success: true,
+      claudeResponse: result.claudeResponse,
+    };
     return NextResponse.json(response, {
       headers: {
         "X-Claude-Output-Length": String(result.output.length),

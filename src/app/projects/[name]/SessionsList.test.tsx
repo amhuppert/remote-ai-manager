@@ -54,6 +54,7 @@ const makeSessions = (count: number): SessionState[] =>
     lastActivityAt: now,
     promptCount: i * 3,
     archived: false,
+    messages: [],
   }));
 
 // ===========================================================================

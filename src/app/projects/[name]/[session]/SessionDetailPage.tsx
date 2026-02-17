@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import type {
   SessionState,
@@ -12,6 +12,7 @@ import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
 import DiffPanel from "./DiffPanel";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import MarkdownContent from "@/components/MarkdownContent";
 import { tracedFetch } from "@/lib/traced-fetch";
 type MobilePanel = "chat" | "diff";
 
@@ -46,21 +47,46 @@ export default function SessionDetailPage({
   const [sending, setSending] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [infoExpanded, setInfoExpanded] = useState(false);
+  const [promptError, setPromptError] = useState<string | null>(null);
+  const [optimisticMessages, setOptimisticMessages] = useState<
+    TranscriptMessage[]
+  >([]);
+
+  // Derive display messages: server messages + optimistic
+  const displayMessages = useMemo(
+    () => [...messages, ...optimisticMessages],
+    [messages, optimisticMessages],
+  );
+
+  // Clear optimistic messages when server catches up
+  useEffect(() => {
+    if (optimisticMessages.length === 0) return;
+    const lastOptimistic = optimisticMessages[optimisticMessages.length - 1];
+    if (!lastOptimistic) return;
+    const serverHasIt = messages.some(
+      (m) =>
+        m.role === lastOptimistic.role && m.content === lastOptimistic.content,
+    );
+    if (serverHasIt) {
+      setOptimisticMessages([]);
+    }
+  }, [messages, optimisticMessages]);
 
   // Message navigation state
   const [currentMsgIndex, setCurrentMsgIndex] = useState(0);
   const panelBodyRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const conversationEndRef = useRef<HTMLDivElement>(null);
 
-  // Reset refs array when messages change
+  // Reset refs array when displayMessages change
   useEffect(() => {
-    messageRefs.current = messageRefs.current.slice(0, messages.length);
-  }, [messages.length]);
+    messageRefs.current = messageRefs.current.slice(0, displayMessages.length);
+  }, [displayMessages.length]);
 
   // Track which message is visible via IntersectionObserver
   useEffect(() => {
     const panelBody = panelBodyRef.current;
-    if (!panelBody || messages.length === 0) return;
+    if (!panelBody || displayMessages.length === 0) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -84,18 +110,27 @@ export default function SessionDetailPage({
     }
 
     return () => observer.disconnect();
-  }, [messages.length]);
+  }, [displayMessages.length]);
+
+  // Auto-scroll to bottom when new messages arrive (server or optimistic)
+  const prevMessageCountRef = useRef(displayMessages.length);
+  useEffect(() => {
+    if (displayMessages.length > prevMessageCountRef.current) {
+      conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+    prevMessageCountRef.current = displayMessages.length;
+  }, [displayMessages.length]);
 
   const scrollToMessage = useCallback(
     (index: number) => {
-      const clamped = Math.max(0, Math.min(index, messages.length - 1));
+      const clamped = Math.max(0, Math.min(index, displayMessages.length - 1));
       const el = messageRefs.current[clamped];
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "start" });
         setCurrentMsgIndex(clamped);
       }
     },
-    [messages.length],
+    [displayMessages.length],
   );
 
   const handlePrevMessage = useCallback(() => {
@@ -105,6 +140,17 @@ export default function SessionDetailPage({
   const handleNextMessage = useCallback(() => {
     scrollToMessage(currentMsgIndex + 1);
   }, [currentMsgIndex, scrollToMessage]);
+
+  // Auto-refresh while session is active (sending or server-side running)
+  useEffect(() => {
+    if (!sending && session.status !== "running") return;
+
+    const interval = setInterval(() => {
+      router.refresh();
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [sending, session.status, router]);
 
   // Restore layout from localStorage
   useEffect(() => {
@@ -129,7 +175,16 @@ export default function SessionDetailPage({
 
   const handleSendPrompt = useCallback(async () => {
     if (!promptText.trim() || sending) return;
+    const text = promptText.trim();
+
+    // Optimistic: add user message immediately and clear input
+    setOptimisticMessages((prev) => [
+      ...prev,
+      { role: "user", content: text, timestamp: new Date().toISOString() },
+    ]);
+    setPromptText("");
     setSending(true);
+    setPromptError(null);
 
     try {
       const res = await tracedFetch(
@@ -138,19 +193,21 @@ export default function SessionDetailPage({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: promptText.trim() }),
+          body: JSON.stringify({ prompt: text }),
         },
       );
 
-      if (res.ok) {
-        setPromptText("");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Prompt failed" }));
+        setPromptError(data.error || "Prompt failed");
       }
     } catch {
-      // TODO: show error
+      setPromptError("Failed to send prompt");
     } finally {
       setSending(false);
+      router.refresh();
     }
-  }, [promptText, sending, projectName, session.sessionName]);
+  }, [promptText, sending, projectName, session.sessionName, router]);
 
   const handleDelete = useCallback(async () => {
     try {
@@ -168,12 +225,8 @@ export default function SessionDetailPage({
   }, [projectName, session.sessionName, router]);
 
   const decodedProjectName = decodeURIComponent(projectName);
-  const statusDotClass =
-    session.status === "running"
-      ? "cyan"
-      : session.status === "ready"
-        ? ""
-        : "";
+  const displayStatus = sending ? "running" : session.status;
+  const statusDotClass = displayStatus === "running" ? "cyan" : "";
 
   return (
     <div className="app" data-page="detail" data-mobile-panel={mobilePanel}>
@@ -195,7 +248,7 @@ export default function SessionDetailPage({
           <>
             <div className="status-indicator">
               <div className={`status-dot ${statusDotClass}`} />
-              {session.status}
+              {displayStatus}
             </div>
             <div className="topbar-sep" />
             <LayoutSwitcher
@@ -275,22 +328,24 @@ export default function SessionDetailPage({
                   <button
                     className="nav-btn"
                     onClick={handlePrevMessage}
-                    disabled={messages.length === 0 || currentMsgIndex <= 0}
+                    disabled={
+                      displayMessages.length === 0 || currentMsgIndex <= 0
+                    }
                     title="Previous message"
                   >
                     &#9650;
                   </button>
                   <span className="msg-counter">
-                    {messages.length > 0
-                      ? `${currentMsgIndex + 1} / ${messages.length}`
+                    {displayMessages.length > 0
+                      ? `${currentMsgIndex + 1} / ${displayMessages.length}`
                       : "0 / 0"}
                   </span>
                   <button
                     className="nav-btn"
                     onClick={handleNextMessage}
                     disabled={
-                      messages.length === 0 ||
-                      currentMsgIndex >= messages.length - 1
+                      displayMessages.length === 0 ||
+                      currentMsgIndex >= displayMessages.length - 1
                     }
                     title="Next message"
                   >
@@ -299,15 +354,15 @@ export default function SessionDetailPage({
                 </div>
               </div>
               <div className="panel-body" ref={panelBodyRef}>
-                {session.status === "running" && (
-                  <div className="running-indicator">
-                    <div className="spinner" />
-                    Claude is working&hellip;
+                {promptError && (
+                  <div className="prompt-error">
+                    <span>{promptError}</span>
+                    <button onClick={() => setPromptError(null)}>&times;</button>
                   </div>
                 )}
                 <div className="conversation">
-                  {messages.length > 0 ? (
-                    messages.map((msg, i) => (
+                  {displayMessages.length > 0 ? (
+                    displayMessages.map((msg, i) => (
                       <div
                         key={i}
                         className={`message ${msg.role}`}
@@ -319,7 +374,9 @@ export default function SessionDetailPage({
                         <div className="message-role">
                           {msg.role === "user" ? "You" : "Claude"}
                         </div>
-                        <div className="message-content">{msg.content}</div>
+                        <div className="message-content">
+                          <MarkdownContent content={msg.content} />
+                        </div>
                       </div>
                     ))
                   ) : (
@@ -333,6 +390,19 @@ export default function SessionDetailPage({
                       </div>
                     </div>
                   )}
+                  {(sending || displayStatus === "running") && (
+                    <div className="message assistant typing-indicator">
+                      <div className="message-role">Claude</div>
+                      <div className="message-content">
+                        <div className="typing-dots">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={conversationEndRef} />
                 </div>
               </div>
 

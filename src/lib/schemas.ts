@@ -15,6 +15,13 @@ export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 export const sessionStatusSchema = z.enum(["idle", "ready", "running"]);
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 
+export const conversationMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+  timestamp: z.string(),
+});
+export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
+
 export const sessionStateSchema = z.object({
   sessionName: z.string(),
   worktreePath: z.string(),
@@ -26,6 +33,7 @@ export const sessionStateSchema = z.object({
   lastActivityAt: z.string(),
   promptCount: z.number(),
   archived: z.boolean(),
+  messages: z.array(conversationMessageSchema).default([]),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 

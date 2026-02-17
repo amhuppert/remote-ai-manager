@@ -9,6 +9,7 @@ export type {
   ProjectState,
   ManagerState,
   PerRepoConfig,
+  ConversationMessage,
 } from "@/lib/schemas";
 
 // ============================================================
@@ -88,6 +89,8 @@ export interface RunPromptResponse {
   success: boolean;
   /** Error message if failed */
   error?: string;
+  /** Claude's response text (extracted from CLI JSON output) */
+  claudeResponse?: string;
 }
 
 /** Generic API error response */

@@ -6,13 +6,13 @@
 
 **Users**: Developers using CSM to manage Claude Code sessions. Hook events fire automatically during Claude Code operation; the UI displays hook installation status.
 
-**Impact**: This is a critical infrastructure feature. Without hooks, CSM cannot capture transcript paths (needed by transcript viewer) or Claude session IDs (needed for session observability).
+**Impact**: Hooks provide supplementary session metadata. Conversation messages are now stored directly in session state by the prompt execution feature (see `prompt-execution` spec, Requirement 8), so hooks are no longer the sole mechanism for conversation display. However, hooks remain valuable for capturing the `transcriptPath` (useful for advanced debugging with the JSONL transcript parser) and `claudeSessionId` (as a secondary source, since prompt execution also sets this from CLI JSON output).
 
 ### Goals
 
 - Receive and process Claude Code hook events via HTTP API
 - Match events to managed sessions by working directory
-- Update session metadata (claudeSessionId, transcriptPath, lastActivityAt)
+- Update supplementary session metadata (claudeSessionId, transcriptPath, lastActivityAt)
 - Detect hook installation status from Claude Code settings
 - Display hook warnings in the UI when not configured
 

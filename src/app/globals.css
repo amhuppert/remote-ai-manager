@@ -643,6 +643,12 @@ textarea {
   border: 1px solid var(--border-subtle);
 }
 
+.project-badge.has-sessions {
+  background: var(--green-glow);
+  color: var(--green);
+  border: 1px solid rgba(0, 230, 118, 0.2);
+}
+
 .project-path {
   font-family: var(--font-mono);
   font-size: 0.72rem;
@@ -1264,6 +1270,36 @@ textarea {
   animation: fadeIn 0.3s ease;
 }
 
+.prompt-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--red-glow);
+  border: 1px solid rgba(255, 61, 90, 0.3);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--red);
+  animation: fadeIn 0.3s ease;
+}
+
+.prompt-error button {
+  background: none;
+  border: none;
+  color: var(--red);
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0 var(--space-xs);
+  opacity: 0.7;
+}
+
+.prompt-error button:hover {
+  opacity: 1;
+}
+
 .spinner {
   width: 14px;
   height: 14px;
@@ -1506,11 +1542,6 @@ textarea {
   font-size: 0.9rem;
   line-height: 1.65;
   color: var(--text-primary);
-}
-
-.message.assistant .message-content {
-  padding-left: var(--space-md);
-  border-left: 2px solid var(--border-default);
 }
 
 .message-content code {
@@ -1827,6 +1858,125 @@ textarea {
   color: var(--cyan-dim);
   background: var(--cyan-glow);
   font-weight: 500;
+}
+
+/* ============================================================
+   Typing Indicator
+   ============================================================ */
+
+@keyframes typingBounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+.typing-indicator {
+  animation: fadeIn 0.3s ease;
+}
+
+.typing-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.typing-dots span {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  animation: typingBounce 1.2s ease-in-out infinite;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* ============================================================
+   Markdown Content Styles
+   ============================================================ */
+
+.message-content p {
+  margin-bottom: var(--space-sm);
+}
+
+.message-content p:last-child {
+  margin-bottom: 0;
+}
+
+.message-content ul,
+.message-content ol {
+  margin: var(--space-sm) 0;
+  padding-left: var(--space-lg);
+}
+
+.message-content li {
+  margin-bottom: var(--space-xs);
+}
+
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.message-content h4 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: var(--space-md) 0 var(--space-sm);
+}
+
+.message-content h1 {
+  font-size: 1.3rem;
+}
+
+.message-content h2 {
+  font-size: 1.15rem;
+}
+
+.message-content h3 {
+  font-size: 1.05rem;
+}
+
+.message-content h4 {
+  font-size: 0.95rem;
+}
+
+.message-content blockquote {
+  margin: var(--space-sm) 0;
+  padding-left: var(--space-md);
+  border-left: 2px solid var(--border-default);
+  color: var(--text-secondary);
+}
+
+.message-content hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: var(--space-md) 0;
+}
+
+.message-content a {
+  color: var(--cyan);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.message-content a:hover {
+  color: var(--cyan-dim);
+}
+
+.message-content strong {
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 /* ============================================================

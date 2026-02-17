@@ -2,17 +2,18 @@
 
 ## Overview
 
-**Purpose**: The Transcript Viewer feature provides conversation observability by parsing Claude Code JSONL transcript files and rendering user/assistant messages within the session detail page.
+**Purpose**: The Transcript Viewer feature provides conversation observability by rendering user/assistant messages within the session detail page. The primary data source is `session.messages` (populated by prompt execution), with a secondary JSONL transcript parser available for legacy/debugging use.
 
 **Users**: Developers monitoring Claude Code sessions will use this to review conversation history and understand what Claude has been doing.
 
-**Impact**: This is a read-only observability feature that depends on session lifecycle (for session state) and hook integration (for transcript path discovery). It is rendered within the session detail page alongside the diff viewer.
+**Impact**: This is a read-only observability feature that depends on session lifecycle (for session state) and prompt execution (for message storage). It is rendered within the session detail page alongside the diff viewer. The JSONL transcript parser remains available as a utility but the session detail page reads messages directly from session state.
 
 ### Goals
 
-- Parse JSONL transcript files into structured user/assistant messages
-- Handle both string and content-block array message formats
-- Skip malformed lines and non-message events gracefully
+- Read conversation messages from `session.messages` in session state (primary path)
+- Maintain JSONL transcript parser as secondary utility for debugging
+- Handle both string and content-block array message formats (JSONL parser)
+- Skip malformed lines and non-message events gracefully (JSONL parser)
 - Render conversation with navigation controls and auto-scroll
 - Present an empty state when no messages are available
 
@@ -29,14 +30,15 @@
 
 The transcript viewer is fully implemented across two layers:
 
-- **`src/lib/transcript.ts`** — Contains `readTranscript()` for JSONL parsing and `extractContent()` for content extraction
-- **`src/app/projects/[name]/[session]/page.tsx`** — Server Component that reads transcript and passes messages as props
+- **`src/lib/transcript.ts`** — Contains `readTranscript()` for JSONL parsing and `extractContent()` for content extraction (secondary/legacy utility)
+- **`src/app/projects/[name]/[session]/page.tsx`** — Server Component that reads messages from `session.messages` and passes them as props
 - **`src/app/projects/[name]/[session]/SessionDetailPage.tsx`** — Client Component rendering conversation with navigation
 
 Key patterns preserved:
 
 - Server-side data loading in page components (SSR)
-- Zod `safeParse` for external data validation
+- Messages sourced from session state (populated by prompt execution)
+- Zod `safeParse` for external data validation (JSONL parser)
 - Flat `src/lib/` module structure
 - Feature-colocated UI components
 
@@ -46,7 +48,7 @@ Key patterns preserved:
 graph TB
     subgraph Server
         Page[Session Page - SSR]
-        Transcript[transcript.ts]
+        Transcript[transcript.ts - secondary]
         State[state.ts]
     end
 
@@ -58,10 +60,9 @@ graph TB
         JSONL[Transcript JSONL File]
     end
 
-    Page --> Transcript
-    Page --> State
+    Page -->|primary: session.messages| State
     Page --> DetailPage
-    Transcript --> JSONL
+    Transcript -.->|secondary/legacy| JSONL
 ```
 
 ### Technology Stack
@@ -75,29 +76,34 @@ graph TB
 
 ## System Flows
 
-### Transcript Loading Flow
+### Message Loading Flow (Primary)
 
 ```mermaid
 sequenceDiagram
     participant Browser
     participant Page as Session Page SSR
     participant State as state.ts
-    participant TR as transcript.ts
-    participant FS as Filesystem
 
     Browser->>Page: Navigate to session detail
     Page->>State: getSession()
-    State-->>Page: SessionState with transcriptPath
-    alt transcriptPath exists
-        Page->>TR: readTranscript(transcriptPath)
-        TR->>FS: Read JSONL file
-        FS-->>TR: Raw text
-        TR->>TR: Parse lines, filter messages, extract content
-        TR-->>Page: TranscriptMessage[]
-    else no transcriptPath
-        Page->>Page: messages = []
-    end
+    State-->>Page: SessionState with messages[]
+    Page->>Page: Map ConversationMessage[] to TranscriptMessage[]
     Page->>Browser: Render SessionDetailPage with messages
+```
+
+### JSONL Transcript Loading Flow (Secondary/Legacy)
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant TR as transcript.ts
+    participant FS as Filesystem
+
+    Caller->>TR: readTranscript(transcriptPath)
+    TR->>FS: Read JSONL file
+    FS-->>TR: Raw text
+    TR->>TR: Parse lines, filter messages, extract content
+    TR-->>Caller: TranscriptMessage[]
 ```
 
 ## Requirements Traceability
@@ -131,10 +137,10 @@ sequenceDiagram
 
 | Component         | Domain/Layer           | Intent                              | Req Coverage | Key Dependencies                  | Contracts |
 | ----------------- | ---------------------- | ----------------------------------- | ------------ | --------------------------------- | --------- |
-| readTranscript    | Domain / transcript.ts | Parse JSONL file into messages      | 1.1–5.1      | Filesystem (P0), Schemas (P1)     | Service   |
-| extractContent    | Domain / transcript.ts | Extract text from message content   | 4.1–4.4      | None                              | Service   |
-| Session Page      | SSR / page.tsx         | Load transcript data for rendering  | 1.1          | transcript.ts (P0), state.ts (P0) | —         |
-| SessionDetailPage | UI / client component  | Render conversation with navigation | 6.1–6.6      | None (props-driven)               | —         |
+| readTranscript    | Domain / transcript.ts | Parse JSONL file into messages (secondary) | 1.1–5.1      | Filesystem (P0), Schemas (P1)     | Service   |
+| extractContent    | Domain / transcript.ts | Extract text from message content          | 4.1–4.4      | None                              | Service   |
+| Session Page      | SSR / page.tsx         | Load messages from session state           | —            | state.ts (P0)                     | —         |
+| SessionDetailPage | UI / client component  | Render conversation with navigation        | 6.1–6.6      | None (props-driven)               | —         |
 
 ### Domain Layer
 

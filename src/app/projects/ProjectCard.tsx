@@ -19,10 +19,16 @@ export default function ProjectCard({
   onMenuToggle,
   onArchive,
 }: ProjectCardProps): React.JSX.Element {
-  const badgeClass =
-    project.activeSessions > 0 ? "project-badge active" : "project-badge idle";
-  const badgeText =
-    project.activeSessions > 0 ? `${project.activeSessions} active` : "idle";
+  const badgeClass = project.hasRunningSession
+    ? "project-badge active"
+    : project.activeSessions > 0
+      ? "project-badge has-sessions"
+      : "project-badge idle";
+  const badgeText = project.hasRunningSession
+    ? "active"
+    : project.activeSessions > 0
+      ? `${project.activeSessions} session${project.activeSessions === 1 ? "" : "s"}`
+      : "idle";
 
   const menuItems = [
     {

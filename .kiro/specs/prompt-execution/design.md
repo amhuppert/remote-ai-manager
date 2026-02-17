@@ -20,7 +20,6 @@
 
 - Streaming/real-time output from Claude CLI (output captured after completion)
 - Prompt queuing (rejected immediately if busy)
-- Prompt history storage (handled by transcript viewer feature)
 - Claude CLI installation management
 
 ## Architecture
@@ -111,14 +110,15 @@ sequenceDiagram
     end
     API->>PE: executePrompt(projectPath, session, prompt)
     PE->>Lock: acquireSessionLock()
-    PE->>State: mutateSession(status = running)
-    PE->>CLI: execFile claude [-c] -p prompt
-    CLI-->>PE: stdout output
-    PE->>State: mutateSession(promptCount++)
+    PE->>State: mutateSession(status = running, append user message)
+    PE->>CLI: execFile claude [-c] -p prompt --dangerously-skip-permissions --output-format json --max-turns 50
+    CLI-->>PE: JSON { result, session_id }
+    PE->>PE: Parse JSON output
+    PE->>State: mutateSession(promptCount++, append assistant message, set claudeSessionId)
     PE->>State: mutateSession(status = ready)
     PE->>Lock: release()
-    PE-->>API: { output: string }
-    API-->>Client: 200 { success: true }
+    PE-->>API: { output: string, claudeResponse: string }
+    API-->>Client: 200 { success: true, claudeResponse: string }
 ```
 
 ### Error Recovery Flow
@@ -126,17 +126,18 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A[Start Execution] --> B[Acquire Lock]
-    B --> C[Set Status: running]
+    B --> C[Set Status: running + Store User Message]
     C --> D[Spawn Claude CLI]
     D --> E{Success?}
-    E -->|Yes| F[Increment promptCount]
-    F --> G[Set Status: ready]
-    G --> H[Release Lock]
-    H --> I[Return Output]
-    E -->|No| J[Wrap Error]
-    J --> K[Best-effort: Set Status ready]
-    K --> L[Release Lock - always]
-    L --> M[Throw Error]
+    E -->|Yes| F[Parse JSON Output]
+    F --> G[Store Assistant Message + Increment promptCount + Set claudeSessionId]
+    G --> H[Set Status: ready]
+    H --> I[Release Lock]
+    I --> J[Return Output + claudeResponse]
+    E -->|No| K[Wrap Error]
+    K --> L[Best-effort: Set Status ready]
+    L --> M[Release Lock - always]
+    M --> N[Throw Error]
 ```
 
 ## Requirements Traceability
@@ -145,9 +146,9 @@ flowchart TD
 | ----------- | ----------------------------- | ---------------------------- | ---------- | -------------- |
 | 1.1         | Spawn claude with -p flag     | executePrompt                | execFile   | Execution      |
 | 1.2         | Set CWD to worktree path      | executePrompt                | execFile   | Execution      |
-| 1.3         | Set CI=1 environment variable | executePrompt                | execFile   | Execution      |
-| 1.4         | Inherit parent env            | executePrompt                | execFile   | Execution      |
-| 1.5         | Capture stdout                | executePrompt                | execFile   | Execution      |
+| 1.3         | Headless CLI flags            | executePrompt                | execFile   | Execution      |
+| 1.4         | Filter CLAUDE-prefixed env    | executePrompt                | execFile   | Execution      |
+| 1.5         | Capture and parse JSON output | executePrompt                | execFile   | Execution      |
 | 2.1         | No -c flag on first prompt    | executePrompt                | —          | Execution      |
 | 2.2         | Add -c flag on subsequent     | executePrompt                | —          | Execution      |
 | 2.3         | Increment prompt count        | executePrompt, mutateSession | State      | Execution      |
@@ -173,13 +174,18 @@ flowchart TD
 | 7.5         | 409 for busy session          | Prompt API Route             | HTTP       | Execution      |
 | 7.6         | 200 with output length header | Prompt API Route             | HTTP       | Execution      |
 | 7.7         | 500 for execution errors      | Prompt API Route             | HTTP       | Error Recovery |
+| 8.1         | Store user message before CLI | executePrompt, mutateSession | State      | Execution      |
+| 8.2         | Store assistant response      | executePrompt, mutateSession | State      | Execution      |
+| 8.3         | Parse JSON result or fallback | executePrompt                | —          | Execution      |
+| 8.4         | Set claudeSessionId from JSON | executePrompt, mutateSession | State      | Execution      |
+| 8.5         | No assistant msg on failure   | executePrompt                | —          | Error Recovery |
 
 ## Components and Interfaces
 
-| Component          | Domain/Layer       | Intent                                 | Req Coverage  | Key Dependencies                                    | Contracts |
-| ------------------ | ------------------ | -------------------------------------- | ------------- | --------------------------------------------------- | --------- |
-| executePrompt      | Domain / prompt.ts | Orchestrate prompt execution lifecycle | 1.1–6.4       | Lock (P0), State (P0), Config (P0), Claude CLI (P0) | Service   |
-| mutateSession      | Domain / prompt.ts | Atomic session state mutation helper   | 4.1–4.4, 2.3  | State (P0)                                          | Service   |
+| Component          | Domain/Layer       | Intent                                 | Req Coverage   | Key Dependencies                                    | Contracts |
+| ------------------ | ------------------ | -------------------------------------- | -------------- | --------------------------------------------------- | --------- |
+| executePrompt      | Domain / prompt.ts | Orchestrate prompt execution lifecycle | 1.1–6.4, 8.1–8.5 | Lock (P0), State (P0), Config (P0), Claude CLI (P0) | Service   |
+| mutateSession      | Domain / prompt.ts | Atomic session state mutation helper   | 4.1–4.4, 2.3, 8.1, 8.2, 8.4 | State (P0)                                          | Service   |
 | acquireSessionLock | Domain / lock.ts   | Acquire single-flight lock for session | 3.1, 3.2, 3.3 | None                                                | Service   |
 | isSessionBusy      | Domain / lock.ts   | Check if session has active lock       | 3.4           | None                                                | Service   |
 | Prompt API Route   | API / route.ts     | HTTP endpoint for prompt submission    | 7.1–7.7       | prompt.ts (P0), lock.ts (P0), state.ts (P0)         | API       |
@@ -191,13 +197,14 @@ flowchart TD
 | Field        | Detail                                                                                        |
 | ------------ | --------------------------------------------------------------------------------------------- |
 | Intent       | Orchestrate full prompt execution: lock → status → CLI → count → recovery                     |
-| Requirements | 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3, 6.4 |
+| Requirements | 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3, 6.4, 8.1, 8.2, 8.3, 8.4, 8.5 |
 
 **Responsibilities & Constraints**
 
-- Acquires session lock, transitions status, spawns CLI, increments count, releases lock
+- Acquires session lock, transitions status, stores user message, spawns CLI, parses JSON response, stores assistant message, increments count, releases lock
 - Uses `finally` block for guaranteed cleanup (status reset + lock release)
-- CLI args built dynamically based on `promptCount`
+- CLI args built dynamically based on `promptCount`; always includes `--dangerously-skip-permissions`, `--output-format json`, `--max-turns 50`
+- Parses JSON output to extract `result` and `session_id`; falls back to raw stdout if parsing fails
 
 **Dependencies**
 
@@ -213,11 +220,11 @@ function executePrompt(
   projectPath: string,
   session: SessionState,
   promptText: string,
-): Promise<{ output: string }>;
+): Promise<{ output: string; claudeResponse: string }>;
 ```
 
 - Preconditions: Session exists and is in "ready" state
-- Postconditions: `promptCount` incremented, status back to "ready", lock released
+- Postconditions: `promptCount` incremented, user and assistant messages stored in `session.messages`, status back to "ready", lock released, `claudeSessionId` set from JSON output if available
 - Error envelope: Throws `Error` with "Prompt execution failed: ..." prefix
 
 #### mutateSession
@@ -225,7 +232,7 @@ function executePrompt(
 | Field        | Detail                                                           |
 | ------------ | ---------------------------------------------------------------- |
 | Intent       | Read session, apply mutation callback, update timestamp, persist |
-| Requirements | 4.1, 4.2, 4.3, 4.4, 2.3                                          |
+| Requirements | 4.1, 4.2, 4.3, 4.4, 2.3, 8.1, 8.2, 8.4                          |
 
 ##### Service Interface
 
@@ -291,17 +298,21 @@ function isSessionBusy(projectPath: string, sessionName: string): boolean;
 
 | Method | Endpoint                                       | Request              | Response                                                    | Errors             |
 | ------ | ---------------------------------------------- | -------------------- | ----------------------------------------------------------- | ------------------ |
-| POST   | /api/projects/[name]/sessions/[session]/prompt | `{ prompt: string }` | `{ success: true }` (200) + `X-Claude-Output-Length` header | 400, 404, 409, 500 |
+| POST   | /api/projects/[name]/sessions/[session]/prompt | `{ prompt: string }` | `{ success: true, claudeResponse: string }` (200) + `X-Claude-Output-Length` header | 400, 404, 409, 500 |
 
 ## Data Models
 
 ### Domain Model
 
-The prompt execution feature operates on existing data models from the session lifecycle feature. No new entities are introduced.
+The prompt execution feature operates on existing data models from the session lifecycle feature and introduces a new `ConversationMessage` entity for message storage.
+
+**New entity**:
+
+- `ConversationMessage` — `{ role: "user" | "assistant", content: string, timestamp: string }` stored in `SessionState.messages[]`
 
 **Key entities used**:
 
-- `SessionState` — status, promptCount, lastActivityAt fields mutated during execution
+- `SessionState` — status, promptCount, lastActivityAt, messages, claudeSessionId fields mutated during execution
 - `GlobalConfig` — `claudeTimeoutMs` for CLI timeout configuration
 
 **Lock state** (in-memory only):
@@ -325,6 +336,7 @@ const runPromptRequestSchema = z.object({
 interface RunPromptResponse {
   success: boolean;
   error?: string;
+  claudeResponse?: string;
 }
 ```
 
@@ -373,13 +385,18 @@ This ordering prevents deadlocks: even if status reset fails, the lock is releas
 
 - `executePrompt`: Full flow with mocked CLI — verify status transitions, prompt count, lock lifecycle
 - `executePrompt`: First prompt vs continuation (no `-c` vs `-c` flag)
+- `executePrompt`: Headless flags (`--dangerously-skip-permissions`, `--output-format json`, `--max-turns 50`)
+- `executePrompt`: User message stored in session state before CLI execution
+- `executePrompt`: Assistant message stored in session state after successful execution
+- `executePrompt`: `claudeSessionId` set from JSON output
+- `executePrompt`: Fallback to raw stdout when JSON parsing fails
 - `executePrompt`: Error recovery — CLI failure triggers status reset and lock release
 - `executePrompt`: Timeout handling
 - `mutateSession`: Read → mutate → persist with timestamp update
 
 ### API Tests
 
-- POST valid prompt: 200 with success response and output length header
+- POST valid prompt: 200 with success response, claudeResponse, and output length header
 - POST missing prompt: 400
 - POST to missing project: 404
 - POST to missing session: 404
@@ -389,5 +406,6 @@ This ordering prevents deadlocks: even if status reset fails, the lock is releas
 ## Security Considerations
 
 - **No shell injection**: Uses `execFile` (not `exec`) — prompt text is passed as an argument, not interpolated into a shell command
-- **Environment isolation**: `CI=1` prevents interactive behavior; parent env inherited for PATH access
-- **Resource limits**: Configurable timeout and 10 MB output buffer cap prevent resource exhaustion
+- **Permission bypass**: `--dangerously-skip-permissions` is required for headless execution but means Claude Code operates without interactive safety checks. This is acceptable because CSM runs in a controlled, local environment where the developer has already authorized the session's work
+- **Environment isolation**: `CLAUDE`-prefixed environment variables are filtered to prevent the child process from inheriting the parent Claude Code session context; parent env otherwise inherited for PATH access
+- **Resource limits**: Configurable timeout, 10 MB output buffer cap, and `--max-turns 50` prevent resource exhaustion and runaway execution

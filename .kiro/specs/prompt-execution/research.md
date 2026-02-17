@@ -40,7 +40,10 @@
   - Uses `execFile` (not `exec`) for safer subprocess spawning (no shell injection risk)
   - First prompt: `claude -p "<prompt>"` — starts new conversation
   - Subsequent: `claude -c -p "<prompt>"` — continues most recent conversation in CWD
-  - `CI=1` environment variable prevents interactive behavior
+  - `--dangerously-skip-permissions` prevents interactive permission prompts in headless mode
+  - `--output-format json` returns structured `{ result, session_id }` output
+  - `--max-turns 50` limits runaway execution
+  - `CLAUDE`-prefixed environment variables filtered to avoid inheriting parent session context
   - Timeout from `config.claudeTimeoutMs` (default 300,000 ms = 5 minutes)
   - Max buffer 10 MB for stdout capture
 - **Implications**: Worktree-per-session design makes `-c` flag unambiguous — each worktree has its own conversation history.

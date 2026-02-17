@@ -2,7 +2,9 @@
 
 ## Introduction
 
-The Transcript Viewer feature parses Claude Code JSONL transcript files, extracts user and assistant messages, and renders them as a conversation view within the session detail page. Transcripts are the primary observability mechanism for understanding what Claude Code is doing within a session. The feature handles the full pipeline: reading JSONL files, parsing entries with Zod validation, filtering for message-type entries, extracting text content from both string and content-block formats, and presenting messages with navigation controls.
+The Transcript Viewer feature renders conversation messages within the session detail page. The **primary data source** for messages is the `session.messages` array, which is populated directly by the prompt execution feature (see `prompt-execution` spec, Requirement 8). This provides immediate message availability without depending on external hooks or transcript files.
+
+As a **secondary/legacy capability**, the feature also includes a JSONL transcript parser (`readTranscript`) that can parse Claude Code transcript files from disk. This parser handles the full pipeline: reading JSONL files, parsing entries with Zod validation, filtering for message-type entries, and extracting text content from both string and content-block formats. The JSONL parser remains available for advanced debugging scenarios but is no longer the default data path for the session detail page.
 
 ## Requirements
 

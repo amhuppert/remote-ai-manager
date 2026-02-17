@@ -65,7 +65,7 @@ describe("ProjectCard", () => {
     expect(link?.getAttribute("href")).toBe("/projects/my-project");
   });
 
-  it("shows active badge when sessions exist (Req 1.4)", () => {
+  it("shows active badge when a session is running (Req 1.4)", () => {
     const { container } = render(
       <ProjectCard
         {...defaultProps}
@@ -79,7 +79,41 @@ describe("ProjectCard", () => {
     );
     const badge = container.querySelector(".project-badge");
     expect(badge?.className).toContain("active");
-    expect(badge?.textContent).toContain("2 active");
+    expect(badge?.textContent).toBe("active");
+  });
+
+  it("shows has-sessions badge when sessions exist but none running (Req 1.4)", () => {
+    const { container } = render(
+      <ProjectCard
+        {...defaultProps}
+        project={{
+          name: "proj",
+          path: "/path",
+          activeSessions: 2,
+          hasRunningSession: false,
+        }}
+      />,
+    );
+    const badge = container.querySelector(".project-badge");
+    expect(badge?.className).toContain("has-sessions");
+    expect(badge?.textContent).toBe("2 sessions");
+  });
+
+  it("shows singular session text for 1 session", () => {
+    const { container } = render(
+      <ProjectCard
+        {...defaultProps}
+        project={{
+          name: "proj",
+          path: "/path",
+          activeSessions: 1,
+          hasRunningSession: false,
+        }}
+      />,
+    );
+    const badge = container.querySelector(".project-badge");
+    expect(badge?.className).toContain("has-sessions");
+    expect(badge?.textContent).toBe("1 session");
   });
 
   it("shows idle badge when no sessions (Req 1.4)", () => {
