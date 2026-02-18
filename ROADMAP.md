@@ -28,3 +28,5 @@
 - Extend voice tool to send more context (text already in text input, maybe previous messages, etc.)
 
 - First-class hotkey support.
+
+- Voice mode that auto-submits voice message (fire and forget)
