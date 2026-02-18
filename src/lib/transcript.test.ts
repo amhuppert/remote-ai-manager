@@ -39,12 +39,12 @@ describe("readTranscript", () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({
       role: "user",
-      content: "Hello Claude",
+      content: [{ type: "text", text: "Hello Claude" }],
       timestamp: "2024-01-01T00:00:00Z",
     });
     expect(result[1]).toEqual({
       role: "assistant",
-      content: "Hello! How can I help?",
+      content: [{ type: "text", text: "Hello! How can I help?" }],
       timestamp: "2024-01-01T00:00:01Z",
     });
   });
@@ -67,7 +67,9 @@ describe("readTranscript", () => {
 
     const result = await readTranscript(filePath);
     expect(result).toHaveLength(1);
-    expect(result[0]!.content).toBe("First paragraph\nSecond paragraph");
+    expect(result[0]!.content).toEqual([
+      { type: "text", text: "First paragraph\nSecond paragraph" },
+    ]);
   });
 
   it("skips non-message entries (tool events, etc.)", async () => {
@@ -97,7 +99,7 @@ describe("readTranscript", () => {
 
     const result = await readTranscript(filePath);
     expect(result).toHaveLength(1);
-    expect(result[0]!.content).toBe("valid");
+    expect(result[0]!.content).toEqual([{ type: "text", text: "valid" }]);
   });
 
   it("skips messages with empty or whitespace-only content", async () => {
@@ -111,7 +113,9 @@ describe("readTranscript", () => {
 
     const result = await readTranscript(filePath);
     expect(result).toHaveLength(1);
-    expect(result[0]!.content).toBe("real content");
+    expect(result[0]!.content).toEqual([
+      { type: "text", text: "real content" },
+    ]);
   });
 
   it("returns null timestamp when not provided", async () => {
@@ -150,7 +154,9 @@ describe("readTranscript", () => {
 
     const result = await readTranscript(filePath);
     expect(result).toHaveLength(1);
-    expect(result[0]!.content).toBe("padded content");
+    expect(result[0]!.content).toEqual([
+      { type: "text", text: "padded content" },
+    ]);
   });
 
   it("returns null for array with only tool_use/tool_result blocks (Req 4.3)", async () => {
@@ -210,8 +216,12 @@ describe("readTranscript", () => {
     const result = await readTranscript(filePath);
     expect(result).toHaveLength(2);
     expect(result[0]!.role).toBe("user");
-    expect(result[0]!.content).toBe("user via role");
+    expect(result[0]!.content).toEqual([
+      { type: "text", text: "user via role" },
+    ]);
     expect(result[1]!.role).toBe("assistant");
-    expect(result[1]!.content).toBe("assistant via role");
+    expect(result[1]!.content).toEqual([
+      { type: "text", text: "assistant via role" },
+    ]);
   });
 });

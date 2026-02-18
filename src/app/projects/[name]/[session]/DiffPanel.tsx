@@ -154,8 +154,6 @@ export default function DiffPanel({
         </div>
       </div>
 
-
-
       {activeTab === "uncommitted" ? (
         <>
           <div className="diff-toolbar">
@@ -165,7 +163,13 @@ export default function DiffPanel({
                 onClick={collapseAll}
                 title="Collapse all files"
               >
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <svg
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                >
                   <rect x="2" y="3" width="10" height="2" rx="0.5" />
                   <line x1="5" y1="8" x2="9" y2="8" />
                   <line x1="5" y1="11" x2="9" y2="11" />
@@ -176,7 +180,13 @@ export default function DiffPanel({
                 onClick={expandAll}
                 title="Expand all files"
               >
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <svg
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                >
                   <line x1="2" y1="3" x2="12" y2="3" />
                   <line x1="4" y1="5.5" x2="10" y2="5.5" />
                   <line x1="2" y1="8.5" x2="12" y2="8.5" />
@@ -187,13 +197,27 @@ export default function DiffPanel({
             <div className="diff-toolbar-sep" />
             <div className="diff-toolbar-group">
               <button className="diff-nav-btn" onClick={() => navigateFile(-1)}>
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <polyline points="9,2 5,7 9,12" />
                 </svg>
               </button>
               <span className="diff-toolbar-label">Files</span>
               <button className="diff-nav-btn" onClick={() => navigateFile(1)}>
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <polyline points="5,2 9,7 5,12" />
                 </svg>
               </button>
@@ -201,13 +225,27 @@ export default function DiffPanel({
             <div className="diff-toolbar-sep" />
             <div className="diff-toolbar-group">
               <button className="diff-nav-btn" onClick={() => navigateHunk(-1)}>
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <polyline points="9,2 5,7 9,12" />
                 </svg>
               </button>
               <span className="diff-toolbar-label">Changes</span>
               <button className="diff-nav-btn" onClick={() => navigateHunk(1)}>
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <polyline points="5,2 9,7 5,12" />
                 </svg>
               </button>

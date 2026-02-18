@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
-import { executePrompt } from "@/lib/prompt";
+import { executePromptStream } from "@/lib/prompt";
 import { isSessionBusy } from "@/lib/lock";
 import { runPromptRequestSchema } from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
-import type { RunPromptResponse, ApiError } from "@/types";
+import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-/** POST /api/projects/[name]/sessions/[session]/prompt — execute a prompt */
+/** POST /api/projects/[name]/sessions/[session]/prompt — execute a prompt (SSE stream) */
 export const POST = withTracing(async (request, { params }) => {
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
@@ -55,36 +55,47 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  try {
-    const result = await executePrompt(
-      projectPath,
-      session,
-      body.prompt.trim(),
-    );
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const emit = (event: string, data: unknown) => {
+        try {
+          controller.enqueue(
+            encoder.encode(
+              `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+            ),
+          );
+        } catch {
+          // Client disconnected — safe to ignore
+        }
+      };
 
-    const response: RunPromptResponse = {
-      success: true,
-      claudeResponse: result.claudeResponse,
-    };
-    return NextResponse.json(response, {
-      headers: {
-        "X-Claude-Output-Length": String(result.output.length),
-      },
-    });
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to execute prompt";
+      try {
+        await executePromptStream(
+          projectPath,
+          session,
+          body.prompt.trim(),
+          emit,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Prompt failed";
+        emit("error", { message: msg });
+        emit("done", {});
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // Already closed
+        }
+      }
+    },
+  });
 
-    // If it's a busy error from the lock, return 409
-    if (message.includes("Session is busy")) {
-      return NextResponse.json(
-        { error: message, code: "SESSION_BUSY" } satisfies ApiError,
-        { status: 409 },
-      );
-    }
-
-    return NextResponse.json({ error: message } satisfies ApiError, {
-      status: 500,
-    });
-  }
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 });

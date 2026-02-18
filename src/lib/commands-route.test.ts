@@ -98,9 +98,8 @@ beforeEach(() => {
 
 describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   it("returns 200 with correct response shape", async () => {
-    const { GET } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/commands/route"
-    );
+    const { GET } =
+      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
     const response = await GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(200);
@@ -120,9 +119,8 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   it("returns 404 when project not found", async () => {
     resolveProjectPathMock.mockResolvedValue(null);
 
-    const { GET } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/commands/route"
-    );
+    const { GET } =
+      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
     const response = await GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(404);
@@ -133,9 +131,8 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   it("returns 404 when session not found", async () => {
     getSessionMock.mockResolvedValue(null);
 
-    const { GET } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/commands/route"
-    );
+    const { GET } =
+      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
     const response = await GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(404);
@@ -146,9 +143,8 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   it("returns 500 on discovery error", async () => {
     discoverCommandsMock.mockRejectedValue(new Error("Scan failed"));
 
-    const { GET } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/commands/route"
-    );
+    const { GET } =
+      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
     const response = await GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(500);
@@ -159,9 +155,8 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   it("returns empty items for project with no commands", async () => {
     discoverCommandsMock.mockResolvedValue([]);
 
-    const { GET } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/commands/route"
-    );
+    const { GET } =
+      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
     const response = await GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(200);
@@ -170,13 +165,10 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   });
 
   it("passes worktreePath from session to discoverCommands", async () => {
-    const { GET } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/commands/route"
-    );
+    const { GET } =
+      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
     await GET(makeRequest(), makeParams());
 
-    expect(discoverCommandsMock).toHaveBeenCalledWith(
-      testSession.worktreePath,
-    );
+    expect(discoverCommandsMock).toHaveBeenCalledWith(testSession.worktreePath);
   });
 });

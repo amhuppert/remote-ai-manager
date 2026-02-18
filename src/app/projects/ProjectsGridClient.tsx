@@ -211,9 +211,7 @@ export default function ProjectsGridClient({
               ))}
             </div>
           </div>
-          {filteredProjects.length > 0 && (
-            <div className="pinned-separator" />
-          )}
+          {filteredProjects.length > 0 && <div className="pinned-separator" />}
         </>
       )}
 

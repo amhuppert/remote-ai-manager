@@ -85,13 +85,21 @@ const emptyDiff: SessionDiff = {
 };
 
 const sampleMessages: TranscriptMessage[] = [
-  { role: "user", content: "Hello Claude", timestamp: "2024-06-15T10:01:00Z" },
+  {
+    role: "user",
+    content: [{ type: "text", text: "Hello Claude" }],
+    timestamp: "2024-06-15T10:01:00Z",
+  },
   {
     role: "assistant",
-    content: "Hello! How can I help?",
+    content: [{ type: "text", text: "Hello! How can I help?" }],
     timestamp: "2024-06-15T10:01:05Z",
   },
-  { role: "user", content: "Fix the bug", timestamp: "2024-06-15T10:02:00Z" },
+  {
+    role: "user",
+    content: [{ type: "text", text: "Fix the bug" }],
+    timestamp: "2024-06-15T10:02:00Z",
+  },
 ];
 
 // ===========================================================================

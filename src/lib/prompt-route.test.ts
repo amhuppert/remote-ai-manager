@@ -9,12 +9,12 @@ const {
   resolveProjectPathMock,
   getSessionMock,
   isSessionBusyMock,
-  executePromptMock,
+  executePromptStreamMock,
 } = vi.hoisted(() => ({
   resolveProjectPathMock: vi.fn(),
   getSessionMock: vi.fn(),
   isSessionBusyMock: vi.fn(),
-  executePromptMock: vi.fn(),
+  executePromptStreamMock: vi.fn(),
 }));
 
 vi.mock("@/lib/project-resolver", () => ({
@@ -30,7 +30,7 @@ vi.mock("@/lib/lock", () => ({
 }));
 
 vi.mock("@/lib/prompt", () => ({
-  executePrompt: executePromptMock,
+  executePromptStream: executePromptStreamMock,
 }));
 
 // Mock logging to avoid file I/O during tests
@@ -88,18 +88,15 @@ beforeEach(() => {
   resolveProjectPathMock.mockResolvedValue("/projects/my-project");
   getSessionMock.mockResolvedValue(testSession);
   isSessionBusyMock.mockReturnValue(false);
-  executePromptMock.mockResolvedValue({
-    output: '{"result":"Claude says hello","session_id":"sess-123"}',
-    claudeResponse: "Claude says hello",
-  });
+  executePromptStreamMock.mockResolvedValue(undefined);
 });
 
 // ===========================================================================
-// 2.6 – API route tests (Req 7.1–7.7)
+// API route tests
 // ===========================================================================
 
 describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
-  it("returns 200 with { success: true } on valid prompt (Req 7.1)", async () => {
+  it("returns SSE stream with text/event-stream content type on valid prompt", async () => {
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
     const response = await POST(
@@ -108,23 +105,11 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     );
 
     expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body.success).toBe(true);
+    expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+    expect(response.headers.get("Cache-Control")).toBe("no-cache");
   });
 
-  it("includes X-Claude-Output-Length header (Req 7.6)", async () => {
-    executePromptMock.mockResolvedValue({
-      output: "12345",
-      claudeResponse: "12345",
-    });
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    const response = await POST(makeRequest({ prompt: "test" }), makeParams());
-
-    expect(response.headers.get("X-Claude-Output-Length")).toBe("5");
-  });
-
-  it("returns 400 when prompt field is missing (Req 7.2)", async () => {
+  it("returns 400 when prompt field is missing", async () => {
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
     const response = await POST(makeRequest({}), makeParams());
@@ -134,7 +119,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     expect(body.error).toContain("prompt is required");
   });
 
-  it("returns 400 when prompt is empty string (Req 7.2)", async () => {
+  it("returns 400 when prompt is empty string", async () => {
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
     const response = await POST(makeRequest({ prompt: "   " }), makeParams());
@@ -144,7 +129,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     expect(body.error).toContain("prompt is required");
   });
 
-  it("returns 404 when project is not found (Req 7.3)", async () => {
+  it("returns 404 when project is not found", async () => {
     resolveProjectPathMock.mockResolvedValue(null);
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
@@ -158,7 +143,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     expect(body.error).toBe("Project not found");
   });
 
-  it("returns 404 when session is not found (Req 7.4)", async () => {
+  it("returns 404 when session is not found", async () => {
     getSessionMock.mockResolvedValue(null);
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
@@ -172,7 +157,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     expect(body.error).toBe("Session not found");
   });
 
-  it("returns 409 with SESSION_BUSY code when session is busy (Req 7.5)", async () => {
+  it("returns 409 with SESSION_BUSY code when session is busy", async () => {
     isSessionBusyMock.mockReturnValue(true);
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
@@ -184,16 +169,29 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     expect(body.error).toContain("Session is busy");
   });
 
-  it("returns 500 with error message when execution fails (Req 7.7)", async () => {
-    executePromptMock.mockRejectedValue(
-      new Error("Prompt execution failed: CLI crashed"),
-    );
+  it("calls executePromptStream with correct arguments", async () => {
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    const response = await POST(makeRequest({ prompt: "test" }), makeParams());
+    await POST(makeRequest({ prompt: "Hello Claude" }), makeParams());
 
-    expect(response.status).toBe(500);
-    const body = await response.json();
-    expect(body.error).toContain("Prompt execution failed");
+    expect(executePromptStreamMock).toHaveBeenCalledWith(
+      "/projects/my-project",
+      testSession,
+      "Hello Claude",
+      expect.any(Function),
+    );
+  });
+
+  it("trims prompt text before passing to executePromptStream", async () => {
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
+    await POST(makeRequest({ prompt: "  Hello Claude  " }), makeParams());
+
+    expect(executePromptStreamMock).toHaveBeenCalledWith(
+      "/projects/my-project",
+      testSession,
+      "Hello Claude",
+      expect.any(Function),
+    );
   });
 });

@@ -228,9 +228,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 /** Make execFileMock resolve in sequence for successive calls */
-function mockExecSequence(
-  results: Array<{ error?: Error; stdout?: string }>,
-) {
+function mockExecSequence(results: Array<{ error?: Error; stdout?: string }>) {
   let callIndex = 0;
   execFileMock.mockImplementation(
     (
@@ -301,7 +299,9 @@ index abc..def 100644
 
     // Verify temp index env is set for all calls
     for (const i of [0, 1, 2]) {
-      const opts = execFileMock.mock.calls[i]![2] as { env: Record<string, string> };
+      const opts = execFileMock.mock.calls[i]![2] as {
+        env: Record<string, string>;
+      };
       expect(opts.env.GIT_INDEX_FILE).toMatch(/csm-diff-/);
     }
 
@@ -322,11 +322,7 @@ index abc..def 100644
   });
 
   it("returns empty diff for empty git diff output (Req 1.6)", async () => {
-    mockExecSequence([
-      { stdout: "" },
-      { stdout: "" },
-      { stdout: "" },
-    ]);
+    mockExecSequence([{ stdout: "" }, { stdout: "" }, { stdout: "" }]);
 
     const result = await computeDiff("/projects/repo/.worktrees/test");
     expect(result.files).toHaveLength(0);

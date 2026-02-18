@@ -610,7 +610,12 @@ textarea {
 }
 
 .project-card.pinned::before {
-  background: linear-gradient(90deg, transparent, var(--amber-dim), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--amber-dim),
+    transparent
+  );
   opacity: 0.5;
 }
 
@@ -2425,6 +2430,43 @@ textarea {
   color: var(--text-primary);
 }
 
+.tool-use-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px var(--space-sm);
+  margin: var(--space-sm) 0;
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  border-left: 2px solid var(--cyan-dim);
+  min-height: 30px;
+}
+
+.tool-use-icon {
+  color: var(--cyan-dim);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.tool-use-name {
+  color: var(--text-primary);
+  font-weight: 600;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+}
+
+.tool-use-context {
+  color: var(--text-tertiary);
+  font-weight: 400;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 /* ============================================================
    Mobile Bottom Action Bar (hidden on desktop)
    ============================================================ */
@@ -2847,11 +2889,7 @@ textarea {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    90deg,
-    var(--cyan-glow) 0%,
-    transparent 60%
-  );
+  background: linear-gradient(90deg, var(--cyan-glow) 0%, transparent 60%);
   pointer-events: none;
 }
 

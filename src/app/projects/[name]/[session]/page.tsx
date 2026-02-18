@@ -38,7 +38,7 @@ export default async function SessionPage({
   const messages: TranscriptMessage[] = (sessionState.messages ?? []).map(
     (m) => ({
       role: m.role,
-      content: m.content,
+      content: m.content, // always MessageContentBlock[] via z.preprocess
       timestamp: m.timestamp,
     }),
   );

@@ -2,6 +2,9 @@
 // CSM Data Entities (derived from Zod schemas)
 // ============================================================
 
+// Import MessageContentBlock locally for use in TranscriptMessage interface
+import type { MessageContentBlock as _MessageContentBlock } from "@/lib/schemas";
+
 export type {
   GlobalConfig,
   SessionStatus,
@@ -10,6 +13,7 @@ export type {
   ManagerState,
   PerRepoConfig,
   ConversationMessage,
+  MessageContentBlock,
 } from "@/lib/schemas";
 
 // ============================================================
@@ -43,8 +47,8 @@ export type {
 export interface TranscriptMessage {
   /** Message role */
   role: "user" | "assistant";
-  /** Message content (may contain markdown) */
-  content: string;
+  /** Message content blocks (text, tool_use, tool_result) */
+  content: _MessageContentBlock[];
   /** ISO 8601 timestamp if available */
   timestamp: string | null;
 }
@@ -91,16 +95,6 @@ export type { RunPromptRequest } from "@/lib/schemas";
 
 /** Layout mode for the session detail view */
 export type LayoutMode = "conversation" | "default" | "split" | "diff";
-
-/** Prompt execution response */
-export interface RunPromptResponse {
-  /** Whether execution succeeded */
-  success: boolean;
-  /** Error message if failed */
-  error?: string;
-  /** Claude's response text (extracted from CLI JSON output) */
-  claudeResponse?: string;
-}
 
 /** Generic API error response */
 export interface ApiError {

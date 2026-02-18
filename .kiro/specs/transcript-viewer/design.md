@@ -19,10 +19,11 @@
 
 ### Non-Goals
 
-- Real-time transcript streaming (page refresh required)
 - Transcript pagination or virtual scrolling (entire file loaded)
 - Editing or annotating transcript messages
 - Searching within transcript content
+
+> **Note**: Real-time streaming is now handled by the prompt execution feature via SSE. The transcript viewer renders the accumulated messages after they are stored in session state.
 
 ## Architecture
 
@@ -189,10 +190,12 @@ function extractContent(
 ```typescript
 interface TranscriptMessage {
   role: "user" | "assistant";
-  content: string;
+  content: MessageContentBlock[];
   timestamp: string | null;
 }
 ```
+
+> **Note**: `TranscriptMessage.content` was migrated from `string` to `MessageContentBlock[]` as part of the stream-json prompt execution implementation. The primary data path (session.messages) stores content as block arrays. The JSONL transcript parser (`readTranscript`) remains a secondary utility that returns text-only content as `string` — consumers must adapt the format if needed.
 
 **TranscriptEntry** (input schema):
 

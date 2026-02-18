@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import type { TranscriptMessage } from "@/types";
+import type { TranscriptMessage, MessageContentBlock } from "@/types";
 import {
   transcriptEntrySchema,
   type ContentBlock,
@@ -66,14 +66,16 @@ export async function readTranscript(
 /**
  * Extract text content from a message content field.
  * Handles both string and array-of-blocks formats.
+ * Returns content as MessageContentBlock[] or null if empty.
  */
 function extractContent(
   content: string | readonly ContentBlock[] | undefined,
-): string | null {
+): MessageContentBlock[] | null {
   if (!content) return null;
 
   if (typeof content === "string") {
-    return content.trim() || null;
+    const trimmed = content.trim();
+    return trimmed ? [{ type: "text" as const, text: trimmed }] : null;
   }
 
   if (Array.isArray(content)) {
@@ -85,7 +87,7 @@ function extractContent(
       .map((block) => block.text);
 
     const joined = textParts.join("\n").trim();
-    return joined || null;
+    return joined ? [{ type: "text" as const, text: joined }] : null;
   }
 
   return null;

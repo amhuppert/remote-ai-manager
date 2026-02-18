@@ -1,41 +1,37 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import type { SessionState } from "@/types";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import type { SessionState, MessageContentBlock } from "@/types";
 import { readConfig } from "./config";
 import { getSession, updateSession } from "./state";
 import { acquireSessionLock } from "./lock";
 import { createLogger } from "./logging";
+import { parseStreamLine } from "./stream-events";
 
 const logger = createLogger("prompt");
 
-const execFileAsync = promisify(execFile);
-
 /**
- * Execute a prompt against the Claude CLI in a session's worktree.
+ * Execute a prompt against the Claude CLI in a session's worktree,
+ * streaming output via `--output-format stream-json`.
  *
  * - First prompt:      `claude -p "<prompt>"`
  * - Subsequent:        `claude -c -p "<prompt>"`
  *
- * The `-c` flag continues the most recent conversation in the cwd.
- * Because each session has its own worktree, `-c` is unambiguous.
- *
- * Uses `--dangerously-skip-permissions` to avoid interactive permission
- * prompts that hang in headless mode, and `--output-format json` to get
- * structured output with `result` and `session_id`.
+ * Uses `spawn` for real-time line-by-line output.
+ * Emits SSE events via the `emit` callback as content arrives.
+ * Accumulates content blocks and persists the assistant message on completion.
  *
  * Acquires a single-flight lock so only one prompt runs per session.
- * Updates session status (running → ready) and prompt count in state.
- * Stores user and assistant messages directly in session state.
+ * Updates session status (running -> ready) and prompt count in state.
  */
-export async function executePrompt(
+export async function executePromptStream(
   projectPath: string,
   session: SessionState,
   promptText: string,
-): Promise<{ output: string; claudeResponse: string }> {
+  emit: (event: string, data: unknown) => void,
+): Promise<void> {
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
 
-  // Build CLI args outside try so they're available in catch for error logging
   const args: string[] = [];
   if (session.promptCount > 0) {
     args.push("-c");
@@ -45,7 +41,8 @@ export async function executePrompt(
     promptText,
     "--dangerously-skip-permissions",
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose",
     "--max-turns",
     "50",
   );
@@ -56,7 +53,11 @@ export async function executePrompt(
     // Mark session as running and store the user message immediately
     await mutateSession(projectPath, session.sessionName, (s) => {
       s.status = "running";
-      s.messages.push({ role: "user", content: promptText, timestamp: now });
+      s.messages.push({
+        role: "user",
+        content: [{ type: "text", text: promptText }],
+        timestamp: now,
+      });
     });
 
     // Log CLI args excluding prompt content for security
@@ -69,79 +70,177 @@ export async function executePrompt(
 
     const promptStart = Date.now();
 
-    // Spawn Claude CLI in the worktree directory.
-    // Close stdin immediately so the CLI doesn't block waiting for input.
-    const execPromise = execFileAsync("claude", args, {
-      cwd: session.worktreePath,
-      timeout: config.claudeTimeoutMs,
-      maxBuffer: 10 * 1024 * 1024, // 10 MB
-      env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([key]) => !key.startsWith("CLAUDE"),
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn("claude", args, {
+        cwd: session.worktreePath,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([key]) => !key.startsWith("CLAUDE"),
+            ),
           ),
-        ),
-      } as NodeJS.ProcessEnv,
-    });
-    execPromise.child.stdin?.end();
-    const { stdout, stderr } = await execPromise;
-
-    const durationMs = Date.now() - promptStart;
-    logger.info("prompt.complete", {
-      sessionName: session.sessionName,
-      exitCode: 0,
-      durationMs,
-      stdoutSize: stdout.length,
-      stderrSize: stderr.length,
-    });
-
-    // Parse JSON output from Claude CLI
-    let claudeResponse = stdout;
-    let sessionId: string | null = null;
-    try {
-      const parsed = JSON.parse(stdout) as {
-        result?: string;
-        session_id?: string;
-      };
-      claudeResponse = parsed.result ?? stdout;
-      sessionId = parsed.session_id ?? null;
-    } catch {
-      // If JSON parsing fails, use raw stdout as the response
-      logger.warn("prompt.json_parse_failed", {
-        sessionName: session.sessionName,
-        stdoutPrefix: stdout.slice(0, 200),
+        } as NodeJS.ProcessEnv,
       });
-    }
 
-    // Store assistant response and update session metadata
-    const responseTimestamp = new Date().toISOString();
-    await mutateSession(projectPath, session.sessionName, (s) => {
-      s.promptCount++;
-      s.messages.push({
-        role: "assistant",
-        content: claudeResponse,
-        timestamp: responseTimestamp,
+      // Close stdin so the CLI doesn't block waiting for input
+      child.stdin?.end();
+
+      // Manual timeout since spawn doesn't support timeout option
+      const timeoutHandle = setTimeout(() => {
+        logger.warn("prompt.timeout", {
+          sessionName: session.sessionName,
+          timeoutMs: config.claudeTimeoutMs,
+        });
+        child.kill("SIGTERM");
+      }, config.claudeTimeoutMs);
+
+      // Accumulate content blocks for the assistant message
+      const contentBlocks: MessageContentBlock[] = [];
+      let sessionId: string | null = null;
+
+      // Buffer stderr for error logging
+      let stderrBuf = "";
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderrBuf += chunk.toString();
       });
-      if (sessionId) {
-        s.claudeSessionId = sessionId;
-      }
-    });
 
-    return { output: stdout, claudeResponse };
-  } catch (err) {
-    const cliArgsForLog = args.filter((a) => a !== promptText);
-    logger.error("prompt.failure", {
-      sessionName: session.sessionName,
-      cliArgs: cliArgsForLog,
-      cwd: session.worktreePath,
-      error: err instanceof Error ? err.message : String(err),
-      stderr: (err as { stderr?: string }).stderr,
-      stack: err instanceof Error ? err.stack : undefined,
-    });
+      // Parse stdout line-by-line
+      const rl = createInterface({ input: child.stdout! });
+      rl.on("line", (line) => {
+        const event = parseStreamLine(line);
+        if (!event) return;
 
-    const message =
-      err instanceof Error ? err.message : "Unknown error executing prompt";
-    throw new Error(`Prompt execution failed: ${message}`);
+        switch (event.type) {
+          case "system":
+            sessionId = event.session_id;
+            emit("init", { sessionId: event.session_id });
+            break;
+
+          case "assistant":
+            for (const block of event.message.content) {
+              if (
+                block["type"] === "text" &&
+                typeof block["text"] === "string"
+              ) {
+                const textBlock: MessageContentBlock = {
+                  type: "text",
+                  text: block["text"],
+                };
+                contentBlocks.push(textBlock);
+                emit("content", textBlock);
+              } else if (
+                block["type"] === "tool_use" &&
+                typeof block["name"] === "string"
+              ) {
+                const toolBlock: MessageContentBlock = {
+                  type: "tool_use",
+                  name: block["name"],
+                  input: block["input"] as Record<string, unknown> | undefined,
+                };
+                contentBlocks.push(toolBlock);
+                emit("content", toolBlock);
+              }
+            }
+            break;
+
+          case "result":
+            if (event.session_id) {
+              sessionId = event.session_id;
+            }
+            emit("result", { sessionId: event.session_id });
+            break;
+
+          case "user":
+            // Internal tool_result messages — log but don't emit
+            logger.debug("prompt.tool_result", {
+              sessionName: session.sessionName,
+            });
+            break;
+        }
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timeoutHandle);
+
+        const durationMs = Date.now() - promptStart;
+        logger.info("prompt.complete", {
+          sessionName: session.sessionName,
+          exitCode: code,
+          durationMs,
+          contentBlocks: contentBlocks.length,
+          stderrSize: stderrBuf.length,
+        });
+
+        if (stderrBuf.trim()) {
+          logger.debug("prompt.stderr", {
+            sessionName: session.sessionName,
+            stderr: stderrBuf.slice(0, 1000),
+          });
+        }
+
+        // Store the assistant message if we got any content
+        const storeAndFinish = async () => {
+          if (contentBlocks.length > 0) {
+            const responseTimestamp = new Date().toISOString();
+            await mutateSession(projectPath, session.sessionName, (s) => {
+              s.promptCount++;
+              s.messages.push({
+                role: "assistant",
+                content: contentBlocks,
+                timestamp: responseTimestamp,
+              });
+              if (sessionId) {
+                s.claudeSessionId = sessionId;
+              }
+            }).catch((storeErr) => {
+              logger.error("prompt.store_response_failed", {
+                sessionName: session.sessionName,
+                error:
+                  storeErr instanceof Error
+                    ? storeErr.message
+                    : String(storeErr),
+              });
+            });
+
+            if (code !== 0) {
+              logger.warn("prompt.non_zero_exit_with_response", {
+                sessionName: session.sessionName,
+                exitCode: code,
+                contentBlockCount: contentBlocks.length,
+              });
+            }
+          } else if (code !== 0) {
+            emit("error", {
+              message: `Claude exited with code ${code}`,
+            });
+            logger.error("prompt.failure", {
+              sessionName: session.sessionName,
+              exitCode: code,
+              stderr: stderrBuf.slice(0, 500),
+            });
+          }
+
+          emit("done", {});
+          resolve();
+        };
+
+        storeAndFinish().catch(reject);
+      });
+
+      child.on("error", (err) => {
+        clearTimeout(timeoutHandle);
+        logger.error("prompt.spawn_error", {
+          sessionName: session.sessionName,
+          error: err.message,
+        });
+        emit("error", {
+          message: `Failed to spawn Claude CLI: ${err.message}`,
+        });
+        emit("done", {});
+        resolve();
+      });
+    });
   } finally {
     // Always mark session as ready when done (even on error)
     await mutateSession(projectPath, session.sessionName, (s) => {

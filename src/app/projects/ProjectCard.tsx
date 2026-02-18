@@ -63,9 +63,7 @@ export default function ProjectCard({
             title={pinned ? "Unpin project" : "Pin project"}
             type="button"
           >
-            <span className="pin-icon">
-              {pinned ? "\u2605" : "\u2606"}
-            </span>
+            <span className="pin-icon">{pinned ? "\u2605" : "\u2606"}</span>
           </button>
           {archived ? (
             <div className="project-badge archived-badge">archived</div>

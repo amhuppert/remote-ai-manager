@@ -65,7 +65,7 @@ As a **secondary/legacy capability**, the feature also includes a JSONL transcri
 
 #### Acceptance Criteria
 
-1. When transcript messages are available, the Session Detail Page shall render each message with its role (user/assistant) and content.
+1. When transcript messages are available, the Session Detail Page shall render each message with its role (user/assistant) and content. Content is rendered via the `MessageContent` component which handles `MessageContentBlock[]` arrays (text blocks rendered as markdown, tool_use blocks rendered as compact indicators).
 2. When no messages are available, the Session Detail Page shall display an empty state with guidance to send a prompt.
 3. The Session Detail Page shall provide message navigation controls showing current position and total count.
 4. The Session Detail Page shall support navigating to the previous and next message.

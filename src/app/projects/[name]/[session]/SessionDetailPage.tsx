@@ -8,6 +8,7 @@ import type {
   TranscriptMessage,
   LayoutMode,
   CommitLogEntry,
+  MessageContentBlock,
 } from "@/types";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
@@ -15,7 +16,7 @@ import DiffPanel from "./DiffPanel";
 import CommitDialog from "./CommitDialog";
 import MergeDialog from "./MergeDialog";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import MarkdownContent from "@/components/MarkdownContent";
+import MessageContent from "@/components/MessageContent";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import {
   CommandAutocomplete,
@@ -77,19 +78,16 @@ export default function SessionDetailPage({
     [messages, optimisticMessages],
   );
 
+  // Track message count before submission for reconciliation
+  const messageCountBeforeSubmitRef = useRef(messages.length);
+
   // Clear optimistic messages when server catches up
   useEffect(() => {
     if (optimisticMessages.length === 0) return;
-    const lastOptimistic = optimisticMessages[optimisticMessages.length - 1];
-    if (!lastOptimistic) return;
-    const serverHasIt = messages.some(
-      (m) =>
-        m.role === lastOptimistic.role && m.content === lastOptimistic.content,
-    );
-    if (serverHasIt) {
+    if (messages.length > messageCountBeforeSubmitRef.current) {
       setOptimisticMessages([]);
     }
-  }, [messages, optimisticMessages]);
+  }, [messages.length, optimisticMessages.length]);
 
   // Message navigation state
   const [currentMsgIndex, setCurrentMsgIndex] = useState(0);
@@ -200,10 +198,16 @@ export default function SessionDetailPage({
     if (!currentText.trim() || sending) return;
     const text = currentText.trim();
 
+    // Track count before submission for optimistic reconciliation
+    messageCountBeforeSubmitRef.current = messages.length;
+
     // Optimistic: add user message immediately and clear input
-    setOptimisticMessages((prev) => [
-      ...prev,
-      { role: "user", content: text, timestamp: new Date().toISOString() },
+    setOptimisticMessages([
+      {
+        role: "user",
+        content: [{ type: "text" as const, text }],
+        timestamp: new Date().toISOString(),
+      },
     ]);
     setPromptText("");
     setSending(true);
@@ -220,9 +224,82 @@ export default function SessionDetailPage({
         },
       );
 
+      // Non-streaming error responses (validation, 404, 409) are still JSON
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: "Prompt failed" }));
         setPromptError(data.error || "Prompt failed");
+        return;
+      }
+
+      // Read SSE stream
+      const reader = res.body?.getReader();
+      if (!reader) {
+        setPromptError("No response stream");
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      const streamBlocks: MessageContentBlock[] = [];
+      let buffer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Split on double newline for complete SSE events
+        const parts = buffer.split("\n\n");
+        // Keep the last part as it may be incomplete
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+
+          // Parse SSE event: "event: <name>\ndata: <json>"
+          let eventName = "";
+          let eventData = "";
+          for (const line of part.split("\n")) {
+            if (line.startsWith("event: ")) {
+              eventName = line.slice(7);
+            } else if (line.startsWith("data: ")) {
+              eventData = line.slice(6);
+            }
+          }
+
+          if (!eventName || !eventData) continue;
+
+          if (eventName === "content") {
+            try {
+              const block = JSON.parse(eventData) as MessageContentBlock;
+              streamBlocks.push(block);
+              // Update optimistic messages with growing assistant message
+              setOptimisticMessages([
+                {
+                  role: "user",
+                  content: [{ type: "text" as const, text }],
+                  timestamp: new Date().toISOString(),
+                },
+                {
+                  role: "assistant",
+                  content: [...streamBlocks],
+                  timestamp: new Date().toISOString(),
+                },
+              ]);
+            } catch {
+              // Skip malformed content events
+            }
+          } else if (eventName === "error") {
+            try {
+              const data = JSON.parse(eventData) as { message?: string };
+              setPromptError(data.message ?? "Prompt failed");
+            } catch {
+              setPromptError("Prompt failed");
+            }
+          } else if (eventName === "done") {
+            break;
+          }
+        }
       }
     } catch {
       setPromptError("Failed to send prompt");
@@ -230,7 +307,7 @@ export default function SessionDetailPage({
       setSending(false);
       router.refresh();
     }
-  }, [sending, projectName, session.sessionName, router]);
+  }, [sending, messages.length, projectName, session.sessionName, router]);
 
   const handleDelete = useCallback(async () => {
     try {
@@ -452,7 +529,7 @@ export default function SessionDetailPage({
                           {msg.role === "user" ? "You" : "Claude"}
                         </div>
                         <div className="message-content">
-                          <MarkdownContent content={msg.content} />
+                          <MessageContent content={msg.content} />
                         </div>
                       </div>
                     ))
@@ -467,18 +544,19 @@ export default function SessionDetailPage({
                       </div>
                     </div>
                   )}
-                  {(sending || displayStatus === "running") && (
-                    <div className="message assistant typing-indicator">
-                      <div className="message-role">Claude</div>
-                      <div className="message-content">
-                        <div className="typing-dots">
-                          <span />
-                          <span />
-                          <span />
+                  {(sending || displayStatus === "running") &&
+                    !optimisticMessages.some((m) => m.role === "assistant") && (
+                      <div className="message assistant typing-indicator">
+                        <div className="message-role">Claude</div>
+                        <div className="message-content">
+                          <div className="typing-dots">
+                            <span />
+                            <span />
+                            <span />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    )}
                   <div ref={conversationEndRef} />
                 </div>
               </div>
@@ -507,7 +585,7 @@ export default function SessionDetailPage({
                     placeholder={
                       isFinished
                         ? "Session is merged and read-only"
-                        : promptPlaceholder ?? "Send a prompt to Claude..."
+                        : (promptPlaceholder ?? "Send a prompt to Claude...")
                     }
                     rows={2}
                     value={promptText}

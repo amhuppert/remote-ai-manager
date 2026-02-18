@@ -54,11 +54,7 @@ export async function commitChanges(
   logger.info("git.commit", { worktreePath, messageLength: message.length });
 
   await git(worktreePath, ["add", "-A"]);
-  const { stdout } = await git(worktreePath, [
-    "commit",
-    "-m",
-    message,
-  ]);
+  const { stdout } = await git(worktreePath, ["commit", "-m", message]);
 
   // Extract commit hash from output — git commit prints it in the first line
   // Format: [branchName hashPrefix] message
@@ -257,8 +253,7 @@ export async function squashMerge(
   try {
     await git(projectPath, ["merge", "--squash", branchName]);
   } catch (err) {
-    const stderr =
-      err instanceof Error ? err.message : String(err);
+    const stderr = err instanceof Error ? err.message : String(err);
     const isConflict =
       stderr.includes("CONFLICT") || stderr.includes("merge conflict");
 

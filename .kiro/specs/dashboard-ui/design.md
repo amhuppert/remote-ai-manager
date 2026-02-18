@@ -57,7 +57,8 @@ The dashboard is fully implemented with a clear Server/Client component split:
 
 - `src/components/Topbar.tsx` — Navigation with breadcrumbs
 - `src/components/ConfirmDialog.tsx` — Destructive action confirmation
-- `src/components/CardContextMenu.tsx` — **NEW** Reusable dropdown context menu
+- `src/components/CardContextMenu.tsx` — Reusable dropdown context menu
+- `src/components/MessageContent.tsx` — Renders `MessageContentBlock[]` content (text as markdown, tool_use as compact indicators)
 
 Key patterns preserved:
 
@@ -108,6 +109,7 @@ graph TB
         State[state.ts]
         Sessions[sessions.ts]
         Prompt[prompt.ts]
+        StreamEvents[stream-events.ts]
         Hooks[hooks.ts]
         Diff[diff.ts]
         Transcript[transcript.ts]
@@ -203,18 +205,23 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant Detail as SessionDetailPage
-    participant API as POST .../prompt
+    participant API as POST .../prompt (SSE)
     participant Prompt as prompt.ts
 
     User->>Detail: Type prompt text
     User->>Detail: Click Send or press Enter
-    Detail->>Detail: Set sending=true, disable input
-    Detail->>API: POST { prompt: text }
-    API->>Prompt: executePrompt(...)
-    Prompt-->>API: RunPromptResponse
-    API-->>Detail: 200 success
+    Detail->>Detail: Set sending=true, add optimistic user message
+    Detail->>API: POST { prompt: text } (streaming fetch)
+    API->>Prompt: executePromptStream(..., emit)
+    loop Stream events
+        Prompt-->>API: emit(content, { type, ... })
+        API-->>Detail: SSE event: content
+        Detail->>Detail: Accumulate content blocks, update optimistic assistant message
+    end
+    Prompt-->>API: emit(done, {})
+    API-->>Detail: SSE event: done
     Detail->>Detail: Set sending=false
-    Detail->>Detail: router.refresh() → re-fetch transcript/diff
+    Detail->>Detail: router.refresh() → re-fetch session state
 ```
 
 ### Project Archive Flow
@@ -557,10 +564,10 @@ Existing types consumed by the dashboard (defined in `src/types/index.ts` and `s
 
 - `DiscoveredProject` — project list items (name, path, activeSessions, hasRunningSession)
 - `SessionState` — session metadata and status
-- `TranscriptMessage` — parsed conversation messages
+- `TranscriptMessage` — parsed conversation messages (content is `MessageContentBlock[]`)
+- `MessageContentBlock` — discriminated union: text, tool_use, tool_result blocks
 - `SessionDiff` — structured git diff data
 - `LayoutMode` — `"conversation" | "default" | "split" | "diff"`
-- `RunPromptResponse` — prompt execution result
 
 ### New Data Model Changes (Req 11)
 

@@ -15,9 +15,28 @@ export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 export const sessionStatusSchema = z.enum(["idle", "ready", "running"]);
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 
+export const messageContentBlockSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({
+    type: z.literal("tool_use"),
+    name: z.string(),
+    input: z.any().optional(),
+  }),
+  z.object({
+    type: z.literal("tool_result"),
+    tool_use_id: z.string(),
+    content: z.string().optional(),
+  }),
+]);
+export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
+
 export const conversationMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
-  content: z.string(),
+  content: z.preprocess(
+    (val) =>
+      typeof val === "string" ? [{ type: "text" as const, text: val }] : val,
+    z.array(messageContentBlockSchema),
+  ),
   timestamp: z.string(),
 });
 export type ConversationMessage = z.infer<typeof conversationMessageSchema>;

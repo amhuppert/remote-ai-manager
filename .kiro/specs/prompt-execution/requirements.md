@@ -14,9 +14,9 @@ The Prompt Execution feature enables developers to send prompts to Claude Code C
 
 1. When a prompt is submitted, the Prompt Executor shall spawn the `claude` CLI process with the `-p` flag and the prompt text as arguments.
 2. When a prompt is submitted, the Prompt Executor shall set the working directory of the spawned process to the session's worktree path.
-3. The Prompt Executor shall pass `--dangerously-skip-permissions` to prevent interactive permission prompts that hang in headless mode, `--output-format json` to receive structured output, and `--max-turns 50` as a safety limit against runaway execution.
+3. The Prompt Executor shall pass `--dangerously-skip-permissions` to prevent interactive permission prompts that hang in headless mode, `--output-format stream-json` to receive streaming structured output, and `--max-turns 50` as a safety limit against runaway execution.
 4. The Prompt Executor shall inherit the parent process environment variables, filtering out any `CLAUDE`-prefixed variables to avoid inheriting the parent Claude Code session context.
-5. The Prompt Executor shall capture standard output, parse it as JSON to extract the `result` (response text) and `session_id`, and return both the raw output and the extracted response.
+5. The Prompt Executor shall read stdout line-by-line from the spawned process, parse each line as a stream-json event, and accumulate content blocks (text, tool_use) from assistant messages into a `MessageContentBlock[]` array.
 
 ### Requirement 2: Conversation Continuity
 
@@ -57,8 +57,7 @@ The Prompt Execution feature enables developers to send prompts to Claude Code C
 #### Acceptance Criteria
 
 1. The Prompt Executor shall enforce a timeout on the Claude CLI process using the `claudeTimeoutMs` value from the global configuration.
-2. If the Claude CLI process exceeds the configured timeout, the Prompt Executor shall terminate the process and return a timeout error.
-3. The Prompt Executor shall configure a maximum output buffer of 10 MB for the Claude CLI process.
+2. If the Claude CLI process exceeds the configured timeout, the Prompt Executor shall terminate the process with SIGTERM and emit an error event.
 
 ### Requirement 6: Error Handling and Recovery
 
@@ -82,8 +81,8 @@ The Prompt Execution feature enables developers to send prompts to Claude Code C
 3. When the project is not found, the Prompt API shall return a 404 error with the message "Project not found".
 4. When the session is not found, the Prompt API shall return a 404 error with the message "Session not found".
 5. When the session is busy (lock held), the Prompt API shall return a 409 error with error code "SESSION_BUSY" and the message "Session is busy — a prompt is already running".
-6. When prompt execution succeeds, the Prompt API shall return a 200 response with `{ success: true, claudeResponse: string }` and include the output length in the `X-Claude-Output-Length` response header.
-7. When prompt execution fails with a non-busy error, the Prompt API shall return a 500 error with the failure message.
+6. When prompt execution begins, the Prompt API shall return a streaming `text/event-stream` SSE response that emits events (`init`, `content`, `result`, `error`, `done`) in real time as the CLI executes.
+7. When prompt execution fails with a non-busy error during stream setup, the Prompt API shall emit an `error` SSE event with the failure message followed by a `done` event.
 
 ### Requirement 8: Conversation Message Storage
 
@@ -91,8 +90,8 @@ The Prompt Execution feature enables developers to send prompts to Claude Code C
 
 #### Acceptance Criteria
 
-1. When a prompt execution begins, the Prompt Executor shall append the user's message (with role, content, and timestamp) to the session's `messages` array before spawning the CLI process.
-2. When a prompt execution completes successfully, the Prompt Executor shall append Claude's response (with role, content, and timestamp) to the session's `messages` array.
-3. When the Claude CLI returns JSON output, the Prompt Executor shall extract the `result` field as the assistant message content. If JSON parsing fails, the Prompt Executor shall use the raw stdout as the response content.
-4. When the Claude CLI returns a `session_id` in the JSON output, the Prompt Executor shall set the session's `claudeSessionId` from that value.
-5. If a prompt execution fails, the Prompt Executor shall not append an assistant message (the user message persisted before execution is retained).
+1. When a prompt execution begins, the Prompt Executor shall append the user's message (with role and content as `[{ type: "text", text: promptText }]`, and timestamp) to the session's `messages` array before spawning the CLI process.
+2. When a prompt execution completes with accumulated content blocks, the Prompt Executor shall append Claude's response (with role and `content: MessageContentBlock[]`, and timestamp) to the session's `messages` array.
+3. The Prompt Executor shall accumulate text and tool_use content blocks from streamed assistant messages into a `MessageContentBlock[]` array during execution.
+4. When the Claude CLI emits a `system` init event with a `session_id`, the Prompt Executor shall set the session's `claudeSessionId` from that value.
+5. If a prompt execution fails with no accumulated content blocks, the Prompt Executor shall not append an assistant message (the user message persisted before execution is retained). If content blocks were accumulated before the failure, they shall be stored.

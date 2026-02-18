@@ -132,16 +132,16 @@ sequenceDiagram
     WT->>Log: Log request start with method path action
 
     WT->>Route: Call handler in ALS context
-    Route->>Prompt: executePrompt
+    Route->>Prompt: executePromptStream
     Prompt->>Lock: acquireSessionLock
     Lock->>Log: Log lock acquired
     Prompt->>State: updateSession status running
     State->>Log: Log state write at debug level
-    Prompt->>CLI: execFile claude with args
-    CLI-->>Prompt: stdout and stderr
+    Prompt->>CLI: spawn claude with stream-json args
+    CLI-->>Prompt: stream-json events (line by line)
     Prompt->>Log: Log execution complete with exit code and duration
     Prompt->>State: updateSession status ready
-    Prompt-->>Route: result
+    Prompt-->>Route: SSE events via emit callback
 
     Route-->>WT: response
     WT->>Log: Log request complete with status and duration

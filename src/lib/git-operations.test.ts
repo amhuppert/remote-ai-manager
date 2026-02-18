@@ -483,11 +483,7 @@ describe("squashMerge", () => {
 
     // Verify cleanup: merge --abort and reset --hard were called
     expect(execFileMock.mock.calls[2]![1]).toEqual(["merge", "--abort"]);
-    expect(execFileMock.mock.calls[3]![1]).toEqual([
-      "reset",
-      "--hard",
-      "HEAD",
-    ]);
+    expect(execFileMock.mock.calls[3]![1]).toEqual(["reset", "--hard", "HEAD"]);
   });
 
   it("re-throws non-conflict merge errors without conflict message", async () => {
