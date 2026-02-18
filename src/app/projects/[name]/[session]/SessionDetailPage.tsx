@@ -136,8 +136,11 @@ export default function SessionDetailPage({
     (index: number) => {
       const clamped = Math.max(0, Math.min(index, displayMessages.length - 1));
       const el = messageRefs.current[clamped];
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      const container = panelBodyRef.current;
+      if (el && container) {
+        // Scroll within the panel-body container only (avoids page-level scroll on mobile)
+        const targetTop = el.offsetTop - container.offsetTop;
+        container.scrollTo({ top: targetTop, behavior: "smooth" });
         setCurrentMsgIndex(clamped);
       }
     },

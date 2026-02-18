@@ -20,9 +20,11 @@ Design and implement the UI feature described in $ARGUMENTS within the static HT
 
 ## Step 1: Load Context
 Read the following files to understand the design system, existing patterns, and product requirements:
-- `ui-design/index.html` — the static HTML prototype (your canvas)
 - `.kiro/specs/ui-design-system/design.md` — the design system
 - `src/app/globals.css` — the canonical design system tokens and component styles
+
+This is the static prototype file:
+- `ui-design/index.html` — the static HTML prototype (your canvas) - quite large, only read when needed and not all at once
 
 ## Step 2: Invoke the Frontend Design Skill
 Use the `/frontend-design` skill to generate a high-quality, distinctive design for the requested feature. When invoking the skill, provide it with:

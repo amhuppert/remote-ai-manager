@@ -842,15 +842,9 @@ textarea {
   line-height: 1;
   cursor: pointer;
   transition: all 0.15s ease;
-  opacity: 0;
-}
-
-.project-card:hover .card-menu-btn {
-  opacity: 1;
 }
 
 .card-menu-btn.open {
-  opacity: 1;
   background: var(--bg-hover);
   border-color: var(--border-default);
   color: var(--text-secondary);
@@ -2512,9 +2506,11 @@ textarea {
     height: 8px;
   }
 
-  /* Hide layout switcher and separators on mobile (use bottom bar instead) */
+  /* Hide layout switcher, separators, and action buttons on mobile (use bottom bar instead) */
   .topbar-status-session .layout-switcher,
-  .topbar-status-session .topbar-sep {
+  .topbar-status-session .topbar-sep,
+  .topbar-status-session .btn,
+  .topbar-status-session .btn-icon-only {
     display: none;
   }
 
@@ -2627,6 +2623,12 @@ textarea {
   .session-content-area[data-layout="conversation"] .sidebar-diff-panel,
   .session-content-area[data-layout="diff"] .prompt-panel {
     display: flex;
+  }
+
+  /* Session detail layout: account for mobile bottom bar */
+  .session-detail-layout {
+    height: calc(100vh - var(--topbar-height) - var(--space-md) * 2 - 56px);
+    min-height: 300px;
   }
 
   /* Info strip: collapsible on mobile */
