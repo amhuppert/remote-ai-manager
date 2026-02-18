@@ -210,37 +210,63 @@ async function resolvePluginPaths(): Promise<
 
     const settingsRaw = await readFile(settingsPath, "utf-8");
     const settings = JSON.parse(settingsRaw) as {
-      enabledPlugins?: string[];
+      enabledPlugins?: Record<string, boolean> | string[];
     };
 
-    if (
-      !settings.enabledPlugins ||
-      !Array.isArray(settings.enabledPlugins) ||
-      settings.enabledPlugins.length === 0
-    ) {
+    // Handle both array and object formats for enabledPlugins
+    let enabledPluginIds: string[] = [];
+    if (settings.enabledPlugins) {
+      if (Array.isArray(settings.enabledPlugins)) {
+        enabledPluginIds = settings.enabledPlugins;
+      } else if (typeof settings.enabledPlugins === "object") {
+        // Object format: { "plugin-id": true/false }
+        enabledPluginIds = Object.entries(settings.enabledPlugins)
+          .filter(([_, enabled]) => enabled)
+          .map(([id]) => id);
+      }
+    }
+
+    if (enabledPluginIds.length === 0) {
       return [];
     }
 
-    // Read installed plugins for cache path resolution
-    let installed: Record<
-      string,
-      { cachePath?: string; marketplace?: string; version?: string }
-    > = {};
+    // Read installed plugins for path resolution
+    interface InstalledPluginsFile {
+      version?: number;
+      plugins?: Record<
+        string,
+        Array<{
+          installPath?: string;
+          cachePath?: string;
+          version?: string;
+          scope?: string;
+        }>
+      >;
+    }
+
+    let installedData: InstalledPluginsFile = {};
     if (existsSync(installedPath)) {
       try {
         const installedRaw = await readFile(installedPath, "utf-8");
-        installed = JSON.parse(installedRaw) as typeof installed;
+        installedData = JSON.parse(installedRaw) as InstalledPluginsFile;
       } catch {
         // Installed file malformed — continue without it
       }
     }
 
-    for (const pluginId of settings.enabledPlugins) {
-      const pluginInfo = installed[pluginId];
-      if (pluginInfo?.cachePath && existsSync(pluginInfo.cachePath)) {
-        const pluginName =
-          pluginId.split("/").pop()?.replace(/^@/, "") ?? pluginId;
-        plugins.push({ name: pluginName, path: pluginInfo.cachePath });
+    // Handle both old format (direct object) and new format (nested in plugins)
+    const installed = installedData.plugins ?? installedData;
+
+    for (const pluginId of enabledPluginIds) {
+      const pluginInstalls = installed[pluginId as keyof typeof installed];
+      if (pluginInstalls && Array.isArray(pluginInstalls)) {
+        // Use the first (most recent) installation
+        const pluginInfo = pluginInstalls[0];
+        const pluginPath = pluginInfo?.installPath ?? pluginInfo?.cachePath;
+        if (pluginPath && existsSync(pluginPath)) {
+          const pluginName = pluginId.split("@")[0] ?? pluginId;
+          plugins.push({ name: pluginName, path: pluginPath });
+        }
       }
     }
   } catch (err) {
