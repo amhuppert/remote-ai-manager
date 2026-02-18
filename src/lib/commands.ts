@@ -135,6 +135,7 @@ async function scanCommandDir(
 async function scanSkillsDir(
   dirPath: string,
   source: string,
+  pluginName?: string,
 ): Promise<CommandItem[]> {
   if (!existsSync(dirPath)) return [];
 
@@ -170,8 +171,12 @@ async function scanSkillsDir(
         }
       }
 
+      const skillName = pluginName
+        ? `/${pluginName}:${entry.name}`
+        : `/${entry.name}`;
+
       items.push({
-        name: `/${entry.name}`,
+        name: skillName,
         description,
         argumentHint,
         type: "skill",
@@ -307,11 +312,19 @@ export async function discoverCommands(
   const pluginPaths = await resolvePluginPaths();
   for (const plugin of pluginPaths) {
     const pluginCmdDir = path.join(plugin.path, "commands");
-    const pluginCmdItems = await scanCommandDir(pluginCmdDir, plugin.name);
+    const pluginCmdItems = await scanCommandDir(
+      pluginCmdDir,
+      plugin.name,
+      plugin.name,
+    );
     allItems.push(...pluginCmdItems);
 
     const pluginSkillsDir = path.join(plugin.path, "skills");
-    const pluginSkillItems = await scanSkillsDir(pluginSkillsDir, plugin.name);
+    const pluginSkillItems = await scanSkillsDir(
+      pluginSkillsDir,
+      plugin.name,
+      plugin.name,
+    );
     allItems.push(...pluginSkillItems);
   }
 
