@@ -81,13 +81,25 @@ export default function SessionDetailPage({
   // Track message count before submission for reconciliation
   const messageCountBeforeSubmitRef = useRef(messages.length);
 
-  // Clear optimistic messages when server catches up
+  // Reconcile optimistic messages when server catches up
   useEffect(() => {
     if (optimisticMessages.length === 0) return;
     if (messages.length > messageCountBeforeSubmitRef.current) {
-      setOptimisticMessages([]);
+      if (sending) {
+        // Server has the user message but stream is still active.
+        // Drop the optimistic user message (server has it) but keep the streaming assistant.
+        const assistantOnly = optimisticMessages.filter(
+          (m) => m.role === "assistant",
+        );
+        if (assistantOnly.length !== optimisticMessages.length) {
+          setOptimisticMessages(assistantOnly);
+        }
+      } else {
+        // Stream is done, server has all messages — clear everything.
+        setOptimisticMessages([]);
+      }
     }
-  }, [messages.length, optimisticMessages.length]);
+  }, [messages.length, optimisticMessages.length, sending]);
 
   // Message navigation state
   const [currentMsgIndex, setCurrentMsgIndex] = useState(0);
@@ -137,6 +149,17 @@ export default function SessionDetailPage({
     }
     prevMessageCountRef.current = displayMessages.length;
   }, [displayMessages.length]);
+
+  // Auto-scroll as streaming content blocks arrive
+  const optimisticContentCount = useMemo(
+    () => optimisticMessages.reduce((sum, m) => sum + m.content.length, 0),
+    [optimisticMessages],
+  );
+  useEffect(() => {
+    if (optimisticContentCount > 0) {
+      conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [optimisticContentCount]);
 
   const scrollToMessage = useCallback(
     (index: number) => {
@@ -545,7 +568,17 @@ export default function SessionDetailPage({
                     </div>
                   )}
                   {(sending || displayStatus === "running") &&
-                    !optimisticMessages.some((m) => m.role === "assistant") && (
+                    (optimisticMessages.some(
+                      (m) => m.role === "assistant",
+                    ) ? (
+                      <div className="streaming-indicator">
+                        <div className="typing-dots">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                      </div>
+                    ) : (
                       <div className="message assistant typing-indicator">
                         <div className="message-role">Claude</div>
                         <div className="message-content">
@@ -556,7 +589,7 @@ export default function SessionDetailPage({
                           </div>
                         </div>
                       </div>
-                    )}
+                    ))}
                   <div ref={conversationEndRef} />
                 </div>
               </div>

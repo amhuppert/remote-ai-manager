@@ -2354,6 +2354,12 @@ textarea {
   animation-delay: 0.3s;
 }
 
+.streaming-indicator {
+  display: flex;
+  padding: 4px 0 4px var(--space-md);
+  animation: fadeIn 0.3s ease;
+}
+
 /* ============================================================
    Markdown Content Styles
    ============================================================ */
