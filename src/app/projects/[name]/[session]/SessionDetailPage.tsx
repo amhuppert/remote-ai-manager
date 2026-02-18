@@ -17,6 +17,10 @@ import MergeDialog from "./MergeDialog";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MarkdownContent from "@/components/MarkdownContent";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
+import {
+  CommandAutocomplete,
+  type CommandAutocompleteHandle,
+} from "@/components/CommandAutocomplete";
 import { tracedFetch } from "@/lib/traced-fetch";
 type MobilePanel = "chat" | "diff";
 
@@ -52,8 +56,12 @@ export default function SessionDetailPage({
   const [promptText, setPromptText] = useState("");
   const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const promptTextRef = useRef(promptText);
   promptTextRef.current = promptText;
+  const [promptPlaceholder, setPromptPlaceholder] = useState<string | null>(
+    null,
+  );
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCommitDialog, setShowCommitDialog] = useState(false);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
@@ -478,21 +486,45 @@ export default function SessionDetailPage({
               {/* Prompt input */}
               <div className="prompt-input-area">
                 <div className="prompt-input-wrapper">
+                  <CommandAutocomplete
+                    ref={autocompleteRef}
+                    promptText={promptText}
+                    onPromptChange={(text) => {
+                      setPromptText(text);
+                      // Reset placeholder when clearing
+                      if (!text.startsWith("/")) {
+                        setPromptPlaceholder(null);
+                      }
+                    }}
+                    onPlaceholderChange={setPromptPlaceholder}
+                    projectName={projectName}
+                    sessionName={session.sessionName}
+                    disabled={isBusy || isFinished}
+                  />
                   <textarea
                     ref={textareaRef}
                     className="prompt-textarea"
                     placeholder={
                       isFinished
                         ? "Session is merged and read-only"
-                        : "Send a prompt to Claude..."
+                        : promptPlaceholder ?? "Send a prompt to Claude..."
                     }
                     rows={2}
                     value={promptText}
                     onChange={(e) => setPromptText(e.target.value)}
                     onKeyDown={(e) => {
+                      // Let autocomplete handle keys first
+                      if (autocompleteRef.current?.handleKeyDown(e)) {
+                        return;
+                      }
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
                         void handleSendPrompt();
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setPromptText("");
+                        setPromptPlaceholder(null);
                       }
                     }}
                     disabled={isFinished}

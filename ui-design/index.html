@@ -1128,6 +1128,253 @@
         }
       }
 
+      /* ============================================
+   SLASH COMMAND AUTOCOMPLETE
+   ============================================ */
+      .cmd-autocomplete {
+        display: none;
+        flex-direction: column;
+        max-height: 320px;
+        background: var(--bg-base);
+        border-bottom: 1px solid var(--border-subtle);
+        overflow: hidden;
+      }
+
+      .cmd-autocomplete.visible {
+        display: flex;
+        animation: cmdReveal 0.18s ease;
+      }
+
+      /* Glowing cyan accent line at top */
+      .cmd-autocomplete::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: var(--space-xl);
+        right: var(--space-xl);
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--cyan-dim),
+          transparent
+        );
+        z-index: 1;
+      }
+
+      .cmd-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px var(--space-md);
+        border-bottom: 1px solid var(--border-subtle);
+        flex-shrink: 0;
+      }
+
+      .cmd-header-label {
+        font-family: var(--font-mono);
+        font-size: 0.58rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--cyan-dim);
+      }
+
+      .cmd-header-count {
+        font-family: var(--font-mono);
+        font-size: 0.55rem;
+        font-weight: 500;
+        color: var(--text-tertiary);
+      }
+
+      .cmd-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: var(--space-xs) 0;
+      }
+
+      .cmd-item {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+        padding: 7px var(--space-md);
+        padding-left: calc(var(--space-md) - 2px);
+        cursor: pointer;
+        transition: background 0.08s ease;
+        border-left: 2px solid transparent;
+        position: relative;
+        user-select: none;
+      }
+
+      .cmd-item:hover {
+        background: rgba(28, 40, 65, 0.5);
+      }
+
+      .cmd-item.active {
+        border-left-color: var(--cyan);
+      }
+
+      /* Active item gradient glow from left */
+      .cmd-item.active::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          90deg,
+          rgba(0, 229, 255, 0.12),
+          transparent 50%
+        );
+        pointer-events: none;
+      }
+
+      .cmd-item.active:hover {
+        background: transparent;
+      }
+
+      .cmd-item-name {
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: var(--text-primary);
+        white-space: nowrap;
+        flex-shrink: 0;
+        position: relative;
+        z-index: 1;
+      }
+
+      .cmd-item.active .cmd-item-name {
+        color: #fff;
+      }
+
+      .cmd-match {
+        color: var(--cyan);
+        font-weight: 700;
+      }
+
+      .cmd-item-desc {
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        color: var(--text-tertiary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+        position: relative;
+        z-index: 1;
+      }
+
+      .cmd-item-badges {
+        display: flex;
+        align-items: center;
+        gap: var(--space-xs);
+        flex-shrink: 0;
+        position: relative;
+        z-index: 1;
+      }
+
+      .cmd-badge {
+        font-family: var(--font-mono);
+        font-size: 0.52rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 1px 5px;
+        border-radius: 100px;
+        border: 1px solid;
+        line-height: 1.5;
+        white-space: nowrap;
+      }
+
+      .cmd-badge-cmd {
+        color: var(--cyan);
+        border-color: rgba(0, 229, 255, 0.2);
+        background: rgba(0, 229, 255, 0.06);
+      }
+
+      .cmd-badge-skill {
+        color: var(--green);
+        border-color: rgba(0, 230, 118, 0.2);
+        background: rgba(0, 230, 118, 0.06);
+      }
+
+      .cmd-badge-builtin {
+        color: var(--text-tertiary);
+        border-color: var(--border-subtle);
+        background: transparent;
+      }
+
+      .cmd-source {
+        font-family: var(--font-mono);
+        font-size: 0.52rem;
+        color: var(--text-tertiary);
+        white-space: nowrap;
+      }
+
+      .cmd-footer {
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+        padding: 5px var(--space-md);
+        border-top: 1px solid var(--border-subtle);
+        flex-shrink: 0;
+      }
+
+      .cmd-kbd-hint {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        font-family: var(--font-mono);
+        font-size: 0.52rem;
+        color: var(--text-tertiary);
+      }
+
+      .cmd-kbd {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 16px;
+        height: 15px;
+        padding: 0 3px;
+        background: var(--bg-raised);
+        border: 1px solid var(--border-subtle);
+        border-radius: 3px;
+        font-family: var(--font-mono);
+        font-size: 0.5rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
+
+      .cmd-no-results {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--space-sm);
+        padding: var(--space-lg) var(--space-md);
+      }
+
+      .cmd-no-results-icon {
+        font-size: 1.2rem;
+        opacity: 0.3;
+      }
+
+      .cmd-no-results-text {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        color: var(--text-tertiary);
+      }
+
+      @keyframes cmdReveal {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
       /* Diff panel */
       .sidebar-diff-panel {
         background: var(--bg-surface);
@@ -3284,23 +3531,29 @@ export default function SessionDetail({ params }) {
                 </div>
 
                 <div class="prompt-input-area">
+                  <!-- Slash Command Autocomplete -->
+                  <div class="cmd-autocomplete" id="cmd-autocomplete">
+                    <div class="cmd-header">
+                      <span class="cmd-header-label">Commands &amp; Skills</span>
+                      <span class="cmd-header-count" id="cmd-count"></span>
+                    </div>
+                    <div class="cmd-list" id="cmd-list"></div>
+                    <div class="cmd-footer">
+                      <span class="cmd-kbd-hint"><kbd class="cmd-kbd">&uarr;&darr;</kbd> navigate</span>
+                      <span class="cmd-kbd-hint"><kbd class="cmd-kbd">&crarr;</kbd> select</span>
+                      <span class="cmd-kbd-hint"><kbd class="cmd-kbd">tab</kbd> complete</span>
+                      <span class="cmd-kbd-hint"><kbd class="cmd-kbd">esc</kbd> close</span>
+                    </div>
+                  </div>
+
                   <div class="prompt-input-wrapper">
                     <textarea
                       class="prompt-textarea"
-                      placeholder="Send a prompt to Claude..."
+                      id="prompt-textarea"
+                      placeholder="Type / for commands..."
                       rows="2"
                     ></textarea>
-                    <button class="send-btn busy" title="Session is busy">
-                      <div
-                        class="spinner"
-                        style="
-                          border-color: rgba(0, 229, 255, 0.3);
-                          border-top-color: var(--cyan);
-                          width: 18px;
-                          height: 18px;
-                        "
-                      ></div>
-                    </button>
+                    <button class="send-btn" id="send-btn" title="Send prompt">&#9654;</button>
                   </div>
                 </div>
               </div>
@@ -4334,6 +4587,272 @@ export default function SessionDetail({ params }) {
 
       // Initialize counts on load
       updateCounts();
+
+      // ===================== SLASH COMMAND AUTOCOMPLETE =====================
+      const cmdData = [
+        // Project commands
+        { name: "/ui-design", desc: "Design a new UI feature in the static HTML prototype", type: "command", source: "project", arg: "<feature-description>" },
+        { name: "/kiro:spec-init", desc: "Initialize a new specification", type: "command", source: "project", arg: "<project-description>" },
+        { name: "/kiro:spec-requirements", desc: "Generate comprehensive requirements", type: "command", source: "project", arg: "<feature-name>" },
+        { name: "/kiro:spec-design", desc: "Create technical design for a specification", type: "command", source: "project", arg: "<feature-name>" },
+        { name: "/kiro:spec-tasks", desc: "Generate implementation tasks", type: "command", source: "project", arg: "<feature-name>" },
+        { name: "/kiro:spec-impl", desc: "Execute spec tasks using TDD methodology", type: "command", source: "project", arg: "<feature-name>" },
+        { name: "/kiro:spec-status", desc: "Show specification status and progress", type: "command", source: "project", arg: "<feature-name>" },
+        { name: "/kiro:validate-design", desc: "Interactive technical design quality review", type: "command", source: "project", arg: "<feature-name>" },
+        { name: "/kiro:validate-impl", desc: "Validate implementation against requirements", type: "command", source: "project", arg: "<feature-name>" },
+        { name: "/kiro:steering", desc: "Manage project-wide steering documents", type: "command", source: "project" },
+        // Plugin commands
+        { name: "/create-plugin", desc: "Guided end-to-end plugin creation workflow", type: "command", source: "plugin-dev" },
+        { name: "/feature-dev", desc: "Plan and implement features with structured workflow", type: "command", source: "feature-dev" },
+        // Skills
+        { name: "/commit", desc: "Commit staged changes to git with smart messages", type: "skill", source: "ai-resources" },
+        { name: "/design", desc: "Create or iterate on a software design", type: "skill", source: "ai-resources" },
+        { name: "/worktree", desc: "Create git worktree for parallel sessions", type: "skill", source: "ai-resources" },
+        { name: "/frontend-design", desc: "Create distinctive, production-grade frontend interfaces", type: "skill", source: "frontend-design" },
+        { name: "/compress", desc: "Optimize and compress instructions for AI usage", type: "skill", source: "ai-resources" },
+        { name: "/cheat-sheet", desc: "Generate concise quick-reference documents", type: "skill", source: "ai-resources" },
+        // Built-ins
+        { name: "/help", desc: "Show available commands and usage information", type: "builtin", source: "built-in" },
+        { name: "/clear", desc: "Clear the conversation history", type: "builtin", source: "built-in" },
+        { name: "/compact", desc: "Compact and summarize conversation context", type: "builtin", source: "built-in" },
+        { name: "/model", desc: "Switch the current model", type: "builtin", source: "built-in" },
+        { name: "/fast", desc: "Toggle fast output mode", type: "builtin", source: "built-in" },
+      ];
+
+      const cmdAutocomplete = document.getElementById("cmd-autocomplete");
+      const cmdList = document.getElementById("cmd-list");
+      const cmdCountEl = document.getElementById("cmd-count");
+      const promptTextarea = document.getElementById("prompt-textarea");
+
+      let cmdVisible = false;
+      let cmdActiveIdx = 0;
+      let cmdFiltered = [];
+
+      function fuzzyMatch(query, target) {
+        const q = query.toLowerCase();
+        const t = target.toLowerCase();
+
+        // Empty query matches everything
+        if (!q) return { match: true, score: 100, indices: [] };
+
+        // Exact prefix match (highest score)
+        if (t.startsWith(q)) {
+          return { match: true, score: 100, indices: Array.from({ length: q.length }, function (_, i) { return i; }) };
+        }
+
+        // Contains match
+        var containsIdx = t.indexOf(q);
+        if (containsIdx !== -1) {
+          return { match: true, score: 80, indices: Array.from({ length: q.length }, function (_, i) { return containsIdx + i; }) };
+        }
+
+        // Fuzzy: match characters in order
+        var qi = 0;
+        var indices = [];
+        for (var ti = 0; ti < t.length && qi < q.length; ti++) {
+          if (t[ti] === q[qi]) {
+            indices.push(ti);
+            qi++;
+          }
+        }
+
+        if (qi === q.length) {
+          var spread = indices[indices.length - 1] - indices[0];
+          var score = Math.max(10, 60 - spread);
+          return { match: true, score: score, indices: indices };
+        }
+
+        return { match: false, score: 0, indices: [] };
+      }
+
+      function highlightName(name, indices) {
+        if (!indices.length) return escapeHtml(name);
+        var result = "";
+        for (var i = 0; i < name.length; i++) {
+          if (indices.indexOf(i) !== -1) {
+            result += '<span class="cmd-match">' + escapeHtml(name[i]) + "</span>";
+          } else {
+            result += escapeHtml(name[i]);
+          }
+        }
+        return result;
+      }
+
+      function escapeHtml(str) {
+        return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+
+      function getBadgeClass(type) {
+        if (type === "command") return "cmd-badge-cmd";
+        if (type === "skill") return "cmd-badge-skill";
+        return "cmd-badge-builtin";
+      }
+
+      function getBadgeLabel(type) {
+        if (type === "command") return "cmd";
+        if (type === "skill") return "skill";
+        return "built-in";
+      }
+
+      function renderCmdList() {
+        var val = promptTextarea.value;
+        var query = val.length > 1 ? val.slice(1) : ""; // Remove leading /
+
+        // Filter and score
+        cmdFiltered = [];
+        for (var i = 0; i < cmdData.length; i++) {
+          var cmd = cmdData[i];
+          var nameTarget = cmd.name.slice(1); // Remove leading / from name
+          var nameResult = fuzzyMatch(query, nameTarget);
+          var descResult = query.length > 2 ? fuzzyMatch(query, cmd.desc) : { match: false, score: 0, indices: [] };
+
+          if (nameResult.match || descResult.match) {
+            cmdFiltered.push({
+              name: cmd.name,
+              desc: cmd.desc,
+              type: cmd.type,
+              source: cmd.source,
+              arg: cmd.arg || null,
+              score: Math.max(nameResult.score, descResult.match ? 40 : 0),
+              nameIndices: nameResult.match ? nameResult.indices.map(function (idx) { return idx + 1; }) : [],
+            });
+          }
+        }
+
+        // Sort by score desc, then name asc
+        cmdFiltered.sort(function (a, b) {
+          if (b.score !== a.score) return b.score - a.score;
+          return a.name.localeCompare(b.name);
+        });
+
+        // Clamp active index
+        if (cmdActiveIdx >= cmdFiltered.length) {
+          cmdActiveIdx = Math.max(0, cmdFiltered.length - 1);
+        }
+
+        // Update count
+        cmdCountEl.textContent = cmdFiltered.length + " available";
+
+        // Render
+        if (cmdFiltered.length === 0) {
+          cmdList.innerHTML =
+            '<div class="cmd-no-results">' +
+            '<span class="cmd-no-results-icon">&#8984;</span>' +
+            '<span class="cmd-no-results-text">No matching commands</span>' +
+            "</div>";
+          return;
+        }
+
+        var html = "";
+        for (var j = 0; j < cmdFiltered.length; j++) {
+          var item = cmdFiltered[j];
+          var isActive = j === cmdActiveIdx;
+          var highlighted = query ? highlightName(item.name, item.nameIndices) : escapeHtml(item.name);
+
+          html +=
+            '<div class="cmd-item' + (isActive ? " active" : "") + '" data-idx="' + j + '">' +
+            '<span class="cmd-item-name">' + highlighted + "</span>" +
+            '<span class="cmd-item-desc">' + escapeHtml(item.desc) + "</span>" +
+            '<span class="cmd-item-badges">' +
+            '<span class="cmd-badge ' + getBadgeClass(item.type) + '">' + getBadgeLabel(item.type) + "</span>" +
+            '<span class="cmd-source">' + escapeHtml(item.source) + "</span>" +
+            "</span>" +
+            "</div>";
+        }
+        cmdList.innerHTML = html;
+
+        // Scroll active into view
+        var activeEl = cmdList.querySelector(".cmd-item.active");
+        if (activeEl) {
+          activeEl.scrollIntoView({ block: "nearest" });
+        }
+      }
+
+      function showCmd() {
+        cmdVisible = true;
+        cmdActiveIdx = 0;
+        cmdAutocomplete.classList.add("visible");
+        renderCmdList();
+      }
+
+      function hideCmd() {
+        cmdVisible = false;
+        cmdAutocomplete.classList.remove("visible");
+      }
+
+      function selectCmd(idx) {
+        var cmd = cmdFiltered[idx];
+        if (!cmd) return;
+        promptTextarea.value = cmd.name + " ";
+        promptTextarea.focus();
+
+        // Update placeholder with arg hint if available
+        if (cmd.arg) {
+          promptTextarea.setAttribute("placeholder", cmd.name + " " + cmd.arg);
+        } else {
+          promptTextarea.setAttribute("placeholder", "Type / for commands...");
+        }
+
+        hideCmd();
+      }
+
+      // Click handler for items (event delegation)
+      cmdList.addEventListener("click", function (e) {
+        var item = e.target.closest(".cmd-item");
+        if (item) {
+          selectCmd(parseInt(item.getAttribute("data-idx"), 10));
+        }
+      });
+
+      // Hover handler to update active index
+      cmdList.addEventListener("mousemove", function (e) {
+        var item = e.target.closest(".cmd-item");
+        if (item) {
+          var idx = parseInt(item.getAttribute("data-idx"), 10);
+          if (idx !== cmdActiveIdx) {
+            cmdActiveIdx = idx;
+            renderCmdList();
+          }
+        }
+      });
+
+      // Input handler
+      promptTextarea.addEventListener("input", function () {
+        var val = this.value;
+        if (val.startsWith("/")) {
+          if (!cmdVisible) showCmd();
+          else renderCmdList();
+        } else {
+          if (cmdVisible) hideCmd();
+        }
+      });
+
+      // Keyboard handler
+      promptTextarea.addEventListener("keydown", function (e) {
+        if (!cmdVisible) return;
+
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          cmdActiveIdx = Math.min(cmdActiveIdx + 1, cmdFiltered.length - 1);
+          renderCmdList();
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          cmdActiveIdx = Math.max(cmdActiveIdx - 1, 0);
+          renderCmdList();
+        } else if (e.key === "Enter" || e.key === "Tab") {
+          e.preventDefault();
+          selectCmd(cmdActiveIdx);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          hideCmd();
+          promptTextarea.value = "";
+          promptTextarea.setAttribute("placeholder", "Type / for commands...");
+        }
+      });
+
+      // Show autocomplete on demo load with "/" pre-typed
+      promptTextarea.value = "/";
+      showCmd();
     </script>
   </body>
 </html>

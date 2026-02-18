@@ -34,6 +34,9 @@ export type {
   MergeRequest,
   SessionArchiveRequest,
   CommitLogEntry,
+  CommandType,
+  CommandItem,
+  CommandsResponse,
 } from "@/lib/schemas";
 
 /** Parsed transcript message */
