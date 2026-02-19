@@ -122,6 +122,35 @@ export default function SessionDetailPage({
   const messageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const conversationEndRef = useRef<HTMLDivElement>(null);
 
+  // Turn-based navigation: group consecutive assistant messages into one turn.
+  // Each user message = 1 turn, all consecutive assistant messages = 1 turn.
+  const turnStartIndices = useMemo(() => {
+    const indices: number[] = [];
+    for (let i = 0; i < displayMessages.length; i++) {
+      const msg = displayMessages[i]!;
+      if (msg.role === "user") {
+        indices.push(i);
+      } else if (i === 0 || displayMessages[i - 1]?.role === "user") {
+        // First assistant message after a user message (or at the start)
+        indices.push(i);
+      }
+    }
+    return indices;
+  }, [displayMessages]);
+
+  // Derive current turn from the visible message index
+  const currentTurnIndex = useMemo(() => {
+    let turn = 0;
+    for (let t = 0; t < turnStartIndices.length; t++) {
+      if ((turnStartIndices[t] ?? 0) <= currentMsgIndex) {
+        turn = t;
+      } else {
+        break;
+      }
+    }
+    return turn;
+  }, [turnStartIndices, currentMsgIndex]);
+
   // Reset refs array when displayMessages change
   useEffect(() => {
     messageRefs.current = messageRefs.current.slice(0, displayMessages.length);
@@ -192,12 +221,18 @@ export default function SessionDetailPage({
   );
 
   const handlePrevMessage = useCallback(() => {
-    scrollToMessage(currentMsgIndex - 1);
-  }, [currentMsgIndex, scrollToMessage]);
+    const prevTurnStart = turnStartIndices[currentTurnIndex - 1];
+    if (prevTurnStart !== undefined) {
+      scrollToMessage(prevTurnStart);
+    }
+  }, [currentTurnIndex, turnStartIndices, scrollToMessage]);
 
   const handleNextMessage = useCallback(() => {
-    scrollToMessage(currentMsgIndex + 1);
-  }, [currentMsgIndex, scrollToMessage]);
+    const nextTurnStart = turnStartIndices[currentTurnIndex + 1];
+    if (nextTurnStart !== undefined) {
+      scrollToMessage(nextTurnStart);
+    }
+  }, [currentTurnIndex, turnStartIndices, scrollToMessage]);
 
   const sessionStatus = deriveSessionStatus(session);
 
@@ -543,23 +578,23 @@ export default function SessionDetailPage({
                     className="nav-btn"
                     onClick={handlePrevMessage}
                     disabled={
-                      displayMessages.length === 0 || currentMsgIndex <= 0
+                      turnStartIndices.length === 0 || currentTurnIndex <= 0
                     }
                     title="Previous message"
                   >
                     &#9650;
                   </button>
                   <span className="msg-counter">
-                    {displayMessages.length > 0
-                      ? `${currentMsgIndex + 1} / ${displayMessages.length}`
+                    {turnStartIndices.length > 0
+                      ? `${currentTurnIndex + 1} / ${turnStartIndices.length}`
                       : "0 / 0"}
                   </span>
                   <button
                     className="nav-btn"
                     onClick={handleNextMessage}
                     disabled={
-                      displayMessages.length === 0 ||
-                      currentMsgIndex >= displayMessages.length - 1
+                      turnStartIndices.length === 0 ||
+                      currentTurnIndex >= turnStartIndices.length - 1
                     }
                     title="Next message"
                   >
