@@ -16,6 +16,7 @@ interface UseVoiceRecorderReturn {
   elapsedTime: number;
   isAvailable: boolean;
   toggleRecording: () => void;
+  stopRecording: () => void;
 }
 
 type RecordingState = "idle" | "recording" | "processing";
@@ -218,6 +219,12 @@ export function useVoiceRecorder(
     });
   }, [projectName]);
 
+  const stopRecording = useCallback(() => {
+    if (state === "recording") {
+      void stopAndProcess();
+    }
+  }, [state, stopAndProcess]);
+
   const toggleRecording = useCallback(async () => {
     if (state === "processing") return;
 
@@ -270,5 +277,6 @@ export function useVoiceRecorder(
     elapsedTime,
     isAvailable,
     toggleRecording,
+    stopRecording,
   };
 }
