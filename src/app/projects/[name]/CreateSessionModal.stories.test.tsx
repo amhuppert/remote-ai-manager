@@ -1,0 +1,25 @@
+// @vitest-environment jsdom
+import { describe, it, expect, beforeAll } from "vitest";
+import { screen } from "@testing-library/react";
+import { composeStories } from "@storybook/react";
+import { storybookAnnotations } from "@/test/storybook-setup";
+import * as stories from "./CreateSessionModal.stories";
+
+beforeAll(storybookAnnotations.beforeAll);
+
+const { Default, Closed } = composeStories(stories);
+
+describe("CreateSessionModal stories", () => {
+  it("Default renders form with session name input", async () => {
+    await Default.run();
+    expect(screen.getByText("New Session")).toBeInTheDocument();
+    expect(screen.getByLabelText("Session Name")).toBeInTheDocument();
+    expect(screen.getByText("Create Session")).toBeInTheDocument();
+    expect(screen.getByText("Cancel")).toBeInTheDocument();
+  });
+
+  it("Closed renders nothing when open=false", async () => {
+    await Closed.run();
+    expect(document.querySelector(".modal-overlay")).toBeNull();
+  });
+});

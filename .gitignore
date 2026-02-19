@@ -36,3 +36,6 @@ PROMPT.md
 RALPH_TASK.md
 
 .worktrees/
+
+*storybook.log
+storybook-static
