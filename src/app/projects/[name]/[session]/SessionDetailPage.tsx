@@ -22,6 +22,7 @@ import CommitDialog from "./CommitDialog";
 import MergeDialog from "./MergeDialog";
 import ConversationSidebar from "./ConversationSidebar";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import HotkeyHelpModal from "@/components/HotkeyHelpModal";
 import MessageContent from "@/components/MessageContent";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import {
@@ -29,6 +30,8 @@ import {
   type CommandAutocompleteHandle,
 } from "@/components/CommandAutocomplete";
 import { tracedFetch } from "@/lib/traced-fetch";
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 type MobilePanel = "chat" | "diff";
 
 interface Props {
@@ -81,6 +84,7 @@ export default function SessionDetailPage({
   const [optimisticMessages, setOptimisticMessages] = useState<
     TranscriptMessage[]
   >([]);
+  const [showHelpModal, setShowHelpModal] = useState(false);
 
   // Derive display messages: server messages + optimistic
   const displayMessages = useMemo(
@@ -193,6 +197,17 @@ export default function SessionDetailPage({
   const handleNextMessage = useCallback(() => {
     scrollToMessage(currentMsgIndex + 1);
   }, [currentMsgIndex, scrollToMessage]);
+
+  // Hotkey bindings — message navigation
+  useAppHotkey("nextMessage", handleNextMessage);
+  useAppHotkey("prevMessage", handlePrevMessage);
+  useAppHotkey("firstMessage", () => scrollToMessage(0));
+  useAppHotkey("lastMessage", () =>
+    scrollToMessage(displayMessages.length - 1),
+  );
+
+  // Help modal hotkey
+  useAppHotkey("helpModal", () => setShowHelpModal(true));
 
   const sessionStatus = deriveSessionStatus(session);
 
@@ -374,6 +389,24 @@ export default function SessionDetailPage({
   const handleVoiceError = useCallback((error: string) => {
     setPromptError(error);
   }, []);
+
+  // Lifted voice recorder hook (was in VoiceRecordButton)
+  const {
+    isRecording,
+    isProcessing,
+    elapsedTime,
+    isAvailable: voiceAvailable,
+    toggleRecording,
+  } = useVoiceRecorder({
+    projectName,
+    onResult: handleVoiceResult,
+    onError: handleVoiceError,
+  });
+
+  // Voice toggle hotkey — works inside form fields (Alt+V)
+  useAppHotkey("voiceToggle", () => void toggleRecording(), {
+    enabled: voiceAvailable && !isProcessing,
+  });
 
   const decodedProjectName = decodeURIComponent(projectName);
   const isFinished = session.finished;
@@ -673,9 +706,11 @@ export default function SessionDetailPage({
                     disabled={isFinished}
                   />
                   <VoiceRecordButton
-                    projectName={projectName}
-                    onResult={handleVoiceResult}
-                    onError={handleVoiceError}
+                    isRecording={isRecording}
+                    isProcessing={isProcessing}
+                    elapsedTime={elapsedTime}
+                    isAvailable={voiceAvailable}
+                    toggleRecording={toggleRecording}
                     disabled={sending}
                   />
                   <button
@@ -797,6 +832,11 @@ export default function SessionDetailPage({
         sessionName={session.sessionName}
         branchName={session.branchName}
         commitCount={commits.length}
+      />
+
+      <HotkeyHelpModal
+        open={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
       />
     </div>
   );

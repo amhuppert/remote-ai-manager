@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ConversationState } from "@/types";
 import { tracedFetch } from "@/lib/traced-fetch";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 
 interface Props {
   projectName: string;
@@ -51,6 +52,8 @@ export default function ConversationSidebar({
       return next;
     });
   }, []);
+
+  useAppHotkey("toggleSidebar", toggleCollapsed);
 
   const handleNewConversation = useCallback(async () => {
     if (creating || isFinished) return;

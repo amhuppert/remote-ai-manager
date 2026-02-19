@@ -1,11 +1,11 @@
 "use client";
 
-import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
-
 interface VoiceRecordButtonProps {
-  projectName: string;
-  onResult: (text: string) => void;
-  onError: (error: string) => void;
+  isRecording: boolean;
+  isProcessing: boolean;
+  elapsedTime: number;
+  isAvailable: boolean;
+  toggleRecording: () => void;
   disabled?: boolean;
 }
 
@@ -16,19 +16,13 @@ function formatTime(seconds: number): string {
 }
 
 export function VoiceRecordButton({
-  projectName,
-  onResult,
-  onError,
+  isRecording,
+  isProcessing,
+  elapsedTime,
+  isAvailable,
+  toggleRecording,
   disabled = false,
 }: VoiceRecordButtonProps) {
-  const {
-    isRecording,
-    isProcessing,
-    elapsedTime,
-    isAvailable,
-    toggleRecording,
-  } = useVoiceRecorder({ projectName, onResult, onError });
-
   if (!isAvailable) return null;
 
   const isDisabled = disabled || isProcessing;
