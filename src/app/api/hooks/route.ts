@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { processHookEvent } from "@/lib/hooks";
 import { hookEventDataSchema } from "@/lib/schemas";
+import { broadcast } from "@/lib/sse-broadcaster";
 import { withTracing, createLogger } from "@/lib/logging";
 import type { ApiError } from "@/types";
 
@@ -37,8 +38,28 @@ export const POST = withTracing(async (request: Request) => {
   }
 
   try {
-    const matched = await processHookEvent(body);
-    return NextResponse.json({ matched });
+    const result = await processHookEvent(body);
+
+    if (
+      result.matched &&
+      body.hook_event_name === "Stop" &&
+      result.projectName &&
+      result.sessionName &&
+      result.conversationId
+    ) {
+      try {
+        broadcast({
+          type: "session-ready",
+          projectName: result.projectName,
+          sessionName: result.sessionName,
+          conversationId: result.conversationId,
+        });
+      } catch {
+        // Fire-and-forget: broadcast failures must not affect the hook response
+      }
+    }
+
+    return NextResponse.json({ matched: result.matched });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Failed to process hook event";

@@ -151,6 +151,26 @@ export const hookEventDataSchema = z.object({
 export type HookEventData = z.infer<typeof hookEventDataSchema>;
 
 // ============================================================
+// SSE Event Schemas
+// ============================================================
+
+export const sessionReadyEventSchema = z.object({
+  type: z.literal("session-ready"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+});
+export type SessionReadyEvent = z.infer<typeof sessionReadyEventSchema>;
+
+export const hookEventResultSchema = z.object({
+  matched: z.boolean(),
+  projectName: z.string().optional(),
+  sessionName: z.string().optional(),
+  conversationId: z.string().optional(),
+});
+export type HookEventResult = z.infer<typeof hookEventResultSchema>;
+
+// ============================================================
 // Command Autocomplete Schemas
 // ============================================================
 

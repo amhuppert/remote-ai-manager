@@ -6,19 +6,24 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import { readState, writeState } from "./state";
 import type { HookEventData } from "./schemas";
-import type { ManagerState, SessionState, ConversationState } from "@/types";
+import type {
+  ManagerState,
+  SessionState,
+  ConversationState,
+  HookEventResult,
+} from "@/types";
 import { createLogger } from "./logging";
 
 const logger = createLogger("hooks");
 
-/** Find the session whose worktreePath matches the given cwd */
+/** Find the session whose worktreePath matches the given cwd, along with its project name */
 function findSessionByCwd(
   state: ManagerState,
   cwd: string,
-): SessionState | null {
-  for (const project of Object.values(state.projects)) {
+): { session: SessionState; projectName: string } | null {
+  for (const [projectName, project] of Object.entries(state.projects)) {
     for (const session of Object.values(project.sessions)) {
-      if (session.worktreePath === cwd) return session;
+      if (session.worktreePath === cwd) return { session, projectName };
     }
   }
   return null;
@@ -35,7 +40,9 @@ function findSessionByCwd(
  *
  * Returns true if a matching session was found and updated.
  */
-export async function processHookEvent(data: HookEventData): Promise<boolean> {
+export async function processHookEvent(
+  data: HookEventData,
+): Promise<HookEventResult> {
   const { session_id, transcript_path, cwd, hook_event_name } = data;
 
   logger.info("hook.event_received", {
@@ -45,18 +52,20 @@ export async function processHookEvent(data: HookEventData): Promise<boolean> {
   });
 
   // cwd is required to match against managed sessions
-  if (!cwd) return false;
+  if (!cwd) return { matched: false };
 
   const state = await readState();
-  const session = findSessionByCwd(state, cwd);
+  const match = findSessionByCwd(state, cwd);
 
-  if (!session) {
+  if (!match) {
     logger.warn("hook.unknown_session", {
       cwd,
       eventType: hook_event_name,
     });
-    return false;
+    return { matched: false };
   }
+
+  const { session, projectName } = match;
 
   // Find or create conversation for this Claude session
   let conversation: ConversationState | undefined;
@@ -123,7 +132,12 @@ export async function processHookEvent(data: HookEventData): Promise<boolean> {
   session.lastActivityAt = new Date().toISOString();
 
   await writeState(state);
-  return true;
+  return {
+    matched: true,
+    projectName,
+    sessionName: session.sessionName,
+    conversationId: conversation?.id,
+  };
 }
 
 /**

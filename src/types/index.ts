@@ -41,6 +41,8 @@ export type {
   CommandType,
   CommandItem,
   CommandsResponse,
+  SessionReadyEvent,
+  HookEventResult,
 } from "@/lib/schemas";
 
 /** Parsed transcript message */

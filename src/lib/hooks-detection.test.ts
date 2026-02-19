@@ -228,7 +228,7 @@ describe("findSessionByCwd (via processHookEvent)", () => {
       cwd: "/project-b/.worktrees/session-b",
       session_id: "new-id",
     });
-    expect(result).toBe(true);
+    expect(result.matched).toBe(true);
   });
 
   it("matches session in project-a by cwd (Req 2.1)", async () => {
@@ -239,7 +239,7 @@ describe("findSessionByCwd (via processHookEvent)", () => {
       cwd: "/project-a/.worktrees/session-a",
       session_id: "new-id",
     });
-    expect(result).toBe(true);
+    expect(result.matched).toBe(true);
   });
 
   it("returns false for unmatched cwd (Req 2.4)", async () => {
@@ -250,6 +250,6 @@ describe("findSessionByCwd (via processHookEvent)", () => {
       cwd: "/unknown/path",
       session_id: "new-id",
     });
-    expect(result).toBe(false);
+    expect(result.matched).toBe(false);
   });
 });

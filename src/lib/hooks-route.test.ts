@@ -5,14 +5,20 @@ import type { NextRequest } from "next/server";
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { processHookEventMock, detectHooksStatusMock } = vi.hoisted(() => ({
-  processHookEventMock: vi.fn(),
-  detectHooksStatusMock: vi.fn(),
-}));
+const { processHookEventMock, detectHooksStatusMock, broadcastMock } =
+  vi.hoisted(() => ({
+    processHookEventMock: vi.fn(),
+    detectHooksStatusMock: vi.fn(),
+    broadcastMock: vi.fn(),
+  }));
 
 vi.mock("@/lib/hooks", () => ({
   processHookEvent: processHookEventMock,
   detectHooksStatus: detectHooksStatusMock,
+}));
+
+vi.mock("@/lib/sse-broadcaster", () => ({
+  broadcast: broadcastMock,
 }));
 
 // Mock logging to avoid file I/O during tests
@@ -47,7 +53,7 @@ function makePostRequest(body: unknown): NextRequest {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.resetModules();
-  processHookEventMock.mockResolvedValue(false);
+  processHookEventMock.mockResolvedValue({ matched: false });
   detectHooksStatusMock.mockResolvedValue({
     installed: false,
     hasUserPromptSubmit: false,
@@ -61,7 +67,7 @@ beforeEach(() => {
 
 describe("POST /api/hooks", () => {
   it("returns 200 with { matched: true } when session matches (Req 1.1)", async () => {
-    processHookEventMock.mockResolvedValue(true);
+    processHookEventMock.mockResolvedValue({ matched: true, projectName: "/project", sessionName: "test", conversationId: "conv-1" });
     const { POST } = await import("@/app/api/hooks/route");
     const response = await POST(
       makePostRequest({
@@ -77,7 +83,7 @@ describe("POST /api/hooks", () => {
   });
 
   it("returns 200 with { matched: false } when no match (Req 1.3)", async () => {
-    processHookEventMock.mockResolvedValue(false);
+    processHookEventMock.mockResolvedValue({ matched: false });
     const { POST } = await import("@/app/api/hooks/route");
     const response = await POST(
       makePostRequest({ cwd: "/unknown/path" }),
@@ -87,6 +93,65 @@ describe("POST /api/hooks", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.matched).toBe(false);
+  });
+
+  it("broadcasts session-ready event on Stop hook with matched result", async () => {
+    processHookEventMock.mockResolvedValue({
+      matched: true,
+      projectName: "/project",
+      sessionName: "test",
+      conversationId: "conv-1",
+    });
+    const { POST } = await import("@/app/api/hooks/route");
+    await POST(
+      makePostRequest({
+        cwd: "/project/.worktrees/test",
+        session_id: "abc",
+        hook_event_name: "Stop",
+      }),
+      emptyContext,
+    );
+
+    expect(broadcastMock).toHaveBeenCalledWith({
+      type: "session-ready",
+      projectName: "/project",
+      sessionName: "test",
+      conversationId: "conv-1",
+    });
+  });
+
+  it("does not broadcast on non-Stop hook events", async () => {
+    processHookEventMock.mockResolvedValue({
+      matched: true,
+      projectName: "/project",
+      sessionName: "test",
+      conversationId: "conv-1",
+    });
+    const { POST } = await import("@/app/api/hooks/route");
+    await POST(
+      makePostRequest({
+        cwd: "/project/.worktrees/test",
+        session_id: "abc",
+        hook_event_name: "UserPromptSubmit",
+      }),
+      emptyContext,
+    );
+
+    expect(broadcastMock).not.toHaveBeenCalled();
+  });
+
+  it("does not broadcast when session is not matched", async () => {
+    processHookEventMock.mockResolvedValue({ matched: false });
+    const { POST } = await import("@/app/api/hooks/route");
+    await POST(
+      makePostRequest({
+        cwd: "/unknown/path",
+        hook_event_name: "Stop",
+      }),
+      emptyContext,
+    );
+
+    expect(broadcastMock).not.toHaveBeenCalled();
   });
 
   it("returns 400 for invalid body (Req 1.4)", async () => {

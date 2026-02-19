@@ -30,13 +30,13 @@ afterEach(async () => {
 });
 
 describe("processHookEvent", () => {
-  it("returns false when cwd is missing", async () => {
+  it("returns matched: false when cwd is missing", async () => {
     const { processHookEvent } = await import("./hooks");
     const result = await processHookEvent({ session_id: "abc" });
-    expect(result).toBe(false);
+    expect(result).toEqual({ matched: false });
   });
 
-  it("returns false when no matching session found", async () => {
+  it("returns matched: false when no matching session found", async () => {
     mockState = {
       projects: {
         "/project": {
@@ -64,7 +64,7 @@ describe("processHookEvent", () => {
       cwd: "/some/other/path",
       session_id: "abc",
     });
-    expect(result).toBe(false);
+    expect(result).toEqual({ matched: false });
   });
 
   it("updates session when cwd matches worktreePath", async () => {
@@ -97,7 +97,10 @@ describe("processHookEvent", () => {
       transcript_path: "/home/user/.claude/transcripts/abc.jsonl",
     });
 
-    expect(result).toBe(true);
+    expect(result.matched).toBe(true);
+    expect(result.projectName).toBe("/project");
+    expect(result.sessionName).toBe("test");
+    expect(result.conversationId).toBeDefined();
 
     const session = mockState.projects["/project"]!.sessions["test"]!;
     // Hook should have created a conversation with the Claude session ID
