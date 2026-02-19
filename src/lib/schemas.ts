@@ -15,26 +15,29 @@ export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 export const sessionStatusSchema = z.enum(["idle", "ready", "running"]);
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 
-export const conversationMessageSchema = z.object({
-  role: z.enum(["user", "assistant"]),
-  content: z.string(),
-  timestamp: z.string(),
+export const conversationStateSchema = z.object({
+  id: z.string(),
+  claudeSessionId: z.string().nullable(),
+  transcriptPath: z.string().nullable(),
+  status: sessionStatusSchema,
+  promptCount: z.number(),
+  createdAt: z.string(),
+  lastActivityAt: z.string(),
+  source: z.enum(["csm", "imported"]).default("csm"),
+  summary: z.string().nullable().default(null),
+  archived: z.boolean().default(false),
 });
-export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
+export type ConversationState = z.infer<typeof conversationStateSchema>;
 
 export const sessionStateSchema = z.object({
   sessionName: z.string(),
   worktreePath: z.string(),
   branchName: z.string(),
-  claudeSessionId: z.string().nullable(),
-  transcriptPath: z.string().nullable(),
-  status: sessionStatusSchema,
   createdAt: z.string(),
   lastActivityAt: z.string(),
-  promptCount: z.number(),
   archived: z.boolean(),
   finished: z.boolean().default(false),
-  messages: z.array(conversationMessageSchema).default([]),
+  conversations: z.array(conversationStateSchema).default([]),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 

@@ -67,15 +67,23 @@ const baseSession: SessionState = {
   sessionName: "test-session",
   worktreePath: "/projects/repo/.worktrees/test-session",
   branchName: "csm/test-session",
-  claudeSessionId: null,
-  transcriptPath: null,
-  status: "ready",
   createdAt: "2024-06-15T10:00:00Z",
   lastActivityAt: "2024-06-15T12:00:00Z",
-  promptCount: 5,
   archived: false,
   finished: false,
-  messages: [],
+  conversations: [{
+    id: "conv-1",
+    claudeSessionId: null,
+    transcriptPath: null,
+    status: "ready",
+
+    promptCount: 5,
+    createdAt: "2024-06-15T10:00:00Z",
+    lastActivityAt: "2024-06-15T12:00:00Z",
+    source: "csm",
+    summary: null,
+    archived: false,
+  }],
 };
 
 const emptyDiff: SessionDiff = {
@@ -215,7 +223,13 @@ describe("SessionDetailPage", () => {
     const { container } = render(
       <SessionDetailPage
         projectName="repo"
-        session={{ ...baseSession, status: "running" }}
+        session={{
+          ...baseSession,
+          conversations: [{
+            ...baseSession.conversations[0]!,
+            status: "running",
+          }],
+        }}
         messages={[]}
         diff={emptyDiff}
         commits={[]}

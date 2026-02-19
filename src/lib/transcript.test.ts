@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile, mkdir, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { readTranscript } from "./transcript";
+import { readTranscript, expandTilde, readConversationMessages } from "./transcript";
 
 const TEST_DIR = path.join("/tmp", "csm-transcript-test-" + Date.now());
 
@@ -213,5 +214,58 @@ describe("readTranscript", () => {
     expect(result[0]!.content).toBe("user via role");
     expect(result[1]!.role).toBe("assistant");
     expect(result[1]!.content).toBe("assistant via role");
+  });
+});
+
+// ==========================================================================
+// expandTilde
+// ==========================================================================
+
+describe("expandTilde", () => {
+  it("expands ~/path to homedir/path", () => {
+    const result = expandTilde("~/foo/bar");
+    expect(result).toBe(os.homedir() + "/foo/bar");
+  });
+
+  it("leaves absolute paths unchanged", () => {
+    expect(expandTilde("/absolute/path")).toBe("/absolute/path");
+  });
+
+  it("leaves relative paths unchanged", () => {
+    expect(expandTilde("relative/path")).toBe("relative/path");
+  });
+});
+
+// ==========================================================================
+// readConversationMessages
+// ==========================================================================
+
+describe("readConversationMessages", () => {
+  it("returns empty array for null path", async () => {
+    const result = await readConversationMessages(null);
+    expect(result).toEqual([]);
+  });
+
+  it("expands tilde and reads transcript", async () => {
+    // Write a transcript file in the test dir
+    const filePath = path.join(TEST_DIR, "conv.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        message: { content: "Hello" },
+        timestamp: "2024-01-01T00:00:00Z",
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    // readConversationMessages with absolute path should work
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.content).toBe("Hello");
+  });
+
+  it("returns empty array for non-existent transcript", async () => {
+    const result = await readConversationMessages("/tmp/nonexistent-xyz.jsonl");
+    expect(result).toEqual([]);
   });
 });

@@ -47,15 +47,23 @@ const makeSessions = (count: number): SessionState[] =>
     sessionName: `session-${i + 1}`,
     worktreePath: `/project/.worktrees/session-${i + 1}`,
     branchName: `csm/session-${i + 1}`,
-    claudeSessionId: null,
-    transcriptPath: null,
-    status: i === 0 ? ("running" as const) : ("ready" as const),
     createdAt: now,
     lastActivityAt: now,
-    promptCount: i * 3,
     archived: false,
     finished: false,
-    messages: [],
+    conversations: [{
+      id: `conv-${i + 1}`,
+      claudeSessionId: null,
+      transcriptPath: null,
+      status: i === 0 ? ("running" as const) : ("ready" as const),
+
+      promptCount: i * 3,
+      createdAt: now,
+      lastActivityAt: now,
+      source: "csm" as const,
+      summary: null,
+      archived: false,
+    }],
   }));
 
 // ===========================================================================

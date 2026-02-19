@@ -1,44 +1,48 @@
-# Technical Design: Session Lifecycle
+# Technical Design: Session Lifecycle — Conversation Model
 
 ## Overview
 
-**Purpose**: The Session Lifecycle feature delivers isolated coding session management to developers using the Claude Session Manager (CSM). Each session is backed by a git worktree and a dedicated branch, enabling parallel Claude Code instances to work within the same repository without interference.
+**Purpose**: This feature expands CSM sessions from a one-to-one relationship with Claude Code sessions to a one-to-many relationship by introducing a **Conversation** entity. Each Conversation maps to a single Claude Code session and carries its own status, messages, and metadata. This enables seamless switching between CSM UI and terminal-based Claude Code usage within the same session.
 
-**Users**: Developers managing multiple Claude Code sessions across git repositories will use this for creating, monitoring, and deleting isolated coding environments.
+**Users**: Developers who work with Claude Code through both CSM and the CLI will use this to track all their interactions in one place, switch between conversations, and start new ones from either interface.
 
-**Impact**: This is the foundational feature that all other CSM capabilities (prompt execution, transcripts, diffs, hooks) depend on. It manages the worktree/branch lifecycle and the session state that other features query.
+**Impact**: Changes the core `SessionState` data model by extracting per-conversation fields (`claudeSessionId`, `transcriptPath`, `status`, `messages`, `promptCount`) into a new `ConversationState` entity. Introduces a new `conversations.ts` module, new API routes, and updated UI views.
 
 ### Goals
 
-- Provide complete session create/delete lifecycle with git worktree isolation
-- Validate session names and generate predictable, git-safe branch names
-- Support optional per-repository initialization scripts for project-specific setup
-- Ensure full rollback on creation failure with no orphaned resources
-- Persist session state atomically for crash safety
+- Model conversations as first-class entities within sessions (one-to-many)
+- Derive session-level status, activity, and prompt count from conversations
+- Auto-import Claude Code sessions created via CLI in the session's worktree
+- Provide UI for listing, creating, and switching between conversations
+- Maintain backward compatibility with existing state files via read-time migration
 
 ### Non-Goals
 
-- Session archival/restore workflow (future consideration)
-- Multi-user concurrent access to the same CSM instance
-- Branch merge or conflict resolution between sessions
-- Remote worktree management (sessions are local only)
+- Conversation forking (future consideration per PROMPT.md)
+- Editing previously sent user messages (future consideration)
+- Real-time sync with Claude Code (polling-based, not live)
+- Multi-user concurrent access
 
 ## Architecture
 
 ### Existing Architecture Analysis
 
-The session lifecycle is fully implemented across three core modules:
+The session lifecycle is fully implemented across core modules (see previous design). Key patterns preserved:
 
-- **`src/lib/sessions.ts`** — Contains `createSession()` and `deleteSession()` functions with inline validation, git operations, init script execution, rollback logic, and state persistence
-- **`src/lib/state.ts`** — Provides atomic read/write operations for the JSON state file using write-to-temp-then-rename pattern
-- **`src/app/api/projects/[name]/sessions/route.ts`** — REST API layer exposing GET/POST/DELETE endpoints that delegate to the session functions
+- Flat `src/lib/` module structure
+- Schema-first modeling via Zod v4
+- Git CLI via `execFile`, filesystem-backed state with atomic writes
+- Single-flight locking per session (worktree-level)
 
-Key patterns preserved:
+Changes required:
 
-- Flat `src/lib/` module structure (no subdirectories)
-- Schema-first data modeling via Zod v4 in `src/lib/schemas.ts`
-- Git CLI invoked via `execFile` (no git library dependency)
-- Filesystem-backed state with atomic writes
+- **`src/lib/schemas.ts`** — New `conversationStateSchema`; updated `sessionStateSchema` replacing per-session fields with `conversations` array
+- **`src/lib/prompt.ts`** — Target specific conversation; use `--session-id` instead of `-c`
+- **`src/lib/hooks.ts`** — Route events to conversations by `session_id`; auto-create conversations for unknown sessions
+- **`src/lib/state.ts`** — New conversation-level query/update functions
+- **New `src/lib/conversations.ts`** — Conversation CRUD, auto-import discovery
+- **New API routes** — Conversation endpoints under session routes
+- **New UI routes** — Session page becomes conversation list; conversation detail as sub-route
 
 ### Architecture Pattern & Boundary Map
 
@@ -46,374 +50,508 @@ Key patterns preserved:
 graph TB
     subgraph API_Layer
         SessionsRoute[Sessions API Route]
+        ConvoRoute[Conversations API Route]
+        PromptRoute[Prompt API Route]
+        HooksRoute[Hooks API Route]
     end
 
     subgraph Domain_Layer
         Sessions[sessions.ts]
+        Conversations[conversations.ts]
+        Prompt[prompt.ts]
+        Hooks[hooks.ts]
         State[state.ts]
-        Config[config.ts]
         Schemas[schemas.ts]
+        Lock[lock.ts]
     end
 
     subgraph External
         GitCLI[Git CLI]
+        ClaudeDir[Claude Code Storage]
         FileSystem[Filesystem]
-        RepoConfig[ClaudeSessionManager.json]
+    end
+
+    subgraph UI_Layer
+        SessionPage[Session Page - Convo List]
+        ConvoDetail[Conversation Detail Page]
+        ConvoSidebar[Conversation Sidebar]
     end
 
     SessionsRoute --> Sessions
+    ConvoRoute --> Conversations
+    PromptRoute --> Prompt
+    HooksRoute --> Hooks
     Sessions --> State
-    Sessions --> Config
-    Sessions --> GitCLI
-    Sessions --> FileSystem
-    Sessions --> RepoConfig
-    State --> FileSystem
-    State --> Config
-    Config --> FileSystem
-    Sessions --> Schemas
+    Conversations --> State
+    Conversations --> ClaudeDir
+    Prompt --> State
+    Prompt --> Lock
+    Prompt --> GitCLI
+    Hooks --> State
+    Hooks --> Conversations
     State --> Schemas
+    State --> FileSystem
+
+    SessionPage --> ConvoRoute
+    ConvoDetail --> PromptRoute
+    ConvoDetail --> ConvoRoute
+    ConvoSidebar --> ConvoRoute
 ```
 
 **Architecture Integration**:
 
-- Selected pattern: Layered architecture with flat domain modules
-- Domain/feature boundaries: API route handles HTTP concerns; `sessions.ts` owns all session logic; `state.ts` owns persistence
-- Existing patterns preserved: Schema-first modeling, atomic state writes, `execFile` for git operations
-- Steering compliance: Flat lib structure, Zod v4 conventions, TypeScript strict mode
+- Selected pattern: Layered architecture with new `conversations.ts` module (see `research.md` for alternatives)
+- Domain boundaries: `sessions.ts` owns session lifecycle; `conversations.ts` owns conversation CRUD and auto-import; `prompt.ts` owns execution
+- Existing patterns preserved: Schema-first modeling, atomic state writes, flat lib structure, `execFile` for CLI
+- New components rationale: `conversations.ts` encapsulates a distinct domain concept with substantial logic (discovery, import, CRUD)
+- Steering compliance: Flat lib modules, Zod v4, TypeScript strict, no external dependencies
 
 ### Technology Stack
 
-| Layer      | Choice / Version        | Role in Feature                                            | Notes                                          |
-| ---------- | ----------------------- | ---------------------------------------------------------- | ---------------------------------------------- |
-| Backend    | Next.js 15 App Router   | API route handlers (GET/POST/DELETE)                       | `force-dynamic` for session routes             |
-| Language   | TypeScript 5.7 (strict) | All session logic and types                                | `noUncheckedIndexedAccess` enabled             |
-| Validation | Zod v4                  | Schema definitions for session state, config, API requests | `z.record(z.string(), valueSchema)` convention |
-| Process    | Node.js `child_process` | Git CLI and init script execution via `execFile`           | Promisified for async/await                    |
-| Storage    | JSON filesystem         | State persistence via atomic write-to-temp-then-rename     | No database                                    |
+| Layer | Choice / Version | Role in Feature | Notes |
+|-------|------------------|-----------------|-------|
+| Backend | Next.js 15 App Router | API routes for conversation endpoints | New dynamic route segment `[conversationId]` |
+| Language | TypeScript 5.7 (strict) | All conversation logic and types | `noUncheckedIndexedAccess` |
+| Validation | Zod v4 | `conversationStateSchema`, updated `sessionStateSchema` | `.default([])` for migration |
+| Process | Node.js `child_process` | Claude CLI with `--session-id` flag | Replaces `-c` continuation |
+| Storage | JSON filesystem | Conversations stored within session state | Atomic writes preserved |
+| Discovery | Node.js `fs` | Read `~/.claude/projects/` for auto-import | `sessions-index.json` + JSONL fallback |
 
 ## System Flows
 
-### Session Creation Flow
+### Prompt Execution (Conversation-Scoped)
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant API as Sessions API Route
-    participant SM as sessions.ts
-    participant Git as Git CLI
-    participant FS as Filesystem
+    participant API as Prompt API Route
+    participant P as prompt.ts
+    participant Lock as lock.ts
     participant State as state.ts
+    participant CLI as Claude CLI
 
-    Client->>API: POST /api/projects/[name]/sessions
-    API->>API: Parse and validate request body
-    API->>SM: createSession(projectPath, sessionName)
-    SM->>SM: validateSessionName(name)
-    SM->>State: readState()
-    State->>FS: Read state.json
-    SM->>SM: Check uniqueness in project
-    SM->>SM: sanitizeBranchName(name)
-    SM->>Git: git worktree add -b csm/name path main
-    SM->>FS: Check for ClaudeSessionManager.json
-    alt Init script configured
-        SM->>FS: Execute init script in worktree
+    Client->>API: POST /projects/[name]/sessions/[session]/conversations/[convoId]/prompt
+    API->>P: executePrompt(projectPath, sessionName, conversationId, prompt)
+    P->>Lock: acquireSessionLock(projectPath, sessionName)
+    P->>State: getConversation(projectPath, sessionName, conversationId)
+    P->>State: updateConversation(status: running, add user message)
+    alt New conversation (no claudeSessionId)
+        P->>CLI: claude -p "prompt" --output-format json
+    else Existing conversation
+        P->>CLI: claude --session-id UUID -p "prompt" --output-format json
     end
-    SM->>State: writeState(updatedState)
-    State->>FS: Write temp file then rename
-    SM-->>API: SessionState
-    API-->>Client: 201 Created
+    CLI-->>P: JSON with result and session_id
+    P->>State: updateConversation(promptCount++, add assistant message, set sessionId)
+    P->>State: updateConversation(status: ready)
+    P->>Lock: release()
+    P-->>API: response
+    API-->>Client: 200 OK
 ```
 
-### Session Creation Rollback Flow
+### Auto-Import Discovery
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as Conversations API Route
+    participant C as conversations.ts
+    participant FS as Claude Code Storage
+    participant State as state.ts
+
+    Client->>API: GET /projects/[name]/sessions/[session]/conversations?import=true
+    API->>C: discoverAndImportConversations(projectPath, session)
+    C->>C: Encode worktree path to Claude project dir name
+    C->>FS: Read sessions-index.json
+    alt Index exists
+        C->>C: Parse entries, filter by cwd/gitBranch
+    else No index
+        C->>FS: List *.jsonl files in project dir
+        C->>FS: Parse first entries of each JSONL for metadata
+    end
+    C->>State: Get existing conversations for session
+    C->>C: Filter out already-tracked session IDs
+    loop For each new session
+        C->>State: Create ConversationState record
+    end
+    C-->>API: Updated conversation list
+    API-->>Client: ConversationState[]
+```
+
+### Hook Event Routing
 
 ```mermaid
 flowchart TD
-    A[Start Creation] --> B[Validate Name]
-    B --> C{Valid?}
-    C -->|No| D[Throw Error]
-    C -->|Yes| E[Check Uniqueness]
-    E --> F{Unique?}
-    F -->|No| D
-    F -->|Yes| G[Create Worktree + Branch]
-    G --> H{Success?}
-    H -->|No| I[Rollback]
-    H -->|Yes| J[Run Init Script]
-    J --> K{Success?}
-    K -->|No| I
-    K -->|Yes| L[Persist State]
-    L --> M[Return Session]
-    I --> N[Remove Worktree via git]
-    N --> O{Removed?}
-    O -->|No| P[rm -rf worktree dir]
-    O -->|Yes| Q[Delete Branch]
-    P --> Q
-    Q --> R[Re-throw Original Error]
-```
-
-### Session Deletion Flow
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API as Sessions API Route
-    participant SM as sessions.ts
-    participant Git as Git CLI
-    participant FS as Filesystem
-    participant State as state.ts
-
-    Client->>API: DELETE /api/projects/[name]/sessions?sessionName=x
-    API->>SM: deleteSession(projectPath, sessionName)
-    SM->>State: readState()
-    SM->>SM: Validate project and session exist
-    alt Worktree exists on disk
-        SM->>Git: git worktree remove --force path
-        alt Git removal fails
-            SM->>FS: rm -rf worktree directory
-        end
-    end
-    SM->>State: writeState(state without session)
-    SM-->>API: void
-    API-->>Client: 200 OK
+    A[Hook event received] --> B{Has session_id?}
+    B -->|Yes| C[Find conversation by claudeSessionId]
+    C --> D{Found?}
+    D -->|Yes| E[Update conversation metadata]
+    B -->|No| F{Has cwd?}
+    F -->|Yes| G[Find session by worktreePath]
+    F -->|No| H[Reject - no match]
+    D -->|No| G
+    G --> I{Session found?}
+    I -->|No| H
+    I -->|Yes| J[Create new conversation for session]
+    J --> E
+    E --> K[Persist state]
 ```
 
 ## Requirements Traceability
 
-| Requirement | Summary                          | Components             | Interfaces | Flows             |
-| ----------- | -------------------------------- | ---------------------- | ---------- | ----------------- |
-| 1.1         | Non-empty, max 100 chars         | validateSessionName    | —          | Creation          |
-| 1.2         | Character set validation         | validateSessionName    | —          | Creation          |
-| 1.3         | Empty name error message         | validateSessionName    | —          | Creation          |
-| 1.4         | Length error message             | validateSessionName    | —          | Creation          |
-| 1.5         | Invalid chars error message      | validateSessionName    | —          | Creation          |
-| 2.1         | Lowercase conversion             | sanitizeBranchName     | —          | Creation          |
-| 2.2         | Non-alphanumeric to hyphens      | sanitizeBranchName     | —          | Creation          |
-| 2.3         | Collapse consecutive hyphens     | sanitizeBranchName     | —          | Creation          |
-| 2.4         | Strip leading/trailing hyphens   | sanitizeBranchName     | —          | Creation          |
-| 2.5         | csm/ prefix                      | sanitizeBranchName     | —          | Creation          |
-| 3.1         | Worktree at .worktrees/name      | createSession          | Git CLI    | Creation          |
-| 3.2         | Branch from main                 | createSession          | Git CLI    | Creation          |
-| 3.3         | Worktree path conflict error     | createSession          | —          | Creation          |
-| 3.4         | Propagate error after rollback   | createSession          | —          | Creation Rollback |
-| 4.1         | Check existing sessions          | createSession          | State      | Creation          |
-| 4.2         | Duplicate name error             | createSession          | —          | Creation          |
-| 5.1         | Check ClaudeSessionManager.json  | readRepoConfig         | Filesystem | Creation          |
-| 5.2         | Resolve and execute init script  | createSession          | execFile   | Creation          |
-| 5.3         | Provide environment variables    | createSession          | execFile   | Creation          |
-| 5.4         | 60-second timeout                | createSession          | execFile   | Creation          |
-| 5.5         | Script not found error           | createSession          | —          | Creation          |
-| 5.6         | Script failure triggers rollback | createSession          | —          | Creation Rollback |
-| 6.1         | Remove worktree via git          | createSession rollback | Git CLI    | Creation Rollback |
-| 6.2         | Filesystem fallback removal      | createSession rollback | Filesystem | Creation Rollback |
-| 6.3         | Delete branch via git            | createSession rollback | Git CLI    | Creation Rollback |
-| 6.4         | Suppress cleanup errors          | createSession rollback | —          | Creation Rollback |
-| 6.5         | No partial state on failure      | createSession          | State      | Creation Rollback |
-| 7.1         | Persist session to JSON state    | createSession          | State      | Creation          |
-| 7.2         | Store all session properties     | createSession          | State      | Creation          |
-| 7.3         | Auto-create project entry        | createSession          | State      | Creation          |
-| 7.4         | ISO 8601 timestamps              | createSession          | —          | Creation          |
-| 8.1         | Remove worktree via git          | deleteSession          | Git CLI    | Deletion          |
-| 8.2         | Filesystem fallback removal      | deleteSession          | Filesystem | Deletion          |
-| 8.3         | Remove session from state        | deleteSession          | State      | Deletion          |
-| 8.4         | Preserve branch and transcripts  | deleteSession          | —          | Deletion          |
-| 8.5         | Project not found error          | deleteSession          | —          | Deletion          |
-| 8.6         | Session not found error          | deleteSession          | —          | Deletion          |
-| 8.7         | Handle missing worktree dir      | deleteSession          | —          | Deletion          |
+| Requirement | Summary | Components | Interfaces | Flows |
+|-------------|---------|------------|------------|-------|
+| 1.1–1.5 | Session name validation | validateSessionName | — | Creation |
+| 2.1–2.5 | Branch name sanitization | sanitizeBranchName | — | Creation |
+| 3.1–3.4 | Worktree creation | createSession | Git CLI | Creation |
+| 4.1–4.2 | Session uniqueness | createSession | State | Creation |
+| 5.1–5.6 | Init script execution | createSession | execFile | Creation |
+| 6.1–6.5 | Rollback on failure | createSession | Git CLI, FS | Creation Rollback |
+| 7.1–7.4 | Session state persistence | createSession | State | Creation |
+| 8.1–8.7 | Session deletion | deleteSession | Git CLI, State | Deletion |
+| 9.1–9.4 | Conversation entity | conversationStateSchema, createConversation | State | — |
+| 10.1–10.5 | Session-conversation relationship | sessionStateSchema, deriveSessionStatus | State | — |
+| 11.1–11.5 | Conversation list view | ConversationList, ConversationCard | Conversations API | — |
+| 12.1–12.6 | Conversation detail view | ConversationDetailPage, ConversationSidebar | Prompt API | Prompt Execution |
+| 13.1–13.4 | Conversation creation from CSM | createConversation, executePrompt | Conversations API, CLI | Prompt Execution |
+| 14.1–14.7 | Auto-import of Claude Code sessions | discoverConversations, importConversations | Claude Code Storage | Auto-Import |
+| 15.1–15.6 | Prompt execution per conversation | executePrompt | Prompt API, CLI, Lock | Prompt Execution |
+| 16.1–16.4 | Hook event routing | processHookEvent | Hooks API, State | Hook Routing |
 
 ## Components and Interfaces
 
-| Component           | Domain/Layer         | Intent                                          | Req Coverage  | Key Dependencies                          | Contracts           |
-| ------------------- | -------------------- | ----------------------------------------------- | ------------- | ----------------------------------------- | ------------------- |
-| validateSessionName | Domain / sessions.ts | Validate session name format and length         | 1.1–1.5       | None                                      | Service             |
-| sanitizeBranchName  | Domain / sessions.ts | Convert session name to git-safe branch suffix  | 2.1–2.5       | None                                      | Service             |
-| readRepoConfig      | Domain / sessions.ts | Read optional per-repo config                   | 5.1           | Filesystem (P1)                           | Service             |
-| createSession       | Domain / sessions.ts | Orchestrate full session creation with rollback | 1–7           | Git CLI (P0), State (P0), Filesystem (P1) | Service, API, State |
-| deleteSession       | Domain / sessions.ts | Remove session worktree and state               | 8.1–8.7       | Git CLI (P0), State (P0), Filesystem (P1) | Service, API, State |
-| Sessions API Route  | API / route.ts       | HTTP endpoints for session CRUD                 | All           | sessions.ts (P0), project-resolver (P0)   | API                 |
-| state.ts            | Domain / state.ts    | Atomic JSON state persistence                   | 7.1, 7.3, 8.3 | Filesystem (P0), Config (P0)              | State               |
+| Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
+|-----------|-------------|--------|-------------|-----------------|-----------|
+| conversationStateSchema | Domain / schemas.ts | Define Conversation data shape | 9.1–9.4 | None | State |
+| sessionStateSchema (updated) | Domain / schemas.ts | Add conversations array, derive status | 10.1–10.5 | conversationStateSchema (P0) | State |
+| conversations.ts | Domain / lib | Conversation CRUD and auto-import | 9, 13, 14 | state.ts (P0), Claude Code Storage (P1) | Service, State |
+| prompt.ts (updated) | Domain / lib | Conversation-scoped prompt execution | 13, 15 | lock.ts (P0), state.ts (P0), Claude CLI (P0) | Service |
+| hooks.ts (updated) | Domain / lib | Route hook events to conversations | 16.1–16.4 | state.ts (P0), conversations.ts (P1) | Service |
+| Conversations API Route | API / route.ts | HTTP endpoints for conversation CRUD | 9, 11, 13, 14 | conversations.ts (P0) | API |
+| Prompt API Route (updated) | API / route.ts | Conversation-scoped prompt endpoint | 15 | prompt.ts (P0) | API |
+| ConversationList | UI / page component | Session page showing conversation cards | 11.1–11.5 | Conversations API (P0) | — |
+| ConversationDetailPage | UI / page component | Conversation messages and prompt input | 12.1–12.6 | Prompt API (P0), Conversations API (P0) | — |
+| ConversationSidebar | UI / component | Quick-switch sidebar in detail view | 12.2–12.3 | Conversations API (P0) | — |
 
 ### Domain Layer
 
-#### validateSessionName
+#### conversationStateSchema
 
-| Field        | Detail                                                          |
-| ------------ | --------------------------------------------------------------- |
-| Intent       | Validate session name format, length, and character constraints |
-| Requirements | 1.1, 1.2, 1.3, 1.4, 1.5                                         |
-
-**Responsibilities & Constraints**
-
-- Validates non-empty, max 100 characters
-- Enforces regex pattern: starts with alphanumeric, allows letters/numbers/spaces/hyphens/underscores
-- Returns `string | null` — error message or null for valid names
-
-##### Service Interface
-
-```typescript
-function validateSessionName(name: string): string | null;
-```
-
-- Preconditions: None
-- Postconditions: Returns null if valid; descriptive error string if invalid
-- Invariants: Pure function, no side effects
-
-#### sanitizeBranchName
-
-| Field        | Detail                                               |
-| ------------ | ---------------------------------------------------- |
-| Intent       | Transform session name into a git-safe branch suffix |
-| Requirements | 2.1, 2.2, 2.3, 2.4, 2.5                              |
+| Field | Detail |
+|-------|--------|
+| Intent | Define the Conversation data entity as a Zod schema |
+| Requirements | 9.1, 9.2, 9.3, 9.4 |
 
 **Responsibilities & Constraints**
 
-- Lowercase, replace non-alphanumeric with hyphens, collapse consecutive hyphens, strip leading/trailing hyphens
-- Does NOT add the `csm/` prefix (caller adds it)
+- Defines all conversation-level properties: ID, Claude Code session ID, transcript path, status, messages, prompt count, timestamps
+- Generates unique IDs via `crypto.randomUUID()` at creation time
+- Status is one of `idle`, `ready`, `running`
 
-##### Service Interface
-
-```typescript
-function sanitizeBranchName(sessionName: string): string;
-```
-
-- Preconditions: Non-empty string (validated upstream)
-- Postconditions: Returns lowercase hyphen-separated string with no leading/trailing hyphens
-- Invariants: Pure function, deterministic
-
-#### readRepoConfig
-
-| Field        | Detail                                                              |
-| ------------ | ------------------------------------------------------------------- |
-| Intent       | Read optional per-repo configuration from ClaudeSessionManager.json |
-| Requirements | 5.1                                                                 |
-
-**Responsibilities & Constraints**
-
-- Checks for `ClaudeSessionManager.json` in project root
-- Parses with Zod `perRepoConfigSchema`
-- Returns null if config file does not exist
-
-##### Service Interface
-
-```typescript
-function readRepoConfig(repoRoot: string): Promise<PerRepoConfig | null>;
-```
-
-- Preconditions: `repoRoot` is a valid directory path
-- Postconditions: Returns parsed config or null
-- Invariants: Does not modify filesystem
-
-#### createSession
-
-| Field        | Detail                                                                                                                   |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| Intent       | Orchestrate full session creation: validate, create worktree/branch, run init script, persist state, rollback on failure |
-| Requirements | 1.1–7.4                                                                                                                  |
-
-**Responsibilities & Constraints**
-
-- Validates name, checks uniqueness, sanitizes branch name
-- Creates git worktree + branch from main
-- Runs optional init script with environment variables and timeout
-- Persists session state only on success
-- Full rollback on any failure: worktree removal (git then fs), branch deletion
-
-**Dependencies**
-
-- Outbound: `state.ts` — read/write state (P0)
-- Outbound: `schemas.ts` — `perRepoConfigSchema` for config parsing (P1)
-- External: Git CLI — worktree and branch operations (P0)
-- External: Filesystem — init script execution, worktree existence checks (P1)
-
-##### Service Interface
-
-```typescript
-function createSession(
-  projectPath: string,
-  sessionName: string,
-): Promise<SessionState>;
-```
-
-- Preconditions: `projectPath` is a valid git repository root
-- Postconditions: Returns `SessionState` with status "ready"; state file updated atomically
-- Invariants: On failure, no worktree, branch, or state remains (full rollback)
-- Error envelope: Throws `Error` with descriptive message for validation, uniqueness, git, or init script failures
-
-##### API Contract
-
-| Method | Endpoint                      | Request                   | Response             | Errors                                              |
-| ------ | ----------------------------- | ------------------------- | -------------------- | --------------------------------------------------- |
-| POST   | /api/projects/[name]/sessions | `{ sessionName: string }` | `SessionState` (201) | 400 (validation/duplicate), 404 (project not found) |
+**Contracts**: State [x]
 
 ##### State Management
 
-- State model: `SessionState` within `ProjectState.sessions` record, keyed by session name
-- Persistence: Atomic write via `writeState()` (temp file + rename)
-- Concurrency: No locking — acceptable for local single-user tool
+```typescript
+const conversationStateSchema = z.object({
+  id: z.string(),
+  claudeSessionId: z.string().nullable(),
+  transcriptPath: z.string().nullable(),
+  status: sessionStatusSchema,
+  messages: z.array(conversationMessageSchema).default([]),
+  promptCount: z.number(),
+  createdAt: z.string(),
+  lastActivityAt: z.string(),
+  source: z.enum(["csm", "imported"]).default("csm"),
+  summary: z.string().nullable().default(null),
+});
+type ConversationState = z.infer<typeof conversationStateSchema>;
+```
 
-#### deleteSession
+#### sessionStateSchema (updated)
 
-| Field        | Detail                                                                        |
-| ------------ | ----------------------------------------------------------------------------- |
-| Intent       | Remove session worktree and clean up state, preserving branch and transcripts |
-| Requirements | 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7                                             |
+| Field | Detail |
+|-------|--------|
+| Intent | Update session schema to hold conversations array instead of per-session conversation fields |
+| Requirements | 10.1, 10.2, 10.3, 10.4, 10.5, 7.2 |
 
 **Responsibilities & Constraints**
 
-- Validates project and session existence in state
-- Removes worktree via git, with filesystem fallback
-- Removes session from state
-- Does NOT delete the git branch or transcript files
+- Removes `claudeSessionId`, `transcriptPath`, `status`, `messages`, `promptCount` from session level
+- Adds `conversations` array (default empty)
+- Legacy fields kept as `.optional()` for read-time migration compatibility
+- Derived properties (`status`, `lastActivityAt`, `promptCount`) computed by helper functions, not stored
+
+**Contracts**: State [x]
+
+##### State Management
+
+```typescript
+// Updated schema — conversations array replaces per-session fields
+const sessionStateSchema = z.object({
+  sessionName: z.string(),
+  worktreePath: z.string(),
+  branchName: z.string(),
+  createdAt: z.string(),
+  lastActivityAt: z.string(),
+  archived: z.boolean(),
+  finished: z.boolean().default(false),
+  conversations: z.array(conversationStateSchema).default([]),
+  // Legacy fields kept optional for backward compatibility during migration
+  claudeSessionId: z.string().nullable().optional(),
+  transcriptPath: z.string().nullable().optional(),
+  status: sessionStatusSchema.optional(),
+  messages: z.array(conversationMessageSchema).optional(),
+  promptCount: z.number().optional(),
+});
+```
+
+**Derived property helpers** (pure functions in `conversations.ts`):
+
+```typescript
+function deriveSessionStatus(session: SessionState): SessionStatus;
+function deriveSessionPromptCount(session: SessionState): number;
+function deriveSessionLastActivity(session: SessionState): string;
+```
+
+**Implementation Notes**
+
+- Read-time migration: when `conversations` is empty but legacy `claudeSessionId` or `messages` exist, `migrateSessionState()` wraps them into a single Conversation
+- Migration runs once per state read; migrated state is persisted on next write
+
+#### conversations.ts
+
+| Field | Detail |
+|-------|--------|
+| Intent | Conversation CRUD operations and Claude Code session auto-import |
+| Requirements | 9.1–9.4, 13.1, 14.1–14.7, 10.3–10.5 |
+
+**Responsibilities & Constraints**
+
+- Creates new Conversation records within a session
+- Discovers Claude Code sessions by scanning `~/.claude/projects/<encoded-path>/`
+- Imports untracked sessions as new Conversation records
+- Provides derived status/activity/promptCount helpers
+- Does NOT own session-level state mutations (delegated to `state.ts`)
 
 **Dependencies**
 
-- Outbound: `state.ts` — read/write state (P0)
-- External: Git CLI — worktree removal (P0)
-- External: Filesystem — fallback removal (P1)
+- Outbound: `state.ts` — read/write session and conversation state (P0)
+- External: `~/.claude/projects/` — Claude Code session files (P1)
+- Outbound: `schemas.ts` — `conversationStateSchema` (P0)
+
+**Contracts**: Service [x] / State [x]
 
 ##### Service Interface
 
 ```typescript
-function deleteSession(projectPath: string, sessionName: string): Promise<void>;
+// Create a new empty conversation in a session
+function createConversation(
+  projectPath: string,
+  sessionName: string,
+): Promise<ConversationState>;
+
+// Get a specific conversation by ID
+function getConversation(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+): Promise<ConversationState | null>;
+
+// Get all conversations for a session
+function getSessionConversations(
+  projectPath: string,
+  sessionName: string,
+): Promise<ConversationState[]>;
+
+// Discover and import Claude Code sessions from filesystem
+function discoverAndImportConversations(
+  projectPath: string,
+  session: SessionState,
+): Promise<ConversationState[]>;
+
+// Derive session-level status from conversations
+function deriveSessionStatus(session: SessionState): SessionStatus;
+function deriveSessionPromptCount(session: SessionState): number;
+function deriveSessionLastActivity(session: SessionState): string;
+
+// Migrate legacy session state (inline conversation fields) to conversations array
+function migrateSessionState(session: SessionState): SessionState;
 ```
 
-- Preconditions: `projectPath` and `sessionName` must exist in state
-- Postconditions: Session removed from state; worktree removed from filesystem (if existed)
-- Error envelope: Throws `Error` for missing project or session
+- Preconditions: `projectPath` and `sessionName` must exist in state for mutation operations
+- Postconditions: New conversations persisted atomically; imported conversations deduplicated by Claude Code session ID
+- Invariants: Conversation IDs are unique within a session; no duplicate Claude Code session IDs across conversations
 
-##### API Contract
+##### State Management
 
-| Method | Endpoint                                    | Request                    | Response                  | Errors                                                     |
-| ------ | ------------------------------------------- | -------------------------- | ------------------------- | ---------------------------------------------------------- |
-| DELETE | /api/projects/[name]/sessions?sessionName=x | Query param: `sessionName` | `{ success: true }` (200) | 400 (missing param/session error), 404 (project not found) |
+- Discovery reads `~/.claude/projects/<encoded-path>/sessions-index.json` when available
+- Fallback: parses first entry of each `.jsonl` file for `sessionId`, `cwd`, `gitBranch`, `timestamp`
+- Encoding: worktree path `/home/user/project/.worktrees/name` → `-home-user-project--worktrees-name` (slashes to dashes, leading dash)
+- Deduplication: compares discovered `sessionId` against existing `conversation.claudeSessionId` values
 
-### API Layer
+**Implementation Notes**
 
-#### Sessions API Route
+- Discovery is triggered on session page load (GET with `?import=true`) and when opening conversation list
+- JSONL fallback reads only the first 5 lines of each file (sufficient for metadata extraction)
+- Filter criteria: `cwd` matches `session.worktreePath` OR `gitBranch` matches `session.branchName`
 
-| Field        | Detail                                     |
-| ------------ | ------------------------------------------ |
-| Intent       | HTTP interface for session CRUD operations |
-| Requirements | All (HTTP exposure)                        |
+#### prompt.ts (updated)
+
+| Field | Detail |
+|-------|--------|
+| Intent | Execute prompts scoped to a specific conversation |
+| Requirements | 13.2, 13.3, 13.4, 15.1–15.6 |
 
 **Responsibilities & Constraints**
 
-- Resolves project path from URL parameter via `project-resolver.ts`
-- Parses request bodies with Zod `createSessionRequestSchema`
-- Maps domain errors to appropriate HTTP status codes
-- Uses `force-dynamic` for non-cacheable responses
+- Accepts `conversationId` parameter to target a specific conversation
+- Uses `--session-id <uuid>` for existing conversations (replaces `-c` flag)
+- Omits `--session-id` for new conversations (first prompt)
+- Stores messages on the conversation, not the session
+- Lock remains at session level (worktree-level)
 
 **Dependencies**
 
-- Inbound: HTTP clients (UI, external tools) (P0)
-- Outbound: `sessions.ts` — `createSession`, `deleteSession` (P0)
-- Outbound: `state.ts` — `getProjectSessions` (P0)
-- Outbound: `project-resolver.ts` — path resolution (P0)
+- Outbound: `state.ts` — read/update conversation within session (P0)
+- Outbound: `lock.ts` — session-level single-flight lock (P0)
+- External: Claude CLI — `--session-id` flag for continuation (P0)
+
+**Contracts**: Service [x]
+
+##### Service Interface
+
+```typescript
+function executePrompt(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+  promptText: string,
+): Promise<{ output: string; claudeResponse: string }>;
+```
+
+- Preconditions: Conversation must exist within session; session must not be locked
+- Postconditions: Conversation status transitions `ready → running → ready`; messages stored on conversation; `claudeSessionId` set from CLI response
+- Error envelope: Throws `Error` for missing conversation, busy session, or CLI failure
+
+**Implementation Notes**
+
+- CLI args change: `session.promptCount > 0 ? ["-c"] : []` becomes `conversation.claudeSessionId ? ["--session-id", conversation.claudeSessionId] : []`
+- The `mutateSession` helper becomes `mutateConversation` that targets a specific conversation within the session's array
+- Lock key unchanged: `${projectPath}::${sessionName}` (worktree-level, not conversation-level)
+
+#### hooks.ts (updated)
+
+| Field | Detail |
+|-------|--------|
+| Intent | Route hook events to the correct conversation, creating new conversations for untracked CLI sessions |
+| Requirements | 16.1, 16.2, 16.3, 16.4 |
+
+**Responsibilities & Constraints**
+
+- Match by `session_id` first (find conversation with matching `claudeSessionId`)
+- If no match by `session_id`, fall back to `cwd` match (find session by `worktreePath`)
+- Auto-create conversation when `cwd` matches but no conversation tracks the `session_id`
+- Deduplicate: do not create if `session_id` already tracked
+
+**Dependencies**
+
+- Outbound: `state.ts` — read/write state (P0)
+- Outbound: `conversations.ts` — `createConversation` for auto-creation (P1)
+
+**Contracts**: Service [x]
+
+##### Service Interface
+
+```typescript
+function processHookEvent(data: HookEventData): Promise<boolean>;
+```
+
+- Preconditions: `data.cwd` or `data.session_id` must be present for matching
+- Postconditions: Matched or newly created conversation updated with `session_id`, `transcript_path`, `lastActivityAt`
+- Invariants: No duplicate conversations created for the same `session_id`
+
+### API Layer
+
+#### Conversations API Route
+
+| Field | Detail |
+|-------|--------|
+| Intent | HTTP endpoints for conversation listing, creation, and auto-import |
+| Requirements | 9, 11, 13, 14 |
+
+**Contracts**: API [x]
 
 ##### API Contract
 
-| Method | Endpoint                                    | Request                   | Response                  | Errors                  |
-| ------ | ------------------------------------------- | ------------------------- | ------------------------- | ----------------------- |
-| GET    | /api/projects/[name]/sessions               | —                         | `SessionState[]` (200)    | 404 (project not found) |
-| POST   | /api/projects/[name]/sessions               | `{ sessionName: string }` | `SessionState` (201)      | 400, 404                |
-| DELETE | /api/projects/[name]/sessions?sessionName=x | Query param               | `{ success: true }` (200) | 400, 404                |
+| Method | Endpoint | Request | Response | Errors |
+|--------|----------|---------|----------|--------|
+| GET | /api/projects/[name]/sessions/[session]/conversations | Query: `?import=true` (optional) | `ConversationState[]` (200) | 404 (project/session) |
+| POST | /api/projects/[name]/sessions/[session]/conversations | `{}` (empty body) | `ConversationState` (201) | 404 (project/session) |
+
+- GET with `?import=true` triggers auto-discovery before returning the list
+- GET without `?import=true` returns existing conversations only
+- POST creates a new empty conversation with status `ready`
+
+#### Prompt API Route (updated)
+
+| Field | Detail |
+|-------|--------|
+| Intent | Conversation-scoped prompt execution endpoint |
+| Requirements | 15 |
+
+**Contracts**: API [x]
+
+##### API Contract
+
+| Method | Endpoint | Request | Response | Errors |
+|--------|----------|---------|----------|--------|
+| POST | /api/projects/[name]/sessions/[session]/conversations/[conversationId]/prompt | `{ prompt: string }` | `RunPromptResponse` (200) | 400 (validation), 404 (not found), 409 (busy) |
+
+- Replaces existing prompt route at `/api/projects/[name]/sessions/[session]/prompt`
+- The old route can be kept temporarily as a redirect for backward compatibility
+
+### UI Layer
+
+UI components are presentational and follow the existing design system. Detailed visual design is documented separately (see UI design proposal). Summary:
+
+#### ConversationList
+
+| Field | Detail |
+|-------|--------|
+| Intent | Display conversation cards on the session page |
+| Requirements | 11.1–11.5 |
+
+- Route: `/projects/[name]/[session]` (replaces current session detail at this route)
+- Conversations ordered by most recently active first
+- Each card shows: status dot, summary/first prompt, prompt count, timestamps, imported badge
+- "New Conversation" button creates empty conversation via POST
+- Click navigates to `/projects/[name]/[session]/[conversationId]`
+
+#### ConversationDetailPage
+
+| Field | Detail |
+|-------|--------|
+| Intent | Full conversation view with message history, prompt input, and sidebar |
+| Requirements | 12.1–12.6, 15 |
+
+- Route: `/projects/[name]/[session]/[conversationId]`
+- Adapted from current `SessionDetailPage`, now scoped to a single conversation
+- Includes `ConversationSidebar` for quick switching
+- Retains existing layout modes (`conversation`, `default`, `split`, `diff`)
+- Diff panel remains session-level (all worktree changes)
+
+#### ConversationSidebar
+
+| Field | Detail |
+|-------|--------|
+| Intent | Collapsible sidebar listing conversations for quick switching |
+| Requirements | 12.2, 12.3 |
+
+- 240px fixed width, collapsible to 0px
+- Active conversation highlighted with cyan accent
+- Compact entries: status dot, truncated summary, metadata
+- "New" button at bottom
+- Collapse state persisted to localStorage
 
 ## Data Models
 
@@ -423,6 +561,7 @@ function deleteSession(projectPath: string, sessionName: string): Promise<void>;
 erDiagram
     ManagerState ||--o{ ProjectState : contains
     ProjectState ||--o{ SessionState : manages
+    SessionState ||--o{ ConversationState : owns
     ProjectState {
         string rootPath
     }
@@ -430,64 +569,103 @@ erDiagram
         string sessionName
         string worktreePath
         string branchName
+        string createdAt
+        string lastActivityAt
+        boolean archived
+        boolean finished
+    }
+    ConversationState {
+        string id
         string claudeSessionId
         string transcriptPath
         string status
+        number promptCount
         string createdAt
         string lastActivityAt
-        number promptCount
-        boolean archived
-        array messages
+        string source
+        string summary
     }
-    PerRepoConfig {
-        string initScriptPath
+    ConversationState ||--o{ ConversationMessage : contains
+    ConversationMessage {
+        string role
+        string content
+        string timestamp
     }
 ```
 
-**Aggregates**: `ManagerState` is the root aggregate containing all `ProjectState` entries. Each `ProjectState` owns its `SessionState` records keyed by session name.
+**Aggregates**: `SessionState` is the aggregate root for its Conversations. Conversations are always accessed and modified through their parent session.
 
 **Invariants**:
 
-- Session names are unique within a project
-- `status` is one of `"idle" | "ready" | "running"`
-- `worktreePath` and `branchName` are derived deterministically from `sessionName`
-- `messages` is an array of `ConversationMessage` objects (defaults to empty on creation; populated by prompt execution)
+- Conversation IDs are unique within a session
+- No two conversations in the same session share a `claudeSessionId` (enforced during import)
+- Session status is always derived, never stored
+- `source` is `"csm"` for CSM-created conversations, `"imported"` for auto-imported ones
 
 ### Logical Data Model
 
-**Structure**: JSON state file at OS-appropriate config directory (e.g., `~/.config/csm/state.json`).
+**Structure**: Conversations stored as array within session object in JSON state file.
 
-```
+```json
 {
   "projects": {
     "<projectPath>": {
       "rootPath": "<projectPath>",
       "sessions": {
-        "<sessionName>": { ...SessionState }
+        "<sessionName>": {
+          "sessionName": "...",
+          "worktreePath": "...",
+          "branchName": "...",
+          "createdAt": "...",
+          "lastActivityAt": "...",
+          "archived": false,
+          "finished": false,
+          "conversations": [
+            {
+              "id": "uuid-v4",
+              "claudeSessionId": "claude-uuid-or-null",
+              "transcriptPath": "/path/to/transcript.jsonl",
+              "status": "ready",
+              "messages": [],
+              "promptCount": 0,
+              "createdAt": "ISO-8601",
+              "lastActivityAt": "ISO-8601",
+              "source": "csm",
+              "summary": null
+            }
+          ]
+        }
       }
     }
   }
 }
 ```
 
-**Consistency**: Single-file atomic writes ensure no partial state. No foreign key constraints — session validity depends on worktree existence on disk.
+**Consistency**: Same atomic write pattern (temp + rename). Conversations are embedded within the session — no separate storage.
 
 ### Data Contracts
 
-**API Request Schema** (Zod v4):
+**Conversation creation request** (empty body — server generates ID and defaults):
 
 ```typescript
-const createSessionRequestSchema = z.object({
-  sessionName: z.string().min(1),
-});
+// POST /api/projects/[name]/sessions/[session]/conversations
+// Request body: {} (empty)
+// Response: ConversationState
 ```
 
-**Per-Repo Config Schema**:
+**Prompt execution request**:
 
 ```typescript
-const perRepoConfigSchema = z.object({
-  initScriptPath: z.string().nullable(),
+const runPromptRequestSchema = z.object({
+  prompt: z.string().trim().min(1),
 });
+// POST /api/.../conversations/[conversationId]/prompt
+```
+
+**Auto-import query**:
+
+```
+GET /api/projects/[name]/sessions/[session]/conversations?import=true
 ```
 
 ## Error Handling
@@ -496,52 +674,70 @@ const perRepoConfigSchema = z.object({
 
 **User Errors (400)**:
 
-- Empty/invalid session name → descriptive validation message
-- Duplicate session name → `"Session '<name>' already exists in this project"`
-- Missing `sessionName` param → `"sessionName is required"` / `"sessionName query parameter is required"`
+- Empty prompt text → existing validation
+- Invalid conversation ID format → `"Invalid conversation ID"`
 
-**System Errors (400 mapped)**:
+**Not Found (404)**:
 
-- Worktree path conflict → `"Worktree directory already exists: <path>"`
-- Init script not found → `"Init script not found: <path>"`
-- Git CLI failure → original git error message
-- Init script timeout → process timeout error
+- Conversation not found → `"Conversation not found"`
+- Session not found → `"Session not found"` (existing)
+- Project not found → `"Project not found"` (existing)
 
-**Not Found Errors (404)**:
+**Conflict (409)**:
 
-- Project not found (API layer) → `"Project not found"`
-- Project not in state → `"Project not found: <path>"`
-- Session not in state → `"Session '<name>' not found in project"`
+- Session busy (prompt already running) → `"Session is busy — a prompt is already running"` (existing, now applies across all conversations in a session)
+
+**System Errors (500)**:
+
+- Claude CLI failure → existing error propagation
+- State file corruption → existing recovery to empty state
+- Auto-import filesystem errors → logged and skipped (graceful degradation)
 
 ### Monitoring
 
-- Errors propagated as thrown exceptions in domain layer
-- API routes catch and map to HTTP responses with `{ error: string }` body
-- No structured logging or metrics (minimal stack — console output only)
+- Auto-import logs: discovery attempts, matches found, imports created, errors encountered
+- Hook routing logs: match type (by session_id, by cwd, new conversation created)
+- Existing prompt execution logging extended with `conversationId`
 
 ## Testing Strategy
 
 ### Unit Tests
 
-- `validateSessionName`: Edge cases (empty, whitespace, >100 chars, invalid chars, valid names)
-- `sanitizeBranchName`: Conversion rules (lowercase, special chars, consecutive hyphens, leading/trailing hyphens)
-- State file read/write: Atomic write behavior, missing file handling, corrupt file recovery
+- `conversationStateSchema` validation: required fields, defaults, status enum
+- `deriveSessionStatus`: running > ready > idle priority, empty conversations = idle
+- `deriveSessionPromptCount`: sum across conversations
+- `migrateSessionState`: legacy session with inline fields → single conversation
+- `discoverConversations`: mock filesystem with index file, without index file, empty directory
 
 ### Integration Tests
 
-- `createSession`: Full flow with mocked git CLI — validation, worktree creation, state persistence
-- `createSession` rollback: Simulated failures at each step to verify cleanup
-- `deleteSession`: Successful deletion, missing worktree handling, error cases
-- Init script execution: With and without config, script success/failure
+- `createConversation`: creates record with correct defaults, persists to state
+- `executePrompt` (conversation-scoped): first prompt (no session ID), subsequent (with session ID), lock enforcement
+- `processHookEvent`: route by session_id, route by cwd with auto-create, deduplication
+- `discoverAndImportConversations`: end-to-end with mock Claude Code directory, dedup against existing
 
 ### API Tests
 
-- POST session creation: Valid request, validation errors, duplicate names
-- DELETE session: Success, missing session, missing project
-- GET sessions list: Empty project, multiple sessions
+- GET conversations: empty session, session with conversations, with `?import=true`
+- POST conversation: success, session not found
+- POST prompt: valid prompt, conversation not found, session busy (409)
+- Backward compatibility: old prompt route behavior during transition
 
-## Security Considerations
+### UI Tests
 
-- **Init script execution**: Arbitrary code execution risk mitigated by requiring explicit `ClaudeSessionManager.json` configuration and 60-second timeout
-- **Path traversal**: `worktreePath` is computed deterministically from project root + sanitized name — no user-controlled path components
-- **Environment variable exposure**: Init script receives `PROJECT_ROOT`, `WORKTREE_PATH`, `SESSION_NAME`, `BRANCH_NAME` plus inherited process env — acceptable for local-first tool
+- Conversation list renders cards with correct status indicators
+- Click navigation from list to detail view
+- Sidebar highlights active conversation and allows switching
+- New Conversation button creates and navigates
+
+## Migration Strategy
+
+**Approach**: Read-time migration, no offline migration step.
+
+1. Updated `sessionStateSchema` accepts both old (inline fields) and new (conversations array) formats via `.optional()` on legacy fields and `.default([])` on `conversations`
+2. `migrateSessionState()` checks: if `conversations` is empty AND legacy `claudeSessionId` or `messages` exist, creates a single Conversation from the legacy fields
+3. Migration runs in `readState()` (or a wrapper) on each session during deserialization
+4. Migrated state is persisted on next `writeState()` call, completing the migration transparently
+5. After all sessions are migrated, legacy `.optional()` fields can be removed in a future cleanup
+
+**Rollback**: Since the JSON state file is the only storage, keeping a backup before the first migrated write provides rollback safety. The migration is non-destructive — it only adds a `conversations` array.

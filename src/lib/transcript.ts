@@ -1,11 +1,31 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import os from "node:os";
 import type { TranscriptMessage } from "@/types";
 import {
   transcriptEntrySchema,
   type ContentBlock,
   type TranscriptEntry,
 } from "./schemas";
+
+/** Expand leading `~` to the user's home directory */
+export function expandTilde(p: string): string {
+  if (p.startsWith("~/") || p === "~") {
+    return os.homedir() + p.slice(1);
+  }
+  return p;
+}
+
+/**
+ * Read conversation messages from a Claude Code transcript file.
+ * Handles null paths (returns []), tilde expansion, and delegates to readTranscript().
+ */
+export async function readConversationMessages(
+  transcriptPath: string | null,
+): Promise<TranscriptMessage[]> {
+  if (!transcriptPath) return [];
+  return readTranscript(expandTilde(transcriptPath));
+}
 
 /**
  * Read and parse a Claude transcript JSONL file into structured messages.

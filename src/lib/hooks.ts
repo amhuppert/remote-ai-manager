@@ -2,10 +2,11 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import { z } from "zod";
 import { readState, writeState } from "./state";
 import type { HookEventData } from "./schemas";
-import type { ManagerState, SessionState } from "@/types";
+import type { ManagerState, SessionState, ConversationState } from "@/types";
 import { createLogger } from "./logging";
 
 const logger = createLogger("hooks");
@@ -28,8 +29,9 @@ function findSessionByCwd(
  *
  * 1. Parse the event data
  * 2. Match `cwd` to a session whose `worktreePath` matches
- * 3. Update the session's claudeSessionId and transcriptPath
- * 4. Save state
+ * 3. Find or create a conversation for the Claude session ID
+ * 4. Update the conversation's claudeSessionId and transcriptPath
+ * 5. Save state
  *
  * Returns true if a matching session was found and updated.
  */
@@ -56,8 +58,63 @@ export async function processHookEvent(data: HookEventData): Promise<boolean> {
     return false;
   }
 
-  if (session_id) session.claudeSessionId = session_id;
-  if (transcript_path) session.transcriptPath = transcript_path;
+  // Find or create conversation for this Claude session
+  let conversation: ConversationState | undefined;
+
+  if (session_id) {
+    // Look for existing conversation with this Claude session ID
+    conversation = session.conversations.find(c => c.claudeSessionId === session_id);
+
+    if (!conversation) {
+      // Check for a CSM-initiated conversation that's currently running but
+      // hasn't been linked to a Claude session yet. This handles the race
+      // condition where executePrompt is still running and the hook fires
+      // before the CLI response has been parsed and claudeSessionId stored.
+      conversation = session.conversations.find(
+        c => c.status === "running" && c.claudeSessionId === null && c.source === "csm"
+      );
+
+      if (conversation) {
+        logger.info("hook.conversation_linked", {
+          sessionName: session.sessionName,
+          conversationId: conversation.id,
+          claudeSessionId: session_id,
+        });
+      }
+    }
+
+    if (!conversation) {
+      // Create new conversation for untracked CLI session
+      const now = new Date().toISOString();
+      conversation = {
+        id: crypto.randomUUID(),
+        claudeSessionId: session_id,
+        transcriptPath: transcript_path ?? null,
+        status: "ready",
+        promptCount: 0,
+        createdAt: now,
+        lastActivityAt: now,
+        source: "imported", // Mark as imported since it came from CLI
+        summary: null,
+        archived: false,
+      };
+      session.conversations.push(conversation);
+
+      logger.info("hook.conversation_created", {
+        sessionName: session.sessionName,
+        conversationId: conversation.id,
+        claudeSessionId: session_id,
+      });
+    }
+  }
+
+  // Update conversation metadata if we have one
+  if (conversation) {
+    if (session_id) conversation.claudeSessionId = session_id;
+    if (transcript_path) conversation.transcriptPath = transcript_path;
+    conversation.lastActivityAt = new Date().toISOString();
+  }
+
   session.lastActivityAt = new Date().toISOString();
 
   await writeState(state);

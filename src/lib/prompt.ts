@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { SessionState } from "@/types";
+import type { SessionState, ConversationState } from "@/types";
 import { readConfig } from "./config";
 import { getSession, updateSession } from "./state";
 import { acquireSessionLock } from "./lock";
 import { createLogger } from "./logging";
+import { getConversation, createConversation, encodeProjectPath } from "./conversations";
 
 const logger = createLogger("prompt");
 
@@ -13,32 +14,48 @@ const execFileAsync = promisify(execFile);
 /**
  * Execute a prompt against the Claude CLI in a session's worktree.
  *
- * - First prompt:      `claude -p "<prompt>"`
- * - Subsequent:        `claude -c -p "<prompt>"`
+ * - New conversation:       `claude -p "<prompt>"`
+ * - Existing conversation:  `claude --resume <uuid> -p "<prompt>"`
  *
- * The `-c` flag continues the most recent conversation in the cwd.
- * Because each session has its own worktree, `-c` is unambiguous.
- *
+ * If conversationId is not provided, creates a new conversation.
  * Uses `--dangerously-skip-permissions` to avoid interactive permission
  * prompts that hang in headless mode, and `--output-format json` to get
  * structured output with `result` and `session_id`.
  *
  * Acquires a single-flight lock so only one prompt runs per session.
- * Updates session status (running → ready) and prompt count in state.
- * Stores user and assistant messages directly in session state.
+ * Updates conversation status (running → ready) and prompt count.
+ * Stores user and assistant messages in the conversation.
  */
 export async function executePrompt(
   projectPath: string,
   session: SessionState,
   promptText: string,
-): Promise<{ output: string; claudeResponse: string }> {
+  conversationId?: string,
+): Promise<{ output: string; claudeResponse: string; conversationId: string }> {
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
 
+  // Get or create conversation
+  let conversation: ConversationState;
+  if (conversationId) {
+    const existingConv = await getConversation(projectPath, session.sessionName, conversationId);
+    if (!existingConv) {
+      throw new Error(`Conversation not found: ${conversationId}`);
+    }
+    conversation = existingConv;
+  } else {
+    // Create a new conversation for this prompt
+    conversation = await createConversation(projectPath, session.sessionName);
+    conversationId = conversation.id;
+  }
+
   // Build CLI args outside try so they're available in catch for error logging
   const args: string[] = [];
-  if (session.promptCount > 0) {
-    args.push("-c");
+  if (conversation.claudeSessionId) {
+    // --resume continues an existing session by its ID
+    // (--session-id assigns an ID to a NEW session and would fail with
+    // "already in use" if the ID already exists)
+    args.push("--resume", conversation.claudeSessionId);
   }
   args.push(
     "-p",
@@ -50,13 +67,10 @@ export async function executePrompt(
     "50",
   );
 
-  const now = new Date().toISOString();
-
   try {
-    // Mark session as running and store the user message immediately
-    await mutateSession(projectPath, session.sessionName, (s) => {
-      s.status = "running";
-      s.messages.push({ role: "user", content: promptText, timestamp: now });
+    // Mark conversation as running
+    await mutateConversation(projectPath, session.sessionName, conversationId, (c) => {
+      c.status = "running";
     });
 
     // Log CLI args excluding prompt content for security
@@ -113,21 +127,20 @@ export async function executePrompt(
       });
     }
 
-    // Store assistant response and update session metadata
-    const responseTimestamp = new Date().toISOString();
-    await mutateSession(projectPath, session.sessionName, (s) => {
-      s.promptCount++;
-      s.messages.push({
-        role: "assistant",
-        content: claudeResponse,
-        timestamp: responseTimestamp,
-      });
+    // Update conversation metadata
+    await mutateConversation(projectPath, session.sessionName, conversationId, (c) => {
+      c.promptCount++;
       if (sessionId) {
-        s.claudeSessionId = sessionId;
+        c.claudeSessionId = sessionId;
+      }
+      // Set transcript path based on Claude session ID
+      if (sessionId && !c.transcriptPath) {
+        const encodedPath = encodeProjectPath(session.worktreePath);
+        c.transcriptPath = `~/.claude/projects/${encodedPath}/${sessionId}.jsonl`;
       }
     });
 
-    return { output: stdout, claudeResponse };
+    return { output: stdout, claudeResponse, conversationId };
   } catch (err) {
     const cliArgsForLog = args.filter((a) => a !== promptText);
     logger.error("prompt.failure", {
@@ -143,9 +156,9 @@ export async function executePrompt(
       err instanceof Error ? err.message : "Unknown error executing prompt";
     throw new Error(`Prompt execution failed: ${message}`);
   } finally {
-    // Always mark session as ready when done (even on error)
-    await mutateSession(projectPath, session.sessionName, (s) => {
-      s.status = "ready";
+    // Always mark conversation as ready when done (even on error)
+    await mutateConversation(projectPath, session.sessionName, conversationId, (c) => {
+      c.status = "ready";
     }).catch(() => {
       // best-effort status reset
     });
@@ -153,16 +166,21 @@ export async function executePrompt(
   }
 }
 
-/** Read a session, apply a mutation, and persist via updateSession */
-async function mutateSession(
+/** Read a conversation, apply a mutation, and persist via updateSession */
+async function mutateConversation(
   projectPath: string,
   sessionName: string,
-  mutate: (session: SessionState) => void,
+  conversationId: string,
+  mutate: (conversation: ConversationState) => void,
 ): Promise<void> {
   const session = await getSession(projectPath, sessionName);
   if (!session) return;
 
-  mutate(session);
+  const conversation = session.conversations.find(c => c.id === conversationId);
+  if (!conversation) return;
+
+  mutate(conversation);
+  conversation.lastActivityAt = new Date().toISOString();
   session.lastActivityAt = new Date().toISOString();
   await updateSession(projectPath, session);
 }

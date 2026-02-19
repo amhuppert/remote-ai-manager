@@ -2733,6 +2733,367 @@ textarea {
 }
 
 /* ============================================================
+   Conversation list layout (task 13)
+   ============================================================ */
+
+.convo-list-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.convo-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.convo-list-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.convo-list-meta .si-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+}
+
+.convo-list-meta .si-label {
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+}
+
+.convo-list-meta .si-val {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.convo-list-meta .si-sep {
+  width: 1px;
+  height: 12px;
+  background: var(--border-subtle);
+  flex-shrink: 0;
+}
+
+/* Conversation card grid */
+.convo-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-md);
+}
+
+.convo-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.convo-card:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+}
+
+.convo-card.most-recent {
+  border-color: rgba(0, 229, 255, 0.35);
+}
+
+.convo-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.convo-badge {
+  font-size: 0.6rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-tertiary);
+}
+
+.convo-badge.imported {
+  background: rgba(0, 229, 255, 0.1);
+  color: var(--cyan);
+}
+
+.convo-card-body {
+  flex: 1;
+}
+
+.convo-card-summary {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.convo-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.convo-card-meta {
+  font-size: 0.66rem;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+/* Archive button in card footer */
+.convo-card-archive-btn {
+  opacity: 0;
+  font-size: 0.7rem;
+  margin-left: auto;
+  padding: 0 4px;
+  transition: opacity 0.15s ease;
+}
+.convo-card:hover .convo-card-archive-btn { opacity: 0.6; }
+.convo-card:hover .convo-card-archive-btn:hover { opacity: 1; }
+
+/* Archived conversation card */
+.convo-card.archived { opacity: 0.55; border-style: dashed; }
+.convo-card.archived:hover { opacity: 0.75; }
+.convo-card.archived.most-recent { border-color: var(--border-subtle); }
+.convo-badge.archived-badge {
+  background: rgba(123, 137, 159, 0.1);
+  color: var(--text-tertiary);
+  border: 1px dashed var(--border-default);
+}
+
+/* ============================================================
+   Conversation sidebar (task 14.2)
+   ============================================================ */
+
+.convo-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  min-width: 240px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  overflow: hidden;
+  transition: width 0.2s ease, min-width 0.2s ease;
+}
+
+.convo-sidebar.collapsed {
+  width: 40px;
+  min-width: 40px;
+}
+
+.convo-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-sm);
+  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-xs);
+}
+
+.convo-sidebar-title {
+  font-size: 0.66rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.convo-sidebar-toggle {
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  color: var(--text-tertiary);
+}
+
+.convo-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.convo-sidebar-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  text-decoration: none;
+  color: inherit;
+  border-left: 2px solid transparent;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+.convo-sidebar-item:hover {
+  background: var(--bg-elevated);
+}
+
+.convo-sidebar-item.active {
+  background: rgba(0, 229, 255, 0.06);
+  border-left-color: var(--cyan);
+}
+
+.sidebar-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+  background: var(--text-tertiary);
+}
+
+.sidebar-dot.running {
+  background: var(--cyan);
+  box-shadow: 0 0 4px var(--cyan);
+}
+
+.sidebar-dot.ready {
+  background: var(--green);
+}
+
+.convo-sidebar-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.convo-sidebar-item-summary {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.convo-sidebar-item-meta {
+  font-size: 0.6rem;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+.convo-sidebar-footer {
+  padding: var(--space-sm);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.convo-sidebar-new {
+  width: 100%;
+}
+
+/* Archived sidebar item */
+.convo-sidebar-item.archived { opacity: 0.55; border-left-style: dashed; }
+.convo-sidebar-item.archived:hover { opacity: 0.75; }
+
+/* Sidebar item hover action button */
+.convo-sidebar-item-action {
+  opacity: 0;
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  padding: 0 2px;
+  margin-top: 2px;
+  transition: opacity 0.15s ease;
+}
+.convo-sidebar-item:hover .convo-sidebar-item-action { opacity: 0.6; }
+.convo-sidebar-item:hover .convo-sidebar-item-action:hover { opacity: 1; }
+
+/* Sidebar archive toggle (compact pill) */
+.convo-sidebar-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6rem;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  cursor: pointer;
+  margin-bottom: var(--space-xs);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.convo-sidebar-archive-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+}
+.convo-sidebar-archive-toggle.active {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  border-style: solid;
+}
+
+/* Session content area with sidebar — flex layout respecting data-layout modes */
+.session-content-area.with-sidebar {
+  display: flex;
+  overflow: hidden;
+}
+
+/* Default: prompt panel fills remaining space, diff panel fixed width */
+.session-content-area.with-sidebar[data-layout="default"] > .prompt-panel {
+  flex: 1;
+  min-width: 0;
+}
+.session-content-area.with-sidebar[data-layout="default"] > .sidebar-diff-panel {
+  flex: 0 0 420px;
+  min-width: 0;
+}
+
+/* Split: both panels share space equally */
+.session-content-area.with-sidebar[data-layout="split"] > .prompt-panel,
+.session-content-area.with-sidebar[data-layout="split"] > .sidebar-diff-panel {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Conversation only: diff panel hidden */
+.session-content-area.with-sidebar[data-layout="conversation"] > .prompt-panel {
+  flex: 1;
+  min-width: 0;
+}
+.session-content-area.with-sidebar[data-layout="conversation"] > .sidebar-diff-panel {
+  display: none;
+}
+
+/* Diff only: prompt panel hidden */
+.session-content-area.with-sidebar[data-layout="diff"] > .prompt-panel {
+  display: none;
+}
+.session-content-area.with-sidebar[data-layout="diff"] > .sidebar-diff-panel {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ============================================================
    Page transition stagger (applied to main content areas)
    ============================================================ */
 

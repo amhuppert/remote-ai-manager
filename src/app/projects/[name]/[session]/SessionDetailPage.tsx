@@ -8,12 +8,15 @@ import type {
   TranscriptMessage,
   LayoutMode,
   CommitLogEntry,
+  ConversationState,
 } from "@/types";
+import { deriveSessionStatus, deriveSessionPromptCount } from "@/lib/session-derived";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
 import DiffPanel from "./DiffPanel";
 import CommitDialog from "./CommitDialog";
 import MergeDialog from "./MergeDialog";
+import ConversationSidebar from "./ConversationSidebar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MarkdownContent from "@/components/MarkdownContent";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
@@ -26,6 +29,8 @@ interface Props {
   messages: TranscriptMessage[];
   diff: SessionDiff;
   commits: CommitLogEntry[];
+  conversationId?: string;
+  conversations?: ConversationState[];
 }
 
 function formatDate(iso: string): string {
@@ -44,6 +49,8 @@ export default function SessionDetailPage({
   messages,
   diff,
   commits,
+  conversationId,
+  conversations,
 }: Props): React.JSX.Element {
   const router = useRouter();
   const storageKey = `csm-layout-${projectName}-${session.sessionName}`;
@@ -152,16 +159,18 @@ export default function SessionDetailPage({
     scrollToMessage(currentMsgIndex + 1);
   }, [currentMsgIndex, scrollToMessage]);
 
+  const sessionStatus = deriveSessionStatus(session);
+
   // Auto-refresh while session is active (sending or server-side running)
   useEffect(() => {
-    if (!sending && session.status !== "running") return;
+    if (!sending && sessionStatus !== "running") return;
 
     const interval = setInterval(() => {
       router.refresh();
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [sending, session.status, router]);
+  }, [sending, sessionStatus, router]);
 
   // Restore layout from localStorage
   useEffect(() => {
@@ -199,8 +208,11 @@ export default function SessionDetailPage({
     setPromptError(null);
 
     try {
+      const promptUrl = conversationId
+        ? `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/conversations/${conversationId}/prompt`
+        : `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/prompt`;
       const res = await tracedFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/prompt`,
+        promptUrl,
         "send-prompt",
         {
           method: "POST",
@@ -219,7 +231,7 @@ export default function SessionDetailPage({
       setSending(false);
       router.refresh();
     }
-  }, [sending, projectName, session.sessionName, router]);
+  }, [sending, projectName, session.sessionName, conversationId, router]);
 
   const handleDelete = useCallback(async () => {
     try {
@@ -248,7 +260,7 @@ export default function SessionDetailPage({
 
   const decodedProjectName = decodeURIComponent(projectName);
   const isFinished = session.finished;
-  const isBusy = sending || session.status === "running";
+  const isBusy = sending || sessionStatus === "running";
   const hasUncommittedChanges = diff.files.length > 0;
   const hasCommits = commits.length > 0;
 
@@ -260,7 +272,7 @@ export default function SessionDetailPage({
     ? "merged"
     : sending
       ? "running"
-      : session.status;
+      : sessionStatus;
   const statusDotClass =
     displayStatus === "running"
       ? "cyan"
@@ -363,7 +375,7 @@ export default function SessionDetailPage({
               <div className="si-sep" />
               <div className="si-item">
                 <span className="si-label">Prompts</span>
-                <span className="si-val">{session.promptCount}</span>
+                <span className="si-val">{deriveSessionPromptCount(session)}</span>
               </div>
               <div className="si-sep" />
               <div className="si-item">
@@ -383,7 +395,18 @@ export default function SessionDetailPage({
           )}
 
           {/* Content area */}
-          <div className="session-content-area" data-layout={layout}>
+          <div className={`session-content-area${conversations ? " with-sidebar" : ""}`} data-layout={layout}>
+            {/* Conversation sidebar */}
+            {conversations && conversationId && (
+              <ConversationSidebar
+                projectName={projectName}
+                sessionName={session.sessionName}
+                conversations={conversations}
+                activeConversationId={conversationId}
+                isFinished={isFinished}
+              />
+            )}
+
             {/* Conversation panel */}
             <div className="prompt-panel">
               <div className="panel-header">

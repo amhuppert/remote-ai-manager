@@ -9,7 +9,7 @@ export type {
   ProjectState,
   ManagerState,
   PerRepoConfig,
-  ConversationMessage,
+  ConversationState,
 } from "@/lib/schemas";
 
 // ============================================================

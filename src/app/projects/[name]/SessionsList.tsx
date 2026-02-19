@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { SessionState } from "@/types";
+import { deriveSessionStatus, deriveSessionPromptCount } from "@/lib/session-derived";
 import CreateSessionModal from "./CreateSessionModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { tracedFetch } from "@/lib/traced-fetch";
@@ -33,10 +34,11 @@ function StatusBadge({ session }: { session: SessionState }) {
       </span>
     );
   }
+  const status = deriveSessionStatus(session);
   return (
-    <span className={`session-status ${session.status}`}>
+    <span className={`session-status ${status}`}>
       <span className="dot" />
-      {session.status}
+      {status}
     </span>
   );
 }
@@ -184,7 +186,7 @@ export default function SessionsList({
                     </span>
                   </td>
                   <td>
-                    <span className="session-time">{session.promptCount}</span>
+                    <span className="session-time">{deriveSessionPromptCount(session)}</span>
                   </td>
                   <td>
                     <div style={{ display: "flex", gap: "var(--space-xs)" }}>

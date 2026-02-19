@@ -374,9 +374,6 @@ describe("ProjectsGridClient — pinned section", () => {
 
     // Click second menu button (beta in main grid — not pinned)
     fireEvent.click(menuBtns[1]!);
-    const allDropdowns = container.querySelectorAll(
-      ".card-dropdown.open .card-dropdown-item",
-    );
     // The open dropdown should show "Pin Project" for non-pinned
     // Since only one menu open at a time, check all visible items
     const visibleItems = container.querySelectorAll(".card-dropdown-item");

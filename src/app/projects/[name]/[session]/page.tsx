@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
-import { computeDiff } from "@/lib/diff";
-import { getCommitLog } from "@/lib/git-operations";
-import SessionDetailPage from "./SessionDetailPage";
-import type { TranscriptMessage } from "@/types";
+import {
+  getSessionConversations,
+  discoverAndImportConversations,
+} from "@/lib/conversations";
+import ConversationList from "./ConversationList";
 
 export const dynamic = "force-dynamic";
 
@@ -28,28 +29,20 @@ export default async function SessionPage({
     notFound();
   }
 
-  // Compute diff — safe to fail (returns empty)
-  const diff = await computeDiff(sessionState.worktreePath);
+  // Auto-import CLI-created conversations on page load
+  await discoverAndImportConversations(projectPath, sessionState);
 
-  // Fetch commit log — safe to fail (returns empty)
-  const commits = await getCommitLog(sessionState.worktreePath);
-
-  // Read conversation messages directly from session state
-  const messages: TranscriptMessage[] = (sessionState.messages ?? []).map(
-    (m) => ({
-      role: m.role,
-      content: m.content,
-      timestamp: m.timestamp,
-    }),
+  // Fetch conversations (most recent first)
+  const conversations = await getSessionConversations(
+    projectPath,
+    decodedSessionName,
   );
 
   return (
-    <SessionDetailPage
+    <ConversationList
       projectName={name}
       session={sessionState}
-      messages={messages}
-      diff={diff}
-      commits={commits}
+      conversations={conversations}
     />
   );
 }

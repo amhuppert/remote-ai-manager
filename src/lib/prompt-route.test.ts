@@ -75,7 +75,6 @@ const testSession = {
   promptCount: 0,
   archived: false,
   finished: false,
-  messages: [],
 };
 
 // ---------------------------------------------------------------------------
