@@ -41,6 +41,7 @@ describe("state", () => {
         },
       },
       archivedProjects: [],
+      pinnedProjects: [],
     });
 
     const state = await readState();
@@ -70,20 +71,17 @@ describe("state", () => {
               sessionName: "test",
               worktreePath: "/existing/.worktrees/test",
               branchName: "csm/test",
-              claudeSessionId: null,
-              transcriptPath: null,
-              status: "ready",
               createdAt: "2024-01-01T00:00:00Z",
               lastActivityAt: "2024-01-01T00:00:00Z",
-              promptCount: 0,
               archived: false,
               finished: false,
-              messages: [],
+              conversations: [],
             },
           },
         },
       },
       archivedProjects: [],
+      pinnedProjects: [],
     });
 
     const project = await getOrCreateProject("/existing");
@@ -96,15 +94,15 @@ describe("state", () => {
       sessionName: "new-session",
       worktreePath: "/proj/.worktrees/new-session",
       branchName: "csm/new-session",
+      createdAt: "2024-01-01T00:00:00Z",
+      lastActivityAt: "2024-01-01T00:00:00Z",
+      archived: false,
+      finished: false,
+      conversations: [],
       claudeSessionId: null,
       transcriptPath: null,
       status: "ready" as const,
-      createdAt: "2024-01-01T00:00:00Z",
-      lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 0,
-      archived: false,
-      finished: false,
-      messages: [],
     };
 
     await updateSession("/proj", session);
@@ -121,15 +119,15 @@ describe("state", () => {
       sessionName: "to-delete",
       worktreePath: "/proj/.worktrees/to-delete",
       branchName: "csm/to-delete",
+      createdAt: "2024-01-01T00:00:00Z",
+      lastActivityAt: "2024-01-01T00:00:00Z",
+      archived: false,
+      finished: false,
+      conversations: [],
       claudeSessionId: null,
       transcriptPath: null,
       status: "ready" as const,
-      createdAt: "2024-01-01T00:00:00Z",
-      lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 0,
-      archived: false,
-      finished: false,
-      messages: [],
     };
 
     await updateSession("/proj", session);
@@ -145,15 +143,15 @@ describe("state", () => {
     const baseSession = {
       worktreePath: "",
       branchName: "",
+      createdAt: "2024-01-01T00:00:00Z",
+      lastActivityAt: "2024-01-01T00:00:00Z",
+      archived: false,
+      finished: false,
+      conversations: [],
       claudeSessionId: null,
       transcriptPath: null,
       status: "ready" as const,
-      createdAt: "2024-01-01T00:00:00Z",
-      lastActivityAt: "2024-01-01T00:00:00Z",
       promptCount: 0,
-      archived: false,
-      finished: false,
-      messages: [],
     };
 
     await updateSession("/proj2", {
@@ -211,6 +209,7 @@ describe("archive helpers", () => {
     await writeState({
       projects: {},
       archivedProjects: ["/some/project"],
+      pinnedProjects: [],
     });
 
     await setProjectArchived("/some/project", false);
@@ -228,15 +227,11 @@ describe("archive helpers", () => {
       sessionName: "test",
       worktreePath: "/proj/.worktrees/test",
       branchName: "csm/test",
-      claudeSessionId: null,
-      transcriptPath: null,
-      status: "ready" as const,
       createdAt: "2024-01-01T00:00:00Z",
       lastActivityAt: "2024-01-01T00:00:00Z",
-      promptCount: 3,
       archived: false,
       finished: false,
-      messages: [],
+      conversations: [],
     };
 
     await writeState({
@@ -247,6 +242,7 @@ describe("archive helpers", () => {
         },
       },
       archivedProjects: [],
+      pinnedProjects: [],
     });
 
     await setProjectArchived("/proj", true);
@@ -254,8 +250,8 @@ describe("archive helpers", () => {
     const state = await readState();
     const savedSession = state.projects["/proj"]!.sessions["test"]!;
     expect(savedSession.sessionName).toBe("test");
-    expect(savedSession.promptCount).toBe(3);
-    expect(savedSession.status).toBe("ready");
+    expect(savedSession.branchName).toBe("csm/test");
+    expect(savedSession.conversations).toEqual([]);
     expect(state.archivedProjects).toContain("/proj");
   });
 
@@ -312,14 +308,11 @@ describe("pin helpers", () => {
       sessionName: "test",
       worktreePath: "/proj/.worktrees/test",
       branchName: "csm/test",
-      claudeSessionId: null,
-      transcriptPath: null,
-      status: "ready" as const,
       createdAt: "2024-01-01T00:00:00Z",
       lastActivityAt: "2024-01-01T00:00:00Z",
-      promptCount: 3,
       archived: false,
-      messages: [],
+      finished: false,
+      conversations: [],
     };
 
     await writeState({
@@ -338,8 +331,8 @@ describe("pin helpers", () => {
     const state = await readState();
     const savedSession = state.projects["/proj"]!.sessions["test"]!;
     expect(savedSession.sessionName).toBe("test");
-    expect(savedSession.promptCount).toBe(3);
-    expect(savedSession.status).toBe("ready");
+    expect(savedSession.branchName).toBe("csm/test");
+    expect(savedSession.conversations).toEqual([]);
     expect(state.pinnedProjects).toContain("/proj");
   });
 

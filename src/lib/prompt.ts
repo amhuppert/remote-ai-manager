@@ -1,11 +1,20 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import type { SessionState, MessageContentBlock } from "@/types";
+import type {
+  SessionState,
+  ConversationState,
+  MessageContentBlock,
+} from "@/types";
 import { readConfig } from "./config";
 import { getSession, updateSession } from "./state";
 import { acquireSessionLock } from "./lock";
 import { createLogger } from "./logging";
 import { parseStreamLine } from "./stream-events";
+import {
+  getConversation,
+  createConversation,
+  encodeProjectPath,
+} from "./conversations";
 
 const logger = createLogger("prompt");
 
@@ -13,28 +22,51 @@ const logger = createLogger("prompt");
  * Execute a prompt against the Claude CLI in a session's worktree,
  * streaming output via `--output-format stream-json`.
  *
- * - First prompt:      `claude -p "<prompt>"`
- * - Subsequent:        `claude -c -p "<prompt>"`
+ * - New conversation:       `claude -p "<prompt>"`
+ * - Existing conversation:  `claude --resume <uuid> -p "<prompt>"`
  *
+ * If conversationId is not provided, creates a new conversation.
  * Uses `spawn` for real-time line-by-line output.
  * Emits SSE events via the `emit` callback as content arrives.
- * Accumulates content blocks and persists the assistant message on completion.
+ * Accumulates content blocks and updates conversation metadata on completion.
  *
  * Acquires a single-flight lock so only one prompt runs per session.
- * Updates session status (running -> ready) and prompt count in state.
+ * Updates conversation status (running -> ready) and prompt count.
  */
 export async function executePromptStream(
   projectPath: string,
   session: SessionState,
   promptText: string,
   emit: (event: string, data: unknown) => void,
-): Promise<void> {
+  conversationId?: string,
+): Promise<{ conversationId: string }> {
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
 
+  // Get or create conversation
+  let conversation: ConversationState;
+  if (conversationId) {
+    const existingConv = await getConversation(
+      projectPath,
+      session.sessionName,
+      conversationId,
+    );
+    if (!existingConv) {
+      throw new Error(`Conversation not found: ${conversationId}`);
+    }
+    conversation = existingConv;
+  } else {
+    // Create a new conversation for this prompt
+    conversation = await createConversation(projectPath, session.sessionName);
+    conversationId = conversation.id;
+  }
+
   const args: string[] = [];
-  if (session.promptCount > 0) {
-    args.push("-c");
+  if (conversation.claudeSessionId) {
+    // --resume continues an existing session by its ID
+    // (--session-id assigns an ID to a NEW session and would fail with
+    // "already in use" if the ID already exists)
+    args.push("--resume", conversation.claudeSessionId);
   }
   args.push(
     "-p",
@@ -47,18 +79,16 @@ export async function executePromptStream(
     "50",
   );
 
-  const now = new Date().toISOString();
-
   try {
-    // Mark session as running and store the user message immediately
-    await mutateSession(projectPath, session.sessionName, (s) => {
-      s.status = "running";
-      s.messages.push({
-        role: "user",
-        content: [{ type: "text", text: promptText }],
-        timestamp: now,
-      });
-    });
+    // Mark conversation as running
+    await mutateConversation(
+      projectPath,
+      session.sessionName,
+      conversationId,
+      (c) => {
+        c.status = "running";
+      },
+    );
 
     // Log CLI args excluding prompt content for security
     const cliArgsForLog = args.filter((a) => a !== promptText);
@@ -95,7 +125,7 @@ export async function executePromptStream(
         child.kill("SIGTERM");
       }, config.claudeTimeoutMs);
 
-      // Accumulate content blocks for the assistant message
+      // Accumulate content blocks for tracking
       const contentBlocks: MessageContentBlock[] = [];
       let sessionId: string | null = null;
 
@@ -179,21 +209,25 @@ export async function executePromptStream(
           });
         }
 
-        // Store the assistant message if we got any content
+        // Update conversation metadata and finish
         const storeAndFinish = async () => {
           if (contentBlocks.length > 0) {
-            const responseTimestamp = new Date().toISOString();
-            await mutateSession(projectPath, session.sessionName, (s) => {
-              s.promptCount++;
-              s.messages.push({
-                role: "assistant",
-                content: contentBlocks,
-                timestamp: responseTimestamp,
-              });
-              if (sessionId) {
-                s.claudeSessionId = sessionId;
-              }
-            }).catch((storeErr) => {
+            await mutateConversation(
+              projectPath,
+              session.sessionName,
+              conversationId!,
+              (c) => {
+                c.promptCount++;
+                if (sessionId) {
+                  c.claudeSessionId = sessionId;
+                }
+                // Set transcript path based on Claude session ID
+                if (sessionId && !c.transcriptPath) {
+                  const encodedPath = encodeProjectPath(session.worktreePath);
+                  c.transcriptPath = `~/.claude/projects/${encodedPath}/${sessionId}.jsonl`;
+                }
+              },
+            ).catch((storeErr) => {
               logger.error("prompt.store_response_failed", {
                 sessionName: session.sessionName,
                 error:
@@ -241,27 +275,41 @@ export async function executePromptStream(
         resolve();
       });
     });
+
+    return { conversationId };
   } finally {
-    // Always mark session as ready when done (even on error)
-    await mutateSession(projectPath, session.sessionName, (s) => {
-      s.status = "ready";
-    }).catch(() => {
+    // Always mark conversation as ready when done (even on error)
+    await mutateConversation(
+      projectPath,
+      session.sessionName,
+      conversationId,
+      (c) => {
+        c.status = "ready";
+      },
+    ).catch(() => {
       // best-effort status reset
     });
     release();
   }
 }
 
-/** Read a session, apply a mutation, and persist via updateSession */
-async function mutateSession(
+/** Read a conversation, apply a mutation, and persist via updateSession */
+async function mutateConversation(
   projectPath: string,
   sessionName: string,
-  mutate: (session: SessionState) => void,
+  conversationId: string,
+  mutate: (conversation: ConversationState) => void,
 ): Promise<void> {
   const session = await getSession(projectPath, sessionName);
   if (!session) return;
 
-  mutate(session);
+  const conversation = session.conversations.find(
+    (c) => c.id === conversationId,
+  );
+  if (!conversation) return;
+
+  mutate(conversation);
+  conversation.lastActivityAt = new Date().toISOString();
   session.lastActivityAt = new Date().toISOString();
   await updateSession(projectPath, session);
 }

@@ -53,7 +53,11 @@ import {
 // ---------------------------------------------------------------------------
 
 function emptyState() {
-  return { projects: {}, archivedProjects: [] as string[] };
+  return {
+    projects: {},
+    archivedProjects: [] as string[],
+    pinnedProjects: [] as string[],
+  };
 }
 
 function stateWithSession(
@@ -70,21 +74,18 @@ function stateWithSession(
             sessionName,
             worktreePath: `${projectPath}/.worktrees/${sessionName}`,
             branchName: `csm/${sessionName}`,
-            claudeSessionId: null,
-            transcriptPath: null,
-            status: "ready",
             createdAt: "2024-01-01T00:00:00Z",
             lastActivityAt: "2024-01-01T00:00:00Z",
-            promptCount: 0,
             archived: false,
             finished: false,
-            messages: [],
+            conversations: [],
             ...overrides,
           },
         },
       },
     },
     archivedProjects: [] as string[],
+    pinnedProjects: [] as string[],
   };
 }
 
@@ -278,10 +279,7 @@ describe("createSession", () => {
     expect(session.sessionName).toBe("My Feature");
     expect(session.worktreePath).toBe("/projects/repo/.worktrees/my-feature");
     expect(session.branchName).toBe("csm/my-feature");
-    expect(session.status).toBe("ready");
-    expect(session.claudeSessionId).toBeNull();
-    expect(session.transcriptPath).toBeNull();
-    expect(session.promptCount).toBe(0);
+    expect(session.conversations).toEqual([]);
     expect(session.archived).toBe(false);
   });
 
@@ -332,7 +330,7 @@ describe("createSession", () => {
     const project = savedState.projects["/projects/repo"];
     expect(project).toBeDefined();
     expect(project.sessions["persist test"]).toBeDefined();
-    expect(project.sessions["persist test"].status).toBe("ready");
+    expect(project.sessions["persist test"].conversations).toEqual([]);
   });
 
   it("auto-creates project entry when project not yet in state", async () => {

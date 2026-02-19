@@ -2,79 +2,94 @@
 
 ## Summary
 
-- **Feature**: `session-lifecycle`
-- **Discovery Scope**: Extension (existing system — fully implemented)
+- **Feature**: `session-lifecycle` (Conversation model extension)
+- **Discovery Scope**: Extension (existing system)
 - **Key Findings**:
-  - Session lifecycle is fully implemented in `src/lib/sessions.ts` with `createSession` and `deleteSession` functions
-  - State persistence uses atomic write-to-temp-then-rename pattern in `src/lib/state.ts`
-  - API routes in `src/app/api/projects/[name]/sessions/route.ts` expose GET/POST/DELETE endpoints
+  - Claude Code stores sessions as JSONL files in `~/.claude/projects/<encoded-path>/`, with an optional `sessions-index.json` for fast metadata lookup
+  - The Claude CLI supports `--session-id <id>` to continue a specific session, replacing the `-c` flag which continues the most recent session in the cwd
+  - Existing session state stores `claudeSessionId`, `transcriptPath`, `status`, `messages`, and `promptCount` directly — all must migrate to per-Conversation records
 
 ## Research Log
 
-### Existing Architecture Analysis
+### Claude Code Session Storage Format
 
-- **Context**: Session lifecycle is already implemented; need to map the existing implementation against requirements.
-- **Sources Consulted**: `src/lib/sessions.ts`, `src/lib/state.ts`, `src/lib/config.ts`, `src/lib/schemas.ts`, `src/types/index.ts`, API routes
+- **Context**: Auto-import requires understanding how Claude Code stores sessions on disk.
+- **Sources Consulted**: `~/.claude/projects/` filesystem exploration, JSONL transcript file analysis
 - **Findings**:
-  - `createSession()` handles validation, worktree creation, init script execution, rollback, and state persistence in a single function
-  - `deleteSession()` handles worktree removal and state cleanup
-  - `sanitizeBranchName()` and `validateSessionName()` are private helper functions within `sessions.ts`
-  - Per-repo config (`ClaudeSessionManager.json`) defines optional `initScriptPath`
-  - State is managed through `readState()`/`writeState()` in `state.ts` with atomic writes
-- **Implications**: Design documents an existing, stable architecture. No new components needed.
+  - Projects stored by encoded path: `/home/user/project` → `-home-user-project`
+  - Sessions are UUID-named JSONL files (e.g., `07990e45-d443-471c-846a-2fa162fbc6bf.jsonl`)
+  - `sessions-index.json` (when present) contains: `sessionId`, `fullPath`, `firstPrompt`, `summary`, `messageCount`, `created`, `modified`, `gitBranch`, `projectPath`, `isSidechain`
+  - Not all projects have `sessions-index.json` — only ~22% in the sample had it
+  - JSONL entries contain `sessionId`, `cwd`, `gitBranch`, `message.role`, `message.content`, `timestamp`
+- **Implications**: Auto-import must support both indexed and fallback (JSONL parsing) discovery. Filter by `cwd` or `gitBranch` to match worktree sessions.
 
-### Git Worktree Strategy
+### Claude CLI Session Continuation
 
-- **Context**: Understanding how worktrees provide session isolation.
+- **Context**: Prompt execution needs to target a specific conversation, not just the most recent.
+- **Sources Consulted**: Claude Code CLI `--help`, existing `prompt.ts` usage
 - **Findings**:
-  - Worktrees are created at `<projectRoot>/.worktrees/<sanitized-name>`
-  - Each worktree gets a dedicated branch `csm/<sanitized-name>` branched from `main`
-  - Git CLI is invoked via `execFile` (promisified) — no git library dependency
-  - Worktree removal uses `git worktree remove --force` with filesystem fallback
-- **Implications**: Lightweight, dependency-free approach. Relies on git CLI availability on the host.
+  - Current code uses `-c` flag for continuation, which continues the most recent session in the cwd
+  - Claude CLI supports `--session-id <uuid>` to target a specific session
+  - First prompt (no session ID): `claude -p "<prompt>"` starts a new session
+  - Subsequent prompts: `claude --session-id <uuid> -p "<prompt>"` continues the specific session
+  - JSON output includes `session_id` in response
+- **Implications**: Replace `-c` flag with `--session-id` for conversation-scoped execution. First prompt omits `--session-id` to create a new Claude Code session.
 
-### Rollback Strategy
+### State Migration Strategy
 
-- **Context**: Understanding failure recovery during session creation.
+- **Context**: Existing sessions store conversation data directly; new model requires moving it to Conversation records.
 - **Findings**:
-  - Try/catch wraps the worktree+init-script block
-  - Rollback removes worktree (git then filesystem fallback), then deletes branch
-  - Cleanup errors are suppressed; original error is re-thrown
-  - State is only written after successful creation (no partial state)
-- **Implications**: Two-phase cleanup (worktree then branch) provides defense-in-depth.
+  - Fields moving from SessionState to ConversationState: `claudeSessionId`, `transcriptPath`, `status`, `messages`, `promptCount`
+  - Fields remaining on SessionState: `sessionName`, `worktreePath`, `branchName`, `createdAt`, `lastActivityAt`, `archived`, `finished`
+  - New field on SessionState: `conversations` (array)
+  - Backward compatibility: read-time migration wraps old session data into a single Conversation if `conversations` is absent
+- **Implications**: No offline migration step needed. Schema uses `.default([])` for `conversations` and `.optional()` for legacy fields to handle both formats.
 
 ## Architecture Pattern Evaluation
 
-| Option                      | Description                                                                           | Strengths                                      | Risks / Limitations                  | Notes                                       |
-| --------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------- | ------------------------------------ | ------------------------------------------- |
-| Current monolithic function | Single `createSession` function with inline validation, git ops, and state management | Simple, easy to follow, all logic in one place | Harder to unit test individual steps | Matches project's flat lib pattern          |
-| Service layer extraction    | Separate validation, git ops, and state into services                                 | Better testability, separation of concerns     | Over-engineering for current scale   | Not aligned with project's minimal approach |
+| Option | Description | Strengths | Risks / Limitations | Notes |
+|--------|-------------|-----------|---------------------|-------|
+| Inline conversation logic in sessions.ts | Add conversation functions to existing sessions module | Simple, follows flat lib pattern | Module grows large | Matches current project style |
+| New conversations.ts module | Separate module for conversation CRUD and auto-import | Clear responsibility boundary | Introduces new module | Better for new domain concept |
+| conversation-discovery.ts + conversations.ts | Split discovery (filesystem scanning) from CRUD | Maximum separation | Two new files may be overkill | Discovery logic is complex enough |
 
 ## Design Decisions
 
-### Decision: Keep Monolithic Session Functions
+### Decision: Separate conversations.ts module
 
-- **Context**: Whether to refactor `createSession`/`deleteSession` into smaller services
+- **Context**: Conversation management introduces significant new logic (CRUD, auto-import, discovery)
 - **Alternatives Considered**:
-  1. Extract GitService, ValidationService, StateService
-  2. Keep current monolithic functions
-- **Selected Approach**: Keep current monolithic functions
-- **Rationale**: Aligns with project's deliberately minimal stack and flat lib structure. Functions are focused and readable at current size.
-- **Trade-offs**: Less granular unit testing, but integration tests cover the full flow effectively.
+  1. Add to sessions.ts — keeps single module but bloats it
+  2. New conversations.ts — clean boundary for new domain concept
+- **Selected Approach**: New `conversations.ts` module for conversation CRUD and auto-import
+- **Rationale**: Discovery/import logic is substantial and conceptually distinct from session lifecycle. The flat lib pattern is maintained (single `src/lib/` directory).
+- **Trade-offs**: Two modules now touch session state, but clear ownership (sessions.ts for session-level, conversations.ts for conversation-level)
 
-### Decision: Atomic State Writes for Crash Safety
+### Decision: Read-time migration for backward compatibility
 
-- **Context**: How to persist session state without corruption
-- **Selected Approach**: Write-to-temp-then-rename pattern (already implemented in `state.ts`)
-- **Rationale**: Rename is atomic on POSIX systems, preventing partial writes from corrupting the state file.
+- **Context**: Existing state files have per-session conversation data that must move to Conversation records
+- **Alternatives Considered**:
+  1. Offline migration script — explicit but requires manual execution
+  2. Read-time migration — transparent, automatic, no user action needed
+- **Selected Approach**: Read-time migration via Zod schema defaults and a `migrateSessionState()` utility
+- **Rationale**: CSM is a local-first tool with no deployment pipeline. Users should not need to run migration commands.
+- **Trade-offs**: Slightly more complex schema parsing; legacy fields kept as optional in schema for compatibility
+
+### Decision: Session-level locking for conversations
+
+- **Context**: All conversations in a session share one worktree. Should locking be per-conversation or per-session?
+- **Selected Approach**: Keep session-level (worktree-level) locking
+- **Rationale**: Concurrent Claude CLI processes in the same worktree would cause file conflicts. One prompt execution at a time per worktree is the correct constraint.
 
 ## Risks & Mitigations
 
-- **Git CLI dependency** — Requires `git` to be installed and accessible in PATH. Mitigation: document as a system requirement.
-- **Init script security** — Arbitrary script execution with elevated environment variables. Mitigation: 60-second timeout, execution only from explicit config.
-- **Concurrent state writes** — Multiple API requests could race on state file. Mitigation: acceptable for local-first single-user tool; no additional locking needed.
+- **State file growth** — Each conversation stores its own messages array. Mitigation: messages are typically short; monitor file size in production use.
+- **sessions-index.json availability** — Not all Claude Code projects have the index. Mitigation: JSONL fallback parsing, with efficient first-entry-only reads.
+- **Race condition during auto-import** — Concurrent page loads could import the same session twice. Mitigation: deduplicate by Claude Code session ID before creating Conversation records.
+- **Breaking change to SessionState schema** — Existing code consuming `session.status`, `session.messages` etc. will break. Mitigation: derive these as computed properties for backward compatibility during transition.
 
 ## References
 
-- [Git worktree documentation](https://git-scm.com/docs/git-worktree) — core git worktree commands used
-- Node.js `child_process.execFile` — subprocess spawning for git and init scripts
+- Claude Code CLI `--session-id` flag — for targeting specific sessions
+- `~/.claude/projects/` directory structure — session storage convention
+- `sessions-index.json` schema — fast metadata lookup for auto-import

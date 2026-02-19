@@ -166,15 +166,11 @@ export async function createSession(
     sessionName,
     worktreePath,
     branchName,
-    claudeSessionId: null,
-    transcriptPath: null,
-    status: "ready",
     createdAt: now,
     lastActivityAt: now,
-    promptCount: 0,
     archived: false,
     finished: false,
-    messages: [],
+    conversations: [],
   };
 
   // Persist to state

@@ -221,11 +221,21 @@
         gap: var(--space-md);
       }
 
-      .app:not([data-page="detail"]) .topbar-status-session {
+      .app:not([data-page="detail"]):not([data-page="conversations"])
+        .topbar-status-session {
         display: none;
       }
 
-      .app[data-page="detail"] .topbar-status-default {
+      .app[data-page="detail"] .topbar-status-default,
+      .app[data-page="conversations"] .topbar-status-default {
+        display: none;
+      }
+
+      /* Hide layout switcher on conversations list page */
+      .app[data-page="conversations"] .layout-switcher {
+        display: none;
+      }
+      .app[data-page="conversations"] .layout-switcher + .topbar-sep {
         display: none;
       }
 
@@ -547,6 +557,320 @@
         vertical-align: middle;
       }
 
+      /* ============================================
+   PAGE: CONVERSATIONS LIST
+   ============================================ */
+      .convo-list-layout {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
+        padding: var(--space-lg);
+        max-width: 960px;
+        margin: 0 auto;
+        width: 100%;
+      }
+
+      .convo-list-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-md);
+        flex-wrap: wrap;
+      }
+
+      .convo-list-meta {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+        flex-wrap: wrap;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+      }
+
+      .convo-list-meta .si-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .convo-list-meta .si-label {
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 0.6rem;
+        font-weight: 600;
+      }
+
+      .convo-list-meta .si-val {
+        color: var(--text-primary);
+      }
+
+      .convo-list-meta .si-sep {
+        width: 1px;
+        height: 12px;
+        background: var(--border-subtle);
+        flex-shrink: 0;
+      }
+
+      .convo-list-actions {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+      }
+
+      /* Conversation card grid */
+      .convo-card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: var(--space-md);
+      }
+
+      .convo-card {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-sm);
+        padding: var(--space-md);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+        text-decoration: none;
+        color: inherit;
+        cursor: pointer;
+        position: relative;
+        transition:
+          border-color 0.15s ease,
+          background 0.15s ease,
+          opacity 0.2s ease;
+      }
+
+      .convo-card:hover {
+        border-color: var(--border-strong);
+        background: var(--bg-elevated, var(--bg-hover));
+      }
+
+      .convo-card.most-recent {
+        border-color: rgba(0, 229, 255, 0.35);
+      }
+
+      .convo-card-header {
+        display: flex;
+        align-items: center;
+        gap: var(--space-xs);
+      }
+
+      .convo-badge {
+        font-size: 0.6rem;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 1px 6px;
+        border-radius: var(--radius-sm);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text-tertiary);
+      }
+
+      .convo-badge.imported {
+        background: rgba(0, 229, 255, 0.1);
+        color: var(--cyan);
+      }
+
+      .convo-card-body {
+        flex: 1;
+      }
+
+      .convo-card-summary {
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+        line-height: 1.5;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .convo-card-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-top: var(--space-xs);
+        border-top: 1px solid var(--border-subtle);
+      }
+
+      .convo-card-meta {
+        font-size: 0.66rem;
+        font-family: var(--font-mono);
+        color: var(--text-tertiary);
+      }
+
+      /* Three-dot menu on conversation cards */
+      .convo-card .card-menu-wrap {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+      }
+
+      .convo-card .card-menu-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-tertiary);
+        font-family: var(--font-mono);
+        font-size: 0.92rem;
+        line-height: 1;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        opacity: 0;
+      }
+
+      .convo-card:hover .card-menu-btn {
+        opacity: 1;
+      }
+
+      .convo-card .card-menu-btn:hover,
+      .convo-card .card-menu-btn.open {
+        background: var(--bg-hover);
+        border-color: var(--border-default);
+        color: var(--text-secondary);
+        opacity: 1;
+      }
+
+      /* Archived conversation card */
+      .convo-card.archived {
+        opacity: 0.4;
+        border-style: dashed;
+      }
+
+      .convo-card.archived:hover {
+        opacity: 0.6;
+      }
+
+      .convo-card.archived.most-recent {
+        border-color: var(--border-subtle);
+      }
+
+      .convo-badge.archived-badge {
+        background: rgba(123, 137, 159, 0.08);
+        color: var(--text-tertiary);
+        border: 1px dashed var(--border-default);
+        font-size: 0.58rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+      }
+
+      /* ============================================
+   CONVERSATION SIDEBAR — ARCHIVE ADDITIONS
+   ============================================ */
+      .convo-sidebar-section-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px var(--space-sm);
+        font-size: 0.56rem;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-tertiary);
+        opacity: 0.7;
+      }
+
+      .convo-sidebar-section-label .sidebar-archive-count {
+        font-size: 0.54rem;
+        padding: 0 4px;
+        border-radius: 100px;
+        background: var(--bg-hover);
+        color: var(--text-tertiary);
+      }
+
+      /* Archive toggle for sidebar — compact pill in footer */
+      .convo-sidebar-archive-toggle {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 10px;
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-tertiary);
+        font-family: var(--font-mono);
+        font-size: 0.6rem;
+        font-weight: 500;
+        letter-spacing: 0.03em;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        white-space: nowrap;
+      }
+
+      .convo-sidebar-archive-toggle:hover {
+        border-color: var(--border-strong);
+        color: var(--text-secondary);
+        background: var(--bg-surface);
+      }
+
+      .convo-sidebar-archive-toggle.showing {
+        border-color: rgba(255, 179, 0, 0.25);
+        color: var(--amber);
+        background: var(--amber-glow);
+      }
+
+      .convo-sidebar-archive-toggle .sidebar-archive-pill-count {
+        padding: 0 5px;
+        border-radius: 100px;
+        background: var(--bg-hover);
+        font-size: 0.54rem;
+        font-weight: 600;
+        color: var(--text-tertiary);
+      }
+
+      .convo-sidebar-archive-toggle.showing .sidebar-archive-pill-count {
+        background: rgba(255, 179, 0, 0.15);
+        color: var(--amber-dim, var(--amber));
+      }
+
+      /* Archived sidebar item */
+      .convo-sidebar-item.archived {
+        opacity: 0.4;
+        border-left-style: dashed;
+      }
+
+      .convo-sidebar-item.archived:hover {
+        opacity: 0.65;
+      }
+
+      /* Hover action button on sidebar items */
+      .convo-sidebar-item-action {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        margin-top: 1px;
+        flex-shrink: 0;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-tertiary);
+        font-size: 0.72rem;
+        cursor: pointer;
+        opacity: 0;
+        transition: all 0.1s ease;
+      }
+
+      .convo-sidebar-item:hover .convo-sidebar-item-action {
+        opacity: 1;
+      }
+
+      .convo-sidebar-item-action:hover {
+        background: var(--bg-hover);
+        color: var(--text-secondary);
+      }
+
       .btn {
         display: inline-flex;
         align-items: center;
@@ -860,6 +1184,173 @@
         gap: var(--space-md);
         min-height: 0;
         transition: grid-template-columns 0.25s ease;
+      }
+
+      /* With sidebar: flex wrapper, grid inside for prompt+diff */
+      .session-content-area.with-sidebar {
+        display: flex;
+        overflow: hidden;
+      }
+
+      .session-content-area.with-sidebar > .prompt-panel {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .session-content-area.with-sidebar > .sidebar-diff-panel {
+        width: 420px;
+        flex-shrink: 0;
+      }
+
+      .session-content-area.with-sidebar[data-layout="split"]
+        > .sidebar-diff-panel {
+        flex: 1;
+        width: auto;
+      }
+
+      .session-content-area.with-sidebar[data-layout="conversation"]
+        > .sidebar-diff-panel {
+        display: none;
+      }
+
+      .session-content-area.with-sidebar[data-layout="diff"] > .prompt-panel {
+        display: none;
+      }
+
+      .session-content-area.with-sidebar[data-layout="diff"]
+        > .sidebar-diff-panel {
+        flex: 1;
+        width: auto;
+      }
+
+      /* Conversation sidebar in detail page */
+      .convo-sidebar {
+        display: flex;
+        flex-direction: column;
+        width: 240px;
+        min-width: 240px;
+        background: var(--bg-surface);
+        border-right: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md) 0 0 var(--radius-md);
+        overflow: hidden;
+        transition:
+          width 0.2s ease,
+          min-width 0.2s ease;
+      }
+
+      .convo-sidebar.collapsed {
+        width: 40px;
+        min-width: 40px;
+      }
+
+      .convo-sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: var(--space-sm);
+        border-bottom: 1px solid var(--border-subtle);
+        gap: var(--space-xs);
+      }
+
+      .convo-sidebar-title {
+        font-size: 0.66rem;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-tertiary);
+        white-space: nowrap;
+        overflow: hidden;
+      }
+
+      .convo-sidebar-toggle {
+        flex-shrink: 0;
+        font-size: 0.6rem;
+        color: var(--text-tertiary);
+      }
+
+      .convo-sidebar-list {
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+
+      .convo-sidebar-item {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--space-xs);
+        padding: var(--space-sm);
+        text-decoration: none;
+        color: inherit;
+        border-left: 2px solid transparent;
+        transition:
+          background 0.1s ease,
+          border-color 0.1s ease;
+      }
+
+      .convo-sidebar-item:hover {
+        background: var(--bg-elevated, var(--bg-hover));
+      }
+
+      .convo-sidebar-item.active {
+        background: rgba(0, 229, 255, 0.06);
+        border-left-color: var(--cyan);
+      }
+
+      .sidebar-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        margin-top: 5px;
+        flex-shrink: 0;
+        background: var(--text-tertiary);
+      }
+
+      .sidebar-dot.running {
+        background: var(--cyan);
+        box-shadow: 0 0 4px var(--cyan);
+      }
+
+      .sidebar-dot.ready {
+        background: var(--green);
+      }
+
+      .convo-sidebar-item-body {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .convo-sidebar-item-summary {
+        font-size: 0.72rem;
+        color: var(--text-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .convo-sidebar-item-meta {
+        font-size: 0.6rem;
+        font-family: var(--font-mono);
+        color: var(--text-tertiary);
+      }
+
+      .convo-sidebar-footer {
+        padding: var(--space-sm);
+        border-top: 1px solid var(--border-subtle);
+      }
+
+      .convo-sidebar-new {
+        width: 100%;
+      }
+
+      .convo-sidebar.collapsed .convo-sidebar-list,
+      .convo-sidebar.collapsed .convo-sidebar-footer,
+      .convo-sidebar.collapsed .convo-sidebar-title {
+        display: none;
       }
 
       /* Layout modes */
@@ -3472,7 +3963,7 @@
                 </tr>
               </thead>
               <tbody id="sessions-tbody">
-                <tr onclick="showPage('detail')">
+                <tr onclick="showPage('conversations')">
                   <td>
                     <div class="session-name-cell">
                       <span class="session-name">implement-ui</span>
@@ -3587,6 +4078,323 @@
           </div>
         </div>
 
+        <!-- ===================== PAGE: CONVERSATIONS LIST ===================== -->
+        <div class="page" id="page-conversations">
+          <div class="convo-list-layout stagger-in">
+            <!-- Session info strip -->
+            <div class="convo-list-header">
+              <div class="convo-list-meta">
+                <div class="si-item">
+                  <span class="si-label">Branch</span>
+                  <span class="si-val">csm/implement-ui</span>
+                </div>
+                <div class="si-sep"></div>
+                <div class="si-item">
+                  <span class="si-label">Created</span>
+                  <span class="si-val">Feb 12, 15:20</span>
+                </div>
+                <div class="si-sep"></div>
+                <div class="si-item">
+                  <span class="si-label">Conversations</span>
+                  <span class="si-val" id="convo-count">4</span>
+                </div>
+                <div class="si-sep"></div>
+                <div class="si-item">
+                  <span class="si-label">Total Prompts</span>
+                  <span class="si-val">22</span>
+                </div>
+              </div>
+              <div class="convo-list-actions">
+                <div class="archive-toggle" id="convo-archive-toggle-wrap">
+                  <button
+                    class="archive-btn-toggle"
+                    id="convo-archive-toggle"
+                    onclick="toggleConvoArchived()"
+                  >
+                    <span>&#9744;</span>
+                    Archived
+                    <span class="archive-count" id="convo-archive-count"
+                      >2</span
+                    >
+                  </button>
+                </div>
+                <button class="btn btn-primary btn-sm">
+                  <span class="btn-icon">+</span> New Conversation
+                </button>
+              </div>
+            </div>
+
+            <!-- Conversation cards -->
+            <div class="convo-card-grid" id="convo-card-grid">
+              <!-- Card 1: most recent, active -->
+              <div class="convo-card most-recent" onclick="showPage('detail')">
+                <div class="card-menu-wrap">
+                  <button
+                    class="card-menu-btn"
+                    onclick="
+                      event.stopPropagation();
+                      toggleCardMenu(this);
+                    "
+                  >
+                    &#8942;
+                  </button>
+                  <div class="card-dropdown">
+                    <button
+                      class="card-dropdown-item"
+                      onclick="
+                        event.stopPropagation();
+                        archiveConvoCard(this);
+                      "
+                    >
+                      <span class="item-icon">&#8615;</span> Archive
+                    </button>
+                  </div>
+                </div>
+                <div class="convo-card-header">
+                  <span class="session-status running">
+                    <span class="dot"></span> running
+                  </span>
+                </div>
+                <div class="convo-card-body">
+                  <div class="convo-card-summary">
+                    Add real-time polling for session status updates. When a
+                    prompt is submitted, poll the run endpoint every 500ms until
+                    completion.
+                  </div>
+                </div>
+                <div class="convo-card-footer">
+                  <span class="convo-card-meta">8 prompts</span>
+                  <span class="convo-card-meta">2m ago</span>
+                </div>
+              </div>
+
+              <!-- Card 2: idle -->
+              <div class="convo-card" onclick="showPage('detail')">
+                <div class="card-menu-wrap">
+                  <button
+                    class="card-menu-btn"
+                    onclick="
+                      event.stopPropagation();
+                      toggleCardMenu(this);
+                    "
+                  >
+                    &#8942;
+                  </button>
+                  <div class="card-dropdown">
+                    <button
+                      class="card-dropdown-item"
+                      onclick="
+                        event.stopPropagation();
+                        archiveConvoCard(this);
+                      "
+                    >
+                      <span class="item-icon">&#8615;</span> Archive
+                    </button>
+                  </div>
+                </div>
+                <div class="convo-card-header">
+                  <span class="session-status idle">
+                    <span class="dot"></span> idle
+                  </span>
+                </div>
+                <div class="convo-card-body">
+                  <div class="convo-card-summary">
+                    Create the session detail page with a prompt input area,
+                    conversation history panel, and a git diff sidebar using
+                    existing design tokens.
+                  </div>
+                </div>
+                <div class="convo-card-footer">
+                  <span class="convo-card-meta">6 prompts</span>
+                  <span class="convo-card-meta">1h ago</span>
+                </div>
+              </div>
+
+              <!-- Card 3: imported, idle -->
+              <div class="convo-card" onclick="showPage('detail')">
+                <div class="card-menu-wrap">
+                  <button
+                    class="card-menu-btn"
+                    onclick="
+                      event.stopPropagation();
+                      toggleCardMenu(this);
+                    "
+                  >
+                    &#8942;
+                  </button>
+                  <div class="card-dropdown">
+                    <button
+                      class="card-dropdown-item"
+                      onclick="
+                        event.stopPropagation();
+                        archiveConvoCard(this);
+                      "
+                    >
+                      <span class="item-icon">&#8615;</span> Archive
+                    </button>
+                  </div>
+                </div>
+                <div class="convo-card-header">
+                  <span class="session-status idle">
+                    <span class="dot"></span> idle
+                  </span>
+                  <span class="convo-badge imported">imported</span>
+                </div>
+                <div class="convo-card-body">
+                  <div class="convo-card-summary">
+                    Refactor the authentication middleware to use JWT tokens
+                    instead of session cookies. Update all protected routes
+                    accordingly.
+                  </div>
+                </div>
+                <div class="convo-card-footer">
+                  <span class="convo-card-meta">5 prompts</span>
+                  <span class="convo-card-meta">3h ago</span>
+                </div>
+              </div>
+
+              <!-- Card 4: idle -->
+              <div class="convo-card" onclick="showPage('detail')">
+                <div class="card-menu-wrap">
+                  <button
+                    class="card-menu-btn"
+                    onclick="
+                      event.stopPropagation();
+                      toggleCardMenu(this);
+                    "
+                  >
+                    &#8942;
+                  </button>
+                  <div class="card-dropdown">
+                    <button
+                      class="card-dropdown-item"
+                      onclick="
+                        event.stopPropagation();
+                        archiveConvoCard(this);
+                      "
+                    >
+                      <span class="item-icon">&#8615;</span> Archive
+                    </button>
+                  </div>
+                </div>
+                <div class="convo-card-header">
+                  <span class="session-status idle">
+                    <span class="dot"></span> idle
+                  </span>
+                </div>
+                <div class="convo-card-body">
+                  <div class="convo-card-summary">
+                    Set up the CI/CD pipeline with GitHub Actions. Add lint,
+                    typecheck, and test steps with proper caching for
+                    node_modules.
+                  </div>
+                </div>
+                <div class="convo-card-footer">
+                  <span class="convo-card-meta">3 prompts</span>
+                  <span class="convo-card-meta">1d ago</span>
+                </div>
+              </div>
+
+              <!-- Card 5: ARCHIVED -->
+              <div
+                class="convo-card archived"
+                data-archived="true"
+                style="display: none"
+                onclick="showPage('detail')"
+              >
+                <div class="card-menu-wrap">
+                  <button
+                    class="card-menu-btn"
+                    onclick="
+                      event.stopPropagation();
+                      toggleCardMenu(this);
+                    "
+                  >
+                    &#8942;
+                  </button>
+                  <div class="card-dropdown">
+                    <button
+                      class="card-dropdown-item"
+                      onclick="
+                        event.stopPropagation();
+                        archiveConvoCard(this);
+                      "
+                    >
+                      <span class="item-icon">&#8613;</span> Unarchive
+                    </button>
+                  </div>
+                </div>
+                <div class="convo-card-header">
+                  <span class="session-status idle">
+                    <span class="dot"></span> idle
+                  </span>
+                  <span class="convo-badge archived-badge">archived</span>
+                </div>
+                <div class="convo-card-body">
+                  <div class="convo-card-summary">
+                    Initial project scaffolding with Next.js 15, TypeScript
+                    strict mode, and Zod v4 schema setup. Configure ESLint and
+                    Vitest.
+                  </div>
+                </div>
+                <div class="convo-card-footer">
+                  <span class="convo-card-meta">12 prompts</span>
+                  <span class="convo-card-meta">5d ago</span>
+                </div>
+              </div>
+
+              <!-- Card 6: ARCHIVED, imported -->
+              <div
+                class="convo-card archived"
+                data-archived="true"
+                style="display: none"
+                onclick="showPage('detail')"
+              >
+                <div class="card-menu-wrap">
+                  <button
+                    class="card-menu-btn"
+                    onclick="
+                      event.stopPropagation();
+                      toggleCardMenu(this);
+                    "
+                  >
+                    &#8942;
+                  </button>
+                  <div class="card-dropdown">
+                    <button
+                      class="card-dropdown-item"
+                      onclick="
+                        event.stopPropagation();
+                        archiveConvoCard(this);
+                      "
+                    >
+                      <span class="item-icon">&#8613;</span> Unarchive
+                    </button>
+                  </div>
+                </div>
+                <div class="convo-card-header">
+                  <span class="session-status idle">
+                    <span class="dot"></span> idle
+                  </span>
+                  <span class="convo-badge imported">imported</span>
+                  <span class="convo-badge archived-badge">archived</span>
+                </div>
+                <div class="convo-card-body">
+                  <div class="convo-card-summary">
+                    Debug the WebSocket connection dropping after 30 seconds of
+                    inactivity. Implement heartbeat mechanism and reconnection
+                    logic.
+                  </div>
+                </div>
+                <div class="convo-card-footer">
+                  <span class="convo-card-meta">7 prompts</span>
+                  <span class="convo-card-meta">1w ago</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- ===================== PAGE: SESSION DETAIL ===================== -->
         <div class="page" id="page-detail">
           <div class="session-detail-layout stagger-in">
@@ -3615,12 +4423,197 @@
               </div>
             </div>
 
-            <!-- Content area: conversation + diff panels -->
+            <!-- Content area: sidebar + conversation + diff panels -->
             <div
-              class="session-content-area"
+              class="session-content-area with-sidebar"
               id="session-content"
               data-layout="default"
             >
+              <!-- Conversation sidebar -->
+              <div class="convo-sidebar" id="convo-sidebar">
+                <div class="convo-sidebar-header">
+                  <span class="convo-sidebar-title">Conversations</span>
+                  <button
+                    class="btn-icon-only convo-sidebar-toggle"
+                    onclick="toggleSidebarCollapse()"
+                    title="Collapse sidebar"
+                  >
+                    &#9664;
+                  </button>
+                </div>
+                <div class="convo-sidebar-list">
+                  <!-- Active conversation -->
+                  <a class="convo-sidebar-item active" href="#">
+                    <span class="sidebar-dot running"></span>
+                    <div class="convo-sidebar-item-body">
+                      <div class="convo-sidebar-item-summary">
+                        Add real-time polling for session status updates
+                      </div>
+                      <div class="convo-sidebar-item-meta">8 prompts</div>
+                    </div>
+                    <button
+                      class="convo-sidebar-item-action"
+                      onclick="
+                        event.preventDefault();
+                        event.stopPropagation();
+                        archiveSidebarItem(this);
+                      "
+                      title="Archive"
+                    >
+                      &#8615;
+                    </button>
+                  </a>
+                  <!-- Other conversations -->
+                  <a class="convo-sidebar-item" href="#">
+                    <span class="sidebar-dot idle"></span>
+                    <div class="convo-sidebar-item-body">
+                      <div class="convo-sidebar-item-summary">
+                        Create session detail page with prompt input
+                      </div>
+                      <div class="convo-sidebar-item-meta">6 prompts</div>
+                    </div>
+                    <button
+                      class="convo-sidebar-item-action"
+                      onclick="
+                        event.preventDefault();
+                        event.stopPropagation();
+                        archiveSidebarItem(this);
+                      "
+                      title="Archive"
+                    >
+                      &#8615;
+                    </button>
+                  </a>
+                  <a class="convo-sidebar-item" href="#">
+                    <span class="sidebar-dot idle"></span>
+                    <div class="convo-sidebar-item-body">
+                      <div class="convo-sidebar-item-summary">
+                        Refactor auth middleware to use JWT tokens
+                      </div>
+                      <div class="convo-sidebar-item-meta">
+                        5 prompts &middot; imported
+                      </div>
+                    </div>
+                    <button
+                      class="convo-sidebar-item-action"
+                      onclick="
+                        event.preventDefault();
+                        event.stopPropagation();
+                        archiveSidebarItem(this);
+                      "
+                      title="Archive"
+                    >
+                      &#8615;
+                    </button>
+                  </a>
+                  <a class="convo-sidebar-item" href="#">
+                    <span class="sidebar-dot idle"></span>
+                    <div class="convo-sidebar-item-body">
+                      <div class="convo-sidebar-item-summary">
+                        Set up CI/CD pipeline with GitHub Actions
+                      </div>
+                      <div class="convo-sidebar-item-meta">3 prompts</div>
+                    </div>
+                    <button
+                      class="convo-sidebar-item-action"
+                      onclick="
+                        event.preventDefault();
+                        event.stopPropagation();
+                        archiveSidebarItem(this);
+                      "
+                      title="Archive"
+                    >
+                      &#8615;
+                    </button>
+                  </a>
+                  <!-- Archived section label (hidden by default) -->
+                  <div
+                    class="convo-sidebar-section-label"
+                    id="sidebar-archived-label"
+                    style="display: none"
+                  >
+                    Archived <span class="sidebar-archive-count">2</span>
+                  </div>
+                  <!-- Archived sidebar items -->
+                  <a
+                    class="convo-sidebar-item archived"
+                    data-archived="true"
+                    style="display: none"
+                    href="#"
+                  >
+                    <span class="sidebar-dot idle"></span>
+                    <div class="convo-sidebar-item-body">
+                      <div class="convo-sidebar-item-summary">
+                        Initial project scaffolding with Next.js 15
+                      </div>
+                      <div class="convo-sidebar-item-meta">12 prompts</div>
+                    </div>
+                    <button
+                      class="convo-sidebar-item-action"
+                      onclick="
+                        event.preventDefault();
+                        event.stopPropagation();
+                        archiveSidebarItem(this);
+                      "
+                      title="Unarchive"
+                    >
+                      &#8613;
+                    </button>
+                  </a>
+                  <a
+                    class="convo-sidebar-item archived"
+                    data-archived="true"
+                    style="display: none"
+                    href="#"
+                  >
+                    <span class="sidebar-dot idle"></span>
+                    <div class="convo-sidebar-item-body">
+                      <div class="convo-sidebar-item-summary">
+                        Debug WebSocket connection drops
+                      </div>
+                      <div class="convo-sidebar-item-meta">
+                        7 prompts &middot; imported
+                      </div>
+                    </div>
+                    <button
+                      class="convo-sidebar-item-action"
+                      onclick="
+                        event.preventDefault();
+                        event.stopPropagation();
+                        archiveSidebarItem(this);
+                      "
+                      title="Unarchive"
+                    >
+                      &#8613;
+                    </button>
+                  </a>
+                </div>
+                <div class="convo-sidebar-footer">
+                  <div
+                    style="
+                      display: flex;
+                      gap: var(--space-xs);
+                      align-items: center;
+                    "
+                  >
+                    <button
+                      class="btn btn-sm convo-sidebar-new"
+                      style="flex: 1"
+                    >
+                      + New
+                    </button>
+                    <button
+                      class="convo-sidebar-archive-toggle"
+                      id="sidebar-archive-toggle"
+                      onclick="toggleSidebarConvoArchived()"
+                    >
+                      Archived
+                      <span class="sidebar-archive-pill-count">2</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <!-- Prompt + conversation panel -->
               <div class="prompt-panel">
                 <div class="panel-header">
@@ -4369,9 +5362,12 @@ export default function SessionDetail({ params }) {
         } else if (page === "sessions") {
           bc.innerHTML =
             '<a href="#" onclick="showPage(\'projects\')">projects</a> <span>/</span> <a href="#" onclick="showPage(\'sessions\')">remote-ai-manager</a>';
+        } else if (page === "conversations") {
+          bc.innerHTML =
+            '<a href="#" onclick="showPage(\'projects\')">projects</a> <span>/</span> <a href="#" onclick="showPage(\'sessions\')">remote-ai-manager</a> <span>/</span> <a class="bc-session" href="#" onclick="showPage(\'conversations\')">implement-ui</a>';
         } else if (page === "detail") {
           bc.innerHTML =
-            '<a href="#" onclick="showPage(\'projects\')">projects</a> <span>/</span> <a href="#" onclick="showPage(\'sessions\')">remote-ai-manager</a> <span>/</span> <a class="bc-session" href="#" onclick="showPage(\'detail\')">implement-ui</a>';
+            '<a href="#" onclick="showPage(\'projects\')">projects</a> <span>/</span> <a href="#" onclick="showPage(\'sessions\')">remote-ai-manager</a> <span>/</span> <a class="bc-session" href="#" onclick="showPage(\'conversations\')">implement-ui</a>';
         }
 
         // Re-trigger stagger animations
@@ -4735,6 +5731,178 @@ export default function SessionDetail({ params }) {
             activeCount +
             " session" +
             (activeCount !== 1 ? "s" : "");
+        }
+      }
+
+      // ===================== CONVERSATION ARCHIVE =====================
+      let showingConvoArchived = false;
+
+      function toggleConvoArchived() {
+        showingConvoArchived = !showingConvoArchived;
+        const btn = document.getElementById("convo-archive-toggle");
+        btn.classList.toggle("showing", showingConvoArchived);
+        btn.querySelector("span:first-child").innerHTML = showingConvoArchived
+          ? "&#9746;"
+          : "&#9744;";
+
+        const cards = document.querySelectorAll(
+          "#convo-card-grid .convo-card[data-archived]",
+        );
+        cards.forEach(function (card) {
+          card.style.display = showingConvoArchived ? "" : "none";
+        });
+
+        updateConvoCount();
+      }
+
+      function archiveConvoCard(btnEl) {
+        const card = btnEl.closest(".convo-card");
+        if (!card) return;
+        closeAllMenus();
+        const isArchived = card.hasAttribute("data-archived");
+
+        if (isArchived) {
+          // Unarchive
+          card.removeAttribute("data-archived");
+          card.classList.remove("archived");
+          card.querySelector(".convo-badge.archived-badge")?.remove();
+          const menuItem = card.querySelector(".card-dropdown-item");
+          if (menuItem) {
+            menuItem.querySelector(".item-icon").innerHTML = "&#8615;";
+            menuItem.childNodes[menuItem.childNodes.length - 1].textContent =
+              " Archive";
+          }
+        } else {
+          // Archive
+          card.setAttribute("data-archived", "true");
+          card.classList.add("archived");
+          card.classList.remove("most-recent");
+          // Add archived badge
+          const header = card.querySelector(".convo-card-header");
+          if (header && !header.querySelector(".convo-badge.archived-badge")) {
+            const badge = document.createElement("span");
+            badge.className = "convo-badge archived-badge";
+            badge.textContent = "archived";
+            header.appendChild(badge);
+          }
+          // Update menu item
+          const menuItem = card.querySelector(".card-dropdown-item");
+          if (menuItem) {
+            menuItem.querySelector(".item-icon").innerHTML = "&#8613;";
+            menuItem.childNodes[menuItem.childNodes.length - 1].textContent =
+              " Unarchive";
+          }
+          if (!showingConvoArchived) {
+            card.style.display = "none";
+          }
+        }
+
+        updateConvoArchiveCount();
+        updateConvoCount();
+      }
+
+      function updateConvoArchiveCount() {
+        const archived = document.querySelectorAll(
+          "#convo-card-grid .convo-card[data-archived]",
+        );
+        const countEl = document.getElementById("convo-archive-count");
+        if (countEl) countEl.textContent = archived.length;
+
+        // Show/hide toggle based on count
+        const wrap = document.getElementById("convo-archive-toggle-wrap");
+        if (wrap) {
+          wrap.style.display = archived.length > 0 ? "" : "none";
+        }
+      }
+
+      function updateConvoCount() {
+        const all = document.querySelectorAll("#convo-card-grid .convo-card");
+        let activeCount = 0;
+        all.forEach(function (card) {
+          if (!card.hasAttribute("data-archived")) activeCount++;
+        });
+        const countEl = document.getElementById("convo-count");
+        if (countEl) countEl.textContent = activeCount;
+      }
+
+      // ===================== SIDEBAR COLLAPSE =====================
+      function toggleSidebarCollapse() {
+        const sidebar = document.getElementById("convo-sidebar");
+        if (!sidebar) return;
+        const isCollapsed = sidebar.classList.toggle("collapsed");
+        const btn = sidebar.querySelector(".convo-sidebar-toggle");
+        if (btn) btn.innerHTML = isCollapsed ? "&#9654;" : "&#9664;";
+        if (btn)
+          btn.title = isCollapsed ? "Expand sidebar" : "Collapse sidebar";
+      }
+
+      // ===================== SIDEBAR CONVERSATION ARCHIVE =====================
+      let showingSidebarArchived = false;
+
+      function toggleSidebarConvoArchived() {
+        showingSidebarArchived = !showingSidebarArchived;
+        const btn = document.getElementById("sidebar-archive-toggle");
+        if (!btn) return;
+        btn.classList.toggle("showing", showingSidebarArchived);
+
+        const items = document.querySelectorAll(
+          ".convo-sidebar-item[data-archived]",
+        );
+        items.forEach(function (item) {
+          item.style.display = showingSidebarArchived ? "" : "none";
+        });
+
+        // Show/hide the section label
+        const label = document.getElementById("sidebar-archived-label");
+        if (label) {
+          label.style.display =
+            showingSidebarArchived && items.length > 0 ? "" : "none";
+        }
+      }
+
+      function archiveSidebarItem(btnEl) {
+        const item = btnEl.closest(".convo-sidebar-item");
+        if (!item) return;
+        const isArchived = item.hasAttribute("data-archived");
+
+        if (isArchived) {
+          item.removeAttribute("data-archived");
+          item.classList.remove("archived");
+          btnEl.innerHTML = "&#8615;";
+          btnEl.title = "Archive";
+        } else {
+          item.setAttribute("data-archived", "true");
+          item.classList.add("archived");
+          btnEl.innerHTML = "&#8613;";
+          btnEl.title = "Unarchive";
+          if (!showingSidebarArchived) {
+            item.style.display = "none";
+          }
+        }
+
+        updateSidebarArchiveCount();
+      }
+
+      function updateSidebarArchiveCount() {
+        const archived = document.querySelectorAll(
+          ".convo-sidebar-item[data-archived]",
+        );
+        const countEl = document.querySelector(".sidebar-archive-pill-count");
+        if (countEl) countEl.textContent = archived.length;
+
+        // Show/hide toggle
+        const btn = document.getElementById("sidebar-archive-toggle");
+        if (btn) {
+          btn.style.display = archived.length > 0 ? "" : "none";
+        }
+
+        // Update section label
+        const label = document.getElementById("sidebar-archived-label");
+        if (label) {
+          label.style.display =
+            showingSidebarArchived && archived.length > 0 ? "" : "none";
+          const labelCount = label.querySelector(".sidebar-archive-count");
+          if (labelCount) labelCount.textContent = archived.length;
         }
       }
 

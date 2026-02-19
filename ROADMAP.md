@@ -16,6 +16,8 @@
 
 ## Backlog
 
+- First-class UI support for Claude native tasks.
+
 - Ability to see Git history and more Git context
 
 - A minimal file browser
@@ -25,8 +27,12 @@
 
 - The ability to run multiple Claude Code sessions within the same worktree.
 
-- Extend voice tool to send more context (text already in text input, maybe previous messages, etc.)
-
 - First-class hotkey support.
 
+- Build the Ralph Loop and spec-driven development workflows natively into the application.
+
+### Voice Tool
+
 - Voice mode that auto-submits voice message (fire and forget)
+
+- Extend voice tool to send more context (text already in text input, maybe previous messages, etc.)

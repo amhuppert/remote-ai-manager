@@ -12,12 +12,16 @@ const {
   updateSessionMock,
   readConfigMock,
   acquireSessionLockMock,
+  getConversationMock,
+  createConversationMock,
 } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   getSessionMock: vi.fn(),
   updateSessionMock: vi.fn(),
   readConfigMock: vi.fn(),
   acquireSessionLockMock: vi.fn(),
+  getConversationMock: vi.fn(),
+  createConversationMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -47,6 +51,12 @@ vi.mock("./logging", () => ({
   }),
 }));
 
+vi.mock("./conversations", () => ({
+  getConversation: getConversationMock,
+  createConversation: createConversationMock,
+  encodeProjectPath: (p: string) => "-" + p.slice(1).replace(/[/.]/g, "-"),
+}));
+
 // ---------------------------------------------------------------------------
 // Import module under test
 // ---------------------------------------------------------------------------
@@ -57,20 +67,32 @@ import type { SessionState } from "@/types";
 // Helpers
 // ---------------------------------------------------------------------------
 
+function makeConversation(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "conv-123",
+    claudeSessionId: null,
+    transcriptPath: null,
+    status: "ready" as const,
+    promptCount: 0,
+    createdAt: "2024-01-01T00:00:00Z",
+    lastActivityAt: "2024-01-01T00:00:00Z",
+    source: "csm" as const,
+    summary: null,
+    archived: false,
+    ...overrides,
+  };
+}
+
 function makeSession(overrides: Partial<SessionState> = {}): SessionState {
   return {
     sessionName: "test-session",
     worktreePath: "/projects/repo/.worktrees/test-session",
     branchName: "csm/test-session",
-    claudeSessionId: null,
-    transcriptPath: null,
-    status: "ready",
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
-    promptCount: 0,
     archived: false,
     finished: false,
-    messages: [],
+    conversations: [],
     ...overrides,
   };
 }
@@ -123,16 +145,31 @@ const defaultConfig = {
 // Reset
 // ---------------------------------------------------------------------------
 
+/** Deep-copy snapshots of each updateSession call (avoids shared-ref mutation) */
+let updateSnapshots: SessionState[] = [];
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers({ shouldAdvanceTime: true });
   readConfigMock.mockResolvedValue(defaultConfig);
+  updateSnapshots = [];
 
   const releaseMock = vi.fn();
   acquireSessionLockMock.mockReturnValue(releaseMock);
 
-  getSessionMock.mockImplementation(() => Promise.resolve(makeSession()));
-  updateSessionMock.mockResolvedValue(undefined);
+  // Mock conversation creation
+  const conversation = makeConversation();
+  createConversationMock.mockResolvedValue(conversation);
+  getConversationMock.mockResolvedValue(conversation);
+
+  // getSession returns the session with the conversation for mutation tracking
+  const session = makeSession();
+  session.conversations = [conversation];
+  getSessionMock.mockImplementation(() => Promise.resolve(session));
+  updateSessionMock.mockImplementation((_path: string, s: SessionState) => {
+    updateSnapshots.push(JSON.parse(JSON.stringify(s)));
+    return Promise.resolve();
+  });
 });
 
 // ===========================================================================
@@ -224,22 +261,12 @@ describe("executePromptStream", () => {
     });
   });
 
-  it("stores accumulated content blocks as assistant message on completion", async () => {
+  it("updates conversation metadata on completion with content", async () => {
     const lines = [
       JSON.stringify({
         type: "system",
         subtype: "init",
         session_id: "sess-abc",
-      }),
-      JSON.stringify({
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [
-            { type: "text", text: "Let me check..." },
-            { type: "tool_use", name: "Read", input: { file_path: "x.ts" } },
-          ],
-        },
       }),
       JSON.stringify({
         type: "assistant",
@@ -259,43 +286,21 @@ describe("executePromptStream", () => {
       vi.fn(),
     );
 
-    // Find the updateSession call that stored the assistant message
-    const assistantCall = updateSessionMock.mock.calls.find(
-      (call: unknown[]) => {
-        const s = call[1] as SessionState;
-        return s.messages.some((m: { role: string }) => m.role === "assistant");
-      },
-    );
-    expect(assistantCall).toBeTruthy();
+    // updateSession should be called at least 3 times:
+    // 1. status -> running
+    // 2. promptCount++ and claudeSessionId
+    // 3. status -> ready (finally block)
+    expect(updateSnapshots.length).toBeGreaterThanOrEqual(3);
 
-    const stored = (assistantCall![1] as SessionState).messages.find(
-      (m: { role: string }) => m.role === "assistant",
-    );
-    expect(stored!.content).toEqual([
-      { type: "text", text: "Let me check..." },
-      { type: "tool_use", name: "Read", input: { file_path: "x.ts" } },
-      { type: "text", text: "Here is the result." },
-    ]);
-  });
+    // First snapshot: conversation status should be "running"
+    expect(updateSnapshots[0]!.conversations[0]!.status).toBe("running");
 
-  it("stores user message in block format", async () => {
-    const child = createMockChild([]);
-    spawnMock.mockReturnValue(child);
+    // Second snapshot should have conversation promptCount incremented
+    expect(updateSnapshots[1]!.conversations[0]!.promptCount).toBe(1);
 
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "My prompt",
-      vi.fn(),
-    );
-
-    // First updateSession call stores the user message
-    const firstUpdate = updateSessionMock.mock.calls[0]![1] as SessionState;
-    const userMsg = firstUpdate.messages.find(
-      (m: { role: string }) => m.role === "user",
-    );
-    expect(userMsg).toBeTruthy();
-    expect(userMsg!.content).toEqual([{ type: "text", text: "My prompt" }]);
+    // Last snapshot: conversation status should be "ready"
+    const last = updateSnapshots[updateSnapshots.length - 1]!;
+    expect(last.conversations[0]!.status).toBe("ready");
   });
 
   it("handles non-zero exit with accumulated content", async () => {
@@ -315,15 +320,6 @@ describe("executePromptStream", () => {
     const emit = (event: string, data: unknown) => events.push([event, data]);
 
     await executePromptStream("/projects/repo", makeSession(), "test", emit);
-
-    // Should still store the response
-    const assistantCall = updateSessionMock.mock.calls.find(
-      (call: unknown[]) => {
-        const s = call[1] as SessionState;
-        return s.messages.some((m: { role: string }) => m.role === "assistant");
-      },
-    );
-    expect(assistantCall).toBeTruthy();
 
     // Should emit done, not error (since there is content)
     expect(events.find(([e]) => e === "error")).toBeUndefined();
@@ -373,51 +369,57 @@ describe("executePromptStream", () => {
     expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 
-  it("resets session status to ready in finally block", async () => {
+  it("resets conversation status to ready in finally block", async () => {
     const child = createMockChild([]);
     spawnMock.mockReturnValue(child);
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
-    // Last updateSession call should set status to "ready"
-    const lastCallIdx = updateSessionMock.mock.calls.length - 1;
-    const lastUpdate = updateSessionMock.mock.calls[
-      lastCallIdx
-    ]![1] as SessionState;
-    expect(lastUpdate.status).toBe("ready");
+    // Last snapshot should set conversation status to "ready"
+    const last = updateSnapshots[updateSnapshots.length - 1]!;
+    expect(last.conversations[0]!.status).toBe("ready");
   });
 
-  it("uses -c flag for subsequent prompts", async () => {
+  it("uses --resume for existing conversation with claudeSessionId", async () => {
+    const convo = makeConversation({ claudeSessionId: "existing-session-id" });
+    getConversationMock.mockResolvedValue(convo);
+
+    const session = makeSession();
+    session.conversations = [convo];
+    getSessionMock.mockImplementation(() => Promise.resolve(session));
+
     const child = createMockChild([]);
     spawnMock.mockReturnValue(child);
 
     await executePromptStream(
       "/projects/repo",
-      makeSession({ promptCount: 3 }),
+      session,
       "follow-up",
       vi.fn(),
+      convo.id,
     );
 
     const [cmd, args] = spawnMock.mock.calls[0]! as [string, string[]];
     expect(cmd).toBe("claude");
-    expect(args).toContain("-c");
+    expect(args).toContain("--resume");
+    expect(args).toContain("existing-session-id");
     expect(args).toContain("--output-format");
     expect(args).toContain("stream-json");
   });
 
-  it("does not use -c flag for first prompt", async () => {
+  it("does not use --resume for new conversation", async () => {
     const child = createMockChild([]);
     spawnMock.mockReturnValue(child);
 
     await executePromptStream(
       "/projects/repo",
-      makeSession({ promptCount: 0 }),
+      makeSession(),
       "first prompt",
       vi.fn(),
     );
 
     const [, args] = spawnMock.mock.calls[0]! as [string, string[]];
-    expect(args).not.toContain("-c");
+    expect(args).not.toContain("--resume");
   });
 
   it("closes stdin immediately", async () => {
@@ -427,5 +429,71 @@ describe("executePromptStream", () => {
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
     expect(child.stdin.end).toHaveBeenCalled();
+  });
+
+  it("returns conversationId", async () => {
+    const child = createMockChild([]);
+    spawnMock.mockReturnValue(child);
+
+    const result = await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "test",
+      vi.fn(),
+    );
+
+    expect(result.conversationId).toBe("conv-123");
+  });
+
+  it("sets claudeSessionId from stream events", async () => {
+    const lines = [
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        session_id: "sess-abc-456",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "response" }],
+        },
+      }),
+    ];
+    const child = createMockChild(lines);
+    spawnMock.mockReturnValue(child);
+
+    await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
+
+    // The metadata update snapshot should have the claude session ID
+    const metadataSnapshot = updateSnapshots.find(
+      (s) => s.conversations[0]!.claudeSessionId === "sess-abc-456",
+    );
+    expect(metadataSnapshot).toBeTruthy();
+  });
+
+  it("updates lastActivityAt on conversation mutations", async () => {
+    const lines = [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "response" }],
+        },
+      }),
+    ];
+    const child = createMockChild(lines);
+    spawnMock.mockReturnValue(child);
+
+    await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
+
+    // All snapshots should have lastActivityAt set
+    for (const snapshot of updateSnapshots) {
+      expect(snapshot.lastActivityAt).toBeTruthy();
+      // Should be a valid ISO string (not the original fixture timestamp)
+      expect(new Date(snapshot.lastActivityAt).getTime()).toBeGreaterThan(
+        new Date("2024-01-01T00:00:00Z").getTime(),
+      );
+    }
   });
 });

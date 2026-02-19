@@ -4,6 +4,7 @@ import path from "node:path";
 import type { DiscoveredProject } from "@/types";
 import { readConfig } from "./config";
 import { readState } from "./state";
+import { deriveSessionStatus } from "./conversations";
 
 /**
  * Scan baseDir one level deep for directories containing a .git directory/file.
@@ -42,7 +43,9 @@ export async function discoverProjects(): Promise<DiscoveredProject[]> {
     const projectState = state.projects[repoPath];
     const sessions = projectState ? Object.values(projectState.sessions) : [];
     const activeSessions = sessions.filter((s) => !s.archived).length;
-    const hasRunningSession = sessions.some((s) => s.status === "running");
+    const hasRunningSession = sessions.some(
+      (s) => deriveSessionStatus(s) === "running",
+    );
 
     projects.push({
       name: entry.name,
