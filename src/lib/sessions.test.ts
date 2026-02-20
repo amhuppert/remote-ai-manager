@@ -641,7 +641,7 @@ describe("deleteSession", () => {
     expect(execFileMock).toHaveBeenCalled();
   });
 
-  it("skips worktree removal for imported sessions and returns worktreeRemoved=false", async () => {
+  it("removes worktree for imported sessions the same as CSM-created ones", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "imported-session", {
         source: "imported",
@@ -649,15 +649,14 @@ describe("deleteSession", () => {
       }),
     );
     existsSyncMock.mockReturnValue(true);
+    mockExecFileSuccess();
 
     const result = await deleteSession("/projects/repo", "imported-session");
 
-    expect(result.worktreeRemoved).toBe(false);
-    // Git worktree remove should NOT be called for imported sessions
-    expect(execFileMock).not.toHaveBeenCalled();
-    // rm should NOT be called
-    expect(rmMock).not.toHaveBeenCalled();
-    // But session should still be removed from state
+    expect(result.worktreeRemoved).toBe(true);
+    // Git worktree remove should be called for imported sessions
+    expect(execFileMock).toHaveBeenCalled();
+    // Session should be removed from state
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
     expect(

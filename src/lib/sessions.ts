@@ -211,46 +211,36 @@ export async function deleteSession(
 
   const source = session.source ?? "csm";
   let worktreeRemoved = false;
+  let worktreeCleanup = "skipped";
 
-  if (source === "imported") {
-    // Imported sessions: remove from state only, do not touch the worktree
-    logger.info("session.delete", {
-      sessionName,
-      source,
-      worktreeCleanup: "skipped-imported",
-    });
-  } else {
-    // CSM-created sessions: remove the worktree from disk
-    let worktreeCleanup = "skipped";
-    if (existsSync(session.worktreePath)) {
-      try {
-        await git(projectPath, [
-          "worktree",
-          "remove",
-          "--force",
-          session.worktreePath,
-        ]);
-        worktreeCleanup = "success";
-        worktreeRemoved = true;
-      } catch (err) {
-        logger.error("session.worktree_remove_failure", {
-          sessionName,
-          worktreePath: session.worktreePath,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        // Fallback: manual removal
-        await rm(session.worktreePath, { recursive: true, force: true });
-        worktreeCleanup = "fallback";
-        worktreeRemoved = true;
-      }
+  if (existsSync(session.worktreePath)) {
+    try {
+      await git(projectPath, [
+        "worktree",
+        "remove",
+        "--force",
+        session.worktreePath,
+      ]);
+      worktreeCleanup = "success";
+      worktreeRemoved = true;
+    } catch (err) {
+      logger.error("session.worktree_remove_failure", {
+        sessionName,
+        worktreePath: session.worktreePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Fallback: manual removal
+      await rm(session.worktreePath, { recursive: true, force: true });
+      worktreeCleanup = "fallback";
+      worktreeRemoved = true;
     }
-
-    logger.info("session.delete", {
-      sessionName,
-      source,
-      worktreeCleanup,
-    });
   }
+
+  logger.info("session.delete", {
+    sessionName,
+    source,
+    worktreeCleanup,
+  });
 
   // Remove from state
   delete project.sessions[sessionName];
