@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Anybody, Manrope, Geist_Mono } from "next/font/google";
 import Providers from "@/components/Providers";
 import NotificationListener from "@/components/NotificationListener";
+import GlobalHotkeyHelp from "@/components/GlobalHotkeyHelp";
 import "./globals.css";
 
 const anybody = Anybody({
@@ -64,6 +65,7 @@ export default function RootLayout({
         <Providers>
           {children}
           <NotificationListener />
+          <GlobalHotkeyHelp />
         </Providers>
       </body>
     </html>

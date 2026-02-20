@@ -48,7 +48,6 @@ describe("HOTKEY_REGISTRY", () => {
   it("non-modifier hotkeys do not have enableOnFormTags", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     const nonModifierIds: HotkeyId[] = [
-      "helpModal",
       "toggleSidebar",
       "nextMessage",
       "prevMessage",
@@ -62,6 +61,13 @@ describe("HOTKEY_REGISTRY", () => {
     for (const id of nonModifierIds) {
       expect(HOTKEY_REGISTRY[id].enableOnFormTags).toBeFalsy();
     }
+  });
+
+  it("helpModal has enableOnFormTags and useKey set", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    expect(HOTKEY_REGISTRY.helpModal.enableOnFormTags).toBe(true);
+    expect(HOTKEY_REGISTRY.helpModal.useKey).toBe(true);
+    expect(HOTKEY_REGISTRY.helpModal.keys).toBe("?");
   });
 });
 
@@ -146,9 +152,9 @@ describe("formatHotkeyDisplay", () => {
       });
     });
 
-    it("formats shift+/ as ?", async () => {
+    it("formats ? as ?", async () => {
       const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("shift+/")).toBe("?");
+      expect(formatHotkeyDisplay("?")).toBe("?");
     });
 
     it("formats alt+v with Alt prefix", async () => {
@@ -186,9 +192,9 @@ describe("formatHotkeyDisplay", () => {
       });
     });
 
-    it("formats shift+/ as ?", async () => {
+    it("formats ? as ?", async () => {
       const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("shift+/")).toBe("?");
+      expect(formatHotkeyDisplay("?")).toBe("?");
     });
 
     it("formats alt+v with option symbol", async () => {

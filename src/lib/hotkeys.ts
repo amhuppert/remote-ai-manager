@@ -7,6 +7,7 @@ export interface HotkeyDefinition {
   readonly description: string;
   readonly category: HotkeyCategory;
   readonly enableOnFormTags?: boolean;
+  readonly useKey?: boolean;
 }
 
 export type HotkeyId =
@@ -27,10 +28,12 @@ export type HotkeyRegistry = Record<HotkeyId, HotkeyDefinition>;
 export const HOTKEY_REGISTRY: HotkeyRegistry = {
   helpModal: {
     id: "helpModal",
-    keys: "shift+/",
+    keys: "?",
     label: "Show keyboard shortcuts",
     description: "Open the keyboard shortcuts help modal",
     category: "general",
+    enableOnFormTags: true,
+    useKey: true,
   },
   voiceToggle: {
     id: "voiceToggle",
@@ -136,8 +139,8 @@ export function getCategoryLabel(category: HotkeyCategory): string {
  * Format a hotkey key string for display with platform-correct modifier symbols.
  */
 export function formatHotkeyDisplay(keys: string): string {
-  // Special case: shift+/ is the ? key
-  if (keys === "shift+/") return "?";
+  // Single-character keys like "?" display as-is
+  if (keys === "?") return "?";
 
   const mac = isMacOS();
   const parts = keys.split("+");

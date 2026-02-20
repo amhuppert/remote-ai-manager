@@ -54,7 +54,6 @@ import CommitDialog from "./CommitDialog";
 import MergeDialog from "./MergeDialog";
 import ConversationSidebar from "./ConversationSidebar";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import HotkeyHelpModal from "@/components/HotkeyHelpModal";
 import MessageContent from "@/components/MessageContent";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import {
@@ -162,7 +161,6 @@ export default function SessionDetailPage({
   const promptTextRef = useRef(promptText);
   promptTextRef.current = promptText;
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [showHelpModal, setShowHelpModal] = useState(false);
 
   // --- Refs for message navigation ---
   const panelBodyRef = useRef<HTMLDivElement>(null);
@@ -326,8 +324,6 @@ export default function SessionDetailPage({
     scrollToMessage(displayMessages.length - 1),
   );
 
-  // Help modal hotkey
-  useAppHotkey("helpModal", () => setShowHelpModal(true));
 
   // --- Handlers ---
 
@@ -836,10 +832,6 @@ export default function SessionDetailPage({
         commitCount={commits.length}
       />
 
-      <HotkeyHelpModal
-        open={showHelpModal}
-        onClose={() => setShowHelpModal(false)}
-      />
     </div>
   );
 }

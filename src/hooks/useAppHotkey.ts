@@ -16,5 +16,6 @@ export function useAppHotkey(
     enableOnFormTags: def.enableOnFormTags
       ? (["input", "textarea", "select"] as const)
       : undefined,
+    useKey: def.useKey,
   });
 }
