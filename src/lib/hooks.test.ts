@@ -228,6 +228,106 @@ describe("processHookEvent", () => {
     );
   });
 
+  it("sets conversation status to ready on Stop event", async () => {
+    mockState = {
+      projects: {
+        "/proj": {
+          rootPath: "/proj",
+          sessions: {
+            s1: {
+              sessionName: "s1",
+              worktreePath: "/proj/.worktrees/s1",
+              branchName: "csm/s1",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [
+                {
+                  id: "conv-running",
+                  name: null,
+                  claudeSessionId: "session-abc",
+                  transcriptPath: null,
+                  status: "running",
+                  promptCount: 1,
+                  createdAt: "2024-01-01T00:00:00Z",
+                  lastActivityAt: "2024-01-01T00:00:00Z",
+                  source: "csm",
+                  summary: null,
+                  archived: false,
+                },
+              ],
+              source: "csm" as const,
+            },
+          },
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    };
+
+    const { processHookEvent } = await import("./hooks");
+    await processHookEvent({
+      cwd: "/proj/.worktrees/s1",
+      session_id: "session-abc",
+      hook_event_name: "Stop",
+    });
+
+    const convo =
+      mockState.projects["/proj"]!.sessions["s1"]!.conversations[0]!;
+    expect(convo.status).toBe("ready");
+  });
+
+  it("does not change status on non-Stop events", async () => {
+    mockState = {
+      projects: {
+        "/proj": {
+          rootPath: "/proj",
+          sessions: {
+            s1: {
+              sessionName: "s1",
+              worktreePath: "/proj/.worktrees/s1",
+              branchName: "csm/s1",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [
+                {
+                  id: "conv-running",
+                  name: null,
+                  claudeSessionId: "session-abc",
+                  transcriptPath: null,
+                  status: "running",
+                  promptCount: 1,
+                  createdAt: "2024-01-01T00:00:00Z",
+                  lastActivityAt: "2024-01-01T00:00:00Z",
+                  source: "csm",
+                  summary: null,
+                  archived: false,
+                },
+              ],
+              source: "csm" as const,
+            },
+          },
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    };
+
+    const { processHookEvent } = await import("./hooks");
+    await processHookEvent({
+      cwd: "/proj/.worktrees/s1",
+      session_id: "session-abc",
+      hook_event_name: "UserPromptSubmit",
+    });
+
+    const convo =
+      mockState.projects["/proj"]!.sessions["s1"]!.conversations[0]!;
+    expect(convo.status).toBe("running");
+  });
+
   it("creates new conversation when no running CSM conversation exists", async () => {
     // When the hook fires and there's no running CSM conversation (e.g.,
     // Claude was started directly from the CLI), it should create a new one.

@@ -1,19 +1,35 @@
 import type { SessionReadyEvent } from "@/types";
 
 const encoder = new TextEncoder();
-const clients = new Set<ReadableStreamDefaultController>();
+
+/**
+ * Use globalThis to store the client Set so it survives Next.js module
+ * re-evaluation (HMR, separate route bundles). Without this, the events
+ * route and hooks route can end up with different Set instances, meaning
+ * broadcast() writes to an empty Set while clients live in another.
+ */
+const GLOBAL_KEY = "__csm_sse_clients" as const;
+
+function getClients(): Set<ReadableStreamDefaultController> {
+  const g = globalThis as unknown as Record<string, unknown>;
+  if (!g[GLOBAL_KEY]) {
+    g[GLOBAL_KEY] = new Set<ReadableStreamDefaultController>();
+  }
+  return g[GLOBAL_KEY] as Set<ReadableStreamDefaultController>;
+}
 
 export function addClient(controller: ReadableStreamDefaultController): void {
-  clients.add(controller);
+  getClients().add(controller);
 }
 
 export function removeClient(
   controller: ReadableStreamDefaultController,
 ): void {
-  clients.delete(controller);
+  getClients().delete(controller);
 }
 
 export function broadcast(event: SessionReadyEvent): void {
+  const clients = getClients();
   if (clients.size === 0) return;
 
   const frame = encoder.encode(
@@ -30,10 +46,10 @@ export function broadcast(event: SessionReadyEvent): void {
 }
 
 export function getClientCount(): number {
-  return clients.size;
+  return getClients().size;
 }
 
 /** Reset state for testing — do not use in production */
 export function _resetForTesting(): void {
-  clients.clear();
+  getClients().clear();
 }

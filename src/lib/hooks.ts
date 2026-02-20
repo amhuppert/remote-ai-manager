@@ -128,6 +128,11 @@ export async function processHookEvent(
     if (session_id) conversation.claudeSessionId = session_id;
     if (transcript_path) conversation.transcriptPath = transcript_path;
     conversation.lastActivityAt = new Date().toISOString();
+
+    // Mark conversation as ready when Claude finishes responding
+    if (hook_event_name === "Stop" && conversation.status === "running") {
+      conversation.status = "ready";
+    }
   }
 
   session.lastActivityAt = new Date().toISOString();
