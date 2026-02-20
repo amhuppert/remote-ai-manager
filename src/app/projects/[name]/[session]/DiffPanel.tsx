@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import type { SessionDiff, CommitLogEntry } from "@/types";
 import CommitHistory from "./CommitHistory";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 
 type DiffTab = "uncommitted" | "commits";
 
@@ -107,6 +108,11 @@ export default function DiffPanel({
 
     hunks[nextIdx]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
+
+  useAppHotkey("nextFile", () => navigateFile(1));
+  useAppHotkey("prevFile", () => navigateFile(-1));
+  useAppHotkey("nextChange", () => navigateHunk(1));
+  useAppHotkey("prevChange", () => navigateHunk(-1));
 
   // Build flat hunk ref index
   let hunkRefIndex = 0;

@@ -1,20 +1,12 @@
 "use client";
 
-import { useEffect, useImperativeHandle, type Ref } from "react";
-import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
-
-export interface VoiceRecordButtonHandle {
-  isRecording: boolean;
-  stopRecording: () => void;
-}
-
 interface VoiceRecordButtonProps {
-  projectName: string;
-  onResult: (text: string) => void;
-  onError: (error: string) => void;
-  onRecordingChange?: (recording: boolean) => void;
+  isRecording: boolean;
+  isProcessing: boolean;
+  elapsedTime: number;
+  isAvailable: boolean;
+  toggleRecording: () => void;
   disabled?: boolean;
-  ref?: Ref<VoiceRecordButtonHandle>;
 }
 
 function formatTime(seconds: number): string {
@@ -24,31 +16,13 @@ function formatTime(seconds: number): string {
 }
 
 export function VoiceRecordButton({
-  projectName,
-  onResult,
-  onError,
-  onRecordingChange,
+  isRecording,
+  isProcessing,
+  elapsedTime,
+  isAvailable,
+  toggleRecording,
   disabled = false,
-  ref,
 }: VoiceRecordButtonProps) {
-  const {
-    isRecording,
-    isProcessing,
-    elapsedTime,
-    isAvailable,
-    toggleRecording,
-    stopRecording,
-  } = useVoiceRecorder({ projectName, onResult, onError });
-
-  useImperativeHandle(ref, () => ({ isRecording, stopRecording }), [
-    isRecording,
-    stopRecording,
-  ]);
-
-  useEffect(() => {
-    onRecordingChange?.(isRecording);
-  }, [isRecording, onRecordingChange]);
-
   if (!isAvailable) return null;
 
   const isDisabled = disabled || isProcessing;
