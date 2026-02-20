@@ -80,6 +80,7 @@ export default function SessionDetailPage({
   const [showCommitDialog, setShowCommitDialog] = useState(false);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [infoExpanded, setInfoExpanded] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
   const [optimisticMessages, setOptimisticMessages] = useState<
     TranscriptMessage[]
@@ -182,6 +183,16 @@ export default function SessionDetailPage({
     }
 
     return () => observer.disconnect();
+  }, [displayMessages.length]);
+
+  // Auto-scroll to bottom on initial load
+  const initialScrollDone = useRef(false);
+  useEffect(() => {
+    if (!initialScrollDone.current && displayMessages.length > 0) {
+      initialScrollDone.current = true;
+      // Use instant scroll on initial load (no smooth animation)
+      conversationEndRef.current?.scrollIntoView({ behavior: "instant" });
+    }
   }, [displayMessages.length]);
 
   // Auto-scroll to bottom when new messages arrive (server or optimistic)
@@ -594,12 +605,23 @@ export default function SessionDetailPage({
                 conversations={conversations}
                 activeConversationId={conversationId}
                 isFinished={isFinished}
+                mobileOpen={mobileSidebarOpen}
+                onMobileClose={() => setMobileSidebarOpen(false)}
               />
             )}
 
             {/* Conversation panel */}
             <div className="prompt-panel">
               <div className="panel-header">
+                {conversations && (
+                  <button
+                    className="convo-sidebar-mobile-toggle"
+                    onClick={() => setMobileSidebarOpen(true)}
+                    title="Show conversations"
+                  >
+                    &#9776; Conversations
+                  </button>
+                )}
                 <span className="panel-title">Conversation</span>
                 <div className="msg-nav">
                   <button
@@ -745,40 +767,42 @@ export default function SessionDetailPage({
                     }}
                     disabled={isFinished}
                   />
-                  <VoiceRecordButton
-                    isRecording={isRecording}
-                    isProcessing={isProcessing}
-                    elapsedTime={elapsedTime}
-                    isAvailable={voiceAvailable}
-                    toggleRecording={toggleRecording}
-                    disabled={sending}
-                  />
-                  <button
-                    className={`send-btn${sending ? " busy" : ""}`}
-                    disabled={!promptText.trim() || sending || isFinished || isRecording}
-                    onClick={() => void handleSendPrompt()}
-                    title={
-                      isFinished
-                        ? "Session is read-only"
-                        : sending
-                          ? "Session is busy"
-                          : "Send prompt"
-                    }
-                  >
-                    {sending ? (
-                      <div
-                        className="spinner"
-                        style={{
-                          borderColor: "rgba(0, 229, 255, 0.3)",
-                          borderTopColor: "var(--cyan)",
-                          width: 18,
-                          height: 18,
-                        }}
-                      />
-                    ) : (
-                      "\u25B6"
-                    )}
-                  </button>
+                  <div className="prompt-input-actions">
+                    <VoiceRecordButton
+                      isRecording={isRecording}
+                      isProcessing={isProcessing}
+                      elapsedTime={elapsedTime}
+                      isAvailable={voiceAvailable}
+                      toggleRecording={toggleRecording}
+                      disabled={sending}
+                    />
+                    <button
+                      className={`send-btn${sending ? " busy" : ""}`}
+                      disabled={!promptText.trim() || sending || isFinished || isRecording}
+                      onClick={() => void handleSendPrompt()}
+                      title={
+                        isFinished
+                          ? "Session is read-only"
+                          : sending
+                            ? "Session is busy"
+                            : "Send prompt"
+                      }
+                    >
+                      {sending ? (
+                        <div
+                          className="spinner"
+                          style={{
+                            borderColor: "rgba(0, 229, 255, 0.3)",
+                            borderTopColor: "var(--cyan)",
+                            width: 18,
+                            height: 18,
+                          }}
+                        />
+                      ) : (
+                        "\u25B6"
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

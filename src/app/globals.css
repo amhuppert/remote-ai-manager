@@ -1650,6 +1650,7 @@ textarea {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  min-height: 0;
 }
 
 .panel-header {
@@ -1784,12 +1785,20 @@ textarea {
   padding: var(--space-md) var(--space-lg);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-base);
+  flex-shrink: 0;
 }
 
 .prompt-input-wrapper {
   display: flex;
   gap: var(--space-sm);
   align-items: flex-end;
+}
+
+.prompt-input-actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-end;
+  flex-shrink: 0;
 }
 
 .prompt-textarea {
@@ -2659,6 +2668,27 @@ textarea {
     display: none;
   }
 
+  /* Show mobile sidebar toggle */
+  .convo-sidebar-mobile-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .convo-sidebar-mobile-toggle:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
   /* Force single column on mobile regardless of layout mode */
   .session-content-area[data-layout="default"],
   .session-content-area[data-layout="split"],
@@ -2707,12 +2737,34 @@ textarea {
     display: none;
   }
 
-  /* Pin prompt input to bottom on mobile (above bottom bar) */
+  /* Prompt input stays at bottom via flex layout — no sticky needed */
   .prompt-input-area {
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
-    padding-bottom: var(--space-md);
+    flex-shrink: 0;
+    padding: var(--space-sm) var(--space-md);
+    padding-bottom: calc(var(--space-sm) + env(safe-area-inset-bottom, 0));
+  }
+
+  /* Stack prompt input: textarea full width, buttons below */
+  .prompt-input-wrapper {
+    flex-wrap: wrap;
+  }
+
+  .prompt-textarea {
+    flex: 1 1 100%;
+    min-height: 44px;
+  }
+
+  .prompt-input-wrapper .send-btn,
+  .prompt-input-wrapper .voice-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Push buttons to the right */
+  .prompt-input-actions {
+    display: flex;
+    gap: var(--space-sm);
+    margin-left: auto;
   }
 
   /* ---- Touch targets ---- */
@@ -2919,18 +2971,15 @@ textarea {
   color: var(--text-tertiary);
 }
 
-/* Archive button in card footer */
+/* Archive button in card footer — always visible for touch accessibility */
 .convo-card-archive-btn {
-  opacity: 0;
+  opacity: 0.5;
   font-size: 0.7rem;
   margin-left: auto;
   padding: 0 4px;
   transition: opacity 0.15s ease;
 }
-.convo-card:hover .convo-card-archive-btn {
-  opacity: 0.6;
-}
-.convo-card:hover .convo-card-archive-btn:hover {
+.convo-card-archive-btn:hover {
   opacity: 1;
 }
 
@@ -3087,19 +3136,16 @@ textarea {
   opacity: 0.75;
 }
 
-/* Sidebar item hover action button */
+/* Sidebar item action button — always visible for touch accessibility */
 .convo-sidebar-item-action {
-  opacity: 0;
+  opacity: 0.5;
   flex-shrink: 0;
   font-size: 0.6rem;
   padding: 0 2px;
   margin-top: 2px;
   transition: opacity 0.15s ease;
 }
-.convo-sidebar-item:hover .convo-sidebar-item-action {
-  opacity: 0.6;
-}
-.convo-sidebar-item:hover .convo-sidebar-item-action:hover {
+.convo-sidebar-item-action:hover {
   opacity: 1;
 }
 
@@ -3128,6 +3174,33 @@ textarea {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-secondary);
   border-style: solid;
+}
+
+/* Mobile sidebar toggle — hidden on desktop */
+.convo-sidebar-mobile-toggle {
+  display: none;
+}
+
+/* Backdrop — hidden on desktop */
+.convo-sidebar-backdrop {
+  display: none;
+}
+
+/* Close button — hidden on desktop */
+.convo-sidebar-close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 /* Session content area with sidebar — flex layout respecting data-layout modes */
@@ -3408,6 +3481,58 @@ textarea {
 
   .cmd-source {
     display: none;
+  }
+
+  /* ---- Conversation sidebar: slide-out drawer on mobile ---- */
+
+  .convo-sidebar {
+    position: fixed;
+    top: var(--topbar-height);
+    left: 0;
+    bottom: 56px; /* above mobile bottom bar */
+    z-index: 90;
+    width: 280px;
+    min-width: 280px;
+    border-radius: 0;
+    border-right: 1px solid var(--border-default);
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    background: var(--bg-surface);
+  }
+
+  /* On mobile, collapsed state doesn't shrink — drawer is either open or closed */
+  .convo-sidebar.collapsed {
+    width: 280px;
+    min-width: 280px;
+    transform: translateX(-100%);
+  }
+
+  .convo-sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  /* Overlay backdrop when sidebar is open */
+  .convo-sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 89;
+    background: rgba(6, 9, 15, 0.6);
+    backdrop-filter: blur(4px);
+  }
+
+  .convo-sidebar-backdrop.visible {
+    display: block;
+  }
+
+  /* Hide the desktop collapse toggle on mobile */
+  .convo-sidebar-toggle {
+    display: none;
+  }
+
+  /* Close button in sidebar header for mobile */
+  .convo-sidebar-close {
+    display: flex;
   }
 }
 

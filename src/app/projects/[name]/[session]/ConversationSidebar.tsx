@@ -13,6 +13,8 @@ interface Props {
   conversations: ConversationState[];
   activeConversationId: string;
   isFinished: boolean;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
 const STORAGE_KEY = "csm-sidebar-collapsed";
@@ -23,6 +25,8 @@ export default function ConversationSidebar({
   conversations,
   activeConversationId,
   isFinished,
+  mobileOpen,
+  onMobileClose,
 }: Props): React.JSX.Element {
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
@@ -109,9 +113,15 @@ export default function ConversationSidebar({
   };
 
   return (
-    <div className={`convo-sidebar${collapsed ? " collapsed" : ""}`}>
+    <>
+    {/* Backdrop for mobile drawer */}
+    <div
+      className={`convo-sidebar-backdrop${mobileOpen ? " visible" : ""}`}
+      onClick={onMobileClose}
+    />
+    <div className={`convo-sidebar${collapsed ? " collapsed" : ""}${mobileOpen ? " mobile-open" : ""}`}>
       <div className="convo-sidebar-header">
-        {!collapsed && (
+        {(!collapsed || mobileOpen) && (
           <span className="convo-sidebar-title">Conversations</span>
         )}
         <button
@@ -121,8 +131,15 @@ export default function ConversationSidebar({
         >
           {collapsed ? "\u25B6" : "\u25C0"}
         </button>
+        <button
+          className="convo-sidebar-close"
+          onClick={onMobileClose}
+          title="Close"
+        >
+          &#10005;
+        </button>
       </div>
-      {!collapsed && (
+      {(!collapsed || mobileOpen) && (
         <>
           <div className="convo-sidebar-list">
             {filteredConversations.map((convo) => (
@@ -177,5 +194,6 @@ export default function ConversationSidebar({
         </>
       )}
     </div>
+    </>
   );
 }
