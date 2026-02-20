@@ -72,6 +72,7 @@ describe("createConversation", () => {
     const convo = await createConversation("/proj", "test");
 
     expect(convo.id).toBeTruthy();
+    expect(convo.name).toBeNull();
     expect(convo.claudeSessionId).toBeNull();
     expect(convo.transcriptPath).toBeNull();
     expect(convo.status).toBe("ready");
@@ -247,6 +248,67 @@ describe("setConversationArchived", () => {
 
     await expect(
       setConversationArchived("/nonexistent", "test", "any-id", true),
+    ).rejects.toThrow("Project not found: /nonexistent");
+  });
+});
+
+describe("renameConversation", () => {
+  it("renames a conversation and persists the change", async () => {
+    const convoId = crypto.randomUUID();
+    await seedSession({
+      conversations: [makeConvo({ id: convoId })],
+    });
+    const { renameConversation } = await import("./conversations");
+    const { getSession } = await import("./state");
+
+    await renameConversation("/proj", "test", convoId, "My task");
+
+    const session = await getSession("/proj", "test");
+    expect(session!.conversations[0]!.name).toBe("My task");
+  });
+
+  it("overwrites a previous name", async () => {
+    const convoId = crypto.randomUUID();
+    await seedSession({
+      conversations: [makeConvo({ id: convoId, name: "Old name" })],
+    });
+    const { renameConversation } = await import("./conversations");
+    const { getSession } = await import("./state");
+
+    await renameConversation("/proj", "test", convoId, "New name");
+
+    const session = await getSession("/proj", "test");
+    expect(session!.conversations[0]!.name).toBe("New name");
+  });
+
+  it("throws for non-existent conversation ID", async () => {
+    await seedSession({
+      conversations: [makeConvo()],
+    });
+    const { renameConversation } = await import("./conversations");
+
+    await expect(
+      renameConversation("/proj", "test", "nonexistent-id", "Name"),
+    ).rejects.toThrow(
+      'Conversation "nonexistent-id" not found in session "test"',
+    );
+  });
+
+  it("throws for non-existent session", async () => {
+    await seedSession();
+    const { renameConversation } = await import("./conversations");
+
+    await expect(
+      renameConversation("/proj", "nonexistent", "any-id", "Name"),
+    ).rejects.toThrow('Session "nonexistent" not found in project');
+  });
+
+  it("throws for non-existent project", async () => {
+    await seedSession();
+    const { renameConversation } = await import("./conversations");
+
+    await expect(
+      renameConversation("/nonexistent", "test", "any-id", "Name"),
     ).rejects.toThrow("Project not found: /nonexistent");
   });
 });
@@ -623,6 +685,7 @@ function makeConvo(
 ): ConversationState {
   return {
     id: crypto.randomUUID(),
+    name: null,
     claudeSessionId: null,
     transcriptPath: null,
     status: "ready",

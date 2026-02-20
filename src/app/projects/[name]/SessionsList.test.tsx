@@ -54,6 +54,7 @@ const makeSessions = (count: number): SessionState[] =>
     conversations: [
       {
         id: `conv-${i + 1}`,
+        name: null,
         claudeSessionId: null,
         transcriptPath: null,
         status: i === 0 ? ("running" as const) : ("ready" as const),

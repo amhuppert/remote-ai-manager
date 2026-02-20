@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { SessionState, ConversationState } from "@/types";
@@ -138,6 +138,54 @@ export default function ConversationList({
     [projectName, session.sessionName, router],
   );
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingId && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingId]);
+
+  const handleRenameStart = useCallback(
+    (convo: ConversationState) => {
+      setEditingId(convo.id);
+      setEditValue(convo.name ?? convo.summary ?? "");
+    },
+    [],
+  );
+
+  const handleRenameSubmit = useCallback(
+    async (conversationId: string) => {
+      const trimmed = editValue.trim();
+      if (!trimmed) {
+        setEditingId(null);
+        return;
+      }
+      try {
+        const res = await tracedFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
+          "rename-conversation",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: trimmed }),
+          },
+        );
+        if (res.ok) {
+          router.refresh();
+        }
+      } catch {
+        // Silently fail
+      } finally {
+        setEditingId(null);
+      }
+    },
+    [editValue, projectName, session.sessionName, router],
+  );
+
   const displayStatus = isFinished ? "merged" : sessionStatus;
   const statusDotClass =
     displayStatus === "running"
@@ -272,9 +320,32 @@ export default function ConversationList({
                     )}
                   </div>
                   <div className="convo-card-body">
-                    <div className="convo-card-summary">
-                      {convo.summary ?? "New conversation"}
-                    </div>
+                    {editingId === convo.id ? (
+                      <input
+                        ref={editInputRef}
+                        className="convo-rename-input"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void handleRenameSubmit(convo.id);
+                          } else if (e.key === "Escape") {
+                            setEditingId(null);
+                          }
+                        }}
+                        onBlur={() => void handleRenameSubmit(convo.id)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        maxLength={200}
+                      />
+                    ) : (
+                      <div className="convo-card-summary">
+                        {convo.name ?? convo.summary ?? "New conversation"}
+                      </div>
+                    )}
                   </div>
                   <div className="convo-card-footer">
                     <span className="convo-card-meta">
@@ -284,6 +355,17 @@ export default function ConversationList({
                     <span className="convo-card-meta">
                       {formatRelativeTime(convo.lastActivityAt)}
                     </span>
+                    <button
+                      className="btn-icon-only convo-card-archive-btn"
+                      data-tooltip="Rename"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleRenameStart(convo);
+                      }}
+                    >
+                      &#9998;
+                    </button>
                     <button
                       className="btn-icon-only convo-card-archive-btn"
                       data-tooltip={convo.archived ? "Unarchive" : "Archive"}

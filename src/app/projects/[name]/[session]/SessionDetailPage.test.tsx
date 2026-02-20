@@ -74,6 +74,7 @@ const baseSession: SessionState = {
   conversations: [
     {
       id: "conv-1",
+      name: null,
       claudeSessionId: null,
       transcriptPath: null,
       status: "ready",

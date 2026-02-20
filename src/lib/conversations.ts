@@ -31,6 +31,7 @@ export async function createConversation(
   const now = new Date().toISOString();
   const conversation: ConversationState = {
     id: crypto.randomUUID(),
+    name: null,
     claudeSessionId: null,
     transcriptPath: null,
     status: "ready",
@@ -117,6 +118,37 @@ export async function setConversationArchived(
   }
 
   conversation.archived = archived;
+  await writeState(state);
+}
+
+/** Rename a conversation */
+export async function renameConversation(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+  name: string,
+): Promise<void> {
+  const state = await readState();
+  const project = state.projects[projectPath];
+  if (!project) {
+    throw new Error(`Project not found: ${projectPath}`);
+  }
+
+  const session = project.sessions[sessionName];
+  if (!session) {
+    throw new Error(`Session "${sessionName}" not found in project`);
+  }
+
+  const conversation = session.conversations.find(
+    (c) => c.id === conversationId,
+  );
+  if (!conversation) {
+    throw new Error(
+      `Conversation "${conversationId}" not found in session "${sessionName}"`,
+    );
+  }
+
+  conversation.name = name;
   await writeState(state);
 }
 
@@ -344,6 +376,7 @@ export async function discoverAndImportConversations(
   // Create Conversation records for new discoveries
   const imported: ConversationState[] = newDiscoveries.map((d) => ({
     id: crypto.randomUUID(),
+    name: null,
     claudeSessionId: d.sessionId,
     transcriptPath: d.transcriptPath,
     status: "idle" as const,

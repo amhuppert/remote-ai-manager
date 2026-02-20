@@ -32,6 +32,7 @@ export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 
 export const conversationStateSchema = z.object({
   id: z.string(),
+  name: z.string().nullable().default(null),
   claudeSessionId: z.string().nullable(),
   transcriptPath: z.string().nullable(),
   status: sessionStatusSchema,
@@ -106,6 +107,13 @@ export const sessionArchiveRequestSchema = z.object({
   archived: z.boolean(),
 });
 export type SessionArchiveRequest = z.infer<typeof sessionArchiveRequestSchema>;
+
+export const renameConversationRequestSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+});
+export type RenameConversationRequest = z.infer<
+  typeof renameConversationRequestSchema
+>;
 
 // ============================================================
 // Git Operations Schemas

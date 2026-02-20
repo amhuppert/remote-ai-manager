@@ -102,6 +102,7 @@ export async function processHookEvent(
       const now = new Date().toISOString();
       conversation = {
         id: crypto.randomUUID(),
+        name: null,
         claudeSessionId: session_id,
         transcriptPath: transcript_path ?? null,
         status: "ready",

@@ -70,6 +70,7 @@ import type { SessionState } from "@/types";
 function makeConversation(overrides: Record<string, unknown> = {}) {
   return {
     id: "conv-123",
+    name: null,
     claudeSessionId: null,
     transcriptPath: null,
     status: "ready" as const,

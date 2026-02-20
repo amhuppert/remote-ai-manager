@@ -37,6 +37,7 @@ export type {
   CommitRequest,
   MergeRequest,
   SessionArchiveRequest,
+  RenameConversationRequest,
   CommitLogEntry,
   CommandType,
   CommandItem,

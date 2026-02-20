@@ -132,6 +132,7 @@ describe("processHookEvent", () => {
               conversations: [
                 {
                   id: "conv-1",
+                  name: null,
                   claudeSessionId: "existing-id",
                   transcriptPath: null,
                   status: "ready",
@@ -186,6 +187,7 @@ describe("processHookEvent", () => {
               conversations: [
                 {
                   id: "conv-csm-1",
+                  name: null,
                   claudeSessionId: null,
                   transcriptPath: null,
                   status: "running",
@@ -245,6 +247,7 @@ describe("processHookEvent", () => {
               conversations: [
                 {
                   id: "conv-idle",
+                  name: null,
                   claudeSessionId: null,
                   transcriptPath: null,
                   status: "ready",
