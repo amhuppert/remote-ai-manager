@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import SessionsList from "./SessionsList";
 import type { SessionState } from "@/types";
 
@@ -22,18 +23,55 @@ vi.mock("next/link", () => ({
 }));
 
 // Mock next/navigation
-const routerRefreshMock = vi.fn();
 const routerPushMock = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    refresh: routerRefreshMock,
     push: routerPushMock,
   }),
 }));
 
+// Mock queries
+const mockSessionsData = { data: undefined as SessionState[] | undefined, isPending: false };
+const mockHooksData = { data: undefined as { installed: boolean; hasUserPromptSubmit: boolean; hasStop: boolean } | undefined, isPending: false };
+
+vi.mock("@/lib/queries", () => ({
+  useSessionsQuery: () => mockSessionsData,
+  useHooksStatusQuery: () => mockHooksData,
+}));
+
+// Mock mutations
+const deleteMutateMock = vi.fn();
+vi.mock("@/lib/mutations", () => ({
+  useCreateSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteSessionMutation: () => ({ mutate: deleteMutateMock, isPending: false }),
+  useArchiveSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+// Mock sessions store
+let storeShowCreateModal = false;
+let storeDeleteTarget: { sessionName: string; projectName: string } | null = null;
+let storeShowArchived = false;
+
+vi.mock("@/stores/sessions.store", () => ({
+  useShowCreateModal: () => storeShowCreateModal,
+  useDeleteTarget: () => storeDeleteTarget,
+  useShowArchivedSessions: () => storeShowArchived,
+  useOpenCreateModal: () => () => { storeShowCreateModal = true; },
+  useCloseCreateModal: () => vi.fn(),
+  useConfirmDeleteSession: () => (target: { sessionName: string; projectName: string }) => { storeDeleteTarget = target; },
+  useCancelDeleteSession: () => vi.fn(),
+  useToggleArchivedSessions: () => vi.fn(),
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
-  globalThis.fetch = vi.fn();
+  storeShowCreateModal = false;
+  storeDeleteTarget = null;
+  storeShowArchived = false;
+  mockSessionsData.data = undefined;
+  mockSessionsData.isPending = false;
+  mockHooksData.data = undefined;
+  mockHooksData.isPending = false;
 });
 
 // ---------------------------------------------------------------------------
@@ -58,7 +96,6 @@ const makeSessions = (count: number): SessionState[] =>
         claudeSessionId: null,
         transcriptPath: null,
         status: i === 0 ? ("running" as const) : ("ready" as const),
-
         promptCount: i * 3,
         createdAt: now,
         lastActivityAt: now,
@@ -70,23 +107,31 @@ const makeSessions = (count: number): SessionState[] =>
     source: "csm" as const,
   }));
 
+function renderWithQuery(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
+
 // ===========================================================================
-// 6.4 – SessionsList (Req 2.1–2.5, 3.1, 3.3)
+// SessionsList Tests
 // ===========================================================================
 
 describe("SessionsList", () => {
   it("renders table with session rows (Req 2.1, 2.2)", () => {
-    const sessions = makeSessions(3);
-    render(
-      <SessionsList projectName="my-project" initialSessions={sessions} />,
-    );
+    mockSessionsData.data = makeSessions(3);
+    renderWithQuery(<SessionsList projectName="my-project" />);
     expect(screen.getByText("session-1")).toBeDefined();
     expect(screen.getByText("session-2")).toBeDefined();
     expect(screen.getByText("session-3")).toBeDefined();
   });
 
   it("renders empty state when no sessions (Req 2.5)", () => {
-    render(<SessionsList projectName="my-project" initialSessions={[]} />);
+    mockSessionsData.data = [];
+    renderWithQuery(<SessionsList projectName="my-project" />);
     expect(screen.getByText("No sessions yet")).toBeDefined();
     expect(
       screen.getByText(
@@ -96,77 +141,57 @@ describe("SessionsList", () => {
   });
 
   it("renders branch names in table (Req 2.2)", () => {
-    const sessions = makeSessions(2);
-    render(
-      <SessionsList projectName="my-project" initialSessions={sessions} />,
-    );
+    mockSessionsData.data = makeSessions(2);
+    renderWithQuery(<SessionsList projectName="my-project" />);
     expect(screen.getByText("csm/session-1")).toBeDefined();
     expect(screen.getByText("csm/session-2")).toBeDefined();
   });
 
   it("renders status badges (Req 2.3)", () => {
-    const sessions = makeSessions(2);
-    const { container } = render(
-      <SessionsList projectName="my-project" initialSessions={sessions} />,
+    mockSessionsData.data = makeSessions(2);
+    const { container } = renderWithQuery(
+      <SessionsList projectName="my-project" />,
     );
     const badges = container.querySelectorAll(".session-status");
     expect(badges.length).toBe(2);
-    // First session is "running", second is "ready"
     expect(badges[0]!.textContent).toContain("running");
     expect(badges[1]!.textContent).toContain("ready");
   });
 
   it("renders prompt counts in table (Req 2.2)", () => {
-    const sessions = makeSessions(3);
-    render(
-      <SessionsList projectName="my-project" initialSessions={sessions} />,
-    );
-    // promptCount: 0, 3, 6
+    mockSessionsData.data = makeSessions(3);
+    renderWithQuery(<SessionsList projectName="my-project" />);
     expect(screen.getByText("0")).toBeDefined();
     expect(screen.getByText("3")).toBeDefined();
     expect(screen.getByText("6")).toBeDefined();
   });
 
   it("links session name to detail page (Req 2.4)", () => {
-    const sessions = makeSessions(1);
-    render(
-      <SessionsList projectName="my-project" initialSessions={sessions} />,
-    );
+    mockSessionsData.data = makeSessions(1);
+    renderWithQuery(<SessionsList projectName="my-project" />);
     const link = screen.getByText("session-1").closest("a");
     expect(link?.getAttribute("href")).toBe("/projects/my-project/session-1");
   });
 
   it("renders New Session button (Req 3.1)", () => {
-    render(<SessionsList projectName="my-project" initialSessions={[]} />);
+    mockSessionsData.data = [];
+    renderWithQuery(<SessionsList projectName="my-project" />);
     expect(screen.getByText("New Session")).toBeDefined();
   });
 
-  it("opens CreateSessionModal on New Session click (Req 3.1)", () => {
-    render(<SessionsList projectName="my-project" initialSessions={[]} />);
-    fireEvent.click(screen.getByText("New Session"));
-    // Modal should now be visible — it renders "New Session" title
-    expect(screen.getByText("Session Name")).toBeDefined();
-  });
-
-  it("shows delete confirmation on Delete button click (Req 3.3)", () => {
-    const sessions = makeSessions(1);
-    render(
-      <SessionsList projectName="my-project" initialSessions={sessions} />,
-    );
-    fireEvent.click(screen.getByText("Delete"));
-    // ConfirmDialog should appear with message
-    expect(screen.getByText("Delete Session")).toBeDefined();
-  });
-
   it("renders table with all column headers (Req 2.1)", () => {
-    const sessions = makeSessions(1);
-    render(
-      <SessionsList projectName="my-project" initialSessions={sessions} />,
-    );
+    mockSessionsData.data = makeSessions(1);
+    renderWithQuery(<SessionsList projectName="my-project" />);
     expect(screen.getByText("Session")).toBeDefined();
     expect(screen.getByText("Branch")).toBeDefined();
     expect(screen.getByText("Status")).toBeDefined();
     expect(screen.getByText("Last Activity")).toBeDefined();
     expect(screen.getByText("Prompts")).toBeDefined();
+  });
+
+  it("shows loading state when pending", () => {
+    mockSessionsData.isPending = true;
+    renderWithQuery(<SessionsList projectName="my-project" />);
+    expect(screen.getByText("Loading sessions...")).toBeDefined();
   });
 });

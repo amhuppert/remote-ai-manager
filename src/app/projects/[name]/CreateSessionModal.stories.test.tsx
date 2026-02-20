@@ -1,9 +1,19 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { composeStories } from "@storybook/react";
 import { storybookAnnotations } from "@/test/storybook-setup";
 import * as stories from "./CreateSessionModal.stories";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+vi.mock("@/lib/mutations", () => ({
+  useCreateSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 
 beforeAll(storybookAnnotations.beforeAll);
 

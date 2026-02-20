@@ -1,32 +1,32 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
-import { tracedFetch } from "@/lib/traced-fetch";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { useCreateSessionMutation } from "@/lib/mutations";
 
 interface CreateSessionModalProps {
   projectName: string;
   open: boolean;
   onClose: () => void;
-  onCreated: () => void;
 }
 
 export default function CreateSessionModal({
   projectName,
   open,
   onClose,
-  onCreated,
 }: CreateSessionModalProps): React.JSX.Element | null {
+  const router = useRouter();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const createMutation = useCreateSessionMutation(projectName);
 
   // Focus input when modal opens
   useEffect(() => {
     if (open) {
       setName("");
       setError(null);
-      // Delay focus to after animation
       const timer = setTimeout(() => inputRef.current?.focus(), 100);
       return () => clearTimeout(timer);
     }
@@ -49,37 +49,22 @@ export default function CreateSessionModal({
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
 
-  const handleSubmit = useCallback(async () => {
-    if (!name.trim() || creating) return;
-
+  const handleSubmit = () => {
+    if (!name.trim() || createMutation.isPending) return;
     setError(null);
-    setCreating(true);
 
-    try {
-      const res = await tracedFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions`,
-        "create-session",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionName: name.trim() }),
-        },
-      );
-
-      if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        setError(data.error ?? "Failed to create session");
-        return;
-      }
-
-      onCreated();
-      onClose();
-    } catch {
-      setError("Network error — could not create session");
-    } finally {
-      setCreating(false);
-    }
-  }, [name, creating, projectName, onCreated, onClose]);
+    createMutation.mutate(name.trim(), {
+      onSuccess: (session) => {
+        onClose();
+        router.push(
+          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`,
+        );
+      },
+      onError: (err) => {
+        setError(err.message);
+      },
+    });
+  };
 
   if (!open) return null;
 
@@ -110,7 +95,7 @@ export default function CreateSessionModal({
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                void handleSubmit();
+                handleSubmit();
               }
             }}
           />
@@ -120,15 +105,19 @@ export default function CreateSessionModal({
           {error && <div className="form-error">{error}</div>}
         </div>
         <div className="modal-actions">
-          <button className="btn btn-sm" onClick={onClose} disabled={creating}>
+          <button
+            className="btn btn-sm"
+            onClick={onClose}
+            disabled={createMutation.isPending}
+          >
             Cancel
           </button>
           <button
             className="btn btn-primary btn-sm"
-            onClick={() => void handleSubmit()}
-            disabled={!name.trim() || creating}
+            onClick={handleSubmit}
+            disabled={!name.trim() || createMutation.isPending}
           >
-            {creating ? "Creating..." : "Create Session"}
+            {createMutation.isPending ? "Creating..." : "Create Session"}
           </button>
         </div>
       </div>

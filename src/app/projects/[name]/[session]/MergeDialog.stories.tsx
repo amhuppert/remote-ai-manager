@@ -8,7 +8,6 @@ const meta = {
   args: {
     open: true,
     onClose: fn(),
-    onSuccess: fn(),
     projectName: "my-app",
     sessionName: "implement-auth",
     branchName: "csm/implement-auth",

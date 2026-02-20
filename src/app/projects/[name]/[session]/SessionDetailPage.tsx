@@ -2,19 +2,51 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import type {
-  SessionState,
-  SessionDiff,
-  TranscriptMessage,
-  LayoutMode,
-  CommitLogEntry,
-  MessageContentBlock,
-  ConversationState,
-} from "@/types";
 import {
   deriveSessionStatus,
   deriveSessionPromptCount,
 } from "@/lib/session-derived";
+import {
+  useSessionQuery,
+  useConversationMessagesQuery,
+  useSessionDiffQuery,
+  useCommitsQuery,
+  useConversationsQuery,
+} from "@/lib/queries";
+import { useDeleteSessionMutation } from "@/lib/mutations";
+import { useSendPrompt } from "@/hooks/use-send-prompt";
+import {
+  useLayout,
+  useMobilePanel,
+  useSending,
+  usePromptPlaceholder,
+  usePromptError,
+  useOptimisticMessages,
+  useMessageCountBeforeSubmit,
+  useCurrentMsgIndex,
+  useShowDeleteConfirm,
+  useShowCommitDialog,
+  useShowMergeDialog,
+  useInfoExpanded,
+  useSwitchLayout,
+  useHydrateLayout,
+  useSwitchMobilePanel,
+  useDismissError,
+  useReconcileMessages,
+  useNavigateToMessage,
+  useStartRecording,
+  useStopRecording,
+  useShowPlaceholderAction,
+  useClearPlaceholder,
+  useRequestCommit,
+  useCancelCommit,
+  useRequestMerge,
+  useCancelMerge,
+  useRequestDeleteSession,
+  useCancelDeleteSessionDetail,
+  useToggleInfoStrip,
+  useResetSessionDetailStore,
+} from "@/stores/session-detail.store";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
 import DiffPanel from "./DiffPanel";
@@ -29,19 +61,13 @@ import {
   CommandAutocomplete,
   type CommandAutocompleteHandle,
 } from "@/components/CommandAutocomplete";
-import { tracedFetch } from "@/lib/traced-fetch";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
-type MobilePanel = "chat" | "diff";
 
 interface Props {
   projectName: string;
-  session: SessionState;
-  messages: TranscriptMessage[];
-  diff: SessionDiff;
-  commits: CommitLogEntry[];
-  conversationId?: string;
-  conversations?: ConversationState[];
+  sessionName: string;
+  conversationId: string;
 }
 
 function formatDate(iso: string): string {
@@ -56,36 +82,92 @@ function formatDate(iso: string): string {
 
 export default function SessionDetailPage({
   projectName,
-  session,
-  messages,
-  diff,
-  commits,
+  sessionName,
   conversationId,
-  conversations,
 }: Props): React.JSX.Element {
   const router = useRouter();
-  const storageKey = `csm-layout-${projectName}-${session.sessionName}`;
-  const [layout, setLayout] = useState<LayoutMode>("default");
-  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
+  const storageKey = `csm-layout-${projectName}-${sessionName}`;
+
+  // --- TanStack Query ---
+  const sessionQuery = useSessionQuery(projectName, sessionName);
+  const conversationsQuery = useConversationsQuery(projectName, sessionName);
+
+  // --- Zustand: state ---
+  const layout = useLayout();
+  const mobilePanel = useMobilePanel();
+  const sending = useSending();
+  const promptPlaceholder = usePromptPlaceholder();
+  const promptError = usePromptError();
+  const optimisticMessages = useOptimisticMessages();
+  const messageCountBeforeSubmit = useMessageCountBeforeSubmit();
+  const currentMsgIndex = useCurrentMsgIndex();
+  const showDeleteConfirm = useShowDeleteConfirm();
+  const showCommitDialog = useShowCommitDialog();
+  const showMergeDialog = useShowMergeDialog();
+  const infoExpanded = useInfoExpanded();
+
+  // --- Zustand: actions ---
+  const switchLayout = useSwitchLayout();
+  const hydrateLayout = useHydrateLayout();
+  const switchMobilePanel = useSwitchMobilePanel();
+  const dismissError = useDismissError();
+  const reconcileMessages = useReconcileMessages();
+  const navigateToMessage = useNavigateToMessage();
+  const startRecording = useStartRecording();
+  const stopRecording = useStopRecording();
+  const showPlaceholder = useShowPlaceholderAction();
+  const clearPlaceholder = useClearPlaceholder();
+  const requestCommit = useRequestCommit();
+  const cancelCommit = useCancelCommit();
+  const requestMerge = useRequestMerge();
+  const cancelMerge = useCancelMerge();
+  const requestDelete = useRequestDeleteSession();
+  const cancelDelete = useCancelDeleteSessionDetail();
+  const toggleInfoStrip = useToggleInfoStrip();
+  const resetStore = useResetSessionDetailStore();
+
+  // --- Derived from query data ---
+  const session = sessionQuery.data;
+  const conversations = conversationsQuery.data;
+  const sessionStatus = session ? deriveSessionStatus(session) : "idle";
+  const isFinished = session?.finished ?? false;
+  const isBusy = sending || sessionStatus === "running";
+
+  // Conditional polling: refetch while session is active
+  const messagesQuery = useConversationMessagesQuery(
+    projectName,
+    sessionName,
+    conversationId,
+    { refetchInterval: isBusy ? 3000 : false },
+  );
+  const diffQuery = useSessionDiffQuery(projectName, sessionName, {
+    refetchInterval: isBusy ? 3000 : false,
+  });
+  const commitsQuery = useCommitsQuery(projectName, sessionName);
+
+  const messages = messagesQuery.data ?? [];
+  const diff = diffQuery.data ?? { files: [], totalAdditions: 0, totalDeletions: 0 };
+  const commits = commitsQuery.data ?? [];
+
+  // --- Mutations ---
+  const deleteMutation = useDeleteSessionMutation(projectName);
+
+  // --- Prompt streaming ---
+  const sendPrompt = useSendPrompt(projectName, sessionName, conversationId);
+
+  // --- Local state ---
   const [promptText, setPromptText] = useState("");
-  const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const promptTextRef = useRef(promptText);
   promptTextRef.current = promptText;
-  const [promptPlaceholder, setPromptPlaceholder] = useState<string | null>(
-    null,
-  );
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showCommitDialog, setShowCommitDialog] = useState(false);
-  const [showMergeDialog, setShowMergeDialog] = useState(false);
-  const [infoExpanded, setInfoExpanded] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [promptError, setPromptError] = useState<string | null>(null);
-  const [optimisticMessages, setOptimisticMessages] = useState<
-    TranscriptMessage[]
-  >([]);
   const [showHelpModal, setShowHelpModal] = useState(false);
+
+  // --- Refs for message navigation ---
+  const panelBodyRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const conversationEndRef = useRef<HTMLDivElement>(null);
 
   // Derive display messages: server messages + optimistic
   const displayMessages = useMemo(
@@ -93,37 +175,33 @@ export default function SessionDetailPage({
     [messages, optimisticMessages],
   );
 
-  // Track message count before submission for reconciliation
-  const messageCountBeforeSubmitRef = useRef(messages.length);
-
-  // Reconcile optimistic messages when server catches up
+  // --- Reconciliation effect ---
   useEffect(() => {
     if (optimisticMessages.length === 0) return;
-    if (messages.length > messageCountBeforeSubmitRef.current) {
-      if (sending) {
-        // Server has the user message but stream is still active.
-        // Drop the optimistic user message (server has it) but keep the streaming assistant.
-        const assistantOnly = optimisticMessages.filter(
-          (m) => m.role === "assistant",
-        );
-        if (assistantOnly.length !== optimisticMessages.length) {
-          setOptimisticMessages(assistantOnly);
-        }
-      } else {
-        // Stream is done, server has all messages — clear everything.
-        setOptimisticMessages([]);
-      }
+    const serverCount = messages.length;
+    if (serverCount > messageCountBeforeSubmit) {
+      reconcileMessages(serverCount);
     }
-  }, [messages.length, optimisticMessages.length, sending]);
+  }, [
+    messages.length,
+    optimisticMessages.length,
+    messageCountBeforeSubmit,
+    reconcileMessages,
+  ]);
 
-  // Message navigation state
-  const [currentMsgIndex, setCurrentMsgIndex] = useState(0);
-  const panelBodyRef = useRef<HTMLDivElement>(null);
-  const messageRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const conversationEndRef = useRef<HTMLDivElement>(null);
+  // --- Hydrate layout from localStorage on mount ---
+  useEffect(() => {
+    hydrateLayout(storageKey);
+  }, [hydrateLayout, storageKey]);
 
-  // Turn-based navigation: group consecutive assistant messages into one turn.
-  // Each user message = 1 turn, all consecutive assistant messages = 1 turn.
+  // --- Reset store on unmount ---
+  useEffect(() => {
+    return () => {
+      resetStore();
+    };
+  }, [resetStore]);
+
+  // --- Turn-based navigation ---
   const turnStartIndices = useMemo(() => {
     const indices: number[] = [];
     for (let i = 0; i < displayMessages.length; i++) {
@@ -131,14 +209,12 @@ export default function SessionDetailPage({
       if (msg.role === "user") {
         indices.push(i);
       } else if (i === 0 || displayMessages[i - 1]?.role === "user") {
-        // First assistant message after a user message (or at the start)
         indices.push(i);
       }
     }
     return indices;
   }, [displayMessages]);
 
-  // Derive current turn from the visible message index
   const currentTurnIndex = useMemo(() => {
     let turn = 0;
     for (let t = 0; t < turnStartIndices.length; t++) {
@@ -167,7 +243,7 @@ export default function SessionDetailPage({
           if (entry.isIntersecting && entry.target instanceof HTMLElement) {
             const idx = Number(entry.target.dataset["msgIndex"]);
             if (!Number.isNaN(idx)) {
-              setCurrentMsgIndex(idx);
+              navigateToMessage(idx);
             }
           }
         }
@@ -183,19 +259,18 @@ export default function SessionDetailPage({
     }
 
     return () => observer.disconnect();
-  }, [displayMessages.length]);
+  }, [displayMessages.length, navigateToMessage]);
 
   // Auto-scroll to bottom on initial load
   const initialScrollDone = useRef(false);
   useEffect(() => {
     if (!initialScrollDone.current && displayMessages.length > 0) {
       initialScrollDone.current = true;
-      // Use instant scroll on initial load (no smooth animation)
       conversationEndRef.current?.scrollIntoView({ behavior: "instant" });
     }
   }, [displayMessages.length]);
 
-  // Auto-scroll to bottom when new messages arrive (server or optimistic)
+  // Auto-scroll to bottom when new messages arrive
   const prevMessageCountRef = useRef(displayMessages.length);
   useEffect(() => {
     if (displayMessages.length > prevMessageCountRef.current) {
@@ -221,13 +296,12 @@ export default function SessionDetailPage({
       const el = messageRefs.current[clamped];
       const container = panelBodyRef.current;
       if (el && container) {
-        // Scroll within the panel-body container only (avoids page-level scroll on mobile)
         const targetTop = el.offsetTop - container.offsetTop;
         container.scrollTo({ top: targetTop, behavior: "smooth" });
-        setCurrentMsgIndex(clamped);
+        navigateToMessage(clamped);
       }
     },
-    [displayMessages.length],
+    [displayMessages.length, navigateToMessage],
   );
 
   const handlePrevMessage = useCallback(() => {
@@ -255,188 +329,44 @@ export default function SessionDetailPage({
   // Help modal hotkey
   useAppHotkey("helpModal", () => setShowHelpModal(true));
 
-  const sessionStatus = deriveSessionStatus(session);
-
-  // Auto-refresh while session is active (sending or server-side running)
-  useEffect(() => {
-    if (!sending && sessionStatus !== "running") return;
-
-    const interval = setInterval(() => {
-      router.refresh();
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [sending, sessionStatus, router]);
-
-  // Restore layout from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(storageKey);
-    if (
-      saved === "conversation" ||
-      saved === "default" ||
-      saved === "split" ||
-      saved === "diff"
-    ) {
-      setLayout(saved);
-    }
-  }, [storageKey]);
+  // --- Handlers ---
 
   const handleLayoutChange = useCallback(
-    (mode: LayoutMode) => {
-      setLayout(mode);
-      localStorage.setItem(storageKey, mode);
+    (mode: Parameters<typeof switchLayout>[0]) => {
+      switchLayout(mode, storageKey);
     },
-    [storageKey],
+    [switchLayout, storageKey],
   );
 
   const handleSendPrompt = useCallback(async () => {
     const currentText = promptTextRef.current;
     if (!currentText.trim() || sending) return;
-    const text = currentText.trim();
-
-    // Track count before submission for optimistic reconciliation
-    messageCountBeforeSubmitRef.current = messages.length;
-
-    // Optimistic: add user message immediately and clear input
-    setOptimisticMessages([
-      {
-        role: "user",
-        content: [{ type: "text" as const, text }],
-        timestamp: new Date().toISOString(),
-      },
-    ]);
     setPromptText("");
-    setSending(true);
-    setPromptError(null);
+    await sendPrompt(currentText.trim(), messages.length);
+  }, [sending, messages.length, sendPrompt]);
 
-    try {
-      const promptUrl = conversationId
-        ? `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/conversations/${conversationId}/prompt`
-        : `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/prompt`;
-      const res = await tracedFetch(promptUrl, "send-prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text }),
-      });
-
-      // Non-streaming error responses (validation, 404, 409) are still JSON
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Prompt failed" }));
-        setPromptError(data.error || "Prompt failed");
-        return;
-      }
-
-      // Read SSE stream
-      const reader = res.body?.getReader();
-      if (!reader) {
-        setPromptError("No response stream");
-        return;
-      }
-
-      const decoder = new TextDecoder();
-      const streamBlocks: MessageContentBlock[] = [];
-      let buffer = "";
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Split on double newline for complete SSE events
-        const parts = buffer.split("\n\n");
-        // Keep the last part as it may be incomplete
-        buffer = parts.pop() ?? "";
-
-        for (const part of parts) {
-          if (!part.trim()) continue;
-
-          // Parse SSE event: "event: <name>\ndata: <json>"
-          let eventName = "";
-          let eventData = "";
-          for (const line of part.split("\n")) {
-            if (line.startsWith("event: ")) {
-              eventName = line.slice(7);
-            } else if (line.startsWith("data: ")) {
-              eventData = line.slice(6);
-            }
-          }
-
-          if (!eventName || !eventData) continue;
-
-          if (eventName === "content") {
-            try {
-              const block = JSON.parse(eventData) as MessageContentBlock;
-              streamBlocks.push(block);
-              // Update optimistic messages with growing assistant message
-              setOptimisticMessages([
-                {
-                  role: "user",
-                  content: [{ type: "text" as const, text }],
-                  timestamp: new Date().toISOString(),
-                },
-                {
-                  role: "assistant",
-                  content: [...streamBlocks],
-                  timestamp: new Date().toISOString(),
-                },
-              ]);
-            } catch {
-              // Skip malformed content events
-            }
-          } else if (eventName === "error") {
-            try {
-              const data = JSON.parse(eventData) as { message?: string };
-              setPromptError(data.message ?? "Prompt failed");
-            } catch {
-              setPromptError("Prompt failed");
-            }
-          } else if (eventName === "done") {
-            break;
-          }
-        }
-      }
-    } catch {
-      setPromptError("Failed to send prompt");
-    } finally {
-      setSending(false);
-      router.refresh();
-    }
-  }, [
-    sending,
-    messages.length,
-    projectName,
-    session.sessionName,
-    conversationId,
-    router,
-  ]);
-
-  const handleDelete = useCallback(async () => {
-    try {
-      const res = await tracedFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions?sessionName=${encodeURIComponent(session.sessionName)}`,
-        "delete-session",
-        { method: "DELETE" },
-      );
-      if (res.ok) {
+  const handleDelete = useCallback(() => {
+    cancelDelete();
+    deleteMutation.mutate(sessionName, {
+      onSuccess: () => {
         router.push(`/projects/${encodeURIComponent(projectName)}`);
-      }
-    } catch {
-      // TODO: show error
-    }
-  }, [projectName, session.sessionName, router]);
+      },
+    });
+  }, [deleteMutation, sessionName, projectName, router, cancelDelete]);
 
   const handleVoiceResult = useCallback((text: string) => {
     setPromptText((prev) => (prev.trim() ? `${prev}\n${text}` : text));
-    // Focus textarea so Enter key submits instead of re-triggering voice button
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
-  const handleVoiceError = useCallback((error: string) => {
-    setPromptError(error);
-  }, []);
+  const handleVoiceError = useCallback(
+    (error: string) => {
+      void error;
+    },
+    [],
+  );
 
-  // Lifted voice recorder hook (was in VoiceRecordButton)
+  // Lifted voice recorder hook
   const {
     isRecording,
     isProcessing,
@@ -449,17 +379,21 @@ export default function SessionDetailPage({
     onError: handleVoiceError,
   });
 
-  // Voice toggle hotkey — works inside form fields (Alt+V)
+  // Sync voice recording state to Zustand store
+  useEffect(() => {
+    if (isRecording) startRecording();
+    else stopRecording();
+  }, [isRecording, startRecording, stopRecording]);
+
+  // Voice toggle hotkey
   useAppHotkey("voiceToggle", () => void toggleRecording(), {
     enabled: voiceAvailable && !isProcessing,
   });
 
+  // --- Derived display values ---
   const decodedProjectName = decodeURIComponent(projectName);
-  const isFinished = session.finished;
-  const isBusy = sending || sessionStatus === "running";
   const hasUncommittedChanges = diff.files.length > 0;
   const hasCommits = commits.length > 0;
-
   const commitDisabled = !hasUncommittedChanges || isBusy || isFinished;
   const mergeDisabled =
     !hasCommits || hasUncommittedChanges || isBusy || isFinished;
@@ -475,6 +409,36 @@ export default function SessionDetailPage({
       : displayStatus === "merged"
         ? "green"
         : "";
+
+  const isLoading =
+    sessionQuery.isPending || messagesQuery.isPending || diffQuery.isPending;
+
+  if (isLoading || !session) {
+    return (
+      <div className="app" data-page="detail">
+        <Topbar
+          page="detail"
+          breadcrumbs={[
+            { label: "projects", href: "/projects" },
+            {
+              label: decodedProjectName,
+              href: `/projects/${encodeURIComponent(projectName)}`,
+            },
+            {
+              label: sessionName,
+              href: `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`,
+              isSession: true,
+            },
+          ]}
+        />
+        <main className="main">
+          <div className="empty-state">
+            <div className="empty-state-title">Loading session...</div>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app" data-page="detail" data-mobile-panel={mobilePanel}>
@@ -508,7 +472,7 @@ export default function SessionDetailPage({
               className="btn btn-sm"
               data-tooltip="Commit changes"
               disabled={commitDisabled}
-              onClick={() => setShowCommitDialog(true)}
+              onClick={requestCommit}
             >
               Commit
             </button>
@@ -516,22 +480,15 @@ export default function SessionDetailPage({
               className="btn btn-sm btn-primary"
               data-tooltip="Merge into main"
               disabled={mergeDisabled}
-              onClick={() => setShowMergeDialog(true)}
+              onClick={requestMerge}
             >
               Merge
             </button>
             <div className="topbar-sep" />
             <button
-              className="btn-icon-only"
-              data-tooltip="Refresh"
-              onClick={() => router.refresh()}
-            >
-              &#8635;
-            </button>
-            <button
               className="btn-icon-only danger"
               data-tooltip="Delete session"
-              onClick={() => setShowDeleteConfirm(true)}
+              onClick={requestDelete}
             >
               &#10005;
             </button>
@@ -544,9 +501,8 @@ export default function SessionDetailPage({
           {/* Info strip */}
           <div
             className={`session-info-strip${infoExpanded ? " expanded" : ""}`}
-            onClick={() => setInfoExpanded((prev) => !prev)}
+            onClick={toggleInfoStrip}
           >
-            {/* Mobile collapsed summary chip */}
             <div className="si-summary">
               <span
                 className={`status-dot ${statusDotClass}`}
@@ -557,7 +513,6 @@ export default function SessionDetailPage({
                 {infoExpanded ? "\u25B2" : "\u25BC"}
               </span>
             </div>
-            {/* Full details (visible on desktop always, on mobile when expanded) */}
             <div className="si-details">
               <div className="si-item">
                 <span className="si-label">Branch</span>
@@ -598,7 +553,7 @@ export default function SessionDetailPage({
             data-layout={layout}
           >
             {/* Conversation sidebar */}
-            {conversations && conversationId && (
+            {conversations && (
               <ConversationSidebar
                 projectName={projectName}
                 sessionName={session.sessionName}
@@ -656,9 +611,7 @@ export default function SessionDetailPage({
                 {promptError && (
                   <div className="prompt-error">
                     <span>{promptError}</span>
-                    <button onClick={() => setPromptError(null)}>
-                      &times;
-                    </button>
+                    <button onClick={dismissError}>&times;</button>
                   </div>
                 )}
                 <div className="conversation">
@@ -724,12 +677,11 @@ export default function SessionDetailPage({
                     promptText={promptText}
                     onPromptChange={(text) => {
                       setPromptText(text);
-                      // Reset placeholder when clearing
                       if (!text.startsWith("/")) {
-                        setPromptPlaceholder(null);
+                        clearPlaceholder();
                       }
                     }}
-                    onPlaceholderChange={setPromptPlaceholder}
+                    onPlaceholderChange={showPlaceholder}
                     projectName={projectName}
                     sessionName={session.sessionName}
                     disabled={isBusy || isFinished}
@@ -746,7 +698,6 @@ export default function SessionDetailPage({
                     value={promptText}
                     onChange={(e) => setPromptText(e.target.value)}
                     onKeyDown={(e) => {
-                      // Let autocomplete handle keys first
                       if (autocompleteRef.current?.handleKeyDown(e)) {
                         return;
                       }
@@ -762,7 +713,7 @@ export default function SessionDetailPage({
                       if (e.key === "Escape") {
                         e.preventDefault();
                         setPromptText("");
-                        setPromptPlaceholder(null);
+                        clearPlaceholder();
                       }
                     }}
                     disabled={isFinished}
@@ -823,13 +774,13 @@ export default function SessionDetailPage({
         <div className="mobile-panel-tabs">
           <button
             className={`mobile-tab${mobilePanel === "chat" ? " active" : ""}`}
-            onClick={() => setMobilePanel("chat")}
+            onClick={() => switchMobilePanel("chat")}
           >
             Chat
           </button>
           <button
             className={`mobile-tab${mobilePanel === "diff" ? " active" : ""}`}
-            onClick={() => setMobilePanel("diff")}
+            onClick={() => switchMobilePanel("diff")}
           >
             Diff
           </button>
@@ -838,23 +789,20 @@ export default function SessionDetailPage({
           <button
             className="btn btn-sm"
             disabled={commitDisabled}
-            onClick={() => setShowCommitDialog(true)}
+            onClick={requestCommit}
           >
             Commit
           </button>
           <button
             className="btn btn-sm btn-primary"
             disabled={mergeDisabled}
-            onClick={() => setShowMergeDialog(true)}
+            onClick={requestMerge}
           >
             Merge
           </button>
-          <button className="btn-icon-only" onClick={() => router.refresh()}>
-            &#8635;
-          </button>
           <button
             className="btn-icon-only danger"
-            onClick={() => setShowDeleteConfirm(true)}
+            onClick={requestDelete}
           >
             &#10005;
           </button>
@@ -867,31 +815,21 @@ export default function SessionDetailPage({
         message={`This will remove the worktree and session state for "${session.sessionName}". The git branch and transcripts will be preserved. This action cannot be undone.`}
         confirmLabel="Delete"
         danger
-        onConfirm={() => {
-          setShowDeleteConfirm(false);
-          void handleDelete();
-        }}
-        onCancel={() => setShowDeleteConfirm(false)}
+        onConfirm={handleDelete}
+        onCancel={cancelDelete}
       />
 
       <CommitDialog
         open={showCommitDialog}
-        onClose={() => setShowCommitDialog(false)}
-        onSuccess={() => {
-          setShowCommitDialog(false);
-          router.refresh();
-        }}
+        onClose={cancelCommit}
+        onSuccess={cancelCommit}
         projectName={projectName}
         sessionName={session.sessionName}
       />
 
       <MergeDialog
         open={showMergeDialog}
-        onClose={() => setShowMergeDialog(false)}
-        onSuccess={() => {
-          setShowMergeDialog(false);
-          router.push(`/projects/${encodeURIComponent(projectName)}`);
-        }}
+        onClose={cancelMerge}
         projectName={projectName}
         sessionName={session.sessionName}
         branchName={session.branchName}

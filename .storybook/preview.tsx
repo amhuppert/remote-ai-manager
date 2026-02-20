@@ -1,12 +1,33 @@
 import type { Preview } from '@storybook/nextjs-vite'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../src/app/globals.css'
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false },
+  },
+})
+
 const preview: Preview = {
+  decorators: [
+    (Story) => (
+      <QueryClientProvider client={queryClient}>
+        <Story />
+      </QueryClientProvider>
+    ),
+  ],
   parameters: {
     controls: {
       matchers: {
        color: /(background|color)$/i,
        date: /Date$/i,
+      },
+    },
+
+    nextjs: {
+      appDirectory: true,
+      navigation: {
+        pathname: '/',
       },
     },
 

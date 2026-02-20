@@ -3,19 +3,28 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { SessionState, ConversationState } from "@/types";
+import type { ConversationState } from "@/types";
 import {
   deriveSessionStatus,
   deriveSessionPromptCount,
 } from "@/lib/session-derived";
+import { useSessionQuery, useConversationsQuery } from "@/lib/queries";
+import {
+  useDeleteSessionMutation,
+  useCreateConversationMutation,
+  useArchiveConversationMutation,
+} from "@/lib/mutations";
+import {
+  useShowArchivedConversations,
+  useToggleArchivedConversations,
+} from "@/stores/conversations.store";
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { tracedFetch } from "@/lib/traced-fetch";
 
 interface Props {
   projectName: string;
-  session: SessionState;
-  conversations: ConversationState[];
+  sessionName: string;
 }
 
 function formatRelativeTime(isoDate: string): string {
@@ -52,17 +61,39 @@ function ConversationStatusDot({ status }: { status: string }) {
 
 export default function ConversationList({
   projectName,
-  session,
-  conversations,
+  sessionName,
 }: Props): React.JSX.Element {
   const router = useRouter();
-  const [creating, setCreating] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
 
-  const sessionStatus = deriveSessionStatus(session);
+  // --- TanStack Query ---
+  const sessionQuery = useSessionQuery(projectName, sessionName);
+  const conversationsQuery = useConversationsQuery(projectName, sessionName);
+
+  // --- Zustand ---
+  const showArchived = useShowArchivedConversations();
+  const toggleArchived = useToggleArchivedConversations();
+
+  // --- Mutations ---
+  const deleteMutation = useDeleteSessionMutation(projectName);
+  const createConvoMutation = useCreateConversationMutation(
+    projectName,
+    sessionName,
+  );
+  const archiveConvoMutation = useArchiveConversationMutation(
+    projectName,
+    sessionName,
+  );
+
+  // --- Local UI state ---
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // --- Derived data ---
+  const session = sessionQuery.data;
+  const conversations = conversationsQuery.data ?? [];
   const decodedProjectName = decodeURIComponent(projectName);
-  const isFinished = session.finished;
+  const isFinished = session?.finished ?? false;
+
+  const sessionStatus = session ? deriveSessionStatus(session) : "idle";
 
   const archivedCount = useMemo(
     () => conversations.filter((c) => c.archived).length,
@@ -76,68 +107,34 @@ export default function ConversationList({
 
   const activeCount = conversations.length - archivedCount;
 
-  const handleNewConversation = useCallback(async () => {
-    if (creating || isFinished) return;
-    setCreating(true);
-    try {
-      const res = await tracedFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/conversations`,
-        "create-conversation",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-      if (res.ok) {
-        const convo = (await res.json()) as ConversationState;
+  const handleNewConversation = useCallback(() => {
+    if (createConvoMutation.isPending || isFinished) return;
+    createConvoMutation.mutate(undefined, {
+      onSuccess: (convo) => {
         router.push(
-          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}/${convo.id}`,
+          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`,
         );
-      }
-    } catch {
-      // Silently fail
-    } finally {
-      setCreating(false);
-    }
-  }, [creating, isFinished, projectName, session.sessionName, router]);
+      },
+    });
+  }, [createConvoMutation, isFinished, projectName, sessionName, router]);
 
-  const handleDelete = useCallback(async () => {
-    try {
-      const res = await tracedFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions?sessionName=${encodeURIComponent(session.sessionName)}`,
-        "delete-session",
-        { method: "DELETE" },
-      );
-      if (res.ok) {
+  const handleDelete = useCallback(() => {
+    setShowDeleteConfirm(false);
+    deleteMutation.mutate(sessionName, {
+      onSuccess: () => {
         router.push(`/projects/${encodeURIComponent(projectName)}`);
-      }
-    } catch {
-      // Silently fail
-    }
-  }, [projectName, session.sessionName, router]);
+      },
+    });
+  }, [deleteMutation, sessionName, projectName, router]);
 
   const handleArchive = useCallback(
-    async (conversationId: string, archived: boolean) => {
-      try {
-        const res = await tracedFetch(
-          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/conversations/${encodeURIComponent(conversationId)}/archive`,
-          "archive-conversation",
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ archived }),
-          },
-        );
-        if (res.ok) {
-          router.refresh();
-        }
-      } catch {
-        // Silently fail
-      }
+    (conversationId: string, archived: boolean) => {
+      archiveConvoMutation.mutate({ conversationId, archived });
     },
-    [projectName, session.sessionName, router],
+    [archiveConvoMutation],
   );
 
+  // --- Rename conversation ---
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -149,13 +146,10 @@ export default function ConversationList({
     }
   }, [editingId]);
 
-  const handleRenameStart = useCallback(
-    (convo: ConversationState) => {
-      setEditingId(convo.id);
-      setEditValue(convo.name ?? convo.summary ?? "");
-    },
-    [],
-  );
+  const handleRenameStart = useCallback((convo: ConversationState) => {
+    setEditingId(convo.id);
+    setEditValue(convo.name ?? convo.summary ?? "");
+  }, []);
 
   const handleRenameSubmit = useCallback(
     async (conversationId: string) => {
@@ -166,7 +160,7 @@ export default function ConversationList({
       }
       try {
         const res = await tracedFetch(
-          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.sessionName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
           "rename-conversation",
           {
             method: "PATCH",
@@ -183,7 +177,7 @@ export default function ConversationList({
         setEditingId(null);
       }
     },
-    [editValue, projectName, session.sessionName, router],
+    [editValue, projectName, sessionName, router],
   );
 
   const displayStatus = isFinished ? "merged" : sessionStatus;
@@ -194,8 +188,9 @@ export default function ConversationList({
         ? "green"
         : "";
 
-  // Most recently active conversation is first (already sorted by API)
   const mostRecentId = filteredConversations[0]?.id;
+
+  const isLoading = sessionQuery.isPending || conversationsQuery.isPending;
 
   return (
     <div className="app" data-page="conversations">
@@ -208,8 +203,8 @@ export default function ConversationList({
             href: `/projects/${encodeURIComponent(projectName)}`,
           },
           {
-            label: session.sessionName,
-            href: `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`,
+            label: sessionName,
+            href: `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`,
             isSession: true,
           },
         ]}
@@ -220,13 +215,6 @@ export default function ConversationList({
               {displayStatus}
             </div>
             <div className="topbar-sep" />
-            <button
-              className="btn-icon-only"
-              data-tooltip="Refresh"
-              onClick={() => router.refresh()}
-            >
-              &#8635;
-            </button>
             <button
               className="btn-icon-only danger"
               data-tooltip="Delete session"
@@ -239,169 +227,178 @@ export default function ConversationList({
       />
 
       <main className="main">
-        <div className="convo-list-layout stagger-in">
-          {/* Session info strip */}
-          <div className="convo-list-header">
-            <div className="convo-list-meta">
-              <div className="si-item">
-                <span className="si-label">Branch</span>
-                <span className="si-val">{session.branchName}</span>
-              </div>
-              <div className="si-sep" />
-              <div className="si-item">
-                <span className="si-label">Created</span>
-                <span className="si-val">{formatDate(session.createdAt)}</span>
-              </div>
-              <div className="si-sep" />
-              <div className="si-item">
-                <span className="si-label">Conversations</span>
-                <span className="si-val">{activeCount}</span>
-              </div>
-              <div className="si-sep" />
-              <div className="si-item">
-                <span className="si-label">Total Prompts</span>
-                <span className="si-val">
-                  {deriveSessionPromptCount(session)}
-                </span>
-              </div>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                gap: "var(--space-sm)",
-                alignItems: "center",
-              }}
-            >
-              {archivedCount > 0 && (
-                <button
-                  className={`archive-toggle${showArchived ? " active" : ""}`}
-                  onClick={() => setShowArchived((v) => !v)}
-                  type="button"
-                >
-                  Archived ({archivedCount})
-                </button>
-              )}
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={() => void handleNewConversation()}
-                disabled={creating || isFinished}
-              >
-                <span className="btn-icon">+</span>
-                {creating ? "Creating..." : "New Conversation"}
-              </button>
-            </div>
+        {isLoading ? (
+          <div className="empty-state">
+            <div className="empty-state-title">Loading conversations...</div>
           </div>
-
-          {/* Finished banner */}
-          {isFinished && (
-            <div className="finished-banner">
-              This session has been merged into main and is read-only.
-            </div>
-          )}
-
-          {/* Conversation cards */}
-          {filteredConversations.length > 0 ? (
-            <div className="convo-card-grid">
-              {filteredConversations.map((convo) => (
-                <Link
-                  key={convo.id}
-                  href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}/${convo.id}`}
-                  className={`convo-card${convo.id === mostRecentId ? " most-recent" : ""}${convo.archived ? " archived" : ""}`}
-                >
-                  <div className="convo-card-header">
-                    <ConversationStatusDot status={convo.status} />
-                    {convo.archived && (
-                      <span className="convo-badge archived-badge">
-                        archived
-                      </span>
-                    )}
-                    {convo.source === "imported" && (
-                      <span className="convo-badge imported">imported</span>
-                    )}
+        ) : (
+          <div className="convo-list-layout stagger-in">
+            {/* Session info strip */}
+            {session && (
+              <div className="convo-list-header">
+                <div className="convo-list-meta">
+                  <div className="si-item">
+                    <span className="si-label">Branch</span>
+                    <span className="si-val">{session.branchName}</span>
                   </div>
-                  <div className="convo-card-body">
-                    {editingId === convo.id ? (
-                      <input
-                        ref={editInputRef}
-                        className="convo-rename-input"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
+                  <div className="si-sep" />
+                  <div className="si-item">
+                    <span className="si-label">Created</span>
+                    <span className="si-val">
+                      {formatDate(session.createdAt)}
+                    </span>
+                  </div>
+                  <div className="si-sep" />
+                  <div className="si-item">
+                    <span className="si-label">Conversations</span>
+                    <span className="si-val">{activeCount}</span>
+                  </div>
+                  <div className="si-sep" />
+                  <div className="si-item">
+                    <span className="si-label">Total Prompts</span>
+                    <span className="si-val">
+                      {deriveSessionPromptCount(session)}
+                    </span>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "var(--space-sm)",
+                    alignItems: "center",
+                  }}
+                >
+                  {archivedCount > 0 && (
+                    <button
+                      className={`archive-toggle${showArchived ? " active" : ""}`}
+                      onClick={toggleArchived}
+                      type="button"
+                    >
+                      Archived ({archivedCount})
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={handleNewConversation}
+                    disabled={createConvoMutation.isPending || isFinished}
+                  >
+                    <span className="btn-icon">+</span>
+                    {createConvoMutation.isPending
+                      ? "Creating..."
+                      : "New Conversation"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Finished banner */}
+            {isFinished && (
+              <div className="finished-banner">
+                This session has been merged into main and is read-only.
+              </div>
+            )}
+
+            {/* Conversation cards */}
+            {filteredConversations.length > 0 ? (
+              <div className="convo-card-grid">
+                {filteredConversations.map((convo) => (
+                  <Link
+                    key={convo.id}
+                    href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`}
+                    className={`convo-card${convo.id === mostRecentId ? " most-recent" : ""}${convo.archived ? " archived" : ""}`}
+                  >
+                    <div className="convo-card-header">
+                      <ConversationStatusDot status={convo.status} />
+                      {convo.archived && (
+                        <span className="convo-badge archived-badge">
+                          archived
+                        </span>
+                      )}
+                      {convo.source === "imported" && (
+                        <span className="convo-badge imported">imported</span>
+                      )}
+                    </div>
+                    <div className="convo-card-body">
+                      {editingId === convo.id ? (
+                        <input
+                          ref={editInputRef}
+                          className="convo-rename-input"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void handleRenameSubmit(convo.id);
+                            } else if (e.key === "Escape") {
+                              setEditingId(null);
+                            }
+                          }}
+                          onBlur={() => void handleRenameSubmit(convo.id)}
+                          onClick={(e) => {
                             e.preventDefault();
-                            void handleRenameSubmit(convo.id);
-                          } else if (e.key === "Escape") {
-                            setEditingId(null);
-                          }
-                        }}
-                        onBlur={() => void handleRenameSubmit(convo.id)}
+                            e.stopPropagation();
+                          }}
+                          maxLength={200}
+                        />
+                      ) : (
+                        <div className="convo-card-summary">
+                          {convo.name ?? convo.summary ?? "New conversation"}
+                        </div>
+                      )}
+                    </div>
+                    <div className="convo-card-footer">
+                      <span className="convo-card-meta">
+                        {convo.promptCount} prompt
+                        {convo.promptCount !== 1 ? "s" : ""}
+                      </span>
+                      <span className="convo-card-meta">
+                        {formatRelativeTime(convo.lastActivityAt)}
+                      </span>
+                      <button
+                        className="btn-icon-only convo-card-archive-btn"
+                        data-tooltip="Rename"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
+                          handleRenameStart(convo);
                         }}
-                        maxLength={200}
-                      />
-                    ) : (
-                      <div className="convo-card-summary">
-                        {convo.name ?? convo.summary ?? "New conversation"}
-                      </div>
-                    )}
-                  </div>
-                  <div className="convo-card-footer">
-                    <span className="convo-card-meta">
-                      {convo.promptCount} prompt
-                      {convo.promptCount !== 1 ? "s" : ""}
-                    </span>
-                    <span className="convo-card-meta">
-                      {formatRelativeTime(convo.lastActivityAt)}
-                    </span>
-                    <button
-                      className="btn-icon-only convo-card-archive-btn"
-                      data-tooltip="Rename"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleRenameStart(convo);
-                      }}
-                    >
-                      &#9998;
-                    </button>
-                    <button
-                      className="btn-icon-only convo-card-archive-btn"
-                      data-tooltip={convo.archived ? "Unarchive" : "Archive"}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        void handleArchive(convo.id, !convo.archived);
-                      }}
-                    >
-                      {convo.archived ? "\u21A9" : "\u2912"}
-                    </button>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-state-title">No conversations yet</div>
-              <div className="empty-state-desc">
-                Create a new conversation to start working with Claude.
+                      >
+                        &#9998;
+                      </button>
+                      <button
+                        className="btn-icon-only convo-card-archive-btn"
+                        data-tooltip={convo.archived ? "Unarchive" : "Archive"}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleArchive(convo.id, !convo.archived);
+                        }}
+                      >
+                        {convo.archived ? "\u21A9" : "\u2912"}
+                      </button>
+                    </div>
+                  </Link>
+                ))}
               </div>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="empty-state">
+                <div className="empty-state-title">No conversations yet</div>
+                <div className="empty-state-desc">
+                  Create a new conversation to start working with Claude.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       <ConfirmDialog
         open={showDeleteConfirm}
         title="Delete Session"
-        message={`This will remove the worktree and session state for "${session.sessionName}". The git branch and transcripts will be preserved. This action cannot be undone.`}
+        message={`This will remove the worktree and session state for "${sessionName}". The git branch and transcripts will be preserved. This action cannot be undone.`}
         confirmLabel="Delete"
         danger
-        onConfirm={() => {
-          setShowDeleteConfirm(false);
-          void handleDelete();
-        }}
+        onConfirm={handleDelete}
         onCancel={() => setShowDeleteConfirm(false)}
       />
     </div>

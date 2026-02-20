@@ -9,7 +9,6 @@ const meta = {
     projectName: "my-app",
     open: true,
     onClose: fn(),
-    onCreated: fn(),
   },
 } satisfies Meta<typeof CreateSessionModal>;
 

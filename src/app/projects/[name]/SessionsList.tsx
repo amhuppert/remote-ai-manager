@@ -1,21 +1,30 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { SessionState } from "@/types";
 import {
   deriveSessionStatus,
   deriveSessionPromptCount,
 } from "@/lib/session-derived";
+import { useSessionsQuery, useHooksStatusQuery } from "@/lib/queries";
+import {
+  useDeleteSessionMutation,
+  useArchiveSessionMutation,
+} from "@/lib/mutations";
+import {
+  useShowCreateModal,
+  useDeleteTarget,
+  useShowArchivedSessions,
+  useOpenCreateModal,
+  useCloseCreateModal,
+  useConfirmDeleteSession,
+  useCancelDeleteSession,
+  useToggleArchivedSessions,
+} from "@/stores/sessions.store";
 import CreateSessionModal from "./CreateSessionModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { tracedFetch } from "@/lib/traced-fetch";
-
-interface SessionsListProps {
-  projectName: string;
-  initialSessions: SessionState[];
-}
+import Topbar from "@/components/Topbar";
 
 function formatRelativeTime(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
@@ -46,15 +55,59 @@ function StatusBadge({ session }: { session: SessionState }) {
   );
 }
 
+function ArchiveButton({
+  projectName,
+  session,
+}: {
+  projectName: string;
+  session: SessionState;
+}) {
+  const archiveMutation = useArchiveSessionMutation(
+    projectName,
+    session.sessionName,
+  );
+
+  return (
+    <button
+      className="btn btn-sm"
+      onClick={(e) => {
+        e.stopPropagation();
+        archiveMutation.mutate(!session.archived);
+      }}
+      disabled={archiveMutation.isPending}
+    >
+      {session.archived ? "Unarchive" : "Archive"}
+    </button>
+  );
+}
+
+interface SessionsListProps {
+  projectName: string;
+}
+
 export default function SessionsList({
   projectName,
-  initialSessions,
 }: SessionsListProps): React.JSX.Element {
-  const router = useRouter();
-  const [modalOpen, setModalOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
-  const sessions = initialSessions;
+  // --- TanStack Query ---
+  const sessionsQuery = useSessionsQuery(projectName);
+  const hooksQuery = useHooksStatusQuery();
+
+  // --- Zustand ---
+  const modalOpen = useShowCreateModal();
+  const deleteTarget = useDeleteTarget();
+  const showArchived = useShowArchivedSessions();
+  const openCreateModal = useOpenCreateModal();
+  const closeCreateModal = useCloseCreateModal();
+  const confirmDelete = useConfirmDeleteSession();
+  const cancelDelete = useCancelDeleteSession();
+  const toggleArchived = useToggleArchivedSessions();
+
+  // --- Mutations ---
+  const deleteMutation = useDeleteSessionMutation(projectName);
+
+  // --- Derived data ---
+  const sessions = sessionsQuery.data ?? [];
+  const hooksStatus = hooksQuery.data;
 
   const archivedCount = useMemo(
     () => sessions.filter((s) => s.archived).length,
@@ -66,194 +119,193 @@ export default function SessionsList({
     return sessions.filter((s) => !s.archived);
   }, [sessions, showArchived]);
 
-  const handleCreated = useCallback(() => {
-    router.refresh();
-  }, [router]);
+  const handleDeleteConfirm = useCallback(() => {
+    if (deleteTarget) {
+      deleteMutation.mutate(deleteTarget.sessionName);
+    }
+    cancelDelete();
+  }, [deleteTarget, deleteMutation, cancelDelete]);
 
-  const handleDelete = useCallback(
-    async (sessionName: string) => {
-      try {
-        const res = await tracedFetch(
-          `/api/projects/${encodeURIComponent(projectName)}/sessions?sessionName=${encodeURIComponent(sessionName)}`,
-          "delete-session",
-          { method: "DELETE" },
-        );
-        if (res.ok) {
-          router.refresh();
-        }
-      } catch {
-        // Silently fail
-      }
-    },
-    [projectName, router],
-  );
+  const runningCount = sessions.filter((s) =>
+    deriveSessionStatus(s) === "running",
+  ).length;
 
-  const handleArchive = useCallback(
-    async (sessionName: string, archived: boolean) => {
-      try {
-        const res = await tracedFetch(
-          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/archive`,
-          "archive-session",
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ archived }),
-          },
-        );
-        if (res.ok) {
-          router.refresh();
-        }
-      } catch {
-        // Silently fail
-      }
-    },
-    [projectName, router],
-  );
+  const isLoading = sessionsQuery.isPending;
 
   return (
-    <>
-      <div className="stagger-in">
-        <div className="session-actions-bar">
-          <div
-            style={{
-              display: "flex",
-              gap: "var(--space-sm)",
-              alignItems: "center",
-            }}
-          >
-            <button
-              className="btn btn-sm"
-              style={{ color: "var(--text-secondary)" }}
-              onClick={() => router.refresh()}
-            >
-              <span className="btn-icon">&#8635;</span> Refresh
-            </button>
-            {archivedCount > 0 && (
-              <button
-                className={`archive-toggle${showArchived ? " active" : ""}`}
-                onClick={() => setShowArchived((v) => !v)}
-                type="button"
-              >
-                Archived ({archivedCount})
-              </button>
-            )}
-          </div>
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => setModalOpen(true)}
-          >
-            <span className="btn-icon">+</span> New Session
-          </button>
-        </div>
-
-        {filteredSessions.length > 0 ? (
-          <table className="sessions-table">
-            <thead>
-              <tr>
-                <th>Session</th>
-                <th>Branch</th>
-                <th>Status</th>
-                <th>Last Activity</th>
-                <th>Prompts</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredSessions.map((session) => (
-                <tr
-                  key={session.sessionName}
-                  className={session.archived ? "archived" : ""}
-                >
-                  <td>
-                    <Link
-                      href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`}
-                      className="session-name-cell"
-                    >
-                      <span className="session-name">
-                        {session.sessionName}
-                      </span>
-                      {session.finished && (
-                        <span className="session-badge merged">merged</span>
-                      )}
-                    </Link>
-                  </td>
-                  <td>
-                    <span className="session-branch">{session.branchName}</span>
-                  </td>
-                  <td>
-                    <StatusBadge session={session} />
-                  </td>
-                  <td>
-                    <span className="session-time">
-                      {formatRelativeTime(session.lastActivityAt)}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="session-time">
-                      {deriveSessionPromptCount(session)}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{ display: "flex", gap: "var(--space-xs)" }}>
-                      <button
-                        className="btn btn-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleArchive(
-                            session.sessionName,
-                            !session.archived,
-                          );
-                        }}
-                      >
-                        {session.archived ? "Unarchive" : "Archive"}
-                      </button>
-                      <button
-                        className="btn btn-danger btn-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteTarget(session.sessionName);
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
+    <div className="app" data-page="sessions">
+      <Topbar
+        page="sessions"
+        breadcrumbs={[
+          { label: "projects", href: "/projects" },
+          {
+            label: projectName,
+            href: `/projects/${encodeURIComponent(projectName)}`,
+          },
+        ]}
+        globalStatus={
+          hooksStatus ? (
+            <>
+              <div className="status-indicator">
+                <div
+                  className={`status-dot${hooksStatus.installed ? "" : " warning"}`}
+                />
+                {hooksStatus.installed ? "hooks active" : "hooks missing"}
+              </div>
+              {runningCount > 0 && (
+                <div className="status-indicator">
+                  <div className="status-dot warning" />
+                  {runningCount} session{runningCount !== 1 ? "s" : ""} running
+                </div>
+              )}
+            </>
+          ) : undefined
+        }
+      />
+      <main className="main">
+        {isLoading ? (
           <div className="empty-state">
-            <div className="empty-state-icon">&#128640;</div>
-            <div className="empty-state-title">No sessions yet</div>
-            <div className="empty-state-desc">
-              Create a session to start working with Claude in this project.
-            </div>
+            <div className="empty-state-title">Loading sessions...</div>
           </div>
+        ) : (
+          <>
+            <div className="stagger-in">
+              <div className="session-actions-bar">
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "var(--space-sm)",
+                    alignItems: "center",
+                  }}
+                >
+                  {archivedCount > 0 && (
+                    <button
+                      className={`archive-toggle${showArchived ? " active" : ""}`}
+                      onClick={toggleArchived}
+                      type="button"
+                    >
+                      Archived ({archivedCount})
+                    </button>
+                  )}
+                </div>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={openCreateModal}
+                >
+                  <span className="btn-icon">+</span> New Session
+                </button>
+              </div>
+
+              {filteredSessions.length > 0 ? (
+                <table className="sessions-table">
+                  <thead>
+                    <tr>
+                      <th>Session</th>
+                      <th>Branch</th>
+                      <th>Status</th>
+                      <th>Last Activity</th>
+                      <th>Prompts</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredSessions.map((session) => (
+                      <tr
+                        key={session.sessionName}
+                        className={session.archived ? "archived" : ""}
+                      >
+                        <td>
+                          <Link
+                            href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`}
+                            className="session-name-cell"
+                          >
+                            <span className="session-name">
+                              {session.sessionName}
+                            </span>
+                            {session.finished && (
+                              <span className="session-badge merged">
+                                merged
+                              </span>
+                            )}
+                          </Link>
+                        </td>
+                        <td>
+                          <span className="session-branch">
+                            {session.branchName}
+                          </span>
+                        </td>
+                        <td>
+                          <StatusBadge session={session} />
+                        </td>
+                        <td>
+                          <span className="session-time">
+                            {formatRelativeTime(session.lastActivityAt)}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="session-time">
+                            {deriveSessionPromptCount(session)}
+                          </span>
+                        </td>
+                        <td>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: "var(--space-xs)",
+                            }}
+                          >
+                            <ArchiveButton
+                              projectName={projectName}
+                              session={session}
+                            />
+                            <button
+                              className="btn btn-danger btn-sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                confirmDelete({
+                                  sessionName: session.sessionName,
+                                  projectName,
+                                });
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="empty-state">
+                  <div className="empty-state-icon">&#128640;</div>
+                  <div className="empty-state-title">No sessions yet</div>
+                  <div className="empty-state-desc">
+                    Create a session to start working with Claude in this
+                    project.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <CreateSessionModal
+              projectName={projectName}
+              open={modalOpen}
+              onClose={closeCreateModal}
+            />
+
+            <ConfirmDialog
+              open={deleteTarget !== null}
+              title="Delete Session"
+              message={`This will remove the worktree and session state for "${deleteTarget?.sessionName ?? ""}". The git branch and transcripts will be preserved. This action cannot be undone.`}
+              confirmLabel="Delete"
+              danger
+              onConfirm={handleDeleteConfirm}
+              onCancel={cancelDelete}
+            />
+          </>
         )}
-      </div>
-
-      <CreateSessionModal
-        projectName={projectName}
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onCreated={handleCreated}
-      />
-
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        title="Delete Session"
-        message={`This will remove the worktree and session state for "${deleteTarget ?? ""}". The git branch and transcripts will be preserved. This action cannot be undone.`}
-        confirmLabel="Delete"
-        danger
-        onConfirm={() => {
-          if (deleteTarget) {
-            void handleDelete(deleteTarget);
-          }
-          setDeleteTarget(null);
-        }}
-        onCancel={() => setDeleteTarget(null)}
-      />
-    </>
+      </main>
+    </div>
   );
 }

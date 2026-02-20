@@ -10,7 +10,7 @@ import {
   forwardRef,
 } from "react";
 import { fuzzyMatch } from "@/lib/fuzzy";
-import { tracedFetch } from "@/lib/traced-fetch";
+import { useCommandsQuery } from "@/lib/queries";
 import type { CommandItem } from "@/types";
 
 interface ScoredItem {
@@ -46,50 +46,20 @@ export const CommandAutocomplete = forwardRef<
   },
   ref,
 ) {
-  const [items, setItems] = useState<CommandItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const fetchedRef = useRef(false);
 
   const visible =
     !disabled && promptText.startsWith("/") && !promptText.includes(" ");
   const query = visible ? promptText.slice(1) : "";
 
-  // Fetch commands on first activation
-  useEffect(() => {
-    if (!visible || fetchedRef.current || loading) return;
-
-    fetchedRef.current = true;
-    setLoading(true);
-    setError(null);
-
-    tracedFetch(
-      `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commands`,
-      "fetch-commands",
-    )
-      .then(async (res) => {
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({ error: "Failed" }));
-          throw new Error(
-            (data as { error?: string }).error ?? "Failed to load commands",
-          );
-        }
-        const data = (await res.json()) as { items: CommandItem[] };
-        setItems(data.items);
-      })
-      .catch((err: unknown) => {
-        const message =
-          err instanceof Error ? err.message : "Failed to load commands";
-        setError(message);
-        // Allow retry on next open
-        fetchedRef.current = false;
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [visible, loading, projectName, sessionName]);
+  // Fetch commands via TanStack Query — only enabled when visible
+  const commandsQuery = useCommandsQuery(projectName, sessionName);
+  const items = commandsQuery.data?.items ?? [];
+  const loading = commandsQuery.isPending && visible;
+  const error = commandsQuery.isError
+    ? commandsQuery.error?.message ?? "Failed to load commands"
+    : null;
 
   // Filter and score items
   const filtered = useMemo((): ScoredItem[] => {
