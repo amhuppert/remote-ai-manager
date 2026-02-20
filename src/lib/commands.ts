@@ -298,17 +298,22 @@ export async function discoverCommands(
   const projectItems = await scanCommandDir(projectCmdDir, "project");
   allItems.push(...projectItems);
 
-  // 2. User-level commands
+  // 2. Project-level skills
+  const projectSkillsDir = path.join(worktreePath, ".claude", "skills");
+  const projectSkillItems = await scanSkillsDir(projectSkillsDir, "project");
+  allItems.push(...projectSkillItems);
+
+  // 3. User-level commands
   const userCmdDir = path.join(homeDir, ".claude", "commands");
   const userCmdItems = await scanCommandDir(userCmdDir, "user");
   allItems.push(...userCmdItems);
 
-  // 3. User-level skills
+  // 4. User-level skills
   const userSkillsDir = path.join(homeDir, ".claude", "skills");
   const userSkillItems = await scanSkillsDir(userSkillsDir, "user");
   allItems.push(...userSkillItems);
 
-  // 4. Plugin commands and skills
+  // 5. Plugin commands and skills
   const pluginPaths = await resolvePluginPaths();
   for (const plugin of pluginPaths) {
     const pluginCmdDir = path.join(plugin.path, "commands");
