@@ -86,6 +86,7 @@ const baseSession: SessionState = {
       archived: false,
     },
   ],
+  source: "csm" as const,
 };
 
 const emptyDiff: SessionDiff = {
@@ -241,6 +242,7 @@ describe("SessionDetailPage", () => {
               status: "running",
             },
           ],
+          source: "csm" as const,
         }}
         messages={[]}
         diff={emptyDiff}

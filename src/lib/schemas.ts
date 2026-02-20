@@ -44,6 +44,9 @@ export const conversationStateSchema = z.object({
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
+export const sessionSourceSchema = z.enum(["csm", "imported"]);
+export type SessionSource = z.infer<typeof sessionSourceSchema>;
+
 export const sessionStateSchema = z.object({
   sessionName: z.string(),
   worktreePath: z.string(),
@@ -53,6 +56,7 @@ export const sessionStateSchema = z.object({
   archived: z.boolean(),
   finished: z.boolean().default(false),
   conversations: z.array(conversationStateSchema).default([]),
+  source: sessionSourceSchema.default("csm"),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 

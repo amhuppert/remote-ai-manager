@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getProjectSessions } from "@/lib/state";
+import { discoverAndImportWorktrees } from "@/lib/worktrees";
 import { detectHooksStatus } from "@/lib/hooks";
 import Topbar from "@/components/Topbar";
 import SessionsList from "./SessionsList";
@@ -21,10 +22,23 @@ export default async function SessionsPage({
     notFound();
   }
 
-  const [sessions, hooksStatus] = await Promise.all([
+  const [existingSessions, hooksStatus] = await Promise.all([
     getProjectSessions(projectPath),
     detectHooksStatus(),
   ]);
+
+  // Reconcile worktrees: discover and import untracked ones
+  const reconciliation = await discoverAndImportWorktrees(
+    projectPath,
+    existingSessions,
+  );
+
+  // Re-read sessions if new ones were imported
+  const sessions =
+    reconciliation.imported.length > 0
+      ? await getProjectSessions(projectPath)
+      : existingSessions;
+
   const activeCount = sessions.filter((s) => !s.archived).length;
 
   return (

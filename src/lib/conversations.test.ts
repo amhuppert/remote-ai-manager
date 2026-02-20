@@ -53,6 +53,7 @@ async function seedSession(sessionOverrides: Record<string, unknown> = {}) {
             archived: false,
             finished: false,
             conversations: [],
+            source: "csm" as const,
             ...sessionOverrides,
           },
         },
@@ -191,6 +192,7 @@ describe("setConversationArchived", () => {
     const convoId = crypto.randomUUID();
     await seedSession({
       conversations: [makeConvo({ id: convoId })],
+      source: "csm" as const,
     });
     const { setConversationArchived } = await import("./conversations");
     const { getSession } = await import("./state");
@@ -205,6 +207,7 @@ describe("setConversationArchived", () => {
     const convoId = crypto.randomUUID();
     await seedSession({
       conversations: [makeConvo({ id: convoId, archived: true })],
+      source: "csm" as const,
     });
     const { setConversationArchived } = await import("./conversations");
     const { getSession } = await import("./state");
@@ -218,6 +221,7 @@ describe("setConversationArchived", () => {
   it("throws for non-existent conversation ID", async () => {
     await seedSession({
       conversations: [makeConvo()],
+      source: "csm" as const,
     });
     const { setConversationArchived } = await import("./conversations");
 
@@ -449,6 +453,7 @@ describe("discoverAndImportConversations", () => {
     await seedSession({
       worktreePath,
       conversations: [makeConvo({ claudeSessionId: "already-tracked" })],
+      source: "csm" as const,
     });
 
     await writeSessionsIndex(worktreePath, [
@@ -644,6 +649,7 @@ function makeSessionWith(
     archived: false,
     finished: false,
     conversations,
+    source: "csm" as const,
     ...overrides,
   };
 }

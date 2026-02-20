@@ -79,6 +79,7 @@ function stateWithSession(
             archived: false,
             finished: false,
             conversations: [],
+            source: "csm",
             ...overrides,
           },
         },
@@ -281,6 +282,7 @@ describe("createSession", () => {
     expect(session.branchName).toBe("csm/my-feature");
     expect(session.conversations).toEqual([]);
     expect(session.archived).toBe(false);
+    expect(session.source).toBe("csm");
   });
 
   it("sets ISO 8601 timestamps for createdAt and lastActivityAt", async () => {
@@ -623,6 +625,79 @@ describe("deleteSession", () => {
     await expect(deleteSession("/nonexistent", "any")).rejects.toThrow(
       "Project not found: /nonexistent",
     );
+  });
+
+  it("returns worktreeRemoved=true for CSM-created sessions", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "csm-session", { source: "csm" }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    mockExecFileSuccess();
+
+    const result = await deleteSession("/projects/repo", "csm-session");
+
+    expect(result.worktreeRemoved).toBe(true);
+    // Git worktree remove should have been called
+    expect(execFileMock).toHaveBeenCalled();
+  });
+
+  it("skips worktree removal for imported sessions and returns worktreeRemoved=false", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "imported-session", {
+        source: "imported",
+        worktreePath: "/external/path/imported-session",
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+
+    const result = await deleteSession("/projects/repo", "imported-session");
+
+    expect(result.worktreeRemoved).toBe(false);
+    // Git worktree remove should NOT be called for imported sessions
+    expect(execFileMock).not.toHaveBeenCalled();
+    // rm should NOT be called
+    expect(rmMock).not.toHaveBeenCalled();
+    // But session should still be removed from state
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    expect(
+      savedState.projects["/projects/repo"].sessions["imported-session"],
+    ).toBeUndefined();
+  });
+
+  it("treats sessions without source field as CSM-created (backward compat)", async () => {
+    // Simulate old state without source field — Zod default kicks in
+    const stateWithoutSource = {
+      projects: {
+        "/projects/repo": {
+          rootPath: "/projects/repo",
+          sessions: {
+            "legacy-session": {
+              sessionName: "legacy-session",
+              worktreePath: "/projects/repo/.worktrees/legacy-session",
+              branchName: "csm/legacy-session",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+              // no source field
+            },
+          },
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    };
+    readStateMock.mockResolvedValue(stateWithoutSource);
+    existsSyncMock.mockReturnValue(true);
+    mockExecFileSuccess();
+
+    const result = await deleteSession("/projects/repo", "legacy-session");
+
+    // Should behave like source: "csm" — remove worktree
+    expect(result.worktreeRemoved).toBe(true);
+    expect(execFileMock).toHaveBeenCalled();
   });
 
   it("throws error for non-existent session in existing project", async () => {

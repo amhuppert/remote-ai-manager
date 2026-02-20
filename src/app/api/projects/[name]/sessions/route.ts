@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getProjectSessions } from "@/lib/state";
 import { createSession, deleteSession } from "@/lib/sessions";
+import { discoverAndImportWorktrees } from "@/lib/worktrees";
 import { createSessionRequestSchema } from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-/** GET /api/projects/[name]/sessions — list all sessions */
+/** GET /api/projects/[name]/sessions — list all sessions with worktree reconciliation */
 export const GET = withTracing(async (_request, { params }) => {
   const name = (await params)["name"] ?? "";
   const projectPath = await resolveProjectPath(name);
@@ -19,8 +20,24 @@ export const GET = withTracing(async (_request, { params }) => {
     );
   }
 
-  const sessions = await getProjectSessions(projectPath);
-  return NextResponse.json(sessions);
+  const existingSessions = await getProjectSessions(projectPath);
+
+  // Reconcile worktrees: discover and import untracked ones
+  const reconciliation = await discoverAndImportWorktrees(
+    projectPath,
+    existingSessions,
+  );
+
+  // Re-read sessions after reconciliation to include newly imported ones
+  const sessions =
+    reconciliation.imported.length > 0
+      ? await getProjectSessions(projectPath)
+      : existingSessions;
+
+  return NextResponse.json({
+    sessions,
+    orphanedSessionNames: reconciliation.orphanedSessionNames,
+  });
 });
 
 /** POST /api/projects/[name]/sessions — create a new session */
@@ -77,8 +94,8 @@ export const DELETE = withTracing(async (request, { params }) => {
   }
 
   try {
-    await deleteSession(projectPath, sessionName);
-    return NextResponse.json({ success: true });
+    const { worktreeRemoved } = await deleteSession(projectPath, sessionName);
+    return NextResponse.json({ success: true, worktreeRemoved });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Failed to delete session";

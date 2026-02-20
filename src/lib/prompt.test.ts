@@ -93,6 +93,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     archived: false,
     finished: false,
     conversations: [],
+    source: "csm" as const,
     ...overrides,
   };
 }

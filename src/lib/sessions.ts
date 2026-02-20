@@ -171,6 +171,7 @@ export async function createSession(
     archived: false,
     finished: false,
     conversations: [],
+    source: "csm",
   };
 
   // Persist to state
@@ -189,14 +190,14 @@ export async function createSession(
 
 /**
  * Delete a session.
- * - Removes the worktree directory
- * - Removes from manager state
+ * - For CSM-created sessions: removes the worktree directory from disk
+ * - For imported sessions: only removes the session record from state
  * - Does NOT delete the branch or transcripts
  */
 export async function deleteSession(
   projectPath: string,
   sessionName: string,
-): Promise<void> {
+): Promise<{ worktreeRemoved: boolean }> {
   const state = await readState();
   const project = state.projects[projectPath];
   if (!project) {
@@ -208,35 +209,52 @@ export async function deleteSession(
     throw new Error(`Session "${sessionName}" not found in project`);
   }
 
-  // Remove worktree
-  let worktreeCleanup = "skipped";
-  if (existsSync(session.worktreePath)) {
-    try {
-      await git(projectPath, [
-        "worktree",
-        "remove",
-        "--force",
-        session.worktreePath,
-      ]);
-      worktreeCleanup = "success";
-    } catch (err) {
-      logger.error("session.worktree_remove_failure", {
-        sessionName,
-        worktreePath: session.worktreePath,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      // Fallback: manual removal
-      await rm(session.worktreePath, { recursive: true, force: true });
-      worktreeCleanup = "fallback";
+  const source = session.source ?? "csm";
+  let worktreeRemoved = false;
+
+  if (source === "imported") {
+    // Imported sessions: remove from state only, do not touch the worktree
+    logger.info("session.delete", {
+      sessionName,
+      source,
+      worktreeCleanup: "skipped-imported",
+    });
+  } else {
+    // CSM-created sessions: remove the worktree from disk
+    let worktreeCleanup = "skipped";
+    if (existsSync(session.worktreePath)) {
+      try {
+        await git(projectPath, [
+          "worktree",
+          "remove",
+          "--force",
+          session.worktreePath,
+        ]);
+        worktreeCleanup = "success";
+        worktreeRemoved = true;
+      } catch (err) {
+        logger.error("session.worktree_remove_failure", {
+          sessionName,
+          worktreePath: session.worktreePath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // Fallback: manual removal
+        await rm(session.worktreePath, { recursive: true, force: true });
+        worktreeCleanup = "fallback";
+        worktreeRemoved = true;
+      }
     }
+
+    logger.info("session.delete", {
+      sessionName,
+      source,
+      worktreeCleanup,
+    });
   }
 
   // Remove from state
   delete project.sessions[sessionName];
   await writeState(state);
 
-  logger.info("session.delete", {
-    sessionName,
-    worktreeCleanup,
-  });
+  return { worktreeRemoved };
 }

@@ -66,6 +66,7 @@ const makeSessions = (count: number): SessionState[] =>
         archived: false,
       },
     ],
+    source: "csm" as const,
   }));
 
 // ===========================================================================

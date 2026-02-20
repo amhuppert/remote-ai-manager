@@ -76,6 +76,7 @@ describe("state", () => {
               archived: false,
               finished: false,
               conversations: [],
+              source: "csm" as const,
             },
           },
         },
@@ -99,6 +100,7 @@ describe("state", () => {
       archived: false,
       finished: false,
       conversations: [],
+      source: "csm" as const,
       claudeSessionId: null,
       transcriptPath: null,
       status: "ready" as const,
@@ -124,6 +126,7 @@ describe("state", () => {
       archived: false,
       finished: false,
       conversations: [],
+      source: "csm" as const,
       claudeSessionId: null,
       transcriptPath: null,
       status: "ready" as const,
@@ -148,6 +151,7 @@ describe("state", () => {
       archived: false,
       finished: false,
       conversations: [],
+      source: "csm" as const,
       claudeSessionId: null,
       transcriptPath: null,
       status: "ready" as const,
@@ -232,6 +236,7 @@ describe("archive helpers", () => {
       archived: false,
       finished: false,
       conversations: [],
+      source: "csm" as const,
     };
 
     await writeState({
@@ -313,6 +318,7 @@ describe("pin helpers", () => {
       archived: false,
       finished: false,
       conversations: [],
+      source: "csm" as const,
     };
 
     await writeState({
