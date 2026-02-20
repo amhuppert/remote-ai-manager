@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import SessionDetailPage from "./SessionDetailPage";
 import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
 
@@ -22,11 +23,9 @@ vi.mock("next/link", () => ({
 }));
 
 // Mock next/navigation
-const routerRefreshMock = vi.fn();
 const routerPushMock = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    refresh: routerRefreshMock,
     push: routerPushMock,
   }),
 }));
@@ -35,29 +34,6 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/components/MarkdownContent", () => ({
   default: ({ content }: { content: string }) => <span>{content}</span>,
 }));
-
-// Mock IntersectionObserver
-beforeEach(() => {
-  vi.clearAllMocks();
-  globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
-    observe: vi.fn(),
-    unobserve: vi.fn(),
-    disconnect: vi.fn(),
-  }));
-  // Mock scrollIntoView (not available in jsdom)
-  Element.prototype.scrollIntoView = vi.fn();
-  // Mock localStorage
-  const storage: Record<string, string> = {};
-  vi.stubGlobal("localStorage", {
-    getItem: (key: string) => storage[key] ?? null,
-    setItem: (key: string, val: string) => {
-      storage[key] = val;
-    },
-    removeItem: (key: string) => {
-      delete storage[key];
-    },
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Test data
@@ -77,7 +53,6 @@ const baseSession: SessionState = {
       claudeSessionId: null,
       transcriptPath: null,
       status: "ready",
-
       promptCount: 5,
       createdAt: "2024-06-15T10:00:00Z",
       lastActivityAt: "2024-06-15T12:00:00Z",
@@ -112,22 +87,134 @@ const sampleMessages: TranscriptMessage[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Mock data holders
+// ---------------------------------------------------------------------------
+
+let mockSession: SessionState | undefined = baseSession;
+let mockMessages: TranscriptMessage[] = sampleMessages;
+let mockDiff: SessionDiff = emptyDiff;
+let mockSessionPending = false;
+let mockMessagesPending = false;
+let mockDiffPending = false;
+
+// Mock queries
+vi.mock("@/lib/queries", () => ({
+  useSessionQuery: () => ({ data: mockSession, isPending: mockSessionPending }),
+  useConversationMessagesQuery: () => ({ data: mockMessages, isPending: mockMessagesPending }),
+  useSessionDiffQuery: () => ({ data: mockDiff, isPending: mockDiffPending }),
+  useCommitsQuery: () => ({ data: [], isPending: false }),
+  useConversationsQuery: () => ({ data: undefined, isPending: false }),
+  useCommandsQuery: () => ({ data: undefined, isPending: false, isError: false }),
+}));
+
+// Mock mutations
+vi.mock("@/lib/mutations", () => ({
+  useDeleteSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useCommitMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useMergeMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useArchiveConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+// Mock useSendPrompt
+const sendPromptMock = vi.fn();
+vi.mock("@/hooks/use-send-prompt", () => ({
+  useSendPrompt: () => sendPromptMock,
+}));
+
+// Mock session-detail store — provide real-ish defaults
+vi.mock("@/stores/session-detail.store", () => ({
+  useLayout: () => "default",
+  useMobilePanel: () => "chat",
+  useSending: () => false,
+  useIsVoiceRecording: () => false,
+  usePromptPlaceholder: () => null,
+  usePromptError: () => null,
+  useOptimisticMessages: () => [],
+  useMessageCountBeforeSubmit: () => 0,
+  useCurrentMsgIndex: () => 0,
+  useShowDeleteConfirm: () => false,
+  useShowCommitDialog: () => false,
+  useShowMergeDialog: () => false,
+  useInfoExpanded: () => false,
+  useSidebarCollapsed: () => false,
+  useSwitchLayout: () => vi.fn(),
+  useHydrateLayout: () => vi.fn(),
+  useSwitchMobilePanel: () => vi.fn(),
+  useSubmitPrompt: () => vi.fn(),
+  useReceiveStreamContent: () => vi.fn(),
+  useCompletePrompt: () => vi.fn(),
+  useFailPrompt: () => vi.fn(),
+  useDismissError: () => vi.fn(),
+  useReconcileMessages: () => vi.fn(),
+  useNavigateToMessage: () => vi.fn(),
+  useStartRecording: () => vi.fn(),
+  useStopRecording: () => vi.fn(),
+  useShowPlaceholderAction: () => vi.fn(),
+  useClearPlaceholder: () => vi.fn(),
+  useRequestCommit: () => vi.fn(),
+  useCancelCommit: () => vi.fn(),
+  useRequestMerge: () => vi.fn(),
+  useCancelMerge: () => vi.fn(),
+  useRequestDeleteSession: () => vi.fn(),
+  useCancelDeleteSessionDetail: () => vi.fn(),
+  useToggleInfoStrip: () => vi.fn(),
+  useToggleSidebar: () => vi.fn(),
+  useHydrateSidebar: () => vi.fn(),
+  useResetSessionDetailStore: () => vi.fn(),
+}));
+
+// Mock IntersectionObserver
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockSession = baseSession;
+  mockMessages = sampleMessages;
+  mockDiff = emptyDiff;
+  mockSessionPending = false;
+  mockMessagesPending = false;
+  mockDiffPending = false;
+
+  globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
+    observe: vi.fn(),
+    unobserve: vi.fn(),
+    disconnect: vi.fn(),
+  }));
+  Element.prototype.scrollIntoView = vi.fn();
+  const storage: Record<string, string> = {};
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => storage[key] ?? null,
+    setItem: (key: string, val: string) => {
+      storage[key] = val;
+    },
+    removeItem: (key: string) => {
+      delete storage[key];
+    },
+  });
+});
+
+function renderWithQuery(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
+
 // ===========================================================================
-// 3.2 + 6.5 – SessionDetailPage rendering
+// SessionDetailPage Tests
 // ===========================================================================
 
 describe("SessionDetailPage", () => {
   it("renders user messages with role indicator (Req 6.1, 3.1)", () => {
-    render(
+    renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={sampleMessages}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
-    // User messages show "You", assistant shows "Claude"
     const roles = screen.getAllByText("You");
     expect(roles.length).toBe(2);
     const assistantRoles = screen.getAllByText("Claude");
@@ -135,13 +222,11 @@ describe("SessionDetailPage", () => {
   });
 
   it("renders message content text (Req 6.1)", () => {
-    render(
+    renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={sampleMessages}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
     expect(screen.getByText("Hello Claude")).toBeDefined();
@@ -150,13 +235,12 @@ describe("SessionDetailPage", () => {
   });
 
   it("renders empty state when no messages (Req 6.2)", () => {
-    render(
+    mockMessages = [];
+    renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={[]}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
     expect(screen.getByText("No messages yet")).toBeDefined();
@@ -166,116 +250,63 @@ describe("SessionDetailPage", () => {
   });
 
   it("displays session info strip with branch, prompts, worktree (Req 3.2)", () => {
-    const { container } = render(
+    const { container } = renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={[]}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
-    // Branch name
     const branchEls = container.querySelectorAll(".si-val");
     const branchTexts = Array.from(branchEls).map((el) => el.textContent);
     expect(branchTexts).toContain("csm/test-session");
-    // Prompt count
     expect(branchTexts).toContain("5");
-    // Worktree path
     expect(branchTexts).toContain("/projects/repo/.worktrees/test-session");
   });
 
   it("shows message counter with position / total (Req 6.3)", () => {
-    render(
+    renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={sampleMessages}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
     expect(screen.getByText("1 / 3")).toBeDefined();
   });
 
   it("shows 0 / 0 counter when no messages", () => {
-    render(
+    mockMessages = [];
+    renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={[]}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
     expect(screen.getByText("0 / 0")).toBeDefined();
   });
 
   it("disables prev button on first message and next on last (Req 6.4, 6.5)", () => {
-    render(
+    renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={sampleMessages}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
     const prevBtn = screen.getByTitle("Previous message");
     const nextBtn = screen.getByTitle("Next message");
-    // At first message, prev should be disabled
     expect(prevBtn.hasAttribute("disabled")).toBe(true);
-    // Next should not be disabled (not at last)
     expect(nextBtn.hasAttribute("disabled")).toBe(false);
   });
 
-  it("shows typing indicator when session status is running (Req 4.4)", () => {
-    const { container } = render(
-      <SessionDetailPage
-        projectName="repo"
-        session={{
-          ...baseSession,
-          conversations: [
-            {
-              ...baseSession.conversations[0]!,
-              status: "running",
-            },
-          ],
-        }}
-        messages={[]}
-        diff={emptyDiff}
-        commits={[]}
-      />,
-    );
-    const indicator = container.querySelector(".typing-indicator");
-    expect(indicator).not.toBeNull();
-    const dots = container.querySelector(".typing-dots");
-    expect(dots).not.toBeNull();
-    expect(dots?.querySelectorAll("span").length).toBe(3);
-  });
-
-  it("does not show typing indicator when session is idle", () => {
-    const { container } = render(
-      <SessionDetailPage
-        projectName="repo"
-        session={baseSession}
-        messages={sampleMessages}
-        diff={emptyDiff}
-        commits={[]}
-      />,
-    );
-    const indicator = container.querySelector(".typing-indicator");
-    expect(indicator).toBeNull();
-  });
-
   it("disables send button when prompt text is empty (Req 3.5)", () => {
-    const { container } = render(
+    const { container } = renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={[]}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
     const sendBtn = container.querySelector(".send-btn");
@@ -283,28 +314,23 @@ describe("SessionDetailPage", () => {
   });
 
   it("renders LayoutSwitcher buttons (Req 3.4)", () => {
-    const { container } = render(
+    const { container } = renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={[]}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
     const layoutBtns = container.querySelectorAll(".layout-btn");
-    // 4 layout modes: conversation, default, split, diff
     expect(layoutBtns.length).toBe(4);
   });
 
   it("enables send button when prompt text is entered (Req 3.5)", () => {
-    const { container } = render(
+    const { container } = renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={[]}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
     const textarea = container.querySelector(".prompt-textarea")!;
@@ -314,13 +340,11 @@ describe("SessionDetailPage", () => {
   });
 
   it("prompt textarea accepts text input (Req 3.4)", () => {
-    const { container } = render(
+    const { container } = renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={[]}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
     const textarea = container.querySelector(
@@ -330,32 +354,15 @@ describe("SessionDetailPage", () => {
     expect(textarea.value).toBe("Fix the bug");
   });
 
-  it("adds optimistic user message on submit and clears input", async () => {
-    // Mock fetch to delay resolution
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: async () => ({}) });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { container } = render(
+  it("shows loading state when queries are pending", () => {
+    mockSessionPending = true;
+    renderWithQuery(
       <SessionDetailPage
         projectName="repo"
-        session={baseSession}
-        messages={[]}
-        diff={emptyDiff}
-        commits={[]}
+        sessionName="test-session"
+        conversationId="conv-1"
       />,
     );
-
-    const textarea = container.querySelector(
-      ".prompt-textarea",
-    ) as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: "Test prompt" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
-
-    // Input should be cleared immediately
-    expect(textarea.value).toBe("");
-    // Optimistic message should appear
-    expect(screen.getByText("Test prompt")).toBeDefined();
+    expect(screen.getByText("Loading session...")).toBeDefined();
   });
 });

@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { sessionKeys } from "@/lib/query-keys";
 import type { SessionReadyEvent } from "@/types";
 
 export default function NotificationListener(): null {
+  const queryClient = useQueryClient();
+
   useEffect(() => {
     if (typeof window === "undefined" || !("Notification" in window)) {
       return;
@@ -16,6 +20,9 @@ export default function NotificationListener(): null {
     const es = new EventSource("/api/events");
 
     es.addEventListener("session-ready", (e: MessageEvent) => {
+      // Invalidate session queries so any open page picks up the change
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+
       if (Notification.permission !== "granted") return;
 
       let event: SessionReadyEvent;
@@ -44,7 +51,7 @@ export default function NotificationListener(): null {
     return () => {
       es.close();
     };
-  }, []);
+  }, [queryClient]);
 
   return null;
 }

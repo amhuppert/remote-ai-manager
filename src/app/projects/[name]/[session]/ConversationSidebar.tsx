@@ -4,7 +4,15 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ConversationState } from "@/types";
-import { tracedFetch } from "@/lib/traced-fetch";
+import {
+  useCreateConversationMutation,
+  useArchiveConversationMutation,
+} from "@/lib/mutations";
+import {
+  useSidebarCollapsed,
+  useToggleSidebar,
+  useHydrateSidebar,
+} from "@/stores/session-detail.store";
 
 interface Props {
   projectName: string;
@@ -14,8 +22,6 @@ interface Props {
   isFinished: boolean;
 }
 
-const STORAGE_KEY = "csm-sidebar-collapsed";
-
 export default function ConversationSidebar({
   projectName,
   sessionName,
@@ -24,8 +30,23 @@ export default function ConversationSidebar({
   isFinished,
 }: Props): React.JSX.Element {
   const router = useRouter();
-  const [collapsed, setCollapsed] = useState(false);
-  const [creating, setCreating] = useState(false);
+
+  // --- Zustand ---
+  const collapsed = useSidebarCollapsed();
+  const toggleCollapsed = useToggleSidebar();
+  const hydrateSidebar = useHydrateSidebar();
+
+  // --- Mutations ---
+  const createConvoMutation = useCreateConversationMutation(
+    projectName,
+    sessionName,
+  );
+  const archiveConvoMutation = useArchiveConversationMutation(
+    projectName,
+    sessionName,
+  );
+
+  // --- Local state ---
   const [showArchived, setShowArchived] = useState(false);
 
   const archivedCount = useMemo(
@@ -38,65 +59,27 @@ export default function ConversationSidebar({
     return conversations.filter((c) => !c.archived);
   }, [conversations, showArchived]);
 
-  // Restore collapsed state from localStorage
+  // Restore collapsed state from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === "true") setCollapsed(true);
-  }, []);
+    hydrateSidebar();
+  }, [hydrateSidebar]);
 
-  const toggleCollapsed = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      localStorage.setItem(STORAGE_KEY, String(next));
-      return next;
-    });
-  }, []);
-
-  const handleNewConversation = useCallback(async () => {
-    if (creating || isFinished) return;
-    setCreating(true);
-    try {
-      const res = await tracedFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations`,
-        "create-conversation-sidebar",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-      if (res.ok) {
-        const convo = (await res.json()) as ConversationState;
+  const handleNewConversation = useCallback(() => {
+    if (createConvoMutation.isPending || isFinished) return;
+    createConvoMutation.mutate(undefined, {
+      onSuccess: (convo) => {
         router.push(
           `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`,
         );
-      }
-    } catch {
-      // Silently fail
-    } finally {
-      setCreating(false);
-    }
-  }, [creating, isFinished, projectName, sessionName, router]);
+      },
+    });
+  }, [createConvoMutation, isFinished, projectName, sessionName, router]);
 
   const handleArchive = useCallback(
-    async (conversationId: string, archived: boolean) => {
-      try {
-        const res = await tracedFetch(
-          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/archive`,
-          "archive-conversation-sidebar",
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ archived }),
-          },
-        );
-        if (res.ok) {
-          router.refresh();
-        }
-      } catch {
-        // Silently fail
-      }
+    (conversationId: string, archived: boolean) => {
+      archiveConvoMutation.mutate({ conversationId, archived });
     },
-    [projectName, sessionName, router],
+    [archiveConvoMutation],
   );
 
   const statusDot = (status: string) => {
@@ -145,7 +128,7 @@ export default function ConversationSidebar({
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    void handleArchive(convo.id, !convo.archived);
+                    handleArchive(convo.id, !convo.archived);
                   }}
                 >
                   {convo.archived ? "\u21A9" : "\u2912"}
@@ -165,8 +148,8 @@ export default function ConversationSidebar({
             )}
             <button
               className="btn btn-sm convo-sidebar-new"
-              onClick={() => void handleNewConversation()}
-              disabled={creating || isFinished}
+              onClick={handleNewConversation}
+              disabled={createConvoMutation.isPending || isFinished}
             >
               + New
             </button>

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
-import { tracedFetch } from "@/lib/traced-fetch";
+import { useState, useEffect, useRef } from "react";
+import { useCommitMutation } from "@/lib/mutations";
 
 interface CommitDialogProps {
   open: boolean;
@@ -20,8 +20,9 @@ export default function CommitDialog({
 }: CommitDialogProps): React.JSX.Element | null {
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const commitMutation = useCommitMutation(projectName, sessionName);
 
   // Auto-focus textarea when opened
   useEffect(() => {
@@ -42,35 +43,19 @@ export default function CommitDialog({
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
-  const handleSubmit = useCallback(async () => {
-    if (!message.trim() || submitting) return;
-
-    setSubmitting(true);
+  const handleSubmit = () => {
+    if (!message.trim() || commitMutation.isPending) return;
     setError(null);
 
-    try {
-      const res = await tracedFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commit`,
-        "commit-changes",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: message.trim() }),
-        },
-      );
-
-      if (res.ok) {
+    commitMutation.mutate(message.trim(), {
+      onSuccess: () => {
         onSuccess();
-      } else {
-        const data = await res.json().catch(() => ({ error: "Commit failed" }));
-        setError(data.error || "Commit failed");
-      }
-    } catch {
-      setError("Failed to commit changes");
-    } finally {
-      setSubmitting(false);
-    }
-  }, [message, submitting, projectName, sessionName, onSuccess]);
+      },
+      onError: (err) => {
+        setError(err.message);
+      },
+    });
+  };
 
   if (!open) return null;
 
@@ -94,7 +79,7 @@ export default function CommitDialog({
             onKeyDown={(e) => {
               if (e.key === "Enter" && e.metaKey) {
                 e.preventDefault();
-                void handleSubmit();
+                handleSubmit();
               }
             }}
           />
@@ -106,16 +91,16 @@ export default function CommitDialog({
           <button
             className="btn btn-sm"
             onClick={onClose}
-            disabled={submitting}
+            disabled={commitMutation.isPending}
           >
             Cancel
           </button>
           <button
             className="btn btn-primary btn-sm"
-            disabled={!message.trim() || submitting}
-            onClick={() => void handleSubmit()}
+            disabled={!message.trim() || commitMutation.isPending}
+            onClick={handleSubmit}
           >
-            {submitting ? "Committing..." : "Commit"}
+            {commitMutation.isPending ? "Committing..." : "Commit"}
           </button>
         </div>
       </div>

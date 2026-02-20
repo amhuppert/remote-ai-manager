@@ -34,10 +34,12 @@ const mockCommands: CommandItem[] = [
   },
 ];
 
-vi.mock("@/lib/traced-fetch", () => ({
-  tracedFetch: vi.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({ items: mockCommands }),
+vi.mock("@/lib/queries", () => ({
+  useCommandsQuery: () => ({
+    data: { items: mockCommands },
+    isPending: false,
+    isError: false,
+    error: null,
   }),
 }));
 

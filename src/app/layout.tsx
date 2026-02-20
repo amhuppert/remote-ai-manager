@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Anybody, Manrope, Geist_Mono } from "next/font/google";
+import Providers from "@/components/Providers";
 import NotificationListener from "@/components/NotificationListener";
 import "./globals.css";
 
@@ -60,8 +61,10 @@ export default function RootLayout({
         <link rel="manifest" href="/site.webmanifest" />
       </head>
       <body>
-        {children}
-        <NotificationListener />
+        <Providers>
+          {children}
+          <NotificationListener />
+        </Providers>
       </body>
     </html>
   );

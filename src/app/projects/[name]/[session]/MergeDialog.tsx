@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
-import { tracedFetch } from "@/lib/traced-fetch";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { useMergeMutation } from "@/lib/mutations";
 
 interface MergeDialogProps {
   open: boolean;
   onClose: () => void;
-  onSuccess: () => void;
   projectName: string;
   sessionName: string;
   branchName: string;
@@ -16,16 +16,17 @@ interface MergeDialogProps {
 export default function MergeDialog({
   open,
   onClose,
-  onSuccess,
   projectName,
   sessionName,
   branchName,
   commitCount,
 }: MergeDialogProps): React.JSX.Element | null {
+  const router = useRouter();
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const mergeMutation = useMergeMutation(projectName, sessionName);
 
   // Reset and pre-fill when opened
   useEffect(() => {
@@ -46,35 +47,20 @@ export default function MergeDialog({
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
-  const handleSubmit = useCallback(async () => {
-    if (!message.trim() || submitting) return;
-
-    setSubmitting(true);
+  const handleSubmit = () => {
+    if (!message.trim() || mergeMutation.isPending) return;
     setError(null);
 
-    try {
-      const res = await tracedFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge`,
-        "merge-session",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: message.trim() }),
-        },
-      );
-
-      if (res.ok) {
-        onSuccess();
-      } else {
-        const data = await res.json().catch(() => ({ error: "Merge failed" }));
-        setError(data.error || "Merge failed");
-      }
-    } catch {
-      setError("Failed to merge session");
-    } finally {
-      setSubmitting(false);
-    }
-  }, [message, submitting, projectName, sessionName, onSuccess]);
+    mergeMutation.mutate(message.trim(), {
+      onSuccess: () => {
+        onClose();
+        router.push(`/projects/${encodeURIComponent(projectName)}`);
+      },
+      onError: (err) => {
+        setError(err.message);
+      },
+    });
+  };
 
   if (!open) return null;
 
@@ -111,7 +97,7 @@ export default function MergeDialog({
             onKeyDown={(e) => {
               if (e.key === "Enter" && e.metaKey) {
                 e.preventDefault();
-                void handleSubmit();
+                handleSubmit();
               }
             }}
           />
@@ -123,16 +109,16 @@ export default function MergeDialog({
           <button
             className="btn btn-sm"
             onClick={onClose}
-            disabled={submitting}
+            disabled={mergeMutation.isPending}
           >
             Cancel
           </button>
           <button
             className="btn btn-primary btn-sm"
-            disabled={!message.trim() || submitting}
-            onClick={() => void handleSubmit()}
+            disabled={!message.trim() || mergeMutation.isPending}
+            onClick={handleSubmit}
           >
-            {submitting ? "Merging..." : "Merge"}
+            {mergeMutation.isPending ? "Merging..." : "Merge"}
           </button>
         </div>
       </div>
