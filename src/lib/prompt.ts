@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type {
+  ClaudeModel,
   SessionState,
   ConversationState,
   MessageContentBlock,
@@ -39,6 +40,7 @@ export async function executePromptStream(
   promptText: string,
   emit: (event: string, data: unknown) => void,
   conversationId?: string,
+  modelId?: ClaudeModel,
 ): Promise<{ conversationId: string }> {
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
@@ -61,7 +63,13 @@ export async function executePromptStream(
     conversationId = conversation.id;
   }
 
+  // Resolve model: explicit parameter > config default
+  const effectiveModel = modelId ?? config.defaultModel;
+
   const args: string[] = [];
+  if (effectiveModel) {
+    args.push("--model", effectiveModel);
+  }
   if (conversation.claudeSessionId) {
     // --resume continues an existing session by its ID
     // (--session-id assigns an ID to a NEW session and would fail with

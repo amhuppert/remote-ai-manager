@@ -8,7 +8,7 @@ import {
   useFailPrompt,
 } from "@/stores/session-detail.store";
 import { tracedFetch } from "@/lib/traced-fetch";
-import type { MessageContentBlock } from "@/types";
+import type { ClaudeModel, MessageContentBlock } from "@/types";
 
 /**
  * Hook that coordinates prompt submission with:
@@ -20,7 +20,7 @@ export function useSendPrompt(
   projectName: string,
   sessionName: string,
   conversationId?: string,
-): (text: string, currentMessageCount: number) => Promise<void> {
+): (text: string, currentMessageCount: number, modelId?: ClaudeModel) => Promise<void> {
   const queryClient = useQueryClient();
   const submitPrompt = useSubmitPrompt();
   const receiveStreamContent = useReceiveStreamContent();
@@ -28,7 +28,7 @@ export function useSendPrompt(
   const failPrompt = useFailPrompt();
 
   return useCallback(
-    async (text: string, currentMessageCount: number) => {
+    async (text: string, currentMessageCount: number, modelId?: ClaudeModel) => {
       const trimmed = text.trim();
       if (!trimmed) return;
 
@@ -44,7 +44,7 @@ export function useSendPrompt(
         const res = await tracedFetch(promptUrl, "send-prompt", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: trimmed }),
+          body: JSON.stringify({ prompt: trimmed, modelId }),
         });
 
         // 3. Handle non-streaming errors

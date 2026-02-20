@@ -6,6 +6,7 @@
 import type { MessageContentBlock as _MessageContentBlock } from "@/lib/schemas";
 
 export type {
+  ClaudeModel,
   GlobalConfig,
   SessionStatus,
   SessionState,

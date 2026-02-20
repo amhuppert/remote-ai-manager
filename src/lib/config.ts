@@ -38,6 +38,7 @@ function defaultConfig(): GlobalConfig {
     ],
     stateFilePath: path.join(CONFIG_DIR, "state.json"),
     claudeTimeoutMs: 300_000,
+    defaultModel: "sonnet",
   };
 }
 

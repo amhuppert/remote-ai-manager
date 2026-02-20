@@ -5,6 +5,7 @@ import { getConversation } from "@/lib/conversations";
 import { executePromptStream } from "@/lib/prompt";
 import { isSessionBusy } from "@/lib/lock";
 import { runPromptRequestSchema } from "@/lib/schemas";
+import type { RunPromptRequest } from "@/types";
 import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/types";
 
@@ -57,7 +58,7 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  let body: { prompt: string };
+  let body: RunPromptRequest;
   try {
     body = runPromptRequestSchema.parse(await request.json());
   } catch {
@@ -91,6 +92,7 @@ export const POST = withTracing(async (request, { params }) => {
           body.prompt.trim(),
           emit,
           conversationId,
+          body.modelId,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Prompt failed";

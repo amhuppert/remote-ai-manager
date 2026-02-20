@@ -4,11 +4,15 @@ import { z } from "zod";
 // CSM Data Entity Schemas
 // ============================================================
 
+export const claudeModelSchema = z.enum(["opus", "sonnet", "haiku"]);
+export type ClaudeModel = z.infer<typeof claudeModelSchema>;
+
 export const globalConfigSchema = z.object({
   baseDir: z.string(),
   ignorePatterns: z.array(z.string()),
   stateFilePath: z.string(),
   claudeTimeoutMs: z.number(),
+  defaultModel: claudeModelSchema.default("sonnet"),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -90,6 +94,7 @@ export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
 export const runPromptRequestSchema = z.object({
   prompt: z.string().trim().min(1),
+  modelId: claudeModelSchema.optional(),
 });
 export type RunPromptRequest = z.infer<typeof runPromptRequestSchema>;
 

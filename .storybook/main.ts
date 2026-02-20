@@ -11,5 +11,10 @@ const config: StorybookConfig = {
   ],
   framework: "@storybook/nextjs-vite",
   staticDirs: ["../public"],
+  viteFinal(config) {
+    config.server ??= {};
+    config.server.allowedHosts = [".tail919904.ts.net"];
+    return config;
+  },
 };
 export default config;

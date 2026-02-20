@@ -60,6 +60,7 @@ import {
   CommandAutocomplete,
   type CommandAutocompleteHandle,
 } from "@/components/CommandAutocomplete";
+import ModelSelector, { type ModelId } from "@/components/ModelSelector";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 
@@ -156,6 +157,7 @@ export default function SessionDetailPage({
 
   // --- Local state ---
   const [promptText, setPromptText] = useState("");
+  const [selectedModel, setSelectedModel] = useState<ModelId>("sonnet");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const promptTextRef = useRef(promptText);
@@ -338,8 +340,8 @@ export default function SessionDetailPage({
     const currentText = promptTextRef.current;
     if (!currentText.trim() || sending) return;
     setPromptText("");
-    await sendPrompt(currentText.trim(), messages.length);
-  }, [sending, messages.length, sendPrompt]);
+    await sendPrompt(currentText.trim(), messages.length, selectedModel);
+  }, [sending, messages.length, sendPrompt, selectedModel]);
 
   const handleDelete = useCallback(() => {
     cancelDelete();
@@ -715,6 +717,11 @@ export default function SessionDetailPage({
                     disabled={isFinished}
                   />
                   <div className="prompt-input-actions">
+                    <ModelSelector
+                      value={selectedModel}
+                      onChange={setSelectedModel}
+                      disabled={sending || isFinished}
+                    />
                     <VoiceRecordButton
                       isRecording={isRecording}
                       isProcessing={isProcessing}
