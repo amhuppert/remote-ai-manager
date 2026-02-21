@@ -27,6 +27,7 @@ export default function CommitDialog({
   // Auto-focus textarea when opened
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMessage("");
       setError(null);
       setTimeout(() => textareaRef.current?.focus(), 100);
@@ -77,7 +78,7 @@ export default function CommitDialog({
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && e.metaKey) {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 handleSubmit();
               }

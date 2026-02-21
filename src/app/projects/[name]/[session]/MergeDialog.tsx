@@ -31,6 +31,7 @@ export default function MergeDialog({
   // Reset and pre-fill when opened
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMessage(sessionName);
       setError(null);
       setTimeout(() => textareaRef.current?.focus(), 100);
@@ -95,7 +96,7 @@ export default function MergeDialog({
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && e.metaKey) {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 handleSubmit();
               }
