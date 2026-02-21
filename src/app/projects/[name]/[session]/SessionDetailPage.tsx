@@ -63,6 +63,7 @@ import {
 import ModelSelector, { type ModelId } from "@/components/ModelSelector";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 interface Props {
   projectName: string;
@@ -166,8 +167,9 @@ export default function SessionDetailPage({
 
   // --- Refs for message navigation ---
   const panelBodyRef = useRef<HTMLDivElement>(null);
-  const messageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const conversationEndRef = useRef<HTMLDivElement>(null);
+  const currentMsgIndexRef = useRef(currentMsgIndex);
+  currentMsgIndexRef.current = currentMsgIndex;
 
   // Derive display messages: server messages + optimistic
   const displayMessages = useMemo(
@@ -227,39 +229,30 @@ export default function SessionDetailPage({
     return turn;
   }, [turnStartIndices, currentMsgIndex]);
 
-  // Reset refs array when displayMessages change
+  // --- Virtualizer for conversation messages ---
+  const virtualizer = useVirtualizer({
+    count: displayMessages.length,
+    getScrollElement: () => panelBodyRef.current,
+    estimateSize: () => 120,
+    overscan: 5,
+    gap: 24,
+  });
+
+  // Track visible message from virtualizer for turn navigation counter
+  const virtualItems = virtualizer.getVirtualItems();
+  const visibleMidIndex =
+    virtualItems.length > 0
+      ? virtualItems[Math.floor(virtualItems.length / 2)]!.index
+      : 0;
+
   useEffect(() => {
-    messageRefs.current = messageRefs.current.slice(0, displayMessages.length);
-  }, [displayMessages.length]);
-
-  // Track which message is visible via IntersectionObserver
-  useEffect(() => {
-    const panelBody = panelBodyRef.current;
-    if (!panelBody || displayMessages.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting && entry.target instanceof HTMLElement) {
-            const idx = Number(entry.target.dataset["msgIndex"]);
-            if (!Number.isNaN(idx)) {
-              navigateToMessage(idx);
-            }
-          }
-        }
-      },
-      {
-        root: panelBody,
-        threshold: 0.5,
-      },
-    );
-
-    for (const ref of messageRefs.current) {
-      if (ref) observer.observe(ref);
+    if (
+      displayMessages.length > 0 &&
+      visibleMidIndex !== currentMsgIndexRef.current
+    ) {
+      navigateToMessage(visibleMidIndex);
     }
-
-    return () => observer.disconnect();
-  }, [displayMessages.length, navigateToMessage]);
+  }, [visibleMidIndex, displayMessages.length, navigateToMessage]);
 
   // Auto-scroll to bottom on initial load
   const initialScrollDone = useRef(false);
@@ -293,15 +286,13 @@ export default function SessionDetailPage({
   const scrollToMessage = useCallback(
     (index: number) => {
       const clamped = Math.max(0, Math.min(index, displayMessages.length - 1));
-      const el = messageRefs.current[clamped];
-      const container = panelBodyRef.current;
-      if (el && container) {
-        const targetTop = el.offsetTop - container.offsetTop;
-        container.scrollTo({ top: targetTop, behavior: "smooth" });
-        navigateToMessage(clamped);
-      }
+      virtualizer.scrollToIndex(clamped, {
+        align: "start",
+        behavior: "smooth",
+      });
+      navigateToMessage(clamped);
     },
-    [displayMessages.length, navigateToMessage],
+    [displayMessages.length, navigateToMessage, virtualizer],
   );
 
   const handlePrevMessage = useCallback(() => {
@@ -614,23 +605,40 @@ export default function SessionDetailPage({
                 )}
                 <div className="conversation">
                   {displayMessages.length > 0 ? (
-                    displayMessages.map((msg, i) => (
-                      <div
-                        key={i}
-                        className={`message ${msg.role}`}
-                        data-msg-index={i}
-                        ref={(el) => {
-                          messageRefs.current[i] = el;
-                        }}
-                      >
-                        <div className="message-role">
-                          {msg.role === "user" ? "You" : "Claude"}
-                        </div>
-                        <div className="message-content">
-                          <MessageContent content={msg.content} />
-                        </div>
-                      </div>
-                    ))
+                    <div
+                      style={{
+                        height: virtualizer.getTotalSize(),
+                        width: "100%",
+                        position: "relative",
+                      }}
+                    >
+                      {virtualizer.getVirtualItems().map((virtualRow) => {
+                        const msg = displayMessages[virtualRow.index]!;
+                        return (
+                          <div
+                            key={virtualRow.index}
+                            ref={virtualizer.measureElement}
+                            data-index={virtualRow.index}
+                            className={`message ${msg.role}`}
+                            data-msg-index={virtualRow.index}
+                            style={{
+                              position: "absolute",
+                              top: 0,
+                              left: 0,
+                              width: "100%",
+                              transform: `translateY(${virtualRow.start}px)`,
+                            }}
+                          >
+                            <div className="message-role">
+                              {msg.role === "user" ? "You" : "Claude"}
+                            </div>
+                            <div className="message-content">
+                              <MessageContent content={msg.content} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : (
                     <div
                       className="empty-state"
@@ -761,13 +769,15 @@ export default function SessionDetailPage({
               </div>
             </div>
 
-            {/* Diff panel */}
-            <DiffPanel
-              diff={diff}
-              commits={commits}
-              projectName={projectName}
-              sessionName={session.sessionName}
-            />
+            {/* Diff panel — only mounted when visible to avoid rendering cost */}
+            {layout !== "conversation" && (
+              <DiffPanel
+                diff={diff}
+                commits={commits}
+                projectName={projectName}
+                sessionName={session.sessionName}
+              />
+            )}
           </div>
         </div>
       </main>

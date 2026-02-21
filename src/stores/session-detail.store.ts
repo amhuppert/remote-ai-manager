@@ -66,7 +66,7 @@ const SIDEBAR_STORAGE_KEY = "csm-sidebar-collapsed";
 const validLayouts: LayoutMode[] = ["conversation", "default", "split", "diff"];
 
 const initialState: SessionDetailState = {
-  layout: "default",
+  layout: "conversation",
   mobilePanel: "chat",
   sending: false,
   isVoiceRecording: false,

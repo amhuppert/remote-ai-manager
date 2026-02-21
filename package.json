@@ -19,6 +19,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-query-devtools": "^5.91.3",
+    "@tanstack/react-virtual": "^3.13.18",
     "@types/react-syntax-highlighter": "^15.5.13",
     "immer": "^11.1.4",
     "next": "^16.1.6",

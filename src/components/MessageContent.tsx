@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import type { MessageContentBlock } from "@/types";
 import MarkdownContent from "./MarkdownContent";
 import { formatToolUse } from "@/lib/stream-events";
@@ -8,7 +9,7 @@ interface Props {
   content: MessageContentBlock[];
 }
 
-export default function MessageContent({ content }: Props): React.JSX.Element {
+export default memo(function MessageContent({ content }: Props): React.JSX.Element {
   return (
     <>
       {content.map((block, i) => {
@@ -35,4 +36,4 @@ export default function MessageContent({ content }: Props): React.JSX.Element {
       })}
     </>
   );
-}
+});

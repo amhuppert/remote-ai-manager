@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -27,7 +28,7 @@ const customStyle: Record<string, React.CSSProperties> = {
   },
 };
 
-export default function MarkdownContent({ content }: Props): React.JSX.Element {
+export default memo(function MarkdownContent({ content }: Props): React.JSX.Element {
   return (
     <ReactMarkdown
       components={{
@@ -58,4 +59,4 @@ export default function MarkdownContent({ content }: Props): React.JSX.Element {
       {content}
     </ReactMarkdown>
   );
-}
+});
