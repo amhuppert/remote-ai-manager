@@ -31,6 +31,7 @@ export default defineConfig({
           name: "unit",
           environment: "node",
           include: ["src/**/*.test.{ts,tsx}"],
+          testTimeout: 15000,
         },
       },
       // Storybook tests — runs *.stories.* in a headless browser

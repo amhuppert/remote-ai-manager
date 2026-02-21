@@ -196,6 +196,7 @@ vi.mock("@/stores/session-detail.store", () => ({
   useToggleInfoStrip: () => vi.fn(),
   useToggleSidebar: () => vi.fn(),
   useHydrateSidebar: () => vi.fn(),
+  useClearConversationMessages: () => vi.fn(),
   useResetSessionDetailStore: () => vi.fn(),
 }));
 

@@ -175,6 +175,8 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
       testSession,
       "Hello Claude",
       expect.any(Function),
+      undefined,
+      undefined,
     );
   });
 
@@ -188,6 +190,8 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
       testSession,
       "Hello Claude",
       expect.any(Function),
+      undefined,
+      undefined,
     );
   });
 });
