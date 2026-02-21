@@ -63,9 +63,9 @@ describe("HOTKEY_REGISTRY", () => {
     }
   });
 
-  it("helpModal has enableOnFormTags and useKey set", async () => {
+  it("helpModal does not have enableOnFormTags so it cannot interfere with text input", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.helpModal.enableOnFormTags).toBe(true);
+    expect(HOTKEY_REGISTRY.helpModal.enableOnFormTags).toBeFalsy();
     expect(HOTKEY_REGISTRY.helpModal.useKey).toBe(true);
     expect(HOTKEY_REGISTRY.helpModal.keys).toBe("?");
   });

@@ -32,7 +32,6 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     label: "Show keyboard shortcuts",
     description: "Open the keyboard shortcuts help modal",
     category: "general",
-    enableOnFormTags: true,
     useKey: true,
   },
   voiceToggle: {
