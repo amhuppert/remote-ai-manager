@@ -12,7 +12,7 @@ export const globalConfigSchema = z.object({
   ignorePatterns: z.array(z.string()),
   stateFilePath: z.string(),
   claudeTimeoutMs: z.number(),
-  defaultModel: claudeModelSchema.default("sonnet"),
+  defaultModel: claudeModelSchema.default("opus"),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
