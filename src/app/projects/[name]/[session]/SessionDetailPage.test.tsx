@@ -141,6 +141,22 @@ vi.mock("@/hooks/useAppHotkey", () => ({
   useAppHotkey: vi.fn(),
 }));
 
+// Mock @tanstack/react-virtual — JSDOM has no layout so virtualizer renders nothing
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, i) => ({
+        index: i,
+        key: i,
+        start: i * 120,
+        size: 120,
+      })),
+    getTotalSize: () => count * 120,
+    measureElement: vi.fn(),
+    scrollToIndex: vi.fn(),
+  }),
+}));
+
 // Mock session-detail store — provide real-ish defaults
 vi.mock("@/stores/session-detail.store", () => ({
   useLayout: () => "default",
