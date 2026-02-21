@@ -273,3 +273,34 @@ export function useArchiveConversationMutation(
     },
   });
 }
+
+export function useRenameConversationMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      conversationId,
+      name,
+    }: {
+      conversationId: string;
+      name: string;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
+        "rename-conversation",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.list(projectName, sessionName),
+      });
+    },
+  });
+}

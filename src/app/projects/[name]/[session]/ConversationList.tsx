@@ -13,6 +13,7 @@ import {
   useDeleteSessionMutation,
   useCreateConversationMutation,
   useArchiveConversationMutation,
+  useRenameConversationMutation,
 } from "@/lib/mutations";
 import {
   useShowArchivedConversations,
@@ -20,7 +21,6 @@ import {
 } from "@/stores/conversations.store";
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { tracedFetch } from "@/lib/traced-fetch";
 
 interface Props {
   projectName: string;
@@ -80,6 +80,10 @@ export default function ConversationList({
     sessionName,
   );
   const archiveConvoMutation = useArchiveConversationMutation(
+    projectName,
+    sessionName,
+  );
+  const renameConvoMutation = useRenameConversationMutation(
     projectName,
     sessionName,
   );
@@ -152,32 +156,18 @@ export default function ConversationList({
   }, []);
 
   const handleRenameSubmit = useCallback(
-    async (conversationId: string) => {
+    (conversationId: string) => {
       const trimmed = editValue.trim();
       if (!trimmed) {
         setEditingId(null);
         return;
       }
-      try {
-        const res = await tracedFetch(
-          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
-          "rename-conversation",
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: trimmed }),
-          },
-        );
-        if (res.ok) {
-          router.refresh();
-        }
-      } catch {
-        // Silently fail
-      } finally {
-        setEditingId(null);
-      }
+      renameConvoMutation.mutate(
+        { conversationId, name: trimmed },
+        { onSettled: () => setEditingId(null) },
+      );
     },
-    [editValue, projectName, sessionName, router],
+    [editValue, renameConvoMutation],
   );
 
   const displayStatus = isFinished ? "merged" : sessionStatus;
