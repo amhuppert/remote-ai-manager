@@ -56,6 +56,7 @@ import MergeDialog from "./MergeDialog";
 import ConversationSidebar from "./ConversationSidebar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MessageContent from "@/components/MessageContent";
+import ConversationNav from "@/components/ConversationNav";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import {
   CommandAutocomplete,
@@ -574,34 +575,14 @@ export default function SessionDetailPage({
                   </button>
                 )}
                 <span className="panel-title">Conversation</span>
-                <div className="msg-nav">
-                  <button
-                    className="nav-btn"
-                    onClick={handlePrevMessage}
-                    disabled={
-                      turnStartIndices.length === 0 || currentTurnIndex <= 0
-                    }
-                    title="Previous message"
-                  >
-                    &#9650;
-                  </button>
-                  <span className="msg-counter">
-                    {turnStartIndices.length > 0
-                      ? `${currentTurnIndex + 1} / ${turnStartIndices.length}`
-                      : "0 / 0"}
-                  </span>
-                  <button
-                    className="nav-btn"
-                    onClick={handleNextMessage}
-                    disabled={
-                      turnStartIndices.length === 0 ||
-                      currentTurnIndex >= turnStartIndices.length - 1
-                    }
-                    title="Next message"
-                  >
-                    &#9660;
-                  </button>
-                </div>
+                <ConversationNav
+                  currentTurn={currentTurnIndex}
+                  totalTurns={turnStartIndices.length}
+                  onFirst={() => scrollToMessage(0)}
+                  onPrevious={handlePrevMessage}
+                  onNext={handleNextMessage}
+                  onLast={() => scrollToMessage(displayMessages.length - 1)}
+                />
               </div>
               <div className="panel-body" ref={panelBodyRef}>
                 {promptError && (

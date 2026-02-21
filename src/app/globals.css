@@ -1775,7 +1775,31 @@ textarea {
 .msg-nav {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-sm);
+}
+
+.msg-nav-group {
+  display: flex;
+}
+
+.msg-nav-group .nav-btn {
+  border-radius: 0;
+}
+
+.msg-nav-group .nav-btn:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.msg-nav-group .nav-btn:last-child {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.msg-nav-group .nav-btn + .nav-btn {
+  margin-left: -1px;
+}
+
+.msg-nav-group .nav-btn:hover:not(:disabled) {
+  z-index: 1;
 }
 
 .nav-btn {
@@ -1790,7 +1814,14 @@ textarea {
   background: transparent;
   color: var(--text-tertiary);
   font-size: 0.55rem;
+  cursor: pointer;
   transition: all 0.15s ease;
+}
+
+.nav-btn svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
 }
 
 .nav-btn:hover:not(:disabled) {
@@ -2971,6 +3002,25 @@ textarea {
     width: 44px;
     height: 44px;
     font-size: 0.72rem;
+  }
+
+  .nav-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  /* Message nav: own row on mobile for breathing room */
+  .prompt-panel .panel-header {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .msg-nav {
+    order: 3;
+    flex: 1 0 100%;
+    justify-content: center;
+    padding-top: var(--space-xs);
+    border-top: 1px solid var(--border-subtle);
   }
 
   /* ---- Modal bottom-sheet on mobile ---- */
