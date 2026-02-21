@@ -106,4 +106,6 @@ export interface ApiError {
   error: string;
   /** Optional error code for programmatic handling */
   code?: string;
+  /** Raw terminal output (stderr/stdout) from a failed git command */
+  output?: string;
 }

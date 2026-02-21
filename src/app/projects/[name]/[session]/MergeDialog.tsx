@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useMergeMutation } from "@/lib/mutations";
+import type { ApiCallError } from "@/lib/mutations";
 
 interface MergeDialogProps {
   open: boolean;
@@ -11,6 +12,10 @@ interface MergeDialogProps {
   sessionName: string;
   branchName: string;
   commitCount: number;
+  /** Pre-populate error state (for Storybook / testing) */
+  defaultError?: string;
+  /** Pre-populate terminal output (for Storybook / testing) */
+  defaultOutput?: string;
 }
 
 export default function MergeDialog({
@@ -20,20 +25,31 @@ export default function MergeDialog({
   sessionName,
   branchName,
   commitCount,
+  defaultError,
+  defaultOutput,
 }: MergeDialogProps): React.JSX.Element | null {
   const router = useRouter();
   const [message, setMessage] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(defaultError ?? null);
+  const [output, setOutput] = useState<string | null>(defaultOutput ?? null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const mergeMutation = useMergeMutation(projectName, sessionName);
 
-  // Reset and pre-fill when opened
+  // Track previous open value to detect closed→open transition
+  const prevOpenRef = useRef(open);
+
+  // Reset and pre-fill only when dialog transitions from closed to open
   useEffect(() => {
-    if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
+
+    if (open && !wasOpen) {
+      /* eslint-disable react-hooks/set-state-in-effect -- intentional reset on closed→open transition */
       setMessage(sessionName);
       setError(null);
+      setOutput(null);
+      /* eslint-enable react-hooks/set-state-in-effect */
       setTimeout(() => textareaRef.current?.focus(), 100);
     }
   }, [open, sessionName]);
@@ -51,6 +67,7 @@ export default function MergeDialog({
   const handleSubmit = () => {
     if (!message.trim() || mergeMutation.isPending) return;
     setError(null);
+    setOutput(null);
 
     mergeMutation.mutate(message.trim(), {
       onSuccess: () => {
@@ -59,6 +76,8 @@ export default function MergeDialog({
       },
       onError: (err) => {
         setError(err.message);
+        const apiErr = err as ApiCallError;
+        setOutput(apiErr.output ?? null);
       },
     });
   };
@@ -104,7 +123,12 @@ export default function MergeDialog({
           />
         </div>
 
-        {error && <div className="form-error">{error}</div>}
+        {error && (
+          <div className="merge-error-banner">
+            <div className="merge-error-title">{error}</div>
+            {output && <pre className="merge-error-output">{output}</pre>}
+          </div>
+        )}
 
         <div className="modal-actions">
           <button

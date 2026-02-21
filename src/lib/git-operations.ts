@@ -271,11 +271,24 @@ export async function squashMerge(
   }
 
   // Commit the squash merge
-  const { stdout: commitOutput } = await git(projectPath, [
-    "commit",
-    "-m",
-    message,
-  ]);
+  let commitOutput: string;
+  try {
+    const result = await git(projectPath, ["commit", "-m", message]);
+    commitOutput = result.stdout;
+  } catch (err) {
+    if (err instanceof Error) {
+      // Capture stderr/stdout from the failed commit (e.g. pre-commit hook output)
+      const childErr = err as Error & { stderr?: string; stdout?: string };
+      const rawOutput = [childErr.stderr?.trim(), childErr.stdout?.trim()]
+        .filter(Boolean)
+        .join("\n")
+        .trim();
+      const newErr = new Error("Commit failed");
+      (newErr as Error & { gitOutput?: string }).gitOutput = rawOutput || undefined;
+      throw newErr;
+    }
+    throw err;
+  }
 
   // Extract hash from commit output
   const hashMatch = /\[[\w/.-]+ ([a-f0-9]+)\]/.exec(commitOutput);

@@ -127,9 +127,10 @@ export const POST = withTracing(async (request, { params }) => {
       );
     }
 
-    return NextResponse.json({ error: message } satisfies ApiError, {
-      status: 500,
-    });
+    const gitOutput = (err as Error & { gitOutput?: string }).gitOutput;
+    const errorResponse: ApiError = { error: message };
+    if (gitOutput) errorResponse.output = gitOutput;
+    return NextResponse.json(errorResponse, { status: 500 });
   } finally {
     release?.();
   }

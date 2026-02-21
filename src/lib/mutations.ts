@@ -11,6 +11,19 @@ import type { SessionState, ConversationState } from "@/types";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Error thrown when a mutation API call fails. Carries optional structured fields. */
+export class ApiCallError extends Error {
+  readonly code?: string;
+  readonly output?: string;
+
+  constructor(message: string, code?: string, output?: string) {
+    super(message);
+    this.name = "ApiCallError";
+    this.code = code;
+    this.output = output;
+  }
+}
+
 async function mutationFetch<T = unknown>(
   url: string,
   traceLabel: string,
@@ -19,8 +32,11 @@ async function mutationFetch<T = unknown>(
   const res = await tracedFetch(url, traceLabel, options);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(
-      (body as { error?: string }).error ?? `API error ${res.status}`,
+    const apiBody = body as { error?: string; code?: string; output?: string };
+    throw new ApiCallError(
+      apiBody.error ?? `API error ${res.status}`,
+      apiBody.code,
+      apiBody.output,
     );
   }
   return res.json() as Promise<T>;

@@ -41,3 +41,36 @@ export const ManyCommits = {
 export const Closed = {
   args: { open: false },
 } satisfies Story;
+
+export const ErrorSimple = {
+  args: {
+    defaultError: "Uncommitted changes must be committed before merging",
+  },
+} satisfies Story;
+
+export const ErrorWithTerminalOutput = {
+  args: {
+    defaultError: "Commit failed",
+    defaultOutput: `✔ Preparing lint-staged...
+✗ Running tasks for staged files...
+  ❯ eslint --fix --max-warnings=0:
+    ✖ Failed
+  ↖ Reverting to original state because of errors...
+  ✔ Cleaning up temporary files...
+
+src/app/projects/[name]/[session]/MergeDialog.tsx
+  18:3  error  'foo' is defined but never used  no-unused-vars
+  42:1  error  Missing semicolon                semi
+
+✖ 2 problems (2 errors, 0 warnings)
+
+husky - pre-commit hook exited with code 1 (error)`,
+  },
+} satisfies Story;
+
+export const ErrorMergeConflict = {
+  args: {
+    defaultError:
+      "Merge conflicts detected between this session and main. Resolve the conflicts in the worktree and try again.",
+  },
+} satisfies Story;
