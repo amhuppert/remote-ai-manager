@@ -52,6 +52,7 @@ interface SessionDetailActions {
   toggleInfoStrip: () => void;
   toggleSidebar: () => void;
   hydrateSidebar: () => void;
+  clearConversationMessages: () => void;
   resetStore: () => void;
 }
 
@@ -290,6 +291,13 @@ const useSessionDetailStore = create<SessionDetailStore>()(
 
     // -- Reset --
 
+    clearConversationMessages: () =>
+      set((state) => {
+        state.optimisticMessages = [];
+        state.messageCountBeforeSubmit = 0;
+        state.currentMsgIndex = 0;
+      }),
+
     resetStore: () =>
       set(() => ({ ...initialState })),
   })),
@@ -378,5 +386,7 @@ export const useToggleSidebar = () =>
   useSessionDetailStore((s) => s.toggleSidebar);
 export const useHydrateSidebar = () =>
   useSessionDetailStore((s) => s.hydrateSidebar);
+export const useClearConversationMessages = () =>
+  useSessionDetailStore((s) => s.clearConversationMessages);
 export const useResetSessionDetailStore = () =>
   useSessionDetailStore((s) => s.resetStore);

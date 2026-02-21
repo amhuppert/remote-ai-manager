@@ -46,6 +46,7 @@ import {
   useCancelDeleteSessionDetail,
   useToggleInfoStrip,
   useResetSessionDetailStore,
+  useClearConversationMessages,
 } from "@/stores/session-detail.store";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
@@ -125,6 +126,7 @@ export default function SessionDetailPage({
   const cancelDelete = useCancelDeleteSessionDetail();
   const toggleInfoStrip = useToggleInfoStrip();
   const resetStore = useResetSessionDetailStore();
+  const clearConversationMessages = useClearConversationMessages();
 
   // --- Derived from query data ---
   const session = sessionQuery.data;
@@ -200,6 +202,12 @@ export default function SessionDetailPage({
       resetStore();
     };
   }, [resetStore]);
+
+  // --- Reset conversation-specific state when switching conversations ---
+  useEffect(() => {
+    initialScrollDone.current = false;
+    clearConversationMessages();
+  }, [conversationId, clearConversationMessages]);
 
   // --- Turn-based navigation ---
   const turnStartIndices = useMemo(() => {
@@ -408,8 +416,7 @@ export default function SessionDetailPage({
         ? "green"
         : "";
 
-  const isLoading =
-    sessionQuery.isPending || messagesQuery.isPending || diffQuery.isPending;
+  const isLoading = sessionQuery.isPending;
 
   if (isLoading || !session) {
     return (
@@ -613,7 +620,14 @@ export default function SessionDetailPage({
                   </div>
                 )}
                 <div className="conversation">
-                  {displayMessages.length > 0 ? (
+                  {messagesQuery.isPending ? (
+                    <div
+                      className="empty-state"
+                      style={{ padding: "var(--space-xl) 0" }}
+                    >
+                      <div className="empty-state-title">Loading conversation...</div>
+                    </div>
+                  ) : displayMessages.length > 0 ? (
                     displayMessages.map((msg, i) => (
                       <div
                         key={i}
