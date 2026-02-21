@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { conversationKeys, sessionKeys } from "@/lib/query-keys";
 import {
@@ -27,10 +27,26 @@ export function useSendPrompt(
   const completePrompt = useCompletePrompt();
   const failPrompt = useFailPrompt();
 
+  // Abort in-flight streams when session context changes or on unmount
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
+  }, [projectName, sessionName, conversationId]);
+
   return useCallback(
     async (text: string, currentMessageCount: number, modelId?: ClaudeModel) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+
+      // Abort any previous in-flight stream
+      abortRef.current?.abort();
+
+      // Create new AbortController for this request
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       // 1. Set optimistic state via Zustand
       submitPrompt(trimmed, currentMessageCount);
@@ -45,6 +61,7 @@ export function useSendPrompt(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ prompt: trimmed, modelId }),
+          signal: controller.signal,
         });
 
         // 3. Handle non-streaming errors
@@ -118,9 +135,14 @@ export function useSendPrompt(
             }
           }
         }
-      } catch {
+      } catch (e) {
+        // Abort is expected during navigation — don't treat as error
+        if (e instanceof DOMException && e.name === "AbortError") return;
         failPrompt("Failed to send prompt");
       } finally {
+        // Skip completion/invalidation for aborted requests
+        if (controller.signal.aborted) return;
+
         completePrompt();
 
         // 5. Invalidate TanStack Query caches
