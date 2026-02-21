@@ -35,14 +35,14 @@
   "lint-staged": {
     "*.{ts,tsx}": [
       "eslint",
-      "prettier --fix"
+      "prettier --write"
     ],
     "*.{js,mjs,cjs}": [
       "eslint",
-      "prettier --fix"
+      "prettier --write"
     ],
     "*.{json,md,css}": [
-      "prettier --fix"
+      "prettier --write"
     ]
   },
   "devDependencies": {
