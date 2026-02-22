@@ -77,6 +77,10 @@ describe("state", () => {
               finished: false,
               conversations: [],
               source: "csm" as const,
+              containerId: null,
+              containerStatus: "none" as const,
+              containerError: null,
+              claudeHostDir: null,
             },
           },
         },
@@ -105,6 +109,10 @@ describe("state", () => {
       transcriptPath: null,
       status: "new" as const,
       promptCount: 0,
+      containerId: null,
+      containerStatus: "none" as const,
+      containerError: null,
+      claudeHostDir: null,
     };
 
     await updateSession("/proj", session);
@@ -131,6 +139,10 @@ describe("state", () => {
       transcriptPath: null,
       status: "new" as const,
       promptCount: 0,
+      containerId: null,
+      containerStatus: "none" as const,
+      containerError: null,
+      claudeHostDir: null,
     };
 
     await updateSession("/proj", session);
@@ -156,6 +168,10 @@ describe("state", () => {
       transcriptPath: null,
       status: "new" as const,
       promptCount: 0,
+      containerId: null,
+      containerStatus: "none" as const,
+      containerError: null,
+      claudeHostDir: null,
     };
 
     await updateSession("/proj2", {
@@ -237,6 +253,10 @@ describe("archive helpers", () => {
       finished: false,
       conversations: [],
       source: "csm" as const,
+      containerId: null,
+      containerStatus: "none" as const,
+      containerError: null,
+      claudeHostDir: null,
     };
 
     await writeState({
@@ -319,6 +339,10 @@ describe("pin helpers", () => {
       finished: false,
       conversations: [],
       source: "csm" as const,
+      containerId: null,
+      containerStatus: "none" as const,
+      containerError: null,
+      claudeHostDir: null,
     };
 
     await writeState({

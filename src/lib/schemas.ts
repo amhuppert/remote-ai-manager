@@ -68,6 +68,16 @@ export type ConversationState = z.infer<typeof conversationStateSchema>;
 export const sessionSourceSchema = z.enum(["csm", "imported"]);
 export type SessionSource = z.infer<typeof sessionSourceSchema>;
 
+export const containerStatusSchema = z.enum([
+  "none",
+  "building",
+  "starting",
+  "running",
+  "stopped",
+  "error",
+]);
+export type ContainerStatus = z.infer<typeof containerStatusSchema>;
+
 export const sessionStateSchema = z.object({
   sessionName: z.string(),
   worktreePath: z.string(),
@@ -78,6 +88,10 @@ export const sessionStateSchema = z.object({
   finished: z.boolean().default(false),
   conversations: z.array(conversationStateSchema).default([]),
   source: sessionSourceSchema.default("csm"),
+  containerId: z.string().nullable().default(null),
+  containerStatus: containerStatusSchema.default("none"),
+  containerError: z.string().nullable().default(null),
+  claudeHostDir: z.string().nullable().default(null),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 
@@ -182,6 +196,8 @@ export const hookEventDataSchema = z.object({
   transcript_path: z.string().optional(),
   cwd: z.string().optional(),
   hook_event_name: z.string().optional(),
+  csm_project_path: z.string().optional(),
+  csm_session_name: z.string().optional(),
 });
 export type HookEventData = z.infer<typeof hookEventDataSchema>;
 
@@ -218,6 +234,16 @@ export const hookEventResultSchema = z.object({
   conversationId: z.string().optional(),
 });
 export type HookEventResult = z.infer<typeof hookEventResultSchema>;
+
+export const containerStatusEventSchema = z.object({
+  type: z.literal("container-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  containerStatus: containerStatusSchema,
+  containerId: z.string().nullable(),
+  error: z.string().nullable(),
+});
+export type ContainerStatusEvent = z.infer<typeof containerStatusEventSchema>;
 
 // ============================================================
 // Command Autocomplete Schemas

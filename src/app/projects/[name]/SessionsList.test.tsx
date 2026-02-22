@@ -129,6 +129,10 @@ const makeSessions = (count: number): SessionState[] =>
       },
     ],
     source: "csm" as const,
+    containerId: null,
+    containerStatus: "none" as const,
+    containerError: null,
+    claudeHostDir: null,
   }));
 
 function renderWithQuery(ui: React.ReactElement) {

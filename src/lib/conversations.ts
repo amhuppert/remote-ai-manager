@@ -3,7 +3,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ConversationState, SessionState } from "@/types";
-import { readState, writeState } from "./state";
+import { readState, modifyState } from "./state";
 import { createLogger } from "./logging";
 
 const logger = createLogger("conversations");
@@ -17,17 +17,6 @@ export async function createConversation(
   projectPath: string,
   sessionName: string,
 ): Promise<ConversationState> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
-
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
-
   const now = new Date().toISOString();
   const conversation: ConversationState = {
     id: crypto.randomUUID(),
@@ -43,8 +32,19 @@ export async function createConversation(
     archived: false,
   };
 
-  session.conversations.push(conversation);
-  await writeState(state);
+  await modifyState((state) => {
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project not found: ${projectPath}`);
+    }
+
+    const session = project.sessions[sessionName];
+    if (!session) {
+      throw new Error(`Session "${sessionName}" not found in project`);
+    }
+
+    session.conversations.push(conversation);
+  });
 
   logger.info("conversation.created", {
     projectPath,
@@ -97,28 +97,28 @@ export async function setConversationArchived(
   conversationId: string,
   archived: boolean,
 ): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
+  await modifyState((state) => {
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project not found: ${projectPath}`);
+    }
 
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
+    const session = project.sessions[sessionName];
+    if (!session) {
+      throw new Error(`Session "${sessionName}" not found in project`);
+    }
 
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
-  );
-  if (!conversation) {
-    throw new Error(
-      `Conversation "${conversationId}" not found in session "${sessionName}"`,
+    const conversation = session.conversations.find(
+      (c) => c.id === conversationId,
     );
-  }
+    if (!conversation) {
+      throw new Error(
+        `Conversation "${conversationId}" not found in session "${sessionName}"`,
+      );
+    }
 
-  conversation.archived = archived;
-  await writeState(state);
+    conversation.archived = archived;
+  });
 }
 
 /** Rename a conversation. Also syncs to Claude Code's sessions-index.json if possible. */
@@ -128,34 +128,43 @@ export async function renameConversation(
   conversationId: string,
   name: string,
 ): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
+  const syncInfo = await modifyState((state) => {
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project not found: ${projectPath}`);
+    }
 
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
+    const session = project.sessions[sessionName];
+    if (!session) {
+      throw new Error(`Session "${sessionName}" not found in project`);
+    }
 
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
-  );
-  if (!conversation) {
-    throw new Error(
-      `Conversation "${conversationId}" not found in session "${sessionName}"`,
+    const conversation = session.conversations.find(
+      (c) => c.id === conversationId,
     );
-  }
+    if (!conversation) {
+      throw new Error(
+        `Conversation "${conversationId}" not found in session "${sessionName}"`,
+      );
+    }
 
-  conversation.name = name;
-  await writeState(state);
+    conversation.name = name;
 
-  // Write rename back to Claude Code's sessions-index.json
-  if (conversation.claudeSessionId) {
+    // Capture info needed for sessions-index sync after state write
+    if (conversation.claudeSessionId) {
+      return {
+        worktreePath: session.worktreePath,
+        claudeSessionId: conversation.claudeSessionId,
+      };
+    }
+    return null;
+  });
+
+  // Write rename back to Claude Code's sessions-index.json (outside write lock)
+  if (syncInfo) {
     await updateSessionsIndexSummary(
-      session.worktreePath,
-      conversation.claudeSessionId,
+      syncInfo.worktreePath,
+      syncInfo.claudeSessionId,
       name,
     );
   }
@@ -228,13 +237,28 @@ export function encodeProjectPath(fsPath: string): string {
   return "-" + fsPath.slice(1).replace(/[/.]/g, "-");
 }
 
-/** Get the full path to the Claude Code project directory for a worktree */
-function getClaudeProjectDir(worktreePath: string): string {
+/**
+ * Get the full path to the Claude Code project directory for a session.
+ *
+ * For containerized sessions (claudeHostDir set), transcripts are in:
+ *   <claudeHostDir>/projects/<encoded-container-workspace-path>/
+ * where the container workspace path is /workspace.
+ *
+ * For host sessions, transcripts are in:
+ *   ~/.claude/projects/<encoded-worktree-path>/
+ */
+function getClaudeProjectDir(session: SessionState): string {
+  if (session.claudeHostDir) {
+    // Inside container, Claude sees /workspace as the project path
+    const encodedPath = encodeProjectPath("/workspace");
+    return path.join(session.claudeHostDir, "projects", encodedPath);
+  }
+
   return path.join(
     os.homedir(),
     ".claude",
     "projects",
-    encodeProjectPath(worktreePath),
+    encodeProjectPath(session.worktreePath),
   );
 }
 
@@ -369,7 +393,7 @@ export async function discoverAndImportConversations(
   projectPath: string,
   session: SessionState,
 ): Promise<ConversationState[]> {
-  const claudeProjectDir = getClaudeProjectDir(session.worktreePath);
+  const claudeProjectDir = getClaudeProjectDir(session);
 
   // Try index-based discovery first, fall back to JSONL
   let discovered = await discoverFromIndex(claudeProjectDir, session);
@@ -408,14 +432,14 @@ export async function discoverAndImportConversations(
   }));
 
   // Persist atomically
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) return [];
-  const sessionState = project.sessions[session.sessionName];
-  if (!sessionState) return [];
+  await modifyState((state) => {
+    const project = state.projects[projectPath];
+    if (!project) return;
+    const sessionState = project.sessions[session.sessionName];
+    if (!sessionState) return;
 
-  sessionState.conversations.push(...imported);
-  await writeState(state);
+    sessionState.conversations.push(...imported);
+  });
 
   logger.info("conversations.imported", {
     projectPath,
@@ -439,7 +463,7 @@ export async function syncConversationSummaries(
   projectPath: string,
   session: SessionState,
 ): Promise<void> {
-  const claudeProjectDir = getClaudeProjectDir(session.worktreePath);
+  const claudeProjectDir = getClaudeProjectDir(session);
   const entries = await readSessionsIndex(claudeProjectDir);
   if (entries.length === 0) return;
 
@@ -461,32 +485,32 @@ export async function syncConversationSummaries(
 
   if (needsUpdate.length === 0) return;
 
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) return;
-  const sessionState = project.sessions[session.sessionName];
-  if (!sessionState) return;
+  await modifyState((state) => {
+    const project = state.projects[projectPath];
+    if (!project) return;
+    const sessionState = project.sessions[session.sessionName];
+    if (!sessionState) return;
 
-  let updated = 0;
-  for (const convo of sessionState.conversations) {
-    if (
-      convo.claudeSessionId !== null &&
-      convo.summary === null &&
-      summaryMap.has(convo.claudeSessionId)
-    ) {
-      convo.summary = summaryMap.get(convo.claudeSessionId)!;
-      updated++;
+    let updated = 0;
+    for (const convo of sessionState.conversations) {
+      if (
+        convo.claudeSessionId !== null &&
+        convo.summary === null &&
+        summaryMap.has(convo.claudeSessionId)
+      ) {
+        convo.summary = summaryMap.get(convo.claudeSessionId)!;
+        updated++;
+      }
     }
-  }
 
-  if (updated > 0) {
-    await writeState(state);
-    logger.info("conversations.summaries_synced", {
-      projectPath,
-      sessionName: session.sessionName,
-      count: updated,
-    });
-  }
+    if (updated > 0) {
+      logger.info("conversations.summaries_synced", {
+        projectPath,
+        sessionName: session.sessionName,
+        count: updated,
+      });
+    }
+  });
 }
 
 // ============================================================
@@ -502,7 +526,14 @@ async function updateSessionsIndexSummary(
   claudeSessionId: string,
   summary: string,
 ): Promise<void> {
-  const claudeProjectDir = getClaudeProjectDir(worktreePath);
+  // For write-back, always use the host ~/.claude/ directory
+  // (containerized transcripts live in claudeHostDir, handled elsewhere)
+  const claudeProjectDir = path.join(
+    os.homedir(),
+    ".claude",
+    "projects",
+    encodeProjectPath(worktreePath),
+  );
   const indexPath = path.join(claudeProjectDir, "sessions-index.json");
 
   try {

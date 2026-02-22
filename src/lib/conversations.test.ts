@@ -54,6 +54,10 @@ async function seedSession(sessionOverrides: Record<string, unknown> = {}) {
             finished: false,
             conversations: [],
             source: "csm" as const,
+            containerId: null,
+            containerStatus: "none" as const,
+            containerError: null,
+            claudeHostDir: null,
             ...sessionOverrides,
           },
         },
@@ -763,6 +767,10 @@ function makeSessionWith(
     finished: false,
     conversations,
     source: "csm" as const,
+    containerId: null,
+    containerStatus: "none" as const,
+    containerError: null,
+    claudeHostDir: null,
     ...overrides,
   };
 }

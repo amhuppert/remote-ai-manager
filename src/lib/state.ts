@@ -8,6 +8,28 @@ import { createLogger } from "./logging";
 
 const logger = createLogger("state");
 
+/**
+ * Simple async mutex for serializing read-modify-write cycles.
+ * Prevents concurrent state writes from clobbering each other
+ * (e.g., hook events racing with container status updates).
+ */
+let _writeLock: Promise<void> = Promise.resolve();
+
+function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = _writeLock;
+  let resolve!: () => void;
+  _writeLock = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return prev.then(async () => {
+    try {
+      return await fn();
+    } finally {
+      resolve();
+    }
+  });
+}
+
 /** Default empty manager state */
 function emptyState(): ManagerState {
   return { projects: {}, archivedProjects: [], pinnedProjects: [] };
@@ -87,24 +109,42 @@ export async function writeState(state: ManagerState): Promise<void> {
   }
 }
 
+/**
+ * Atomic read-modify-write: reads state, applies a mutation, and writes back.
+ * The entire operation is serialized via the write lock, preventing concurrent
+ * read-modify-write cycles from clobbering each other.
+ */
+export function modifyState<T>(
+  fn: (state: ManagerState) => T | Promise<T>,
+): Promise<T> {
+  return withWriteLock(async () => {
+    const state = await readState();
+    const result = await fn(state);
+    await writeState(state);
+    return result;
+  });
+}
+
 /** Get or create a ProjectState entry for a given project path */
 export async function getOrCreateProject(
   projectPath: string,
 ): Promise<ProjectState> {
-  const state = await readState();
-  const existing = state.projects[projectPath];
-  if (existing) {
-    return existing;
-  }
+  return withWriteLock(async () => {
+    const state = await readState();
+    const existing = state.projects[projectPath];
+    if (existing) {
+      return existing;
+    }
 
-  const project: ProjectState = {
-    rootPath: projectPath,
-    sessions: {},
-  };
+    const project: ProjectState = {
+      rootPath: projectPath,
+      sessions: {},
+    };
 
-  state.projects[projectPath] = project;
-  await writeState(state);
-  return project;
+    state.projects[projectPath] = project;
+    await writeState(state);
+    return project;
+  });
 }
 
 /** Update a specific session within a project and persist */
@@ -112,19 +152,21 @@ export async function updateSession(
   projectPath: string,
   session: SessionState,
 ): Promise<void> {
-  const state = await readState();
+  return withWriteLock(async () => {
+    const state = await readState();
 
-  if (!state.projects[projectPath]) {
-    state.projects[projectPath] = {
-      rootPath: projectPath,
-      sessions: {},
-    };
-  }
+    if (!state.projects[projectPath]) {
+      state.projects[projectPath] = {
+        rootPath: projectPath,
+        sessions: {},
+      };
+    }
 
-  // Safe to assert: we just ensured the project exists above
-  state.projects[projectPath]!.sessions[session.sessionName] = session;
+    // Safe to assert: we just ensured the project exists above
+    state.projects[projectPath]!.sessions[session.sessionName] = session;
 
-  await writeState(state);
+    await writeState(state);
+  });
 }
 
 /** Remove a session from a project's state */
@@ -132,12 +174,14 @@ export async function removeSession(
   projectPath: string,
   sessionName: string,
 ): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) return;
+  return withWriteLock(async () => {
+    const state = await readState();
+    const project = state.projects[projectPath];
+    if (!project) return;
 
-  delete project.sessions[sessionName];
-  await writeState(state);
+    delete project.sessions[sessionName];
+    await writeState(state);
+  });
 }
 
 /** Get all sessions for a project */
@@ -169,19 +213,21 @@ export async function setSessionArchived(
   sessionName: string,
   archived: boolean,
 ): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
+  return withWriteLock(async () => {
+    const state = await readState();
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project not found: ${projectPath}`);
+    }
 
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
+    const session = project.sessions[sessionName];
+    if (!session) {
+      throw new Error(`Session "${sessionName}" not found in project`);
+    }
 
-  session.archived = archived;
-  await writeState(state);
+    session.archived = archived;
+    await writeState(state);
+  });
 }
 
 /** Mark a session as finished (merged) and archived atomically */
@@ -189,20 +235,22 @@ export async function setSessionFinished(
   projectPath: string,
   sessionName: string,
 ): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
+  return withWriteLock(async () => {
+    const state = await readState();
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project not found: ${projectPath}`);
+    }
 
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
+    const session = project.sessions[sessionName];
+    if (!session) {
+      throw new Error(`Session "${sessionName}" not found in project`);
+    }
 
-  session.finished = true;
-  session.archived = true;
-  await writeState(state);
+    session.finished = true;
+    session.archived = true;
+    await writeState(state);
+  });
 }
 
 /** Read archived project paths from persisted state */
@@ -216,17 +264,19 @@ export async function setProjectArchived(
   projectPath: string,
   archived: boolean,
 ): Promise<void> {
-  const state = await readState();
-  const current = new Set(state.archivedProjects);
+  return withWriteLock(async () => {
+    const state = await readState();
+    const current = new Set(state.archivedProjects);
 
-  if (archived) {
-    current.add(projectPath);
-  } else {
-    current.delete(projectPath);
-  }
+    if (archived) {
+      current.add(projectPath);
+    } else {
+      current.delete(projectPath);
+    }
 
-  state.archivedProjects = [...current];
-  await writeState(state);
+    state.archivedProjects = [...current];
+    await writeState(state);
+  });
 }
 
 /** Read pinned project paths from persisted state */
@@ -240,15 +290,17 @@ export async function setProjectPinned(
   projectPath: string,
   pinned: boolean,
 ): Promise<void> {
-  const state = await readState();
-  const current = new Set(state.pinnedProjects);
+  return withWriteLock(async () => {
+    const state = await readState();
+    const current = new Set(state.pinnedProjects);
 
-  if (pinned) {
-    current.add(projectPath);
-  } else {
-    current.delete(projectPath);
-  }
+    if (pinned) {
+      current.add(projectPath);
+    } else {
+      current.delete(projectPath);
+    }
 
-  state.pinnedProjects = [...current];
-  await writeState(state);
+    state.pinnedProjects = [...current];
+    await writeState(state);
+  });
 }

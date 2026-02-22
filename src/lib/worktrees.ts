@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { SessionState } from "@/types";
-import { readState, writeState } from "./state";
+import { modifyState } from "./state";
 import { createLogger } from "./logging";
 
 const logger = createLogger("worktrees");
@@ -52,7 +52,9 @@ export interface ReconciliationResult {
  *
  * The first block is always the main working tree.
  */
-export function parseWorktreeList(porcelainOutput: string): DiscoveredWorktree[] {
+export function parseWorktreeList(
+  porcelainOutput: string,
+): DiscoveredWorktree[] {
   const trimmed = porcelainOutput.trim();
   if (!trimmed) return [];
 
@@ -164,9 +166,13 @@ export async function discoverAndImportWorktrees(
   // Run git worktree list
   let porcelainOutput: string;
   try {
-    const { stdout } = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
-      cwd: projectPath,
-    });
+    const { stdout } = await execFileAsync(
+      "git",
+      ["worktree", "list", "--porcelain"],
+      {
+        cwd: projectPath,
+      },
+    );
     porcelainOutput = stdout;
   } catch (err) {
     logger.error("worktrees.discovery_failure", {
@@ -192,7 +198,10 @@ export async function discoverAndImportWorktrees(
   const discoveredPaths = new Set(discovered.map((wt) => wt.path));
   const orphanedSessionNames = existingSessions
     .filter(
-      (s) => !s.finished && !discoveredPaths.has(s.worktreePath) && !existsSync(s.worktreePath),
+      (s) =>
+        !s.finished &&
+        !discoveredPaths.has(s.worktreePath) &&
+        !existsSync(s.worktreePath),
     )
     .map((s) => s.sessionName);
 
@@ -234,23 +243,27 @@ export async function discoverAndImportWorktrees(
       finished: false,
       conversations: [],
       source: "imported",
+      containerId: null,
+      containerStatus: "none",
+      containerError: null,
+      claudeHostDir: null,
     });
   }
 
-  // Persist atomically
-  const state = await readState();
-  if (!state.projects[projectPath]) {
-    state.projects[projectPath] = {
-      rootPath: projectPath,
-      sessions: {},
-    };
-  }
+  // Persist atomically (serialized via write lock to prevent clobbering)
+  await modifyState((state) => {
+    if (!state.projects[projectPath]) {
+      state.projects[projectPath] = {
+        rootPath: projectPath,
+        sessions: {},
+      };
+    }
 
-  const project = state.projects[projectPath]!;
-  for (const session of imported) {
-    project.sessions[session.sessionName] = session;
-  }
-  await writeState(state);
+    const project = state.projects[projectPath]!;
+    for (const session of imported) {
+      project.sessions[session.sessionName] = session;
+    }
+  });
 
   logger.info("worktrees.reconciliation", {
     projectPath,

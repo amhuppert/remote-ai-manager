@@ -1,4 +1,4 @@
-import type { SSEEvent } from "@/types";
+import type { SSEEvent, ContainerStatusEvent } from "@/types";
 
 const encoder = new TextEncoder();
 
@@ -34,6 +34,23 @@ export function broadcast(event: SSEEvent): void {
 
   const frame = encoder.encode(
     `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+  );
+
+  for (const controller of clients) {
+    try {
+      controller.enqueue(frame);
+    } catch {
+      clients.delete(controller);
+    }
+  }
+}
+
+export function broadcastContainerStatus(event: ContainerStatusEvent): void {
+  const clients = getClients();
+  if (clients.size === 0) return;
+
+  const frame = encoder.encode(
+    `event: container-status\ndata: ${JSON.stringify(event)}\n\n`,
   );
 
   for (const controller of clients) {
