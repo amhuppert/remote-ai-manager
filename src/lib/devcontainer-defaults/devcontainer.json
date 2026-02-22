@@ -1,0 +1,18 @@
+{
+  "name": "CSM Claude Code Sandbox",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "node",
+  "runArgs": [
+    "--add-host=host.docker.internal:host-gateway"
+  ],
+  "capAdd": [
+    "NET_ADMIN",
+    "NET_RAW"
+  ],
+  "containerEnv": {
+    "DEVCONTAINER": "true"
+  },
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh"
+}

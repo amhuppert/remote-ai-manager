@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { SessionState } from "@/types";
-import { readState, writeState } from "./state";
+import { modifyState } from "./state";
 import { createLogger } from "./logging";
 
 const logger = createLogger("worktrees");
@@ -234,23 +234,27 @@ export async function discoverAndImportWorktrees(
       finished: false,
       conversations: [],
       source: "imported",
+      containerId: null,
+      containerStatus: "none",
+      containerError: null,
+      claudeHostDir: null,
     });
   }
 
-  // Persist atomically
-  const state = await readState();
-  if (!state.projects[projectPath]) {
-    state.projects[projectPath] = {
-      rootPath: projectPath,
-      sessions: {},
-    };
-  }
+  // Persist atomically (serialized via write lock to prevent clobbering)
+  await modifyState((state) => {
+    if (!state.projects[projectPath]) {
+      state.projects[projectPath] = {
+        rootPath: projectPath,
+        sessions: {},
+      };
+    }
 
-  const project = state.projects[projectPath]!;
-  for (const session of imported) {
-    project.sessions[session.sessionName] = session;
-  }
-  await writeState(state);
+    const project = state.projects[projectPath]!;
+    for (const session of imported) {
+      project.sessions[session.sessionName] = session;
+    }
+  });
 
   logger.info("worktrees.reconciliation", {
     projectPath,

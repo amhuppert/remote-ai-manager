@@ -15,6 +15,8 @@ export type {
   PerRepoConfig,
   ConversationState,
   MessageContentBlock,
+  ContainerStatus,
+  ContainerStatusEvent,
 } from "@/lib/schemas";
 
 // ============================================================

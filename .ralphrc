@@ -3,7 +3,7 @@
 # Documentation: https://github.com/frankbria/ralph-claude-code
 
 # Project identification
-PROJECT_NAME="session-lifecycle"
+PROJECT_NAME="dev-containers"
 PROJECT_TYPE="typescript"
 
 # Loop settings
