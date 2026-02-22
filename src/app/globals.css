@@ -2887,7 +2887,10 @@ textarea {
 
   /* On mobile, both panels are visible (display controlled by data-mobile-panel) */
   .session-content-area[data-layout="conversation"] .sidebar-diff-panel,
-  .session-content-area[data-layout="diff"] .prompt-panel {
+  .session-content-area[data-layout="diff"] .prompt-panel,
+  .session-content-area.with-sidebar[data-layout="conversation"]
+    > .sidebar-diff-panel,
+  .session-content-area.with-sidebar[data-layout="diff"] > .prompt-panel {
     display: flex;
   }
 

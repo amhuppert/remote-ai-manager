@@ -59,13 +59,10 @@ export function useVoiceRecorder(
   onResultRef.current = onResult;
   onErrorRef.current = onError;
 
-  // Health check
+  // Health check — only checks server availability; client capability
+  // (navigator.mediaDevices) is validated at recording time so the button
+  // stays visible on non-HTTPS mobile connections.
   const checkHealth = useCallback(async () => {
-    if (typeof navigator === "undefined" || !navigator.mediaDevices) {
-      setIsAvailable(false);
-      return;
-    }
-
     try {
       const response = await fetch("/api/voice/health");
       const data = (await response.json()) as { available: boolean };
@@ -235,6 +232,12 @@ export function useVoiceRecorder(
 
     // Start recording
     try {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices) {
+        onErrorRef.current(
+          "Voice recording requires a secure connection (HTTPS)",
+        );
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
