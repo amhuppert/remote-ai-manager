@@ -148,10 +148,17 @@ vi.mock("@/hooks/useAppHotkey", () => ({
   useAppHotkey: vi.fn(),
 }));
 
+// Configurable virtual items — null means "show all" (default for most tests).
+// Set to a specific array in individual tests to simulate partial scroll state.
+let mockVirtualItems:
+  | { index: number; key: number; start: number; size: number }[]
+  | null = null;
+
 // Mock @tanstack/react-virtual — JSDOM has no layout so virtualizer renders nothing
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getVirtualItems: () =>
+      mockVirtualItems ??
       Array.from({ length: count }, (_, i) => ({
         index: i,
         key: i,
@@ -216,6 +223,7 @@ beforeEach(() => {
   mockSessionPending = false;
   mockMessagesPending = false;
   mockDiffPending = false;
+  mockVirtualItems = null; // reset to "show all" default
 
   globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
     observe: vi.fn(),
@@ -336,6 +344,9 @@ describe("SessionDetailPage", () => {
   });
 
   it("disables prev button on first message and next on last (Req 6.4, 6.5)", () => {
+    // Simulate only the first item being visible in the scroll container.
+    // This puts the user at the start of the conversation with content below.
+    mockVirtualItems = [{ index: 0, key: 0, start: 0, size: 120 }];
     renderWithQuery(
       <SessionDetailPage
         projectName="repo"

@@ -260,6 +260,18 @@ export default function SessionDetailPage({
       ? virtualItems[Math.floor(virtualItems.length / 2)]!.index
       : 0;
 
+  // Scroll-based edge detection: check whether the first/last message is rendered.
+  // This is more accurate than deriving it from the middle-visible message's turn index,
+  // which incorrectly disables "Jump to End" when all messages fit on screen.
+  const isScrolledToStart =
+    displayMessages.length === 0 ||
+    (virtualItems.length > 0 && virtualItems[0]!.index === 0);
+  const isScrolledToEnd =
+    displayMessages.length === 0 ||
+    (virtualItems.length > 0 &&
+      virtualItems[virtualItems.length - 1]!.index >=
+        displayMessages.length - 1);
+
   useEffect(() => {
     if (
       displayMessages.length > 0 &&
@@ -580,6 +592,8 @@ export default function SessionDetailPage({
                 <ConversationNav
                   currentTurn={currentTurnIndex}
                   totalTurns={turnStartIndices.length}
+                  isAtStart={isScrolledToStart}
+                  isAtEnd={isScrolledToEnd}
                   onFirst={() => scrollToMessage(0)}
                   onPrevious={handlePrevMessage}
                   onNext={handleNextMessage}

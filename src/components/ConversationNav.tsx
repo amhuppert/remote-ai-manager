@@ -1,6 +1,10 @@
 interface ConversationNavProps {
   currentTurn: number;
   totalTurns: number;
+  /** Override the computed isAtStart — use scroll-based detection from the parent */
+  isAtStart?: boolean;
+  /** Override the computed isAtEnd — use scroll-based detection from the parent */
+  isAtEnd?: boolean;
   onFirst: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -10,13 +14,16 @@ interface ConversationNavProps {
 export default function ConversationNav({
   currentTurn,
   totalTurns,
+  isAtStart: isAtStartProp,
+  isAtEnd: isAtEndProp,
   onFirst,
   onPrevious,
   onNext,
   onLast,
 }: ConversationNavProps) {
-  const isAtStart = totalTurns === 0 || currentTurn <= 0;
-  const isAtEnd = totalTurns === 0 || currentTurn >= totalTurns - 1;
+  const isAtStart = isAtStartProp ?? (totalTurns === 0 || currentTurn <= 0);
+  const isAtEnd =
+    isAtEndProp ?? (totalTurns === 0 || currentTurn >= totalTurns - 1);
   const isEmpty = totalTurns === 0;
 
   return (
