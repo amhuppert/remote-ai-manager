@@ -277,6 +277,17 @@ export async function executePromptStream(
               exitCode: code,
               stderr: stderrBuf.slice(0, 500),
             });
+          } else if (code === 0) {
+            // Claude exited cleanly but produced no output — likely a startup failure
+            // (e.g. unknown skill, missing config, permission error)
+            const hint = stderrBuf.trim()
+              ? stderrBuf.trim().slice(0, 500)
+              : "Claude exited without producing a response";
+            emit("error", { message: hint });
+            logger.warn("prompt.empty_response", {
+              sessionName: session.sessionName,
+              stderrSize: stderrBuf.length,
+            });
           }
 
           emit("done", {});
