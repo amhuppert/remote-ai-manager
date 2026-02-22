@@ -6,6 +6,7 @@ import {
   readTranscript,
   expandTilde,
   readConversationMessages,
+  parseCommandContent,
 } from "./transcript";
 
 const TEST_DIR = path.join("/tmp", "csm-transcript-test-" + Date.now());
@@ -281,5 +282,181 @@ describe("readConversationMessages", () => {
   it("returns empty array for non-existent transcript", async () => {
     const result = await readConversationMessages("/tmp/nonexistent-xyz.jsonl");
     expect(result).toEqual([]);
+  });
+});
+
+// ==========================================================================
+// parseCommandContent
+// ==========================================================================
+
+describe("parseCommandContent", () => {
+  it("parses command with name and args", () => {
+    const content =
+      "<command-message>kiro:spec-init</command-message>\n<command-name>/kiro:spec-init</command-name>\n<command-args>notifications</command-args>";
+    const result = parseCommandContent(content);
+    expect(result).toEqual({
+      type: "command",
+      name: "/kiro:spec-init",
+      args: "notifications",
+    });
+  });
+
+  it("parses command without args tag", () => {
+    const content =
+      "<command-message>commit</command-message>\n<command-name>/commit</command-name>";
+    const result = parseCommandContent(content);
+    expect(result).toEqual({
+      type: "command",
+      name: "/commit",
+      args: null,
+    });
+  });
+
+  it("returns null for non-command content", () => {
+    expect(parseCommandContent("Hello Claude")).toBeNull();
+    expect(parseCommandContent("some text without tags")).toBeNull();
+  });
+
+  it("handles command-name without leading slash", () => {
+    const content = "<command-name>commit</command-name>";
+    const result = parseCommandContent(content);
+    expect(result).toEqual({
+      type: "command",
+      name: "/commit",
+      args: null,
+    });
+  });
+
+  it("handles empty args", () => {
+    const content =
+      "<command-name>/test</command-name>\n<command-args>  </command-args>";
+    const result = parseCommandContent(content);
+    expect(result).toEqual({
+      type: "command",
+      name: "/test",
+      args: null,
+    });
+  });
+});
+
+// ==========================================================================
+// readTranscript – slash command handling
+// ==========================================================================
+
+describe("readTranscript – slash commands", () => {
+  it("converts command invocation to a command content block", async () => {
+    const filePath = path.join(TEST_DIR, "command.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        uuid: "cmd-1",
+        message: {
+          content:
+            "<command-message>commit</command-message>\n<command-name>/commit</command-name>\n<command-args>fix bug</command-args>",
+        },
+        timestamp: "2024-01-01T00:00:00Z",
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readTranscript(filePath);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      role: "user",
+      content: [{ type: "command", name: "/commit", args: "fix bug" }],
+      timestamp: "2024-01-01T00:00:00Z",
+    });
+  });
+
+  it("skips expanded command content (child message with matching parentUuid)", async () => {
+    const filePath = path.join(TEST_DIR, "expanded.jsonl");
+    const lines = [
+      // Command invocation
+      JSON.stringify({
+        type: "user",
+        uuid: "cmd-1",
+        message: {
+          content:
+            "<command-message>kiro:spec-init</command-message>\n<command-name>/kiro:spec-init</command-name>\n<command-args>notifications</command-args>",
+        },
+        timestamp: "2024-01-01T00:00:00Z",
+      }),
+      // Expanded content (should be skipped)
+      JSON.stringify({
+        type: "user",
+        uuid: "expanded-1",
+        parentUuid: "cmd-1",
+        message: {
+          content: [
+            {
+              type: "text",
+              text: "# Spec Initialization\n\nThis is a very long expanded prompt...",
+            },
+          ],
+        },
+        timestamp: "2024-01-01T00:00:01Z",
+      }),
+      // Claude's response
+      JSON.stringify({
+        type: "assistant",
+        uuid: "resp-1",
+        parentUuid: "expanded-1",
+        message: {
+          content: [{ type: "text", text: "I'll initialize the spec." }],
+        },
+        timestamp: "2024-01-01T00:00:02Z",
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readTranscript(filePath);
+    expect(result).toHaveLength(2);
+    // Command invocation shown as compact block
+    expect(result[0]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "command",
+          name: "/kiro:spec-init",
+          args: "notifications",
+        },
+      ],
+      timestamp: "2024-01-01T00:00:00Z",
+    });
+    // Claude's response preserved
+    expect(result[1]).toEqual({
+      role: "assistant",
+      content: [{ type: "text", text: "I'll initialize the spec." }],
+      timestamp: "2024-01-01T00:00:02Z",
+    });
+  });
+
+  it("does not skip user messages without matching parentUuid", async () => {
+    const filePath = path.join(TEST_DIR, "no-skip.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        uuid: "cmd-1",
+        message: {
+          content:
+            "<command-name>/commit</command-name>\n<command-args>fix</command-args>",
+        },
+      }),
+      // A regular user message (different parentUuid)
+      JSON.stringify({
+        type: "user",
+        uuid: "msg-2",
+        parentUuid: "other-uuid",
+        message: { content: "A follow-up question" },
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readTranscript(filePath);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.content[0]!.type).toBe("command");
+    expect(result[1]!.content).toEqual([
+      { type: "text", text: "A follow-up question" },
+    ]);
   });
 });

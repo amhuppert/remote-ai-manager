@@ -31,6 +31,11 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
     tool_use_id: z.string(),
     content: z.string().optional(),
   }),
+  z.object({
+    type: z.literal("command"),
+    name: z.string(),
+    args: z.string().nullable(),
+  }),
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 
@@ -152,6 +157,8 @@ export const transcriptEntrySchema = z.object({
     })
     .optional(),
   timestamp: z.string().optional(),
+  uuid: z.string().optional(),
+  parentUuid: z.string().nullable().optional(),
 });
 export type TranscriptEntry = z.infer<typeof transcriptEntrySchema>;
 

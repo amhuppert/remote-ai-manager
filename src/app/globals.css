@@ -2670,6 +2670,46 @@ textarea {
   min-width: 0;
 }
 
+/* Command indicator (slash commands) */
+
+.command-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px var(--space-sm);
+  margin: var(--space-sm) 0;
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  border-left: 2px solid var(--purple, #b388ff);
+  min-height: 30px;
+}
+
+.command-icon {
+  color: var(--purple, #b388ff);
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.command-name {
+  color: var(--text-primary);
+  font-weight: 600;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+}
+
+.command-args {
+  color: var(--text-tertiary);
+  font-weight: 400;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 /* ============================================================
    Mobile Bottom Action Bar (hidden on desktop)
    ============================================================ */

@@ -28,6 +28,30 @@ export async function readConversationMessages(
 }
 
 /**
+ * Pattern that matches user messages containing slash command invocation tags.
+ * Example content: "<command-name>/kiro:spec-init</command-name>\n<command-args>notifications</command-args>"
+ */
+const COMMAND_NAME_RE = /<command-name>\/?(.+?)<\/command-name>/;
+const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
+
+/**
+ * Try to parse a command invocation from a user message's string content.
+ * Returns a command content block if the message is a slash command, null otherwise.
+ */
+export function parseCommandContent(
+  content: string,
+): MessageContentBlock | null {
+  const nameMatch = content.match(COMMAND_NAME_RE);
+  if (!nameMatch) return null;
+
+  const name = nameMatch[1]!;
+  const argsMatch = content.match(COMMAND_ARGS_RE);
+  const args = argsMatch?.[1]?.trim() || null;
+
+  return { type: "command" as const, name: `/${name}`, args };
+}
+
+/**
  * Read and parse a Claude transcript JSONL file into structured messages.
  *
  * Transcript format: JSONL where each line is a JSON event.
@@ -35,6 +59,8 @@ export async function readConversationMessages(
  * - `message.content` may be a string or an array of content blocks.
  * - Only `text` blocks are extracted from arrays.
  * - Tool events, permission events, etc. are ignored.
+ * - Slash command invocations are detected and rendered as compact command blocks.
+ * - Expanded skill/command content (the child message) is skipped.
  *
  * Returns messages in chronological order (file order).
  */
@@ -48,6 +74,9 @@ export async function readTranscript(
   const raw = await readFile(transcriptPath, "utf-8");
   const lines = raw.split("\n").filter((line) => line.trim().length > 0);
   const messages: TranscriptMessage[] = [];
+
+  // Track UUIDs of command invocation messages so we can skip their expanded children
+  const commandUuids = new Set<string>();
 
   for (const line of lines) {
     let entry: TranscriptEntry;
@@ -64,6 +93,32 @@ export async function readTranscript(
     const role = entry.type ?? entry.message?.role;
     if (role !== "user" && role !== "assistant") {
       continue;
+    }
+
+    // Skip expanded command content (child message of a command invocation)
+    if (
+      role === "user" &&
+      entry.parentUuid &&
+      commandUuids.has(entry.parentUuid)
+    ) {
+      continue;
+    }
+
+    // Check if this is a slash command invocation (string content with <command-name> tags)
+    if (role === "user" && typeof entry.message?.content === "string") {
+      const commandBlock = parseCommandContent(entry.message.content);
+      if (commandBlock) {
+        // Track this UUID so the expanded child message gets skipped
+        if (entry.uuid) {
+          commandUuids.add(entry.uuid);
+        }
+        messages.push({
+          role: "user",
+          content: [commandBlock],
+          timestamp: entry.timestamp ?? null,
+        });
+        continue;
+      }
     }
 
     const content = extractContent(entry.message?.content);

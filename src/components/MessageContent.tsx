@@ -9,12 +9,23 @@ interface Props {
   content: MessageContentBlock[];
 }
 
-export default memo(function MessageContent({ content }: Props): React.JSX.Element {
+export default memo(function MessageContent({
+  content,
+}: Props): React.JSX.Element {
   return (
     <>
       {content.map((block, i) => {
         if (block.type === "text") {
           return <MarkdownContent key={i} content={block.text} />;
+        }
+        if (block.type === "command") {
+          return (
+            <div key={i} className="command-indicator">
+              <span className="command-icon">/</span>
+              <span className="command-name">{block.name}</span>
+              {block.args && <span className="command-args">{block.args}</span>}
+            </div>
+          );
         }
         if (block.type === "tool_use") {
           const formatted = formatToolUse(
