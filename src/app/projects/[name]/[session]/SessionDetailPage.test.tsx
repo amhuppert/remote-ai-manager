@@ -103,11 +103,18 @@ let mockDiffPending = false;
 // Mock queries
 vi.mock("@/lib/queries", () => ({
   useSessionQuery: () => ({ data: mockSession, isPending: mockSessionPending }),
-  useConversationMessagesQuery: () => ({ data: mockMessages, isPending: mockMessagesPending }),
+  useConversationMessagesQuery: () => ({
+    data: mockMessages,
+    isPending: mockMessagesPending,
+  }),
   useSessionDiffQuery: () => ({ data: mockDiff, isPending: mockDiffPending }),
   useCommitsQuery: () => ({ data: [], isPending: false }),
   useConversationsQuery: () => ({ data: undefined, isPending: false }),
-  useCommandsQuery: () => ({ data: undefined, isPending: false, isError: false }),
+  useCommandsQuery: () => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+  }),
 }));
 
 // Mock mutations
@@ -248,6 +255,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     const roles = screen.getAllByText("You");
@@ -262,6 +270,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     expect(screen.getByText("Hello Claude")).toBeDefined();
@@ -276,6 +285,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     expect(screen.getByText("No messages yet")).toBeDefined();
@@ -290,6 +300,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     const branchEls = container.querySelectorAll(".si-val");
@@ -305,6 +316,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     expect(screen.getByText("1 / 3")).toBeDefined();
@@ -317,6 +329,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     expect(screen.getByText("0 / 0")).toBeDefined();
@@ -328,6 +341,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     const prevBtn = screen.getByTitle("Previous message");
@@ -342,6 +356,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     const sendBtn = container.querySelector(".send-btn");
@@ -354,6 +369,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     const layoutBtns = container.querySelectorAll(".layout-btn");
@@ -366,6 +382,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     const textarea = container.querySelector(".prompt-textarea")!;
@@ -380,6 +397,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     const textarea = container.querySelector(
@@ -396,6 +414,7 @@ describe("SessionDetailPage", () => {
         projectName="repo"
         sessionName="test-session"
         conversationId="conv-1"
+        defaultModel="sonnet"
       />,
     );
     expect(screen.getByText("Loading session...")).toBeDefined();

@@ -71,6 +71,7 @@ interface Props {
   projectName: string;
   sessionName: string;
   conversationId: string;
+  defaultModel: ModelId;
 }
 
 function formatDate(iso: string): string {
@@ -87,6 +88,7 @@ export default function SessionDetailPage({
   projectName,
   sessionName,
   conversationId,
+  defaultModel,
 }: Props): React.JSX.Element {
   const router = useRouter();
   const storageKey = `csm-layout-${projectName}-${sessionName}`;
@@ -165,7 +167,7 @@ export default function SessionDetailPage({
 
   // --- Local state ---
   const [promptText, setPromptText] = useState("");
-  const [selectedModel, setSelectedModel] = useState<ModelId>("sonnet");
+  const [selectedModel, setSelectedModel] = useState<ModelId>(defaultModel);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const promptTextRef = useRef(promptText);
