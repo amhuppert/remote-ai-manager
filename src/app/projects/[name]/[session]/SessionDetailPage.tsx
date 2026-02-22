@@ -183,6 +183,14 @@ export default function SessionDetailPage({
   const currentMsgIndexRef = useRef(currentMsgIndex);
   currentMsgIndexRef.current = currentMsgIndex;
 
+  // --- Auto-resize textarea to fit content ---
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [promptText]);
+
   // Derive display messages: server messages + optimistic
   const displayMessages = useMemo(
     () => [...messages, ...optimisticMessages],
@@ -724,7 +732,7 @@ export default function SessionDetailPage({
                         ? "Session is merged and read-only"
                         : (promptPlaceholder ?? "Send a prompt to Claude...")
                     }
-                    rows={2}
+                    rows={1}
                     value={promptText}
                     onChange={(e) => setPromptText(e.target.value)}
                     onKeyDown={(e) => {

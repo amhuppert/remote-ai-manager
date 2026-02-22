@@ -1868,8 +1868,8 @@ textarea {
 .prompt-textarea {
   flex: 1;
   resize: none;
-  min-height: 48px;
-  max-height: 160px;
+  min-height: 80px;
+  max-height: 50vh;
   padding: 12px 14px;
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
@@ -1879,7 +1879,10 @@ textarea {
   font-size: 0.85rem;
   line-height: 1.5;
   outline: none;
-  transition: all 0.15s ease;
+  overflow-y: auto;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .prompt-textarea:focus {
