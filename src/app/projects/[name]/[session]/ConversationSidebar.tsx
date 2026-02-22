@@ -93,7 +93,7 @@ export default function ConversationSidebar({
   const genericRenameMutation = useGenericRenameConversationMutation();
 
   // --- Local state ---
-  const [activeTab, setActiveTab] = useState<"session" | "active">("session");
+  const [activeTab, setActiveTab] = useState<"session" | "active">("active");
   const [showArchived, setShowArchived] = useState(false);
 
   const archivedCount = useMemo(
