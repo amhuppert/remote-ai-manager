@@ -150,7 +150,11 @@ export default function SessionDetailPage({
   const commitsQuery = useCommitsQuery(projectName, sessionName);
 
   const messages = messagesQuery.data ?? [];
-  const diff = diffQuery.data ?? { files: [], totalAdditions: 0, totalDeletions: 0 };
+  const diff = diffQuery.data ?? {
+    files: [],
+    totalAdditions: 0,
+    totalDeletions: 0,
+  };
   const commits = commitsQuery.data ?? [];
 
   // --- Mutations ---
@@ -326,7 +330,6 @@ export default function SessionDetailPage({
     scrollToMessage(displayMessages.length - 1),
   );
 
-
   // --- Handlers ---
 
   const handleLayoutChange = useCallback(
@@ -357,12 +360,9 @@ export default function SessionDetailPage({
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
-  const handleVoiceError = useCallback(
-    (error: string) => {
-      void error;
-    },
-    [],
-  );
+  const handleVoiceError = useCallback((error: string) => {
+    void error;
+  }, []);
 
   // Lifted voice recorder hook
   const {
@@ -597,7 +597,9 @@ export default function SessionDetailPage({
                       className="empty-state"
                       style={{ padding: "var(--space-xl) 0" }}
                     >
-                      <div className="empty-state-title">Loading conversation...</div>
+                      <div className="empty-state-title">
+                        Loading conversation...
+                      </div>
                     </div>
                   ) : displayMessages.length > 0 ? (
                     <div
@@ -607,32 +609,34 @@ export default function SessionDetailPage({
                         position: "relative",
                       }}
                     >
-                      {virtualizer.getVirtualItems().map((virtualRow: VirtualItem) => {
-                        const msg = displayMessages[virtualRow.index]!;
-                        return (
-                          <div
-                            key={virtualRow.index}
-                            ref={virtualizer.measureElement}
-                            data-index={virtualRow.index}
-                            className={`message ${msg.role}`}
-                            data-msg-index={virtualRow.index}
-                            style={{
-                              position: "absolute",
-                              top: 0,
-                              left: 0,
-                              width: "100%",
-                              transform: `translateY(${virtualRow.start}px)`,
-                            }}
-                          >
-                            <div className="message-role">
-                              {msg.role === "user" ? "You" : "Claude"}
+                      {virtualizer
+                        .getVirtualItems()
+                        .map((virtualRow: VirtualItem) => {
+                          const msg = displayMessages[virtualRow.index]!;
+                          return (
+                            <div
+                              key={virtualRow.index}
+                              ref={virtualizer.measureElement}
+                              data-index={virtualRow.index}
+                              className={`message ${msg.role}`}
+                              data-msg-index={virtualRow.index}
+                              style={{
+                                position: "absolute",
+                                top: 0,
+                                left: 0,
+                                width: "100%",
+                                transform: `translateY(${virtualRow.start}px)`,
+                              }}
+                            >
+                              <div className="message-role">
+                                {msg.role === "user" ? "You" : "Claude"}
+                              </div>
+                              <div className="message-content">
+                                <MessageContent content={msg.content} />
+                              </div>
                             </div>
-                            <div className="message-content">
-                              <MessageContent content={msg.content} />
-                            </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
                     </div>
                   ) : (
                     <div
@@ -735,7 +739,12 @@ export default function SessionDetailPage({
                     />
                     <button
                       className={`send-btn${sending ? " busy" : ""}`}
-                      disabled={!promptText.trim() || sending || isFinished || isRecording}
+                      disabled={
+                        !promptText.trim() ||
+                        sending ||
+                        isFinished ||
+                        isRecording
+                      }
                       onClick={() => void handleSendPrompt()}
                       title={
                         isFinished
@@ -764,8 +773,8 @@ export default function SessionDetailPage({
               </div>
             </div>
 
-            {/* Diff panel — only mounted when visible to avoid rendering cost */}
-            {layout !== "conversation" && (
+            {/* Diff panel — mounted when layout shows it OR mobile panel is "diff" */}
+            {(layout !== "conversation" || mobilePanel === "diff") && (
               <DiffPanel
                 diff={diff}
                 commits={commits}
@@ -808,10 +817,7 @@ export default function SessionDetailPage({
           >
             Merge
           </button>
-          <button
-            className="btn-icon-only danger"
-            onClick={requestDelete}
-          >
+          <button className="btn-icon-only danger" onClick={requestDelete}>
             &#10005;
           </button>
         </div>
@@ -843,7 +849,6 @@ export default function SessionDetailPage({
         branchName={session.branchName}
         commitCount={commits.length}
       />
-
     </div>
   );
 }
