@@ -55,10 +55,13 @@ export const CommandAutocomplete = forwardRef<
 
   // Fetch commands via TanStack Query — only enabled when visible
   const commandsQuery = useCommandsQuery(projectName, sessionName);
-  const items = commandsQuery.data?.items ?? [];
+  const items = useMemo(
+    () => commandsQuery.data?.items ?? [],
+    [commandsQuery.data?.items],
+  );
   const loading = commandsQuery.isPending && visible;
   const error = commandsQuery.isError
-    ? commandsQuery.error?.message ?? "Failed to load commands"
+    ? (commandsQuery.error?.message ?? "Failed to load commands")
     : null;
 
   // Filter and score items
@@ -104,10 +107,13 @@ export const CommandAutocomplete = forwardRef<
     return results;
   }, [items, query]);
 
-  // Reset active index when filtered results change
-  useEffect(() => {
+  // Reset active index when filtered results change (state-during-render pattern)
+  const resetKey = `${query}:${filtered.length}`;
+  const [prevResetKey, setPrevResetKey] = useState(resetKey);
+  if (resetKey !== prevResetKey) {
+    setPrevResetKey(resetKey);
     setActiveIndex(0);
-  }, [filtered.length, query]);
+  }
 
   // Scroll active item into view
   useEffect(() => {

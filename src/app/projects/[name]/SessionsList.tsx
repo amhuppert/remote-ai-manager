@@ -106,7 +106,10 @@ export default function SessionsList({
   const deleteMutation = useDeleteSessionMutation(projectName);
 
   // --- Derived data ---
-  const sessions = sessionsQuery.data ?? [];
+  const sessions = useMemo(
+    () => sessionsQuery.data ?? [],
+    [sessionsQuery.data],
+  );
   const hooksStatus = hooksQuery.data;
 
   const archivedCount = useMemo(
@@ -126,8 +129,8 @@ export default function SessionsList({
     cancelDelete();
   }, [deleteTarget, deleteMutation, cancelDelete]);
 
-  const runningCount = sessions.filter((s) =>
-    deriveSessionStatus(s) === "running",
+  const runningCount = sessions.filter(
+    (s) => deriveSessionStatus(s) === "running",
   ).length;
 
   const isLoading = sessionsQuery.isPending;

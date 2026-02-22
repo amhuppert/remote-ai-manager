@@ -93,7 +93,10 @@ export default function ConversationList({
 
   // --- Derived data ---
   const session = sessionQuery.data;
-  const conversations = conversationsQuery.data ?? [];
+  const conversations = useMemo(
+    () => conversationsQuery.data ?? [],
+    [conversationsQuery.data],
+  );
   const decodedProjectName = decodeURIComponent(projectName);
   const isFinished = session?.finished ?? false;
 

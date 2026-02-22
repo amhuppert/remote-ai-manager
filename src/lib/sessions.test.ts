@@ -280,7 +280,14 @@ describe("createSession", () => {
     expect(session.sessionName).toBe("My Feature");
     expect(session.worktreePath).toBe("/projects/repo/.worktrees/my-feature");
     expect(session.branchName).toBe("csm/my-feature");
-    expect(session.conversations).toEqual([]);
+    expect(session.conversations).toHaveLength(1);
+    expect(session.conversations[0]).toMatchObject({
+      status: "ready",
+      source: "csm",
+      promptCount: 0,
+      name: null,
+    });
+    expect(session.conversations[0]!.id).toBeTruthy();
     expect(session.archived).toBe(false);
     expect(session.source).toBe("csm");
   });
@@ -332,7 +339,7 @@ describe("createSession", () => {
     const project = savedState.projects["/projects/repo"];
     expect(project).toBeDefined();
     expect(project.sessions["persist test"]).toBeDefined();
-    expect(project.sessions["persist test"].conversations).toEqual([]);
+    expect(project.sessions["persist test"].conversations).toHaveLength(1);
   });
 
   it("auto-creates project entry when project not yet in state", async () => {

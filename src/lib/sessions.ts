@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { SessionState } from "@/types";
+import type { ConversationState, SessionState } from "@/types";
 import { perRepoConfigSchema, type PerRepoConfig } from "./schemas";
 import { readState, writeState } from "./state";
 import { createLogger } from "./logging";
@@ -160,8 +161,21 @@ export async function createSession(
     throw err;
   }
 
-  // Build session state
+  // Build session state with an initial conversation
   const now = new Date().toISOString();
+  const initialConversation: ConversationState = {
+    id: crypto.randomUUID(),
+    name: null,
+    claudeSessionId: null,
+    transcriptPath: null,
+    status: "ready",
+    promptCount: 0,
+    createdAt: now,
+    lastActivityAt: now,
+    source: "csm",
+    summary: null,
+    archived: false,
+  };
   const session: SessionState = {
     sessionName,
     worktreePath,
@@ -170,7 +184,7 @@ export async function createSession(
     lastActivityAt: now,
     archived: false,
     finished: false,
-    conversations: [],
+    conversations: [initialConversation],
     source: "csm",
   };
 

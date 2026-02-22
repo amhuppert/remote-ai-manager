@@ -151,7 +151,10 @@ export default function SessionDetailPage({
   });
   const commitsQuery = useCommitsQuery(projectName, sessionName);
 
-  const messages = messagesQuery.data ?? [];
+  const messages = useMemo(
+    () => messagesQuery.data ?? [],
+    [messagesQuery.data],
+  );
   const diff = diffQuery.data ?? {
     files: [],
     totalAdditions: 0,
@@ -245,6 +248,7 @@ export default function SessionDetailPage({
   }, [turnStartIndices, currentMsgIndex]);
 
   // --- Virtualizer for conversation messages ---
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual API is intentionally used
   const virtualizer = useVirtualizer({
     count: displayMessages.length,
     getScrollElement: () => panelBodyRef.current,

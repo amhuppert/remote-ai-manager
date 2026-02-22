@@ -226,7 +226,7 @@ async function resolvePluginPaths(): Promise<
       } else if (typeof settings.enabledPlugins === "object") {
         // Object format: { "plugin-id": true/false }
         enabledPluginIds = Object.entries(settings.enabledPlugins)
-          .filter(([_, enabled]) => enabled)
+          .filter(([, enabled]) => enabled)
           .map(([id]) => id);
       }
     }

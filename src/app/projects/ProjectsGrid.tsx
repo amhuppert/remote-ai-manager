@@ -46,9 +46,18 @@ export default function ProjectsGrid(): React.JSX.Element {
   const pinMutation = usePinProjectMutation();
 
   // --- Derived data ---
-  const projects = projectsQuery.data ?? [];
-  const archivedPaths = prefsQuery.data?.archived ?? [];
-  const pinnedPaths = prefsQuery.data?.pinned ?? [];
+  const projects = useMemo(
+    () => projectsQuery.data ?? [],
+    [projectsQuery.data],
+  );
+  const archivedPaths = useMemo(
+    () => prefsQuery.data?.archived ?? [],
+    [prefsQuery.data?.archived],
+  );
+  const pinnedPaths = useMemo(
+    () => prefsQuery.data?.pinned ?? [],
+    [prefsQuery.data?.pinned],
+  );
   const config = configQuery.data;
   const hooksStatus = hooksQuery.data;
 
@@ -97,7 +106,14 @@ export default function ProjectsGrid(): React.JSX.Element {
       }
       return true;
     });
-  }, [projects, pinnedSet, archivedSet, searchQuery, statusFilter, showArchived]);
+  }, [
+    projects,
+    pinnedSet,
+    archivedSet,
+    searchQuery,
+    statusFilter,
+    showArchived,
+  ]);
 
   const handleArchive = useCallback(
     (projectPath: string) => {
@@ -301,8 +317,8 @@ export default function ProjectsGrid(): React.JSX.Element {
             <div className="empty-state-title">No projects discovered</div>
             <div className="empty-state-desc">
               No git repositories found
-              {config ? ` in ${config.baseDir}` : ""}. Ensure the base
-              directory is configured correctly and contains repositories.
+              {config ? ` in ${config.baseDir}` : ""}. Ensure the base directory
+              is configured correctly and contains repositories.
             </div>
           </div>
         )}

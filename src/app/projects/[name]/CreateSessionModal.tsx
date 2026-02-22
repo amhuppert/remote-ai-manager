@@ -22,11 +22,19 @@ export default function CreateSessionModal({
 
   const createMutation = useCreateSessionMutation(projectName);
 
-  // Focus input when modal opens
-  useEffect(() => {
+  // Reset state when modal opens (state-during-render pattern)
+  const [prevOpen, setPrevOpen] = useState(false);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
     if (open) {
       setName("");
       setError(null);
+    }
+  }
+
+  // Focus input when modal opens
+  useEffect(() => {
+    if (open) {
       const timer = setTimeout(() => inputRef.current?.focus(), 100);
       return () => clearTimeout(timer);
     }
@@ -56,8 +64,11 @@ export default function CreateSessionModal({
     createMutation.mutate(name.trim(), {
       onSuccess: (session) => {
         onClose();
+        const conversationId = session.conversations[0]?.id;
         router.push(
-          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`,
+          conversationId
+            ? `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}/${encodeURIComponent(conversationId)}`
+            : `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`,
         );
       },
       onError: (err) => {

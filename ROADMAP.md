@@ -2,17 +2,9 @@
 
 ## High Priority
 
-- Set up Storybook, replace index.html prototype with Storybook stories.
-
-- Notifications
-
-- Be able to seamlessly switch between direct Claude Code in terminal and web interface.
-
 - The ability to fork a conversation.
 
-- The ability to import sessions from Claude Code.
-
-- UI for easily invoking Claude Code commands/skills.
+- Run Claude in dev container
 
 ## Backlog
 
@@ -24,10 +16,6 @@
 
 - Track generated artifacts specially
    - Have a dedicated UI for displaying certain artifacts created during a session
-
-- The ability to run multiple Claude Code sessions within the same worktree.
-
-- First-class hotkey support.
 
 - Build the Ralph Loop and spec-driven development workflows natively into the application.
 
