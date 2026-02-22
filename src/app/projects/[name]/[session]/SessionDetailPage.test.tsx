@@ -63,10 +63,6 @@ const baseSession: SessionState = {
     },
   ],
   source: "csm" as const,
-  containerId: null,
-  containerStatus: "none" as const,
-  containerError: null,
-  claudeHostDir: null,
 };
 
 const emptyDiff: SessionDiff = {

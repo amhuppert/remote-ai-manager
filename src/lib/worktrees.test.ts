@@ -9,13 +9,11 @@ const {
   existsSyncMock,
   readStateMock,
   writeStateMock,
-  modifyStateMock,
 } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
   existsSyncMock: vi.fn<(p: string) => boolean>(),
   readStateMock: vi.fn(),
   writeStateMock: vi.fn(),
-  modifyStateMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -29,7 +27,6 @@ vi.mock("node:fs", () => ({
 vi.mock("./state", () => ({
   readState: readStateMock,
   writeState: writeStateMock,
-  modifyState: modifyStateMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -98,14 +95,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   readStateMock.mockResolvedValue(emptyState());
   writeStateMock.mockResolvedValue(undefined);
-  modifyStateMock.mockImplementation(
-    async (fn: (state: unknown) => unknown) => {
-      const state = await readStateMock();
-      const result = await fn(state);
-      await writeStateMock(state);
-      return result;
-    },
-  );
   existsSyncMock.mockReturnValue(true);
 });
 
@@ -404,10 +393,6 @@ describe("discoverAndImportWorktrees", () => {
     finished: false,
     conversations: [],
     source: "csm",
-    containerId: null,
-    containerStatus: "none",
-    containerError: null,
-    claudeHostDir: null,
   };
 
   it("imports untracked worktrees as sessions with source=imported", async () => {
@@ -481,10 +466,6 @@ describe("discoverAndImportWorktrees", () => {
       finished: false,
       conversations: [],
       source: "csm",
-      containerId: null,
-      containerStatus: "none",
-      containerError: null,
-      claudeHostDir: null,
     };
 
     // Git returns only main worktree — orphan's path doesn't exist on disk
@@ -534,10 +515,6 @@ describe("discoverAndImportWorktrees", () => {
       finished: true,
       conversations: [],
       source: "csm",
-      containerId: null,
-      containerStatus: "none",
-      containerError: null,
-      claudeHostDir: null,
     };
 
     mockExecFileSuccess(

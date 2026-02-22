@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type {
   ClaudeModel,
@@ -16,7 +17,6 @@ import {
   encodeProjectPath,
 } from "./conversations";
 import { broadcast } from "./sse-broadcaster";
-import { execInContainer, buildContainerEnv } from "./devcontainer";
 
 const logger = createLogger("prompt");
 
@@ -125,22 +125,17 @@ export async function executePromptStream(
     const promptStart = Date.now();
 
     await new Promise<void>((resolve, reject) => {
-      // Require a running container — never execute Claude with
-      // --dangerously-skip-permissions outside a sandboxed environment.
-      if (!session.containerId || session.containerStatus !== "running") {
-        const reason = !session.containerId
-          ? "No container has been created for this session. Delete and recreate the session to provision a container."
-          : `Container is not running (status: ${session.containerStatus}). Delete and recreate the session, or check Docker.`;
-        throw new Error(reason);
-      }
-
-      const env = buildContainerEnv(projectPath, session.sessionName);
-      const child = execInContainer(
-        projectPath,
-        session.worktreePath,
-        ["claude", ...args],
-        env,
-      );
+      const child = spawn("claude", args, {
+        cwd: session.worktreePath,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([key]) => !key.startsWith("CLAUDE"),
+            ),
+          ),
+        } as NodeJS.ProcessEnv,
+      });
 
       // Close stdin so the CLI doesn't block waiting for input
       child.stdin?.end();
@@ -251,12 +246,8 @@ export async function executePromptStream(
                   c.claudeSessionId = sessionId;
                 }
                 // Set transcript path based on Claude session ID
-                // Inside container, Claude sees /workspace as the project path
                 if (sessionId && !c.transcriptPath) {
-                  const projectDir = session.claudeHostDir
-                    ? "/workspace"
-                    : session.worktreePath;
-                  const encodedPath = encodeProjectPath(projectDir);
+                  const encodedPath = encodeProjectPath(session.worktreePath);
                   c.transcriptPath = `~/.claude/projects/${encodedPath}/${sessionId}.jsonl`;
                 }
               },

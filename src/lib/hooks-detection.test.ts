@@ -33,10 +33,6 @@ vi.mock("node:os", async () => {
 vi.mock("./state", () => ({
   readState: readStateMock,
   writeState: vi.fn(),
-  modifyState: vi.fn(async (fn: (state: unknown) => unknown) => {
-    const state = await readStateMock();
-    return fn(state);
-  }),
 }));
 
 import { detectHooksStatus, processHookEvent } from "./hooks";

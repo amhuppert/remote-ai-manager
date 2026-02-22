@@ -11,15 +11,6 @@ const {
   readFileMock,
   readStateMock,
   writeStateMock,
-  updateSessionMock,
-  removeSessionMock,
-  checkPrerequisitesMock,
-  resolveConfigMock,
-  prepareSessionEnvironmentMock,
-  startContainerMock,
-  buildContainerEnvMock,
-  stopAndRemoveContainerMock,
-  broadcastContainerStatusMock,
 } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
   existsSyncMock: vi.fn<(p: string) => boolean>(),
@@ -27,15 +18,6 @@ const {
   readFileMock: vi.fn(),
   readStateMock: vi.fn(),
   writeStateMock: vi.fn(),
-  updateSessionMock: vi.fn(),
-  removeSessionMock: vi.fn(),
-  checkPrerequisitesMock: vi.fn(),
-  resolveConfigMock: vi.fn(),
-  prepareSessionEnvironmentMock: vi.fn(),
-  startContainerMock: vi.fn(),
-  buildContainerEnvMock: vi.fn(),
-  stopAndRemoveContainerMock: vi.fn(),
-  broadcastContainerStatusMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -54,21 +36,6 @@ vi.mock("node:fs/promises", () => ({
 vi.mock("./state", () => ({
   readState: readStateMock,
   writeState: writeStateMock,
-  updateSession: updateSessionMock,
-  removeSession: removeSessionMock,
-}));
-
-vi.mock("./devcontainer", () => ({
-  checkPrerequisites: checkPrerequisitesMock,
-  resolveConfig: resolveConfigMock,
-  prepareSessionEnvironment: prepareSessionEnvironmentMock,
-  startContainer: startContainerMock,
-  buildContainerEnv: buildContainerEnvMock,
-  stopAndRemoveContainer: stopAndRemoveContainerMock,
-}));
-
-vi.mock("./sse-broadcaster", () => ({
-  broadcastContainerStatus: broadcastContainerStatusMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -198,37 +165,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   readStateMock.mockResolvedValue(emptyState());
   writeStateMock.mockResolvedValue(undefined);
-  updateSessionMock.mockResolvedValue(undefined);
-  removeSessionMock.mockResolvedValue(undefined);
   existsSyncMock.mockReturnValue(false);
   rmMock.mockResolvedValue(undefined);
   readFileMock.mockRejectedValue(new Error("file not found"));
-
-  // Default devcontainer mocks for successful container setup
-  checkPrerequisitesMock.mockResolvedValue({
-    dockerAvailable: true,
-    dockerPermissions: true,
-    devcontainerCliAvailable: true,
-    errors: [],
-  });
-  resolveConfigMock.mockReturnValue({
-    configPath: "/defaults/devcontainer.json",
-    isDefault: true,
-  });
-  prepareSessionEnvironmentMock.mockResolvedValue("/tmp/claude-dir");
-  buildContainerEnvMock.mockReturnValue({
-    ANTHROPIC_API_KEY: "test-key",
-    CSM_PROJECT_PATH: "/projects/repo",
-    CSM_SESSION_NAME: "test",
-    DEVCONTAINER: "true",
-  });
-  startContainerMock.mockResolvedValue({
-    containerId: "abc123",
-    remoteUser: "node",
-    remoteWorkspaceFolder: "/workspace",
-  });
-  stopAndRemoveContainerMock.mockResolvedValue(undefined);
-  broadcastContainerStatusMock.mockReturnValue(undefined);
 });
 
 // ===========================================================================
@@ -391,17 +330,16 @@ describe("createSession", () => {
     );
   });
 
-  it("persists session to state via updateSession", async () => {
+  it("persists session to state via writeState", async () => {
     mockExecFileSuccess();
     await createSession("/projects/repo", "persist test");
 
-    // updateSession is called multiple times: initial persist + container status updates
-    expect(updateSessionMock).toHaveBeenCalled();
-    // First call saves the initial session state
-    const [projectPath, session] = updateSessionMock.mock.calls[0]!;
-    expect(projectPath).toBe("/projects/repo");
-    expect(session.sessionName).toBe("persist test");
-    expect(session.conversations).toHaveLength(1);
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const project = savedState.projects["/projects/repo"];
+    expect(project).toBeDefined();
+    expect(project.sessions["persist test"]).toBeDefined();
+    expect(project.sessions["persist test"].conversations).toHaveLength(1);
   });
 
   it("auto-creates project entry when project not yet in state", async () => {
@@ -409,10 +347,9 @@ describe("createSession", () => {
     mockExecFileSuccess();
     await createSession("/new/project", "first session");
 
-    // updateSession handles project creation internally
-    const [projectPath, session] = updateSessionMock.mock.calls[0]!;
-    expect(projectPath).toBe("/new/project");
-    expect(session.sessionName).toBe("first session");
+    const savedState = writeStateMock.mock.calls[0]![0];
+    expect(savedState.projects["/new/project"]).toBeDefined();
+    expect(savedState.projects["/new/project"].rootPath).toBe("/new/project");
   });
 
   // =========================================================================
@@ -608,8 +545,8 @@ describe("createSession", () => {
       createSession("/projects/repo", "should not persist"),
     ).rejects.toThrow("git worktree add failed");
 
-    // updateSession should never be called on failure
-    expect(updateSessionMock).not.toHaveBeenCalled();
+    // writeState should never be called on failure
+    expect(writeStateMock).not.toHaveBeenCalled();
   });
 
   it("throws validation error for empty name (via createSession)", async () => {
@@ -618,7 +555,7 @@ describe("createSession", () => {
     );
     // No git or state calls should have been made
     expect(execFileMock).not.toHaveBeenCalled();
-    expect(updateSessionMock).not.toHaveBeenCalled();
+    expect(writeStateMock).not.toHaveBeenCalled();
   });
 });
 
@@ -645,10 +582,11 @@ describe("deleteSession", () => {
     );
 
     // Verify session removed from state
-    expect(removeSessionMock).toHaveBeenCalledWith(
-      "/projects/repo",
-      "to-delete",
-    );
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    expect(
+      savedState.projects["/projects/repo"].sessions["to-delete"],
+    ).toBeUndefined();
   });
 
   it("removes session from state even when worktree doesn't exist on disk", async () => {
@@ -663,10 +601,11 @@ describe("deleteSession", () => {
     expect(execFileMock).not.toHaveBeenCalled();
 
     // Session should still be removed from state
-    expect(removeSessionMock).toHaveBeenCalledWith(
-      "/projects/repo",
-      "no-worktree",
-    );
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    expect(
+      savedState.projects["/projects/repo"].sessions["no-worktree"],
+    ).toBeUndefined();
   });
 
   it("falls back to filesystem rm when git worktree remove fails", async () => {
@@ -685,10 +624,7 @@ describe("deleteSession", () => {
     );
 
     // Session still removed from state
-    expect(removeSessionMock).toHaveBeenCalledWith(
-      "/projects/repo",
-      "rm-fallback",
-    );
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws error for non-existent project", async () => {
@@ -728,10 +664,11 @@ describe("deleteSession", () => {
     // Git worktree remove should be called for imported sessions
     expect(execFileMock).toHaveBeenCalled();
     // Session should be removed from state
-    expect(removeSessionMock).toHaveBeenCalledWith(
-      "/projects/repo",
-      "imported-session",
-    );
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    expect(
+      savedState.projects["/projects/repo"].sessions["imported-session"],
+    ).toBeUndefined();
   });
 
   it("treats sessions without source field as CSM-created (backward compat)", async () => {

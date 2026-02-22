@@ -18,10 +18,6 @@ vi.mock("./state", () => ({
     mockState = state;
     return Promise.resolve();
   }),
-  modifyState: vi.fn(async (fn: (state: ManagerState) => unknown) => {
-    const result = await fn(mockState);
-    return result;
-  }),
 }));
 
 beforeEach(async () => {
@@ -56,10 +52,6 @@ describe("processHookEvent", () => {
               finished: false,
               conversations: [],
               source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
             },
           },
         },
@@ -92,10 +84,6 @@ describe("processHookEvent", () => {
               finished: false,
               conversations: [],
               source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
             },
           },
         },
@@ -158,10 +146,6 @@ describe("processHookEvent", () => {
                 },
               ],
               source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
             },
           },
         },
@@ -217,10 +201,6 @@ describe("processHookEvent", () => {
                 },
               ],
               source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
             },
           },
         },
@@ -278,10 +258,6 @@ describe("processHookEvent", () => {
                 },
               ],
               source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
             },
           },
         },
@@ -332,10 +308,6 @@ describe("processHookEvent", () => {
                 },
               ],
               source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
             },
           },
         },
@@ -389,10 +361,6 @@ describe("processHookEvent", () => {
                 },
               ],
               source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
             },
           },
         },
@@ -419,191 +387,5 @@ describe("processHookEvent", () => {
     // Original conversation should be unchanged
     const original = session.conversations.find((c) => c.id === "conv-idle");
     expect(original!.claudeSessionId).toBeNull();
-  });
-});
-
-// ===========================================================================
-// Container identity-based hook matching (Req 8.3)
-// ===========================================================================
-
-describe("processHookEvent — container identity matching", () => {
-  it("matches session by csm_project_path and csm_session_name", async () => {
-    mockState = {
-      projects: {
-        "/project": {
-          rootPath: "/project",
-          sessions: {
-            "container-session": {
-              sessionName: "container-session",
-              worktreePath: "/project/.worktrees/container-session",
-              branchName: "csm/container-session",
-              createdAt: "2024-01-01T00:00:00Z",
-              lastActivityAt: "2024-01-01T00:00:00Z",
-              archived: false,
-              finished: false,
-              conversations: [],
-              source: "csm" as const,
-              containerId: "abc123",
-              containerStatus: "running" as const,
-              containerError: null,
-              claudeHostDir: "/tmp/claude-dir",
-            },
-          },
-        },
-      },
-      archivedProjects: [],
-      pinnedProjects: [],
-    };
-
-    const { processHookEvent } = await import("./hooks");
-    const result = await processHookEvent({
-      session_id: "claude-container-sess",
-      csm_project_path: "/project",
-      csm_session_name: "container-session",
-      hook_event_name: "UserPromptSubmit",
-    });
-
-    expect(result.matched).toBe(true);
-    expect(result.sessionName).toBe("container-session");
-    expect(result.conversationId).toBeDefined();
-
-    const session =
-      mockState.projects["/project"]!.sessions["container-session"]!;
-    expect(session.conversations).toHaveLength(1);
-    expect(session.conversations[0]!.claudeSessionId).toBe(
-      "claude-container-sess",
-    );
-  });
-
-  it("prefers container identity over cwd matching", async () => {
-    mockState = {
-      projects: {
-        "/project": {
-          rootPath: "/project",
-          sessions: {
-            "cwd-session": {
-              sessionName: "cwd-session",
-              worktreePath: "/workspace",
-              branchName: "csm/cwd-session",
-              createdAt: "2024-01-01T00:00:00Z",
-              lastActivityAt: "2024-01-01T00:00:00Z",
-              archived: false,
-              finished: false,
-              conversations: [],
-              source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
-            },
-            "container-session": {
-              sessionName: "container-session",
-              worktreePath: "/project/.worktrees/container-session",
-              branchName: "csm/container-session",
-              createdAt: "2024-01-01T00:00:00Z",
-              lastActivityAt: "2024-01-01T00:00:00Z",
-              archived: false,
-              finished: false,
-              conversations: [],
-              source: "csm" as const,
-              containerId: "abc123",
-              containerStatus: "running" as const,
-              containerError: null,
-              claudeHostDir: "/tmp/claude-dir",
-            },
-          },
-        },
-      },
-      archivedProjects: [],
-      pinnedProjects: [],
-    };
-
-    const { processHookEvent } = await import("./hooks");
-    // Send both cwd and identity — identity should win
-    const result = await processHookEvent({
-      session_id: "sess-123",
-      cwd: "/workspace",
-      csm_project_path: "/project",
-      csm_session_name: "container-session",
-    });
-
-    expect(result.matched).toBe(true);
-    expect(result.sessionName).toBe("container-session");
-  });
-
-  it("falls back to cwd when container identity fields are absent", async () => {
-    mockState = {
-      projects: {
-        "/project": {
-          rootPath: "/project",
-          sessions: {
-            "host-session": {
-              sessionName: "host-session",
-              worktreePath: "/project/.worktrees/host-session",
-              branchName: "csm/host-session",
-              createdAt: "2024-01-01T00:00:00Z",
-              lastActivityAt: "2024-01-01T00:00:00Z",
-              archived: false,
-              finished: false,
-              conversations: [],
-              source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
-            },
-          },
-        },
-      },
-      archivedProjects: [],
-      pinnedProjects: [],
-    };
-
-    const { processHookEvent } = await import("./hooks");
-    const result = await processHookEvent({
-      session_id: "sess-456",
-      cwd: "/project/.worktrees/host-session",
-    });
-
-    expect(result.matched).toBe(true);
-    expect(result.sessionName).toBe("host-session");
-  });
-
-  it("returns matched: false when container identity does not match any session", async () => {
-    mockState = {
-      projects: {
-        "/project": {
-          rootPath: "/project",
-          sessions: {
-            existing: {
-              sessionName: "existing",
-              worktreePath: "/project/.worktrees/existing",
-              branchName: "csm/existing",
-              createdAt: "2024-01-01T00:00:00Z",
-              lastActivityAt: "2024-01-01T00:00:00Z",
-              archived: false,
-              finished: false,
-              conversations: [],
-              source: "csm" as const,
-              containerId: null,
-              containerStatus: "none" as const,
-              containerError: null,
-              claudeHostDir: null,
-            },
-          },
-        },
-      },
-      archivedProjects: [],
-      pinnedProjects: [],
-    };
-
-    const { processHookEvent } = await import("./hooks");
-    const result = await processHookEvent({
-      session_id: "sess-789",
-      csm_project_path: "/project",
-      csm_session_name: "nonexistent-session",
-    });
-
-    expect(result.matched).toBe(false);
   });
 });

@@ -14,8 +14,6 @@ const {
   acquireSessionLockMock,
   getConversationMock,
   createConversationMock,
-  execInContainerMock,
-  buildContainerEnvMock,
 } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   getSessionMock: vi.fn(),
@@ -24,17 +22,10 @@ const {
   acquireSessionLockMock: vi.fn(),
   getConversationMock: vi.fn(),
   createConversationMock: vi.fn(),
-  execInContainerMock: vi.fn(),
-  buildContainerEnvMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
   spawn: spawnMock,
-}));
-
-vi.mock("./devcontainer", () => ({
-  execInContainer: execInContainerMock,
-  buildContainerEnv: buildContainerEnvMock,
 }));
 
 vi.mock("./state", () => ({
@@ -104,10 +95,6 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     finished: false,
     conversations: [],
     source: "csm" as const,
-    containerId: "test-container-abc123",
-    containerStatus: "running" as const,
-    containerError: null,
-    claudeHostDir: "/home/user/.config/csm/containers/test-session-abc123",
     ...overrides,
   };
 }
@@ -184,24 +171,6 @@ beforeEach(() => {
   updateSessionMock.mockImplementation((_path: string, s: SessionState) => {
     updateSnapshots.push(JSON.parse(JSON.stringify(s)));
     return Promise.resolve();
-  });
-
-  // Mock devcontainer functions: execInContainer delegates to spawnMock
-  execInContainerMock.mockImplementation(
-    (
-      _projectPath: string,
-      _worktreePath: string,
-      _command: string[],
-      _env: Record<string, string>,
-    ) => {
-      return spawnMock();
-    },
-  );
-  buildContainerEnvMock.mockReturnValue({
-    ANTHROPIC_API_KEY: "test-key",
-    CSM_PROJECT_PATH: "/projects/repo",
-    CSM_SESSION_NAME: "test-session",
-    DEVCONTAINER: "true",
   });
 });
 
@@ -417,10 +386,7 @@ describe("executePromptStream", () => {
     const convo = makeConversation({ claudeSessionId: "existing-session-id" });
     getConversationMock.mockResolvedValue(convo);
 
-    const session = makeSession({
-      containerId: "abc123",
-      containerStatus: "running",
-    });
+    const session = makeSession();
     session.conversations = [convo];
     getSessionMock.mockImplementation(() => Promise.resolve(session));
 
@@ -435,67 +401,27 @@ describe("executePromptStream", () => {
       convo.id,
     );
 
-    // execInContainer is called with (projectPath, worktreePath, command[], env)
-    const [, , command] = execInContainerMock.mock.calls[0]! as [
-      string,
-      string,
-      string[],
-      Record<string, string>,
-    ];
-    expect(command[0]).toBe("claude");
-    expect(command).toContain("--resume");
-    expect(command).toContain("existing-session-id");
-    expect(command).toContain("--output-format");
-    expect(command).toContain("stream-json");
+    const [cmd, args] = spawnMock.mock.calls[0]! as [string, string[]];
+    expect(cmd).toBe("claude");
+    expect(args).toContain("--resume");
+    expect(args).toContain("existing-session-id");
+    expect(args).toContain("--output-format");
+    expect(args).toContain("stream-json");
   });
 
   it("does not use --resume for new conversation", async () => {
     const child = createMockChild([]);
     spawnMock.mockReturnValue(child);
 
-    const session = makeSession({
-      containerId: "abc123",
-      containerStatus: "running",
-    });
-    getSessionMock.mockImplementation(() => Promise.resolve(session));
-
     await executePromptStream(
       "/projects/repo",
-      session,
+      makeSession(),
       "first prompt",
       vi.fn(),
     );
 
-    // execInContainer is called with (projectPath, worktreePath, command[], env)
-    const [, , command] = execInContainerMock.mock.calls[0]! as [
-      string,
-      string,
-      string[],
-      Record<string, string>,
-    ];
-    expect(command).not.toContain("--resume");
-  });
-
-  it("throws when session has no container", async () => {
-    await expect(
-      executePromptStream(
-        "/projects/repo",
-        makeSession({ containerId: null, containerStatus: "none" }),
-        "test prompt",
-        vi.fn(),
-      ),
-    ).rejects.toThrow("No container has been created for this session");
-  });
-
-  it("throws when container is not running", async () => {
-    await expect(
-      executePromptStream(
-        "/projects/repo",
-        makeSession({ containerId: "abc123", containerStatus: "stopped" }),
-        "test prompt",
-        vi.fn(),
-      ),
-    ).rejects.toThrow("Container is not running (status: stopped)");
+    const [, args] = spawnMock.mock.calls[0]! as [string, string[]];
+    expect(args).not.toContain("--resume");
   });
 
   it("closes stdin immediately", async () => {
