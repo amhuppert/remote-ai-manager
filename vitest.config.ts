@@ -8,6 +8,18 @@ const dirname =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url));
 
+// Claude Code sets CLAUDECODE=1 in every shell it spawns.
+// Use the minimal `dot` reporter to reduce test output by ~96%,
+// printing one char per test and only showing details on failure.
+const isAI = process.env.CLAUDECODE === "1";
+const isCI = process.env.CI === "true";
+
+function getReporters(): string[] {
+  if (isCI) return ["dot", "github-actions"];
+  if (isAI) return ["dot"];
+  return ["default"];
+}
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -21,6 +33,7 @@ export default defineConfig({
     jsx: "automatic",
   },
   test: {
+    reporters: getReporters(),
     globals: true,
     exclude: ["**/node_modules/**", "**/.worktrees/**", "**/dist/**"],
     workspace: [
