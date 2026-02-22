@@ -6,7 +6,19 @@
 
 - Run Claude in dev container
 
+- Auto resolve merge conflicts
+
+- Consolidated converations across projects
+  * View where you see conversations awaiting input across all projects/sessions
+
 ## Backlog
+
+- See context usage
+
+- Auto run dev server + Storybook and serve over tailscale
+  * Project-specific configuration
+
+- First-class roadmap tracking
 
 - First-class UI support for Claude native tasks.
 
