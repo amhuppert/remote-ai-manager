@@ -18,6 +18,7 @@ export type HotkeyId =
   | "firstMessage"
   | "lastMessage"
   | "toggleSidebar"
+  | "toggleActivePanel"
   | "nextFile"
   | "prevFile"
   | "nextChange"
@@ -47,6 +48,13 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     keys: "b",
     label: "Toggle sidebar",
     description: "Expand or collapse the conversations sidebar",
+    category: "general",
+  },
+  toggleActivePanel: {
+    id: "toggleActivePanel",
+    keys: "shift+b",
+    label: "Toggle active conversations",
+    description: "Open or close the active conversations panel",
     category: "general",
   },
   nextMessage: {

@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useActiveConversationsQuery } from "@/lib/queries";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
   useUnifiedPanelOpen,
   useCloseUnifiedPanel,
+  useToggleUnifiedPanel,
 } from "@/stores/unified-panel.store";
 
 function formatRelativeTime(isoDate: string): string {
@@ -21,7 +23,10 @@ function formatRelativeTime(isoDate: string): string {
 export default function UnifiedPanel(): React.JSX.Element | null {
   const isOpen = useUnifiedPanelOpen();
   const close = useCloseUnifiedPanel();
+  const togglePanel = useToggleUnifiedPanel();
   const { data: conversations, isPending } = useActiveConversationsQuery();
+
+  useAppHotkey("toggleActivePanel", togglePanel);
 
   if (!isOpen) return null;
 
