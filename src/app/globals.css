@@ -3484,6 +3484,20 @@ textarea {
   min-width: 0;
 }
 
+/* Mobile: data-mobile-panel overrides with-sidebar panel hiding */
+@media (max-width: 768px) {
+  .app[data-mobile-panel="diff"]
+    .session-content-area.with-sidebar
+    > .sidebar-diff-panel {
+    display: flex;
+  }
+  .app[data-mobile-panel="chat"]
+    .session-content-area.with-sidebar
+    > .prompt-panel {
+    display: flex;
+  }
+}
+
 /* ============================================================
    Page transition stagger (applied to main content areas)
    ============================================================ */
