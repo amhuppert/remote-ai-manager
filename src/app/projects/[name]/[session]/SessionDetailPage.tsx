@@ -326,6 +326,13 @@ export default function SessionDetailPage({
     [displayMessages.length, navigateToMessage, virtualizer],
   );
 
+  const scrollToEnd = useCallback(() => {
+    conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (displayMessages.length > 0) {
+      navigateToMessage(displayMessages.length - 1);
+    }
+  }, [displayMessages.length, navigateToMessage]);
+
   const handlePrevMessage = useCallback(() => {
     const prevTurnStart = turnStartIndices[currentTurnIndex - 1];
     if (prevTurnStart !== undefined) {
@@ -344,9 +351,7 @@ export default function SessionDetailPage({
   useAppHotkey("nextMessage", handleNextMessage);
   useAppHotkey("prevMessage", handlePrevMessage);
   useAppHotkey("firstMessage", () => scrollToMessage(0));
-  useAppHotkey("lastMessage", () =>
-    scrollToMessage(displayMessages.length - 1),
-  );
+  useAppHotkey("lastMessage", scrollToEnd);
 
   // --- Handlers ---
 
@@ -601,7 +606,7 @@ export default function SessionDetailPage({
                   onFirst={() => scrollToMessage(0)}
                   onPrevious={handlePrevMessage}
                   onNext={handleNextMessage}
-                  onLast={() => scrollToMessage(displayMessages.length - 1)}
+                  onLast={scrollToEnd}
                 />
               </div>
               <div className="panel-body" ref={panelBodyRef}>
