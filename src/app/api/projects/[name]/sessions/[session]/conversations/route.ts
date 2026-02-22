@@ -5,6 +5,7 @@ import {
   createConversation,
   getSessionConversations,
   discoverAndImportConversations,
+  syncConversationSummaries,
 } from "@/lib/conversations";
 import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/types";
@@ -34,10 +35,11 @@ export const GET = withTracing(async (request, { params }) => {
     );
   }
 
-  // Auto-import discovery when ?import=true
+  // Auto-import discovery and summary sync when ?import=true
   const url = new URL(request.url);
   if (url.searchParams.get("import") === "true") {
     await discoverAndImportConversations(projectPath, session);
+    await syncConversationSummaries(projectPath, session);
   }
 
   const conversations = await getSessionConversations(projectPath, sessionName);

@@ -1,9 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  projectKeys,
-  sessionKeys,
-  conversationKeys,
-} from "@/lib/query-keys";
+import { projectKeys, sessionKeys, conversationKeys } from "@/lib/query-keys";
 import { tracedFetch } from "@/lib/traced-fetch";
 import type { SessionState, ConversationState } from "@/types";
 
@@ -178,10 +174,7 @@ export function usePinProjectMutation() {
 // Git Mutations
 // ---------------------------------------------------------------------------
 
-export function useCommitMutation(
-  projectName: string,
-  sessionName: string,
-) {
+export function useCommitMutation(projectName: string, sessionName: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -206,10 +199,7 @@ export function useCommitMutation(
   });
 }
 
-export function useMergeMutation(
-  projectName: string,
-  sessionName: string,
-) {
+export function useMergeMutation(projectName: string, sessionName: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -295,6 +285,7 @@ export function useRenameConversationMutation(
   sessionName: string,
 ) {
   const queryClient = useQueryClient();
+  const listKey = conversationKeys.list(projectName, sessionName);
 
   return useMutation({
     mutationFn: ({
@@ -313,10 +304,21 @@ export function useRenameConversationMutation(
           body: JSON.stringify({ name }),
         },
       ),
+    onMutate: async ({ conversationId, name }) => {
+      await queryClient.cancelQueries({ queryKey: listKey });
+      const previous = queryClient.getQueryData<ConversationState[]>(listKey);
+      queryClient.setQueryData<ConversationState[]>(listKey, (old) =>
+        old?.map((c) => (c.id === conversationId ? { ...c, name } : c)),
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(listKey, context.previous);
+      }
+    },
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.list(projectName, sessionName),
-      });
+      void queryClient.invalidateQueries({ queryKey: listKey });
     },
   });
 }

@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ConversationState, SessionState } from "@/types";
@@ -121,7 +121,7 @@ export async function setConversationArchived(
   await writeState(state);
 }
 
-/** Rename a conversation */
+/** Rename a conversation. Also syncs to Claude Code's sessions-index.json if possible. */
 export async function renameConversation(
   projectPath: string,
   sessionName: string,
@@ -150,6 +150,15 @@ export async function renameConversation(
 
   conversation.name = name;
   await writeState(state);
+
+  // Write rename back to Claude Code's sessions-index.json
+  if (conversation.claudeSessionId) {
+    await updateSessionsIndexSummary(
+      session.worktreePath,
+      conversation.claudeSessionId,
+      name,
+    );
+  }
 }
 
 // ============================================================
@@ -166,6 +175,36 @@ export {
 // ============================================================
 // Auto-Import: Discover Claude Code sessions from filesystem
 // ============================================================
+
+/** Shape of an entry in Claude Code's sessions-index.json */
+interface SessionsIndexEntry {
+  sessionId?: string;
+  fullPath?: string;
+  firstPrompt?: string;
+  summary?: string;
+  messageCount?: number;
+  created?: string;
+  modified?: string;
+  gitBranch?: string;
+  projectPath?: string;
+}
+
+/** Read and parse Claude Code's sessions-index.json, returning entries array */
+async function readSessionsIndex(
+  claudeProjectDir: string,
+): Promise<SessionsIndexEntry[]> {
+  const indexPath = path.join(claudeProjectDir, "sessions-index.json");
+  try {
+    const raw = await readFile(indexPath, "utf-8");
+    const index = JSON.parse(raw) as {
+      version?: number;
+      entries?: SessionsIndexEntry[];
+    };
+    return Array.isArray(index.entries) ? index.entries : [];
+  } catch {
+    return [];
+  }
+}
 
 /** Metadata for a discovered Claude Code session */
 interface DiscoveredSession {
@@ -218,50 +257,30 @@ async function discoverFromIndex(
   claudeProjectDir: string,
   session: SessionState,
 ): Promise<DiscoveredSession[]> {
-  const indexPath = path.join(claudeProjectDir, "sessions-index.json");
-  try {
-    const raw = await readFile(indexPath, "utf-8");
-    const index = JSON.parse(raw) as {
-      entries?: Array<{
-        sessionId?: string;
-        fullPath?: string;
-        firstPrompt?: string;
-        summary?: string;
-        messageCount?: number;
-        created?: string;
-        modified?: string;
-        gitBranch?: string;
-        projectPath?: string;
-      }>;
+  const entries = await readSessionsIndex(claudeProjectDir);
+  if (entries.length === 0) return [];
+
+  const results: DiscoveredSession[] = [];
+  for (const entry of entries) {
+    if (!entry.sessionId || !entry.fullPath) continue;
+
+    const discovered: DiscoveredSession = {
+      sessionId: entry.sessionId,
+      transcriptPath: entry.fullPath,
+      firstPrompt: entry.firstPrompt ?? null,
+      summary: entry.summary ?? null,
+      messageCount: entry.messageCount ?? 0,
+      created: entry.created ?? new Date().toISOString(),
+      modified: entry.modified ?? new Date().toISOString(),
+      gitBranch: entry.gitBranch ?? null,
+      cwd: entry.projectPath ?? null,
     };
 
-    if (!Array.isArray(index.entries)) return [];
-
-    const results: DiscoveredSession[] = [];
-    for (const entry of index.entries) {
-      if (!entry.sessionId || !entry.fullPath) continue;
-
-      const discovered: DiscoveredSession = {
-        sessionId: entry.sessionId,
-        transcriptPath: entry.fullPath,
-        firstPrompt: entry.firstPrompt ?? null,
-        summary: entry.summary ?? null,
-        messageCount: entry.messageCount ?? 0,
-        created: entry.created ?? new Date().toISOString(),
-        modified: entry.modified ?? new Date().toISOString(),
-        gitBranch: entry.gitBranch ?? null,
-        cwd: entry.projectPath ?? null,
-      };
-
-      if (matchesSession(discovered, session)) {
-        results.push(discovered);
-      }
+    if (matchesSession(discovered, session)) {
+      results.push(discovered);
     }
-    return results;
-  } catch {
-    // File doesn't exist or is unreadable — not an error
-    return [];
   }
+  return results;
 }
 
 /**
@@ -406,4 +425,101 @@ export async function discoverAndImportConversations(
   });
 
   return imported;
+}
+
+// ============================================================
+// Summary Sync: Pull auto-generated names from Claude Code
+// ============================================================
+
+/**
+ * Sync conversation summaries from Claude Code's sessions-index.json.
+ * Updates existing conversations that have a claudeSessionId but no summary.
+ */
+export async function syncConversationSummaries(
+  projectPath: string,
+  session: SessionState,
+): Promise<void> {
+  const claudeProjectDir = getClaudeProjectDir(session.worktreePath);
+  const entries = await readSessionsIndex(claudeProjectDir);
+  if (entries.length === 0) return;
+
+  // Build lookup: Claude sessionId → summary
+  const summaryMap = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.sessionId && entry.summary) {
+      summaryMap.set(entry.sessionId, entry.summary);
+    }
+  }
+
+  // Find conversations that need summary updates
+  const needsUpdate = session.conversations.filter(
+    (c) =>
+      c.claudeSessionId !== null &&
+      c.summary === null &&
+      summaryMap.has(c.claudeSessionId),
+  );
+
+  if (needsUpdate.length === 0) return;
+
+  const state = await readState();
+  const project = state.projects[projectPath];
+  if (!project) return;
+  const sessionState = project.sessions[session.sessionName];
+  if (!sessionState) return;
+
+  let updated = 0;
+  for (const convo of sessionState.conversations) {
+    if (
+      convo.claudeSessionId !== null &&
+      convo.summary === null &&
+      summaryMap.has(convo.claudeSessionId)
+    ) {
+      convo.summary = summaryMap.get(convo.claudeSessionId)!;
+      updated++;
+    }
+  }
+
+  if (updated > 0) {
+    await writeState(state);
+    logger.info("conversations.summaries_synced", {
+      projectPath,
+      sessionName: session.sessionName,
+      count: updated,
+    });
+  }
+}
+
+// ============================================================
+// Sessions-index.json write-back for rename sync
+// ============================================================
+
+/**
+ * Update the summary field for a session entry in Claude Code's sessions-index.json.
+ * This makes renames visible when using Claude Code directly.
+ */
+async function updateSessionsIndexSummary(
+  worktreePath: string,
+  claudeSessionId: string,
+  summary: string,
+): Promise<void> {
+  const claudeProjectDir = getClaudeProjectDir(worktreePath);
+  const indexPath = path.join(claudeProjectDir, "sessions-index.json");
+
+  try {
+    const raw = await readFile(indexPath, "utf-8");
+    const index = JSON.parse(raw) as {
+      version?: number;
+      entries?: SessionsIndexEntry[];
+    };
+
+    if (!Array.isArray(index.entries)) return;
+
+    const entry = index.entries.find((e) => e.sessionId === claudeSessionId);
+    if (!entry) return;
+
+    entry.summary = summary;
+    await writeFile(indexPath, JSON.stringify(index, null, 4), "utf-8");
+  } catch {
+    // sessions-index.json missing or unwritable — skip silently
+  }
 }
