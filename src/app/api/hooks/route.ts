@@ -54,6 +54,13 @@ export const POST = withTracing(async (request: Request) => {
           sessionName: result.sessionName,
           conversationId: result.conversationId,
         });
+        broadcast({
+          type: "conversation-status",
+          projectName: result.projectName,
+          sessionName: result.sessionName,
+          conversationId: result.conversationId,
+          status: "awaiting",
+        });
       } catch {
         // Fire-and-forget: broadcast failures must not affect the hook response
       }

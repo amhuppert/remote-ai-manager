@@ -5,7 +5,7 @@ import { immer } from "zustand/middleware/immer";
 // Types
 // ---------------------------------------------------------------------------
 
-type StatusFilter = "all" | "active" | "idle";
+type StatusFilter = "all" | "active" | "running" | "idle";
 
 interface ProjectsState {
   statusFilter: StatusFilter;
@@ -65,12 +65,10 @@ const useProjectsStore = create<ProjectsStore>()(
 // Selector hooks
 // ---------------------------------------------------------------------------
 
-export const useStatusFilter = () =>
-  useProjectsStore((s) => s.statusFilter);
+export const useStatusFilter = () => useProjectsStore((s) => s.statusFilter);
 export const useShowArchivedProjects = () =>
   useProjectsStore((s) => s.showArchived);
-export const useOpenMenuId = () =>
-  useProjectsStore((s) => s.openMenuId);
+export const useOpenMenuId = () => useProjectsStore((s) => s.openMenuId);
 
 // ---------------------------------------------------------------------------
 // Action hooks
@@ -84,5 +82,4 @@ export const useOpenProjectMenu = () =>
   useProjectsStore((s) => s.openProjectMenu);
 export const useCloseProjectMenu = () =>
   useProjectsStore((s) => s.closeProjectMenu);
-export const useResetFilters = () =>
-  useProjectsStore((s) => s.resetFilters);
+export const useResetFilters = () => useProjectsStore((s) => s.resetFilters);

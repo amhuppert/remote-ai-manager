@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { sessionKeys } from "@/lib/query-keys";
+import { sessionKeys, conversationKeys } from "@/lib/query-keys";
 import type { SessionReadyEvent } from "@/types";
 
 export default function NotificationListener(): null {
@@ -32,13 +32,10 @@ export default function NotificationListener(): null {
         return;
       }
 
-      const notification = new Notification(
-        `${event.sessionName} is ready`,
-        {
-          body: `Project: ${event.projectName}`,
-          tag: `session-ready-${event.conversationId}`,
-        },
-      );
+      const notification = new Notification(`${event.sessionName} is ready`, {
+        body: `Project: ${event.projectName}`,
+        tag: `session-ready-${event.conversationId}`,
+      });
 
       notification.onclick = () => {
         window.focus();
@@ -46,6 +43,15 @@ export default function NotificationListener(): null {
         window.location.href = url;
         notification.close();
       };
+    });
+
+    es.addEventListener("conversation-status", () => {
+      // Invalidate active conversations query for unified panel refresh
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active,
+      });
+      // Also invalidate session queries for status display updates
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     });
 
     return () => {

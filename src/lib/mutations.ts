@@ -322,3 +322,87 @@ export function useRenameConversationMutation(
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Generic Conversation Mutations (project/session as variables)
+// ---------------------------------------------------------------------------
+
+/**
+ * Archive/unarchive a conversation from any project/session.
+ * Unlike `useArchiveConversationMutation`, this accepts project/session as
+ * part of the mutation variables — useful for the active conversations tab
+ * where conversations span multiple projects.
+ */
+export function useGenericArchiveConversationMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      sessionName,
+      conversationId,
+      archived,
+    }: {
+      projectName: string;
+      sessionName: string;
+      conversationId: string;
+      archived: boolean;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/archive`,
+        "archive-conversation",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ archived }),
+        },
+      ),
+    onSuccess: (_data, { projectName, sessionName }) => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.list(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active,
+      });
+    },
+  });
+}
+
+/**
+ * Rename a conversation from any project/session.
+ * Accepts project/session as part of the mutation variables.
+ */
+export function useGenericRenameConversationMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      sessionName,
+      conversationId,
+      name,
+    }: {
+      projectName: string;
+      sessionName: string;
+      conversationId: string;
+      name: string;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
+        "rename-conversation",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        },
+      ),
+    onSuccess: (_data, { projectName, sessionName }) => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.list(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active,
+      });
+    },
+  });
+}

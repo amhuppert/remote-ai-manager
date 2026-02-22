@@ -3,6 +3,7 @@ import { Anybody, Manrope, Geist_Mono } from "next/font/google";
 import Providers from "@/components/Providers";
 import NotificationListener from "@/components/NotificationListener";
 import GlobalHotkeyHelp from "@/components/GlobalHotkeyHelp";
+import UnifiedPanel from "@/components/UnifiedPanel";
 import "./globals.css";
 
 const anybody = Anybody({
@@ -65,6 +66,7 @@ export default function RootLayout({
         <Providers>
           {children}
           <NotificationListener />
+          <UnifiedPanel />
           <GlobalHotkeyHelp />
         </Providers>
       </body>

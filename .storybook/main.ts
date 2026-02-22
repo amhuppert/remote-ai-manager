@@ -1,4 +1,4 @@
-import type { StorybookConfig } from '@storybook/nextjs-vite';
+import type { StorybookConfig } from "@storybook/nextjs-vite";
 
 const config: StorybookConfig = {
   stories: ["../src/**/*.mdx", "../src/**/*.stories.@(ts|tsx)"],
@@ -13,7 +13,7 @@ const config: StorybookConfig = {
   staticDirs: ["../public"],
   viteFinal(config) {
     config.server ??= {};
-    config.server.allowedHosts = [".tail919904.ts.net"];
+    config.server.allowedHosts = true;
     return config;
   },
 };

@@ -16,6 +16,7 @@ import {
   createConversation,
   encodeProjectPath,
 } from "./conversations";
+import { broadcast } from "./sse-broadcaster";
 
 const logger = createLogger("prompt");
 
@@ -87,6 +88,8 @@ export async function executePromptStream(
     "50",
   );
 
+  const projectName = projectPath.split("/").pop() ?? projectPath;
+
   try {
     // Mark conversation as running
     await mutateConversation(
@@ -97,6 +100,19 @@ export async function executePromptStream(
         c.status = "running";
       },
     );
+
+    // Broadcast running status for unified panel
+    try {
+      broadcast({
+        type: "conversation-status",
+        projectName,
+        sessionName: session.sessionName,
+        conversationId,
+        status: "running",
+      });
+    } catch {
+      // fire-and-forget
+    }
 
     // Log CLI args excluding prompt content for security
     const cliArgsForLog = args.filter((a) => a !== promptText);
@@ -286,17 +302,31 @@ export async function executePromptStream(
 
     return { conversationId };
   } finally {
-    // Always mark conversation as ready when done (even on error)
+    // Always mark conversation as awaiting when done (even on error)
     await mutateConversation(
       projectPath,
       session.sessionName,
       conversationId,
       (c) => {
-        c.status = "ready";
+        c.status = "awaiting";
       },
     ).catch(() => {
       // best-effort status reset
     });
+
+    // Broadcast awaiting status for unified panel
+    try {
+      broadcast({
+        type: "conversation-status",
+        projectName,
+        sessionName: session.sessionName,
+        conversationId,
+        status: "awaiting",
+      });
+    } catch {
+      // fire-and-forget
+    }
+
     release();
   }
 }

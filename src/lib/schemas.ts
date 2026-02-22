@@ -16,8 +16,19 @@ export const globalConfigSchema = z.object({
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
-export const sessionStatusSchema = z.enum(["idle", "ready", "running"]);
-export type SessionStatus = z.infer<typeof sessionStatusSchema>;
+export const conversationStatusSchema = z
+  .enum(["new", "awaiting", "running"])
+  .or(
+    z
+      .enum(["idle", "ready"])
+      .transform((v) =>
+        v === "idle" ? ("new" as const) : ("awaiting" as const),
+      ),
+  );
+export type ConversationStatus = "new" | "awaiting" | "running";
+
+/** Session-level derived status (running > awaiting > idle) */
+export type DerivedSessionStatus = "running" | "awaiting" | "idle";
 
 export const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
@@ -44,7 +55,7 @@ export const conversationStateSchema = z.object({
   name: z.string().nullable().default(null),
   claudeSessionId: z.string().nullable(),
   transcriptPath: z.string().nullable(),
-  status: sessionStatusSchema,
+  status: conversationStatusSchema,
   promptCount: z.number(),
   createdAt: z.string(),
   lastActivityAt: z.string(),
@@ -185,6 +196,20 @@ export const sessionReadyEventSchema = z.object({
   conversationId: z.string(),
 });
 export type SessionReadyEvent = z.infer<typeof sessionReadyEventSchema>;
+
+export const conversationStatusEventSchema = z.object({
+  type: z.literal("conversation-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  status: z.enum(["running", "awaiting"]),
+});
+export type ConversationStatusEvent = z.infer<
+  typeof conversationStatusEventSchema
+>;
+
+/** Discriminated union of all SSE event types */
+export type SSEEvent = SessionReadyEvent | ConversationStatusEvent;
 
 export const hookEventResultSchema = z.object({
   matched: z.boolean(),

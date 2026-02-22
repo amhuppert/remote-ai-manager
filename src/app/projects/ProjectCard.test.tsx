@@ -83,7 +83,7 @@ describe("ProjectCard", () => {
     );
     const badge = container.querySelector(".project-badge");
     expect(badge?.className).toContain("active");
-    expect(badge?.textContent).toBe("active");
+    expect(badge?.textContent).toBe("running");
   });
 
   it("shows has-sessions badge when sessions exist but none running (Req 1.4)", () => {

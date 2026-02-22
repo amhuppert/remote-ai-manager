@@ -105,7 +105,7 @@ export async function processHookEvent(
         name: null,
         claudeSessionId: session_id,
         transcriptPath: transcript_path ?? null,
-        status: "ready",
+        status: "new",
         promptCount: 0,
         createdAt: now,
         lastActivityAt: now,
@@ -129,9 +129,9 @@ export async function processHookEvent(
     if (transcript_path) conversation.transcriptPath = transcript_path;
     conversation.lastActivityAt = new Date().toISOString();
 
-    // Mark conversation as ready when Claude finishes responding
+    // Mark conversation as awaiting when Claude finishes responding
     if (hook_event_name === "Stop" && conversation.status === "running") {
-      conversation.status = "ready";
+      conversation.status = "awaiting";
     }
   }
 

@@ -1,0 +1,86 @@
+"use client";
+
+import Link from "next/link";
+import { useActiveConversationsQuery } from "@/lib/queries";
+import {
+  useUnifiedPanelOpen,
+  useCloseUnifiedPanel,
+} from "@/stores/unified-panel.store";
+
+function formatRelativeTime(isoDate: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+export default function UnifiedPanel(): React.JSX.Element | null {
+  const isOpen = useUnifiedPanelOpen();
+  const close = useCloseUnifiedPanel();
+  const { data: conversations, isPending } = useActiveConversationsQuery();
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      <div className="unified-panel-backdrop" onClick={close} />
+      <aside className="unified-panel">
+        <div className="unified-panel-header">
+          <span className="unified-panel-title">Active Conversations</span>
+          <button
+            className="btn-icon-only unified-panel-close"
+            onClick={close}
+            title="Close panel"
+          >
+            &#10005;
+          </button>
+        </div>
+        <div className="unified-panel-body">
+          {isPending ? (
+            <div className="unified-panel-empty">Loading...</div>
+          ) : !conversations || conversations.length === 0 ? (
+            <div className="unified-panel-empty">
+              No active conversations.
+              <br />
+              <span className="unified-panel-empty-hint">
+                Conversations with status running or awaiting will appear here.
+              </span>
+            </div>
+          ) : (
+            <ul className="unified-panel-list">
+              {conversations.map((convo) => (
+                <li key={convo.id}>
+                  <Link
+                    href={`/projects/${encodeURIComponent(convo.projectName)}/${encodeURIComponent(convo.sessionName)}/${convo.id}`}
+                    className="unified-panel-item"
+                    onClick={close}
+                  >
+                    <span
+                      className={`unified-panel-dot ${convo.status}`}
+                      title={convo.status}
+                    />
+                    <div className="unified-panel-item-body">
+                      <div className="unified-panel-item-name">
+                        {convo.name ?? "Unnamed conversation"}
+                      </div>
+                      <div className="unified-panel-item-meta">
+                        {convo.projectName} / {convo.sessionName}
+                      </div>
+                    </div>
+                    <div className="unified-panel-item-time">
+                      {formatRelativeTime(convo.lastActivityAt)}
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </aside>
+    </>
+  );
+}

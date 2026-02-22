@@ -24,17 +24,12 @@ export const sessionKeys = {
   commits: (projectName: string, sessionName: string) =>
     [...sessionKeys.all, "commits", projectName, sessionName] as const,
   commitDiff: (projectName: string, sessionName: string, hash: string) =>
-    [
-      ...sessionKeys.all,
-      "commitDiff",
-      projectName,
-      sessionName,
-      hash,
-    ] as const,
+    [...sessionKeys.all, "commitDiff", projectName, sessionName, hash] as const,
 };
 
 export const conversationKeys = {
   all: ["conversations"] as const,
+  active: ["conversations", "active"] as const,
   list: (projectName: string, sessionName: string) =>
     [...conversationKeys.all, "list", projectName, sessionName] as const,
   messages: (

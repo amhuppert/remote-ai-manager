@@ -1,6 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import {
+  useUnifiedPanelOpen,
+  useToggleUnifiedPanel,
+} from "@/stores/unified-panel.store";
+import { useActiveConversationsQuery } from "@/lib/queries";
 
 export interface BreadcrumbSegment {
   label: string;
@@ -24,6 +29,11 @@ export default function Topbar({
   sessionControls,
   globalStatus,
 }: TopbarProps): React.JSX.Element {
+  const panelOpen = useUnifiedPanelOpen();
+  const togglePanel = useToggleUnifiedPanel();
+  const { data: activeConversations } = useActiveConversationsQuery();
+  const activeCount = activeConversations?.length ?? 0;
+
   return (
     <header className="topbar">
       <div className="topbar-brand">
@@ -46,6 +56,17 @@ export default function Topbar({
         </nav>
       </div>
       <div className="topbar-status">
+        <button
+          className={`unified-panel-toggle${panelOpen ? " active" : ""}`}
+          onClick={togglePanel}
+          title="Active conversations"
+          type="button"
+        >
+          <span className="unified-panel-toggle-icon">&#9776;</span>
+          {activeCount > 0 && (
+            <span className="unified-panel-toggle-badge">{activeCount}</span>
+          )}
+        </button>
         {page !== "detail" && (
           <div className="topbar-status-default">{globalStatus}</div>
         )}

@@ -8,7 +8,8 @@ import type { MessageContentBlock as _MessageContentBlock } from "@/lib/schemas"
 export type {
   ClaudeModel,
   GlobalConfig,
-  SessionStatus,
+  ConversationStatus,
+  DerivedSessionStatus,
   SessionState,
   ProjectState,
   ManagerState,
@@ -44,6 +45,8 @@ export type {
   CommandItem,
   CommandsResponse,
   SessionReadyEvent,
+  ConversationStatusEvent,
+  SSEEvent,
   HookEventResult,
 } from "@/lib/schemas";
 

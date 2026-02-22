@@ -20,6 +20,17 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+// Mock unified panel store hooks
+vi.mock("@/stores/unified-panel.store", () => ({
+  useUnifiedPanelOpen: () => false,
+  useToggleUnifiedPanel: () => vi.fn(),
+}));
+
+// Mock active conversations query
+vi.mock("@/lib/queries", () => ({
+  useActiveConversationsQuery: () => ({ data: undefined }),
+}));
+
 describe("Topbar", () => {
   // =========================================================================
   // 6.2 – Topbar (Req 5.1–5.5)
@@ -87,5 +98,11 @@ describe("Topbar", () => {
     // Global status should not be visible (rendered in a hidden section)
     const statusDefault = container.querySelector(".topbar-status-default");
     expect(statusDefault).toBeNull();
+  });
+
+  it("renders unified panel toggle button", () => {
+    const { container } = render(<Topbar breadcrumbs={[]} page="projects" />);
+    const toggle = container.querySelector(".unified-panel-toggle");
+    expect(toggle).toBeDefined();
   });
 });

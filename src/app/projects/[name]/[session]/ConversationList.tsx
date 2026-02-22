@@ -49,10 +49,8 @@ function formatDate(iso: string): string {
 }
 
 function ConversationStatusDot({ status }: { status: string }) {
-  const cls =
-    status === "running" ? "running" : status === "ready" ? "ready" : "idle";
   return (
-    <span className={`session-status ${cls}`}>
+    <span className={`session-status ${status}`}>
       <span className="dot" />
       {status}
     </span>
@@ -367,7 +365,7 @@ export default function ConversationList({
                           handleArchive(convo.id, !convo.archived);
                         }}
                       >
-                        {convo.archived ? "\u21A9" : "\u2912"}
+                        {convo.archived ? "\u21A9" : "\u2913"}
                       </button>
                     </div>
                   </Link>

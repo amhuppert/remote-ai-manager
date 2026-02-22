@@ -135,7 +135,7 @@ describe("processHookEvent", () => {
                   name: null,
                   claudeSessionId: "existing-id",
                   transcriptPath: null,
-                  status: "ready",
+                  status: "new",
 
                   promptCount: 0,
                   createdAt: "2024-01-01T00:00:00Z",
@@ -275,7 +275,7 @@ describe("processHookEvent", () => {
 
     const convo =
       mockState.projects["/proj"]!.sessions["s1"]!.conversations[0]!;
-    expect(convo.status).toBe("ready");
+    expect(convo.status).toBe("awaiting");
   });
 
   it("does not change status on non-Stop events", async () => {
@@ -350,7 +350,7 @@ describe("processHookEvent", () => {
                   name: null,
                   claudeSessionId: null,
                   transcriptPath: null,
-                  status: "ready",
+                  status: "new",
 
                   promptCount: 0,
                   createdAt: "2024-01-01T00:00:00Z",

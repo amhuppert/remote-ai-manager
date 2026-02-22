@@ -1,4 +1,4 @@
-import type { SessionReadyEvent } from "@/types";
+import type { SSEEvent } from "@/types";
 
 const encoder = new TextEncoder();
 
@@ -28,12 +28,12 @@ export function removeClient(
   getClients().delete(controller);
 }
 
-export function broadcast(event: SessionReadyEvent): void {
+export function broadcast(event: SSEEvent): void {
   const clients = getClients();
   if (clients.size === 0) return;
 
   const frame = encoder.encode(
-    `event: session-ready\ndata: ${JSON.stringify(event)}\n\n`,
+    `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
   );
 
   for (const controller of clients) {

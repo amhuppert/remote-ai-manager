@@ -282,7 +282,7 @@ describe("createSession", () => {
     expect(session.branchName).toBe("csm/my-feature");
     expect(session.conversations).toHaveLength(1);
     expect(session.conversations[0]).toMatchObject({
-      status: "ready",
+      status: "new",
       source: "csm",
       promptCount: 0,
       name: null,

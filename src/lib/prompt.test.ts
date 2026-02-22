@@ -73,7 +73,7 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     name: null,
     claudeSessionId: null,
     transcriptPath: null,
-    status: "ready" as const,
+    status: "new" as const,
     promptCount: 0,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
@@ -300,9 +300,9 @@ describe("executePromptStream", () => {
     // Second snapshot should have conversation promptCount incremented
     expect(updateSnapshots[1]!.conversations[0]!.promptCount).toBe(1);
 
-    // Last snapshot: conversation status should be "ready"
+    // Last snapshot: conversation status should be "awaiting"
     const last = updateSnapshots[updateSnapshots.length - 1]!;
-    expect(last.conversations[0]!.status).toBe("ready");
+    expect(last.conversations[0]!.status).toBe("awaiting");
   });
 
   it("handles non-zero exit with accumulated content", async () => {
@@ -371,15 +371,15 @@ describe("executePromptStream", () => {
     expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 
-  it("resets conversation status to ready in finally block", async () => {
+  it("resets conversation status to awaiting in finally block", async () => {
     const child = createMockChild([]);
     spawnMock.mockReturnValue(child);
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
-    // Last snapshot should set conversation status to "ready"
+    // Last snapshot should set conversation status to "awaiting"
     const last = updateSnapshots[updateSnapshots.length - 1]!;
-    expect(last.conversations[0]!.status).toBe("ready");
+    expect(last.conversations[0]!.status).toBe("awaiting");
   });
 
   it("uses --resume for existing conversation with claudeSessionId", async () => {

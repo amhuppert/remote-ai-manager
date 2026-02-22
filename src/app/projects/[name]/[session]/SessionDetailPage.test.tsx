@@ -53,7 +53,7 @@ const baseSession: SessionState = {
       name: null,
       claudeSessionId: null,
       transcriptPath: null,
-      status: "ready",
+      status: "new",
       promptCount: 5,
       createdAt: "2024-06-15T10:00:00Z",
       lastActivityAt: "2024-06-15T12:00:00Z",
@@ -115,6 +115,13 @@ vi.mock("@/lib/queries", () => ({
     isPending: false,
     isError: false,
   }),
+  useActiveConversationsQuery: () => ({ data: undefined }),
+}));
+
+// Mock unified panel store
+vi.mock("@/stores/unified-panel.store", () => ({
+  useUnifiedPanelOpen: () => false,
+  useToggleUnifiedPanel: () => vi.fn(),
 }));
 
 // Mock mutations

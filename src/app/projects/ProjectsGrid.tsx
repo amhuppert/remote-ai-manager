@@ -74,8 +74,9 @@ export default function ProjectsGrid(): React.JSX.Element {
     const nonArchived = projects.filter((p) => !archivedSet.has(p.path));
     return {
       all: nonArchived.length,
-      active: nonArchived.filter((p) => p.hasRunningSession).length,
-      idle: nonArchived.filter((p) => !p.hasRunningSession).length,
+      active: nonArchived.filter((p) => p.activeSessions > 0).length,
+      running: nonArchived.filter((p) => p.hasRunningSession).length,
+      idle: nonArchived.filter((p) => p.activeSessions === 0).length,
     };
   }, [projects, archivedSet]);
 
@@ -101,8 +102,9 @@ export default function ProjectsGrid(): React.JSX.Element {
       if (isArchived && !showArchived) return false;
       if (query && !p.name.toLowerCase().includes(query)) return false;
       if (!isArchived && statusFilter !== "all") {
-        if (statusFilter === "active" && !p.hasRunningSession) return false;
-        if (statusFilter === "idle" && p.hasRunningSession) return false;
+        if (statusFilter === "active" && p.activeSessions === 0) return false;
+        if (statusFilter === "running" && !p.hasRunningSession) return false;
+        if (statusFilter === "idle" && p.activeSessions > 0) return false;
       }
       return true;
     });
@@ -231,17 +233,21 @@ export default function ProjectsGrid(): React.JSX.Element {
               </div>
 
               <div className="filter-pills">
-                {(["all", "active", "idle"] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    className={`filter-pill${statusFilter === filter ? " active" : ""}`}
-                    onClick={() => filterByStatus(filter)}
-                    type="button"
-                  >
-                    {filter}
-                    <span className="filter-pill-count">{counts[filter]}</span>
-                  </button>
-                ))}
+                {(["all", "active", "running", "idle"] as const).map(
+                  (filter) => (
+                    <button
+                      key={filter}
+                      className={`filter-pill${statusFilter === filter ? " active" : ""}`}
+                      onClick={() => filterByStatus(filter)}
+                      type="button"
+                    >
+                      {filter}
+                      <span className="filter-pill-count">
+                        {counts[filter]}
+                      </span>
+                    </button>
+                  ),
+                )}
               </div>
 
               {archivedCount > 0 && (

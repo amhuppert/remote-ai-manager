@@ -31,34 +31,58 @@ vi.mock("next/navigation", () => ({
 }));
 
 // Mock queries
-const mockSessionsData = { data: undefined as SessionState[] | undefined, isPending: false };
-const mockHooksData = { data: undefined as { installed: boolean; hasUserPromptSubmit: boolean; hasStop: boolean } | undefined, isPending: false };
+const mockSessionsData = {
+  data: undefined as SessionState[] | undefined,
+  isPending: false,
+};
+const mockHooksData = {
+  data: undefined as
+    | { installed: boolean; hasUserPromptSubmit: boolean; hasStop: boolean }
+    | undefined,
+  isPending: false,
+};
 
 vi.mock("@/lib/queries", () => ({
   useSessionsQuery: () => mockSessionsData,
   useHooksStatusQuery: () => mockHooksData,
+  useActiveConversationsQuery: () => ({ data: undefined }),
+}));
+
+// Mock unified panel store
+vi.mock("@/stores/unified-panel.store", () => ({
+  useUnifiedPanelOpen: () => false,
+  useToggleUnifiedPanel: () => vi.fn(),
 }));
 
 // Mock mutations
 const deleteMutateMock = vi.fn();
 vi.mock("@/lib/mutations", () => ({
   useCreateSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useDeleteSessionMutation: () => ({ mutate: deleteMutateMock, isPending: false }),
+  useDeleteSessionMutation: () => ({
+    mutate: deleteMutateMock,
+    isPending: false,
+  }),
   useArchiveSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 // Mock sessions store
 let storeShowCreateModal = false;
-let storeDeleteTarget: { sessionName: string; projectName: string } | null = null;
+let storeDeleteTarget: { sessionName: string; projectName: string } | null =
+  null;
 let storeShowArchived = false;
 
 vi.mock("@/stores/sessions.store", () => ({
   useShowCreateModal: () => storeShowCreateModal,
   useDeleteTarget: () => storeDeleteTarget,
   useShowArchivedSessions: () => storeShowArchived,
-  useOpenCreateModal: () => () => { storeShowCreateModal = true; },
+  useOpenCreateModal: () => () => {
+    storeShowCreateModal = true;
+  },
   useCloseCreateModal: () => vi.fn(),
-  useConfirmDeleteSession: () => (target: { sessionName: string; projectName: string }) => { storeDeleteTarget = target; },
+  useConfirmDeleteSession:
+    () => (target: { sessionName: string; projectName: string }) => {
+      storeDeleteTarget = target;
+    },
   useCancelDeleteSession: () => vi.fn(),
   useToggleArchivedSessions: () => vi.fn(),
 }));
@@ -95,7 +119,7 @@ const makeSessions = (count: number): SessionState[] =>
         name: null,
         claudeSessionId: null,
         transcriptPath: null,
-        status: i === 0 ? ("running" as const) : ("ready" as const),
+        status: i === 0 ? ("running" as const) : ("awaiting" as const),
         promptCount: i * 3,
         createdAt: now,
         lastActivityAt: now,
@@ -155,7 +179,7 @@ describe("SessionsList", () => {
     const badges = container.querySelectorAll(".session-status");
     expect(badges.length).toBe(2);
     expect(badges[0]!.textContent).toContain("running");
-    expect(badges[1]!.textContent).toContain("ready");
+    expect(badges[1]!.textContent).toContain("awaiting");
   });
 
   it("renders prompt counts in table (Req 2.2)", () => {

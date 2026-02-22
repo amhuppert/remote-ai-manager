@@ -2,15 +2,17 @@
  * Pure derive functions for session-level properties computed from conversations.
  * This module has NO Node.js dependencies and is safe to import from client components.
  */
-import type { SessionState, SessionStatus } from "@/types";
+import type { SessionState, DerivedSessionStatus } from "@/types";
 
 /**
  * Derive session status from conversations:
  * - `running` if any conversation is running
- * - `ready` if any conversation is ready
- * - `idle` otherwise (all idle or no conversations)
+ * - `awaiting` if any conversation is awaiting
+ * - `idle` otherwise (all new or no conversations)
  */
-export function deriveSessionStatus(session: SessionState): SessionStatus {
+export function deriveSessionStatus(
+  session: SessionState,
+): DerivedSessionStatus {
   if (session.conversations.length === 0) {
     return "idle";
   }
@@ -18,8 +20,8 @@ export function deriveSessionStatus(session: SessionState): SessionStatus {
   if (session.conversations.some((c) => c.status === "running")) {
     return "running";
   }
-  if (session.conversations.some((c) => c.status === "ready")) {
-    return "ready";
+  if (session.conversations.some((c) => c.status === "awaiting")) {
+    return "awaiting";
   }
   return "idle";
 }

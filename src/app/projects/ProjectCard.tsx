@@ -29,7 +29,7 @@ export default function ProjectCard({
       ? "project-badge has-sessions"
       : "project-badge idle";
   const badgeText = project.hasRunningSession
-    ? "active"
+    ? "running"
     : project.activeSessions > 0
       ? `${project.activeSessions} session${project.activeSessions === 1 ? "" : "s"}`
       : "idle";

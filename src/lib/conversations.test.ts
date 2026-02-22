@@ -75,7 +75,7 @@ describe("createConversation", () => {
     expect(convo.name).toBeNull();
     expect(convo.claudeSessionId).toBeNull();
     expect(convo.transcriptPath).toBeNull();
-    expect(convo.status).toBe("ready");
+    expect(convo.status).toBe("new");
     expect(convo.promptCount).toBe(0);
     expect(convo.source).toBe("csm");
     expect(convo.summary).toBeNull();
@@ -318,31 +318,31 @@ describe("deriveSessionStatus", () => {
     const { deriveSessionStatus } = await import("./conversations");
 
     const session = makeSessionWith([
-      makeConvo({ status: "ready" }),
+      makeConvo({ status: "awaiting" }),
       makeConvo({ status: "running" }),
-      makeConvo({ status: "idle" }),
+      makeConvo({ status: "new" }),
     ]);
 
     expect(deriveSessionStatus(session)).toBe("running");
   });
 
-  it("returns ready if any conversation is ready and none running", async () => {
+  it("returns awaiting if any conversation is awaiting and none running", async () => {
     const { deriveSessionStatus } = await import("./conversations");
 
     const session = makeSessionWith([
-      makeConvo({ status: "idle" }),
-      makeConvo({ status: "ready" }),
+      makeConvo({ status: "new" }),
+      makeConvo({ status: "awaiting" }),
     ]);
 
-    expect(deriveSessionStatus(session)).toBe("ready");
+    expect(deriveSessionStatus(session)).toBe("awaiting");
   });
 
-  it("returns idle when all conversations are idle", async () => {
+  it("returns idle when all conversations are new", async () => {
     const { deriveSessionStatus } = await import("./conversations");
 
     const session = makeSessionWith([
-      makeConvo({ status: "idle" }),
-      makeConvo({ status: "idle" }),
+      makeConvo({ status: "new" }),
+      makeConvo({ status: "new" }),
     ]);
 
     expect(deriveSessionStatus(session)).toBe("idle");
@@ -395,6 +395,56 @@ describe("deriveSessionLastActivity", () => {
 
     const session = makeSessionWith([]);
     expect(deriveSessionLastActivity(session)).toBe("2024-01-01T00:00:00Z");
+  });
+});
+
+// ============================================================
+// Schema Migration: conversationStatusSchema
+// ============================================================
+
+describe("conversationStatusSchema migration", () => {
+  it("accepts new status values as-is", async () => {
+    const { conversationStatusSchema } = await import("./schemas");
+
+    expect(conversationStatusSchema.parse("new")).toBe("new");
+    expect(conversationStatusSchema.parse("awaiting")).toBe("awaiting");
+    expect(conversationStatusSchema.parse("running")).toBe("running");
+  });
+
+  it("migrates idle to new", async () => {
+    const { conversationStatusSchema } = await import("./schemas");
+
+    expect(conversationStatusSchema.parse("idle")).toBe("new");
+  });
+
+  it("migrates ready to awaiting", async () => {
+    const { conversationStatusSchema } = await import("./schemas");
+
+    expect(conversationStatusSchema.parse("ready")).toBe("awaiting");
+  });
+
+  it("rejects invalid status values", async () => {
+    const { conversationStatusSchema } = await import("./schemas");
+
+    const result = conversationStatusSchema.safeParse("invalid");
+    expect(result.success).toBe(false);
+  });
+
+  it("migrates legacy status in full conversation state parsing", async () => {
+    const { conversationStateSchema } = await import("./schemas");
+
+    const legacyConvo = {
+      id: "test-id",
+      claudeSessionId: null,
+      transcriptPath: null,
+      status: "idle",
+      promptCount: 0,
+      createdAt: "2024-01-01T00:00:00Z",
+      lastActivityAt: "2024-01-01T00:00:00Z",
+    };
+
+    const parsed = conversationStateSchema.parse(legacyConvo);
+    expect(parsed.status).toBe("new");
   });
 });
 
@@ -479,7 +529,7 @@ describe("discoverAndImportConversations", () => {
     expect(imported).toHaveLength(1);
     expect(imported[0]!.claudeSessionId).toBe("abc-123");
     expect(imported[0]!.source).toBe("imported");
-    expect(imported[0]!.status).toBe("idle");
+    expect(imported[0]!.status).toBe("new");
     expect(imported[0]!.summary).toBe("Test session");
     expect(imported[0]!.promptCount).toBe(5);
   });
@@ -688,7 +738,7 @@ function makeConvo(
     name: null,
     claudeSessionId: null,
     transcriptPath: null,
-    status: "ready",
+    status: "new",
     promptCount: 0,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",

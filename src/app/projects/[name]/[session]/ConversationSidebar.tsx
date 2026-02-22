@@ -5,9 +5,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ConversationState } from "@/types";
 import {
+  useActiveConversationsQuery,
+  type ActiveConversation,
+} from "@/lib/queries";
+import {
   useCreateConversationMutation,
   useArchiveConversationMutation,
   useRenameConversationMutation,
+  useGenericArchiveConversationMutation,
+  useGenericRenameConversationMutation,
 } from "@/lib/mutations";
 import {
   useSidebarCollapsed,
@@ -15,6 +21,25 @@ import {
   useHydrateSidebar,
 } from "@/stores/session-detail.store";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatRelativeTime(isoDate: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 interface Props {
   projectName: string;
@@ -42,7 +67,14 @@ export default function ConversationSidebar({
   const toggleCollapsed = useToggleSidebar();
   const hydrateSidebar = useHydrateSidebar();
 
-  // --- Mutations ---
+  // --- Active conversations query ---
+  const { data: activeConversations } = useActiveConversationsQuery();
+  const activeConvoList = useMemo(
+    () => activeConversations ?? [],
+    [activeConversations],
+  );
+
+  // --- Session mutations ---
   const createConvoMutation = useCreateConversationMutation(
     projectName,
     sessionName,
@@ -51,8 +83,17 @@ export default function ConversationSidebar({
     projectName,
     sessionName,
   );
+  const renameConvoMutation = useRenameConversationMutation(
+    projectName,
+    sessionName,
+  );
+
+  // --- Generic mutations (for active tab — different projects/sessions) ---
+  const genericArchiveMutation = useGenericArchiveConversationMutation();
+  const genericRenameMutation = useGenericRenameConversationMutation();
 
   // --- Local state ---
+  const [activeTab, setActiveTab] = useState<"session" | "active">("session");
   const [showArchived, setShowArchived] = useState(false);
 
   const archivedCount = useMemo(
@@ -91,11 +132,19 @@ export default function ConversationSidebar({
     [archiveConvoMutation],
   );
 
-  // --- Rename conversation ---
-  const renameConvoMutation = useRenameConversationMutation(
-    projectName,
-    sessionName,
+  const handleActiveArchive = useCallback(
+    (convo: ActiveConversation, archived: boolean) => {
+      genericArchiveMutation.mutate({
+        projectName: convo.projectName,
+        sessionName: convo.sessionName,
+        conversationId: convo.id,
+        archived,
+      });
+    },
+    [genericArchiveMutation],
   );
+
+  // --- Rename conversation (session tab) ---
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -107,9 +156,9 @@ export default function ConversationSidebar({
     }
   }, [editingId]);
 
-  const handleRenameStart = useCallback((convo: ConversationState) => {
-    setEditingId(convo.id);
-    setEditValue(convo.name ?? convo.summary ?? "");
+  const handleRenameStart = useCallback((id: string, name: string) => {
+    setEditingId(id);
+    setEditValue(name);
   }, []);
 
   const handleRenameSubmit = useCallback(
@@ -127,10 +176,47 @@ export default function ConversationSidebar({
     [editValue, renameConvoMutation],
   );
 
+  // --- Rename for active tab conversations ---
+  const [activeEditingId, setActiveEditingId] = useState<string | null>(null);
+  const [activeEditValue, setActiveEditValue] = useState("");
+  const activeEditInputRef = useRef<HTMLInputElement>(null);
+  const activeEditConvoRef = useRef<ActiveConversation | null>(null);
+
+  useEffect(() => {
+    if (activeEditingId && activeEditInputRef.current) {
+      activeEditInputRef.current.focus();
+      activeEditInputRef.current.select();
+    }
+  }, [activeEditingId]);
+
+  const handleActiveRenameStart = useCallback((convo: ActiveConversation) => {
+    setActiveEditingId(convo.id);
+    setActiveEditValue(convo.name ?? "");
+    activeEditConvoRef.current = convo;
+  }, []);
+
+  const handleActiveRenameSubmit = useCallback(
+    (conversationId: string) => {
+      const trimmed = activeEditValue.trim();
+      if (!trimmed || !activeEditConvoRef.current) {
+        setActiveEditingId(null);
+        return;
+      }
+      genericRenameMutation.mutate(
+        {
+          projectName: activeEditConvoRef.current.projectName,
+          sessionName: activeEditConvoRef.current.sessionName,
+          conversationId,
+          name: trimmed,
+        },
+        { onSettled: () => setActiveEditingId(null) },
+      );
+    },
+    [activeEditValue, genericRenameMutation],
+  );
+
   const statusDot = (status: string) => {
-    const cls =
-      status === "running" ? "running" : status === "ready" ? "ready" : "idle";
-    return <span className={`sidebar-dot ${cls}`} />;
+    return <span className={`sidebar-dot ${status}`} />;
   };
 
   return (
@@ -150,104 +236,247 @@ export default function ConversationSidebar({
           <button
             className="btn-icon-only convo-sidebar-toggle"
             onClick={toggleCollapsed}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            data-tooltip={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             {collapsed ? "\u25B6" : "\u25C0"}
           </button>
           <button
             className="convo-sidebar-close"
             onClick={onMobileClose}
-            title="Close"
+            data-tooltip="Close"
           >
             &#10005;
           </button>
         </div>
         {(!collapsed || mobileOpen) && (
           <>
-            <div className="convo-sidebar-list">
-              {filteredConversations.map((convo) => (
-                <Link
-                  key={convo.id}
-                  href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`}
-                  className={`convo-sidebar-item${convo.id === activeConversationId ? " active" : ""}${convo.archived ? " archived" : ""}`}
-                >
-                  {statusDot(convo.status)}
-                  <div className="convo-sidebar-item-body">
-                    {editingId === convo.id ? (
-                      <input
-                        ref={editInputRef}
-                        className="convo-rename-input"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            void handleRenameSubmit(convo.id);
-                          } else if (e.key === "Escape") {
-                            setEditingId(null);
-                          }
-                        }}
-                        onBlur={() => void handleRenameSubmit(convo.id)}
+            <div className="convo-sidebar-tabs">
+              <button
+                className={`convo-sidebar-tab${activeTab === "session" ? " active" : ""}`}
+                onClick={() => setActiveTab("session")}
+              >
+                Session
+              </button>
+              <button
+                className={`convo-sidebar-tab${activeTab === "active" ? " active" : ""}`}
+                onClick={() => setActiveTab("active")}
+              >
+                Active
+                {activeConvoList.length > 0 && (
+                  <span className="convo-sidebar-tab-badge">
+                    {activeConvoList.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {activeTab === "session" ? (
+              <>
+                <div className="convo-sidebar-list">
+                  {filteredConversations.map((convo) => (
+                    <Link
+                      key={convo.id}
+                      href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`}
+                      className={`convo-sidebar-item${convo.id === activeConversationId ? " active" : ""}${convo.archived ? " archived" : ""}`}
+                    >
+                      {statusDot(convo.status)}
+                      <div className="convo-sidebar-item-body">
+                        {editingId === convo.id ? (
+                          <input
+                            ref={editInputRef}
+                            className="convo-rename-input"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                void handleRenameSubmit(convo.id);
+                              } else if (e.key === "Escape") {
+                                setEditingId(null);
+                              }
+                            }}
+                            onBlur={() => void handleRenameSubmit(convo.id)}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                            maxLength={200}
+                          />
+                        ) : (
+                          <div className="convo-sidebar-item-summary">
+                            {convo.name ?? convo.summary ?? "New conversation"}
+                          </div>
+                        )}
+                        <div className="convo-sidebar-item-meta">
+                          {convo.promptCount} prompt
+                          {convo.promptCount !== 1 ? "s" : ""}
+                          {convo.source === "imported" && " \u00B7 imported"}
+                        </div>
+                      </div>
+                      <button
+                        className="btn-icon-only convo-sidebar-item-action"
+                        data-tooltip="Rename"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
+                          handleRenameStart(
+                            convo.id,
+                            convo.name ?? convo.summary ?? "",
+                          );
                         }}
-                        maxLength={200}
-                      />
-                    ) : (
-                      <div className="convo-sidebar-item-summary">
-                        {convo.name ?? convo.summary ?? "New conversation"}
-                      </div>
-                    )}
-                    <div className="convo-sidebar-item-meta">
-                      {convo.promptCount} prompt
-                      {convo.promptCount !== 1 ? "s" : ""}
-                      {convo.source === "imported" && " \u00B7 imported"}
-                    </div>
+                      >
+                        &#9998;
+                      </button>
+                      <button
+                        className="btn-icon-only convo-sidebar-item-action"
+                        data-tooltip={convo.archived ? "Unarchive" : "Archive"}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleArchive(convo.id, !convo.archived);
+                        }}
+                      >
+                        {convo.archived ? "\u21A9" : "\u2913"}
+                      </button>
+                    </Link>
+                  ))}
+                </div>
+                <div className="convo-sidebar-footer">
+                  {archivedCount > 0 && (
+                    <button
+                      className={`convo-sidebar-archive-toggle${showArchived ? " active" : ""}`}
+                      onClick={() => setShowArchived((v) => !v)}
+                      type="button"
+                    >
+                      Archived ({archivedCount})
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-sm convo-sidebar-new"
+                    onClick={handleNewConversation}
+                    disabled={createConvoMutation.isPending || isFinished}
+                  >
+                    + New
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="convo-sidebar-list">
+                {activeConvoList.length === 0 ? (
+                  <div className="convo-sidebar-empty">
+                    No active conversations.
+                    <span className="convo-sidebar-empty-hint">
+                      Running or awaiting conversations will appear here.
+                    </span>
                   </div>
-                  <button
-                    className="btn-icon-only convo-sidebar-item-action"
-                    title="Rename"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleRenameStart(convo);
-                    }}
-                  >
-                    &#9998;
-                  </button>
-                  <button
-                    className="btn-icon-only convo-sidebar-item-action"
-                    title={convo.archived ? "Unarchive" : "Archive"}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleArchive(convo.id, !convo.archived);
-                    }}
-                  >
-                    {convo.archived ? "\u21A9" : "\u2912"}
-                  </button>
-                </Link>
-              ))}
-            </div>
-            <div className="convo-sidebar-footer">
-              {archivedCount > 0 && (
-                <button
-                  className={`convo-sidebar-archive-toggle${showArchived ? " active" : ""}`}
-                  onClick={() => setShowArchived((v) => !v)}
-                  type="button"
-                >
-                  Archived ({archivedCount})
-                </button>
-              )}
-              <button
-                className="btn btn-sm convo-sidebar-new"
-                onClick={handleNewConversation}
-                disabled={createConvoMutation.isPending || isFinished}
-              >
-                + New
-              </button>
-            </div>
+                ) : (
+                  activeConvoList.map((convo) => (
+                    <Link
+                      key={convo.id}
+                      href={`/projects/${encodeURIComponent(convo.projectName)}/${encodeURIComponent(convo.sessionName)}/${convo.id}`}
+                      className="convo-sidebar-item"
+                    >
+                      {statusDot(convo.status)}
+                      <div className="convo-sidebar-item-body">
+                        <div className="convo-sidebar-item-name-row">
+                          {activeEditingId === convo.id ? (
+                            <input
+                              ref={activeEditInputRef}
+                              className="convo-rename-input"
+                              value={activeEditValue}
+                              onChange={(e) =>
+                                setActiveEditValue(e.target.value)
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  void handleActiveRenameSubmit(convo.id);
+                                } else if (e.key === "Escape") {
+                                  setActiveEditingId(null);
+                                }
+                              }}
+                              onBlur={() =>
+                                void handleActiveRenameSubmit(convo.id)
+                              }
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
+                              maxLength={200}
+                              style={{ flex: 1 }}
+                            />
+                          ) : (
+                            <>
+                              <div className="convo-sidebar-item-summary">
+                                {convo.name ?? "Unnamed conversation"}
+                              </div>
+                              <span className="convo-sidebar-active-time">
+                                {formatRelativeTime(convo.lastActivityAt)}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        {activeEditingId !== convo.id && (
+                          <div className="convo-sidebar-active-meta">
+                            <span
+                              className="convo-sidebar-meta-chip"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                router.push(
+                                  `/projects/${encodeURIComponent(convo.projectName)}`,
+                                );
+                              }}
+                              role="link"
+                              tabIndex={0}
+                            >
+                              {convo.projectName}
+                            </span>
+                            <span className="convo-sidebar-meta-sep">/</span>
+                            <span
+                              className="convo-sidebar-meta-chip"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                router.push(
+                                  `/projects/${encodeURIComponent(convo.projectName)}/${encodeURIComponent(convo.sessionName)}`,
+                                );
+                              }}
+                              role="link"
+                              tabIndex={0}
+                            >
+                              {convo.sessionName}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        className="btn-icon-only convo-sidebar-item-action"
+                        data-tooltip="Rename"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleActiveRenameStart(convo);
+                        }}
+                      >
+                        &#9998;
+                      </button>
+                      <button
+                        className="btn-icon-only convo-sidebar-item-action"
+                        data-tooltip="Archive"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleActiveArchive(convo, true);
+                        }}
+                      >
+                        {"\u2913"}
+                      </button>
+                    </Link>
+                  ))
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

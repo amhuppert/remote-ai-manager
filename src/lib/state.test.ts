@@ -103,7 +103,7 @@ describe("state", () => {
       source: "csm" as const,
       claudeSessionId: null,
       transcriptPath: null,
-      status: "ready" as const,
+      status: "new" as const,
       promptCount: 0,
     };
 
@@ -129,7 +129,7 @@ describe("state", () => {
       source: "csm" as const,
       claudeSessionId: null,
       transcriptPath: null,
-      status: "ready" as const,
+      status: "new" as const,
       promptCount: 0,
     };
 
@@ -154,7 +154,7 @@ describe("state", () => {
       source: "csm" as const,
       claudeSessionId: null,
       transcriptPath: null,
-      status: "ready" as const,
+      status: "new" as const,
       promptCount: 0,
     };
 

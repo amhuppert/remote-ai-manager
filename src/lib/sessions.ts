@@ -168,7 +168,7 @@ export async function createSession(
     name: null,
     claudeSessionId: null,
     transcriptPath: null,
-    status: "ready",
+    status: "new",
     promptCount: 0,
     createdAt: now,
     lastActivityAt: now,

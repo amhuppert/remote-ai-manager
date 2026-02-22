@@ -148,6 +148,28 @@ export function useCommitDiffQuery(
 // Conversation Queries
 // ---------------------------------------------------------------------------
 
+export interface ActiveConversation {
+  id: string;
+  name: string | null;
+  status: "running" | "awaiting";
+  lastActivityAt: string;
+  projectName: string;
+  projectPath: string;
+  sessionName: string;
+}
+
+export function useActiveConversationsQuery() {
+  return useQuery({
+    queryKey: conversationKeys.active,
+    queryFn: async () => {
+      const data = await apiFetch<{ conversations: ActiveConversation[] }>(
+        "/api/conversations/active",
+      );
+      return data.conversations;
+    },
+  });
+}
+
 export function useConversationsQuery(
   projectName: string,
   sessionName: string,

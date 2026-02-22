@@ -22,9 +22,9 @@ describe("ProjectCard stories", () => {
     expect(screen.getByText("2 sessions")).toBeInTheDocument();
   });
 
-  it("Active renders with active badge", async () => {
+  it("Active renders with running badge", async () => {
     await Active.run();
-    expect(screen.getByText("active")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
   });
 
   it("Pinned renders with filled star", async () => {
