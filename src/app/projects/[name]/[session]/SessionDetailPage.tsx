@@ -47,6 +47,7 @@ import {
   useToggleInfoStrip,
   useResetSessionDetailStore,
   useClearConversationMessages,
+  useFailPrompt,
 } from "@/stores/session-detail.store";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
@@ -65,7 +66,10 @@ import {
 import ModelSelector, { type ModelId } from "@/components/ModelSelector";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { useImageAttachments } from "@/hooks/use-image-attachments";
+import ImageAttachmentPreview from "./ImageAttachmentPreview";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
+import type { ImagePayload } from "@/types";
 
 interface Props {
   projectName: string;
@@ -176,6 +180,12 @@ export default function SessionDetailPage({
   const promptTextRef = useRef(promptText);
   promptTextRef.current = promptText;
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Image attachments ---
+  const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
+    useImageAttachments();
+  const failPrompt = useFailPrompt();
 
   // --- Refs for message navigation ---
   const panelBodyRef = useRef<HTMLDivElement>(null);
@@ -371,10 +381,26 @@ export default function SessionDetailPage({
 
   const handleSendPrompt = useCallback(async () => {
     const currentText = promptTextRef.current;
-    if (!currentText.trim() || sending) return;
+    const hasImages = pendingImages.length > 0;
+    if ((!currentText.trim() && !hasImages) || sending) return;
+
+    // Collect image payloads before clearing
+    const imagePayloads: ImagePayload[] = hasImages
+      ? pendingImages.map((img) => ({
+          mediaType: img.mediaType as ImagePayload["mediaType"],
+          base64Data: img.base64Data,
+        }))
+      : [];
+
     setPromptText("");
-    await sendPrompt(currentText.trim(), messages.length, selectedModel);
-  }, [sending, messages.length, sendPrompt, selectedModel]);
+    clearImages();
+    await sendPrompt(
+      currentText.trim(),
+      messages.length,
+      selectedModel,
+      imagePayloads.length > 0 ? imagePayloads : undefined,
+    );
+  }, [sending, messages.length, sendPrompt, selectedModel, pendingImages, clearImages]);
 
   const handleDelete = useCallback(() => {
     cancelDelete();
@@ -734,6 +760,22 @@ export default function SessionDetailPage({
                     rows={1}
                     value={promptText}
                     onChange={(e) => setPromptText(e.target.value)}
+                    onPaste={(e) => {
+                      const items = e.clipboardData.items;
+                      for (const item of items) {
+                        if (item.type.startsWith("image/")) {
+                          e.preventDefault();
+                          const file = item.getAsFile();
+                          if (file) {
+                            void addImage(file).then((err) => {
+                              if (err) failPrompt(err);
+                            });
+                          }
+                          return;
+                        }
+                      }
+                      // Text paste — let default behavior proceed
+                    }}
                     onKeyDown={(e) => {
                       if (autocompleteRef.current?.handleKeyDown(e)) {
                         return;
@@ -751,11 +793,43 @@ export default function SessionDetailPage({
                         e.preventDefault();
                         setPromptText("");
                         clearPlaceholder();
+                        clearImages();
                       }
                     }}
                     disabled={isFinished}
                   />
+                  <ImageAttachmentPreview
+                    images={pendingImages}
+                    onRemove={removeImage}
+                  />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/gif,image/webp"
+                    multiple
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const files = e.target.files;
+                      if (!files) return;
+                      for (const file of files) {
+                        void addImage(file).then((err) => {
+                          if (err) failPrompt(err);
+                        });
+                      }
+                      // Reset so re-selecting the same file works
+                      e.target.value = "";
+                    }}
+                  />
                   <div className="prompt-input-actions">
+                    <button
+                      className="attachment-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isAtLimit || sending || isFinished}
+                      title="Attach image"
+                      type="button"
+                    >
+                      {"\uD83D\uDCCE"}
+                    </button>
                     <ModelSelector
                       value={selectedModel}
                       onChange={setSelectedModel}
@@ -772,7 +846,7 @@ export default function SessionDetailPage({
                     <button
                       className={`send-btn${sending ? " busy" : ""}`}
                       disabled={
-                        !promptText.trim() ||
+                        (!promptText.trim() && pendingImages.length === 0) ||
                         sending ||
                         isFinished ||
                         isRecording

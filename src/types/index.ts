@@ -96,7 +96,7 @@ export interface SessionDiff {
   totalDeletions: number;
 }
 
-export type { RunPromptRequest } from "@/lib/schemas";
+export type { RunPromptRequest, ImagePayload } from "@/lib/schemas";
 
 /** Layout mode for the session detail view */
 export type LayoutMode = "conversation" | "default" | "split" | "diff";

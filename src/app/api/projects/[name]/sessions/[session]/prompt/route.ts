@@ -50,7 +50,7 @@ export const POST = withTracing(async (request, { params }) => {
   } catch {
     return NextResponse.json(
       {
-        error: "prompt is required and must be a non-empty string",
+        error: "Either prompt text or at least one image is required",
       } satisfies ApiError,
       { status: 400 },
     );
@@ -79,6 +79,7 @@ export const POST = withTracing(async (request, { params }) => {
           emit,
           undefined,
           body.modelId,
+          body.images,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Prompt failed";

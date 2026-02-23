@@ -68,3 +68,34 @@ export const ToolUseWithoutInput = {
     ] satisfies MessageContentBlock[],
   },
 } satisfies Story;
+
+// Tiny 1x1 PNG base64 for story demo
+const TINY_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+
+export const ImageOnly = {
+  args: {
+    content: [
+      { type: "image", mediaType: "image/png", base64Data: TINY_PNG },
+    ] satisfies MessageContentBlock[],
+  },
+} satisfies Story;
+
+export const TextAndImage = {
+  args: {
+    content: [
+      { type: "text", text: "Here is a screenshot of the bug:" },
+      { type: "image", mediaType: "image/png", base64Data: TINY_PNG },
+    ] satisfies MessageContentBlock[],
+  },
+} satisfies Story;
+
+export const MultipleImages = {
+  args: {
+    content: [
+      { type: "text", text: "Compare these two UI states:" },
+      { type: "image", mediaType: "image/png", base64Data: TINY_PNG },
+      { type: "image", mediaType: "image/png", base64Data: TINY_PNG },
+    ] satisfies MessageContentBlock[],
+  },
+} satisfies Story;

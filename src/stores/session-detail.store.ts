@@ -29,9 +29,9 @@ interface SessionDetailActions {
   switchLayout: (mode: LayoutMode, storageKey: string) => void;
   hydrateLayout: (storageKey: string) => void;
   switchMobilePanel: (panel: MobilePanel) => void;
-  submitPrompt: (text: string, currentMessageCount: number) => void;
+  submitPrompt: (userContent: MessageContentBlock[], currentMessageCount: number) => void;
   receiveStreamContent: (
-    userText: string,
+    userContent: MessageContentBlock[],
     allBlocks: MessageContentBlock[],
   ) => void;
   completePrompt: () => void;
@@ -123,7 +123,7 @@ const useSessionDetailStore = create<SessionDetailStore>()(
 
     // -- Prompt streaming --
 
-    submitPrompt: (text, currentMessageCount) =>
+    submitPrompt: (userContent, currentMessageCount) =>
       set((state) => {
         state.sending = true;
         state.promptError = null;
@@ -131,18 +131,18 @@ const useSessionDetailStore = create<SessionDetailStore>()(
         state.optimisticMessages = [
           {
             role: "user",
-            content: [{ type: "text" as const, text }],
+            content: userContent,
             timestamp: new Date().toISOString(),
           },
         ];
       }),
 
-    receiveStreamContent: (userText, allBlocks) =>
+    receiveStreamContent: (userContent, allBlocks) =>
       set((state) => {
         state.optimisticMessages = [
           {
             role: "user",
-            content: [{ type: "text" as const, text: userText }],
+            content: userContent,
             timestamp: new Date().toISOString(),
           },
           {

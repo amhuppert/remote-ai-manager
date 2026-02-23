@@ -48,6 +48,11 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
     name: z.string(),
     args: z.string().nullable(),
   }),
+  z.object({
+    type: z.literal("image"),
+    mediaType: z.string(),
+    base64Data: z.string(),
+  }),
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 
@@ -113,10 +118,22 @@ export const createSessionRequestSchema = z.object({
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
-export const runPromptRequestSchema = z.object({
-  prompt: z.string().trim().min(1),
-  modelId: claudeModelSchema.optional(),
+export const imagePayloadSchema = z.object({
+  mediaType: z.enum(["image/jpeg", "image/png", "image/gif", "image/webp"]),
+  base64Data: z.string().min(1),
 });
+export type ImagePayload = z.infer<typeof imagePayloadSchema>;
+
+export const runPromptRequestSchema = z
+  .object({
+    prompt: z.string().trim(),
+    modelId: claudeModelSchema.optional(),
+    images: z.array(imagePayloadSchema).max(5).optional(),
+  })
+  .refine(
+    (data) => data.prompt.length > 0 || (data.images && data.images.length > 0),
+    { message: "Either prompt text or at least one image is required" },
+  );
 export type RunPromptRequest = z.infer<typeof runPromptRequestSchema>;
 
 export const commitRequestSchema = z.object({
