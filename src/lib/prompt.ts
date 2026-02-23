@@ -139,14 +139,14 @@ export async function executePromptStream(
           type: "preset",
           preset: "claude_code",
           append: session.objective
-            ? `[Session Objective]\n${session.objective}`
+            ? `<objective>${session.objective}</objective>`
             : undefined,
         },
         settingSources: ["user", "project", "local"],
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         cwd: session.worktreePath,
-        maxTurns: config.maxTurns ?? 50,
+        maxTurns: config.maxTurns,
         resume: conversation.claudeSessionId ?? undefined,
         persistSession: true,
         abortController,

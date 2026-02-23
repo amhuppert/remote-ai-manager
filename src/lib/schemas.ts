@@ -13,7 +13,7 @@ export const globalConfigSchema = z.object({
   stateFilePath: z.string(),
   claudeTimeoutMs: z.number(),
   defaultModel: claudeModelSchema.default("opus"),
-  maxTurns: z.number().int().positive().default(50),
+  maxTurns: z.number().int().positive().optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
