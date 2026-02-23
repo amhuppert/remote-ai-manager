@@ -69,6 +69,20 @@ export async function executePromptStream(
     conversationId = conversation.id;
   }
 
+  // Set transcript path eagerly so messages are readable immediately
+  const transcriptPath = await getTranscriptPath(conversationId);
+  if (!conversation.transcriptPath) {
+    await mutateConversation(
+      projectPath,
+      session.sessionName,
+      conversationId,
+      (c) => {
+        c.transcriptPath = transcriptPath;
+      },
+    );
+    conversation.transcriptPath = transcriptPath;
+  }
+
   // Resolve model: explicit parameter > config default
   const effectiveModel = modelId ?? config.defaultModel;
 
@@ -193,11 +207,6 @@ export async function executePromptStream(
           if (sessionId) {
             c.claudeSessionId = sessionId;
           }
-          // Set transcript path to our own storage
-          if (!c.transcriptPath) {
-            // getTranscriptPath is async but we need the path synchronously here.
-            // We'll set it after this block.
-          }
           // Accumulate cost/duration/turns
           if (resultCostUsd != null) {
             c.totalCostUsd = (c.totalCostUsd ?? 0) + resultCostUsd;
@@ -215,21 +224,6 @@ export async function executePromptStream(
           error:
             storeErr instanceof Error ? storeErr.message : String(storeErr),
         });
-      });
-
-      // Set transcript path (async)
-      const transcriptPath = await getTranscriptPath(conversationId);
-      await mutateConversation(
-        projectPath,
-        session.sessionName,
-        conversationId,
-        (c) => {
-          if (!c.transcriptPath) {
-            c.transcriptPath = transcriptPath;
-          }
-        },
-      ).catch(() => {
-        // best-effort
       });
     } else {
       // No content and no session — likely a startup failure
