@@ -119,6 +119,8 @@ const makeSessions = (count: number): SessionState[] =>
         totalCostUsd: null,
         totalDurationMs: null,
         totalTurns: null,
+        pendingQuestionId: null,
+        pendingQuestions: null,
       },
     ],
     source: "csm" as const,

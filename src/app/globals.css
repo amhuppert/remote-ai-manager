@@ -1252,6 +1252,16 @@ textarea {
   color: var(--green);
 }
 
+.session-status.waiting_for_input .dot {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.session-status.waiting_for_input {
+  color: var(--amber);
+}
+
 .session-time {
   font-family: var(--font-mono);
   font-size: 0.78rem;

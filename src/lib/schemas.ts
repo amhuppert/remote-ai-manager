@@ -32,8 +32,12 @@ export type ConversationStatus =
   | "running"
   | "waiting_for_input";
 
-/** Session-level derived status (running > awaiting > idle) */
-export type DerivedSessionStatus = "running" | "awaiting" | "idle";
+/** Session-level derived status (waiting_for_input > running > awaiting > idle) */
+export type DerivedSessionStatus =
+  | "waiting_for_input"
+  | "running"
+  | "awaiting"
+  | "idle";
 
 export const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
@@ -60,6 +64,21 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 
+// AskUserQuestion schemas (defined before conversationStateSchema which references them)
+export const askQuestionOptionSchema = z.object({
+  label: z.string(),
+  description: z.string().optional(),
+});
+export type AskQuestionOption = z.infer<typeof askQuestionOptionSchema>;
+
+export const askQuestionItemSchema = z.object({
+  question: z.string(),
+  header: z.string().optional(),
+  options: z.array(askQuestionOptionSchema),
+  multiSelect: z.boolean().default(false),
+});
+export type AskQuestionItem = z.infer<typeof askQuestionItemSchema>;
+
 export const conversationStateSchema = z.object({
   id: z.string(),
   name: z.string().nullable().default(null),
@@ -75,6 +94,8 @@ export const conversationStateSchema = z.object({
   totalCostUsd: z.number().nullable().default(null),
   totalDurationMs: z.number().nullable().default(null),
   totalTurns: z.number().nullable().default(null),
+  pendingQuestionId: z.string().nullable().default(null),
+  pendingQuestions: z.array(askQuestionItemSchema).nullable().default(null),
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
@@ -191,22 +212,8 @@ export type ConversationStatusEvent = z.infer<
 >;
 
 // ============================================================
-// AskUserQuestion Schemas
+// AskUserQuestion Event Schemas
 // ============================================================
-
-export const askQuestionOptionSchema = z.object({
-  label: z.string(),
-  description: z.string().optional(),
-});
-export type AskQuestionOption = z.infer<typeof askQuestionOptionSchema>;
-
-export const askQuestionItemSchema = z.object({
-  question: z.string(),
-  header: z.string().optional(),
-  options: z.array(askQuestionOptionSchema),
-  multiSelect: z.boolean().default(false),
-});
-export type AskQuestionItem = z.infer<typeof askQuestionItemSchema>;
 
 export const askQuestionEventSchema = z.object({
   type: z.literal("ask-question"),

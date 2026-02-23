@@ -276,6 +276,8 @@ export async function createSession(
     totalCostUsd: null,
     totalDurationMs: null,
     totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
   };
   const session: SessionState = {
     sessionName,

@@ -185,13 +185,15 @@ export async function executePromptStream(
 
             const questionId = randomUUID();
 
-            // Set conversation status to waiting_for_input
+            // Set conversation status to waiting_for_input and persist question data
             await mutateConversation(
               projectPath,
               session.sessionName,
               conversationId!,
               (c) => {
                 c.status = "waiting_for_input";
+                c.pendingQuestionId = questionId;
+                c.pendingQuestions = questions as ConversationState["pendingQuestions"];
               },
             ).catch(() => {});
 
@@ -213,13 +215,15 @@ export async function executePromptStream(
             // Block until user answers via the answer API
             const answers = await registerQuestion(questionId, conversationId!);
 
-            // Restore running status
+            // Restore running status and clear persisted question data
             await mutateConversation(
               projectPath,
               session.sessionName,
               conversationId!,
               (c) => {
                 c.status = "running";
+                c.pendingQuestionId = null;
+                c.pendingQuestions = null;
               },
             ).catch(() => {});
 
@@ -338,6 +342,8 @@ export async function executePromptStream(
       conversationId,
       (c) => {
         c.status = "awaiting";
+        c.pendingQuestionId = null;
+        c.pendingQuestions = null;
       },
     ).catch(() => {
       // best-effort status reset

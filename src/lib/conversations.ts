@@ -42,6 +42,8 @@ export async function createConversation(
     totalCostUsd: null,
     totalDurationMs: null,
     totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
   };
 
   session.conversations.push(conversation);

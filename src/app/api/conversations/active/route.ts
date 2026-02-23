@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 interface ActiveConversation {
   id: string;
   name: string | null;
-  status: "running" | "awaiting";
+  status: "running" | "awaiting" | "waiting_for_input";
   lastActivityAt: string;
   projectName: string;
   projectPath: string;
@@ -38,7 +38,11 @@ export async function GET() {
 
         for (const convo of session.conversations) {
           if (convo.archived) continue;
-          if (convo.status !== "running" && convo.status !== "awaiting")
+          if (
+            convo.status !== "running" &&
+            convo.status !== "awaiting" &&
+            convo.status !== "waiting_for_input"
+          )
             continue;
 
           conversations.push({

@@ -50,6 +50,7 @@ import {
   usePendingQuestions,
   usePendingQuestionId,
   useCurrentQuestionIndex,
+  useShowQuestions,
   useNavigateQuestion,
   useClearQuestions,
   useFailPrompt,
@@ -144,6 +145,7 @@ export default function SessionDetailPage({
   const pendingQuestions = usePendingQuestions();
   const pendingQuestionId = usePendingQuestionId();
   const currentQuestionIndex = useCurrentQuestionIndex();
+  const showQuestions = useShowQuestions();
   const navigateQuestion = useNavigateQuestion();
   const clearQuestions = useClearQuestions();
 
@@ -152,7 +154,11 @@ export default function SessionDetailPage({
   const conversations = conversationsQuery.data;
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
   const isFinished = session?.finished ?? false;
-  const isBusy = sending || sessionStatus === "running" || !!pendingQuestions;
+  const isBusy =
+    sending ||
+    sessionStatus === "running" ||
+    sessionStatus === "waiting_for_input" ||
+    !!pendingQuestions;
 
   // Conditional polling: refetch while session is active
   const messagesQuery = useConversationMessagesQuery(
@@ -249,6 +255,37 @@ export default function SessionDetailPage({
     initialScrollDone.current = false;
     clearConversationMessages();
   }, [conversationId, clearConversationMessages]);
+
+  // --- Recover persisted question state on page load / navigation ---
+  useEffect(() => {
+    if (!session) return;
+    const activeConvo = session.conversations.find(
+      (c) => c.id === conversationId,
+    );
+    if (!activeConvo) return;
+
+    if (
+      activeConvo.status === "waiting_for_input" &&
+      activeConvo.pendingQuestionId &&
+      activeConvo.pendingQuestions &&
+      !pendingQuestionId
+    ) {
+      // Hydrate the store with persisted question data
+      showQuestions(activeConvo.pendingQuestionId, activeConvo.pendingQuestions);
+    } else if (
+      pendingQuestionId &&
+      activeConvo.status !== "waiting_for_input"
+    ) {
+      // Another tab answered — clear stale question state
+      clearQuestions();
+    }
+  }, [
+    session,
+    conversationId,
+    pendingQuestionId,
+    showQuestions,
+    clearQuestions,
+  ]);
 
   // --- Turn-based navigation ---
   // A "turn" = one user prompt + all subsequent Claude responses until the next prompt.
@@ -431,12 +468,29 @@ export default function SessionDetailPage({
         });
         if (res.ok) {
           clearQuestions();
+        } else if (res.status === 410) {
+          // Prompt is no longer running (server restarted)
+          clearQuestions();
+          const body = await res.json().catch(() => null);
+          failPrompt(
+            body?.error ??
+              "The prompt that asked this question is no longer running.",
+          );
+          // Refresh session data to pick up updated status
+          void sessionQuery.refetch();
         }
       } catch {
         // Best effort — the question panel remains visible for retry
       }
     },
-    [projectName, sessionName, conversationId, clearQuestions],
+    [
+      projectName,
+      sessionName,
+      conversationId,
+      clearQuestions,
+      failPrompt,
+      sessionQuery,
+    ],
   );
 
   const handleDelete = useCallback(() => {

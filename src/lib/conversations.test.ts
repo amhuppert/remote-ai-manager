@@ -67,6 +67,8 @@ describe("createConversation", () => {
     expect(convo.promptCount).toBe(0);
     expect(convo.source).toBe("csm");
     expect(convo.summary).toBeNull();
+    expect(convo.pendingQuestionId).toBeNull();
+    expect(convo.pendingQuestions).toBeNull();
     expect(convo.createdAt).toBeTruthy();
     expect(convo.lastActivityAt).toBeTruthy();
   });
@@ -302,6 +304,29 @@ describe("renameConversation", () => {
 });
 
 describe("deriveSessionStatus", () => {
+  it("returns waiting_for_input if any conversation has that status", async () => {
+    const { deriveSessionStatus } = await import("./conversations");
+
+    const session = makeSessionWith([
+      makeConvo({ status: "awaiting" }),
+      makeConvo({ status: "waiting_for_input" }),
+      makeConvo({ status: "new" }),
+    ]);
+
+    expect(deriveSessionStatus(session)).toBe("waiting_for_input");
+  });
+
+  it("returns waiting_for_input over running when both present", async () => {
+    const { deriveSessionStatus } = await import("./conversations");
+
+    const session = makeSessionWith([
+      makeConvo({ status: "running" }),
+      makeConvo({ status: "waiting_for_input" }),
+    ]);
+
+    expect(deriveSessionStatus(session)).toBe("waiting_for_input");
+  });
+
   it("returns running if any conversation is running", async () => {
     const { deriveSessionStatus } = await import("./conversations");
 
@@ -460,6 +485,8 @@ function makeConvo(
     totalCostUsd: null,
     totalDurationMs: null,
     totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
     ...overrides,
   };
 }
