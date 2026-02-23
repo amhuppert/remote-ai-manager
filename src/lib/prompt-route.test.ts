@@ -112,7 +112,9 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body.error).toContain("prompt is required");
+    expect(body.error).toContain(
+      "Either prompt text or at least one image is required",
+    );
   });
 
   it("returns 400 when prompt is empty string", async () => {
@@ -122,7 +124,9 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body.error).toContain("prompt is required");
+    expect(body.error).toContain(
+      "Either prompt text or at least one image is required",
+    );
   });
 
   it("returns 404 when project is not found", async () => {
@@ -177,6 +181,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
       expect.any(Function),
       undefined,
       undefined,
+      undefined,
     );
   });
 
@@ -190,6 +195,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
       testSession,
       "Hello Claude",
       expect.any(Function),
+      undefined,
       undefined,
       undefined,
     );

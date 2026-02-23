@@ -5,6 +5,7 @@ import type {
   SDKResultSuccess,
   SDKResultError,
   SDKSystemMessage,
+  SDKUserMessage,
   Query,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -12,6 +13,7 @@ import type {
   SessionState,
   ConversationState,
   MessageContentBlock,
+  ImagePayload,
 } from "@/types";
 import { readConfig } from "./config";
 import { getSession, updateSession } from "./state";
@@ -50,6 +52,7 @@ export async function executePromptStream(
   emit: (event: string, data: unknown) => void,
   conversationId?: string,
   modelId?: ClaudeModel,
+  images?: ImagePayload[],
 ): Promise<{ conversationId: string }> {
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
@@ -121,20 +124,37 @@ export async function executePromptStream(
       resume: !!conversation.claudeSessionId,
     });
 
+    // Build user content blocks for transcript
+    const userContentBlocks: MessageContentBlock[] = [
+      ...(promptText ? [{ type: "text" as const, text: promptText }] : []),
+      ...(images ?? []).map((img) => ({
+        type: "image" as const,
+        mediaType: img.mediaType,
+        base64Data: img.base64Data,
+      })),
+    ];
+
     // Persist the user's prompt in the transcript
     await appendEntry(conversationId, {
       timestamp: new Date().toISOString(),
       type: "user",
       role: "user",
-      content: [{ type: "text", text: promptText }],
+      content: userContentBlocks,
     });
 
     const promptStart = Date.now();
 
+    // Build SDK prompt: multi-modal async iterable when images present, plain string otherwise
+    const hasImages = images && images.length > 0;
+    const sdkPrompt:
+      | string
+      | AsyncIterable<import("@anthropic-ai/claude-agent-sdk").SDKUserMessage> =
+      hasImages ? buildMultiModalPrompt(promptText, images) : promptText;
+
     // Create SDK query
     const abortController = new AbortController();
     const q: Query = query({
-      prompt: promptText,
+      prompt: sdkPrompt,
       options: {
         model: effectiveModel ?? undefined,
         systemPrompt: {
@@ -338,6 +358,33 @@ export async function executePromptStream(
 
     release();
   }
+}
+
+/**
+ * Build an async iterable that yields a single SDKUserMessage with image + text content blocks.
+ */
+async function* buildMultiModalPrompt(
+  promptText: string,
+  images: ImagePayload[],
+): AsyncGenerator<SDKUserMessage> {
+  const content = [
+    ...images.map((img) => ({
+      type: "image" as const,
+      source: {
+        type: "base64" as const,
+        media_type: img.mediaType,
+        data: img.base64Data,
+      },
+    })),
+    ...(promptText ? [{ type: "text" as const, text: promptText }] : []),
+  ];
+
+  yield {
+    type: "user",
+    session_id: "",
+    message: { role: "user", content },
+    parent_tool_use_id: null,
+  } as SDKUserMessage;
 }
 
 /**

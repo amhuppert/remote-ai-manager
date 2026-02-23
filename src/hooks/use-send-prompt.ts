@@ -11,6 +11,7 @@ import {
 import { tracedFetch } from "@/lib/traced-fetch";
 import type {
   ClaudeModel,
+  ImagePayload,
   MessageContentBlock,
   AskQuestionItem,
 } from "@/types";
@@ -29,6 +30,7 @@ export function useSendPrompt(
   text: string,
   currentMessageCount: number,
   modelId?: ClaudeModel,
+  images?: ImagePayload[],
 ) => Promise<void> {
   const queryClient = useQueryClient();
   const submitPrompt = useSubmitPrompt();
@@ -51,9 +53,11 @@ export function useSendPrompt(
       text: string,
       currentMessageCount: number,
       modelId?: ClaudeModel,
+      images?: ImagePayload[],
     ) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      const hasImages = images && images.length > 0;
+      if (!trimmed && !hasImages) return;
 
       // Abort any previous in-flight stream
       abortRef.current?.abort();
@@ -62,8 +66,18 @@ export function useSendPrompt(
       const controller = new AbortController();
       abortRef.current = controller;
 
+      // Build user content blocks for optimistic messages
+      const userContent: MessageContentBlock[] = [
+        ...(trimmed ? [{ type: "text" as const, text: trimmed }] : []),
+        ...(images ?? []).map((img) => ({
+          type: "image" as const,
+          mediaType: img.mediaType,
+          base64Data: img.base64Data,
+        })),
+      ];
+
       // 1. Set optimistic state via Zustand
-      submitPrompt(trimmed, currentMessageCount);
+      submitPrompt(userContent, currentMessageCount);
 
       // 2. Build prompt URL
       const promptUrl = conversationId
@@ -74,7 +88,11 @@ export function useSendPrompt(
         const res = await tracedFetch(promptUrl, "send-prompt", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: trimmed, modelId }),
+          body: JSON.stringify({
+            prompt: trimmed,
+            modelId,
+            images: hasImages ? images : undefined,
+          }),
           signal: controller.signal,
         });
 
@@ -129,7 +147,7 @@ export function useSendPrompt(
               try {
                 const block = JSON.parse(eventData) as MessageContentBlock;
                 streamBlocks.push(block);
-                receiveStreamContent(trimmed, [...streamBlocks]);
+                receiveStreamContent(userContent, [...streamBlocks]);
               } catch {
                 // Skip malformed content events
               }

@@ -27,6 +27,16 @@ export default memo(function MessageContent({
             </div>
           );
         }
+        if (block.type === "image") {
+          return (
+            <img
+              key={i}
+              src={`data:${block.mediaType};base64,${block.base64Data}`}
+              alt="Attached image"
+              className="message-inline-image"
+            />
+          );
+        }
         if (block.type === "tool_use") {
           const formatted = formatToolUse(
             block.name,
