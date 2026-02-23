@@ -17,7 +17,11 @@ export function deriveSessionStatus(
     return "idle";
   }
 
-  if (session.conversations.some((c) => c.status === "running")) {
+  if (
+    session.conversations.some(
+      (c) => c.status === "running" || c.status === "waiting_for_input",
+    )
+  ) {
     return "running";
   }
   if (session.conversations.some((c) => c.status === "awaiting")) {

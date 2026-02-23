@@ -19,6 +19,13 @@ export default function NotificationListener(): null {
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     });
 
+    es.addEventListener("ask-question", () => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active,
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    });
+
     return () => {
       es.close();
     };

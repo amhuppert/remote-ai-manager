@@ -21,6 +21,8 @@ import { getConversation, createConversation } from "./conversations";
 import { appendTranscriptEntry, getTranscriptPath } from "./transcript";
 import type { TranscriptEntry } from "./transcript";
 import { broadcast } from "./sse-broadcaster";
+import { registerQuestion } from "./question-registry";
+import { randomUUID } from "node:crypto";
 
 // Prevent nested session detection when CSM runs inside Claude Code
 delete process.env.CLAUDECODE;
@@ -151,6 +153,77 @@ export async function executePromptStream(
         persistSession: true,
         abortController,
         env: { CLAUDECODE: "" },
+        canUseTool: async (
+          toolName: string,
+          input: Record<string, unknown>,
+        ) => {
+          if (toolName === "AskUserQuestion") {
+            const questions = input.questions;
+            if (!questions || !Array.isArray(questions)) {
+              return { behavior: "allow" as const, updatedInput: input };
+            }
+
+            const questionId = randomUUID();
+
+            // Set conversation status to waiting_for_input
+            await mutateConversation(
+              projectPath,
+              session.sessionName,
+              conversationId!,
+              (c) => {
+                c.status = "waiting_for_input";
+              },
+            ).catch(() => {});
+
+            try {
+              broadcast({
+                type: "conversation-status",
+                projectName,
+                sessionName: session.sessionName,
+                conversationId: conversationId!,
+                status: "waiting_for_input",
+              });
+            } catch {
+              /* fire-and-forget */
+            }
+
+            // Emit question data on the prompt SSE stream
+            emit("ask-question", { questionId, questions });
+
+            // Block until user answers via the answer API
+            const answers = await registerQuestion(questionId, conversationId!);
+
+            // Restore running status
+            await mutateConversation(
+              projectPath,
+              session.sessionName,
+              conversationId!,
+              (c) => {
+                c.status = "running";
+              },
+            ).catch(() => {});
+
+            try {
+              broadcast({
+                type: "conversation-status",
+                projectName,
+                sessionName: session.sessionName,
+                conversationId: conversationId!,
+                status: "running",
+              });
+            } catch {
+              /* fire-and-forget */
+            }
+
+            return {
+              behavior: "allow" as const,
+              updatedInput: { ...input, answers },
+            };
+          }
+
+          // Auto-approve all other tools (bypassPermissions mode)
+          return { behavior: "allow" as const, updatedInput: input };
+        },
       },
     });
 

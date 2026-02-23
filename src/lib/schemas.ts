@@ -18,7 +18,7 @@ export const globalConfigSchema = z.object({
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
 export const conversationStatusSchema = z
-  .enum(["new", "awaiting", "running"])
+  .enum(["new", "awaiting", "running", "waiting_for_input"])
   .or(
     z
       .enum(["idle", "ready"])
@@ -26,7 +26,11 @@ export const conversationStatusSchema = z
         v === "idle" ? ("new" as const) : ("awaiting" as const),
       ),
   );
-export type ConversationStatus = "new" | "awaiting" | "running";
+export type ConversationStatus =
+  | "new"
+  | "awaiting"
+  | "running"
+  | "waiting_for_input";
 
 /** Session-level derived status (running > awaiting > idle) */
 export type DerivedSessionStatus = "running" | "awaiting" | "idle";
@@ -163,14 +167,48 @@ export const conversationStatusEventSchema = z.object({
   projectName: z.string(),
   sessionName: z.string(),
   conversationId: z.string(),
-  status: z.enum(["running", "awaiting"]),
+  status: z.enum(["running", "awaiting", "waiting_for_input"]),
 });
 export type ConversationStatusEvent = z.infer<
   typeof conversationStatusEventSchema
 >;
 
+// ============================================================
+// AskUserQuestion Schemas
+// ============================================================
+
+export const askQuestionOptionSchema = z.object({
+  label: z.string(),
+  description: z.string().optional(),
+});
+export type AskQuestionOption = z.infer<typeof askQuestionOptionSchema>;
+
+export const askQuestionItemSchema = z.object({
+  question: z.string(),
+  header: z.string().optional(),
+  options: z.array(askQuestionOptionSchema),
+  multiSelect: z.boolean().default(false),
+});
+export type AskQuestionItem = z.infer<typeof askQuestionItemSchema>;
+
+export const askQuestionEventSchema = z.object({
+  type: z.literal("ask-question"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  questionId: z.string(),
+  questions: z.array(askQuestionItemSchema),
+});
+export type AskQuestionEvent = z.infer<typeof askQuestionEventSchema>;
+
+export const answerQuestionRequestSchema = z.object({
+  questionId: z.string(),
+  answers: z.record(z.string(), z.string()),
+});
+export type AnswerQuestionRequest = z.infer<typeof answerQuestionRequestSchema>;
+
 /** SSE event type */
-export type SSEEvent = ConversationStatusEvent;
+export type SSEEvent = ConversationStatusEvent | AskQuestionEvent;
 
 // ============================================================
 // Command Autocomplete Schemas

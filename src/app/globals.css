@@ -423,6 +423,14 @@ textarea {
     0 0 3px var(--amber);
 }
 
+.status-dot.amber {
+  background: var(--amber);
+  box-shadow:
+    0 0 8px var(--amber-glow),
+    0 0 3px var(--amber);
+  animation: pulse-dot 2.5s ease-in-out infinite;
+}
+
 .status-dot.cyan {
   background: var(--cyan);
   box-shadow:
@@ -1976,6 +1984,192 @@ textarea {
   padding: 2px 4px;
   border-radius: var(--radius-sm);
   white-space: nowrap;
+}
+
+/* AskUserQuestion panel — replaces prompt input when Claude needs user input */
+.ask-question-panel {
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+  flex-shrink: 0;
+}
+
+.ask-question-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.ask-question-badge {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--amber);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ask-question-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.ask-question-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ask-question-nav-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.ask-question-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.ask-question-counter {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  min-width: 3em;
+  text-align: center;
+}
+
+.ask-question-subheader {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-xs);
+}
+
+.ask-question-text {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin-bottom: var(--space-md);
+}
+
+.ask-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.ask-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.ask-question-option:hover {
+  border-color: var(--cyan-dim);
+  background: rgba(0, 229, 255, 0.04);
+}
+
+.ask-question-option.selected {
+  border-color: var(--cyan);
+  background: rgba(0, 229, 255, 0.08);
+}
+
+.ask-question-option input[type="checkbox"],
+.ask-question-option input[type="radio"] {
+  margin-top: 3px;
+  accent-color: var(--cyan);
+  flex-shrink: 0;
+}
+
+.ask-question-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ask-question-option-label {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.ask-question-option-desc {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.ask-question-other-input {
+  margin-top: var(--space-xs);
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.ask-question-other-input:focus {
+  border-color: var(--cyan-dim);
+}
+
+.ask-question-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ask-question-submit {
+  padding: var(--space-sm) var(--space-lg);
+  background: var(--cyan);
+  border: 1px solid var(--cyan);
+  color: var(--bg-base);
+  border-radius: var(--radius-md);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ask-question-submit:hover:not(:disabled) {
+  background: var(--cyan-dim);
+  box-shadow: 0 0 24px var(--cyan-glow-strong);
+}
+
+.ask-question-submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* Model selector */

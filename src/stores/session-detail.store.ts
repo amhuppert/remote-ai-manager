@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import type { LayoutMode, TranscriptMessage, MessageContentBlock } from "@/types";
+import type {
+  LayoutMode,
+  TranscriptMessage,
+  MessageContentBlock,
+  AskQuestionItem,
+} from "@/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,6 +28,9 @@ interface SessionDetailState {
   showMergeDialog: boolean;
   infoExpanded: boolean;
   sidebarCollapsed: boolean;
+  pendingQuestions: AskQuestionItem[] | null;
+  pendingQuestionId: string | null;
+  currentQuestionIndex: number;
 }
 
 interface SessionDetailActions {
@@ -52,6 +60,9 @@ interface SessionDetailActions {
   toggleInfoStrip: () => void;
   toggleSidebar: () => void;
   hydrateSidebar: () => void;
+  showQuestions: (questionId: string, questions: AskQuestionItem[]) => void;
+  navigateQuestion: (index: number) => void;
+  clearQuestions: () => void;
   clearConversationMessages: () => void;
   resetStore: () => void;
 }
@@ -81,6 +92,9 @@ const initialState: SessionDetailState = {
   showMergeDialog: false,
   infoExpanded: false,
   sidebarCollapsed: false,
+  pendingQuestions: null,
+  pendingQuestionId: null,
+  currentQuestionIndex: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -170,8 +184,7 @@ const useSessionDetailStore = create<SessionDetailStore>()(
       }),
 
     reconcileMessages: (serverCount) => {
-      const { sending, messageCountBeforeSubmit, optimisticMessages } =
-        get();
+      const { sending, messageCountBeforeSubmit, optimisticMessages } = get();
       if (optimisticMessages.length === 0) return;
       if (serverCount <= messageCountBeforeSubmit) return;
 
@@ -289,6 +302,27 @@ const useSessionDetailStore = create<SessionDetailStore>()(
       }
     },
 
+    // -- AskUserQuestion --
+
+    showQuestions: (questionId, questions) =>
+      set((state) => {
+        state.pendingQuestions = questions;
+        state.pendingQuestionId = questionId;
+        state.currentQuestionIndex = 0;
+      }),
+
+    navigateQuestion: (index) =>
+      set((state) => {
+        state.currentQuestionIndex = index;
+      }),
+
+    clearQuestions: () =>
+      set((state) => {
+        state.pendingQuestions = null;
+        state.pendingQuestionId = null;
+        state.currentQuestionIndex = 0;
+      }),
+
     // -- Reset --
 
     clearConversationMessages: () =>
@@ -298,8 +332,7 @@ const useSessionDetailStore = create<SessionDetailStore>()(
         state.currentMsgIndex = 0;
       }),
 
-    resetStore: () =>
-      set(() => ({ ...initialState })),
+    resetStore: () => set(() => ({ ...initialState })),
   })),
 );
 
@@ -307,18 +340,14 @@ const useSessionDetailStore = create<SessionDetailStore>()(
 // Selector hooks
 // ---------------------------------------------------------------------------
 
-export const useLayout = () =>
-  useSessionDetailStore((s) => s.layout);
-export const useMobilePanel = () =>
-  useSessionDetailStore((s) => s.mobilePanel);
-export const useSending = () =>
-  useSessionDetailStore((s) => s.sending);
+export const useLayout = () => useSessionDetailStore((s) => s.layout);
+export const useMobilePanel = () => useSessionDetailStore((s) => s.mobilePanel);
+export const useSending = () => useSessionDetailStore((s) => s.sending);
 export const useIsVoiceRecording = () =>
   useSessionDetailStore((s) => s.isVoiceRecording);
 export const usePromptPlaceholder = () =>
   useSessionDetailStore((s) => s.promptPlaceholder);
-export const usePromptError = () =>
-  useSessionDetailStore((s) => s.promptError);
+export const usePromptError = () => useSessionDetailStore((s) => s.promptError);
 export const useOptimisticMessages = () =>
   useSessionDetailStore((s) => s.optimisticMessages);
 export const useMessageCountBeforeSubmit = () =>
@@ -352,8 +381,7 @@ export const useReceiveStreamContent = () =>
   useSessionDetailStore((s) => s.receiveStreamContent);
 export const useCompletePrompt = () =>
   useSessionDetailStore((s) => s.completePrompt);
-export const useFailPrompt = () =>
-  useSessionDetailStore((s) => s.failPrompt);
+export const useFailPrompt = () => useSessionDetailStore((s) => s.failPrompt);
 export const useDismissError = () =>
   useSessionDetailStore((s) => s.dismissError);
 export const useReconcileMessages = () =>
@@ -374,8 +402,7 @@ export const useCancelCommit = () =>
   useSessionDetailStore((s) => s.cancelCommit);
 export const useRequestMerge = () =>
   useSessionDetailStore((s) => s.requestMerge);
-export const useCancelMerge = () =>
-  useSessionDetailStore((s) => s.cancelMerge);
+export const useCancelMerge = () => useSessionDetailStore((s) => s.cancelMerge);
 export const useRequestDeleteSession = () =>
   useSessionDetailStore((s) => s.requestDeleteSession);
 export const useCancelDeleteSessionDetail = () =>
@@ -386,6 +413,18 @@ export const useToggleSidebar = () =>
   useSessionDetailStore((s) => s.toggleSidebar);
 export const useHydrateSidebar = () =>
   useSessionDetailStore((s) => s.hydrateSidebar);
+export const useShowQuestions = () =>
+  useSessionDetailStore((s) => s.showQuestions);
+export const useNavigateQuestion = () =>
+  useSessionDetailStore((s) => s.navigateQuestion);
+export const useClearQuestions = () =>
+  useSessionDetailStore((s) => s.clearQuestions);
+export const usePendingQuestions = () =>
+  useSessionDetailStore((s) => s.pendingQuestions);
+export const usePendingQuestionId = () =>
+  useSessionDetailStore((s) => s.pendingQuestionId);
+export const useCurrentQuestionIndex = () =>
+  useSessionDetailStore((s) => s.currentQuestionIndex);
 export const useClearConversationMessages = () =>
   useSessionDetailStore((s) => s.clearConversationMessages);
 export const useResetSessionDetailStore = () =>

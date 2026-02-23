@@ -6,9 +6,14 @@ import {
   useReceiveStreamContent,
   useCompletePrompt,
   useFailPrompt,
+  useShowQuestions,
 } from "@/stores/session-detail.store";
 import { tracedFetch } from "@/lib/traced-fetch";
-import type { ClaudeModel, MessageContentBlock } from "@/types";
+import type {
+  ClaudeModel,
+  MessageContentBlock,
+  AskQuestionItem,
+} from "@/types";
 
 /**
  * Hook that coordinates prompt submission with:
@@ -20,12 +25,17 @@ export function useSendPrompt(
   projectName: string,
   sessionName: string,
   conversationId?: string,
-): (text: string, currentMessageCount: number, modelId?: ClaudeModel) => Promise<void> {
+): (
+  text: string,
+  currentMessageCount: number,
+  modelId?: ClaudeModel,
+) => Promise<void> {
   const queryClient = useQueryClient();
   const submitPrompt = useSubmitPrompt();
   const receiveStreamContent = useReceiveStreamContent();
   const completePrompt = useCompletePrompt();
   const failPrompt = useFailPrompt();
+  const showQuestions = useShowQuestions();
 
   // Abort in-flight streams when session context changes or on unmount
   const abortRef = useRef<AbortController | null>(null);
@@ -37,7 +47,11 @@ export function useSendPrompt(
   }, [projectName, sessionName, conversationId]);
 
   return useCallback(
-    async (text: string, currentMessageCount: number, modelId?: ClaudeModel) => {
+    async (
+      text: string,
+      currentMessageCount: number,
+      modelId?: ClaudeModel,
+    ) => {
       const trimmed = text.trim();
       if (!trimmed) return;
 
@@ -69,9 +83,7 @@ export function useSendPrompt(
           const data = await res
             .json()
             .catch(() => ({ error: "Prompt failed" }));
-          failPrompt(
-            (data as { error?: string }).error ?? "Prompt failed",
-          );
+          failPrompt((data as { error?: string }).error ?? "Prompt failed");
           return;
         }
 
@@ -120,6 +132,16 @@ export function useSendPrompt(
                 receiveStreamContent(trimmed, [...streamBlocks]);
               } catch {
                 // Skip malformed content events
+              }
+            } else if (eventName === "ask-question") {
+              try {
+                const data = JSON.parse(eventData) as {
+                  questionId: string;
+                  questions: AskQuestionItem[];
+                };
+                showQuestions(data.questionId, data.questions);
+              } catch {
+                // Skip malformed question events
               }
             } else if (eventName === "error") {
               try {
@@ -172,6 +194,7 @@ export function useSendPrompt(
       receiveStreamContent,
       completePrompt,
       failPrompt,
+      showQuestions,
     ],
   );
 }

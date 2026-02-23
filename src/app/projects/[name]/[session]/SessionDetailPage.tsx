@@ -47,6 +47,11 @@ import {
   useToggleInfoStrip,
   useResetSessionDetailStore,
   useClearConversationMessages,
+  usePendingQuestions,
+  usePendingQuestionId,
+  useCurrentQuestionIndex,
+  useNavigateQuestion,
+  useClearQuestions,
 } from "@/stores/session-detail.store";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
@@ -63,6 +68,7 @@ import {
   type CommandAutocompleteHandle,
 } from "@/components/CommandAutocomplete";
 import ModelSelector, { type ModelId } from "@/components/ModelSelector";
+import AskQuestionPanel from "@/components/AskQuestionPanel";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
@@ -131,13 +137,18 @@ export default function SessionDetailPage({
   const toggleInfoStrip = useToggleInfoStrip();
   const resetStore = useResetSessionDetailStore();
   const clearConversationMessages = useClearConversationMessages();
+  const pendingQuestions = usePendingQuestions();
+  const pendingQuestionId = usePendingQuestionId();
+  const currentQuestionIndex = useCurrentQuestionIndex();
+  const navigateQuestion = useNavigateQuestion();
+  const clearQuestions = useClearQuestions();
 
   // --- Derived from query data ---
   const session = sessionQuery.data;
   const conversations = conversationsQuery.data;
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
   const isFinished = session?.finished ?? false;
-  const isBusy = sending || sessionStatus === "running";
+  const isBusy = sending || sessionStatus === "running" || !!pendingQuestions;
 
   // Conditional polling: refetch while session is active
   const messagesQuery = useConversationMessagesQuery(
@@ -376,6 +387,25 @@ export default function SessionDetailPage({
     await sendPrompt(currentText.trim(), messages.length, selectedModel);
   }, [sending, messages.length, sendPrompt, selectedModel]);
 
+  const handleAnswerSubmit = useCallback(
+    async (questionId: string, answers: Record<string, string>) => {
+      const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/answer`;
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ questionId, answers }),
+        });
+        if (res.ok) {
+          clearQuestions();
+        }
+      } catch {
+        // Best effort — the question panel remains visible for retry
+      }
+    },
+    [projectName, sessionName, conversationId, clearQuestions],
+  );
+
   const handleDelete = useCallback(() => {
     cancelDelete();
     deleteMutation.mutate(sessionName, {
@@ -428,15 +458,19 @@ export default function SessionDetailPage({
 
   const displayStatus = isFinished
     ? "merged"
-    : sending
-      ? "running"
-      : sessionStatus;
+    : pendingQuestions
+      ? "waiting_for_input"
+      : sending
+        ? "running"
+        : sessionStatus;
   const statusDotClass =
     displayStatus === "running"
       ? "cyan"
       : displayStatus === "merged"
         ? "green"
-        : "";
+        : displayStatus === "waiting_for_input"
+          ? "amber"
+          : "";
 
   const isLoading = sessionQuery.isPending;
 
@@ -706,103 +740,113 @@ export default function SessionDetailPage({
                 </div>
               </div>
 
-              {/* Prompt input */}
-              <div className="prompt-input-area">
-                <div className="prompt-input-wrapper">
-                  <CommandAutocomplete
-                    ref={autocompleteRef}
-                    promptText={promptText}
-                    onPromptChange={(text) => {
-                      setPromptText(text);
-                      if (!text.startsWith("/")) {
-                        clearPlaceholder();
+              {/* Prompt input OR question panel */}
+              {pendingQuestions && pendingQuestionId ? (
+                <AskQuestionPanel
+                  questions={pendingQuestions}
+                  questionId={pendingQuestionId}
+                  currentIndex={currentQuestionIndex}
+                  onNavigate={navigateQuestion}
+                  onSubmit={handleAnswerSubmit}
+                />
+              ) : (
+                <div className="prompt-input-area">
+                  <div className="prompt-input-wrapper">
+                    <CommandAutocomplete
+                      ref={autocompleteRef}
+                      promptText={promptText}
+                      onPromptChange={(text) => {
+                        setPromptText(text);
+                        if (!text.startsWith("/")) {
+                          clearPlaceholder();
+                        }
+                      }}
+                      onPlaceholderChange={showPlaceholder}
+                      projectName={projectName}
+                      sessionName={session.sessionName}
+                      disabled={isBusy || isFinished}
+                    />
+                    <textarea
+                      ref={textareaRef}
+                      className="prompt-textarea"
+                      placeholder={
+                        isFinished
+                          ? "Session is merged and read-only"
+                          : (promptPlaceholder ?? "Send a prompt to Claude...")
                       }
-                    }}
-                    onPlaceholderChange={showPlaceholder}
-                    projectName={projectName}
-                    sessionName={session.sessionName}
-                    disabled={isBusy || isFinished}
-                  />
-                  <textarea
-                    ref={textareaRef}
-                    className="prompt-textarea"
-                    placeholder={
-                      isFinished
-                        ? "Session is merged and read-only"
-                        : (promptPlaceholder ?? "Send a prompt to Claude...")
-                    }
-                    rows={1}
-                    value={promptText}
-                    onChange={(e) => setPromptText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (autocompleteRef.current?.handleKeyDown(e)) {
-                        return;
-                      }
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        // Stop voice recording instead of submitting
-                        if (isRecording) {
-                          toggleRecording();
+                      rows={1}
+                      value={promptText}
+                      onChange={(e) => setPromptText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (autocompleteRef.current?.handleKeyDown(e)) {
                           return;
                         }
-                        void handleSendPrompt();
-                      }
-                      if (e.key === "Escape") {
-                        e.preventDefault();
-                        setPromptText("");
-                        clearPlaceholder();
-                      }
-                    }}
-                    disabled={isFinished}
-                  />
-                  <div className="prompt-input-actions">
-                    <ModelSelector
-                      value={selectedModel}
-                      onChange={setSelectedModel}
-                      disabled={sending || isFinished}
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          // Stop voice recording instead of submitting
+                          if (isRecording) {
+                            toggleRecording();
+                            return;
+                          }
+                          void handleSendPrompt();
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setPromptText("");
+                          clearPlaceholder();
+                        }
+                      }}
+                      disabled={isFinished}
                     />
-                    <VoiceRecordButton
-                      isRecording={isRecording}
-                      isProcessing={isProcessing}
-                      elapsedTime={elapsedTime}
-                      isAvailable={voiceAvailable}
-                      toggleRecording={toggleRecording}
-                      disabled={sending}
-                    />
-                    <button
-                      className={`send-btn${sending ? " busy" : ""}`}
-                      disabled={
-                        !promptText.trim() ||
-                        sending ||
-                        isFinished ||
-                        isRecording
-                      }
-                      onClick={() => void handleSendPrompt()}
-                      title={
-                        isFinished
-                          ? "Session is read-only"
-                          : sending
-                            ? "Session is busy"
-                            : "Send prompt"
-                      }
-                    >
-                      {sending ? (
-                        <div
-                          className="spinner"
-                          style={{
-                            borderColor: "rgba(0, 229, 255, 0.3)",
-                            borderTopColor: "var(--cyan)",
-                            width: 18,
-                            height: 18,
-                          }}
-                        />
-                      ) : (
-                        "\u25B6"
-                      )}
-                    </button>
+                    <div className="prompt-input-actions">
+                      <ModelSelector
+                        value={selectedModel}
+                        onChange={setSelectedModel}
+                        disabled={sending || isFinished}
+                      />
+                      <VoiceRecordButton
+                        isRecording={isRecording}
+                        isProcessing={isProcessing}
+                        elapsedTime={elapsedTime}
+                        isAvailable={voiceAvailable}
+                        toggleRecording={toggleRecording}
+                        disabled={sending}
+                      />
+                      <button
+                        className={`send-btn${sending ? " busy" : ""}`}
+                        disabled={
+                          !promptText.trim() ||
+                          sending ||
+                          isFinished ||
+                          isRecording
+                        }
+                        onClick={() => void handleSendPrompt()}
+                        title={
+                          isFinished
+                            ? "Session is read-only"
+                            : sending
+                              ? "Session is busy"
+                              : "Send prompt"
+                        }
+                      >
+                        {sending ? (
+                          <div
+                            className="spinner"
+                            style={{
+                              borderColor: "rgba(0, 229, 255, 0.3)",
+                              borderTopColor: "var(--cyan)",
+                              width: 18,
+                              height: 18,
+                            }}
+                          />
+                        ) : (
+                          "\u25B6"
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Diff panel — mounted when layout shows it OR mobile panel is "diff" */}

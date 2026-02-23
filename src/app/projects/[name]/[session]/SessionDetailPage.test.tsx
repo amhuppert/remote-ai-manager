@@ -223,6 +223,12 @@ vi.mock("@/stores/session-detail.store", () => ({
   useHydrateSidebar: () => vi.fn(),
   useClearConversationMessages: () => vi.fn(),
   useResetSessionDetailStore: () => vi.fn(),
+  usePendingQuestions: () => null,
+  usePendingQuestionId: () => null,
+  useCurrentQuestionIndex: () => 0,
+  useShowQuestions: () => vi.fn(),
+  useNavigateQuestion: () => vi.fn(),
+  useClearQuestions: () => vi.fn(),
 }));
 
 // Mock IntersectionObserver

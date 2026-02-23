@@ -46,6 +46,10 @@ export type {
   CommandsResponse,
   ConversationStatusEvent,
   SSEEvent,
+  AskQuestionOption,
+  AskQuestionItem,
+  AskQuestionEvent,
+  AnswerQuestionRequest,
 } from "@/lib/schemas";
 
 /** Parsed transcript message */
