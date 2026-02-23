@@ -1,5 +1,7 @@
 # Requirements Document
 
+> **UPDATED (2026-02-22) — SDK Migration:** Requirement 6.1-6.2 (SSE events) now uses only `conversation-status` events. The `session-ready` event type referenced in earlier specs has been removed. Status change events are broadcast from `prompt.ts` directly (not from hooks). All other requirements remain valid.
+
 ## Introduction
 
 CSM currently lacks cross-project awareness: when a user is working inside a specific conversation, they have no visibility into what's happening in other projects, sessions, or conversations. Additionally, the conversation status labels (`idle`, `ready`, `running`) are confusing and don't clearly communicate the distinction the user cares about: whether Claude hasn't been invoked yet, is actively running, or has finished and awaits user input.

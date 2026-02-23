@@ -1,5 +1,13 @@
 # Technical Design: Session Lifecycle — Conversation Model
 
+> **UPDATED (2026-02-22) — SDK Migration:** Several components described below have been removed or simplified:
+>
+> - **`hooks.ts (updated)`** and Requirement 16 (Hook Event Routing): Entire hook system removed. The "Hook Event Routing" flow diagram is obsolete.
+> - **Auto-Import Discovery**: `discoverAndImportConversations()`, `encodeProjectPath()`, `readSessionsIndex()`, and `~/.claude/projects/` filesystem scanning have been removed from `conversations.ts`. CSM no longer imports conversations from Claude Code's filesystem.
+> - **`?import=true` query param**: Removed from the conversations API route.
+> - **`-c` flag / `--session-id`**: Prompt continuation now uses SDK `resume: conversationId` option instead.
+> - **Components still valid**: `conversationStateSchema`, `sessionStateSchema`, CRUD operations in `conversations.ts`, `deriveSessionStatus/PromptCount/LastActivity`, conversation API routes (GET/POST), prompt API route, UI components.
+
 ## Overview
 
 **Purpose**: This feature expands CSM sessions from a one-to-one relationship with Claude Code sessions to a one-to-many relationship by introducing a **Conversation** entity. Each Conversation maps to a single Claude Code session and carries its own status, messages, and metadata. This enables seamless switching between CSM UI and terminal-based Claude Code usage within the same session.

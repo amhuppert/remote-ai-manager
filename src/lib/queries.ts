@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   projectKeys,
   configKeys,
-  hooksKeys,
   sessionKeys,
   conversationKeys,
   commandKeys,
@@ -54,25 +53,13 @@ export function useProjectPreferencesQuery() {
 }
 
 // ---------------------------------------------------------------------------
-// Config & Hooks Queries
+// Config Queries
 // ---------------------------------------------------------------------------
 
 export function useConfigQuery() {
   return useQuery({
     queryKey: configKeys.all,
     queryFn: () => apiFetch<{ baseDir: string }>("/api/config"),
-  });
-}
-
-export function useHooksStatusQuery() {
-  return useQuery({
-    queryKey: hooksKeys.status(),
-    queryFn: () =>
-      apiFetch<{
-        installed: boolean;
-        hasUserPromptSubmit: boolean;
-        hasStop: boolean;
-      }>("/api/hooks/status"),
   });
 }
 
@@ -178,7 +165,7 @@ export function useConversationsQuery(
     queryKey: conversationKeys.list(projectName, sessionName),
     queryFn: () =>
       apiFetch<ConversationState[]>(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations?import=true`,
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations`,
       ),
   });
 }

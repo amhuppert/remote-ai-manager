@@ -57,6 +57,7 @@ export const POST = withTracing(async (request, { params }) => {
   }
 
   const encoder = new TextEncoder();
+  const abortController = new AbortController();
   const stream = new ReadableStream({
     async start(controller) {
       const emit = (event: string, data: unknown) => {
@@ -79,6 +80,7 @@ export const POST = withTracing(async (request, { params }) => {
           emit,
           undefined,
           body.modelId,
+          abortController.signal,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Prompt failed";
@@ -91,6 +93,9 @@ export const POST = withTracing(async (request, { params }) => {
           // Already closed
         }
       }
+    },
+    cancel() {
+      abortController.abort();
     },
   });
 

@@ -1,5 +1,7 @@
 # Technical Design: Hook Integration
 
+> **DEPRECATED (2026-02-22):** This entire feature was removed during the migration to `@anthropic-ai/claude-agent-sdk`. See `hook-integration/spec.json` for details. The design below is historical only.
+
 ## Overview
 
 **Purpose**: The Hook Integration feature connects CSM to Claude Code's lifecycle event system, receiving events via HTTP to update session metadata (Claude session ID and transcript path) and providing hook installation detection for the UI.

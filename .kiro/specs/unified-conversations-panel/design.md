@@ -1,5 +1,7 @@
 # Design Document — Unified Conversations Panel
 
+> **UPDATED (2026-02-22) — SDK Migration:** References to `session-ready` events triggered from the hooks route are obsolete. The hook system was removed entirely. The `session-ready` SSE event type and `SessionReadyEvent` schema have been superseded by `conversation-status` events broadcast directly from `prompt.ts`. The `NotificationListener` now only listens for `conversation-status` events. The `SSEEvent` discriminated union is now just `ConversationStatusEvent` (no `SessionReadyEvent`). All other aspects of this spec (status schema migration, unified panel, sidebar tabs, active conversations API, filters) remain valid.
+
 ## Overview
 
 **Purpose**: This feature delivers cross-project conversation awareness and a clearer status system to CSM users. It replaces confusing status labels (`idle`/`ready`/`running`) with intuitive ones (`new`/`awaiting`/`running`), fixes inconsistent project-level badges, and introduces a global side panel that surfaces all active conversations across every project.

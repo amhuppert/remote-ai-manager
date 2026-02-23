@@ -1,5 +1,12 @@
-import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  SDKMessage,
+  SDKAssistantMessage,
+  SDKResultSuccess,
+  SDKResultError,
+  SDKSystemMessage,
+  Query,
+} from "@anthropic-ai/claude-agent-sdk";
 import type {
   ClaudeModel,
   SessionState,
@@ -10,30 +17,29 @@ import { readConfig } from "./config";
 import { getSession, updateSession } from "./state";
 import { acquireSessionLock } from "./lock";
 import { createLogger } from "./logging";
-import { parseStreamLine } from "./stream-events";
-import {
-  getConversation,
-  createConversation,
-  encodeProjectPath,
-} from "./conversations";
+import { getConversation, createConversation } from "./conversations";
+import { appendTranscriptEntry, getTranscriptPath } from "./transcript";
+import type { TranscriptEntry } from "./transcript";
 import { broadcast } from "./sse-broadcaster";
+
+// Prevent nested session detection when CSM runs inside Claude Code
+delete process.env.CLAUDECODE;
 
 const logger = createLogger("prompt");
 
 /**
- * Execute a prompt against the Claude CLI in a session's worktree,
- * streaming output via `--output-format stream-json`.
+ * Execute a prompt via the Agents SDK query() API,
+ * streaming output via SSE events.
  *
- * - New conversation:       `claude -p "<prompt>"`
- * - Existing conversation:  `claude --resume <uuid> -p "<prompt>"`
+ * - New conversation:       creates a new SDK session
+ * - Existing conversation:  resumes an existing SDK session via claudeSessionId
  *
  * If conversationId is not provided, creates a new conversation.
- * Uses `spawn` for real-time line-by-line output.
  * Emits SSE events via the `emit` callback as content arrives.
- * Accumulates content blocks and updates conversation metadata on completion.
+ * Appends all messages to our own JSONL transcript.
  *
  * Acquires a single-flight lock so only one prompt runs per session.
- * Updates conversation status (running -> ready) and prompt count.
+ * Updates conversation status (running -> awaiting) and prompt count.
  */
 export async function executePromptStream(
   projectPath: string,
@@ -42,6 +48,7 @@ export async function executePromptStream(
   emit: (event: string, data: unknown) => void,
   conversationId?: string,
   modelId?: ClaudeModel,
+  signal?: AbortSignal,
 ): Promise<{ conversationId: string }> {
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
@@ -59,34 +66,12 @@ export async function executePromptStream(
     }
     conversation = existingConv;
   } else {
-    // Create a new conversation for this prompt
     conversation = await createConversation(projectPath, session.sessionName);
     conversationId = conversation.id;
   }
 
   // Resolve model: explicit parameter > config default
   const effectiveModel = modelId ?? config.defaultModel;
-
-  const args: string[] = [];
-  if (effectiveModel) {
-    args.push("--model", effectiveModel);
-  }
-  if (conversation.claudeSessionId) {
-    // --resume continues an existing session by its ID
-    // (--session-id assigns an ID to a NEW session and would fail with
-    // "already in use" if the ID already exists)
-    args.push("--resume", conversation.claudeSessionId);
-  }
-  args.push(
-    "-p",
-    promptText,
-    "--dangerously-skip-permissions",
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--max-turns",
-    "50",
-  );
 
   const projectName = projectPath.split("/").pop() ?? projectPath;
 
@@ -101,7 +86,7 @@ export async function executePromptStream(
       },
     );
 
-    // Broadcast running status for unified panel
+    // Broadcast running status
     try {
       broadcast({
         type: "conversation-status",
@@ -114,203 +99,151 @@ export async function executePromptStream(
       // fire-and-forget
     }
 
-    // Log CLI args excluding prompt content for security
-    const cliArgsForLog = args.filter((a) => a !== promptText);
     logger.info("prompt.submit", {
       sessionName: session.sessionName,
       promptLength: promptText.length,
-      cliArgs: cliArgsForLog,
+      model: effectiveModel ?? "default",
+      resume: !!conversation.claudeSessionId,
     });
 
     const promptStart = Date.now();
 
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn("claude", args, {
+    // Create SDK query
+    const abortController = new AbortController();
+    const q: Query = query({
+      prompt: promptText,
+      options: {
+        model: effectiveModel ?? undefined,
+        systemPrompt: { type: "preset", preset: "claude_code" },
+        settingSources: ["user", "project", "local"],
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
         cwd: session.worktreePath,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          ...Object.fromEntries(
-            Object.entries(process.env).filter(
-              ([key]) => !key.startsWith("CLAUDE"),
-            ),
-          ),
-        } as NodeJS.ProcessEnv,
-      });
-
-      // Close stdin so the CLI doesn't block waiting for input
-      child.stdin?.end();
-
-      // Manual timeout since spawn doesn't support timeout option
-      const timeoutHandle = setTimeout(() => {
-        logger.warn("prompt.timeout", {
-          sessionName: session.sessionName,
-          timeoutMs: config.claudeTimeoutMs,
-        });
-        child.kill("SIGTERM");
-      }, config.claudeTimeoutMs);
-
-      // Accumulate content blocks for tracking
-      const contentBlocks: MessageContentBlock[] = [];
-      let sessionId: string | null = null;
-
-      // Buffer stderr for error logging
-      let stderrBuf = "";
-      child.stderr?.on("data", (chunk: Buffer) => {
-        stderrBuf += chunk.toString();
-      });
-
-      // Parse stdout line-by-line
-      const rl = createInterface({ input: child.stdout! });
-      rl.on("line", (line) => {
-        const event = parseStreamLine(line);
-        if (!event) return;
-
-        switch (event.type) {
-          case "system":
-            sessionId = event.session_id;
-            emit("init", { sessionId: event.session_id });
-            break;
-
-          case "assistant":
-            for (const block of event.message.content) {
-              if (
-                block["type"] === "text" &&
-                typeof block["text"] === "string"
-              ) {
-                const textBlock: MessageContentBlock = {
-                  type: "text",
-                  text: block["text"],
-                };
-                contentBlocks.push(textBlock);
-                emit("content", textBlock);
-              } else if (
-                block["type"] === "tool_use" &&
-                typeof block["name"] === "string"
-              ) {
-                const toolBlock: MessageContentBlock = {
-                  type: "tool_use",
-                  name: block["name"],
-                  input: block["input"] as Record<string, unknown> | undefined,
-                };
-                contentBlocks.push(toolBlock);
-                emit("content", toolBlock);
-              }
-            }
-            break;
-
-          case "result":
-            if (event.session_id) {
-              sessionId = event.session_id;
-            }
-            emit("result", { sessionId: event.session_id });
-            break;
-
-          case "user":
-            // Internal tool_result messages — log but don't emit
-            logger.debug("prompt.tool_result", {
-              sessionName: session.sessionName,
-            });
-            break;
-        }
-      });
-
-      child.on("close", (code) => {
-        clearTimeout(timeoutHandle);
-
-        const durationMs = Date.now() - promptStart;
-        logger.info("prompt.complete", {
-          sessionName: session.sessionName,
-          exitCode: code,
-          durationMs,
-          contentBlocks: contentBlocks.length,
-          stderrSize: stderrBuf.length,
-        });
-
-        if (stderrBuf.trim()) {
-          logger.debug("prompt.stderr", {
-            sessionName: session.sessionName,
-            stderr: stderrBuf.slice(0, 1000),
-          });
-        }
-
-        // Update conversation metadata and finish
-        const storeAndFinish = async () => {
-          if (contentBlocks.length > 0) {
-            await mutateConversation(
-              projectPath,
-              session.sessionName,
-              conversationId!,
-              (c) => {
-                c.promptCount++;
-                if (sessionId) {
-                  c.claudeSessionId = sessionId;
-                }
-                // Set transcript path based on Claude session ID
-                if (sessionId && !c.transcriptPath) {
-                  const encodedPath = encodeProjectPath(session.worktreePath);
-                  c.transcriptPath = `~/.claude/projects/${encodedPath}/${sessionId}.jsonl`;
-                }
-              },
-            ).catch((storeErr) => {
-              logger.error("prompt.store_response_failed", {
-                sessionName: session.sessionName,
-                error:
-                  storeErr instanceof Error
-                    ? storeErr.message
-                    : String(storeErr),
-              });
-            });
-
-            if (code !== 0) {
-              logger.warn("prompt.non_zero_exit_with_response", {
-                sessionName: session.sessionName,
-                exitCode: code,
-                contentBlockCount: contentBlocks.length,
-              });
-            }
-          } else if (code !== 0) {
-            emit("error", {
-              message: `Claude exited with code ${code}`,
-            });
-            logger.error("prompt.failure", {
-              sessionName: session.sessionName,
-              exitCode: code,
-              stderr: stderrBuf.slice(0, 500),
-            });
-          } else if (code === 0) {
-            // Claude exited cleanly but produced no output — likely a startup failure
-            // (e.g. unknown skill, missing config, permission error)
-            const hint = stderrBuf.trim()
-              ? stderrBuf.trim().slice(0, 500)
-              : "Claude exited without producing a response";
-            emit("error", { message: hint });
-            logger.warn("prompt.empty_response", {
-              sessionName: session.sessionName,
-              stderrSize: stderrBuf.length,
-            });
-          }
-
-          emit("done", {});
-          resolve();
-        };
-
-        storeAndFinish().catch(reject);
-      });
-
-      child.on("error", (err) => {
-        clearTimeout(timeoutHandle);
-        logger.error("prompt.spawn_error", {
-          sessionName: session.sessionName,
-          error: err.message,
-        });
-        emit("error", {
-          message: `Failed to spawn Claude CLI: ${err.message}`,
-        });
-        emit("done", {});
-        resolve();
-      });
+        maxTurns: config.maxTurns ?? 50,
+        resume: conversation.claudeSessionId ?? undefined,
+        persistSession: true,
+        abortController,
+        env: { CLAUDECODE: "" },
+      },
     });
 
+    // Wire up cancellation from the caller's AbortSignal
+    if (signal) {
+      if (signal.aborted) {
+        abortController.abort();
+      } else {
+        signal.addEventListener(
+          "abort",
+          () => {
+            abortController.abort();
+          },
+          { once: true },
+        );
+      }
+    }
+
+    // Track state across the message loop
+    let sessionId: string | null = null;
+    let resultCostUsd: number | null = null;
+    let resultDurationMs: number | null = null;
+    let resultNumTurns: number | null = null;
+    const contentBlocks: MessageContentBlock[] = [];
+
+    try {
+      for await (const message of q) {
+        await processMessage(
+          message,
+          conversationId,
+          emit,
+          contentBlocks,
+          (id) => {
+            sessionId = id;
+          },
+          (cost, duration, turns) => {
+            resultCostUsd = cost;
+            resultDurationMs = duration;
+            resultNumTurns = turns;
+          },
+        );
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Unknown SDK error";
+      logger.error("prompt.sdk_error", {
+        sessionName: session.sessionName,
+        error: errorMsg,
+      });
+      emit("error", { message: `SDK error: ${errorMsg}` });
+    }
+
+    const durationMs = Date.now() - promptStart;
+    logger.info("prompt.complete", {
+      sessionName: session.sessionName,
+      durationMs,
+      contentBlocks: contentBlocks.length,
+      costUsd: resultCostUsd,
+      numTurns: resultNumTurns,
+    });
+
+    // Update conversation metadata
+    if (contentBlocks.length > 0 || sessionId) {
+      await mutateConversation(
+        projectPath,
+        session.sessionName,
+        conversationId,
+        (c) => {
+          c.promptCount++;
+          if (sessionId) {
+            c.claudeSessionId = sessionId;
+          }
+          // Set transcript path to our own storage
+          if (!c.transcriptPath) {
+            // getTranscriptPath is async but we need the path synchronously here.
+            // We'll set it after this block.
+          }
+          // Accumulate cost/duration/turns
+          if (resultCostUsd != null) {
+            c.totalCostUsd = (c.totalCostUsd ?? 0) + resultCostUsd;
+          }
+          if (resultDurationMs != null) {
+            c.totalDurationMs = (c.totalDurationMs ?? 0) + resultDurationMs;
+          }
+          if (resultNumTurns != null) {
+            c.totalTurns = (c.totalTurns ?? 0) + resultNumTurns;
+          }
+        },
+      ).catch((storeErr) => {
+        logger.error("prompt.store_response_failed", {
+          sessionName: session.sessionName,
+          error:
+            storeErr instanceof Error ? storeErr.message : String(storeErr),
+        });
+      });
+
+      // Set transcript path (async)
+      const transcriptPath = await getTranscriptPath(conversationId);
+      await mutateConversation(
+        projectPath,
+        session.sessionName,
+        conversationId,
+        (c) => {
+          if (!c.transcriptPath) {
+            c.transcriptPath = transcriptPath;
+          }
+        },
+      ).catch(() => {
+        // best-effort
+      });
+    } else {
+      // No content and no session — likely a startup failure
+      emit("error", {
+        message: "Claude exited without producing a response",
+      });
+      logger.warn("prompt.empty_response", {
+        sessionName: session.sessionName,
+      });
+    }
+
+    emit("done", {});
     return { conversationId };
   } finally {
     // Always mark conversation as awaiting when done (even on error)
@@ -325,7 +258,7 @@ export async function executePromptStream(
       // best-effort status reset
     });
 
-    // Broadcast awaiting status for unified panel
+    // Broadcast awaiting status
     try {
       broadcast({
         type: "conversation-status",
@@ -339,6 +272,170 @@ export async function executePromptStream(
     }
 
     release();
+  }
+}
+
+/**
+ * Process a single SDK message: emit SSE events, append to transcript, track state.
+ */
+async function processMessage(
+  message: SDKMessage,
+  conversationId: string,
+  emit: (event: string, data: unknown) => void,
+  contentBlocks: MessageContentBlock[],
+  setSessionId: (id: string) => void,
+  setResultData: (
+    costUsd: number,
+    durationMs: number,
+    numTurns: number,
+  ) => void,
+): Promise<void> {
+  const timestamp = new Date().toISOString();
+
+  switch (message.type) {
+    case "system": {
+      const sysMsg = message as SDKSystemMessage;
+      if (sysMsg.subtype === "init") {
+        setSessionId(sysMsg.session_id);
+        emit("init", { sessionId: sysMsg.session_id });
+        await appendEntry(conversationId, {
+          timestamp,
+          type: "system",
+          raw: { subtype: "init", session_id: sysMsg.session_id },
+        });
+      }
+      // Other system subtypes (status, compact_boundary, task_*) — log to transcript only
+      else {
+        await appendEntry(conversationId, {
+          timestamp,
+          type: "system",
+          raw: message,
+        });
+      }
+      break;
+    }
+
+    case "assistant": {
+      const asstMsg = message as SDKAssistantMessage;
+      setSessionId(asstMsg.session_id);
+
+      const blocks: MessageContentBlock[] = [];
+      for (const block of asstMsg.message.content) {
+        if (block.type === "text" && "text" in block) {
+          const textBlock: MessageContentBlock = {
+            type: "text",
+            text: block.text,
+          };
+          blocks.push(textBlock);
+          contentBlocks.push(textBlock);
+          emit("content", textBlock);
+        } else if (block.type === "tool_use" && "name" in block) {
+          const toolBlock: MessageContentBlock = {
+            type: "tool_use",
+            name: block.name,
+            input: block.input as Record<string, unknown> | undefined,
+          };
+          blocks.push(toolBlock);
+          contentBlocks.push(toolBlock);
+          emit("content", toolBlock);
+        }
+      }
+
+      await appendEntry(conversationId, {
+        timestamp,
+        type: "assistant",
+        role: "assistant",
+        content: blocks,
+      });
+      break;
+    }
+
+    case "user": {
+      // Internal tool_result messages — log to transcript but don't emit
+      await appendEntry(conversationId, {
+        timestamp,
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "[tool result]" }],
+        raw: message,
+      });
+      break;
+    }
+
+    case "result": {
+      const resultMsg = message as SDKResultSuccess | SDKResultError;
+      setSessionId(resultMsg.session_id);
+
+      if (resultMsg.subtype === "success") {
+        const success = resultMsg as SDKResultSuccess;
+        setResultData(
+          success.total_cost_usd,
+          success.duration_ms,
+          success.num_turns,
+        );
+        emit("result", {
+          sessionId: success.session_id,
+          costUsd: success.total_cost_usd,
+          numTurns: success.num_turns,
+        });
+      } else {
+        const error = resultMsg as SDKResultError;
+        setResultData(error.total_cost_usd, error.duration_ms, error.num_turns);
+        const errorMessage = mapErrorSubtype(error);
+        emit("error", { message: errorMessage });
+      }
+
+      await appendEntry(conversationId, {
+        timestamp,
+        type: "result",
+        raw: resultMsg,
+      });
+      break;
+    }
+
+    default: {
+      // stream_event, tool_progress, hook_*, auth_status, etc.
+      // Append to transcript for debugging; no SSE emission
+      await appendEntry(conversationId, {
+        timestamp,
+        type: message.type,
+        raw: message,
+      });
+      break;
+    }
+  }
+}
+
+/** Map SDK error result subtypes to human-readable messages */
+function mapErrorSubtype(error: SDKResultError): string {
+  switch (error.subtype) {
+    case "error_max_turns":
+      return `Agent reached maximum turns (${error.num_turns})`;
+    case "error_max_budget_usd":
+      return `Agent exceeded budget limit ($${error.total_cost_usd.toFixed(2)})`;
+    case "error_max_structured_output_retries":
+      return "Agent exceeded structured output retry limit";
+    case "error_during_execution":
+      return error.errors.length > 0
+        ? error.errors.join("; ")
+        : "Error during execution";
+    default:
+      return "Unknown error";
+  }
+}
+
+/** Append a transcript entry, logging failures but not throwing */
+async function appendEntry(
+  conversationId: string,
+  entry: TranscriptEntry,
+): Promise<void> {
+  try {
+    await appendTranscriptEntry(conversationId, entry);
+  } catch (err) {
+    logger.warn("prompt.transcript_write_failed", {
+      conversationId,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

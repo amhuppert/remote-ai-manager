@@ -28,7 +28,7 @@ Hybrid approach: **feature-colocated components** within App Router pages, **sha
 
 **Location**: `src/lib/`
 **Purpose**: All business logic, data access, and utilities
-**Pattern**: One module per domain concept (e.g., `sessions.ts`, `state.ts`, `config.ts`, `hooks.ts`); use nested directories when a domain has multiple related files (e.g., `src/lib/logging/`)
+**Pattern**: One module per domain concept (e.g., `sessions.ts`, `state.ts`, `config.ts`, `prompt.ts`, `transcript.ts`); use nested directories when a domain has multiple related files (e.g., `src/lib/logging/`)
 
 ### API Routes (`src/app/api/`)
 
@@ -43,11 +43,6 @@ Hybrid approach: **feature-colocated components** within App Router pages, **sha
 **Purpose**: Single source of truth for all data shapes
 **Pattern**: Zod schemas define entities; `z.infer` derives types; additional interfaces (API responses, UI-only types) live in `src/types/index.ts`
 
-### CLI-capable Lib Modules
-
-Some `src/lib/` modules serve dual purpose: importable library functions + CLI entry point (via `npx tsx`).
-**Example**: `install-hooks.ts` — exports functions for testing/reuse, and runs directly when invoked as a script.
-
 ## Naming Conventions
 
 - **Files**: PascalCase for React components (`ProjectCard.tsx`), kebab-case for lib modules (`project-resolver.ts`)
@@ -55,7 +50,7 @@ Some `src/lib/` modules serve dual purpose: importable library functions + CLI e
 - **Types/Interfaces**: PascalCase, suffixed by domain (`SessionState`, `FileDiff`)
 - **Schemas**: camelCase with `Schema` suffix (`sessionStateSchema`)
 - **Test files**: `.test.ts`/`.test.tsx` suffix, colocated with source (both in `src/lib/` and `src/app/**/`)
-- **Route tests**: API route tests use `*-route.test.ts` naming in `src/lib/` (e.g., `hooks-route.test.ts`)
+- **Route tests**: API route tests use `*-route.test.ts` naming in `src/lib/` (e.g., `prompt-route.test.ts`)
 
 ## Import Organization
 

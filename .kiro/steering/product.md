@@ -6,9 +6,9 @@ CSM (Claude Session Manager) is a web-based control plane for managing remote Cl
 
 1. **Project Discovery** — Scans a configurable base directory for git repositories and surfaces them as manageable projects
 2. **Session Lifecycle** — Creates isolated coding sessions backed by git worktrees and dedicated branches (`csm/<name>`), with full create/monitor/delete lifecycle
-3. **Prompt Execution** — Sends prompts to Claude Code CLI processes running in session worktrees, with single-flight locking to prevent concurrent executions
-4. **Live Observability** — Parses Claude Code JSONL transcripts and git diffs to show conversation history and code changes per session
-5. **Hook Integration** — Receives Claude Code lifecycle events (UserPromptSubmit, Stop) to track session activity and status in real time
+3. **Prompt Execution** — Sends prompts via the `@anthropic-ai/claude-agent-sdk` `query()` API running in session worktrees, with single-flight locking to prevent concurrent executions
+4. **Live Observability** — Stores conversation transcripts as own JSONL files and computes git diffs to show conversation history and code changes per session
+5. **Real-Time Status** — Broadcasts conversation status changes (`running`/`awaiting`) via SSE to drive UI updates and browser notifications
 
 ## Target Use Cases
 

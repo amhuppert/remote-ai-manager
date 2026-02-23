@@ -1,5 +1,16 @@
 # Technical Design: Prompt Execution
 
+> **UPDATED (2026-02-22) — SDK Migration:** The architecture has migrated from `child_process.spawn` to `@anthropic-ai/claude-agent-sdk` `query()`. Key changes:
+>
+> - **`prompt.ts`** rewritten with SDK `query()` async generator (replaces `spawn` + `readline`)
+> - **`stream-events.ts`** deleted; `format-tool-use.ts` extracted as standalone module
+> - **`transcript.ts`** rewritten with own JSONL storage (replaces Claude Code filesystem reading)
+> - SDK options: `systemPrompt: { type: "preset", preset: "claude_code" }`, `permissionMode: "bypassPermissions"`, `maxTurns: 50`, `resume: conversationId` for continuation
+> - API routes updated with `AbortController` + `cancel()` for stream cancellation
+> - Cost tracking via `SDKResultSuccess.total_cost_usd/duration_ms/num_turns`
+>
+> Requirements (locking, status transitions, SSE events, API endpoints) remain valid. Implementation details below reflect the pre-migration design.
+
 ## Overview
 
 **Purpose**: The Prompt Execution feature delivers the core interaction mechanism between CSM and Claude Code. It enables developers to send prompts to Claude Code CLI processes running within session worktrees, with concurrency control and lifecycle management.

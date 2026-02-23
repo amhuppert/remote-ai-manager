@@ -1,5 +1,7 @@
 # Technical Design: Transcript Viewer
 
+> **UPDATED (2026-02-22) — SDK Migration:** `transcript.ts` was rewritten to manage CSM's own JSONL transcript files at `<configDir>/transcripts/<conversationId>.jsonl`, populated from SDK stream data via `appendTranscriptEntry()`. It no longer reads Claude Code's `~/.claude/projects/` filesystem. The primary data path (session.messages) is unchanged. The JSONL parser now reads CSM-owned files rather than external Claude Code transcripts.
+
 ## Overview
 
 **Purpose**: The Transcript Viewer feature provides conversation observability by rendering user/assistant messages within the session detail page. The primary data source is `session.messages` (populated by prompt execution), with a secondary JSONL transcript parser available for legacy/debugging use.

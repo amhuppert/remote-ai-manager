@@ -175,6 +175,9 @@ export async function createSession(
     source: "csm",
     summary: null,
     archived: false,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
   };
   const session: SessionState = {
     sessionName,

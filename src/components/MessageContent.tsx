@@ -3,7 +3,7 @@
 import { memo } from "react";
 import type { MessageContentBlock } from "@/types";
 import MarkdownContent from "./MarkdownContent";
-import { formatToolUse } from "@/lib/stream-events";
+import { formatToolUse } from "@/lib/format-tool-use";
 
 interface Props {
   content: MessageContentBlock[];

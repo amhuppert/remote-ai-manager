@@ -1,5 +1,7 @@
 # Design Document: E2E Debugging Instrumentation
 
+> **UPDATED (2026-02-22) — SDK Migration:** The `hooks module (instrumented)` component and Requirement 4 (Hook Event Debugging) sections are obsolete — the hook system was removed. The "Hook Event Correlation Flow" sequence diagram no longer applies. The architecture diagram's `Hooks[hooks module]` node should be disregarded. All other components (Logger, withTracing, tracedFetch, sessions/prompt/state/lock instrumentation) remain valid, though prompt module instrumentation should reference SDK `query()` instead of Claude CLI subprocess.
+
 ## Overview
 
 **Purpose**: This feature adds structured, end-to-end logging instrumentation to CSM so that Claude Code agents can read a single NDJSON log file and trace any user interaction from the UI through API routes to Claude CLI execution, diagnosing failures without needing to reproduce them.

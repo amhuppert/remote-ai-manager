@@ -1,5 +1,7 @@
 # Requirements Document
 
+> **UPDATED (2026-02-22) — SDK Migration:** Requirement 8 (Hook Status Display) is obsolete — the hook system was removed. The hooks banner, `useHooksStatusQuery`, and hooks status indicators in the Topbar have been deleted from the codebase. Requirement 5.5's reference to "hooks status" in the Topbar global status should be disregarded. All other requirements remain valid.
+
 ## Introduction
 
 The Dashboard UI is the primary user interface for the Claude Session Manager (CSM). It provides a three-level navigation hierarchy: project list, sessions list, and session detail. The dashboard enables developers to discover git repositories, create and manage coding sessions, send prompts, view transcripts and diffs, and monitor session status. The UI follows a dark-themed design system with responsive layouts supporting desktop, tablet, and mobile viewports.

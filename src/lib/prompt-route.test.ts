@@ -177,6 +177,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
       expect.any(Function),
       undefined,
       undefined,
+      expect.any(Object), // AbortSignal
     );
   });
 
@@ -192,6 +193,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
       expect.any(Function),
       undefined,
       undefined,
+      expect.any(Object), // AbortSignal
     );
   });
 });

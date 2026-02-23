@@ -6,13 +6,14 @@ import {
   getClientCount,
   _resetForTesting,
 } from "./sse-broadcaster";
-import type { SessionReadyEvent } from "@/types";
+import type { ConversationStatusEvent } from "@/types";
 
-const TEST_EVENT: SessionReadyEvent = {
-  type: "session-ready",
+const TEST_EVENT: ConversationStatusEvent = {
+  type: "conversation-status",
   projectName: "my-project",
   sessionName: "feature-x",
   conversationId: "conv-123",
+  status: "running",
 };
 
 function makeController(): {
@@ -77,7 +78,7 @@ describe("sse-broadcaster", () => {
     broadcast(TEST_EVENT);
 
     const decoder = new TextDecoder();
-    const expected = `event: session-ready\ndata: ${JSON.stringify(TEST_EVENT)}\n\n`;
+    const expected = `event: conversation-status\ndata: ${JSON.stringify(TEST_EVENT)}\n\n`;
 
     expect(decoder.decode(client1.chunks[0])).toBe(expected);
     expect(decoder.decode(client2.chunks[0])).toBe(expected);
@@ -102,7 +103,7 @@ describe("sse-broadcaster", () => {
     expect(getClientCount()).toBe(1);
     // Good client should still receive the event
     const decoder = new TextDecoder();
-    expect(decoder.decode(chunks[0])).toContain("session-ready");
+    expect(decoder.decode(chunks[0])).toContain("conversation-status");
   });
 
   it("getClientCount reflects accurate count after multiple operations", () => {

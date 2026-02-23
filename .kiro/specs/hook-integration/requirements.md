@@ -1,5 +1,7 @@
 # Requirements Document
 
+> **DEPRECATED (2026-02-22):** This entire feature was removed during the migration to `@anthropic-ai/claude-agent-sdk`. CSM no longer receives Claude Code lifecycle events via HTTP hooks. Session metadata (status, session ID, transcript) is now tracked directly via the SDK `query()` stream. All hook-related files have been deleted: `hooks.ts`, `install-hooks.ts`, `api/hooks/route.ts`, `api/hooks/status/route.ts`. The requirements below are historical only.
+
 ## Introduction
 
 The Hook Integration feature connects CSM to Claude Code's lifecycle event system. Claude Code emits hook events (such as `UserPromptSubmit` and `Stop`) during its operation, and CSM receives these events via an HTTP API to update session metadata. This is the primary mechanism for capturing the Claude session ID and transcript file path — data that enables the transcript viewer and session observability features. The feature also provides hook installation detection so the UI can warn users when hooks are not configured.

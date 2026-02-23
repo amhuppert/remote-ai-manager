@@ -1,5 +1,7 @@
 # Requirements Document
 
+> **UPDATED (2026-02-22) — SDK Migration:** Requirement 4 (Hook Event Debugging) is obsolete — the hook system was removed. All references to `hooks.ts`, `hooks module`, hook event logging, and hook validation should be disregarded. The remaining requirements (1, 2, 3, 5, 6) are still valid but Req 3.2-3.4 should reference SDK `query()` execution instead of Claude CLI subprocess spawning.
+
 ## Introduction
 CSM (Claude Session Manager) orchestrates multiple remote Claude Code sessions across git worktrees. When things go wrong — dropped hooks, stalled prompts, corrupted state, worktree conflicts — the primary debugging workflow is a Claude Code agent reading log files to diagnose the issue. This feature adds structured, end-to-end logging that traces user interactions in the UI through API routes to Claude CLI invocations, producing logs with enough context for an AI agent to reconstruct what happened and identify root causes without needing to reproduce the problem.
 

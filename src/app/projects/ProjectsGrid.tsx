@@ -7,7 +7,6 @@ import {
   useProjectsQuery,
   useProjectPreferencesQuery,
   useConfigQuery,
-  useHooksStatusQuery,
 } from "@/lib/queries";
 import {
   useArchiveProjectMutation,
@@ -30,7 +29,6 @@ export default function ProjectsGrid(): React.JSX.Element {
   const projectsQuery = useProjectsQuery();
   const prefsQuery = useProjectPreferencesQuery();
   const configQuery = useConfigQuery();
-  const hooksQuery = useHooksStatusQuery();
 
   // --- Zustand ---
   const statusFilter = useStatusFilter();
@@ -59,7 +57,6 @@ export default function ProjectsGrid(): React.JSX.Element {
     [prefsQuery.data?.pinned],
   );
   const config = configQuery.data;
-  const hooksStatus = hooksQuery.data;
 
   const archivedSet = useMemo(() => new Set(archivedPaths), [archivedPaths]);
   const pinnedSet = useMemo(() => new Set(pinnedPaths), [pinnedPaths]);
@@ -164,40 +161,15 @@ export default function ProjectsGrid(): React.JSX.Element {
         page="projects"
         breadcrumbs={[{ label: "projects", href: "/projects" }]}
         globalStatus={
-          hooksStatus ? (
-            <>
-              <div className="status-indicator">
-                <div
-                  className={`status-dot${hooksStatus.installed ? "" : " warning"}`}
-                />
-                {hooksStatus.installed ? "hooks active" : "hooks missing"}
-              </div>
-              {runningCount > 0 && (
-                <div className="status-indicator">
-                  <div className="status-dot warning" />
-                  {runningCount} session{runningCount !== 1 ? "s" : ""} running
-                </div>
-              )}
-            </>
+          runningCount > 0 ? (
+            <div className="status-indicator">
+              <div className="status-dot warning" />
+              {runningCount} session{runningCount !== 1 ? "s" : ""} running
+            </div>
           ) : undefined
         }
       />
       <main className="main">
-        {hooksStatus && !hooksStatus.installed && (
-          <div className="hooks-banner">
-            <span className="banner-icon">&#9888;</span>
-            <span className="banner-text">
-              Claude Code hooks are not configured. Session transcripts and
-              metadata will not be captured automatically.
-              {!hooksStatus.hasUserPromptSubmit && !hooksStatus.hasStop
-                ? " Both UserPromptSubmit and Stop hooks are missing."
-                : !hooksStatus.hasUserPromptSubmit
-                  ? " UserPromptSubmit hook is missing."
-                  : " Stop hook is missing."}
-            </span>
-          </div>
-        )}
-
         <div className="page-header stagger-in">
           <h1 className="page-title">
             Ground <span className="accent">Control</span>

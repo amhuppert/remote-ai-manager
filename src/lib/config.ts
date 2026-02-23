@@ -39,6 +39,7 @@ function defaultConfig(): GlobalConfig {
     stateFilePath: path.join(CONFIG_DIR, "state.json"),
     claudeTimeoutMs: 300_000,
     defaultModel: "opus",
+    maxTurns: 50,
   };
 }
 

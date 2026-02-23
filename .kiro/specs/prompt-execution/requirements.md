@@ -1,5 +1,16 @@
 # Requirements Document
 
+> **UPDATED (2026-02-22) — SDK Migration:** The implementation has migrated from direct CLI subprocess spawning (`child_process.spawn`) to the `@anthropic-ai/claude-agent-sdk` `query()` API. Key changes to requirements:
+>
+> - **Req 1 (CLI Invocation):** No longer spawns `claude` CLI directly. Uses SDK `query()` with options: `systemPrompt: { type: "preset", preset: "claude_code" }`, `permissionMode: "bypassPermissions"`, `maxTurns: 50`, `settingSources: ["user", "project", "local"]`. The `CLAUDECODE` env var is unset to prevent nested session detection.
+> - **Req 1.5:** stdout line-by-line parsing replaced with async generator iteration over `SDKMessage` objects (system, assistant, user, result types).
+> - **Req 2 (Conversation Continuity):** `-c` flag replaced with `resume: conversationId` in SDK options.
+> - **Req 5 (Timeout):** Manual `setTimeout` + `SIGTERM` replaced with SDK-managed timeout via AbortSignal.
+> - **Req 8.4:** Session ID now captured from `SDKSystemMessage.session_id` field.
+> - **Deleted modules:** `stream-events.ts` removed; `format-tool-use.ts` extracted as standalone module.
+> - **New capability:** SDK `SDKResultMessage` provides `total_cost_usd`, `duration_ms`, `num_turns` for cost tracking per conversation.
+> - **New capability:** Own transcript storage — all SDK messages appended to `<configDir>/transcripts/<conversationId>.jsonl`.
+
 ## Introduction
 
 The Prompt Execution feature enables developers to send prompts to Claude Code CLI processes running within session worktrees. It manages the full execution lifecycle: spawning the Claude CLI subprocess, enforcing single-flight concurrency locking (one prompt per session at a time), transitioning session status between ready and running states, tracking prompt counts for conversation continuity, and handling timeouts and errors gracefully. This feature is the core interaction mechanism between CSM and Claude Code.

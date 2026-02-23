@@ -35,16 +35,8 @@ const mockSessionsData = {
   data: undefined as SessionState[] | undefined,
   isPending: false,
 };
-const mockHooksData = {
-  data: undefined as
-    | { installed: boolean; hasUserPromptSubmit: boolean; hasStop: boolean }
-    | undefined,
-  isPending: false,
-};
-
 vi.mock("@/lib/queries", () => ({
   useSessionsQuery: () => mockSessionsData,
-  useHooksStatusQuery: () => mockHooksData,
   useActiveConversationsQuery: () => ({ data: undefined }),
 }));
 
@@ -94,8 +86,6 @@ beforeEach(() => {
   storeShowArchived = false;
   mockSessionsData.data = undefined;
   mockSessionsData.isPending = false;
-  mockHooksData.data = undefined;
-  mockHooksData.isPending = false;
 });
 
 // ---------------------------------------------------------------------------
@@ -126,6 +116,9 @@ const makeSessions = (count: number): SessionState[] =>
         source: "csm" as const,
         summary: null,
         archived: false,
+        totalCostUsd: null,
+        totalDurationMs: null,
+        totalTurns: null,
       },
     ],
     source: "csm" as const,

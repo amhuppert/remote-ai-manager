@@ -1,5 +1,7 @@
 # Requirements Document
 
+> **UPDATED (2026-02-22) — SDK Migration:** Requirement 3 (Broadcasting) originally described triggering notifications from `POST /api/hooks` Stop events. The hook system was removed. Broadcasting now happens directly from `prompt.ts` via `conversation-status` SSE events. The `session-ready` event type referenced in Req 3 has been superseded by `conversation-status`. Requirements 1, 2, 4, 5 (permission, SSE connection, display, lifecycle) remain valid.
+
 ## Introduction
 CSM (Claude Session Manager) enables developers to run multiple parallel Claude Code sessions across repositories. When Claude finishes work in a session, the user needs to know it's ready for input — especially when they've switched to another tab or application while waiting. This feature adds OS-level browser notifications via the Browser Notification API, delivered through a global Server-Sent Events (SSE) channel, so users are alerted when any session completes work regardless of which CSM page they're viewing.
 

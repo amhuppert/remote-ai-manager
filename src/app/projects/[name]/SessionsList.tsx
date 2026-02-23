@@ -7,7 +7,7 @@ import {
   deriveSessionStatus,
   deriveSessionPromptCount,
 } from "@/lib/session-derived";
-import { useSessionsQuery, useHooksStatusQuery } from "@/lib/queries";
+import { useSessionsQuery } from "@/lib/queries";
 import {
   useDeleteSessionMutation,
   useArchiveSessionMutation,
@@ -90,7 +90,6 @@ export default function SessionsList({
 }: SessionsListProps): React.JSX.Element {
   // --- TanStack Query ---
   const sessionsQuery = useSessionsQuery(projectName);
-  const hooksQuery = useHooksStatusQuery();
 
   // --- Zustand ---
   const modalOpen = useShowCreateModal();
@@ -110,8 +109,6 @@ export default function SessionsList({
     () => sessionsQuery.data ?? [],
     [sessionsQuery.data],
   );
-  const hooksStatus = hooksQuery.data;
-
   const archivedCount = useMemo(
     () => sessions.filter((s) => s.archived).length,
     [sessions],
@@ -147,21 +144,11 @@ export default function SessionsList({
           },
         ]}
         globalStatus={
-          hooksStatus ? (
-            <>
-              <div className="status-indicator">
-                <div
-                  className={`status-dot${hooksStatus.installed ? "" : " warning"}`}
-                />
-                {hooksStatus.installed ? "hooks active" : "hooks missing"}
-              </div>
-              {runningCount > 0 && (
-                <div className="status-indicator">
-                  <div className="status-dot warning" />
-                  {runningCount} session{runningCount !== 1 ? "s" : ""} running
-                </div>
-              )}
-            </>
+          runningCount > 0 ? (
+            <div className="status-indicator">
+              <div className="status-dot warning" />
+              {runningCount} session{runningCount !== 1 ? "s" : ""} running
+            </div>
           ) : undefined
         }
       />

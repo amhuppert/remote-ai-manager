@@ -1,5 +1,7 @@
 # Requirements Document
 
+> **UPDATED (2026-02-22) — SDK Migration:** The JSONL transcript parser (Requirements 1-5) now reads CSM's own transcript files at `<configDir>/transcripts/<conversationId>.jsonl` rather than Claude Code's external filesystem. The primary data path (`session.messages`) is unchanged.
+
 ## Introduction
 
 The Transcript Viewer feature renders conversation messages within the session detail page. The **primary data source** for messages is the `session.messages` array, which is populated directly by the prompt execution feature (see `prompt-execution` spec, Requirement 8). This provides immediate message availability without depending on external hooks or transcript files.

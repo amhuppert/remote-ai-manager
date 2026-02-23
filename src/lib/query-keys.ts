@@ -8,11 +8,6 @@ export const configKeys = {
   all: ["config"] as const,
 };
 
-export const hooksKeys = {
-  all: ["hooks"] as const,
-  status: () => [...hooksKeys.all, "status"] as const,
-};
-
 export const sessionKeys = {
   all: ["sessions"] as const,
   list: (projectName: string) =>

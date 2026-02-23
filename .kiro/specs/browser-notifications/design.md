@@ -1,5 +1,7 @@
 # Design Document: Browser Notifications
 
+> **UPDATED (2026-02-22) — SDK Migration:** The hook-based notification trigger flow described below is obsolete. The entire hook system (`POST /api/hooks`, `processHookEvent`, `hooks.ts`) was removed. Notifications are now triggered via `conversation-status` SSE events broadcast directly from `prompt.ts` when a conversation transitions to `awaiting` status. The `session-ready` event type has been replaced by `conversation-status`. The SSE broadcaster, events route, and `NotificationListener` components remain but the trigger source changed from hooks to prompt execution. See `unified-conversations-panel` spec for the current event flow.
+
 ## Overview
 
 **Purpose**: This feature delivers real-time OS-level browser notifications to CSM users when any Claude Code session finishes work and is ready for the next prompt.

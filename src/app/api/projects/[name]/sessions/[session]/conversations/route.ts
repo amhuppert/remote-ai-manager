@@ -4,8 +4,6 @@ import { getSession } from "@/lib/state";
 import {
   createConversation,
   getSessionConversations,
-  discoverAndImportConversations,
-  syncConversationSummaries,
 } from "@/lib/conversations";
 import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/types";
@@ -13,7 +11,7 @@ import type { ApiError } from "@/types";
 export const dynamic = "force-dynamic";
 
 /** GET /api/projects/[name]/sessions/[session]/conversations — list conversations */
-export const GET = withTracing(async (request, { params }) => {
+export const GET = withTracing(async (_request, { params }) => {
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
   const sessionSlug = resolvedParams["session"] ?? "";
@@ -33,13 +31,6 @@ export const GET = withTracing(async (request, { params }) => {
       { error: "Session not found" } satisfies ApiError,
       { status: 404 },
     );
-  }
-
-  // Auto-import discovery and summary sync when ?import=true
-  const url = new URL(request.url);
-  if (url.searchParams.get("import") === "true") {
-    await discoverAndImportConversations(projectPath, session);
-    await syncConversationSummaries(projectPath, session);
   }
 
   const conversations = await getSessionConversations(projectPath, sessionName);

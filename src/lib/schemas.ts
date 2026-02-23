@@ -13,6 +13,7 @@ export const globalConfigSchema = z.object({
   stateFilePath: z.string(),
   claudeTimeoutMs: z.number(),
   defaultModel: claudeModelSchema.default("opus"),
+  maxTurns: z.number().int().positive().default(50),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -62,6 +63,9 @@ export const conversationStateSchema = z.object({
   source: z.enum(["csm", "imported"]).default("csm"),
   summary: z.string().nullable().default(null),
   archived: z.boolean().default(false),
+  totalCostUsd: z.number().nullable().default(null),
+  totalDurationMs: z.number().nullable().default(null),
+  totalTurns: z.number().nullable().default(null),
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
@@ -150,52 +154,8 @@ export const commitLogEntrySchema = z.object({
 export type CommitLogEntry = z.infer<typeof commitLogEntrySchema>;
 
 // ============================================================
-// Transcript Schemas
-// ============================================================
-
-export const contentBlockSchema = z.object({
-  type: z.string(),
-  text: z.string().optional(),
-});
-export type ContentBlock = z.infer<typeof contentBlockSchema>;
-
-export const transcriptEntrySchema = z.object({
-  type: z.string().optional(),
-  message: z
-    .object({
-      role: z.string().optional(),
-      content: z.union([z.string(), z.array(contentBlockSchema)]).optional(),
-    })
-    .optional(),
-  timestamp: z.string().optional(),
-  uuid: z.string().optional(),
-  parentUuid: z.string().nullable().optional(),
-});
-export type TranscriptEntry = z.infer<typeof transcriptEntrySchema>;
-
-// ============================================================
-// Hook Event Schemas
-// ============================================================
-
-export const hookEventDataSchema = z.object({
-  session_id: z.string().optional(),
-  transcript_path: z.string().optional(),
-  cwd: z.string().optional(),
-  hook_event_name: z.string().optional(),
-});
-export type HookEventData = z.infer<typeof hookEventDataSchema>;
-
-// ============================================================
 // SSE Event Schemas
 // ============================================================
-
-export const sessionReadyEventSchema = z.object({
-  type: z.literal("session-ready"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-});
-export type SessionReadyEvent = z.infer<typeof sessionReadyEventSchema>;
 
 export const conversationStatusEventSchema = z.object({
   type: z.literal("conversation-status"),
@@ -208,16 +168,8 @@ export type ConversationStatusEvent = z.infer<
   typeof conversationStatusEventSchema
 >;
 
-/** Discriminated union of all SSE event types */
-export type SSEEvent = SessionReadyEvent | ConversationStatusEvent;
-
-export const hookEventResultSchema = z.object({
-  matched: z.boolean(),
-  projectName: z.string().optional(),
-  sessionName: z.string().optional(),
-  conversationId: z.string().optional(),
-});
-export type HookEventResult = z.infer<typeof hookEventResultSchema>;
+/** SSE event type */
+export type SSEEvent = ConversationStatusEvent;
 
 // ============================================================
 // Command Autocomplete Schemas
