@@ -90,17 +90,26 @@ export default function AskQuestionPanel({
     [current],
   );
 
-  // Check if all questions have at least one answer
-  const allAnswered = useMemo(() => {
-    return questions.every((q) => {
+  // Check if a single question has at least one answer
+  const isQuestionAnswered = useCallback(
+    (q: AskQuestionItem) => {
       const sel = selections[q.question];
       const hasSelection = sel && sel.size > 0;
       const hasOther =
         useOther[q.question] &&
         (otherTexts[q.question] ?? "").trim().length > 0;
       return hasSelection || hasOther;
-    });
-  }, [questions, selections, useOther, otherTexts]);
+    },
+    [selections, useOther, otherTexts],
+  );
+
+  // Check if all questions have at least one answer
+  const allAnswered = useMemo(() => {
+    return questions.every(isQuestionAnswered);
+  }, [questions, isQuestionAnswered]);
+
+  const isLastQuestion = currentIndex === totalQuestions - 1;
+  const currentAnswered = current ? isQuestionAnswered(current) : false;
 
   const handleSubmit = useCallback(() => {
     const answers: Record<string, string> = {};
@@ -215,13 +224,23 @@ export default function AskQuestionPanel({
       </div>
 
       <div className="ask-question-actions">
-        <button
-          className="ask-question-submit"
-          disabled={disabled || !allAnswered}
-          onClick={handleSubmit}
-        >
-          {isMultiQuestion ? "Submit All Answers" : "Submit Answer"}
-        </button>
+        {isMultiQuestion && !isLastQuestion ? (
+          <button
+            className="ask-question-submit"
+            disabled={disabled || !currentAnswered}
+            onClick={() => onNavigate(currentIndex + 1)}
+          >
+            Next Question &#8594;
+          </button>
+        ) : (
+          <button
+            className="ask-question-submit"
+            disabled={disabled || !allAnswered}
+            onClick={handleSubmit}
+          >
+            {isMultiQuestion ? "Submit All Answers" : "Submit Answer"}
+          </button>
+        )}
       </div>
     </div>
   );
