@@ -41,6 +41,7 @@ async function seedSession(sessionOverrides: Record<string, unknown> = {}) {
             finished: false,
             conversations: [],
             source: "csm" as const,
+            objective: null,
             ...sessionOverrides,
           },
         },
@@ -477,6 +478,7 @@ function makeSessionWith(
     finished: false,
     conversations,
     source: "csm" as const,
+    objective: null,
     ...overrides,
   };
 }

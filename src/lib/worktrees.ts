@@ -52,7 +52,9 @@ export interface ReconciliationResult {
  *
  * The first block is always the main working tree.
  */
-export function parseWorktreeList(porcelainOutput: string): DiscoveredWorktree[] {
+export function parseWorktreeList(
+  porcelainOutput: string,
+): DiscoveredWorktree[] {
   const trimmed = porcelainOutput.trim();
   if (!trimmed) return [];
 
@@ -164,9 +166,13 @@ export async function discoverAndImportWorktrees(
   // Run git worktree list
   let porcelainOutput: string;
   try {
-    const { stdout } = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
-      cwd: projectPath,
-    });
+    const { stdout } = await execFileAsync(
+      "git",
+      ["worktree", "list", "--porcelain"],
+      {
+        cwd: projectPath,
+      },
+    );
     porcelainOutput = stdout;
   } catch (err) {
     logger.error("worktrees.discovery_failure", {
@@ -192,7 +198,10 @@ export async function discoverAndImportWorktrees(
   const discoveredPaths = new Set(discovered.map((wt) => wt.path));
   const orphanedSessionNames = existingSessions
     .filter(
-      (s) => !s.finished && !discoveredPaths.has(s.worktreePath) && !existsSync(s.worktreePath),
+      (s) =>
+        !s.finished &&
+        !discoveredPaths.has(s.worktreePath) &&
+        !existsSync(s.worktreePath),
     )
     .map((s) => s.sessionName);
 
@@ -234,6 +243,7 @@ export async function discoverAndImportWorktrees(
       finished: false,
       conversations: [],
       source: "imported",
+      objective: null,
     });
   }
 

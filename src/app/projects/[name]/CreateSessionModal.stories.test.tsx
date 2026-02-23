@@ -15,15 +15,32 @@ vi.mock("@/lib/mutations", () => ({
   useCreateSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
+vi.mock("@/hooks/useVoiceRecorder", () => ({
+  useVoiceRecorder: () => ({
+    isRecording: false,
+    isProcessing: false,
+    elapsedTime: 0,
+    isAvailable: false,
+    toggleRecording: vi.fn(),
+    stopRecording: vi.fn(),
+  }),
+}));
+
+vi.mock("@/components/VoiceRecordButton", () => ({
+  VoiceRecordButton: () => null,
+}));
+
 beforeAll(storybookAnnotations.beforeAll);
 
 const { Default, Closed } = composeStories(stories);
 
 describe("CreateSessionModal stories", () => {
-  it("Default renders form with session name input", async () => {
+  it("Default renders form with objective textarea", async () => {
     await Default.run();
     expect(screen.getByText("New Session")).toBeInTheDocument();
-    expect(screen.getByLabelText("Session Name")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("What do you want to work on?"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Create Session")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });

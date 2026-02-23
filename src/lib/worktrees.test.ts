@@ -4,17 +4,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mocks
 // ---------------------------------------------------------------------------
 
-const {
-  execFileMock,
-  existsSyncMock,
-  readStateMock,
-  writeStateMock,
-} = vi.hoisted(() => ({
-  execFileMock: vi.fn(),
-  existsSyncMock: vi.fn<(p: string) => boolean>(),
-  readStateMock: vi.fn(),
-  writeStateMock: vi.fn(),
-}));
+const { execFileMock, existsSyncMock, readStateMock, writeStateMock } =
+  vi.hoisted(() => ({
+    execFileMock: vi.fn(),
+    existsSyncMock: vi.fn<(p: string) => boolean>(),
+    readStateMock: vi.fn(),
+    writeStateMock: vi.fn(),
+  }));
 
 vi.mock("node:child_process", () => ({
   execFile: execFileMock,
@@ -393,6 +389,7 @@ describe("discoverAndImportWorktrees", () => {
     finished: false,
     conversations: [],
     source: "csm",
+    objective: null,
   };
 
   it("imports untracked worktrees as sessions with source=imported", async () => {
@@ -466,6 +463,7 @@ describe("discoverAndImportWorktrees", () => {
       finished: false,
       conversations: [],
       source: "csm",
+      objective: null,
     };
 
     // Git returns only main worktree — orphan's path doesn't exist on disk
@@ -515,6 +513,7 @@ describe("discoverAndImportWorktrees", () => {
       finished: true,
       conversations: [],
       source: "csm",
+      objective: null,
     };
 
     mockExecFileSuccess(

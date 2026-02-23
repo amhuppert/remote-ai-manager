@@ -114,7 +114,13 @@ export async function executePromptStream(
       prompt: promptText,
       options: {
         model: effectiveModel ?? undefined,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: session.objective
+            ? `[Session Objective]\n${session.objective}`
+            : undefined,
+        },
         settingSources: ["user", "project", "local"],
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,

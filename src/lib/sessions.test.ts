@@ -9,15 +9,21 @@ const {
   existsSyncMock,
   rmMock,
   readFileMock,
+  mkdirMock,
+  writeFileMock,
   readStateMock,
   writeStateMock,
+  ensureUniqueNameMock,
 } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
   existsSyncMock: vi.fn<(p: string) => boolean>(),
   rmMock: vi.fn(),
   readFileMock: vi.fn(),
+  mkdirMock: vi.fn(),
+  writeFileMock: vi.fn(),
   readStateMock: vi.fn(),
   writeStateMock: vi.fn(),
+  ensureUniqueNameMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -31,11 +37,17 @@ vi.mock("node:fs", () => ({
 vi.mock("node:fs/promises", () => ({
   rm: rmMock,
   readFile: readFileMock,
+  mkdir: mkdirMock,
+  writeFile: writeFileMock,
 }));
 
 vi.mock("./state", () => ({
   readState: readStateMock,
   writeState: writeStateMock,
+}));
+
+vi.mock("./worktrees", () => ({
+  ensureUniqueName: ensureUniqueNameMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -46,6 +58,7 @@ import {
   sanitizeBranchName,
   createSession,
   deleteSession,
+  generateSessionName,
 } from "./sessions";
 
 // ---------------------------------------------------------------------------
@@ -80,6 +93,7 @@ function stateWithSession(
             finished: false,
             conversations: [],
             source: "csm",
+            objective: null,
             ...overrides,
           },
         },
@@ -168,6 +182,9 @@ beforeEach(() => {
   existsSyncMock.mockReturnValue(false);
   rmMock.mockResolvedValue(undefined);
   readFileMock.mockRejectedValue(new Error("file not found"));
+  mkdirMock.mockResolvedValue(undefined);
+  writeFileMock.mockResolvedValue(undefined);
+  ensureUniqueNameMock.mockImplementation((name: string) => name);
 });
 
 // ===========================================================================
@@ -269,17 +286,83 @@ describe("sanitizeBranchName", () => {
 });
 
 // ===========================================================================
-// 1.3 – Session creation with worktree and state persistence (Req 3.1–3.2, 7.1–7.4)
+// 1.3 – generateSessionName
+// ===========================================================================
+
+describe("generateSessionName", () => {
+  it("uses Claude Haiku output when valid", async () => {
+    mockExecFileSuccess("add-auth\n");
+    const name = await generateSessionName(
+      "Add user authentication",
+      "/projects/repo",
+    );
+    expect(name).toBe("add-auth");
+
+    // Verify claude was called with haiku model
+    expect(execFileMock).toHaveBeenCalledWith(
+      "claude",
+      expect.arrayContaining(["--model", "haiku"]),
+      expect.objectContaining({ timeout: 15_000 }),
+      expect.any(Function),
+    );
+  });
+
+  it("falls back to heuristic when Claude fails", async () => {
+    mockExecFileFailure(new Error("claude not found"));
+    const name = await generateSessionName(
+      "Add auth feature",
+      "/projects/repo",
+    );
+    // Fallback: take first 4 words, remove fillers, kebab-case
+    expect(name).toBe("add-auth-feature");
+  });
+
+  it("falls back to heuristic when Claude returns invalid name", async () => {
+    mockExecFileSuccess(""); // empty output
+    const name = await generateSessionName(
+      "Implement search",
+      "/projects/repo",
+    );
+    expect(name).toBe("implement-search");
+  });
+
+  it("removes filler words in fallback", async () => {
+    mockExecFileFailure(new Error("timeout"));
+    const name = await generateSessionName(
+      "Add a new feature to the app",
+      "/projects/repo",
+    );
+    // Removes "a", "to", "the" → ["add", "new", "feature", "app"]
+    expect(name).toBe("add-new-feature-app");
+  });
+
+  it("returns 'session' when fallback produces empty name", async () => {
+    mockExecFileFailure(new Error("timeout"));
+    const name = await generateSessionName("the", "/projects/repo");
+    // All words are filler → empty → "session"
+    expect(name).toBe("session");
+  });
+});
+
+// ===========================================================================
+// 1.4 – Session creation with worktree and state persistence
 // ===========================================================================
 
 describe("createSession", () => {
   it("creates a session with correct properties", async () => {
-    mockExecFileSuccess();
-    const session = await createSession("/projects/repo", "My Feature");
+    mockExecFileSequence([
+      { stdout: "my-feature\n" }, // claude haiku
+      { stdout: "" }, // git worktree add
+    ]);
+    const session = await createSession(
+      "/projects/repo",
+      "Implement my feature",
+    );
 
-    expect(session.sessionName).toBe("My Feature");
+    expect(session.sessionName).toBe("my-feature");
     expect(session.worktreePath).toBe("/projects/repo/.worktrees/my-feature");
     expect(session.branchName).toBe("csm/my-feature");
+    expect(session.objective).toBe("Implement my feature");
     expect(session.conversations).toHaveLength(1);
     expect(session.conversations[0]).toMatchObject({
       status: "new",
@@ -293,15 +376,14 @@ describe("createSession", () => {
   });
 
   it("sets ISO 8601 timestamps for createdAt and lastActivityAt", async () => {
-    mockExecFileSuccess();
+    mockExecFileSequence([{ stdout: "timestamp-test\n" }, { stdout: "" }]);
     const before = new Date().toISOString();
-    const session = await createSession("/projects/repo", "timestamp test");
+    const session = await createSession("/projects/repo", "Test timestamps");
     const after = new Date().toISOString();
 
     expect(session.createdAt).toBeTruthy();
     expect(session.lastActivityAt).toBeTruthy();
     expect(session.createdAt).toBe(session.lastActivityAt);
-    // Verify timestamps are in valid range
     expect(new Date(session.createdAt).getTime()).toBeGreaterThanOrEqual(
       new Date(before).getTime(),
     );
@@ -311,10 +393,13 @@ describe("createSession", () => {
   });
 
   it("calls git worktree add with correct arguments", async () => {
-    mockExecFileSuccess();
-    await createSession("/projects/repo", "feature");
+    mockExecFileSequence([
+      { stdout: "feature\n" }, // claude haiku
+      { stdout: "" }, // git worktree add
+    ]);
+    await createSession("/projects/repo", "Build feature");
 
-    // First call should be git worktree add
+    // Second call should be git worktree add (first is claude)
     expect(execFileMock).toHaveBeenCalledWith(
       "git",
       [
@@ -330,22 +415,40 @@ describe("createSession", () => {
     );
   });
 
+  it("writes memory-bank/focus.md with objective", async () => {
+    mockExecFileSequence([{ stdout: "auth-feature\n" }, { stdout: "" }]);
+    await createSession("/projects/repo", "Add user authentication");
+
+    expect(mkdirMock).toHaveBeenCalledWith(
+      "/projects/repo/.worktrees/auth-feature/memory-bank",
+      { recursive: true },
+    );
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/projects/repo/.worktrees/auth-feature/memory-bank/focus.md",
+      "# Session Focus\n\n## Objective\n\nAdd user authentication\n",
+      "utf-8",
+    );
+  });
+
   it("persists session to state via writeState", async () => {
-    mockExecFileSuccess();
-    await createSession("/projects/repo", "persist test");
+    mockExecFileSequence([{ stdout: "persist-test\n" }, { stdout: "" }]);
+    await createSession("/projects/repo", "Persist test objective");
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
     const project = savedState.projects["/projects/repo"];
     expect(project).toBeDefined();
-    expect(project.sessions["persist test"]).toBeDefined();
-    expect(project.sessions["persist test"].conversations).toHaveLength(1);
+    expect(project.sessions["persist-test"]).toBeDefined();
+    expect(project.sessions["persist-test"].objective).toBe(
+      "Persist test objective",
+    );
+    expect(project.sessions["persist-test"].conversations).toHaveLength(1);
   });
 
   it("auto-creates project entry when project not yet in state", async () => {
     readStateMock.mockResolvedValue(emptyState());
-    mockExecFileSuccess();
-    await createSession("/new/project", "first session");
+    mockExecFileSequence([{ stdout: "first-session\n" }, { stdout: "" }]);
+    await createSession("/new/project", "First session objective");
 
     const savedState = writeStateMock.mock.calls[0]![0];
     expect(savedState.projects["/new/project"]).toBeDefined();
@@ -353,71 +456,75 @@ describe("createSession", () => {
   });
 
   // =========================================================================
-  // 1.4 – Session uniqueness and conflicts (Req 4.1–4.2, 3.3)
+  // Session uniqueness via ensureUniqueName
   // =========================================================================
 
-  it("throws error for duplicate session name in same project", async () => {
+  it("uses ensureUniqueName to avoid conflicts", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "existing"),
     );
-    await expect(createSession("/projects/repo", "existing")).rejects.toThrow(
-      'Session "existing" already exists in this project',
+    ensureUniqueNameMock.mockReturnValue("existing-2");
+    mockExecFileSequence([{ stdout: "existing\n" }, { stdout: "" }]);
+
+    const session = await createSession("/projects/repo", "Another feature");
+
+    expect(ensureUniqueNameMock).toHaveBeenCalledWith(
+      "existing",
+      new Set(["existing"]),
     );
+    expect(session.sessionName).toBe("existing-2");
   });
 
-  it("allows same session name in different projects", async () => {
+  it("allows same generated name in different projects", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo-a", "shared-name"),
     );
-    mockExecFileSuccess();
-    const session = await createSession("/projects/repo-b", "shared-name");
+    mockExecFileSequence([{ stdout: "shared-name\n" }, { stdout: "" }]);
+    const session = await createSession(
+      "/projects/repo-b",
+      "Shared name objective",
+    );
     expect(session.sessionName).toBe("shared-name");
   });
 
   it("throws error when worktree directory already exists", async () => {
+    mockExecFileSequence([{ stdout: "conflict\n" }]);
     existsSyncMock.mockImplementation((p: string) => {
-      // Simulate worktree path already existing
       if (String(p).includes(".worktrees/")) return true;
       return false;
     });
-    await expect(createSession("/projects/repo", "conflict")).rejects.toThrow(
-      "Worktree directory already exists:",
-    );
+    await expect(
+      createSession("/projects/repo", "Conflict objective"),
+    ).rejects.toThrow("Worktree directory already exists:");
   });
 
   // =========================================================================
-  // 1.5 – Init script execution and rollback (Req 5.1–5.6, 6.1–6.5, 3.4)
+  // Init script execution and rollback
   // =========================================================================
 
   it("executes init script with correct environment when configured", async () => {
-    // First call: git worktree add (success)
-    // Second call: init script execution (success)
     mockExecFileSequence([
+      { stdout: "with-init\n" }, // claude haiku
       { stdout: "" }, // git worktree add
       { stdout: "" }, // init script
     ]);
 
-    // Mock readFile for ClaudeSessionManager.json
     readFileMock.mockResolvedValue(
       JSON.stringify({ initScriptPath: "./setup.sh" }),
     );
 
-    // existsSync: worktree path doesn't exist (no conflict),
-    // config file exists, script file exists
     existsSyncMock.mockImplementation((p: string) => {
       if (String(p).includes("ClaudeSessionManager.json")) return true;
       if (String(p).includes("setup.sh")) return true;
       return false;
     });
 
-    await createSession("/projects/repo", "with init");
+    await createSession("/projects/repo", "With init objective");
 
-    // Second execFile call should be the init script
-    const initCall = execFileMock.mock.calls[1];
+    // Third execFile call should be the init script (0=claude, 1=git, 2=init)
+    const initCall = execFileMock.mock.calls[2];
     expect(initCall).toBeDefined();
-    // The init script path
     expect(initCall![0]).toBe("/projects/repo/setup.sh");
-    // options
     const opts = initCall![2] as {
       cwd: string;
       env: Record<string, string>;
@@ -426,20 +533,21 @@ describe("createSession", () => {
     expect(opts.cwd).toBe("/projects/repo/.worktrees/with-init");
     expect(opts.env.PROJECT_ROOT).toBe("/projects/repo");
     expect(opts.env.WORKTREE_PATH).toBe("/projects/repo/.worktrees/with-init");
-    expect(opts.env.SESSION_NAME).toBe("with init");
+    expect(opts.env.SESSION_NAME).toBe("with-init");
     expect(opts.env.BRANCH_NAME).toBe("csm/with-init");
     expect(opts.timeout).toBe(60_000);
   });
 
   it("throws 'Init script not found' when script path doesn't exist", async () => {
-    mockExecFileSequence([{ stdout: "" }]); // git worktree add
+    mockExecFileSequence([
+      { stdout: "missing-script\n" }, // claude haiku
+      { stdout: "" }, // git worktree add
+    ]);
 
     readFileMock.mockResolvedValue(
       JSON.stringify({ initScriptPath: "./missing.sh" }),
     );
 
-    // Track worktree path checks: first call = pre-creation (false),
-    // subsequent calls = cleanup (true)
     let worktreeCheckCount = 0;
     existsSyncMock.mockImplementation((p: string) => {
       if (String(p).includes(".worktrees/")) {
@@ -452,18 +560,17 @@ describe("createSession", () => {
     });
 
     await expect(
-      createSession("/projects/repo", "missing script"),
+      createSession("/projects/repo", "Missing script objective"),
     ).rejects.toThrow("Init script not found:");
   });
 
   it("rolls back worktree and branch on init script failure", async () => {
     const scriptError = new Error("script failed");
 
-    // Call sequence: git worktree add (success), init script (fail),
-    // git worktree remove (success), git branch -D (success)
     mockExecFileSequence([
-      { stdout: "" },
-      { error: scriptError },
+      { stdout: "fail-session\n" }, // claude haiku
+      { stdout: "" }, // git worktree add
+      { error: scriptError }, // init script fails
       { stdout: "" }, // rollback: worktree remove
       { stdout: "" }, // rollback: branch delete
     ]);
@@ -484,18 +591,18 @@ describe("createSession", () => {
     });
 
     await expect(
-      createSession("/projects/repo", "fail session"),
+      createSession("/projects/repo", "Fail session objective"),
     ).rejects.toThrow("script failed");
 
     // Verify rollback: git worktree remove --force was called
-    const worktreeRemoveCall = execFileMock.mock.calls[2];
+    const worktreeRemoveCall = execFileMock.mock.calls[3];
     expect(worktreeRemoveCall![0]).toBe("git");
     expect(worktreeRemoveCall![1]).toContain("worktree");
     expect(worktreeRemoveCall![1]).toContain("remove");
     expect(worktreeRemoveCall![1]).toContain("--force");
 
     // Verify rollback: git branch -D was called
-    const branchDeleteCall = execFileMock.mock.calls[3];
+    const branchDeleteCall = execFileMock.mock.calls[4];
     expect(branchDeleteCall![0]).toBe("git");
     expect(branchDeleteCall![1]).toContain("branch");
     expect(branchDeleteCall![1]).toContain("-D");
@@ -506,6 +613,7 @@ describe("createSession", () => {
     const removeError = new Error("worktree remove failed");
 
     mockExecFileSequence([
+      { stdout: "rm-fallback\n" }, // claude haiku
       { stdout: "" }, // git worktree add
       { error: scriptError }, // init script
       { error: removeError }, // git worktree remove fails
@@ -528,10 +636,9 @@ describe("createSession", () => {
     });
 
     await expect(
-      createSession("/projects/repo", "rm fallback"),
+      createSession("/projects/repo", "RM fallback objective"),
     ).rejects.toThrow("script failed");
 
-    // Verify rm was called as fallback
     expect(rmMock).toHaveBeenCalledWith(
       expect.stringContaining(".worktrees/rm-fallback"),
       { recursive: true, force: true },
@@ -539,22 +646,15 @@ describe("createSession", () => {
   });
 
   it("does not persist state when creation fails", async () => {
-    mockExecFileFailure(new Error("git worktree add failed"));
+    mockExecFileSequence([
+      { stdout: "should-not-persist\n" }, // claude haiku
+      { error: new Error("git worktree add failed") }, // git fails
+    ]);
 
     await expect(
-      createSession("/projects/repo", "should not persist"),
+      createSession("/projects/repo", "Should not persist"),
     ).rejects.toThrow("git worktree add failed");
 
-    // writeState should never be called on failure
-    expect(writeStateMock).not.toHaveBeenCalled();
-  });
-
-  it("throws validation error for empty name (via createSession)", async () => {
-    await expect(createSession("/projects/repo", "")).rejects.toThrow(
-      "Session name cannot be empty",
-    );
-    // No git or state calls should have been made
-    expect(execFileMock).not.toHaveBeenCalled();
     expect(writeStateMock).not.toHaveBeenCalled();
   });
 });
@@ -644,7 +744,6 @@ describe("deleteSession", () => {
     const result = await deleteSession("/projects/repo", "csm-session");
 
     expect(result.worktreeRemoved).toBe(true);
-    // Git worktree remove should have been called
     expect(execFileMock).toHaveBeenCalled();
   });
 
@@ -661,9 +760,7 @@ describe("deleteSession", () => {
     const result = await deleteSession("/projects/repo", "imported-session");
 
     expect(result.worktreeRemoved).toBe(true);
-    // Git worktree remove should be called for imported sessions
     expect(execFileMock).toHaveBeenCalled();
-    // Session should be removed from state
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
     expect(
@@ -672,7 +769,6 @@ describe("deleteSession", () => {
   });
 
   it("treats sessions without source field as CSM-created (backward compat)", async () => {
-    // Simulate old state without source field — Zod default kicks in
     const stateWithoutSource = {
       projects: {
         "/projects/repo": {
@@ -701,7 +797,6 @@ describe("deleteSession", () => {
 
     const result = await deleteSession("/projects/repo", "legacy-session");
 
-    // Should behave like source: "csm" — remove worktree
     expect(result.worktreeRemoved).toBe(true);
     expect(execFileMock).toHaveBeenCalled();
   });

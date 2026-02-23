@@ -16,6 +16,21 @@ vi.mock("@/lib/mutations", () => ({
   useCreateSessionMutation: () => ({ mutate: mutateMock, isPending: false }),
 }));
 
+vi.mock("@/hooks/useVoiceRecorder", () => ({
+  useVoiceRecorder: () => ({
+    isRecording: false,
+    isProcessing: false,
+    elapsedTime: 0,
+    isAvailable: false,
+    toggleRecording: vi.fn(),
+    stopRecording: vi.fn(),
+  }),
+}));
+
+vi.mock("@/components/VoiceRecordButton", () => ({
+  VoiceRecordButton: () => null,
+}));
+
 function renderWithQuery(ui: React.ReactElement) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -41,10 +56,10 @@ afterEach(() => {
 });
 
 describe("CreateSessionModal", () => {
-  it("renders modal content when open=true (Req 2.2)", () => {
+  it("renders modal content when open=true", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     expect(screen.getByText("New Session")).toBeDefined();
-    expect(screen.getByText("Session Name")).toBeDefined();
+    expect(screen.getByText("What do you want to work on?")).toBeDefined();
     expect(screen.getByText("Create Session")).toBeDefined();
   });
 
@@ -55,42 +70,50 @@ describe("CreateSessionModal", () => {
     expect(container.querySelector(".modal-overlay")).toBeNull();
   });
 
-  it("auto-focuses input on open (Req 2.2)", () => {
+  it("auto-focuses textarea on open", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     vi.advanceTimersByTime(150);
-    const input = screen.getByPlaceholderText("e.g. implement-auth");
-    expect(document.activeElement).toBe(input);
+    const textarea = screen.getByPlaceholderText(
+      "e.g. Add user authentication with JWT tokens",
+    );
+    expect(document.activeElement).toBe(textarea);
   });
 
-  it("shows branch name preview as user types (Req 2.3)", () => {
+  it("shows auto-generation hint", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const input = screen.getByPlaceholderText("e.g. implement-auth");
-    fireEvent.change(input, { target: { value: "My Feature" } });
-    expect(screen.getByText("Branch: csm/my-feature")).toBeDefined();
+    expect(
+      screen.getByText("Session name and branch will be auto-generated"),
+    ).toBeDefined();
   });
 
-  it("sanitizes branch preview (removes special chars, lowercases)", () => {
+  it("shows character count", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const input = screen.getByPlaceholderText("e.g. implement-auth");
-    fireEvent.change(input, { target: { value: "Hello World!!!" } });
-    expect(screen.getByText("Branch: csm/hello-world")).toBeDefined();
+    expect(screen.getByText("0/500")).toBeDefined();
+
+    const textarea = screen.getByPlaceholderText(
+      "e.g. Add user authentication with JWT tokens",
+    );
+    fireEvent.change(textarea, { target: { value: "test objective" } });
+    expect(screen.getByText("14/500")).toBeDefined();
   });
 
-  it("disables create button when name is empty (Req 2.3)", () => {
+  it("disables create button when objective is empty", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     const createBtn = screen.getByText("Create Session");
     expect(createBtn.hasAttribute("disabled")).toBe(true);
   });
 
-  it("enables create button when name has content", () => {
+  it("enables create button when objective has content", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const input = screen.getByPlaceholderText("e.g. implement-auth");
-    fireEvent.change(input, { target: { value: "test" } });
+    const textarea = screen.getByPlaceholderText(
+      "e.g. Add user authentication with JWT tokens",
+    );
+    fireEvent.change(textarea, { target: { value: "Add auth" } });
     const createBtn = screen.getByText("Create Session");
     expect(createBtn.hasAttribute("disabled")).toBe(false);
   });
 
-  it("calls onClose on Escape key press (Req 2.3)", () => {
+  it("calls onClose on Escape key press", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
@@ -106,15 +129,29 @@ describe("CreateSessionModal", () => {
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("submits on Enter key in input (Req 2.3)", () => {
+  it("submits objective on Enter key in textarea", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const input = screen.getByPlaceholderText("e.g. implement-auth");
-    fireEvent.change(input, { target: { value: "new-session" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    const textarea = screen.getByPlaceholderText(
+      "e.g. Add user authentication with JWT tokens",
+    );
+    fireEvent.change(textarea, {
+      target: { value: "Add user authentication" },
+    });
+    fireEvent.keyDown(textarea, { key: "Enter" });
 
     expect(mutateMock).toHaveBeenCalledWith(
-      "new-session",
+      "Add user authentication",
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  it("allows multiline with Shift+Enter", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    const textarea = screen.getByPlaceholderText(
+      "e.g. Add user authentication with JWT tokens",
+    );
+    fireEvent.change(textarea, { target: { value: "line 1" } });
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+    expect(mutateMock).not.toHaveBeenCalled();
   });
 });

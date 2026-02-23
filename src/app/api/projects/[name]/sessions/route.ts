@@ -51,18 +51,20 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  let body: { sessionName: string };
+  let body: { objective: string };
   try {
     body = createSessionRequestSchema.parse(await request.json());
   } catch {
     return NextResponse.json(
-      { error: "sessionName is required" } satisfies ApiError,
+      {
+        error: "objective is required (max 500 characters)",
+      } satisfies ApiError,
       { status: 400 },
     );
   }
 
   try {
-    const session = await createSession(projectPath, body.sessionName.trim());
+    const session = await createSession(projectPath, body.objective);
     return NextResponse.json(session, { status: 201 });
   } catch (err) {
     const message =

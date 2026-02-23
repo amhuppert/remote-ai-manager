@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useCreateSessionMutation } from "@/lib/mutations";
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 
 interface CreateSessionModalProps {
   projectName: string;
@@ -16,26 +18,40 @@ export default function CreateSessionModal({
   onClose,
 }: CreateSessionModalProps): React.JSX.Element | null {
   const router = useRouter();
-  const [name, setName] = useState("");
+  const [objective, setObjective] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const createMutation = useCreateSessionMutation(projectName);
+
+  const {
+    isRecording,
+    isProcessing,
+    elapsedTime,
+    isAvailable: voiceAvailable,
+    toggleRecording,
+  } = useVoiceRecorder({
+    projectName,
+    onResult: (text) => {
+      setObjective((prev) => (prev ? prev + "\n" + text : text));
+    },
+    onError: (err) => setError(err),
+  });
 
   // Reset state when modal opens (state-during-render pattern)
   const [prevOpen, setPrevOpen] = useState(false);
   if (open !== prevOpen) {
     setPrevOpen(open);
     if (open) {
-      setName("");
+      setObjective("");
       setError(null);
     }
   }
 
-  // Focus input when modal opens
+  // Focus textarea when modal opens
   useEffect(() => {
     if (open) {
-      const timer = setTimeout(() => inputRef.current?.focus(), 100);
+      const timer = setTimeout(() => textareaRef.current?.focus(), 100);
       return () => clearTimeout(timer);
     }
   }, [open]);
@@ -50,18 +66,11 @@ export default function CreateSessionModal({
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
-  const sanitizedBranch = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-
   const handleSubmit = () => {
-    if (!name.trim() || createMutation.isPending) return;
+    if (!objective.trim() || createMutation.isPending || isRecording) return;
     setError(null);
 
-    createMutation.mutate(name.trim(), {
+    createMutation.mutate(objective.trim(), {
       onSuccess: (session) => {
         onClose();
         const conversationId = session.conversations[0]?.id;
@@ -89,30 +98,60 @@ export default function CreateSessionModal({
       <div className="modal">
         <div className="modal-title">New Session</div>
         <div className="form-group">
-          <label className="form-label" htmlFor="session-name-input">
-            Session Name
+          <label className="form-label" htmlFor="session-objective-input">
+            What do you want to work on?
           </label>
-          <input
-            ref={inputRef}
-            id="session-name-input"
-            className="form-input"
-            type="text"
-            placeholder="e.g. implement-auth"
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value);
-              setError(null);
+          <div style={{ position: "relative" }}>
+            <textarea
+              ref={textareaRef}
+              id="session-objective-input"
+              className="form-input"
+              rows={3}
+              placeholder="e.g. Add user authentication with JWT tokens"
+              value={objective}
+              maxLength={500}
+              onChange={(e) => {
+                setObjective(e.target.value);
+                setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  if (isRecording) {
+                    toggleRecording();
+                  } else {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                right: "0.5rem",
+                bottom: "0.5rem",
+              }}
+            >
+              <VoiceRecordButton
+                isRecording={isRecording}
+                isProcessing={isProcessing}
+                elapsedTime={elapsedTime}
+                isAvailable={voiceAvailable}
+                toggleRecording={toggleRecording}
+                disabled={createMutation.isPending}
+              />
+            </div>
+          </div>
+          <div
+            className="form-hint"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
             }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                handleSubmit();
-              }
-            }}
-          />
-          {sanitizedBranch && (
-            <div className="form-hint">Branch: csm/{sanitizedBranch}</div>
-          )}
+          >
+            <span>Session name and branch will be auto-generated</span>
+            <span>{objective.length}/500</span>
+          </div>
           {error && <div className="form-error">{error}</div>}
         </div>
         <div className="modal-actions">
@@ -126,7 +165,9 @@ export default function CreateSessionModal({
           <button
             className="btn btn-primary btn-sm"
             onClick={handleSubmit}
-            disabled={!name.trim() || createMutation.isPending}
+            disabled={
+              !objective.trim() || createMutation.isPending || isRecording
+            }
           >
             {createMutation.isPending ? "Creating..." : "Create Session"}
           </button>

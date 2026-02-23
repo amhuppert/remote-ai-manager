@@ -82,6 +82,7 @@ export const sessionStateSchema = z.object({
   finished: z.boolean().default(false),
   conversations: z.array(conversationStateSchema).default([]),
   source: sessionSourceSchema.default("csm"),
+  objective: z.string().nullable().default(null),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 
@@ -108,7 +109,7 @@ export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 // ============================================================
 
 export const createSessionRequestSchema = z.object({
-  sessionName: z.string().min(1),
+  objective: z.string().trim().min(1).max(500),
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
