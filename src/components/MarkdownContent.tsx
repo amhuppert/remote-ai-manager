@@ -2,6 +2,7 @@
 
 import { memo } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
@@ -28,9 +29,12 @@ const customStyle: Record<string, React.CSSProperties> = {
   },
 };
 
-export default memo(function MarkdownContent({ content }: Props): React.JSX.Element {
+export default memo(function MarkdownContent({
+  content,
+}: Props): React.JSX.Element {
   return (
     <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
       components={{
         code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || "");

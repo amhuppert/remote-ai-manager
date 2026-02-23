@@ -2834,6 +2834,30 @@ textarea {
   color: var(--text-primary);
 }
 
+.message-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--space-sm) 0;
+  font-size: 0.85rem;
+}
+
+.message-content th,
+.message-content td {
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border-default);
+  text-align: left;
+}
+
+.message-content th {
+  background: var(--bg-raised);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.message-content tr:nth-child(even) {
+  background: var(--bg-raised);
+}
+
 .tool-use-indicator {
   display: flex;
   align-items: center;
