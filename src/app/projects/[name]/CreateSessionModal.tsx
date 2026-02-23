@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useCreateSessionMutation } from "@/lib/mutations";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 
 interface CreateSessionModalProps {
@@ -36,6 +37,11 @@ export default function CreateSessionModal({
       setObjective((prev) => (prev ? prev + "\n" + text : text));
     },
     onError: (err) => setError(err),
+  });
+
+  // Alt+V hotkey to toggle voice recording while modal is open
+  useAppHotkey("voiceToggle", () => void toggleRecording(), {
+    enabled: open && voiceAvailable && !isProcessing,
   });
 
   // Reset state when modal opens (state-during-render pattern)
