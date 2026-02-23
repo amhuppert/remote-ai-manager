@@ -86,17 +86,6 @@ describe("CreateSessionModal", () => {
     ).toBeDefined();
   });
 
-  it("shows character count", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    expect(screen.getByText("0/500")).toBeDefined();
-
-    const textarea = screen.getByPlaceholderText(
-      "e.g. Add user authentication with JWT tokens",
-    );
-    fireEvent.change(textarea, { target: { value: "test objective" } });
-    expect(screen.getByText("14/500")).toBeDefined();
-  });
-
   it("disables create button when objective is empty", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     const createBtn = screen.getByText("Create Session");

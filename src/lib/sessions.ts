@@ -76,7 +76,7 @@ const FILLER_WORDS = new Set([
   "our",
 ]);
 
-/** Generate a short session name from an objective using Claude Haiku */
+/** Generate a short readable session name from an objective using Claude Haiku */
 export async function generateSessionName(
   objective: string,
   projectPath: string,
@@ -88,7 +88,7 @@ export async function generateSessionName(
         "--model",
         "haiku",
         "-p",
-        `Generate a short kebab-case name (2-4 words, lowercase, hyphens between words) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
+        `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
         "--output-format",
         "text",
         "--max-turns",
@@ -109,9 +109,8 @@ export async function generateSessionName(
     );
 
     const name = stdout.trim().split("\n")[0]!.trim();
-    const sanitized = sanitizeBranchName(name);
-    if (sanitized && validateSessionName(sanitized) === null) {
-      return sanitized;
+    if (name && validateSessionName(name) === null) {
+      return name;
     }
     // Haiku returned something invalid — fall through to heuristic
   } catch (err) {
@@ -123,14 +122,20 @@ export async function generateSessionName(
   return fallbackSessionName(objective);
 }
 
+/** Capitalize the first letter of a word */
+function capitalize(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+}
+
 /** Derive a session name from objective text using simple heuristics */
 function fallbackSessionName(objective: string): string {
   const words = objective
     .toLowerCase()
     .split(/\s+/)
+    .filter((w) => /^[a-z0-9]+$/.test(w))
     .filter((w) => !FILLER_WORDS.has(w));
-  const name = sanitizeBranchName(words.slice(0, 4).join("-"));
-  return name || "session";
+  const name = words.slice(0, 4).map(capitalize).join(" ");
+  return name || "Session";
 }
 
 /**
@@ -258,7 +263,7 @@ export async function createSession(
   const now = new Date().toISOString();
   const initialConversation: ConversationState = {
     id: crypto.randomUUID(),
-    name: null,
+    name: `${sessionName} 1`,
     claudeSessionId: null,
     transcriptPath: null,
     status: "new",

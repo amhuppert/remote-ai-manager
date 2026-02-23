@@ -57,7 +57,7 @@ export const POST = withTracing(async (request, { params }) => {
   } catch {
     return NextResponse.json(
       {
-        error: "objective is required (max 500 characters)",
+        error: "objective is required",
       } satisfies ApiError,
       { status: 400 },
     );

@@ -26,9 +26,10 @@ export async function createConversation(
   }
 
   const now = new Date().toISOString();
+  const sequenceNumber = session.conversations.length + 1;
   const conversation: ConversationState = {
     id: crypto.randomUUID(),
-    name: null,
+    name: `${sessionName} ${sequenceNumber}`,
     claudeSessionId: null,
     transcriptPath: null,
     status: "new",

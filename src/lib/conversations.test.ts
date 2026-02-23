@@ -60,7 +60,7 @@ describe("createConversation", () => {
     const convo = await createConversation("/proj", "test");
 
     expect(convo.id).toBeTruthy();
-    expect(convo.name).toBeNull();
+    expect(convo.name).toBe("test 1");
     expect(convo.claudeSessionId).toBeNull();
     expect(convo.transcriptPath).toBeNull();
     expect(convo.status).toBe("new");

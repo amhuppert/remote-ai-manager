@@ -291,12 +291,12 @@ describe("sanitizeBranchName", () => {
 
 describe("generateSessionName", () => {
   it("uses Claude Haiku output when valid", async () => {
-    mockExecFileSuccess("add-auth\n");
+    mockExecFileSuccess("Add Auth\n");
     const name = await generateSessionName(
       "Add user authentication",
       "/projects/repo",
     );
-    expect(name).toBe("add-auth");
+    expect(name).toBe("Add Auth");
 
     // Verify claude was called with haiku model
     expect(execFileMock).toHaveBeenCalledWith(
@@ -313,8 +313,8 @@ describe("generateSessionName", () => {
       "Add auth feature",
       "/projects/repo",
     );
-    // Fallback: take first 4 words, remove fillers, kebab-case
-    expect(name).toBe("add-auth-feature");
+    // Fallback: take first 4 words, remove fillers, Title Case
+    expect(name).toBe("Add Auth Feature");
   });
 
   it("falls back to heuristic when Claude returns invalid name", async () => {
@@ -323,7 +323,7 @@ describe("generateSessionName", () => {
       "Implement search",
       "/projects/repo",
     );
-    expect(name).toBe("implement-search");
+    expect(name).toBe("Implement Search");
   });
 
   it("removes filler words in fallback", async () => {
@@ -332,15 +332,15 @@ describe("generateSessionName", () => {
       "Add a new feature to the app",
       "/projects/repo",
     );
-    // Removes "a", "to", "the" → ["add", "new", "feature", "app"]
-    expect(name).toBe("add-new-feature-app");
+    // Removes "a", "to", "the" → ["Add", "New", "Feature", "App"]
+    expect(name).toBe("Add New Feature App");
   });
 
-  it("returns 'session' when fallback produces empty name", async () => {
+  it("returns 'Session' when fallback produces empty name", async () => {
     mockExecFileFailure(new Error("timeout"));
     const name = await generateSessionName("the", "/projects/repo");
-    // All words are filler → empty → "session"
-    expect(name).toBe("session");
+    // All words are filler → empty → "Session"
+    expect(name).toBe("Session");
   });
 });
 
@@ -351,7 +351,7 @@ describe("generateSessionName", () => {
 describe("createSession", () => {
   it("creates a session with correct properties", async () => {
     mockExecFileSequence([
-      { stdout: "my-feature\n" }, // claude haiku
+      { stdout: "My Feature\n" }, // claude haiku
       { stdout: "" }, // git worktree add
     ]);
     const session = await createSession(
@@ -359,7 +359,7 @@ describe("createSession", () => {
       "Implement my feature",
     );
 
-    expect(session.sessionName).toBe("my-feature");
+    expect(session.sessionName).toBe("My Feature");
     expect(session.worktreePath).toBe("/projects/repo/.worktrees/my-feature");
     expect(session.branchName).toBe("csm/my-feature");
     expect(session.objective).toBe("Implement my feature");
@@ -368,7 +368,7 @@ describe("createSession", () => {
       status: "new",
       source: "csm",
       promptCount: 0,
-      name: null,
+      name: "My Feature 1",
     });
     expect(session.conversations[0]!.id).toBeTruthy();
     expect(session.archived).toBe(false);
@@ -376,7 +376,7 @@ describe("createSession", () => {
   });
 
   it("sets ISO 8601 timestamps for createdAt and lastActivityAt", async () => {
-    mockExecFileSequence([{ stdout: "timestamp-test\n" }, { stdout: "" }]);
+    mockExecFileSequence([{ stdout: "Timestamp Test\n" }, { stdout: "" }]);
     const before = new Date().toISOString();
     const session = await createSession("/projects/repo", "Test timestamps");
     const after = new Date().toISOString();
@@ -394,7 +394,7 @@ describe("createSession", () => {
 
   it("calls git worktree add with correct arguments", async () => {
     mockExecFileSequence([
-      { stdout: "feature\n" }, // claude haiku
+      { stdout: "Build Feature\n" }, // claude haiku
       { stdout: "" }, // git worktree add
     ]);
     await createSession("/projects/repo", "Build feature");
@@ -406,8 +406,8 @@ describe("createSession", () => {
         "worktree",
         "add",
         "-b",
-        "csm/feature",
-        "/projects/repo/.worktrees/feature",
+        "csm/build-feature",
+        "/projects/repo/.worktrees/build-feature",
         "main",
       ],
       { cwd: "/projects/repo" },
@@ -416,7 +416,7 @@ describe("createSession", () => {
   });
 
   it("writes memory-bank/focus.md with objective", async () => {
-    mockExecFileSequence([{ stdout: "auth-feature\n" }, { stdout: "" }]);
+    mockExecFileSequence([{ stdout: "Auth Feature\n" }, { stdout: "" }]);
     await createSession("/projects/repo", "Add user authentication");
 
     expect(mkdirMock).toHaveBeenCalledWith(
@@ -431,23 +431,23 @@ describe("createSession", () => {
   });
 
   it("persists session to state via writeState", async () => {
-    mockExecFileSequence([{ stdout: "persist-test\n" }, { stdout: "" }]);
+    mockExecFileSequence([{ stdout: "Persist Test\n" }, { stdout: "" }]);
     await createSession("/projects/repo", "Persist test objective");
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
     const project = savedState.projects["/projects/repo"];
     expect(project).toBeDefined();
-    expect(project.sessions["persist-test"]).toBeDefined();
-    expect(project.sessions["persist-test"].objective).toBe(
+    expect(project.sessions["Persist Test"]).toBeDefined();
+    expect(project.sessions["Persist Test"].objective).toBe(
       "Persist test objective",
     );
-    expect(project.sessions["persist-test"].conversations).toHaveLength(1);
+    expect(project.sessions["Persist Test"].conversations).toHaveLength(1);
   });
 
   it("auto-creates project entry when project not yet in state", async () => {
     readStateMock.mockResolvedValue(emptyState());
-    mockExecFileSequence([{ stdout: "first-session\n" }, { stdout: "" }]);
+    mockExecFileSequence([{ stdout: "First Session\n" }, { stdout: "" }]);
     await createSession("/new/project", "First session objective");
 
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -461,34 +461,34 @@ describe("createSession", () => {
 
   it("uses ensureUniqueName to avoid conflicts", async () => {
     readStateMock.mockResolvedValue(
-      stateWithSession("/projects/repo", "existing"),
+      stateWithSession("/projects/repo", "Existing"),
     );
-    ensureUniqueNameMock.mockReturnValue("existing-2");
-    mockExecFileSequence([{ stdout: "existing\n" }, { stdout: "" }]);
+    ensureUniqueNameMock.mockReturnValue("Existing 2");
+    mockExecFileSequence([{ stdout: "Existing\n" }, { stdout: "" }]);
 
     const session = await createSession("/projects/repo", "Another feature");
 
     expect(ensureUniqueNameMock).toHaveBeenCalledWith(
-      "existing",
-      new Set(["existing"]),
+      "Existing",
+      new Set(["Existing"]),
     );
-    expect(session.sessionName).toBe("existing-2");
+    expect(session.sessionName).toBe("Existing 2");
   });
 
   it("allows same generated name in different projects", async () => {
     readStateMock.mockResolvedValue(
-      stateWithSession("/projects/repo-a", "shared-name"),
+      stateWithSession("/projects/repo-a", "Shared Name"),
     );
-    mockExecFileSequence([{ stdout: "shared-name\n" }, { stdout: "" }]);
+    mockExecFileSequence([{ stdout: "Shared Name\n" }, { stdout: "" }]);
     const session = await createSession(
       "/projects/repo-b",
       "Shared name objective",
     );
-    expect(session.sessionName).toBe("shared-name");
+    expect(session.sessionName).toBe("Shared Name");
   });
 
   it("throws error when worktree directory already exists", async () => {
-    mockExecFileSequence([{ stdout: "conflict\n" }]);
+    mockExecFileSequence([{ stdout: "Conflict\n" }]);
     existsSyncMock.mockImplementation((p: string) => {
       if (String(p).includes(".worktrees/")) return true;
       return false;
@@ -504,7 +504,7 @@ describe("createSession", () => {
 
   it("executes init script with correct environment when configured", async () => {
     mockExecFileSequence([
-      { stdout: "with-init\n" }, // claude haiku
+      { stdout: "With Init\n" }, // claude haiku
       { stdout: "" }, // git worktree add
       { stdout: "" }, // init script
     ]);
@@ -533,14 +533,14 @@ describe("createSession", () => {
     expect(opts.cwd).toBe("/projects/repo/.worktrees/with-init");
     expect(opts.env.PROJECT_ROOT).toBe("/projects/repo");
     expect(opts.env.WORKTREE_PATH).toBe("/projects/repo/.worktrees/with-init");
-    expect(opts.env.SESSION_NAME).toBe("with-init");
+    expect(opts.env.SESSION_NAME).toBe("With Init");
     expect(opts.env.BRANCH_NAME).toBe("csm/with-init");
     expect(opts.timeout).toBe(60_000);
   });
 
   it("throws 'Init script not found' when script path doesn't exist", async () => {
     mockExecFileSequence([
-      { stdout: "missing-script\n" }, // claude haiku
+      { stdout: "Missing Script\n" }, // claude haiku
       { stdout: "" }, // git worktree add
     ]);
 
@@ -568,7 +568,7 @@ describe("createSession", () => {
     const scriptError = new Error("script failed");
 
     mockExecFileSequence([
-      { stdout: "fail-session\n" }, // claude haiku
+      { stdout: "Fail Session\n" }, // claude haiku
       { stdout: "" }, // git worktree add
       { error: scriptError }, // init script fails
       { stdout: "" }, // rollback: worktree remove
@@ -613,7 +613,7 @@ describe("createSession", () => {
     const removeError = new Error("worktree remove failed");
 
     mockExecFileSequence([
-      { stdout: "rm-fallback\n" }, // claude haiku
+      { stdout: "Rm Fallback\n" }, // claude haiku
       { stdout: "" }, // git worktree add
       { error: scriptError }, // init script
       { error: removeError }, // git worktree remove fails
@@ -647,7 +647,7 @@ describe("createSession", () => {
 
   it("does not persist state when creation fails", async () => {
     mockExecFileSequence([
-      { stdout: "should-not-persist\n" }, // claude haiku
+      { stdout: "Should Not Persist\n" }, // claude haiku
       { error: new Error("git worktree add failed") }, // git fails
     ]);
 

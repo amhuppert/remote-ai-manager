@@ -109,7 +109,7 @@ export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 // ============================================================
 
 export const createSessionRequestSchema = z.object({
-  objective: z.string().trim().min(1).max(500),
+  objective: z.string().trim().min(1),
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 

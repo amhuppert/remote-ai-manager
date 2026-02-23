@@ -112,10 +112,9 @@ export default function CreateSessionModal({
               ref={textareaRef}
               id="session-objective-input"
               className="form-input"
-              rows={3}
+              rows={6}
               placeholder="e.g. Add user authentication with JWT tokens"
               value={objective}
-              maxLength={500}
               onChange={(e) => {
                 setObjective(e.target.value);
                 setError(null);
@@ -148,15 +147,8 @@ export default function CreateSessionModal({
               />
             </div>
           </div>
-          <div
-            className="form-hint"
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-            }}
-          >
-            <span>Session name and branch will be auto-generated</span>
-            <span>{objective.length}/500</span>
+          <div className="form-hint">
+            Session name and branch will be auto-generated
           </div>
           {error && <div className="form-error">{error}</div>}
         </div>
