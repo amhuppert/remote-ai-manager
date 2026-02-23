@@ -137,11 +137,17 @@ export async function readConversationMessages(
       }
     }
 
-    messages.push({
-      role: entry.role,
-      content: entry.content,
-      timestamp: entry.timestamp ?? null,
-    });
+    const prev = messages[messages.length - 1];
+    if (prev && prev.role === entry.role) {
+      // Merge consecutive messages from the same role into one
+      prev.content = [...prev.content, ...entry.content];
+    } else {
+      messages.push({
+        role: entry.role,
+        content: entry.content,
+        timestamp: entry.timestamp ?? null,
+      });
+    }
   }
 
   return messages;

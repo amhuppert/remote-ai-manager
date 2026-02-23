@@ -258,6 +258,64 @@ describe("readConversationMessages", () => {
     expect(result[0]!.content[1]!.type).toBe("tool_use");
   });
 
+  it("merges consecutive assistant messages into a single message", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "merge-asst.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "First response" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:02Z",
+        type: "assistant",
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            name: "Write",
+            input: { file_path: "/tmp/test.ts" },
+          },
+        ],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:03Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Done writing." }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.role).toBe("user");
+    expect(result[1]!.role).toBe("assistant");
+    expect(result[1]!.content).toHaveLength(3);
+    expect(result[1]!.content[0]).toEqual({
+      type: "text",
+      text: "First response",
+    });
+    expect(result[1]!.content[1]).toEqual({
+      type: "tool_use",
+      name: "Write",
+      input: { file_path: "/tmp/test.ts" },
+    });
+    expect(result[1]!.content[2]).toEqual({
+      type: "text",
+      text: "Done writing.",
+    });
+    // Timestamp should be from the first message in the group
+    expect(result[1]!.timestamp).toBe("2024-01-01T00:00:01Z");
+  });
+
   it("detects slash command invocations in user messages", async () => {
     const filePath = path.join(TEST_DIR, "transcripts", "command.jsonl");
     const lines = [
