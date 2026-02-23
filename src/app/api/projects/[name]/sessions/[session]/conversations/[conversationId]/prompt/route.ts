@@ -71,7 +71,6 @@ export const POST = withTracing(async (request, { params }) => {
   }
 
   const encoder = new TextEncoder();
-  const abortController = new AbortController();
   const stream = new ReadableStream({
     async start(controller) {
       const emit = (event: string, data: unknown) => {
@@ -94,7 +93,6 @@ export const POST = withTracing(async (request, { params }) => {
           emit,
           conversationId,
           body.modelId,
-          abortController.signal,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Prompt failed";
@@ -109,7 +107,8 @@ export const POST = withTracing(async (request, { params }) => {
       }
     },
     cancel() {
-      abortController.abort();
+      // No-op: let the execution continue in the background.
+      // The SDK process must survive client disconnects (navigation, browser close).
     },
   });
 

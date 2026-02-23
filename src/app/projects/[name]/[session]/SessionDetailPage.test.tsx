@@ -338,7 +338,7 @@ describe("SessionDetailPage", () => {
         defaultModel="sonnet"
       />,
     );
-    expect(screen.getByText("1 / 3")).toBeDefined();
+    expect(screen.getByText("1 / 2")).toBeDefined();
   });
 
   it("shows 0 / 0 counter when no messages", () => {

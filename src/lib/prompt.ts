@@ -48,7 +48,6 @@ export async function executePromptStream(
   emit: (event: string, data: unknown) => void,
   conversationId?: string,
   modelId?: ClaudeModel,
-  signal?: AbortSignal,
 ): Promise<{ conversationId: string }> {
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
@@ -106,6 +105,14 @@ export async function executePromptStream(
       resume: !!conversation.claudeSessionId,
     });
 
+    // Persist the user's prompt in the transcript
+    await appendEntry(conversationId, {
+      timestamp: new Date().toISOString(),
+      type: "user",
+      role: "user",
+      content: [{ type: "text", text: promptText }],
+    });
+
     const promptStart = Date.now();
 
     // Create SDK query
@@ -132,21 +139,6 @@ export async function executePromptStream(
         env: { CLAUDECODE: "" },
       },
     });
-
-    // Wire up cancellation from the caller's AbortSignal
-    if (signal) {
-      if (signal.aborted) {
-        abortController.abort();
-      } else {
-        signal.addEventListener(
-          "abort",
-          () => {
-            abortController.abort();
-          },
-          { once: true },
-        );
-      }
-    }
 
     // Track state across the message loop
     let sessionId: string | null = null;
@@ -357,12 +349,11 @@ async function processMessage(
     }
 
     case "user": {
-      // Internal tool_result messages — log to transcript but don't emit
+      // Internal tool_result messages — log to transcript for debugging only.
+      // No role field so readConversationMessages filters these out.
       await appendEntry(conversationId, {
         timestamp,
-        type: "user",
-        role: "user",
-        content: [{ type: "text", text: "[tool result]" }],
+        type: "tool_result",
         raw: message,
       });
       break;

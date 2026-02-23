@@ -230,13 +230,12 @@ export default function SessionDetailPage({
   }, [conversationId, clearConversationMessages]);
 
   // --- Turn-based navigation ---
+  // A "turn" = one user prompt + all subsequent Claude responses until the next prompt.
+  // Navigation jumps between user messages, skipping intermediate assistant messages.
   const turnStartIndices = useMemo(() => {
     const indices: number[] = [];
     for (let i = 0; i < displayMessages.length; i++) {
-      const msg = displayMessages[i]!;
-      if (msg.role === "user") {
-        indices.push(i);
-      } else if (i === 0 || displayMessages[i - 1]?.role === "user") {
+      if (displayMessages[i]!.role === "user") {
         indices.push(i);
       }
     }
