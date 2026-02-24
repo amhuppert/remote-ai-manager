@@ -239,23 +239,33 @@ export default function SessionDetailPage({
     el.style.height = `${el.scrollHeight}px`;
   }, [promptText]);
 
-  // Derive display messages: server messages + optimistic
-  const displayMessages = useMemo(
-    () => [...messages, ...optimisticMessages],
-    [messages, optimisticMessages],
-  );
+  // Derive display messages: server messages + optimistic (non-overlapping).
+  // During streaming, the server transcript is written in real-time and polled
+  // every 3s, so server `messages` may already contain the assistant response
+  // that is also in `optimisticMessages`. To avoid duplicates, slice server
+  // messages to just before the current prompt and append optimistic instead.
+  const displayMessages = useMemo(() => {
+    if (optimisticMessages.length === 0) return messages;
+    return [
+      ...messages.slice(0, messageCountBeforeSubmit),
+      ...optimisticMessages,
+    ];
+  }, [messages, optimisticMessages, messageCountBeforeSubmit]);
 
   // --- Reconciliation effect ---
+  // Clear optimistic messages once the stream is done and the server has the data.
+  // While sending, optimistic messages are the authoritative source (displayMessages
+  // slices server data to before the submit point), so no reconciliation is needed.
   useEffect(() => {
     if (optimisticMessages.length === 0) return;
-    const serverCount = messages.length;
-    if (serverCount > messageCountBeforeSubmit) {
-      reconcileMessages(serverCount);
+    if (!sending && messages.length > messageCountBeforeSubmit) {
+      reconcileMessages(messages.length);
     }
   }, [
     messages.length,
     optimisticMessages.length,
     messageCountBeforeSubmit,
+    sending,
     reconcileMessages,
   ]);
 

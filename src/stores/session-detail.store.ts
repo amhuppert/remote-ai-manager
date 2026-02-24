@@ -201,26 +201,15 @@ const useSessionDetailStore = create<SessionDetailStore>()(
       }),
 
     reconcileMessages: (serverCount) => {
-      const { sending, messageCountBeforeSubmit, optimisticMessages } = get();
+      const { messageCountBeforeSubmit, optimisticMessages } = get();
       if (optimisticMessages.length === 0) return;
       if (serverCount <= messageCountBeforeSubmit) return;
 
-      if (sending) {
-        // Server has user message; keep only streaming assistant
-        const assistantOnly = optimisticMessages.filter(
-          (m) => m.role === "assistant",
-        );
-        if (assistantOnly.length !== optimisticMessages.length) {
-          set((state) => {
-            state.optimisticMessages = assistantOnly;
-          });
-        }
-      } else {
-        // Stream done — clear all optimistic
-        set((state) => {
-          state.optimisticMessages = [];
-        });
-      }
+      // Server has the prompt data — clear all optimistic messages.
+      // (This is only called when sending=false, so the stream is done.)
+      set((state) => {
+        state.optimisticMessages = [];
+      });
     },
 
     // -- Message navigation --
