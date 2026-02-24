@@ -244,6 +244,7 @@ async function provisionSession(
     pendingQuestionId: null,
     pendingQuestions: null,
     forkedFrom: null,
+    role: opts.mode === "focus" ? "initialization" : null,
   };
   const session: SessionState = {
     sessionName,

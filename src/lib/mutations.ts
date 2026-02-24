@@ -328,6 +328,34 @@ export function useRenameConversationMutation(
 }
 
 // ---------------------------------------------------------------------------
+// Focus Initialization Mutations
+// ---------------------------------------------------------------------------
+
+export function useFinalizeInitializationMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch<{ conversationId: string; name: string }>(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/finalize-initialization`,
+        "finalize-initialization",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.list(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Generic Conversation Mutations (project/session as variables)
 // ---------------------------------------------------------------------------
 

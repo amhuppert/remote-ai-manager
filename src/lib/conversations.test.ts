@@ -413,6 +413,114 @@ describe("deriveSessionLastActivity", () => {
 });
 
 // ============================================================
+// createConversation with role
+// ============================================================
+
+describe("createConversation with role", () => {
+  it("defaults role to null when no opts provided", async () => {
+    await seedSession();
+    const { createConversation } = await import("./conversations");
+
+    const convo = await createConversation("/proj", "test");
+    expect(convo.role).toBeNull();
+  });
+
+  it("sets role to initialization when specified", async () => {
+    await seedSession();
+    const { createConversation } = await import("./conversations");
+
+    const convo = await createConversation("/proj", "test", {
+      role: "initialization",
+    });
+    expect(convo.role).toBe("initialization");
+  });
+
+  it("persists the role to state", async () => {
+    await seedSession();
+    const { createConversation } = await import("./conversations");
+    const { getSession } = await import("./state");
+
+    await createConversation("/proj", "test", { role: "initialization" });
+
+    const session = await getSession("/proj", "test");
+    expect(session!.conversations[0]!.role).toBe("initialization");
+  });
+});
+
+// ============================================================
+// finalizeInitialization
+// ============================================================
+
+describe("finalizeInitialization", () => {
+  it("archives the initialization conversation and creates a new one", async () => {
+    const initConvoId = crypto.randomUUID();
+    await seedSession({
+      creationMode: "focus" as const,
+      objective: "Test objective",
+      conversations: [
+        makeConvo({ id: initConvoId, role: "initialization", promptCount: 1 }),
+      ],
+    });
+    const { finalizeInitialization } = await import("./conversations");
+    const { getSession } = await import("./state");
+
+    const result = await finalizeInitialization("/proj", "test");
+
+    // Verify result
+    expect(result.conversationId).toBeTruthy();
+    expect(result.name).toBeTruthy();
+
+    // Verify state
+    const session = await getSession("/proj", "test");
+    expect(session!.conversations).toHaveLength(2);
+
+    // Init conversation should be archived
+    const initConvo = session!.conversations.find((c) => c.id === initConvoId);
+    expect(initConvo!.archived).toBe(true);
+
+    // New conversation should have role null and not be archived
+    const newConvo = session!.conversations.find(
+      (c) => c.id === result.conversationId,
+    );
+    expect(newConvo).toBeTruthy();
+    expect(newConvo!.role).toBeNull();
+    expect(newConvo!.archived).toBe(false);
+    expect(newConvo!.status).toBe("new");
+  });
+
+  it("throws when no initialization conversation exists", async () => {
+    await seedSession({
+      creationMode: "focus" as const,
+      objective: "Test objective",
+      conversations: [makeConvo({ role: null })],
+    });
+    const { finalizeInitialization } = await import("./conversations");
+
+    await expect(finalizeInitialization("/proj", "test")).rejects.toThrow(
+      "No initialization conversation found in this session",
+    );
+  });
+
+  it("throws for non-existent project", async () => {
+    await seedSession();
+    const { finalizeInitialization } = await import("./conversations");
+
+    await expect(
+      finalizeInitialization("/nonexistent", "test"),
+    ).rejects.toThrow("Project not found: /nonexistent");
+  });
+
+  it("throws for non-existent session", async () => {
+    await seedSession();
+    const { finalizeInitialization } = await import("./conversations");
+
+    await expect(
+      finalizeInitialization("/proj", "nonexistent"),
+    ).rejects.toThrow('Session "nonexistent" not found in project');
+  });
+});
+
+// ============================================================
 // Schema Migration: conversationStatusSchema
 // ============================================================
 
@@ -489,6 +597,7 @@ function makeConvo(
     pendingQuestionId: null,
     pendingQuestions: null,
     forkedFrom: null,
+    role: null,
     ...overrides,
   };
 }

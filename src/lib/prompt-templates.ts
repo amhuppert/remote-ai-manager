@@ -1,7 +1,7 @@
 /**
- * Prompt template for Focus mode objective understanding.
- * The agent researches the codebase, asks clarifying questions via AskUserQuestion,
- * and writes an enriched focus.md once it has full understanding.
+ * Prompt template for Focus mode objective understanding (Steps 1–3).
+ * The agent researches the codebase and asks clarifying questions via AskUserQuestion.
+ * Does NOT write focus.md — that happens in a separate step after user confirmation.
  */
 export function getUnderstandObjectivePrompt(objective: string): string {
   return `You are starting a new coding session. Your task is to deeply understand the following objective before beginning any implementation.
@@ -40,14 +40,33 @@ After receiving answers:
 - If the answers reveal new areas that need research or raise additional questions, perform additional analysis and ask follow-up questions
 - Repeat this cycle until you have complete clarity on the objective
 
-**Step 4: Confirm Understanding and Write Focus Document**
+**Step 4: Present Your Understanding**
 
 Once you have no remaining clarifying questions and fully understand the objective:
 
 1. Present a concise summary (2-4 sentences) of what the objective entails
-2. Confirm that you understand the objective and are ready to proceed
+2. List the key requirements and design decisions you've identified
+3. Describe your high-level implementation approach
 
-3. Write the enriched \`memory-bank/focus.md\` file with the following structure:
+The user will review your understanding and confirm when they are satisfied. Do NOT write focus.md yet — that will be handled separately after confirmation.
+
+**Important Guidelines:**
+
+- Do NOT begin implementing or writing any code
+- Do NOT write focus.md — wait for the user to confirm your understanding first
+- Do NOT make assumptions about ambiguous requirements — always ask for clarification
+- Be thorough in identifying potential issues or unclear areas
+- Your questions should be specific and actionable`;
+}
+
+/**
+ * Prompt template for writing the focus document (Step 4).
+ * Sent after the user confirms the agent has sufficient understanding.
+ */
+export function getWriteFocusDocumentPrompt(): string {
+  return `Based on everything we've discussed — the research, your questions, and my answers — write the enriched \`memory-bank/focus.md\` file now.
+
+Use the following structure:
 
 \`\`\`markdown
 # Session Focus
@@ -73,10 +92,5 @@ Once you have no remaining clarifying questions and fully understand the objecti
 [Existing patterns discovered in the codebase that should be followed]
 \`\`\`
 
-**Important Guidelines:**
-
-- Do NOT begin implementing or writing any code other than focus.md
-- Do NOT make assumptions about ambiguous requirements — always ask for clarification
-- Be thorough in identifying potential issues or unclear areas
-- Your questions should be specific and actionable`;
+Write the file and nothing else. Do NOT begin any implementation work.`;
 }

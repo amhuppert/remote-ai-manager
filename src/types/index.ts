@@ -9,6 +9,7 @@ export type {
   ClaudeModel,
   GlobalConfig,
   ConversationStatus,
+  ConversationRole,
   DerivedSessionStatus,
   SessionState,
   ProjectState,

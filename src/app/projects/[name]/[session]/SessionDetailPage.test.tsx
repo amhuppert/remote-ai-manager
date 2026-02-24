@@ -66,6 +66,7 @@ const baseSession: SessionState = {
       pendingQuestionId: null,
       pendingQuestions: null,
       forkedFrom: null,
+      role: null,
     },
   ],
   source: "csm" as const,

@@ -122,6 +122,7 @@ const makeSessions = (count: number): SessionState[] =>
         pendingQuestionId: null,
         pendingQuestions: null,
         forkedFrom: null,
+        role: null,
       },
     ],
     source: "csm" as const,

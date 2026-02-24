@@ -2387,6 +2387,31 @@ textarea {
 }
 
 /* AskUserQuestion panel — replaces prompt input when Claude needs user input */
+/* ---- Focus Confirmation Bar ---- */
+
+.focus-confirm-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+.focus-confirm-text {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.focus-confirm-bar .btn {
+  white-space: nowrap;
+}
+
+/* ---- Ask Question Panel ---- */
+
 .ask-question-panel {
   padding: var(--space-md) var(--space-lg);
   border-top: 1px solid var(--border-subtle);
