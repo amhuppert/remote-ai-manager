@@ -51,6 +51,7 @@ Project steering files are loaded automatically below. Custom files are supporte
 @.kiro/steering/product.md
 @.kiro/steering/tech.md
 @.kiro/steering/structure.md
+@.kiro/steering/logs.md
 
 ## Next.js MCP Tools
 

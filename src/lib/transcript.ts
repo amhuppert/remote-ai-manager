@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { TranscriptMessage, MessageContentBlock } from "@/types";
 import { getConfigDirPath } from "./config";
+import { resolveImageRefs } from "./transcript-images";
 
 // ============================================================
 // Transcript Entry Types
@@ -268,6 +269,11 @@ export async function readConversationMessages(
         timestamp: entry.timestamp ?? null,
       });
     }
+  }
+
+  // Resolve image_ref blocks back to inline image blocks
+  for (const message of messages) {
+    message.content = await resolveImageRefs(message.content);
   }
 
   return messages;

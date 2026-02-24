@@ -21,6 +21,7 @@ import { acquireSessionLock } from "./lock";
 import { createLogger } from "./logging";
 import { getConversation, createConversation } from "./conversations";
 import { appendTranscriptEntry, getTranscriptPath } from "./transcript";
+import { externalizeImageBlocks } from "./transcript-images";
 import type { TranscriptEntry } from "./transcript";
 import { broadcast } from "./sse-broadcaster";
 import { registerQuestion } from "./question-registry";
@@ -131,7 +132,7 @@ export async function executePromptStream(
       resume: !!conversation.claudeSessionId,
     });
 
-    // Build user content blocks for transcript
+    // Build user content blocks (inline base64 for SDK use)
     const userContentBlocks: MessageContentBlock[] = [
       ...(promptText ? [{ type: "text" as const, text: promptText }] : []),
       ...(images ?? []).map((img) => ({
@@ -141,12 +142,17 @@ export async function executePromptStream(
       })),
     ];
 
+    // Externalize images to disk for transcript storage (base64 → file refs)
+    const transcriptBlocks = images?.length
+      ? await externalizeImageBlocks(conversationId, userContentBlocks)
+      : userContentBlocks;
+
     // Persist the user's prompt in the transcript
     await appendEntry(conversationId, {
       timestamp: new Date().toISOString(),
       type: "user",
       role: "user",
-      content: userContentBlocks,
+      content: transcriptBlocks,
     });
 
     const promptStart = Date.now();
@@ -188,7 +194,7 @@ export async function executePromptStream(
             : undefined,
         persistSession: true,
         abortController,
-        env: { CLAUDECODE: "" },
+        env: { ...process.env, CLAUDECODE: "" },
         canUseTool: async (
           toolName: string,
           input: Record<string, unknown>,

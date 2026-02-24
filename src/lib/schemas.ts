@@ -61,6 +61,11 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
     mediaType: z.string(),
     base64Data: z.string(),
   }),
+  z.object({
+    type: z.literal("image_ref"),
+    mediaType: z.string(),
+    imagePath: z.string(),
+  }),
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 
