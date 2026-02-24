@@ -1617,6 +1617,86 @@ textarea {
   flex-shrink: 0;
 }
 
+/* Copyable ID — clickable metadata value with copy-to-clipboard */
+.copyable-id {
+  cursor: pointer;
+  position: relative;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  margin: -1px -4px;
+  transition: background 0.15s ease;
+}
+
+.copyable-id:hover {
+  background: var(--bg-hover);
+}
+
+.copyable-id-val {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.copyable-id-icon {
+  font-size: 0.55rem;
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.copyable-id:hover .copyable-id-icon {
+  opacity: 1;
+}
+
+.copyable-id::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 10;
+}
+
+.copyable-id:hover::after {
+  opacity: 1;
+}
+
+/* Conversation sidebar inline ID */
+.convo-sidebar-id {
+  font-family: var(--font-mono);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.convo-sidebar-id:hover {
+  opacity: 1;
+  color: var(--cyan);
+}
+
+/* Conversation card inline ID */
+.convo-card-id {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+.convo-card-id:hover {
+  opacity: 1;
+  color: var(--cyan);
+  cursor: pointer;
+}
+
 .session-info-strip .si-expand-hint {
   font-size: 0.5rem;
   color: var(--text-tertiary);

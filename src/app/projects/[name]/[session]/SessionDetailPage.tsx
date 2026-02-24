@@ -85,6 +85,7 @@ import { useImageAttachments } from "@/hooks/use-image-attachments";
 import ImageAttachmentPreview from "./ImageAttachmentPreview";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import type { ImagePayload } from "@/types";
+import CopyableId from "@/components/CopyableId";
 
 interface Props {
   projectName: string;
@@ -854,6 +855,19 @@ export default function SessionDetailPage({
                   {session.worktreePath}
                 </span>
               </div>
+              <div className="si-sep" />
+              <CopyableId label="Conv ID" value={conversationId} />
+              {(() => {
+                const claudeSid = session.conversations.find(
+                  (c) => c.id === conversationId,
+                )?.claudeSessionId;
+                return claudeSid ? (
+                  <>
+                    <div className="si-sep" />
+                    <CopyableId label="Claude Session" value={claudeSid} />
+                  </>
+                ) : null;
+              })()}
             </div>
           </div>
 

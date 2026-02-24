@@ -345,6 +345,17 @@ export default function ConversationList({
                       <span className="convo-card-meta">
                         {formatRelativeTime(convo.lastActivityAt)}
                       </span>
+                      <span
+                        className="convo-card-meta convo-card-id"
+                        title={convo.id}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void navigator.clipboard.writeText(convo.id);
+                        }}
+                      >
+                        {convo.id.slice(0, 8)}
+                      </span>
                       <button
                         className="btn-icon-only convo-card-archive-btn"
                         data-tooltip="Rename"

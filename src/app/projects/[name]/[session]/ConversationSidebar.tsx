@@ -366,6 +366,18 @@ export default function ConversationSidebar({
                           {convo.promptCount} prompt
                           {convo.promptCount !== 1 ? "s" : ""}
                           {convo.source === "imported" && " \u00B7 imported"}
+                          {" \u00B7 "}
+                          <span
+                            className="convo-sidebar-id"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void navigator.clipboard.writeText(convo.id);
+                            }}
+                            title={convo.id}
+                          >
+                            {convo.id.slice(0, 8)}
+                          </span>
                         </div>
                       </div>
                       <button
