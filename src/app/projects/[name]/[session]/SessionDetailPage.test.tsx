@@ -35,6 +35,21 @@ vi.mock("@/components/MarkdownContent", () => ({
   default: ({ content }: { content: string }) => <span>{content}</span>,
 }));
 
+// Mock MarkdownViewer to avoid pulling in react-markdown in tests
+vi.mock("@/components/MarkdownViewer", () => ({
+  default: ({
+    content,
+    isLoading,
+  }: {
+    content: string | null;
+    isLoading: boolean;
+  }) => (
+    <div data-testid="markdown-viewer">
+      {isLoading ? "Loading..." : (content ?? "No content")}
+    </div>
+  ),
+}));
+
 // ---------------------------------------------------------------------------
 // Test data
 // ---------------------------------------------------------------------------
@@ -125,6 +140,7 @@ vi.mock("@/lib/queries", () => ({
     isError: false,
   }),
   useActiveConversationsQuery: () => ({ data: undefined }),
+  useFocusDocQuery: () => ({ data: undefined, isPending: false }),
 }));
 
 // Mock unified panel store
@@ -140,6 +156,10 @@ vi.mock("@/lib/mutations", () => ({
   useMergeMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useCreateConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useArchiveConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useFinalizeInitializationMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 // Mock useSendPrompt
@@ -246,6 +266,8 @@ vi.mock("@/stores/session-detail.store", () => ({
   useShowQuestions: () => vi.fn(),
   useNavigateQuestion: () => vi.fn(),
   useClearQuestions: () => vi.fn(),
+  useRightPaneTab: () => "diff",
+  useSwitchRightPaneTab: () => vi.fn(),
 }));
 
 // Mock IntersectionObserver

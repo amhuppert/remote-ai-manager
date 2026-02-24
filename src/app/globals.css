@@ -2917,6 +2917,267 @@ textarea {
 }
 
 /* ============================================================
+   Markdown Viewer
+   ============================================================ */
+
+.markdown-viewer {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.markdown-viewer-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  color: var(--text-tertiary);
+  font-size: 0.82rem;
+  text-align: center;
+  min-height: 200px;
+}
+
+.markdown-content {
+  padding: var(--space-lg);
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  font-family: var(--font-body);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 1.5em 0 0.5em;
+  line-height: 1.3;
+}
+
+.markdown-content h1:first-child,
+.markdown-content h2:first-child,
+.markdown-content h3:first-child {
+  margin-top: 0;
+}
+
+.markdown-content h1 {
+  font-size: 1.4rem;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 0.4em;
+}
+
+.markdown-content h2 {
+  font-size: 1.15rem;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 0.3em;
+}
+
+.markdown-content h3 {
+  font-size: 1rem;
+}
+
+.markdown-content h4 {
+  font-size: 0.92rem;
+}
+
+.markdown-content h5,
+.markdown-content h6 {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.markdown-content p {
+  margin: 0 0 1em;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0 0 1em;
+  padding-left: 1.5em;
+}
+
+.markdown-content li {
+  margin-bottom: 0.3em;
+}
+
+.markdown-content li > ul,
+.markdown-content li > ol {
+  margin-bottom: 0;
+}
+
+.markdown-content a {
+  color: var(--cyan);
+  text-decoration: none;
+}
+
+.markdown-content a:hover {
+  text-decoration: underline;
+}
+
+.markdown-content blockquote {
+  margin: 0 0 1em;
+  padding: var(--space-sm) var(--space-md);
+  border-left: 3px solid var(--cyan);
+  background: var(--bg-raised);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-secondary);
+}
+
+.markdown-content blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content code {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  padding: 0.15em 0.4em;
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  color: var(--cyan);
+}
+
+.markdown-content pre {
+  margin: 0 0 1em;
+  padding: var(--space-md);
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+
+.markdown-content pre code {
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.markdown-content strong {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.markdown-content em {
+  color: var(--text-secondary);
+}
+
+.markdown-content hr {
+  margin: 1.5em 0;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.markdown-content table {
+  width: 100%;
+  margin: 0 0 1em;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.markdown-content th,
+.markdown-content td {
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+}
+
+.markdown-content th {
+  background: var(--bg-raised);
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.markdown-content img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+
+/* ============================================================
+   Right Pane (diff + markdown viewer wrapper)
+   ============================================================ */
+
+.right-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.right-pane-tabs {
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border: 1px solid var(--border-subtle);
+  border-bottom: none;
+}
+
+.right-pane-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.right-pane-body > .sidebar-diff-panel {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.right-pane-body > .markdown-viewer {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* When RightPane has tabs, remove duplicate border-radius from DiffPanel */
+.right-pane .sidebar-diff-panel {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  border-top: none;
+}
+
+/* ============================================================
+   Session Mode Badge
+   ============================================================ */
+
+.session-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 9999px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.session-badge.merged {
+  background: rgba(0, 230, 118, 0.1);
+  color: var(--green);
+}
+
+.session-badge.focus {
+  background: rgba(0, 229, 255, 0.1);
+  color: var(--cyan);
+}
+
+.session-badge.fast {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-tertiary);
+}
+
+/* ============================================================
    Commit History — Timeline View
    ============================================================ */
 
@@ -3667,6 +3928,10 @@ textarea {
   }
 
   .app[data-mobile-panel="diff"] .prompt-panel {
+    display: none;
+  }
+
+  .app[data-mobile-panel="focus"] .prompt-panel {
     display: none;
   }
 
@@ -4512,6 +4777,11 @@ textarea {
 /* Mobile: data-mobile-panel overrides with-sidebar panel hiding */
 @media (max-width: 768px) {
   .app[data-mobile-panel="diff"]
+    .session-content-area.with-sidebar
+    > .sidebar-diff-panel {
+    display: flex;
+  }
+  .app[data-mobile-panel="focus"]
     .session-content-area.with-sidebar
     > .sidebar-diff-panel {
     display: flex;

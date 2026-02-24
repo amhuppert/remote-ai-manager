@@ -217,6 +217,12 @@ export default function SessionsList({
                                 merged
                               </span>
                             )}
+                            {session.creationMode === "focus" && (
+                              <span className="session-badge focus">focus</span>
+                            )}
+                            {session.creationMode === "fast" && (
+                              <span className="session-badge fast">fast</span>
+                            )}
                           </Link>
                         </td>
                         <td>

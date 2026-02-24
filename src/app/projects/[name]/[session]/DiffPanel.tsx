@@ -12,6 +12,7 @@ interface DiffPanelProps {
   commits?: CommitLogEntry[];
   projectName?: string;
   sessionName?: string;
+  hotkeysEnabled?: boolean;
 }
 
 export default function DiffPanel({
@@ -19,6 +20,7 @@ export default function DiffPanel({
   commits = [],
   projectName = "",
   sessionName = "",
+  hotkeysEnabled = true,
 }: DiffPanelProps): React.JSX.Element {
   const defaultTab: DiffTab = diff.files.length > 0 ? "uncommitted" : "commits";
   const [activeTab, setActiveTab] = useState<DiffTab>(defaultTab);
@@ -109,10 +111,18 @@ export default function DiffPanel({
     hunks[nextIdx]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  useAppHotkey("nextFile", () => navigateFile(1));
-  useAppHotkey("prevFile", () => navigateFile(-1));
-  useAppHotkey("nextChange", () => navigateHunk(1));
-  useAppHotkey("prevChange", () => navigateHunk(-1));
+  useAppHotkey("nextFile", () => navigateFile(1), {
+    enabled: hotkeysEnabled,
+  });
+  useAppHotkey("prevFile", () => navigateFile(-1), {
+    enabled: hotkeysEnabled,
+  });
+  useAppHotkey("nextChange", () => navigateHunk(1), {
+    enabled: hotkeysEnabled,
+  });
+  useAppHotkey("prevChange", () => navigateHunk(-1), {
+    enabled: hotkeysEnabled,
+  });
 
   // Build flat hunk ref index
   let hunkRefIndex = 0;

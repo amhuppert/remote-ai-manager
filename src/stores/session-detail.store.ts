@@ -11,11 +11,13 @@ import type {
 // Types
 // ---------------------------------------------------------------------------
 
-type MobilePanel = "chat" | "diff";
+type MobilePanel = "chat" | "diff" | "focus";
+type RightPaneTab = "diff" | "focus";
 
 interface SessionDetailState {
   layout: LayoutMode;
   mobilePanel: MobilePanel;
+  rightPaneTab: RightPaneTab;
   sending: boolean;
   isVoiceRecording: boolean;
   promptPlaceholder: string | null;
@@ -39,6 +41,7 @@ interface SessionDetailActions {
   switchLayout: (mode: LayoutMode, storageKey: string) => void;
   hydrateLayout: (storageKey: string) => void;
   switchMobilePanel: (panel: MobilePanel) => void;
+  switchRightPaneTab: (tab: RightPaneTab) => void;
   submitPrompt: (
     userContent: MessageContentBlock[],
     currentMessageCount: number,
@@ -95,6 +98,7 @@ const validLayouts: LayoutMode[] = ["conversation", "default", "split", "diff"];
 const initialState: SessionDetailState = {
   layout: "conversation",
   mobilePanel: "chat",
+  rightPaneTab: "diff",
   sending: false,
   isVoiceRecording: false,
   promptPlaceholder: null,
@@ -150,6 +154,11 @@ const useSessionDetailStore = create<SessionDetailStore>()(
     switchMobilePanel: (panel) =>
       set((state) => {
         state.mobilePanel = panel;
+      }),
+
+    switchRightPaneTab: (tab) =>
+      set((state) => {
+        state.rightPaneTab = tab;
       }),
 
     // -- Prompt streaming --
@@ -401,6 +410,8 @@ export const useEditingIndex = () =>
   useSessionDetailStore((s) => s.editingIndex);
 export const usePendingForkPrompt = () =>
   useSessionDetailStore((s) => s.pendingForkPrompt);
+export const useRightPaneTab = () =>
+  useSessionDetailStore((s) => s.rightPaneTab);
 
 // ---------------------------------------------------------------------------
 // Action hooks
@@ -412,6 +423,8 @@ export const useHydrateLayout = () =>
   useSessionDetailStore((s) => s.hydrateLayout);
 export const useSwitchMobilePanel = () =>
   useSessionDetailStore((s) => s.switchMobilePanel);
+export const useSwitchRightPaneTab = () =>
+  useSessionDetailStore((s) => s.switchRightPaneTab);
 export const useSubmitPrompt = () =>
   useSessionDetailStore((s) => s.submitPrompt);
 export const useReceiveStreamContent = () =>

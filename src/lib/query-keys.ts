@@ -20,6 +20,8 @@ export const sessionKeys = {
     [...sessionKeys.all, "commits", projectName, sessionName] as const,
   commitDiff: (projectName: string, sessionName: string, hash: string) =>
     [...sessionKeys.all, "commitDiff", projectName, sessionName, hash] as const,
+  focusDoc: (projectName: string, sessionName: string) =>
+    [...sessionKeys.all, "focusDoc", projectName, sessionName] as const,
 };
 
 export const conversationKeys = {

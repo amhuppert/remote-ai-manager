@@ -116,6 +116,28 @@ export function useCommitsQuery(projectName: string, sessionName: string) {
   });
 }
 
+export function useFocusDocQuery(
+  projectName: string,
+  sessionName: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: sessionKeys.focusDoc(projectName, sessionName),
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/focus-doc`,
+      );
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        throw new Error(`Failed to fetch focus document`);
+      }
+      const data = (await res.json()) as { content: string };
+      return data.content;
+    },
+    enabled: options?.enabled ?? true,
+  });
+}
+
 export function useCommitDiffQuery(
   projectName: string,
   sessionName: string,

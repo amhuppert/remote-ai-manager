@@ -63,10 +63,11 @@ import {
   useCancelEditing,
   useSetPendingForkPrompt,
   useConsumePendingForkPrompt,
+  useSwitchRightPaneTab,
 } from "@/stores/session-detail.store";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
-import DiffPanel from "./DiffPanel";
+import RightPane from "./RightPane";
 import CommitDialog from "./CommitDialog";
 import MergeDialog from "./MergeDialog";
 import ConversationSidebar from "./ConversationSidebar";
@@ -141,7 +142,17 @@ export default function SessionDetailPage({
   // --- Zustand: actions ---
   const switchLayout = useSwitchLayout();
   const hydrateLayout = useHydrateLayout();
-  const switchMobilePanel = useSwitchMobilePanel();
+  const switchMobilePanelRaw = useSwitchMobilePanel();
+  const switchRightPaneTab = useSwitchRightPaneTab();
+  const switchMobilePanel = useCallback(
+    (panel: "chat" | "diff" | "focus") => {
+      switchMobilePanelRaw(panel);
+      // Sync right pane tab when switching to diff or focus via mobile tabs
+      if (panel === "focus") switchRightPaneTab("focus");
+      if (panel === "diff") switchRightPaneTab("diff");
+    },
+    [switchMobilePanelRaw, switchRightPaneTab],
+  );
   const dismissError = useDismissError();
   const reconcileMessages = useReconcileMessages();
   const navigateToMessage = useNavigateToMessage();
@@ -1266,9 +1277,12 @@ export default function SessionDetailPage({
               )}
             </div>
 
-            {/* Diff panel — mounted when layout shows it OR mobile panel is "diff" */}
-            {(layout !== "conversation" || mobilePanel === "diff") && (
-              <DiffPanel
+            {/* Right pane (diff + optional focus doc) — mounted when layout shows it OR mobile panel is "diff"/"focus" */}
+            {(layout !== "conversation" ||
+              mobilePanel === "diff" ||
+              mobilePanel === "focus") && (
+              <RightPane
+                creationMode={session.creationMode}
                 diff={diff}
                 commits={commits}
                 projectName={projectName}
@@ -1294,6 +1308,14 @@ export default function SessionDetailPage({
           >
             Diff
           </button>
+          {session.creationMode === "focus" && (
+            <button
+              className={`mobile-tab${mobilePanel === "focus" ? " active" : ""}`}
+              onClick={() => switchMobilePanel("focus")}
+            >
+              Focus
+            </button>
+          )}
         </div>
         <div className="mobile-actions">
           <button
