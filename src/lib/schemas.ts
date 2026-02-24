@@ -95,79 +95,6 @@ export const conversationRoleSchema = z
   .default(null);
 export type ConversationRole = z.infer<typeof conversationRoleSchema>;
 
-// ============================================================
-// Conversation Metrics Schemas
-// ============================================================
-
-export const compactionEventSchema = z.object({
-  trigger: z.enum(["manual", "auto"]),
-  preTokens: z.number(),
-  timestamp: z.string(),
-});
-export type CompactionEvent = z.infer<typeof compactionEventSchema>;
-
-export const modelUsageEntrySchema = z.object({
-  inputTokens: z.number(),
-  outputTokens: z.number(),
-  cacheReadInputTokens: z.number(),
-  cacheCreationInputTokens: z.number(),
-  costUSD: z.number(),
-  contextWindow: z.number(),
-  maxOutputTokens: z.number(),
-});
-export type ModelUsageEntry = z.infer<typeof modelUsageEntrySchema>;
-
-export const conversationMetricsSchema = z.object({
-  // Token usage (cumulative across all API calls — NOT context fill level)
-  inputTokens: z.number().nullable().default(null),
-  outputTokens: z.number().nullable().default(null),
-  cacheReadInputTokens: z.number().nullable().default(null),
-  cacheCreationInputTokens: z.number().nullable().default(null),
-
-  // Context window size (model's max, from modelUsage)
-  contextWindow: z.number().nullable().default(null),
-
-  // Per-model breakdown
-  modelUsage: z
-    .record(z.string(), modelUsageEntrySchema)
-    .nullable()
-    .default(null),
-
-  // Timing (accumulated across prompts)
-  durationMs: z.number().nullable().default(null),
-  durationApiMs: z.number().nullable().default(null),
-  // Turns (accumulated across prompts)
-  numTurns: z.number().nullable().default(null),
-
-  // Cost (accumulated across prompts)
-  totalCostUsd: z.number().nullable().default(null),
-
-  // Session metadata (from init)
-  model: z.string().nullable().default(null),
-  claudeCodeVersion: z.string().nullable().default(null),
-  tools: z.array(z.string()).nullable().default(null),
-  mcpServers: z
-    .array(
-      z.object({
-        name: z.string(),
-        status: z.string(),
-      }),
-    )
-    .nullable()
-    .default(null),
-
-  // Compaction tracking
-  compactionCount: z.number().default(0),
-  lastCompactionPreTokens: z.number().nullable().default(null),
-  compactions: z.array(compactionEventSchema).default([]),
-
-  // Stop/error info
-  stopReason: z.string().nullable().default(null),
-  errorSubtype: z.string().nullable().default(null),
-  permissionDenials: z.array(z.string()).nullable().default(null),
-});
-export type ConversationMetrics = z.infer<typeof conversationMetricsSchema>;
-
 export const conversationStateSchema = z.object({
   id: z.string(),
   name: z.string().nullable().default(null),
@@ -180,7 +107,9 @@ export const conversationStateSchema = z.object({
   source: z.enum(["csm", "imported"]).default("csm"),
   summary: z.string().nullable().default(null),
   archived: z.boolean().default(false),
-  metrics: conversationMetricsSchema.nullable().default(null),
+  totalCostUsd: z.number().nullable().default(null),
+  totalDurationMs: z.number().nullable().default(null),
+  totalTurns: z.number().nullable().default(null),
   pendingQuestionId: z.string().nullable().default(null),
   pendingQuestions: z.array(askQuestionItemSchema).nullable().default(null),
   forkedFrom: forkedFromSchema,
@@ -337,20 +266,8 @@ export const answerQuestionRequestSchema = z.object({
 });
 export type AnswerQuestionRequest = z.infer<typeof answerQuestionRequestSchema>;
 
-export const metricsUpdateEventSchema = z.object({
-  type: z.literal("metrics-update"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  metrics: conversationMetricsSchema.partial(),
-});
-export type MetricsUpdateEvent = z.infer<typeof metricsUpdateEventSchema>;
-
 /** SSE event type */
-export type SSEEvent =
-  | ConversationStatusEvent
-  | AskQuestionEvent
-  | MetricsUpdateEvent;
+export type SSEEvent = ConversationStatusEvent | AskQuestionEvent;
 
 // ============================================================
 // Command Autocomplete Schemas

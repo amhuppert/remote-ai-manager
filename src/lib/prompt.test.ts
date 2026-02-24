@@ -91,7 +91,9 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     source: "csm" as const,
     summary: null,
     archived: false,
-    metrics: null,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
     pendingQuestionId: null,
     pendingQuestions: null,
     forkedFrom: null,
@@ -474,7 +476,7 @@ describe("executePromptStream", () => {
     expect(metadataSnapshot).toBeTruthy();
   });
 
-  it("accumulates cost data from result message into metrics", async () => {
+  it("accumulates cost data from result message", async () => {
     const mockQuery = createMockQuery([
       {
         type: "assistant",
@@ -489,19 +491,9 @@ describe("executePromptStream", () => {
         uuid: "u2",
         total_cost_usd: 0.05,
         duration_ms: 1200,
-        duration_api_ms: 1000,
         num_turns: 3,
         result: "Done.",
         is_error: false,
-        stop_reason: "end_turn",
-        usage: {
-          inputTokens: 5000,
-          outputTokens: 1000,
-          cacheReadInputTokens: 0,
-          cacheCreationInputTokens: 0,
-        },
-        modelUsage: {},
-        permission_denials: [],
       },
     ]);
     queryMock.mockReturnValue(mockQuery);
@@ -509,12 +501,12 @@ describe("executePromptStream", () => {
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
     const costSnapshot = updateSnapshots.find(
-      (s) => s.conversations[0]!.metrics?.totalCostUsd != null,
+      (s) => s.conversations[0]!.totalCostUsd !== null,
     );
     expect(costSnapshot).toBeTruthy();
-    expect(costSnapshot!.conversations[0]!.metrics!.totalCostUsd).toBe(0.05);
-    expect(costSnapshot!.conversations[0]!.metrics!.durationMs).toBe(1200);
-    expect(costSnapshot!.conversations[0]!.metrics!.numTurns).toBe(3);
+    expect(costSnapshot!.conversations[0]!.totalCostUsd).toBe(0.05);
+    expect(costSnapshot!.conversations[0]!.totalDurationMs).toBe(1200);
+    expect(costSnapshot!.conversations[0]!.totalTurns).toBe(3);
   });
 
   it("appends transcript entries for messages", async () => {
