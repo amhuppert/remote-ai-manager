@@ -14,6 +14,7 @@ const {
   readStateMock,
   writeStateMock,
   ensureUniqueNameMock,
+  queryMock,
 } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
   existsSyncMock: vi.fn<(p: string) => boolean>(),
@@ -24,6 +25,7 @@ const {
   readStateMock: vi.fn(),
   writeStateMock: vi.fn(),
   ensureUniqueNameMock: vi.fn(),
+  queryMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -48,6 +50,10 @@ vi.mock("./state", () => ({
 
 vi.mock("./worktrees", () => ({
   ensureUniqueName: ensureUniqueNameMock,
+}));
+
+vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
+  query: queryMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -174,6 +180,39 @@ function mockExecFileSequence(
   );
 }
 
+/** Create a mock async iterable that yields SDK messages with the given text */
+function mockQueryResponse(text: string) {
+  async function* generate() {
+    yield {
+      type: "assistant" as const,
+      session_id: "mock-session",
+      message: {
+        role: "assistant" as const,
+        content: [{ type: "text" as const, text }],
+      },
+    };
+    yield {
+      type: "result" as const,
+      subtype: "success" as const,
+      session_id: "mock-session",
+      total_cost_usd: 0,
+      duration_ms: 100,
+      num_turns: 1,
+    };
+  }
+  return generate();
+}
+
+/** Create a mock async iterable that throws an error */
+function mockQueryError(error: Error) {
+  async function* generate() {
+    throw error;
+    // eslint-disable-next-line no-unreachable
+    yield undefined as never;
+  }
+  return generate();
+}
+
 // ---------------------------------------------------------------------------
 // Reset mocks between tests
 // ---------------------------------------------------------------------------
@@ -292,39 +331,46 @@ describe("sanitizeBranchName", () => {
 // ===========================================================================
 
 describe("generateSessionName", () => {
-  it("uses Claude Haiku output when valid", async () => {
-    mockExecFileSuccess("Add Auth\n");
+  it("uses Agent SDK output when valid", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("Add Auth"));
     const name = await generateSessionName(
       "Add user authentication",
       "/projects/repo",
     );
     expect(name).toBe("Add Auth");
 
-    // Verify claude was called with haiku model
-    expect(execFileMock).toHaveBeenCalledWith(
-      "claude",
-      expect.arrayContaining(["--model", "haiku"]),
-      expect.objectContaining({ timeout: 15_000 }),
-      expect.any(Function),
+    // Verify SDK was called with haiku model and no tools
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("Add user authentication"),
+        options: expect.objectContaining({
+          model: "haiku",
+          maxTurns: 1,
+          tools: [],
+          mcpServers: {},
+        }),
+      }),
     );
   });
 
-  it("throws when Claude CLI fails", async () => {
-    mockExecFileFailure(new Error("claude not found"));
+  it("throws when SDK query fails", async () => {
+    queryMock.mockReturnValue(
+      mockQueryError(new Error("SDK connection error")),
+    );
     await expect(
       generateSessionName("Add auth feature", "/projects/repo"),
-    ).rejects.toThrow("claude not found");
+    ).rejects.toThrow("SDK connection error");
   });
 
   it("throws when Claude returns empty output", async () => {
-    mockExecFileSuccess(""); // empty output
+    queryMock.mockReturnValue(mockQueryResponse(""));
     await expect(
       generateSessionName("Implement search", "/projects/repo"),
     ).rejects.toThrow("Session name generation returned empty result");
   });
 
   it("throws when Claude returns invalid name", async () => {
-    mockExecFileSuccess("-invalid-name\n");
+    queryMock.mockReturnValue(mockQueryResponse("-invalid-name"));
     await expect(
       generateSessionName("Bad name", "/projects/repo"),
     ).rejects.toThrow("Generated session name is invalid");
@@ -337,10 +383,8 @@ describe("generateSessionName", () => {
 
 describe("createSessionFocus", () => {
   it("creates a session with correct properties", async () => {
-    mockExecFileSequence([
-      { stdout: "My Feature\n" }, // claude haiku
-      { stdout: "" }, // git worktree add
-    ]);
+    queryMock.mockReturnValue(mockQueryResponse("My Feature"));
+    mockExecFileSuccess(); // git worktree add
     const session = await createSessionFocus(
       "/projects/repo",
       "Implement my feature",
@@ -363,7 +407,8 @@ describe("createSessionFocus", () => {
   });
 
   it("sets ISO 8601 timestamps for createdAt and lastActivityAt", async () => {
-    mockExecFileSequence([{ stdout: "Timestamp Test\n" }, { stdout: "" }]);
+    queryMock.mockReturnValue(mockQueryResponse("Timestamp Test"));
+    mockExecFileSuccess();
     const before = new Date().toISOString();
     const session = await createSessionFocus(
       "/projects/repo",
@@ -383,13 +428,10 @@ describe("createSessionFocus", () => {
   });
 
   it("calls git worktree add with correct arguments", async () => {
-    mockExecFileSequence([
-      { stdout: "Build Feature\n" }, // claude haiku
-      { stdout: "" }, // git worktree add
-    ]);
+    queryMock.mockReturnValue(mockQueryResponse("Build Feature"));
+    mockExecFileSuccess();
     await createSessionFocus("/projects/repo", "Build feature");
 
-    // Second call should be git worktree add (first is claude)
     expect(execFileMock).toHaveBeenCalledWith(
       "git",
       [
@@ -406,7 +448,8 @@ describe("createSessionFocus", () => {
   });
 
   it("writes memory-bank/focus.md with objective", async () => {
-    mockExecFileSequence([{ stdout: "Auth Feature\n" }, { stdout: "" }]);
+    queryMock.mockReturnValue(mockQueryResponse("Auth Feature"));
+    mockExecFileSuccess();
     await createSessionFocus("/projects/repo", "Add user authentication");
 
     expect(mkdirMock).toHaveBeenCalledWith(
@@ -421,7 +464,8 @@ describe("createSessionFocus", () => {
   });
 
   it("persists session to state via writeState", async () => {
-    mockExecFileSequence([{ stdout: "Persist Test\n" }, { stdout: "" }]);
+    queryMock.mockReturnValue(mockQueryResponse("Persist Test"));
+    mockExecFileSuccess();
     await createSessionFocus("/projects/repo", "Persist test objective");
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
@@ -437,7 +481,8 @@ describe("createSessionFocus", () => {
 
   it("auto-creates project entry when project not yet in state", async () => {
     readStateMock.mockResolvedValue(emptyState());
-    mockExecFileSequence([{ stdout: "First Session\n" }, { stdout: "" }]);
+    queryMock.mockReturnValue(mockQueryResponse("First Session"));
+    mockExecFileSuccess();
     await createSessionFocus("/new/project", "First session objective");
 
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -454,7 +499,8 @@ describe("createSessionFocus", () => {
       stateWithSession("/projects/repo", "Existing"),
     );
     ensureUniqueNameMock.mockReturnValue("Existing 2");
-    mockExecFileSequence([{ stdout: "Existing\n" }, { stdout: "" }]);
+    queryMock.mockReturnValue(mockQueryResponse("Existing"));
+    mockExecFileSuccess();
 
     const session = await createSessionFocus(
       "/projects/repo",
@@ -472,7 +518,8 @@ describe("createSessionFocus", () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo-a", "Shared Name"),
     );
-    mockExecFileSequence([{ stdout: "Shared Name\n" }, { stdout: "" }]);
+    queryMock.mockReturnValue(mockQueryResponse("Shared Name"));
+    mockExecFileSuccess();
     const session = await createSessionFocus(
       "/projects/repo-b",
       "Shared name objective",
@@ -481,7 +528,7 @@ describe("createSessionFocus", () => {
   });
 
   it("throws error when worktree directory already exists", async () => {
-    mockExecFileSequence([{ stdout: "Conflict\n" }]);
+    queryMock.mockReturnValue(mockQueryResponse("Conflict"));
     existsSyncMock.mockImplementation((p: string) => {
       if (String(p).includes(".worktrees/")) return true;
       return false;
@@ -496,8 +543,8 @@ describe("createSessionFocus", () => {
   // =========================================================================
 
   it("executes init script with correct environment when configured", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("With Init"));
     mockExecFileSequence([
-      { stdout: "With Init\n" }, // claude haiku
       { stdout: "" }, // git worktree add
       { stdout: "" }, // init script
     ]);
@@ -514,8 +561,8 @@ describe("createSessionFocus", () => {
 
     await createSessionFocus("/projects/repo", "With init objective");
 
-    // Third execFile call should be the init script (0=claude, 1=git, 2=init)
-    const initCall = execFileMock.mock.calls[2];
+    // Second execFile call should be the init script (0=git, 1=init)
+    const initCall = execFileMock.mock.calls[1];
     expect(initCall).toBeDefined();
     expect(initCall![0]).toBe("/projects/repo/setup.sh");
     const opts = initCall![2] as {
@@ -532,10 +579,8 @@ describe("createSessionFocus", () => {
   });
 
   it("throws 'Init script not found' when script path doesn't exist", async () => {
-    mockExecFileSequence([
-      { stdout: "Missing Script\n" }, // claude haiku
-      { stdout: "" }, // git worktree add
-    ]);
+    queryMock.mockReturnValue(mockQueryResponse("Missing Script"));
+    mockExecFileSuccess(); // git worktree add
 
     readFileMock.mockResolvedValue(
       JSON.stringify({ initScriptPath: "./missing.sh" }),
@@ -560,8 +605,8 @@ describe("createSessionFocus", () => {
   it("rolls back worktree and branch on init script failure", async () => {
     const scriptError = new Error("script failed");
 
+    queryMock.mockReturnValue(mockQueryResponse("Fail Session"));
     mockExecFileSequence([
-      { stdout: "Fail Session\n" }, // claude haiku
       { stdout: "" }, // git worktree add
       { error: scriptError }, // init script fails
       { stdout: "" }, // rollback: worktree remove
@@ -588,14 +633,14 @@ describe("createSessionFocus", () => {
     ).rejects.toThrow("script failed");
 
     // Verify rollback: git worktree remove --force was called
-    const worktreeRemoveCall = execFileMock.mock.calls[3];
+    const worktreeRemoveCall = execFileMock.mock.calls[2];
     expect(worktreeRemoveCall![0]).toBe("git");
     expect(worktreeRemoveCall![1]).toContain("worktree");
     expect(worktreeRemoveCall![1]).toContain("remove");
     expect(worktreeRemoveCall![1]).toContain("--force");
 
     // Verify rollback: git branch -D was called
-    const branchDeleteCall = execFileMock.mock.calls[4];
+    const branchDeleteCall = execFileMock.mock.calls[3];
     expect(branchDeleteCall![0]).toBe("git");
     expect(branchDeleteCall![1]).toContain("branch");
     expect(branchDeleteCall![1]).toContain("-D");
@@ -605,8 +650,8 @@ describe("createSessionFocus", () => {
     const scriptError = new Error("script failed");
     const removeError = new Error("worktree remove failed");
 
+    queryMock.mockReturnValue(mockQueryResponse("Rm Fallback"));
     mockExecFileSequence([
-      { stdout: "Rm Fallback\n" }, // claude haiku
       { stdout: "" }, // git worktree add
       { error: scriptError }, // init script
       { error: removeError }, // git worktree remove fails
@@ -639,10 +684,8 @@ describe("createSessionFocus", () => {
   });
 
   it("does not persist state when creation fails", async () => {
-    mockExecFileSequence([
-      { stdout: "Should Not Persist\n" }, // claude haiku
-      { error: new Error("git worktree add failed") }, // git fails
-    ]);
+    queryMock.mockReturnValue(mockQueryResponse("Should Not Persist"));
+    mockExecFileFailure(new Error("git worktree add failed"));
 
     await expect(
       createSessionFocus("/projects/repo", "Should not persist"),

@@ -4,6 +4,8 @@ import { existsSync } from "node:fs";
 import { mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import type {
   ConversationState,
   SessionCreationMode,
@@ -58,43 +60,57 @@ async function git(
   return execFileAsync("git", args, { cwd });
 }
 
-/** Generate a short readable session name from an objective using Claude Haiku */
+/** Generate a short readable session name from an objective using the Agent SDK */
 export async function generateSessionName(
   objective: string,
   projectPath: string,
 ): Promise<string> {
-  const { stdout } = await execFileAsync(
-    "claude",
-    [
-      "--model",
-      "haiku",
-      "-p",
-      `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
-      "--output-format",
-      "text",
-      "--max-turns",
-      "1",
-      "--dangerously-skip-permissions",
-    ],
-    {
-      cwd: projectPath,
-      timeout: 15_000,
-      env: {
-        ...process.env,
-        CLAUDECODE: "", // Prevent nested session detection
-      } as NodeJS.ProcessEnv,
-    },
-  );
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 60_000);
 
-  const name = stdout.trim().split("\n")[0]!.trim();
-  if (!name) {
-    throw new Error("Session name generation returned empty result");
+  try {
+    let text = "";
+
+    const q = query({
+      prompt: `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
+      options: {
+        model: "haiku",
+        maxTurns: 1,
+        tools: [],
+        mcpServers: {},
+        settingSources: [],
+        persistSession: false,
+        cwd: projectPath,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        abortController,
+        env: { CLAUDECODE: "" },
+      },
+    });
+
+    for await (const message of q) {
+      if (message.type === "assistant") {
+        const asstMsg = message as SDKAssistantMessage;
+        for (const block of asstMsg.message.content) {
+          if (block.type === "text" && "text" in block) {
+            text += block.text;
+          }
+        }
+      }
+    }
+
+    const name = text.trim().split("\n")[0]!.trim();
+    if (!name) {
+      throw new Error("Session name generation returned empty result");
+    }
+    const validationError = validateSessionName(name);
+    if (validationError) {
+      throw new Error(`Generated session name is invalid: ${validationError}`);
+    }
+    return name;
+  } finally {
+    clearTimeout(timeout);
   }
-  const validationError = validateSessionName(name);
-  if (validationError) {
-    throw new Error(`Generated session name is invalid: ${validationError}`);
-  }
-  return name;
 }
 
 /**
@@ -286,8 +302,7 @@ export async function createSessionFast(
 
 /**
  * Create a session in focus mode.
- * AI generates the session name from the objective.
- * Throws if name generation fails (no fallback).
+ * AI generates the session name from the objective via the Agent SDK.
  */
 export async function createSessionFocus(
   projectPath: string,
