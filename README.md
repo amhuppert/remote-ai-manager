@@ -52,8 +52,8 @@ tailscale serve off
 
 ```bash
 npm run dev          # Start Next.js dev server
-npm run test         # Run tests in watch mode
-npm run test:run     # Run tests once
+npm run test     # Run tests once
+npm run test:watch         # Run tests in watch mode
 npm run typecheck    # Type-check without emitting
 npm run lint         # Lint with ESLint
 npm run format       # Format with Prettier

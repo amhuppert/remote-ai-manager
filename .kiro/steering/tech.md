@@ -45,7 +45,7 @@ z.record(valueSchema);
 ### Testing
 
 - **Vitest** — test files colocated with source: `*.test.ts` next to `*.ts` in `src/lib/`
-- Tests run via `bun run test` (watch) or `npm run test:run` (single run)
+- Tests run via `bun run test` (single run) or `bun run test:watch` (watch mode)
 - Typecheck via `bun run typecheck`
 
 ## Development Environment

@@ -45,7 +45,7 @@ The session completed **3 tasks** successfully:
 3. Fixed a race condition in the prompt queue
 
 \`\`\`bash
-$ npm run test:run
+$ bun run test
 ✓ 42 tests passed
 \`\`\`
 
