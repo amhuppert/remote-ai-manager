@@ -9,7 +9,7 @@ This project has two MCP servers configured in `.mcp.json` that provide real-tim
 
 ## Prerequisites
 
-The Next.js dev server must be running (`npm run dev`) for runtime tools to function. The `/_next/mcp` endpoint is built into Next.js 16+.
+The Next.js dev server must be running (`bun run dev`) for runtime tools to function. The `/_next/mcp` endpoint is built into Next.js 16+.
 
 ## Available MCP Servers
 
@@ -110,7 +110,7 @@ At the start of a development session where MCP tools will be used, call `init` 
 ## Troubleshooting
 
 If tools return connection errors:
-- Verify the dev server is running: `npm run dev`
+- Verify the dev server is running: `bun run dev`
 - Confirm the server is accessible at `http://localhost:3000/_next/mcp`
 - Restart the dev server if it was started before MCP configuration
 - Restart the MCP client (Claude Code) to reload `.mcp.json`

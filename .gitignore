@@ -23,9 +23,6 @@ npm-debug.log*
 .DS_Store
 *.tsbuildinfo
 
-# bun
-bun.lock
-
 # voice/prompt (local dev)
 .voice-last.json
 PROMPT.md

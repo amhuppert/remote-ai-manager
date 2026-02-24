@@ -54,7 +54,7 @@ Seven UI improvements to the session detail page and project dashboard. Items ar
 
 1. **Install packages:**
    ```
-   npm install react-markdown remark-gfm rehype-highlight highlight.js
+   bun add react-markdown remark-gfm rehype-highlight highlight.js
    ```
 
 2. **Create `MessageContent` component** (inline in SessionDetailPage or as a separate file `src/app/projects/[name]/[session]/MessageContent.tsx`):

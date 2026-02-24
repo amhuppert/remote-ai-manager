@@ -58,7 +58,7 @@ This project uses Next.js 16 with two MCP servers configured in `.mcp.json`:
 - **next-devtools**: Application-layer diagnostics (errors, routes, server actions, logs) via the `/_next/mcp` endpoint
 - **chrome-devtools**: Browser-layer control (screenshots, console, network, automation) via Chrome DevTools Protocol
 
-Use MCP tools when: diagnosing build/runtime errors, verifying UI after changes, inspecting network requests, debugging client-side issues, or profiling performance. The dev server (`npm run dev`) must be running. See the `nextjs-mcp` skill for detailed tool reference and workflows.
+Use MCP tools when: diagnosing build/runtime errors, verifying UI after changes, inspecting network requests, debugging client-side issues, or profiling performance. The dev server (`bun run dev`) must be running. See the `nextjs-mcp` skill for detailed tool reference and workflows.
 
 ## UI Design Rules
 

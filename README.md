@@ -13,7 +13,7 @@ A web-based control plane for managing remote Claude Code coding sessions. Creat
 ### 1. Install dependencies
 
 ```bash
-npm install
+bun install
 ```
 
 ### 2. Allow non-root Tailscale commands (one-time)
@@ -25,7 +25,7 @@ sudo tailscale set --operator=$USER
 ### 3. Start the dev server
 
 ```bash
-npm run dev
+bun run dev
 ```
 
 ### 4. Expose to your Tailscale network
@@ -51,10 +51,10 @@ tailscale serve off
 ## Development
 
 ```bash
-npm run dev          # Start Next.js dev server
-npm run test     # Run tests once
-npm run test:watch         # Run tests in watch mode
-npm run typecheck    # Type-check without emitting
-npm run lint         # Lint with ESLint
-npm run format       # Format with Prettier
+bun run dev          # Start Next.js dev server
+bun run test         # Run tests once
+bun run test:watch   # Run tests in watch mode
+bun run typecheck    # Type-check without emitting
+bun run lint         # Lint with ESLint
+bun run format       # Format with Prettier
 ```

@@ -7,8 +7,6 @@
 ## Installation
 
 ```bash
-npm install react-hotkeys-hook
-# or
 bun add react-hotkeys-hook
 ```
 
