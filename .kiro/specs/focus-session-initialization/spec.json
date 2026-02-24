@@ -1,0 +1,22 @@
+{
+  "feature_name": "focus-session-initialization",
+  "created_at": "2026-02-24T06:02:00.000Z",
+  "updated_at": "2026-02-24T06:30:00.000Z",
+  "language": "en",
+  "phase": "implemented",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}

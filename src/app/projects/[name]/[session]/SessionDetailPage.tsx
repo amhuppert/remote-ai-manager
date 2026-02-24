@@ -13,7 +13,10 @@ import {
   useCommitsQuery,
   useConversationsQuery,
 } from "@/lib/queries";
-import { useDeleteSessionMutation } from "@/lib/mutations";
+import {
+  useDeleteSessionMutation,
+  useFinalizeInitializationMutation,
+} from "@/lib/mutations";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import {
@@ -79,6 +82,7 @@ import {
 } from "@/components/CommandAutocomplete";
 import ModelSelector, { type ModelId } from "@/components/ModelSelector";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
+import FocusConfirmationBar from "@/components/FocusConfirmationBar";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
@@ -176,6 +180,15 @@ export default function SessionDetailPage({
     sessionStatus === "waiting_for_input" ||
     !!pendingQuestions;
 
+  // Detect initialization conversation for focus confirmation bar
+  const activeConversation = session?.conversations.find(
+    (c) => c.id === conversationId,
+  );
+  const isInitConversation = activeConversation?.role === "initialization";
+  const [focusConfirmLoading, setFocusConfirmLoading] = useState(false);
+  // Flag: user clicked confirm, write-focus prompt was sent, waiting for it to finish
+  const [awaitingFinalize, setAwaitingFinalize] = useState(false);
+
   // Conditional polling: refetch while session is active
   const messagesQuery = useConversationMessagesQuery(
     projectName,
@@ -201,6 +214,10 @@ export default function SessionDetailPage({
 
   // --- Mutations ---
   const deleteMutation = useDeleteSessionMutation(projectName);
+  const finalizeMutation = useFinalizeInitializationMutation(
+    projectName,
+    sessionName,
+  );
 
   // --- Prompt streaming ---
   const { send: sendPrompt, abortClient } = useSendPrompt(
@@ -567,6 +584,48 @@ export default function SessionDetailPage({
       },
     });
   }, [deleteMutation, sessionName, projectName, router, cancelDelete]);
+
+  // --- Focus initialization confirmation ---
+  // Step 1: User clicks confirm → send write-focus-document prompt, set flag
+  const handleConfirmFocus = useCallback(() => {
+    setFocusConfirmLoading(true);
+    setAwaitingFinalize(true);
+    void import("@/lib/prompt-templates").then(
+      ({ getWriteFocusDocumentPrompt }) => {
+        void sendPrompt(
+          getWriteFocusDocumentPrompt(),
+          messages.length,
+          selectedModel,
+        );
+      },
+    );
+  }, [sendPrompt, messages.length, selectedModel]);
+
+  // Step 2: Once the prompt finishes (session no longer busy), finalize
+  useEffect(() => {
+    if (!awaitingFinalize || isBusy) return;
+    setAwaitingFinalize(false);
+
+    void (async () => {
+      try {
+        const result = await finalizeMutation.mutateAsync();
+        router.push(
+          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${result.conversationId}`,
+        );
+      } catch {
+        failPrompt("Failed to finalize initialization");
+        setFocusConfirmLoading(false);
+      }
+    })();
+  }, [
+    awaitingFinalize,
+    isBusy,
+    finalizeMutation,
+    router,
+    projectName,
+    sessionName,
+    failPrompt,
+  ]);
 
   // --- Fork / Edit handlers ---
 
@@ -1043,6 +1102,18 @@ export default function SessionDetailPage({
                   <div ref={conversationEndRef} />
                 </div>
               </div>
+
+              {/* Focus initialization confirmation bar */}
+              {isInitConversation &&
+                !pendingQuestions &&
+                (!isBusy || focusConfirmLoading) &&
+                (activeConversation?.promptCount ?? 0) > 0 && (
+                  <FocusConfirmationBar
+                    onConfirm={handleConfirmFocus}
+                    disabled={isFinished}
+                    loading={focusConfirmLoading}
+                  />
+                )}
 
               {/* Prompt input OR question panel */}
               {pendingQuestions && pendingQuestionId ? (

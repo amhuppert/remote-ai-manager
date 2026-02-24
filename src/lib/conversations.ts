@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { ConversationState, ForkedFrom } from "@/types";
+import type { ConversationState, ConversationRole, ForkedFrom } from "@/types";
 import { readState, writeState } from "./state";
 import { createLogger } from "./logging";
 import { copyTranscriptUpTo, getTranscriptPath } from "./transcript";
@@ -15,6 +15,7 @@ const logger = createLogger("conversations");
 export async function createConversation(
   projectPath: string,
   sessionName: string,
+  opts?: { role?: ConversationRole },
 ): Promise<ConversationState> {
   const state = await readState();
   const project = state.projects[projectPath];
@@ -47,6 +48,7 @@ export async function createConversation(
     pendingQuestionId: null,
     pendingQuestions: null,
     forkedFrom: null,
+    role: opts?.role ?? null,
   };
 
   session.conversations.push(conversation);
@@ -278,6 +280,7 @@ export async function forkConversation(
     pendingQuestionId: null,
     pendingQuestions: null,
     forkedFrom,
+    role: null,
   };
 
   session.conversations.push(conversation);
@@ -293,6 +296,84 @@ export async function forkConversation(
   });
 
   return { conversationId: newId, name: forkName };
+}
+
+// ============================================================
+// Focus Initialization
+// ============================================================
+
+export interface FinalizeInitializationResult {
+  conversationId: string;
+  name: string;
+}
+
+/**
+ * Finalize the focus initialization flow:
+ * 1. Archive the initialization conversation
+ * 2. Create a new regular conversation
+ * Returns the new conversation.
+ */
+export async function finalizeInitialization(
+  projectPath: string,
+  sessionName: string,
+): Promise<FinalizeInitializationResult> {
+  const state = await readState();
+  const project = state.projects[projectPath];
+  if (!project) {
+    throw new Error(`Project not found: ${projectPath}`);
+  }
+
+  const session = project.sessions[sessionName];
+  if (!session) {
+    throw new Error(`Session "${sessionName}" not found in project`);
+  }
+
+  // Find the initialization conversation
+  const initConvo = session.conversations.find(
+    (c) => c.role === "initialization",
+  );
+  if (!initConvo) {
+    throw new Error("No initialization conversation found in this session");
+  }
+
+  // Archive it
+  initConvo.archived = true;
+
+  // Create a new regular conversation
+  const now = new Date().toISOString();
+  const sequenceNumber = session.conversations.length + 1;
+  const newConvo: ConversationState = {
+    id: crypto.randomUUID(),
+    name: `${sessionName} ${sequenceNumber}`,
+    claudeSessionId: null,
+    transcriptPath: null,
+    status: "new",
+    promptCount: 0,
+    createdAt: now,
+    lastActivityAt: now,
+    source: "csm",
+    summary: null,
+    archived: false,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    forkedFrom: null,
+    role: null,
+  };
+
+  session.conversations.push(newConvo);
+  await writeState(state);
+
+  logger.info("initialization.finalized", {
+    projectPath,
+    sessionName,
+    archivedConversationId: initConvo.id,
+    newConversationId: newConvo.id,
+  });
+
+  return { conversationId: newConvo.id, name: newConvo.name! };
 }
 
 // ============================================================

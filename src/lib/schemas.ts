@@ -89,6 +89,12 @@ export const forkedFromSchema = z
   .default(null);
 export type ForkedFrom = z.infer<typeof forkedFromSchema>;
 
+export const conversationRoleSchema = z
+  .enum(["initialization"])
+  .nullable()
+  .default(null);
+export type ConversationRole = z.infer<typeof conversationRoleSchema>;
+
 export const conversationStateSchema = z.object({
   id: z.string(),
   name: z.string().nullable().default(null),
@@ -107,6 +113,7 @@ export const conversationStateSchema = z.object({
   pendingQuestionId: z.string().nullable().default(null),
   pendingQuestions: z.array(askQuestionItemSchema).nullable().default(null),
   forkedFrom: forkedFromSchema,
+  role: conversationRoleSchema,
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
