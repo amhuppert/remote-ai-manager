@@ -16,6 +16,9 @@ export type {
   ManagerState,
   PerRepoConfig,
   ConversationState,
+  ConversationMetrics,
+  CompactionEvent,
+  ModelUsageEntry,
   ForkedFrom,
   MessageContentBlock,
 } from "@/lib/schemas";
@@ -48,6 +51,7 @@ export type {
   CommandItem,
   CommandsResponse,
   ConversationStatusEvent,
+  MetricsUpdateEvent,
   SSEEvent,
   AskQuestionOption,
   AskQuestionItem,
