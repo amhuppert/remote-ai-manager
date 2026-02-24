@@ -441,7 +441,7 @@ export default function ConversationSidebar({
                     <Link
                       key={convo.id}
                       href={`/projects/${encodeURIComponent(convo.projectName)}/${encodeURIComponent(convo.sessionName)}/${convo.id}`}
-                      className="convo-sidebar-item"
+                      className={`convo-sidebar-item${convo.id === activeConversationId ? " active" : ""}`}
                     >
                       {statusDot(convo.status)}
                       <div className="convo-sidebar-item-body">
