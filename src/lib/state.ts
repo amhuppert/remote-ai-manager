@@ -229,6 +229,44 @@ export async function setProjectArchived(
   await writeState(state);
 }
 
+/**
+ * Reset any conversations stuck in "running" or "waiting_for_input" back to "awaiting".
+ * Called on server startup — no prompt can survive a restart, so these are stale.
+ * Returns the number of conversations recovered.
+ */
+export async function recoverStaleConversations(): Promise<number> {
+  const state = await readState();
+  let recovered = 0;
+
+  for (const project of Object.values(state.projects)) {
+    for (const session of Object.values(project.sessions)) {
+      for (const conversation of session.conversations) {
+        if (
+          conversation.status === "running" ||
+          conversation.status === "waiting_for_input"
+        ) {
+          logger.warn("state.recover_stale_conversation", {
+            sessionName: session.sessionName,
+            conversationId: conversation.id,
+            previousStatus: conversation.status,
+          });
+          conversation.status = "awaiting";
+          conversation.pendingQuestionId = null;
+          conversation.pendingQuestions = null;
+          recovered++;
+        }
+      }
+    }
+  }
+
+  if (recovered > 0) {
+    await writeState(state);
+    logger.info("state.recovery_complete", { recovered });
+  }
+
+  return recovered;
+}
+
 /** Read pinned project paths from persisted state */
 export async function getPinnedProjects(): Promise<Set<string>> {
   const state = await readState();

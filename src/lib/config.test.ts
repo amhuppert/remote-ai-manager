@@ -35,7 +35,7 @@ describe("config", () => {
     const config = await readConfig();
 
     expect(config.baseDir).toContain("projects");
-    expect(config.claudeTimeoutMs).toBe(300_000);
+    expect(config.claudeTimeoutMs).toBe(3_600_000);
     expect(config.ignorePatterns).toContain("node_modules");
     expect(typeof config.stateFilePath).toBe("string");
   });
@@ -77,7 +77,7 @@ describe("config", () => {
 
     expect(config.baseDir).toBe("/old/path");
     // claudeTimeoutMs should get the default
-    expect(config.claudeTimeoutMs).toBe(300_000);
+    expect(config.claudeTimeoutMs).toBe(3_600_000);
   });
 
   it("getConfigDirPath returns a path under home", async () => {
@@ -114,7 +114,7 @@ describe("config", () => {
 
     expect(config.baseDir).toBe("/valid/path");
     // Defaults fill in missing fields
-    expect(config.claudeTimeoutMs).toBe(300_000);
+    expect(config.claudeTimeoutMs).toBe(3_600_000);
     expect(config.ignorePatterns).toContain("node_modules");
   });
 

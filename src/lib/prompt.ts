@@ -97,6 +97,9 @@ export async function executePromptStream(
 
   const projectName = projectPath.split("/").pop() ?? projectPath;
 
+  // Declared here so `finally` can clear it
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
   try {
     // Mark conversation as running
     await mutateConversation(
@@ -265,6 +268,15 @@ export async function executePromptStream(
       },
     });
 
+    // Safety-net timeout: abort if prompt exceeds configured max duration
+    timeoutHandle = setTimeout(() => {
+      logger.warn("prompt.timeout", {
+        sessionName: session.sessionName,
+        timeoutMs: config.claudeTimeoutMs,
+      });
+      abortController.abort();
+    }, config.claudeTimeoutMs);
+
     // Track state across the message loop
     let sessionId: string | null = null;
     let resultCostUsd: number | null = null;
@@ -357,6 +369,9 @@ export async function executePromptStream(
     emit("done", {});
     return { conversationId };
   } finally {
+    // Clear safety-net timeout
+    clearTimeout(timeoutHandle);
+
     // Clean up abort controller registration
     unregisterAbortController(conversationId);
 

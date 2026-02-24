@@ -59,11 +59,11 @@ bun run dev
 # Production build
 bun run build
 
-# Run tests (watch mode)
+# Run tests (single run)
 bun run test
 
-# Run tests (single run)
-bun run test:run
+# Run tests (watch mode)
+bun run test:watch
 
 # Type checking
 bun run typecheck

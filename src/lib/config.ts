@@ -37,7 +37,7 @@ function defaultConfig(): GlobalConfig {
       ".venv",
     ],
     stateFilePath: path.join(CONFIG_DIR, "state.json"),
-    claudeTimeoutMs: 300_000,
+    claudeTimeoutMs: 3_600_000,
     defaultModel: "opus",
   };
 }
