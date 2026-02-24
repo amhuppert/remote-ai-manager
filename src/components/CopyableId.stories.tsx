@@ -47,3 +47,20 @@ export const CustomTruncation = {
     truncateAt: 20,
   },
 } satisfies Story;
+
+export const BranchName = {
+  args: {
+    label: "Branch",
+    value: "csm/more-copyable-fields",
+    truncateAt: 999,
+  },
+} satisfies Story;
+
+export const WorktreePath = {
+  args: {
+    label: "Worktree",
+    value:
+      "/home/alex/github/remote-ai-manager/.worktrees/more-copyable-fields",
+    truncateAt: 999,
+  },
+} satisfies Story;

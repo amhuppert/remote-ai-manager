@@ -842,10 +842,11 @@ export default function SessionDetailPage({
               </span>
             </div>
             <div className="si-details">
-              <div className="si-item">
-                <span className="si-label">Branch</span>
-                <span className="si-val">{session.branchName}</span>
-              </div>
+              <CopyableId
+                label="Branch"
+                value={session.branchName}
+                truncateAt={999}
+              />
               <div className="si-sep" />
               <div className="si-item">
                 <span className="si-label">Created</span>
@@ -859,12 +860,11 @@ export default function SessionDetailPage({
                 </span>
               </div>
               <div className="si-sep" />
-              <div className="si-item">
-                <span className="si-label">Worktree</span>
-                <span className="si-val" style={{ opacity: 0.6 }}>
-                  {session.worktreePath}
-                </span>
-              </div>
+              <CopyableId
+                label="Worktree"
+                value={session.worktreePath}
+                truncateAt={999}
+              />
               <div className="si-sep" />
               <CopyableId label="Conv ID" value={conversationId} />
               {(() => {
