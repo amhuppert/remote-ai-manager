@@ -1195,10 +1195,6 @@ export default function SessionDetailPage({
                       }}
                       disabled={isFinished}
                     />
-                    <ImageAttachmentPreview
-                      images={pendingImages}
-                      onRemove={removeImage}
-                    />
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -1217,60 +1213,80 @@ export default function SessionDetailPage({
                         e.target.value = "";
                       }}
                     />
-                    <div className="prompt-input-actions">
-                      <button
-                        className="attachment-btn"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={isAtLimit || sending || isFinished}
-                        title="Attach image"
-                        type="button"
-                      >
-                        {"\uD83D\uDCCE"}
-                      </button>
-                      <ModelSelector
-                        value={selectedModel}
-                        onChange={setSelectedModel}
-                        disabled={sending || isFinished}
-                      />
-                      <VoiceRecordButton
-                        isRecording={isRecording}
-                        isProcessing={isProcessing}
-                        elapsedTime={elapsedTime}
-                        isAvailable={voiceAvailable}
-                        toggleRecording={toggleRecording}
-                        disabled={sending}
-                      />
-                      <button
-                        className={`send-btn${sending ? " busy" : ""}`}
-                        disabled={
-                          (!promptText.trim() && pendingImages.length === 0) ||
-                          sending ||
-                          isFinished ||
-                          isRecording
-                        }
-                        onClick={() => void handleSendPrompt()}
-                        title={
-                          isFinished
-                            ? "Session is read-only"
-                            : sending
-                              ? "Session is busy"
-                              : "Send prompt"
-                        }
-                      >
-                        {sending ? (
-                          <div
-                            className="spinner"
-                            style={{
-                              borderColor: "rgba(0, 229, 255, 0.3)",
-                              borderTopColor: "var(--cyan)",
-                              width: 18,
-                              height: 18,
-                            }}
-                          />
-                        ) : (
-                          "\u25B6"
-                        )}
-                      </button>
+                    <ImageAttachmentPreview
+                      images={pendingImages}
+                      onRemove={removeImage}
+                    />
+                    <div className="prompt-toolbar">
+                      <div className="prompt-toolbar-start">
+                        <button
+                          className="attachment-btn"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isAtLimit || sending || isFinished}
+                          title="Attach image"
+                          type="button"
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                          </svg>
+                        </button>
+                        <ModelSelector
+                          value={selectedModel}
+                          onChange={setSelectedModel}
+                          disabled={sending || isFinished}
+                        />
+                      </div>
+                      <div className="prompt-toolbar-end">
+                        <VoiceRecordButton
+                          isRecording={isRecording}
+                          isProcessing={isProcessing}
+                          elapsedTime={elapsedTime}
+                          isAvailable={voiceAvailable}
+                          toggleRecording={toggleRecording}
+                          disabled={sending}
+                        />
+                        <button
+                          className={`send-btn${sending ? " busy" : ""}`}
+                          disabled={
+                            (!promptText.trim() &&
+                              pendingImages.length === 0) ||
+                            sending ||
+                            isFinished ||
+                            isRecording
+                          }
+                          onClick={() => void handleSendPrompt()}
+                          title={
+                            isFinished
+                              ? "Session is read-only"
+                              : sending
+                                ? "Session is busy"
+                                : "Send prompt"
+                          }
+                        >
+                          {sending ? (
+                            <div
+                              className="spinner"
+                              style={{
+                                borderColor: "rgba(0, 229, 255, 0.3)",
+                                borderTopColor: "var(--cyan)",
+                                width: 18,
+                                height: 18,
+                              }}
+                            />
+                          ) : (
+                            "\u25B6"
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

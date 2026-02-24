@@ -68,14 +68,15 @@ export const InPromptArea = {
               rows={2}
               readOnly
             />
-            <div className="prompt-input-actions">
-              <Story />
-              <button
-                className="send-btn"
-                style={{ cursor: "default" }}
-              >
-                &#x25B6;
-              </button>
+            <div className="prompt-toolbar">
+              <div className="prompt-toolbar-start">
+                <Story />
+              </div>
+              <div className="prompt-toolbar-end">
+                <button className="send-btn" style={{ cursor: "default" }}>
+                  &#x25B6;
+                </button>
+              </div>
             </div>
           </div>
         </div>
