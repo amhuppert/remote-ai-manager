@@ -3306,6 +3306,83 @@ textarea {
   min-width: 0;
 }
 
+/* Tool use group (collapsible consecutive tool uses) */
+
+.tool-use-group {
+  margin: var(--space-sm) 0;
+  border-left: 2px solid var(--cyan-dim);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.tool-use-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px var(--space-sm);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  min-height: 30px;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.tool-use-group-header:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tool-use-group-icon {
+  color: var(--cyan-dim);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.tool-use-group-count {
+  font-weight: 600;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.tool-use-group-summary {
+  color: var(--text-tertiary);
+  font-weight: 400;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tool-use-group-chevron {
+  margin-left: auto;
+  font-size: 0.6rem;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.tool-use-group-header:hover .tool-use-group-chevron {
+  color: var(--text-secondary);
+}
+
+.tool-use-group-body {
+  padding: 0 var(--space-sm) var(--space-xs);
+}
+
+.tool-use-group-body .tool-use-indicator {
+  margin: 2px 0;
+  background: var(--bg-surface);
+  border-left: none;
+}
+
 /* Command indicator (slash commands) */
 
 .command-indicator {

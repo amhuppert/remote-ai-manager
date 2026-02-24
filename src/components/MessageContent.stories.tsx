@@ -102,3 +102,122 @@ export const MultipleImages = {
     ] satisfies MessageContentBlock[],
   },
 } satisfies Story;
+
+/** Consecutive tool uses are grouped into a collapsible section */
+export const GroupedToolUses = {
+  args: {
+    content: [
+      {
+        type: "text",
+        text: "Let me find the relevant components and understand how statuses are styled.",
+      },
+      {
+        type: "tool_use",
+        name: "Task",
+        input: { description: "Find waiting_for_input styling" },
+      },
+      { type: "tool_result", tool_use_id: "t1" },
+      {
+        type: "tool_use",
+        name: "Grep",
+        input: { pattern: "waiting_for_input|WAITING_FOR_INPUT" },
+      },
+      { type: "tool_result", tool_use_id: "t2" },
+      { type: "tool_use", name: "Glob", input: { pattern: "**/*.css" } },
+      { type: "tool_result", tool_use_id: "t3" },
+      {
+        type: "tool_use",
+        name: "Glob",
+        input: { pattern: '**/*"status"*.ts*' },
+      },
+      { type: "tool_result", tool_use_id: "t4" },
+      {
+        type: "tool_use",
+        name: "Grep",
+        input: { pattern: 'status."indicator|status."dot' },
+      },
+      { type: "tool_result", tool_use_id: "t5" },
+      {
+        type: "tool_use",
+        name: "Read",
+        input: { file_path: "/src/app/globals.css" },
+      },
+      { type: "tool_result", tool_use_id: "t6" },
+      {
+        type: "tool_use",
+        name: "Grep",
+        input: { pattern: "amber|orange|\\.awaiting|\\.running" },
+      },
+      { type: "tool_result", tool_use_id: "t7" },
+      {
+        type: "tool_use",
+        name: "Read",
+        input: { file_path: "/src/components/UnifiedPanel.tsx" },
+      },
+      { type: "tool_result", tool_use_id: "t8" },
+    ] satisfies MessageContentBlock[],
+  },
+} satisfies Story;
+
+/** Tool uses separated by text should NOT be grouped together */
+export const SeparateGroupsByText = {
+  args: {
+    content: [
+      { type: "text", text: "First, let me search for the file." },
+      {
+        type: "tool_use",
+        name: "Grep",
+        input: { pattern: "createSession" },
+      },
+      { type: "tool_result", tool_use_id: "t1" },
+      {
+        type: "tool_use",
+        name: "Read",
+        input: { file_path: "/src/lib/sessions.ts" },
+      },
+      { type: "tool_result", tool_use_id: "t2" },
+      {
+        type: "tool_use",
+        name: "Glob",
+        input: { pattern: "**/*session*.ts" },
+      },
+      { type: "tool_result", tool_use_id: "t3" },
+      {
+        type: "text",
+        text: "Now I understand the structure. Let me make the changes.",
+      },
+      {
+        type: "tool_use",
+        name: "Edit",
+        input: { file_path: "/src/lib/sessions.ts" },
+      },
+      { type: "tool_result", tool_use_id: "t4" },
+      {
+        type: "tool_use",
+        name: "Write",
+        input: { file_path: "/src/lib/sessions.test.ts" },
+      },
+      { type: "tool_result", tool_use_id: "t5" },
+      {
+        type: "text",
+        text: "Done! The session creation logic has been updated.",
+      },
+    ] satisfies MessageContentBlock[],
+  },
+} satisfies Story;
+
+/** A single tool use should NOT be grouped (rendered inline) */
+export const SingleToolUseNoGroup = {
+  args: {
+    content: [
+      { type: "text", text: "Let me check that file." },
+      {
+        type: "tool_use",
+        name: "Read",
+        input: { file_path: "/src/lib/config.ts" },
+      },
+      { type: "tool_result", tool_use_id: "t1" },
+      { type: "text", text: "The config looks correct." },
+    ] satisfies MessageContentBlock[],
+  },
+} satisfies Story;
