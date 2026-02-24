@@ -369,6 +369,10 @@ textarea {
   font-weight: 600;
 }
 
+.topbar-mobile-back {
+  display: none;
+}
+
 .topbar-status {
   display: flex;
   align-items: center;
@@ -3404,12 +3408,40 @@ textarea {
 
   .topbar-brand {
     gap: var(--space-sm);
+    min-width: 0;
+    flex: 1;
   }
 
   /* Mobile breadcrumb: show only last segment with back arrow */
-  .topbar-breadcrumb a:not(:last-child),
+  .topbar-breadcrumb a:not(.bc-last):not(.topbar-mobile-back),
   .topbar-breadcrumb .bc-sep {
     display: none;
+  }
+
+  .topbar-mobile-back {
+    display: flex;
+    align-items: center;
+    font-size: 1.4rem;
+    line-height: 1;
+    color: var(--text-tertiary);
+    padding: 4px 0;
+    flex-shrink: 0;
+  }
+
+  .topbar-mobile-back:hover {
+    color: var(--text-primary);
+  }
+
+  .topbar-breadcrumb {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .topbar-breadcrumb .bc-last {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   /* Dots-only status — hide text on non-detail pages */
@@ -3419,6 +3451,17 @@ textarea {
   }
 
   .topbar-status-default .status-indicator .status-dot {
+    width: 8px;
+    height: 8px;
+  }
+
+  /* Dots-only status — hide text on detail pages too */
+  .topbar-status-session .status-indicator {
+    font-size: 0;
+    gap: 0;
+  }
+
+  .topbar-status-session .status-indicator .status-dot {
     width: 8px;
     height: 8px;
   }

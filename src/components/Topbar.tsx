@@ -42,17 +42,36 @@ export default function Topbar({
         </Link>
         <div className="topbar-divider" />
         <nav className="topbar-breadcrumb">
-          {breadcrumbs.map((seg, i) => (
-            <span key={seg.href} style={{ display: "contents" }}>
-              {i > 0 && <span className="bc-sep">/</span>}
-              <Link
-                href={seg.href}
-                className={seg.isSession ? "bc-session" : undefined}
-              >
-                {seg.label}
-              </Link>
-            </span>
-          ))}
+          {breadcrumbs.length > 0 && (
+            <Link
+              href={
+                breadcrumbs.length > 1
+                  ? breadcrumbs[breadcrumbs.length - 2]!.href
+                  : "/projects"
+              }
+              className="topbar-mobile-back"
+              aria-label="Go back"
+            >
+              &#8249;
+            </Link>
+          )}
+          {breadcrumbs.map((seg, i) => {
+            const isLast = i === breadcrumbs.length - 1;
+            const cls = [
+              seg.isSession ? "bc-session" : null,
+              isLast ? "bc-last" : null,
+            ]
+              .filter(Boolean)
+              .join(" ");
+            return (
+              <span key={seg.href} style={{ display: "contents" }}>
+                {i > 0 && <span className="bc-sep">/</span>}
+                <Link href={seg.href} className={cls || undefined}>
+                  {seg.label}
+                </Link>
+              </span>
+            );
+          })}
         </nav>
       </div>
       <div className="topbar-status">
