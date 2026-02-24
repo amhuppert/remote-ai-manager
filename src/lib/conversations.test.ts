@@ -488,6 +488,7 @@ function makeConvo(
     totalTurns: null,
     pendingQuestionId: null,
     pendingQuestions: null,
+    forkedFrom: null,
     ...overrides,
   };
 }

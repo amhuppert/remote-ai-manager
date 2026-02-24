@@ -15,6 +15,7 @@ export type {
   ManagerState,
   PerRepoConfig,
   ConversationState,
+  ForkedFrom,
   MessageContentBlock,
 } from "@/lib/schemas";
 

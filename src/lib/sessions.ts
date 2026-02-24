@@ -227,6 +227,7 @@ async function provisionSession(
     totalTurns: null,
     pendingQuestionId: null,
     pendingQuestions: null,
+    forkedFrom: null,
   };
   const session: SessionState = {
     sessionName,

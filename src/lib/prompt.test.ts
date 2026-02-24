@@ -96,6 +96,7 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     totalTurns: null,
     pendingQuestionId: null,
     pendingQuestions: null,
+    forkedFrom: null,
     ...overrides,
   };
 }

@@ -169,7 +169,15 @@ export async function executePromptStream(
         allowDangerouslySkipPermissions: true,
         cwd: session.worktreePath,
         maxTurns: config.maxTurns,
-        resume: conversation.claudeSessionId ?? undefined,
+        resume:
+          conversation.claudeSessionId ??
+          conversation.forkedFrom?.sourceClaudeSessionId ??
+          undefined,
+        forkSession:
+          conversation.forkedFrom != null &&
+          conversation.claudeSessionId == null
+            ? true
+            : undefined,
         persistSession: true,
         abortController,
         env: { CLAUDECODE: "" },
@@ -193,7 +201,8 @@ export async function executePromptStream(
               (c) => {
                 c.status = "waiting_for_input";
                 c.pendingQuestionId = questionId;
-                c.pendingQuestions = questions as ConversationState["pendingQuestions"];
+                c.pendingQuestions =
+                  questions as ConversationState["pendingQuestions"];
               },
             ).catch(() => {});
 
