@@ -28,6 +28,7 @@ import {
   useShowCommitDialog,
   useShowMergeDialog,
   useInfoExpanded,
+  useEditingIndex,
   useSwitchLayout,
   useHydrateLayout,
   useSwitchMobilePanel,
@@ -53,6 +54,10 @@ import {
   useNavigateQuestion,
   useClearQuestions,
   useFailPrompt,
+  useStartEditing,
+  useCancelEditing,
+  useSetPendingForkPrompt,
+  useConsumePendingForkPrompt,
 } from "@/stores/session-detail.store";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
@@ -62,6 +67,8 @@ import MergeDialog from "./MergeDialog";
 import ConversationSidebar from "./ConversationSidebar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MessageContent from "@/components/MessageContent";
+import MessageActions from "@/components/MessageActions";
+import MessageEditor from "@/components/MessageEditor";
 import ConversationNav from "@/components/ConversationNav";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import {
@@ -120,6 +127,7 @@ export default function SessionDetailPage({
   const showCommitDialog = useShowCommitDialog();
   const showMergeDialog = useShowMergeDialog();
   const infoExpanded = useInfoExpanded();
+  const editingIndex = useEditingIndex();
 
   // --- Zustand: actions ---
   const switchLayout = useSwitchLayout();
@@ -146,6 +154,10 @@ export default function SessionDetailPage({
   const currentQuestionIndex = useCurrentQuestionIndex();
   const navigateQuestion = useNavigateQuestion();
   const clearQuestions = useClearQuestions();
+  const startEditing = useStartEditing();
+  const cancelEditing = useCancelEditing();
+  const setPendingForkPrompt = useSetPendingForkPrompt();
+  const consumePendingForkPrompt = useConsumePendingForkPrompt();
 
   // --- Derived from query data ---
   const session = sessionQuery.data;
@@ -448,6 +460,115 @@ export default function SessionDetailPage({
     });
   }, [deleteMutation, sessionName, projectName, router, cancelDelete]);
 
+  // --- Fork / Edit handlers ---
+
+  const [forkingIndex, setForkingIndex] = useState<number | null>(null);
+
+  const handleFork = useCallback(
+    async (messageIndex: number) => {
+      setForkingIndex(messageIndex);
+      try {
+        const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/fork`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messageIndex }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({ error: "Fork failed" }));
+          failPrompt((data as { error?: string }).error ?? "Fork failed");
+          return;
+        }
+        const result = (await res.json()) as {
+          conversationId: string;
+          name: string;
+        };
+        router.push(
+          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${result.conversationId}`,
+        );
+      } catch {
+        failPrompt("Fork failed");
+      } finally {
+        setForkingIndex(null);
+      }
+    },
+    [projectName, sessionName, conversationId, router, failPrompt],
+  );
+
+  const handleEditSave = useCallback(
+    async (messageIndex: number, newText: string) => {
+      setForkingIndex(messageIndex);
+      try {
+        // Extract original text to detect unchanged saves
+        const msg = displayMessages[messageIndex];
+        const originalText =
+          msg?.content.find((b) => b.type === "text" && "text" in b)
+            ? (msg.content.find((b) => b.type === "text" && "text" in b) as { text: string }).text
+            : "";
+
+        const isUnchanged = newText.trim() === originalText.trim();
+
+        const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/fork`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messageIndex,
+            editedText: isUnchanged ? undefined : newText,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({ error: "Fork failed" }));
+          failPrompt((data as { error?: string }).error ?? "Fork failed");
+          return;
+        }
+        const result = (await res.json()) as {
+          conversationId: string;
+          name: string;
+        };
+
+        cancelEditing();
+
+        // If text was edited, set pending fork prompt for auto-send
+        if (!isUnchanged) {
+          setPendingForkPrompt({
+            conversationId: result.conversationId,
+            text: newText,
+          });
+        }
+
+        router.push(
+          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${result.conversationId}`,
+        );
+      } catch {
+        failPrompt("Fork failed");
+      } finally {
+        setForkingIndex(null);
+      }
+    },
+    [
+      projectName,
+      sessionName,
+      conversationId,
+      displayMessages,
+      router,
+      failPrompt,
+      cancelEditing,
+      setPendingForkPrompt,
+    ],
+  );
+
+  // Auto-prompt delivery for edit-and-fork
+  const autoPromptFired = useRef(false);
+  useEffect(() => {
+    if (autoPromptFired.current) return;
+    const pending = consumePendingForkPrompt();
+    if (!pending) return;
+    if (pending.conversationId !== conversationId) return;
+    autoPromptFired.current = true;
+    void sendPrompt(pending.text, 0, selectedModel);
+  }, [conversationId, consumePendingForkPrompt, sendPrompt, selectedModel]);
+
   const handleVoiceResult = useCallback((text: string) => {
     setPromptText((prev) => (prev.trim() ? `${prev}\n${text}` : text));
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -712,12 +833,15 @@ export default function SessionDetailPage({
                         .getVirtualItems()
                         .map((virtualRow: VirtualItem) => {
                           const msg = displayMessages[virtualRow.index]!;
+                          const isEditing =
+                            editingIndex === virtualRow.index;
+                          const isUserMsg = msg.role === "user";
                           return (
                             <div
                               key={virtualRow.index}
                               ref={virtualizer.measureElement}
                               data-index={virtualRow.index}
-                              className={`message ${msg.role}`}
+                              className={`message ${msg.role}${isEditing ? " editing" : ""}`}
                               data-msg-index={virtualRow.index}
                               style={{
                                 position: "absolute",
@@ -728,11 +852,40 @@ export default function SessionDetailPage({
                               }}
                             >
                               <div className="message-role">
-                                {msg.role === "user" ? "You" : "Claude"}
+                                {isUserMsg ? "You" : "Claude"}
                               </div>
-                              <div className="message-content">
-                                <MessageContent content={msg.content} />
-                              </div>
+                              {isEditing ? (
+                                <MessageEditor
+                                  originalText={
+                                    (
+                                      msg.content.find(
+                                        (b) =>
+                                          b.type === "text" && "text" in b,
+                                      ) as
+                                        | { text: string }
+                                        | undefined
+                                    )?.text ?? ""
+                                  }
+                                  messageIndex={virtualRow.index}
+                                  onSave={handleEditSave}
+                                  onCancel={cancelEditing}
+                                  saving={
+                                    forkingIndex === virtualRow.index
+                                  }
+                                />
+                              ) : (
+                                <div className="message-content">
+                                  <MessageContent content={msg.content} />
+                                </div>
+                              )}
+                              {isUserMsg && !isEditing && (
+                                <MessageActions
+                                  messageIndex={virtualRow.index}
+                                  onFork={handleFork}
+                                  onEdit={startEditing}
+                                  disabled={isBusy || isFinished}
+                                />
+                              )}
                             </div>
                           );
                         })}

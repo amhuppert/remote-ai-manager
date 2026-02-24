@@ -1783,6 +1783,200 @@ textarea {
   color: var(--text-primary);
 }
 
+/* Message actions — hover overlay on user messages */
+.msg-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  z-index: 2;
+}
+
+.message.user:hover .msg-actions,
+.message.user:focus-within .msg-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.msg-actions--disabled {
+  pointer-events: none !important;
+  opacity: 0.3 !important;
+}
+
+.msg-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  position: relative;
+}
+
+.msg-action-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+}
+
+.msg-action-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.msg-action-btn--confirm {
+  color: var(--green);
+}
+
+.msg-action-btn--confirm:hover:not(:disabled) {
+  color: var(--green);
+  background: var(--green-glow);
+  border-color: var(--green-dim);
+}
+
+/* Action button tooltips */
+.msg-action-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+  z-index: 3;
+}
+
+.msg-action-btn:hover::after {
+  opacity: 1;
+}
+
+.msg-actions-confirm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.msg-actions-confirm-label {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  padding: 0 4px;
+}
+
+/* Message inline editor */
+.msg-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.msg-editor-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--cyan-dim);
+  letter-spacing: 0.02em;
+}
+
+.msg-editor-textarea {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  line-height: 1.65;
+  resize: none;
+  outline: none;
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.msg-editor-textarea:focus {
+  border-color: var(--amber-dim);
+  box-shadow: 0 0 0 1px var(--amber-glow);
+}
+
+.msg-editor-textarea:disabled {
+  opacity: 0.5;
+}
+
+.msg-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.msg-editor-shortcut {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--text-tertiary);
+}
+
+.msg-editor-buttons {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.msg-editor-save {
+  background: var(--amber);
+  color: var(--text-inverse);
+  border-color: var(--amber);
+  font-weight: 600;
+}
+
+.msg-editor-save:hover:not(:disabled) {
+  background: var(--amber-dim);
+  border-color: var(--amber-dim);
+  box-shadow: 0 0 16px var(--amber-glow);
+}
+
+.msg-editor-save:disabled {
+  opacity: 0.4;
+}
+
+/* Message in editing state */
+.message.user.editing {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin: calc(-1 * var(--space-md)) calc(-1 * var(--space-sm));
+}
+
+.message.user.editing .msg-actions {
+  display: none;
+}
+
 /* Message navigation */
 .msg-nav {
   display: flex;
@@ -3374,6 +3568,46 @@ textarea {
     border-top: 1px solid var(--border-subtle);
   }
 
+  /* ---- Message actions: flow below content on mobile ---- */
+  .msg-actions {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+    margin-top: var(--space-xs);
+    margin-left: auto;
+    width: fit-content;
+    background: transparent;
+    border: none;
+    padding: 0;
+  }
+
+  .msg-action-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .msg-action-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .msg-action-btn::after {
+    display: none;
+  }
+
+  .msg-actions-confirm-label {
+    font-size: 0.68rem;
+  }
+
+  .msg-editor-shortcut {
+    display: none;
+  }
+
+  .msg-editor-save,
+  .msg-editor-actions .btn-sm {
+    min-height: 44px;
+  }
+
   /* ---- Modal bottom-sheet on mobile ---- */
 
   .modal-overlay {
@@ -3705,6 +3939,15 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.convo-sidebar-fork-icon {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  opacity: 0.7;
 }
 
 .convo-sidebar-item-meta {

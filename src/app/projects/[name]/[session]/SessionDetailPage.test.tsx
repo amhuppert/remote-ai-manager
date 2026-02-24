@@ -63,6 +63,7 @@ const baseSession: SessionState = {
       totalCostUsd: null,
       totalDurationMs: null,
       totalTurns: null,
+      forkedFrom: null,
     },
   ],
   source: "csm" as const,

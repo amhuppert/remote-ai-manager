@@ -460,6 +460,7 @@ function makeConvo(
     totalCostUsd: null,
     totalDurationMs: null,
     totalTurns: null,
+    forkedFrom: null,
     ...overrides,
   };
 }

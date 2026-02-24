@@ -60,6 +60,16 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 
+export const forkedFromSchema = z
+  .object({
+    sourceConversationId: z.string(),
+    sourceClaudeSessionId: z.string(),
+    messageIndex: z.number().int().min(0),
+  })
+  .nullable()
+  .default(null);
+export type ForkedFrom = z.infer<typeof forkedFromSchema>;
+
 export const conversationStateSchema = z.object({
   id: z.string(),
   name: z.string().nullable().default(null),
@@ -75,6 +85,7 @@ export const conversationStateSchema = z.object({
   totalCostUsd: z.number().nullable().default(null),
   totalDurationMs: z.number().nullable().default(null),
   totalTurns: z.number().nullable().default(null),
+  forkedFrom: forkedFromSchema,
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
@@ -161,6 +172,12 @@ export const renameConversationRequestSchema = z.object({
 export type RenameConversationRequest = z.infer<
   typeof renameConversationRequestSchema
 >;
+
+export const forkRequestSchema = z.object({
+  messageIndex: z.number().int().min(0),
+  editedText: z.string().trim().min(1).optional(),
+});
+export type ForkRequest = z.infer<typeof forkRequestSchema>;
 
 // ============================================================
 // Git Operations Schemas

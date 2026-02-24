@@ -276,6 +276,7 @@ export async function createSession(
     totalCostUsd: null,
     totalDurationMs: null,
     totalTurns: null,
+    forkedFrom: null,
   };
   const session: SessionState = {
     sessionName,

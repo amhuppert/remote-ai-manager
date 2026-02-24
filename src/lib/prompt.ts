@@ -169,7 +169,14 @@ export async function executePromptStream(
         allowDangerouslySkipPermissions: true,
         cwd: session.worktreePath,
         maxTurns: config.maxTurns,
-        resume: conversation.claudeSessionId ?? undefined,
+        resume: conversation.claudeSessionId
+          ?? conversation.forkedFrom?.sourceClaudeSessionId
+          ?? undefined,
+        forkSession:
+          conversation.forkedFrom != null &&
+          conversation.claudeSessionId == null
+            ? true
+            : undefined,
         persistSession: true,
         abortController,
         env: { CLAUDECODE: "" },

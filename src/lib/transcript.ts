@@ -1,4 +1,4 @@
-import { appendFile, readFile, mkdir } from "node:fs/promises";
+import { appendFile, readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { TranscriptMessage, MessageContentBlock } from "@/types";
@@ -62,6 +62,125 @@ export async function appendTranscriptEntry(
   const filePath = await getTranscriptPath(conversationId);
   const line = JSON.stringify(entry) + "\n";
   await appendFile(filePath, line, "utf-8");
+}
+
+// ============================================================
+// Fork / Copy Operations
+// ============================================================
+
+export interface CopyTranscriptInput {
+  sourceTranscriptPath: string;
+  targetConversationId: string;
+  /** 0-based index into visible messages (user/assistant with content) */
+  upToMessageIndex: number;
+  /** If true, include the assistant response after the target user message */
+  includeAssistantResponse: boolean;
+  /** If provided, replaces the message at upToMessageIndex with edited text */
+  appendEditedMessage?: {
+    text: string;
+    timestamp: string;
+  };
+}
+
+/**
+ * Copy JSONL transcript entries from source to a new target file,
+ * up to a specified visible message index.
+ *
+ * "Visible messages" are those with role=user or role=assistant and non-empty content.
+ * All raw JSONL lines between visible messages (system, tool_result, etc.) are preserved.
+ */
+export async function copyTranscriptUpTo(
+  input: CopyTranscriptInput,
+): Promise<void> {
+  const {
+    sourceTranscriptPath,
+    targetConversationId,
+    upToMessageIndex,
+    includeAssistantResponse,
+    appendEditedMessage,
+  } = input;
+
+  const raw = await readFile(sourceTranscriptPath, "utf-8");
+  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+
+  // Find the raw line index boundaries based on visible message counting
+  let visibleCount = -1;
+  let cutoffLineIndex = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    let entry: TranscriptEntry;
+    try {
+      entry = JSON.parse(lines[i]!) as TranscriptEntry;
+    } catch {
+      continue;
+    }
+
+    const isVisible =
+      (entry.role === "user" || entry.role === "assistant") &&
+      entry.content &&
+      entry.content.length > 0;
+
+    if (isVisible) {
+      visibleCount++;
+
+      if (appendEditedMessage) {
+        // For edit-and-fork: copy up to (but NOT including) the target message
+        if (visibleCount === upToMessageIndex) {
+          cutoffLineIndex = i - 1;
+          break;
+        }
+      } else if (includeAssistantResponse) {
+        // For direct fork: include the target user message + next assistant response
+        if (visibleCount === upToMessageIndex) {
+          // This is the target user message — continue to find assistant response
+          cutoffLineIndex = i;
+        } else if (
+          visibleCount === upToMessageIndex + 1 &&
+          entry.role === "assistant"
+        ) {
+          // Found the assistant response after the fork point
+          cutoffLineIndex = i;
+          break;
+        } else if (visibleCount > upToMessageIndex) {
+          // Next visible message is user, not assistant — stop
+          break;
+        }
+      } else {
+        // Copy up to and including the target message
+        if (visibleCount === upToMessageIndex) {
+          cutoffLineIndex = i;
+          break;
+        }
+      }
+    } else if (visibleCount >= 0 && cutoffLineIndex >= 0) {
+      // Non-visible lines after the cutoff — include them if they come before the next visible message
+      cutoffLineIndex = i;
+    }
+  }
+
+  // If we never broke, include remaining non-visible lines after the last match
+  if (cutoffLineIndex === -1 && visibleCount >= upToMessageIndex) {
+    cutoffLineIndex = lines.length - 1;
+  }
+
+  // Build the copied content
+  const copiedLines = cutoffLineIndex >= 0 ? lines.slice(0, cutoffLineIndex + 1) : [];
+
+  // Append edited message if provided
+  if (appendEditedMessage) {
+    const editedEntry: TranscriptEntry = {
+      timestamp: appendEditedMessage.timestamp,
+      type: "user",
+      role: "user",
+      content: [{ type: "text", text: appendEditedMessage.text }],
+    };
+    copiedLines.push(JSON.stringify(editedEntry));
+  }
+
+  // Write to target file
+  const targetPath = await getTranscriptPath(targetConversationId);
+  const content = copiedLines.length > 0 ? copiedLines.join("\n") + "\n" : "";
+  await writeFile(targetPath, content, "utf-8");
 }
 
 // ============================================================

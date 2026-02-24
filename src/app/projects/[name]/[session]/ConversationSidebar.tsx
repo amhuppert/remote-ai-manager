@@ -304,6 +304,61 @@ export default function ConversationSidebar({
                           />
                         ) : (
                           <div className="convo-sidebar-item-summary">
+                            {convo.forkedFrom && (
+                              <span
+                                className="convo-sidebar-fork-icon"
+                                data-tooltip={(() => {
+                                  const source = conversations.find(
+                                    (c) =>
+                                      c.id ===
+                                      convo.forkedFrom?.sourceConversationId,
+                                  );
+                                  const sourceName =
+                                    source?.name ?? "deleted conversation";
+                                  const turn =
+                                    Math.floor(
+                                      convo.forkedFrom.messageIndex / 2,
+                                    ) + 1;
+                                  return `Forked from ${sourceName} at turn ${turn}`;
+                                })()}
+                              >
+                                <svg
+                                  width="10"
+                                  height="10"
+                                  viewBox="0 0 12 12"
+                                  fill="none"
+                                  aria-hidden="true"
+                                >
+                                  <circle
+                                    cx="3"
+                                    cy="2.5"
+                                    r="1.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.2"
+                                  />
+                                  <circle
+                                    cx="3"
+                                    cy="9.5"
+                                    r="1.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.2"
+                                  />
+                                  <circle
+                                    cx="9"
+                                    cy="4.5"
+                                    r="1.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.2"
+                                  />
+                                  <path
+                                    d="M3 4V8M3 5.5C3 5.5 3 4.5 5.5 4.5H7.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.2"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                              </span>
+                            )}
                             {convo.name ?? convo.summary ?? "New conversation"}
                           </div>
                         )}
