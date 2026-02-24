@@ -26,107 +26,34 @@ describe("ConversationNav", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Disabled-state logic (the regression target)
+  // Buttons are always enabled
   // -------------------------------------------------------------------------
 
-  it("disables all buttons when conversation is empty", () => {
+  it("keeps all buttons enabled when conversation is empty", () => {
     render(<ConversationNav currentTurn={0} totalTurns={0} {...handlers} />);
     const { first, prev, next, last } = getButtons();
-    expect(first).toBeDisabled();
-    expect(prev).toBeDisabled();
-    expect(next).toBeDisabled();
-    expect(last).toBeDisabled();
-  });
-
-  it("disables all buttons when there is a single turn", () => {
-    render(<ConversationNav currentTurn={0} totalTurns={1} {...handlers} />);
-    const { first, prev, next, last } = getButtons();
-    expect(first).toBeDisabled();
-    expect(prev).toBeDisabled();
-    expect(next).toBeDisabled();
-    expect(last).toBeDisabled();
-  });
-
-  it("disables only backward buttons at the first turn", () => {
-    render(<ConversationNav currentTurn={0} totalTurns={5} {...handlers} />);
-    const { first, prev, next, last } = getButtons();
-    expect(first).toBeDisabled();
-    expect(prev).toBeDisabled();
+    expect(first).not.toBeDisabled();
+    expect(prev).not.toBeDisabled();
     expect(next).not.toBeDisabled();
     expect(last).not.toBeDisabled();
   });
 
-  it("disables only forward buttons at the last turn", () => {
+  it("keeps all buttons enabled at the first turn", () => {
+    render(<ConversationNav currentTurn={0} totalTurns={5} {...handlers} />);
+    const { first, prev, next, last } = getButtons();
+    expect(first).not.toBeDisabled();
+    expect(prev).not.toBeDisabled();
+    expect(next).not.toBeDisabled();
+    expect(last).not.toBeDisabled();
+  });
+
+  it("keeps all buttons enabled at the last turn", () => {
     render(<ConversationNav currentTurn={4} totalTurns={5} {...handlers} />);
     const { first, prev, next, last } = getButtons();
     expect(first).not.toBeDisabled();
     expect(prev).not.toBeDisabled();
-    expect(next).toBeDisabled();
-    expect(last).toBeDisabled();
-  });
-
-  it("enables all buttons when in the middle of a conversation", () => {
-    render(<ConversationNav currentTurn={2} totalTurns={5} {...handlers} />);
-    const { first, prev, next, last } = getButtons();
-    expect(first).not.toBeDisabled();
-    expect(prev).not.toBeDisabled();
     expect(next).not.toBeDisabled();
     expect(last).not.toBeDisabled();
-  });
-
-  it("enables all buttons at turn 1 of many (not at boundary)", () => {
-    render(<ConversationNav currentTurn={1} totalTurns={10} {...handlers} />);
-    const { first, prev, next, last } = getButtons();
-    expect(first).not.toBeDisabled();
-    expect(prev).not.toBeDisabled();
-    expect(next).not.toBeDisabled();
-    expect(last).not.toBeDisabled();
-  });
-
-  // -------------------------------------------------------------------------
-  // isAtStart / isAtEnd prop overrides
-  // -------------------------------------------------------------------------
-
-  it("respects isAtStart override even when turn > 0", () => {
-    render(
-      <ConversationNav
-        currentTurn={3}
-        totalTurns={5}
-        isAtStart={true}
-        {...handlers}
-      />,
-    );
-    const { first, prev } = getButtons();
-    expect(first).toBeDisabled();
-    expect(prev).toBeDisabled();
-  });
-
-  it("respects isAtEnd override even when not at last turn", () => {
-    render(
-      <ConversationNav
-        currentTurn={1}
-        totalTurns={5}
-        isAtEnd={true}
-        {...handlers}
-      />,
-    );
-    const { next, last } = getButtons();
-    expect(next).toBeDisabled();
-    expect(last).toBeDisabled();
-  });
-
-  it("override false keeps buttons enabled at boundary", () => {
-    render(
-      <ConversationNav
-        currentTurn={0}
-        totalTurns={5}
-        isAtStart={false}
-        {...handlers}
-      />,
-    );
-    const { first, prev } = getButtons();
-    expect(first).not.toBeDisabled();
-    expect(prev).not.toBeDisabled();
   });
 
   // -------------------------------------------------------------------------
@@ -203,7 +130,7 @@ describe("ConversationNav", () => {
     expect(onLast).toHaveBeenCalledTimes(1);
   });
 
-  it("does not fire handlers on disabled buttons", () => {
+  it("fires handlers even at boundary positions", () => {
     const onFirst = vi.fn();
     const onPrevious = vi.fn();
     render(
@@ -217,7 +144,7 @@ describe("ConversationNav", () => {
     );
     fireEvent.click(screen.getByTitle("First message"));
     fireEvent.click(screen.getByTitle("Previous message"));
-    expect(onFirst).not.toHaveBeenCalled();
-    expect(onPrevious).not.toHaveBeenCalled();
+    expect(onFirst).toHaveBeenCalledTimes(1);
+    expect(onPrevious).toHaveBeenCalledTimes(1);
   });
 });

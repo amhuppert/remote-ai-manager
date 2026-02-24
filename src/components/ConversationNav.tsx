@@ -1,10 +1,6 @@
 interface ConversationNavProps {
   currentTurn: number;
   totalTurns: number;
-  /** Override the computed isAtStart — use scroll-based detection from the parent */
-  isAtStart?: boolean;
-  /** Override the computed isAtEnd — use scroll-based detection from the parent */
-  isAtEnd?: boolean;
   onFirst: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -14,27 +10,17 @@ interface ConversationNavProps {
 export default function ConversationNav({
   currentTurn,
   totalTurns,
-  isAtStart: isAtStartProp,
-  isAtEnd: isAtEndProp,
   onFirst,
   onPrevious,
   onNext,
   onLast,
 }: ConversationNavProps) {
-  const isAtStart = isAtStartProp ?? (totalTurns === 0 || currentTurn <= 0);
-  const isAtEnd =
-    isAtEndProp ?? (totalTurns === 0 || currentTurn >= totalTurns - 1);
   const isEmpty = totalTurns === 0;
 
   return (
     <div className="msg-nav">
       <div className="msg-nav-group">
-        <button
-          className="nav-btn"
-          onClick={onFirst}
-          disabled={isAtStart}
-          title="First message"
-        >
+        <button className="nav-btn" onClick={onFirst} title="First message">
           <svg
             width="10"
             height="10"
@@ -63,7 +49,6 @@ export default function ConversationNav({
         <button
           className="nav-btn"
           onClick={onPrevious}
-          disabled={isAtStart}
           title="Previous message"
         >
           <svg
@@ -87,12 +72,7 @@ export default function ConversationNav({
         {isEmpty ? "0 / 0" : `${currentTurn + 1} / ${totalTurns}`}
       </span>
       <div className="msg-nav-group">
-        <button
-          className="nav-btn"
-          onClick={onNext}
-          disabled={isAtEnd}
-          title="Next message"
-        >
+        <button className="nav-btn" onClick={onNext} title="Next message">
           <svg
             width="10"
             height="6"
@@ -109,12 +89,7 @@ export default function ConversationNav({
             />
           </svg>
         </button>
-        <button
-          className="nav-btn"
-          onClick={onLast}
-          disabled={isAtEnd}
-          title="Last message"
-        >
+        <button className="nav-btn" onClick={onLast} title="Last message">
           <svg
             width="10"
             height="10"

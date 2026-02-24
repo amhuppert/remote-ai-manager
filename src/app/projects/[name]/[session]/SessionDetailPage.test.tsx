@@ -376,9 +376,7 @@ describe("SessionDetailPage", () => {
     expect(screen.getByText("0 / 0")).toBeDefined();
   });
 
-  it("disables prev button on first message and next on last (Req 6.4, 6.5)", () => {
-    // Simulate only the first item being visible in the scroll container.
-    // This puts the user at the start of the conversation with content below.
+  it("keeps nav buttons always enabled (Req 6.4, 6.5)", () => {
     mockVirtualItems = [{ index: 0, key: 0, start: 0, size: 120 }];
     renderWithQuery(
       <SessionDetailPage
@@ -390,7 +388,7 @@ describe("SessionDetailPage", () => {
     );
     const prevBtn = screen.getByTitle("Previous message");
     const nextBtn = screen.getByTitle("Next message");
-    expect(prevBtn.hasAttribute("disabled")).toBe(true);
+    expect(prevBtn.hasAttribute("disabled")).toBe(false);
     expect(nextBtn.hasAttribute("disabled")).toBe(false);
   });
 

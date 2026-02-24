@@ -2140,7 +2140,7 @@ textarea {
   margin-left: -1px;
 }
 
-.msg-nav-group .nav-btn:hover:not(:disabled) {
+.msg-nav-group .nav-btn:hover {
   z-index: 1;
 }
 
@@ -2166,15 +2166,10 @@ textarea {
   flex-shrink: 0;
 }
 
-.nav-btn:hover:not(:disabled) {
+.nav-btn:hover {
   background: var(--bg-hover);
   color: var(--text-secondary);
   border-color: var(--border-default);
-}
-
-.nav-btn:disabled {
-  opacity: 0.3;
-  cursor: default;
 }
 
 .msg-counter {
