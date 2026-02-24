@@ -5027,6 +5027,11 @@ textarea {
   border-left-color: var(--border-default);
 }
 
+.unified-panel-item.active {
+  background: rgba(0, 229, 255, 0.06);
+  border-left-color: var(--cyan);
+}
+
 /* Status dot */
 .unified-panel-dot {
   width: 8px;

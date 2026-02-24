@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useActiveConversationsQuery } from "@/lib/queries";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
@@ -25,6 +26,13 @@ export default function UnifiedPanel(): React.JSX.Element | null {
   const close = useCloseUnifiedPanel();
   const togglePanel = useToggleUnifiedPanel();
   const { data: conversations, isPending } = useActiveConversationsQuery();
+  const pathname = usePathname();
+  // Extract conversation ID from URL: /projects/<name>/<session>/<conversationId>
+  const pathSegments = pathname.split("/");
+  const currentConversationId =
+    pathSegments.length >= 5 && pathSegments[1] === "projects"
+      ? pathSegments[4]
+      : null;
 
   useAppHotkey("toggleActivePanel", togglePanel);
 
@@ -61,7 +69,7 @@ export default function UnifiedPanel(): React.JSX.Element | null {
                 <li key={convo.id}>
                   <Link
                     href={`/projects/${encodeURIComponent(convo.projectName)}/${encodeURIComponent(convo.sessionName)}/${convo.id}`}
-                    className="unified-panel-item"
+                    className={`unified-panel-item${convo.id === currentConversationId ? " active" : ""}`}
                     onClick={close}
                   >
                     <span
