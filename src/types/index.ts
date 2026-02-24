@@ -36,6 +36,7 @@ export interface DiscoveredProject {
 
 export type {
   CreateSessionRequest,
+  SessionCreationMode,
   CommitRequest,
   MergeRequest,
   SessionArchiveRequest,

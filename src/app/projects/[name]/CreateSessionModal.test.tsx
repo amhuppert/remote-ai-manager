@@ -55,11 +55,16 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** Switch modal to Focus mode by clicking the Focus button */
+function switchToFocusMode() {
+  fireEvent.click(screen.getByText("Focus"));
+}
+
 describe("CreateSessionModal", () => {
-  it("renders modal content when open=true", () => {
+  it("renders modal with fast mode by default", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     expect(screen.getByText("New Session")).toBeDefined();
-    expect(screen.getByText("What do you want to work on?")).toBeDefined();
+    expect(screen.getByText("Session name")).toBeDefined();
     expect(screen.getByText("Create Session")).toBeDefined();
   });
 
@@ -70,8 +75,60 @@ describe("CreateSessionModal", () => {
     expect(container.querySelector(".modal-overlay")).toBeNull();
   });
 
-  it("auto-focuses textarea on open", () => {
+  it("auto-focuses name input in fast mode", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    vi.advanceTimersByTime(150);
+    const input = screen.getByPlaceholderText("e.g. Copy To Clipboard");
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("shows branch hint in fast mode", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    expect(
+      screen.getByText("Branch name will be derived from the session name"),
+    ).toBeDefined();
+  });
+
+  it("disables create button when name is empty in fast mode", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    const createBtn = screen.getByText("Create Session");
+    expect(createBtn.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("enables create button when name has content in fast mode", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    const input = screen.getByPlaceholderText("e.g. Copy To Clipboard");
+    fireEvent.change(input, { target: { value: "My Session" } });
+    const createBtn = screen.getByText("Create Session");
+    expect(createBtn.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("submits session name on Enter in fast mode", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    const input = screen.getByPlaceholderText("e.g. Copy To Clipboard");
+    fireEvent.change(input, { target: { value: "My Session" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(mutateMock).toHaveBeenCalledWith(
+      { mode: "fast", sessionName: "My Session" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("switches to focus mode and shows objective textarea", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    switchToFocusMode();
+    expect(screen.getByText("What do you want to work on?")).toBeDefined();
+    expect(
+      screen.getByPlaceholderText(
+        "e.g. Add user authentication with JWT tokens",
+      ),
+    ).toBeDefined();
+  });
+
+  it("auto-focuses textarea in focus mode", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    switchToFocusMode();
     vi.advanceTimersByTime(150);
     const textarea = screen.getByPlaceholderText(
       "e.g. Add user authentication with JWT tokens",
@@ -79,27 +136,43 @@ describe("CreateSessionModal", () => {
     expect(document.activeElement).toBe(textarea);
   });
 
-  it("shows auto-generation hint", () => {
+  it("enables create button when objective has content in focus mode", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    expect(
-      screen.getByText("Session name and branch will be auto-generated"),
-    ).toBeDefined();
-  });
-
-  it("disables create button when objective is empty", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const createBtn = screen.getByText("Create Session");
-    expect(createBtn.hasAttribute("disabled")).toBe(true);
-  });
-
-  it("enables create button when objective has content", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    switchToFocusMode();
     const textarea = screen.getByPlaceholderText(
       "e.g. Add user authentication with JWT tokens",
     );
     fireEvent.change(textarea, { target: { value: "Add auth" } });
     const createBtn = screen.getByText("Create Session");
     expect(createBtn.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("submits objective on Enter key in focus mode", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    switchToFocusMode();
+    const textarea = screen.getByPlaceholderText(
+      "e.g. Add user authentication with JWT tokens",
+    );
+    fireEvent.change(textarea, {
+      target: { value: "Add user authentication" },
+    });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    expect(mutateMock).toHaveBeenCalledWith(
+      { mode: "focus", objective: "Add user authentication" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("allows multiline with Shift+Enter in focus mode", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    switchToFocusMode();
+    const textarea = screen.getByPlaceholderText(
+      "e.g. Add user authentication with JWT tokens",
+    );
+    fireEvent.change(textarea, { target: { value: "line 1" } });
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+    expect(mutateMock).not.toHaveBeenCalled();
   });
 
   it("calls onClose on Escape key press", () => {
@@ -116,31 +189,5 @@ describe("CreateSessionModal", () => {
     Object.defineProperty(overlay, "tagName", { value: "DIV" });
     fireEvent.click(overlay);
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("submits objective on Enter key in textarea", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const textarea = screen.getByPlaceholderText(
-      "e.g. Add user authentication with JWT tokens",
-    );
-    fireEvent.change(textarea, {
-      target: { value: "Add user authentication" },
-    });
-    fireEvent.keyDown(textarea, { key: "Enter" });
-
-    expect(mutateMock).toHaveBeenCalledWith(
-      "Add user authentication",
-      expect.objectContaining({ onSuccess: expect.any(Function) }),
-    );
-  });
-
-  it("allows multiline with Shift+Enter", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const textarea = screen.getByPlaceholderText(
-      "e.g. Add user authentication with JWT tokens",
-    );
-    fireEvent.change(textarea, { target: { value: "line 1" } });
-    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
-    expect(mutateMock).not.toHaveBeenCalled();
   });
 });

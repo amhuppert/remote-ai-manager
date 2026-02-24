@@ -390,6 +390,7 @@ describe("discoverAndImportWorktrees", () => {
     conversations: [],
     source: "csm",
     objective: null,
+    creationMode: "fast" as const,
   };
 
   it("imports untracked worktrees as sessions with source=imported", async () => {
@@ -464,6 +465,7 @@ describe("discoverAndImportWorktrees", () => {
       conversations: [],
       source: "csm",
       objective: null,
+      creationMode: "fast" as const,
     };
 
     // Git returns only main worktree — orphan's path doesn't exist on disk
@@ -514,6 +516,7 @@ describe("discoverAndImportWorktrees", () => {
       conversations: [],
       source: "csm",
       objective: null,
+      creationMode: "fast" as const,
     };
 
     mockExecFileSuccess(

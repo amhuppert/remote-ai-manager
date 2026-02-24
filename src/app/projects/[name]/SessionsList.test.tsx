@@ -125,6 +125,7 @@ const makeSessions = (count: number): SessionState[] =>
     ],
     source: "csm" as const,
     objective: null,
+    creationMode: "fast" as const,
   }));
 
 function renderWithQuery(ui: React.ReactElement) {

@@ -69,6 +69,7 @@ const baseSession: SessionState = {
   ],
   source: "csm" as const,
   objective: null,
+  creationMode: "fast" as const,
 };
 
 const emptyDiff: SessionDiff = {

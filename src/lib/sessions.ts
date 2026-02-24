@@ -4,7 +4,11 @@ import { existsSync } from "node:fs";
 import { mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { ConversationState, SessionState } from "@/types";
+import type {
+  ConversationState,
+  SessionCreationMode,
+  SessionState,
+} from "@/types";
 import { perRepoConfigSchema, type PerRepoConfig } from "./schemas";
 import { readState, writeState } from "./state";
 import { createLogger } from "./logging";
@@ -54,122 +58,59 @@ async function git(
   return execFileAsync("git", args, { cwd });
 }
 
-const FILLER_WORDS = new Set([
-  "a",
-  "an",
-  "the",
-  "and",
-  "or",
-  "to",
-  "for",
-  "in",
-  "on",
-  "of",
-  "with",
-  "that",
-  "this",
-  "is",
-  "it",
-  "be",
-  "do",
-  "my",
-  "our",
-]);
-
 /** Generate a short readable session name from an objective using Claude Haiku */
 export async function generateSessionName(
   objective: string,
   projectPath: string,
 ): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync(
-      "claude",
-      [
-        "--model",
-        "haiku",
-        "-p",
-        `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
-        "--output-format",
-        "text",
-        "--max-turns",
-        "1",
-        "--dangerously-skip-permissions",
-      ],
-      {
-        cwd: projectPath,
-        timeout: 15_000,
-        env: {
-          ...Object.fromEntries(
-            Object.entries(process.env).filter(
-              ([key]) => !key.startsWith("CLAUDE"),
-            ),
-          ),
-        } as NodeJS.ProcessEnv,
-      },
-    );
+  const { stdout } = await execFileAsync(
+    "claude",
+    [
+      "--model",
+      "haiku",
+      "-p",
+      `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
+      "--output-format",
+      "text",
+      "--max-turns",
+      "1",
+      "--dangerously-skip-permissions",
+    ],
+    {
+      cwd: projectPath,
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        CLAUDECODE: "", // Prevent nested session detection
+      } as NodeJS.ProcessEnv,
+    },
+  );
 
-    const name = stdout.trim().split("\n")[0]!.trim();
-    if (name && validateSessionName(name) === null) {
-      return name;
-    }
-    // Haiku returned something invalid — fall through to heuristic
-  } catch (err) {
-    logger.warn("session.name_generation_failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
+  const name = stdout.trim().split("\n")[0]!.trim();
+  if (!name) {
+    throw new Error("Session name generation returned empty result");
   }
-
-  return fallbackSessionName(objective);
-}
-
-/** Capitalize the first letter of a word */
-function capitalize(word: string): string {
-  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-}
-
-/** Derive a session name from objective text using simple heuristics */
-function fallbackSessionName(objective: string): string {
-  const words = objective
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => /^[a-z0-9]+$/.test(w))
-    .filter((w) => !FILLER_WORDS.has(w));
-  const name = words.slice(0, 4).map(capitalize).join(" ");
-  return name || "Session";
-}
-
-/**
- * Create a new session for a project.
- * - Auto-generates session name from objective via Claude Haiku
- * - Creates a worktree from main
- * - Creates branch csm/<sanitized-name>
- * - Writes memory-bank/focus.md with the objective
- * - Runs optional init script
- * - On failure, rolls back completely
- */
-export async function createSession(
-  projectPath: string,
-  objective: string,
-): Promise<SessionState> {
-  // Generate session name from objective
-  const baseName = await generateSessionName(objective, projectPath);
-
-  // Ensure uniqueness within project
-  const state = await readState();
-  const project = state.projects[projectPath];
-  const existingNames = new Set(Object.keys(project?.sessions ?? {}));
-  const sessionName = ensureUniqueName(baseName, existingNames);
-
-  // Validate the generated name
-  const validationError = validateSessionName(sessionName);
+  const validationError = validateSessionName(name);
   if (validationError) {
     throw new Error(`Generated session name is invalid: ${validationError}`);
   }
+  return name;
+}
 
+/**
+ * Provision the worktree, run init script, and persist session state.
+ * Shared by both fast and focus creation flows.
+ */
+async function provisionSession(
+  projectPath: string,
+  sessionName: string,
+  opts: {
+    mode: SessionCreationMode;
+    objective: string | null;
+  },
+): Promise<SessionState> {
   const sanitized = sanitizeBranchName(sessionName);
   const branchName = `csm/${sanitized}`;
-
-  // Worktree location: .worktrees/<sanitized> inside the project
   const worktreePath = path.join(projectPath, ".worktrees", sanitized);
 
   if (existsSync(worktreePath)) {
@@ -177,13 +118,13 @@ export async function createSession(
   }
 
   try {
-    // Create worktree + branch from main
     logger.info("session.create", {
       projectName: projectPath,
       sessionName,
-      objective,
+      objective: opts.objective,
       worktreePath,
       branchName,
+      mode: opts.mode,
     });
 
     await git(projectPath, [
@@ -195,14 +136,23 @@ export async function createSession(
       "main",
     ]);
 
-    // Write memory-bank/focus.md with the objective
+    // Write memory-bank/focus.md
     const memoryBankDir = path.join(worktreePath, "memory-bank");
     await mkdir(memoryBankDir, { recursive: true });
-    await writeFile(
-      path.join(memoryBankDir, "focus.md"),
-      `# Session Focus\n\n## Objective\n\n${objective}\n`,
-      "utf-8",
-    );
+    if (opts.mode === "fast") {
+      await writeFile(
+        path.join(memoryBankDir, "focus.md"),
+        `# Session Focus\n\n## Objective\n\n${opts.objective ?? sessionName}\n`,
+        "utf-8",
+      );
+    } else {
+      // Focus mode: placeholder — agent will overwrite after research
+      await writeFile(
+        path.join(memoryBankDir, "focus.md"),
+        `# Session Focus\n\n## Objective\n\n${opts.objective}\n\n> This focus document will be enriched after objective analysis.\n`,
+        "utf-8",
+      );
+    }
 
     // Run optional init script
     const repoConfig = await readRepoConfig(projectPath);
@@ -241,7 +191,6 @@ export async function createSession(
         await git(projectPath, ["worktree", "remove", "--force", worktreePath]);
       }
     } catch {
-      // Best-effort cleanup, also try raw rm
       try {
         await rm(worktreePath, { recursive: true, force: true });
       } catch {
@@ -289,21 +238,72 @@ export async function createSession(
     finished: false,
     conversations: [initialConversation],
     source: "csm",
-    objective,
+    objective: opts.objective,
+    creationMode: opts.mode,
   };
 
   // Persist to state
+  const state = await readState();
   if (!state.projects[projectPath]) {
     state.projects[projectPath] = {
       rootPath: projectPath,
       sessions: {},
     };
   }
-  // Safe to assert: we just ensured the project exists above
   state.projects[projectPath]!.sessions[sessionName] = session;
   await writeState(state);
 
   return session;
+}
+
+/**
+ * Create a session in fast mode.
+ * User provides the session name directly; branch is derived from it.
+ */
+export async function createSessionFast(
+  projectPath: string,
+  sessionName: string,
+): Promise<SessionState> {
+  const validationError = validateSessionName(sessionName);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  // Ensure uniqueness within project
+  const state = await readState();
+  const project = state.projects[projectPath];
+  const existingNames = new Set(Object.keys(project?.sessions ?? {}));
+  if (existingNames.has(sessionName)) {
+    throw new Error(`Session "${sessionName}" already exists in this project`);
+  }
+
+  return provisionSession(projectPath, sessionName, {
+    mode: "fast",
+    objective: null,
+  });
+}
+
+/**
+ * Create a session in focus mode.
+ * AI generates the session name from the objective.
+ * Throws if name generation fails (no fallback).
+ */
+export async function createSessionFocus(
+  projectPath: string,
+  objective: string,
+): Promise<SessionState> {
+  const baseName = await generateSessionName(objective, projectPath);
+
+  // Ensure uniqueness within project
+  const state = await readState();
+  const project = state.projects[projectPath];
+  const existingNames = new Set(Object.keys(project?.sessions ?? {}));
+  const sessionName = ensureUniqueName(baseName, existingNames);
+
+  return provisionSession(projectPath, sessionName, {
+    mode: "focus",
+    objective,
+  });
 }
 
 /**

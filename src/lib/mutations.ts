@@ -46,14 +46,18 @@ export function useCreateSessionMutation(projectName: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (objective: string) =>
+    mutationFn: (
+      params:
+        | { mode: "fast"; sessionName: string }
+        | { mode: "focus"; objective: string },
+    ) =>
       mutationFetch<SessionState>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions`,
         "create-session",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ objective }),
+          body: JSON.stringify(params),
         },
       ),
     onSuccess: () => {

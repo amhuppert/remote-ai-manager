@@ -78,6 +78,7 @@ describe("state", () => {
               conversations: [],
               source: "csm" as const,
               objective: null,
+              creationMode: "fast" as const,
             },
           },
         },
@@ -103,6 +104,7 @@ describe("state", () => {
       conversations: [],
       source: "csm" as const,
       objective: null,
+      creationMode: "fast" as const,
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -130,6 +132,7 @@ describe("state", () => {
       conversations: [],
       source: "csm" as const,
       objective: null,
+      creationMode: "fast" as const,
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -156,6 +159,7 @@ describe("state", () => {
       conversations: [],
       source: "csm" as const,
       objective: null,
+      creationMode: "fast" as const,
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -242,6 +246,7 @@ describe("archive helpers", () => {
       conversations: [],
       source: "csm" as const,
       objective: null,
+      creationMode: "fast" as const,
     };
 
     await writeState({
@@ -325,6 +330,7 @@ describe("pin helpers", () => {
       conversations: [],
       source: "csm" as const,
       objective: null,
+      creationMode: "fast" as const,
     };
 
     await writeState({

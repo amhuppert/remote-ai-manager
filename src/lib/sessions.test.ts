@@ -56,7 +56,8 @@ vi.mock("./worktrees", () => ({
 import {
   validateSessionName,
   sanitizeBranchName,
-  createSession,
+  createSessionFast,
+  createSessionFocus,
   deleteSession,
   generateSessionName,
 } from "./sessions";
@@ -94,6 +95,7 @@ function stateWithSession(
             conversations: [],
             source: "csm",
             objective: null,
+            creationMode: "fast" as const,
             ...overrides,
           },
         },
@@ -307,40 +309,25 @@ describe("generateSessionName", () => {
     );
   });
 
-  it("falls back to heuristic when Claude fails", async () => {
+  it("throws when Claude CLI fails", async () => {
     mockExecFileFailure(new Error("claude not found"));
-    const name = await generateSessionName(
-      "Add auth feature",
-      "/projects/repo",
-    );
-    // Fallback: take first 4 words, remove fillers, Title Case
-    expect(name).toBe("Add Auth Feature");
+    await expect(
+      generateSessionName("Add auth feature", "/projects/repo"),
+    ).rejects.toThrow("claude not found");
   });
 
-  it("falls back to heuristic when Claude returns invalid name", async () => {
+  it("throws when Claude returns empty output", async () => {
     mockExecFileSuccess(""); // empty output
-    const name = await generateSessionName(
-      "Implement search",
-      "/projects/repo",
-    );
-    expect(name).toBe("Implement Search");
+    await expect(
+      generateSessionName("Implement search", "/projects/repo"),
+    ).rejects.toThrow("Session name generation returned empty result");
   });
 
-  it("removes filler words in fallback", async () => {
-    mockExecFileFailure(new Error("timeout"));
-    const name = await generateSessionName(
-      "Add a new feature to the app",
-      "/projects/repo",
-    );
-    // Removes "a", "to", "the" → ["Add", "New", "Feature", "App"]
-    expect(name).toBe("Add New Feature App");
-  });
-
-  it("returns 'Session' when fallback produces empty name", async () => {
-    mockExecFileFailure(new Error("timeout"));
-    const name = await generateSessionName("the", "/projects/repo");
-    // All words are filler → empty → "Session"
-    expect(name).toBe("Session");
+  it("throws when Claude returns invalid name", async () => {
+    mockExecFileSuccess("-invalid-name\n");
+    await expect(
+      generateSessionName("Bad name", "/projects/repo"),
+    ).rejects.toThrow("Generated session name is invalid");
   });
 });
 
@@ -348,13 +335,13 @@ describe("generateSessionName", () => {
 // 1.4 – Session creation with worktree and state persistence
 // ===========================================================================
 
-describe("createSession", () => {
+describe("createSessionFocus", () => {
   it("creates a session with correct properties", async () => {
     mockExecFileSequence([
       { stdout: "My Feature\n" }, // claude haiku
       { stdout: "" }, // git worktree add
     ]);
-    const session = await createSession(
+    const session = await createSessionFocus(
       "/projects/repo",
       "Implement my feature",
     );
@@ -378,7 +365,10 @@ describe("createSession", () => {
   it("sets ISO 8601 timestamps for createdAt and lastActivityAt", async () => {
     mockExecFileSequence([{ stdout: "Timestamp Test\n" }, { stdout: "" }]);
     const before = new Date().toISOString();
-    const session = await createSession("/projects/repo", "Test timestamps");
+    const session = await createSessionFocus(
+      "/projects/repo",
+      "Test timestamps",
+    );
     const after = new Date().toISOString();
 
     expect(session.createdAt).toBeTruthy();
@@ -397,7 +387,7 @@ describe("createSession", () => {
       { stdout: "Build Feature\n" }, // claude haiku
       { stdout: "" }, // git worktree add
     ]);
-    await createSession("/projects/repo", "Build feature");
+    await createSessionFocus("/projects/repo", "Build feature");
 
     // Second call should be git worktree add (first is claude)
     expect(execFileMock).toHaveBeenCalledWith(
@@ -417,7 +407,7 @@ describe("createSession", () => {
 
   it("writes memory-bank/focus.md with objective", async () => {
     mockExecFileSequence([{ stdout: "Auth Feature\n" }, { stdout: "" }]);
-    await createSession("/projects/repo", "Add user authentication");
+    await createSessionFocus("/projects/repo", "Add user authentication");
 
     expect(mkdirMock).toHaveBeenCalledWith(
       "/projects/repo/.worktrees/auth-feature/memory-bank",
@@ -425,14 +415,14 @@ describe("createSession", () => {
     );
     expect(writeFileMock).toHaveBeenCalledWith(
       "/projects/repo/.worktrees/auth-feature/memory-bank/focus.md",
-      "# Session Focus\n\n## Objective\n\nAdd user authentication\n",
+      "# Session Focus\n\n## Objective\n\nAdd user authentication\n\n> This focus document will be enriched after objective analysis.\n",
       "utf-8",
     );
   });
 
   it("persists session to state via writeState", async () => {
     mockExecFileSequence([{ stdout: "Persist Test\n" }, { stdout: "" }]);
-    await createSession("/projects/repo", "Persist test objective");
+    await createSessionFocus("/projects/repo", "Persist test objective");
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -448,7 +438,7 @@ describe("createSession", () => {
   it("auto-creates project entry when project not yet in state", async () => {
     readStateMock.mockResolvedValue(emptyState());
     mockExecFileSequence([{ stdout: "First Session\n" }, { stdout: "" }]);
-    await createSession("/new/project", "First session objective");
+    await createSessionFocus("/new/project", "First session objective");
 
     const savedState = writeStateMock.mock.calls[0]![0];
     expect(savedState.projects["/new/project"]).toBeDefined();
@@ -466,7 +456,10 @@ describe("createSession", () => {
     ensureUniqueNameMock.mockReturnValue("Existing 2");
     mockExecFileSequence([{ stdout: "Existing\n" }, { stdout: "" }]);
 
-    const session = await createSession("/projects/repo", "Another feature");
+    const session = await createSessionFocus(
+      "/projects/repo",
+      "Another feature",
+    );
 
     expect(ensureUniqueNameMock).toHaveBeenCalledWith(
       "Existing",
@@ -480,7 +473,7 @@ describe("createSession", () => {
       stateWithSession("/projects/repo-a", "Shared Name"),
     );
     mockExecFileSequence([{ stdout: "Shared Name\n" }, { stdout: "" }]);
-    const session = await createSession(
+    const session = await createSessionFocus(
       "/projects/repo-b",
       "Shared name objective",
     );
@@ -494,7 +487,7 @@ describe("createSession", () => {
       return false;
     });
     await expect(
-      createSession("/projects/repo", "Conflict objective"),
+      createSessionFocus("/projects/repo", "Conflict objective"),
     ).rejects.toThrow("Worktree directory already exists:");
   });
 
@@ -519,7 +512,7 @@ describe("createSession", () => {
       return false;
     });
 
-    await createSession("/projects/repo", "With init objective");
+    await createSessionFocus("/projects/repo", "With init objective");
 
     // Third execFile call should be the init script (0=claude, 1=git, 2=init)
     const initCall = execFileMock.mock.calls[2];
@@ -560,7 +553,7 @@ describe("createSession", () => {
     });
 
     await expect(
-      createSession("/projects/repo", "Missing script objective"),
+      createSessionFocus("/projects/repo", "Missing script objective"),
     ).rejects.toThrow("Init script not found:");
   });
 
@@ -591,7 +584,7 @@ describe("createSession", () => {
     });
 
     await expect(
-      createSession("/projects/repo", "Fail session objective"),
+      createSessionFocus("/projects/repo", "Fail session objective"),
     ).rejects.toThrow("script failed");
 
     // Verify rollback: git worktree remove --force was called
@@ -636,7 +629,7 @@ describe("createSession", () => {
     });
 
     await expect(
-      createSession("/projects/repo", "RM fallback objective"),
+      createSessionFocus("/projects/repo", "RM fallback objective"),
     ).rejects.toThrow("script failed");
 
     expect(rmMock).toHaveBeenCalledWith(
@@ -652,10 +645,79 @@ describe("createSession", () => {
     ]);
 
     await expect(
-      createSession("/projects/repo", "Should not persist"),
+      createSessionFocus("/projects/repo", "Should not persist"),
     ).rejects.toThrow("git worktree add failed");
 
     expect(writeStateMock).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// 1.5 – Fast session creation (user-provided name)
+// ===========================================================================
+
+describe("createSessionFast", () => {
+  it("creates a session with user-provided name", async () => {
+    mockExecFileSuccess(); // git worktree add
+    const session = await createSessionFast("/projects/repo", "My Feature");
+
+    expect(session.sessionName).toBe("My Feature");
+    expect(session.worktreePath).toBe("/projects/repo/.worktrees/my-feature");
+    expect(session.branchName).toBe("csm/my-feature");
+    expect(session.objective).toBeNull();
+    expect(session.creationMode).toBe("fast");
+    expect(session.conversations).toHaveLength(1);
+  });
+
+  it("does not call Claude for name generation", async () => {
+    mockExecFileSuccess(); // git worktree add
+    await createSessionFast("/projects/repo", "Direct Name");
+
+    // Only one execFile call (git), no claude call
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    expect(execFileMock).toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["worktree", "add"]),
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it("writes focus.md with session name as fallback objective", async () => {
+    mockExecFileSuccess(); // git worktree add
+    await createSessionFast("/projects/repo", "Quick Fix");
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/projects/repo/.worktrees/quick-fix/memory-bank/focus.md",
+      "# Session Focus\n\n## Objective\n\nQuick Fix\n",
+      "utf-8",
+    );
+  });
+
+  it("throws for invalid session name", async () => {
+    await expect(createSessionFast("/projects/repo", "")).rejects.toThrow(
+      "Session name cannot be empty",
+    );
+  });
+
+  it("throws for duplicate session name in same project", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "Existing"),
+    );
+    await expect(
+      createSessionFast("/projects/repo", "Existing"),
+    ).rejects.toThrow('Session "Existing" already exists in this project');
+  });
+
+  it("persists session to state", async () => {
+    mockExecFileSuccess(); // git worktree add
+    await createSessionFast("/projects/repo", "Persist Test");
+
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const project = savedState.projects["/projects/repo"];
+    expect(project.sessions["Persist Test"]).toBeDefined();
+    expect(project.sessions["Persist Test"].creationMode).toBe("fast");
   });
 });
 

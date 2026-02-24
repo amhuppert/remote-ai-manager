@@ -112,6 +112,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     conversations: [],
     source: "csm" as const,
     objective: null,
+    creationMode: "fast" as const,
     ...overrides,
   };
 }

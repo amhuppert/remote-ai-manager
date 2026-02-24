@@ -102,6 +102,9 @@ export type ConversationState = z.infer<typeof conversationStateSchema>;
 export const sessionSourceSchema = z.enum(["csm", "imported"]);
 export type SessionSource = z.infer<typeof sessionSourceSchema>;
 
+export const sessionCreationModeSchema = z.enum(["fast", "focus"]);
+export type SessionCreationMode = z.infer<typeof sessionCreationModeSchema>;
+
 export const sessionStateSchema = z.object({
   sessionName: z.string(),
   worktreePath: z.string(),
@@ -113,6 +116,7 @@ export const sessionStateSchema = z.object({
   conversations: z.array(conversationStateSchema).default([]),
   source: sessionSourceSchema.default("csm"),
   objective: z.string().nullable().default(null),
+  creationMode: sessionCreationModeSchema.default("fast"),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 
@@ -138,9 +142,16 @@ export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 // API Request Schemas
 // ============================================================
 
-export const createSessionRequestSchema = z.object({
-  objective: z.string().trim().min(1),
-});
+export const createSessionRequestSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("fast"),
+    sessionName: z.string().trim().min(1),
+  }),
+  z.object({
+    mode: z.literal("focus"),
+    objective: z.string().trim().min(1),
+  }),
+]);
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
 export const imagePayloadSchema = z.object({

@@ -244,6 +244,7 @@ export async function discoverAndImportWorktrees(
       conversations: [],
       source: "imported",
       objective: null,
+      creationMode: "fast",
     });
   }
 

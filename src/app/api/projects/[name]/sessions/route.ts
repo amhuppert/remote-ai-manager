@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getProjectSessions } from "@/lib/state";
-import { createSession, deleteSession } from "@/lib/sessions";
+import {
+  createSessionFast,
+  createSessionFocus,
+  deleteSession,
+} from "@/lib/sessions";
 import { discoverAndImportWorktrees } from "@/lib/worktrees";
-import { createSessionRequestSchema } from "@/lib/schemas";
+import {
+  createSessionRequestSchema,
+  type CreateSessionRequest,
+} from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/types";
 
@@ -51,20 +58,24 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  let body: { objective: string };
+  let body: CreateSessionRequest;
   try {
     body = createSessionRequestSchema.parse(await request.json());
   } catch {
     return NextResponse.json(
       {
-        error: "objective is required",
+        error:
+          "Invalid request: fast mode requires sessionName, focus mode requires objective",
       } satisfies ApiError,
       { status: 400 },
     );
   }
 
   try {
-    const session = await createSession(projectPath, body.objective);
+    const session =
+      body.mode === "fast"
+        ? await createSessionFast(projectPath, body.sessionName)
+        : await createSessionFocus(projectPath, body.objective);
     return NextResponse.json(session, { status: 201 });
   } catch (err) {
     const message =

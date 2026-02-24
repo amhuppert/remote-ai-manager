@@ -83,6 +83,7 @@ interface Props {
   sessionName: string;
   conversationId: string;
   defaultModel: ModelId;
+  autoFocus?: boolean;
 }
 
 function formatDate(iso: string): string {
@@ -100,6 +101,7 @@ export default function SessionDetailPage({
   sessionName,
   conversationId,
   defaultModel,
+  autoFocus,
 }: Props): React.JSX.Element {
   const router = useRouter();
   const storageKey = `csm-layout-${projectName}-${sessionName}`;
@@ -271,7 +273,10 @@ export default function SessionDetailPage({
       !pendingQuestionId
     ) {
       // Hydrate the store with persisted question data
-      showQuestions(activeConvo.pendingQuestionId, activeConvo.pendingQuestions);
+      showQuestions(
+        activeConvo.pendingQuestionId,
+        activeConvo.pendingQuestions,
+      );
     } else if (
       pendingQuestionId &&
       activeConvo.status !== "waiting_for_input"
@@ -285,6 +290,37 @@ export default function SessionDetailPage({
     pendingQuestionId,
     showQuestions,
     clearQuestions,
+  ]);
+
+  // --- Auto-send Focus mode prompt ---
+  const autoFocusFired = useRef(false);
+  useEffect(() => {
+    if (!autoFocus || autoFocusFired.current || !session?.objective) return;
+    autoFocusFired.current = true;
+
+    // Clean the URL parameter
+    router.replace(
+      `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${encodeURIComponent(conversationId)}`,
+      { scroll: false },
+    );
+
+    // Build and send the understand-objective prompt
+    import("@/lib/prompt-templates").then(
+      ({ getUnderstandObjectivePrompt }) => {
+        const prompt = getUnderstandObjectivePrompt(session.objective!);
+        void sendPrompt(prompt, messages.length, selectedModel);
+      },
+    );
+  }, [
+    autoFocus,
+    session,
+    sendPrompt,
+    messages.length,
+    selectedModel,
+    router,
+    projectName,
+    sessionName,
+    conversationId,
   ]);
 
   // --- Turn-based navigation ---

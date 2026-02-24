@@ -35,12 +35,10 @@ beforeAll(storybookAnnotations.beforeAll);
 const { Default, Closed } = composeStories(stories);
 
 describe("CreateSessionModal stories", () => {
-  it("Default renders form with objective textarea", async () => {
+  it("Default renders form with session name input", async () => {
     await Default.run();
     expect(screen.getByText("New Session")).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("What do you want to work on?"),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Session name")).toBeInTheDocument();
     expect(screen.getByText("Create Session")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });
