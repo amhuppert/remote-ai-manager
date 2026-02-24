@@ -5,6 +5,7 @@ import type {
   SDKResultSuccess,
   SDKResultError,
   SDKSystemMessage,
+  SDKCompactBoundaryMessage,
   SDKUserMessage,
   Query,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -12,9 +13,11 @@ import type {
   ClaudeModel,
   SessionState,
   ConversationState,
+  ConversationMetrics,
   MessageContentBlock,
   ImagePayload,
 } from "@/types";
+import { conversationMetricsSchema } from "./schemas";
 import { readConfig } from "./config";
 import { getSession, updateSession } from "./state";
 import { acquireSessionLock } from "./lock";
@@ -279,10 +282,45 @@ export async function executePromptStream(
 
     // Track state across the message loop
     let sessionId: string | null = null;
-    let resultCostUsd: number | null = null;
-    let resultDurationMs: number | null = null;
-    let resultNumTurns: number | null = null;
+    let resultMetrics: Partial<ConversationMetrics> | null = null;
     const contentBlocks: MessageContentBlock[] = [];
+
+    // Helper to persist metrics and broadcast SSE update.
+    // metricsProducer receives existing metrics so it can accumulate values.
+    const persistMetricsUpdate = async (
+      metricsProducer:
+        | Partial<ConversationMetrics>
+        | ((
+            existing: ConversationMetrics | null,
+          ) => Partial<ConversationMetrics>),
+    ) => {
+      let metricsUpdate: Partial<ConversationMetrics>;
+      await mutateConversation(
+        projectPath,
+        session.sessionName,
+        conversationId,
+        (c) => {
+          const existing = c.metrics ?? conversationMetricsSchema.parse({});
+          metricsUpdate =
+            typeof metricsProducer === "function"
+              ? metricsProducer(c.metrics)
+              : metricsProducer;
+          c.metrics = { ...existing, ...metricsUpdate };
+        },
+      ).catch(() => {});
+
+      try {
+        broadcast({
+          type: "metrics-update",
+          projectName,
+          sessionName: session.sessionName,
+          conversationId,
+          metrics: metricsUpdate!,
+        });
+      } catch {
+        // fire-and-forget
+      }
+    };
 
     try {
       for await (const message of q) {
@@ -294,11 +332,10 @@ export async function executePromptStream(
           (id) => {
             sessionId = id;
           },
-          (cost, duration, turns) => {
-            resultCostUsd = cost;
-            resultDurationMs = duration;
-            resultNumTurns = turns;
+          async (metricsUpdate) => {
+            resultMetrics = metricsUpdate;
           },
+          persistMetricsUpdate,
         );
       }
     } catch (err) {
@@ -323,8 +360,10 @@ export async function executePromptStream(
       sessionName: session.sessionName,
       durationMs,
       contentBlocks: contentBlocks.length,
-      costUsd: resultCostUsd,
-      numTurns: resultNumTurns,
+      costUsd: (resultMetrics as Partial<ConversationMetrics> | null)
+        ?.totalCostUsd,
+      numTurns: (resultMetrics as Partial<ConversationMetrics> | null)
+        ?.numTurns,
     });
 
     // Update conversation metadata
@@ -338,16 +377,7 @@ export async function executePromptStream(
           if (sessionId) {
             c.claudeSessionId = sessionId;
           }
-          // Accumulate cost/duration/turns
-          if (resultCostUsd != null) {
-            c.totalCostUsd = (c.totalCostUsd ?? 0) + resultCostUsd;
-          }
-          if (resultDurationMs != null) {
-            c.totalDurationMs = (c.totalDurationMs ?? 0) + resultDurationMs;
-          }
-          if (resultNumTurns != null) {
-            c.totalTurns = (c.totalTurns ?? 0) + resultNumTurns;
-          }
+          // Result metrics already persisted via persistMetricsUpdate in processMessage
         },
       ).catch((storeErr) => {
         logger.error("prompt.store_response_failed", {
@@ -442,11 +472,14 @@ async function processMessage(
   emit: (event: string, data: unknown) => void,
   contentBlocks: MessageContentBlock[],
   setSessionId: (id: string) => void,
-  setResultData: (
-    costUsd: number,
-    durationMs: number,
-    numTurns: number,
-  ) => void,
+  setResultMetrics: (metrics: Partial<ConversationMetrics>) => void,
+  persistMetricsUpdate: (
+    metricsUpdate:
+      | Partial<ConversationMetrics>
+      | ((
+          existing: ConversationMetrics | null,
+        ) => Partial<ConversationMetrics>),
+  ) => Promise<void>,
 ): Promise<void> {
   const timestamp = new Date().toISOString();
 
@@ -456,14 +489,41 @@ async function processMessage(
       if (sysMsg.subtype === "init") {
         setSessionId(sysMsg.session_id);
         emit("init", { sessionId: sysMsg.session_id });
+
+        // Extract and persist session metadata
+        const initMetrics = extractInitMetrics(sysMsg);
+        await persistMetricsUpdate(initMetrics);
+
         await appendEntry(conversationId, {
           timestamp,
           type: "system",
           raw: { subtype: "init", session_id: sysMsg.session_id },
         });
-      }
-      // Other system subtypes (status, compact_boundary, task_*) — log to transcript only
-      else {
+      } else if (sysMsg.subtype === "compact_boundary") {
+        const compactMsg = message as SDKCompactBoundaryMessage;
+        await persistMetricsUpdate((existing) =>
+          extractCompactionEvent(compactMsg, existing),
+        );
+
+        await appendEntry(conversationId, {
+          timestamp,
+          type: "system",
+          raw: message,
+        });
+      } else if (
+        sysMsg.subtype === "status" &&
+        "status" in sysMsg &&
+        (sysMsg as Record<string, unknown>).status === "compacting"
+      ) {
+        // Broadcast compacting status as metrics update
+        await persistMetricsUpdate({});
+
+        await appendEntry(conversationId, {
+          timestamp,
+          type: "system",
+          raw: message,
+        });
+      } else {
         await appendEntry(conversationId, {
           timestamp,
           type: "system",
@@ -523,13 +583,15 @@ async function processMessage(
       const resultMsg = message as SDKResultSuccess | SDKResultError;
       setSessionId(resultMsg.session_id);
 
+      // Extract full metrics from result (with accumulation from existing)
+      await persistMetricsUpdate((existing) => {
+        const metrics = extractResultMetrics(resultMsg, existing);
+        setResultMetrics(metrics);
+        return metrics;
+      });
+
       if (resultMsg.subtype === "success") {
         const success = resultMsg as SDKResultSuccess;
-        setResultData(
-          success.total_cost_usd,
-          success.duration_ms,
-          success.num_turns,
-        );
         emit("result", {
           sessionId: success.session_id,
           costUsd: success.total_cost_usd,
@@ -537,7 +599,6 @@ async function processMessage(
         });
       } else {
         const error = resultMsg as SDKResultError;
-        setResultData(error.total_cost_usd, error.duration_ms, error.num_turns);
         const errorMessage = mapErrorSubtype(error);
         emit("error", { message: errorMessage });
       }
@@ -561,6 +622,120 @@ async function processMessage(
       break;
     }
   }
+}
+
+// ============================================================
+// Metrics Extraction Functions
+// ============================================================
+
+/** Extract metrics from a result message (success or error).
+ *  Accumulates totalCostUsd, durationMs, numTurns from existing metrics. */
+export function extractResultMetrics(
+  result: SDKResultSuccess | SDKResultError,
+  existing: ConversationMetrics | null,
+): Partial<ConversationMetrics> {
+  const metrics: Partial<ConversationMetrics> = {};
+
+  // Token usage from the usage field
+  if (result.usage) {
+    metrics.inputTokens = result.usage.inputTokens ?? null;
+    metrics.outputTokens = result.usage.outputTokens ?? null;
+    metrics.cacheReadInputTokens = result.usage.cacheReadInputTokens ?? null;
+    metrics.cacheCreationInputTokens =
+      result.usage.cacheCreationInputTokens ?? null;
+  }
+
+  // Per-model breakdown
+  if (result.modelUsage) {
+    const modelUsage: Record<
+      string,
+      {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadInputTokens: number;
+        cacheCreationInputTokens: number;
+        costUSD: number;
+        contextWindow: number;
+        maxOutputTokens: number;
+      }
+    > = {};
+    for (const [model, usage] of Object.entries(result.modelUsage)) {
+      modelUsage[model] = {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadInputTokens: usage.cacheReadInputTokens,
+        cacheCreationInputTokens: usage.cacheCreationInputTokens,
+        costUSD: usage.costUSD,
+        contextWindow: usage.contextWindow,
+        maxOutputTokens: usage.maxOutputTokens,
+      };
+      // Use the first model's context window as the top-level value
+      if (metrics.contextWindow == null) {
+        metrics.contextWindow = usage.contextWindow;
+      }
+    }
+    metrics.modelUsage = modelUsage;
+  }
+
+  // Accumulated fields: add to existing values
+  metrics.totalCostUsd = (existing?.totalCostUsd ?? 0) + result.total_cost_usd;
+  metrics.durationMs = (existing?.durationMs ?? 0) + result.duration_ms;
+  metrics.durationApiMs =
+    (existing?.durationApiMs ?? 0) + result.duration_api_ms;
+  metrics.numTurns = (existing?.numTurns ?? 0) + result.num_turns;
+
+  // Stop/error info
+  metrics.stopReason = result.stop_reason ?? null;
+
+  if (result.subtype !== "success") {
+    metrics.errorSubtype = result.subtype;
+  }
+
+  if (result.permission_denials && result.permission_denials.length > 0) {
+    metrics.permissionDenials = result.permission_denials.map(
+      (d) => d.tool_name,
+    );
+  }
+
+  return metrics;
+}
+
+/** Extract session metadata from init message */
+export function extractInitMetrics(
+  init: SDKSystemMessage,
+): Partial<ConversationMetrics> {
+  return {
+    model: init.model ?? null,
+    claudeCodeVersion: init.claude_code_version ?? null,
+    tools: init.tools ?? null,
+    mcpServers:
+      init.mcp_servers?.map((s) => ({ name: s.name, status: s.status })) ??
+      null,
+  };
+}
+
+/** Extract compaction event data from compact_boundary message */
+export function extractCompactionEvent(
+  compact: SDKCompactBoundaryMessage,
+  existing: ConversationMetrics | null,
+): Partial<ConversationMetrics> {
+  const preTokens = compact.compact_metadata.pre_tokens;
+  const trigger = compact.compact_metadata.trigger;
+  const existingCompactions = existing?.compactions ?? [];
+  const existingCount = existing?.compactionCount ?? 0;
+
+  return {
+    compactionCount: existingCount + 1,
+    lastCompactionPreTokens: preTokens,
+    compactions: [
+      ...existingCompactions,
+      {
+        trigger,
+        preTokens,
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
 }
 
 /** Map SDK error result subtypes to human-readable messages */

@@ -83,6 +83,7 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import ImageAttachmentPreview from "./ImageAttachmentPreview";
+import MetricsPanel from "./MetricsPanel";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import type { ImagePayload } from "@/types";
 import CopyableId from "@/components/CopyableId";
@@ -887,6 +888,14 @@ export default function SessionDetailPage({
               This session has been merged into main and is read-only.
             </div>
           )}
+
+          {/* Metrics strip */}
+          <MetricsPanel
+            metrics={
+              session.conversations.find((c) => c.id === conversationId)
+                ?.metrics ?? null
+            }
+          />
 
           {/* Content area */}
           <div
