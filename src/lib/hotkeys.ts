@@ -13,6 +13,7 @@ export interface HotkeyDefinition {
 export type HotkeyId =
   | "helpModal"
   | "voiceToggle"
+  | "abortPrompt"
   | "nextMessage"
   | "prevMessage"
   | "firstMessage"
@@ -40,6 +41,14 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     keys: "alt+v",
     label: "Toggle voice recording",
     description: "Start or stop voice recording for prompt input",
+    category: "general",
+    enableOnFormTags: true,
+  },
+  abortPrompt: {
+    id: "abortPrompt",
+    keys: "Escape",
+    label: "Abort prompt / clear input",
+    description: "Cancel a running prompt, or clear the input field when idle",
     category: "general",
     enableOnFormTags: true,
   },

@@ -7,6 +7,7 @@ describe("HOTKEY_REGISTRY", () => {
     const expectedIds: HotkeyId[] = [
       "helpModal",
       "voiceToggle",
+      "abortPrompt",
       "nextMessage",
       "prevMessage",
       "firstMessage",
@@ -43,6 +44,11 @@ describe("HOTKEY_REGISTRY", () => {
   it("voiceToggle has enableOnFormTags set", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     expect(HOTKEY_REGISTRY.voiceToggle.enableOnFormTags).toBe(true);
+  });
+
+  it("abortPrompt has enableOnFormTags set", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    expect(HOTKEY_REGISTRY.abortPrompt.enableOnFormTags).toBe(true);
   });
 
   it("non-modifier hotkeys do not have enableOnFormTags", async () => {

@@ -22,16 +22,22 @@ import type {
  * - Fetch API (SSE streaming)
  * - TanStack Query (cache invalidation on completion)
  */
+export interface SendPromptHandle {
+  send: (
+    text: string,
+    currentMessageCount: number,
+    modelId?: ClaudeModel,
+    images?: ImagePayload[],
+  ) => Promise<void>;
+  /** Abort the in-flight SSE stream (client-side only). */
+  abortClient: () => void;
+}
+
 export function useSendPrompt(
   projectName: string,
   sessionName: string,
   conversationId?: string,
-): (
-  text: string,
-  currentMessageCount: number,
-  modelId?: ClaudeModel,
-  images?: ImagePayload[],
-) => Promise<void> {
+): SendPromptHandle {
   const queryClient = useQueryClient();
   const submitPrompt = useSubmitPrompt();
   const receiveStreamContent = useReceiveStreamContent();
@@ -48,7 +54,11 @@ export function useSendPrompt(
     };
   }, [projectName, sessionName, conversationId]);
 
-  return useCallback(
+  const abortClient = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  const send = useCallback(
     async (
       text: string,
       currentMessageCount: number,
@@ -170,6 +180,8 @@ export function useSendPrompt(
               } catch {
                 failPrompt("Prompt failed");
               }
+            } else if (eventName === "aborted") {
+              break;
             } else if (eventName === "done") {
               break;
             }
@@ -215,4 +227,6 @@ export function useSendPrompt(
       showQuestions,
     ],
   );
+
+  return { send, abortClient };
 }

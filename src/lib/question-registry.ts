@@ -76,6 +76,30 @@ export function rejectQuestion(questionId: string, reason: string): boolean {
 }
 
 /**
+ * Reject all pending questions for a given conversation (e.g., on abort).
+ * Returns the number of questions rejected.
+ */
+export function rejectQuestionsForConversation(
+  conversationId: string,
+  reason: string,
+): number {
+  const registry = getRegistry();
+  let count = 0;
+  for (const [questionId, pending] of registry) {
+    if (pending.conversationId === conversationId) {
+      registry.delete(questionId);
+      pending.reject(new Error(reason));
+      count++;
+      logger.debug("question.rejected_for_conversation", {
+        questionId,
+        conversationId,
+      });
+    }
+  }
+  return count;
+}
+
+/**
  * Check if a conversation has any pending questions.
  */
 export function hasPendingQuestion(conversationId: string): boolean {

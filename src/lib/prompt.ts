@@ -24,6 +24,10 @@ import { appendTranscriptEntry, getTranscriptPath } from "./transcript";
 import type { TranscriptEntry } from "./transcript";
 import { broadcast } from "./sse-broadcaster";
 import { registerQuestion } from "./question-registry";
+import {
+  registerAbortController,
+  unregisterAbortController,
+} from "./abort-registry";
 import { randomUUID } from "node:crypto";
 
 // Prevent nested session detection when CSM runs inside Claude Code
@@ -153,6 +157,7 @@ export async function executePromptStream(
 
     // Create SDK query
     const abortController = new AbortController();
+    registerAbortController(conversationId, abortController);
     const q: Query = query({
       prompt: sdkPrompt,
       options: {
@@ -285,12 +290,20 @@ export async function executePromptStream(
         );
       }
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Unknown SDK error";
-      logger.error("prompt.sdk_error", {
-        sessionName: session.sessionName,
-        error: errorMsg,
-      });
-      emit("error", { message: `SDK error: ${errorMsg}` });
+      if (abortController.signal.aborted) {
+        logger.info("prompt.aborted", {
+          sessionName: session.sessionName,
+        });
+        emit("aborted", { message: "Prompt execution was cancelled" });
+      } else {
+        const errorMsg =
+          err instanceof Error ? err.message : "Unknown SDK error";
+        logger.error("prompt.sdk_error", {
+          sessionName: session.sessionName,
+          error: errorMsg,
+        });
+        emit("error", { message: `SDK error: ${errorMsg}` });
+      }
     }
 
     const durationMs = Date.now() - promptStart;
@@ -344,6 +357,9 @@ export async function executePromptStream(
     emit("done", {});
     return { conversationId };
   } finally {
+    // Clean up abort controller registration
+    unregisterAbortController(conversationId);
+
     // Always mark conversation as awaiting when done (even on error)
     await mutateConversation(
       projectPath,

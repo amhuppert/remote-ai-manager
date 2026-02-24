@@ -143,8 +143,15 @@ vi.mock("@/lib/mutations", () => ({
 
 // Mock useSendPrompt
 const sendPromptMock = vi.fn();
+const abortClientMock = vi.fn();
 vi.mock("@/hooks/use-send-prompt", () => ({
-  useSendPrompt: () => sendPromptMock,
+  useSendPrompt: () => ({ send: sendPromptMock, abortClient: abortClientMock }),
+}));
+
+// Mock useAbortPrompt
+const abortPromptMock = vi.fn();
+vi.mock("@/hooks/use-abort-prompt", () => ({
+  useAbortPrompt: () => abortPromptMock,
 }));
 
 // Mock useVoiceRecorder

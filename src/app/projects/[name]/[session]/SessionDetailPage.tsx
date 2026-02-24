@@ -15,6 +15,7 @@ import {
 } from "@/lib/queries";
 import { useDeleteSessionMutation } from "@/lib/mutations";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
+import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import {
   useLayout,
   useMobilePanel,
@@ -201,7 +202,12 @@ export default function SessionDetailPage({
   const deleteMutation = useDeleteSessionMutation(projectName);
 
   // --- Prompt streaming ---
-  const sendPrompt = useSendPrompt(projectName, sessionName, conversationId);
+  const { send: sendPrompt, abortClient } = useSendPrompt(
+    projectName,
+    sessionName,
+    conversationId,
+  );
+  const abortPrompt = useAbortPrompt(projectName, sessionName, conversationId);
 
   // --- Local state ---
   const [promptText, setPromptText] = useState("");
@@ -465,6 +471,19 @@ export default function SessionDetailPage({
   useAppHotkey("prevMessage", handlePrevMessage);
   useAppHotkey("firstMessage", () => scrollToMessage(0));
   useAppHotkey("lastMessage", scrollToEnd);
+
+  // Abort / clear input hotkey (Escape)
+  const handleAbortOrClear = useCallback(() => {
+    if (sending) {
+      abortClient();
+      void abortPrompt();
+    } else {
+      setPromptText("");
+      clearPlaceholder();
+      clearImages();
+    }
+  }, [sending, abortClient, abortPrompt, clearPlaceholder, clearImages]);
+  useAppHotkey("abortPrompt", handleAbortOrClear);
 
   // --- Handlers ---
 
@@ -1080,12 +1099,6 @@ export default function SessionDetailPage({
                             return;
                           }
                           void handleSendPrompt();
-                        }
-                        if (e.key === "Escape") {
-                          e.preventDefault();
-                          setPromptText("");
-                          clearPlaceholder();
-                          clearImages();
                         }
                       }}
                       disabled={isFinished}
