@@ -4098,6 +4098,11 @@ textarea {
   background: var(--text-tertiary);
 }
 
+.sidebar-dot.waiting_for_input {
+  background: var(--amber);
+  box-shadow: 0 0 4px var(--amber);
+}
+
 .convo-sidebar-item-body {
   flex: 1;
   min-width: 0;
@@ -4976,6 +4981,12 @@ textarea {
 
 .unified-panel-dot.awaiting {
   background: var(--green);
+}
+
+.unified-panel-dot.waiting_for_input {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+  animation: unified-pulse 2s ease-in-out infinite;
 }
 
 /* Item body */
