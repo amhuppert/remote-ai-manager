@@ -37,10 +37,12 @@ export async function hasUncommittedChanges(
   return stdout.trim().length > 0;
 }
 
-/** Stage all changes and commit with the given message */
+/** Stage all changes and commit with the given message.
+ *  When `skipHooks` is true, passes `--no-verify` to skip pre-commit hooks. */
 export async function commitChanges(
   worktreePath: string,
   message: string,
+  options?: { skipHooks?: boolean },
 ): Promise<CommitResult> {
   if (!message.trim()) {
     throw new Error("Commit message cannot be empty");
@@ -54,7 +56,11 @@ export async function commitChanges(
   logger.info("git.commit", { worktreePath, messageLength: message.length });
 
   await git(worktreePath, ["add", "-A"]);
-  const { stdout } = await git(worktreePath, ["commit", "-m", message]);
+  const commitArgs = ["commit", "-m", message];
+  if (options?.skipHooks) {
+    commitArgs.push("--no-verify");
+  }
+  const { stdout } = await git(worktreePath, commitArgs);
 
   // Extract commit hash from output — git commit prints it in the first line
   // Format: [branchName hashPrefix] message
@@ -365,6 +371,9 @@ export async function squashMerge(
     const result = await git(projectPath, ["commit", "-m", message]);
     commitOutput = result.stdout;
   } catch (err) {
+    // Clean up: reset staged squash changes so project root stays clean
+    await git(projectPath, ["reset", "--hard", "HEAD"]).catch(() => {});
+
     if (err instanceof Error) {
       // Capture stderr/stdout from the failed commit (e.g. pre-commit hook output)
       const childErr = err as Error & { stderr?: string; stdout?: string };

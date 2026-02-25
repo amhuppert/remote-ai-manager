@@ -295,13 +295,18 @@ export function dispatchMergeJob(params: {
         autoResolve,
       });
 
-      // Phase 0: Commit uncommitted changes in the worktree
+      // Phase 0: Commit uncommitted changes in the worktree.
+      // Skip pre-commit hooks — this is a WIP commit that will be
+      // squash-merged; running lint/test here blocks the pipeline
+      // and leaves the worktree in a half-staged state on failure.
       if (await hasUncommittedChanges(worktreePath)) {
         logger.info("merge.commit_uncommitted", {
           jobId: job.jobId,
           worktreePath,
         });
-        await commitChanges(worktreePath, "WIP: uncommitted changes");
+        await commitChanges(worktreePath, "WIP: uncommitted changes", {
+          skipHooks: true,
+        });
       }
 
       // Phase 1: Merge main into feature branch
@@ -389,7 +394,12 @@ export function dispatchMergeJob(params: {
       }
     } catch (err) {
       job.status = "failed";
-      job.errorMessage = err instanceof Error ? err.message : "Unknown error";
+      const errObj = err as Error & { gitOutput?: string };
+      const parts: string[] = [errObj.message ?? "Unknown error"];
+      if (errObj.gitOutput) {
+        parts.push(errObj.gitOutput);
+      }
+      job.errorMessage = parts.join("\n");
       logger.error("merge.failed", {
         jobId: job.jobId,
         error: job.errorMessage,

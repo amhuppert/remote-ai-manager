@@ -179,6 +179,44 @@ describe("commitChanges", () => {
     );
   });
 
+  it("passes --no-verify when skipHooks is true", async () => {
+    mockExecFileSequence([
+      { stdout: " M file.ts\n" },
+      { stdout: "" },
+      { stdout: "[csm/my-session abc1234] WIP commit\n 1 file changed\n" },
+    ]);
+
+    const result = await commitChanges("/worktree", "WIP commit", {
+      skipHooks: true,
+    });
+    expect(result.hash).toBe("abc1234");
+
+    // Verify git commit was called with --no-verify
+    expect(execFileMock.mock.calls[2]![1]).toEqual([
+      "commit",
+      "-m",
+      "WIP commit",
+      "--no-verify",
+    ]);
+  });
+
+  it("does not pass --no-verify by default", async () => {
+    mockExecFileSequence([
+      { stdout: " M file.ts\n" },
+      { stdout: "" },
+      { stdout: "[csm/my-session abc1234] Add feature\n 1 file changed\n" },
+    ]);
+
+    await commitChanges("/worktree", "Add feature");
+
+    // Verify git commit was called WITHOUT --no-verify
+    expect(execFileMock.mock.calls[2]![1]).toEqual([
+      "commit",
+      "-m",
+      "Add feature",
+    ]);
+  });
+
   it("returns empty hash when git output format is unexpected", async () => {
     mockExecFileSequence([
       { stdout: " M file.ts\n" },
@@ -484,6 +522,31 @@ describe("squashMerge", () => {
 
     // Verify cleanup: merge --abort and reset --hard were called
     expect(execFileMock.mock.calls[2]![1]).toEqual(["merge", "--abort"]);
+    expect(execFileMock.mock.calls[3]![1]).toEqual(["reset", "--hard", "HEAD"]);
+  });
+
+  it("resets project root when commit fails (e.g. pre-commit hook)", async () => {
+    const commitError = Object.assign(new Error("Command failed: git commit"), {
+      stderr: "husky - pre-commit script failed (code 1)",
+      stdout: "",
+    });
+
+    mockExecFileSequence([
+      // git status --porcelain (clean)
+      { stdout: "" },
+      // git merge --squash (succeeds — changes staged)
+      { stdout: "" },
+      // git commit → fails (pre-commit hook)
+      { error: commitError },
+      // git reset --hard HEAD (cleanup)
+      { stdout: "" },
+    ]);
+
+    await expect(
+      squashMerge("/project", "csm/branch", "Merge"),
+    ).rejects.toThrow("Commit failed");
+
+    // Verify cleanup: reset --hard to undo staged squash changes
     expect(execFileMock.mock.calls[3]![1]).toEqual(["reset", "--hard", "HEAD"]);
   });
 
