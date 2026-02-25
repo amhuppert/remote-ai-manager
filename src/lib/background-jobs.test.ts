@@ -224,10 +224,10 @@ describe("background-jobs", () => {
 
       await settle();
 
-      // Phase 0 commit was called first with worktree path and merge message
+      // Phase 0 commit was called first with worktree path and WIP message
       expect(mockCommitChanges).toHaveBeenCalledWith(
         BASE_MERGE_PARAMS.worktreePath,
-        BASE_MERGE_PARAMS.message,
+        "WIP: uncommitted changes",
       );
 
       // Phase 1 merge still happened after commit

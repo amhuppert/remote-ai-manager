@@ -55,11 +55,9 @@ export default function SmartMergeDialog({
   initialSubmitted,
   initialAutoResolve,
 }: SmartMergeDialogProps): React.JSX.Element | null {
-  const [message, setMessage] = useState("");
   const [autoResolve, setAutoResolve] = useState(initialAutoResolve ?? true);
   const [submitted, setSubmitted] = useState(initialSubmitted ?? false);
   const [error, setError] = useState<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevOpenRef = useRef(open);
 
   // Reset on open
@@ -69,14 +67,12 @@ export default function SmartMergeDialog({
 
     if (open && !wasOpen) {
       /* eslint-disable react-hooks/set-state-in-effect -- intentional reset on transition */
-      setMessage(sessionName);
       setAutoResolve(initialAutoResolve ?? true);
       setSubmitted(initialSubmitted ?? false);
       setError(null);
       /* eslint-enable react-hooks/set-state-in-effect */
-      setTimeout(() => textareaRef.current?.focus(), 100);
     }
-  }, [open, sessionName, initialSubmitted, initialAutoResolve]);
+  }, [open, initialSubmitted, initialAutoResolve]);
 
   // Escape to close (always dismissible)
   useEffect(() => {
@@ -89,13 +85,13 @@ export default function SmartMergeDialog({
   }, [open, onClose]);
 
   const handleSubmit = useCallback(async () => {
-    if (!message.trim() || submitted) return;
+    if (submitted) return;
     try {
       const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: message.trim(), autoResolve }),
+        body: JSON.stringify({ autoResolve }),
       });
       if (res.status === 202) {
         setSubmitted(true);
@@ -118,7 +114,7 @@ export default function SmartMergeDialog({
     } catch {
       setError("Failed to start merge");
     }
-  }, [message, submitted, projectName, sessionName, autoResolve]);
+  }, [submitted, projectName, sessionName, autoResolve]);
 
   if (!open) return null;
 
@@ -163,25 +159,6 @@ export default function SmartMergeDialog({
                 )}
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Merge Commit Message</label>
-                <textarea
-                  ref={textareaRef}
-                  className="form-input"
-                  rows={3}
-                  placeholder="Describe this merge..."
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault();
-                      handleSubmit();
-                    }
-                  }}
-                />
-                <span className="form-hint">⌘+Enter to start</span>
-              </div>
-
               {/* ── Auto-resolve toggle ── */}
               <div className="smart-merge-toggle-row">
                 <button
@@ -216,7 +193,7 @@ export default function SmartMergeDialog({
               </button>
               <button
                 className="btn btn-primary btn-sm"
-                disabled={!message.trim()}
+                disabled={submitted}
                 onClick={handleSubmit}
               >
                 Start Merge

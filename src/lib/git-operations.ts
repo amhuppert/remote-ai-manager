@@ -221,6 +221,48 @@ export async function getCommitDiff(
 }
 
 // ============================================================
+// Merge Detection
+// ============================================================
+
+/**
+ * Check if a branch has been merged into main via regular merge commit.
+ * Returns true if the branch tip is an ancestor of main (exit code 0).
+ */
+export async function isBranchAncestorOfMain(
+  projectPath: string,
+  branchName: string,
+): Promise<boolean> {
+  try {
+    await git(projectPath, ["merge-base", "--is-ancestor", branchName, "main"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if main's recent commit log mentions the branch name.
+ * Catches squash/rebase merges where the commit message references the branch.
+ */
+export async function isBranchMentionedInMainLog(
+  projectPath: string,
+  branchName: string,
+): Promise<boolean> {
+  try {
+    const { stdout } = await git(projectPath, [
+      "log",
+      "main",
+      "--oneline",
+      "-100",
+      `--grep=${branchName}`,
+    ]);
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================
 // Merge Main into Feature Branch
 // ============================================================
 

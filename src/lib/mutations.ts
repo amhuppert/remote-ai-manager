@@ -207,14 +207,14 @@ export function useMergeMutation(projectName: string, sessionName: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (message: string) =>
+    mutationFn: () =>
       mutationFetch<{ success: boolean; mergeHash: string }>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge`,
         "merge-session",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message }),
+          body: JSON.stringify({ autoResolve: false }),
         },
       ),
     onSuccess: () => {
