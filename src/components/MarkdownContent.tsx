@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -29,6 +29,71 @@ const customStyle: Record<string, React.CSSProperties> = {
   },
 };
 
+function CodeBlockCopyButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      void navigator.clipboard.writeText(code).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
+    },
+    [code],
+  );
+
+  return (
+    <button
+      className={`code-block-copy-btn${copied ? " code-block-copy-btn--copied" : ""}`}
+      onClick={handleCopy}
+      title="Copy code"
+    >
+      {copied ? (
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M1.5 5.5L4 8L8.5 2"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : (
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          aria-hidden="true"
+        >
+          <rect
+            x="4"
+            y="3"
+            width="6"
+            height="7.5"
+            rx="1"
+            stroke="currentColor"
+            strokeWidth="1.2"
+          />
+          <path
+            d="M2 8.5V2.5C2 1.95 2.45 1.5 3 1.5H7.5"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 export default memo(function MarkdownContent({
   content,
 }: Props): React.JSX.Element {
@@ -42,13 +107,16 @@ export default memo(function MarkdownContent({
 
           if (match) {
             return (
-              <SyntaxHighlighter
-                style={customStyle}
-                language={match[1]}
-                PreTag="div"
-              >
-                {codeString}
-              </SyntaxHighlighter>
+              <div className="code-block-wrapper">
+                <SyntaxHighlighter
+                  style={customStyle}
+                  language={match[1]}
+                  PreTag="div"
+                >
+                  {codeString}
+                </SyntaxHighlighter>
+                <CodeBlockCopyButton code={codeString} />
+              </div>
             );
           }
 

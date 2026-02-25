@@ -76,6 +76,7 @@ import ConversationSidebar from "./ConversationSidebar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MessageContent from "@/components/MessageContent";
 import MessageActions from "@/components/MessageActions";
+import AssistantMessageActions from "@/components/AssistantMessageActions";
 import MessageEditor from "@/components/MessageEditor";
 import ConversationNav from "@/components/ConversationNav";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
@@ -1080,6 +1081,11 @@ export default function SessionDetailPage({
                                   onFork={handleFork}
                                   onEdit={startEditing}
                                   disabled={isBusy || isFinished}
+                                />
+                              )}
+                              {!isUserMsg && (
+                                <AssistantMessageActions
+                                  content={msg.content}
                                 />
                               )}
                             </div>

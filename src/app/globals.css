@@ -2945,6 +2945,49 @@ textarea {
   color: var(--text-primary);
 }
 
+/* Code block copy button */
+.code-block-wrapper {
+  position: relative;
+}
+
+.code-block-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
+  z-index: 2;
+}
+
+.code-block-wrapper:hover .code-block-copy-btn {
+  opacity: 1;
+}
+
+.code-block-copy-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+}
+
+.code-block-copy-btn--copied {
+  color: var(--green);
+  opacity: 1;
+}
+
 /* Message actions — hover overlay on user messages */
 .msg-actions {
   position: absolute;
@@ -2964,7 +3007,9 @@ textarea {
 }
 
 .message.user:hover .msg-actions,
-.message.user:focus-within .msg-actions {
+.message.user:focus-within .msg-actions,
+.message.assistant:hover .msg-actions,
+.message.assistant:focus-within .msg-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -2999,6 +3044,10 @@ textarea {
 .msg-action-btn:disabled {
   opacity: 0.3;
   cursor: default;
+}
+
+.msg-action-btn--copied {
+  color: var(--green);
 }
 
 .msg-action-btn--confirm {
