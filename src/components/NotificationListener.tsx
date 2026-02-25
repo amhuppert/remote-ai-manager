@@ -29,6 +29,10 @@ export default function NotificationListener(): null {
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     });
 
+    es.addEventListener("session-finished", () => {
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    });
+
     es.addEventListener("job-status", (event) => {
       try {
         const parsed = JSON.parse(event.data);

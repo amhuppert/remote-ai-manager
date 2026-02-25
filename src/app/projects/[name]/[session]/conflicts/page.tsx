@@ -15,8 +15,6 @@ export default function ConflictsPage() {
   const [branchName, setBranchName] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Default merge message to session name; could be overridden by stored data
-  const [mergeMessage, setMergeMessage] = useState("");
 
   // Fetch conflict analysis and session data in parallel
   useEffect(() => {
@@ -51,9 +49,6 @@ export default function ConflictsPage() {
           const sessionData = (await sessionRes.json()) as SessionState;
           setBranchName(sessionData.branchName);
         }
-
-        // Default merge message to session name
-        setMergeMessage(sessionName);
       } catch {
         setError("Failed to load conflicts");
       } finally {
@@ -70,7 +65,6 @@ export default function ConflictsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mergeMessage: mergeMessage || sessionName,
           decisions: conflicts.map((c) => ({
             file: c.file,
             decision: "approved" as const,
@@ -86,7 +80,7 @@ export default function ConflictsPage() {
     } catch {
       setError("Failed to submit conflict resolution");
     }
-  }, [projectName, sessionName, conflicts, mergeMessage, router]);
+  }, [projectName, sessionName, conflicts, router]);
 
   const handleFixApproved = useCallback(
     async (
@@ -102,7 +96,6 @@ export default function ConflictsPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            mergeMessage: mergeMessage || sessionName,
             decisions: decisions.map((d) => ({
               file: d.file,
               decision: d.decision,
@@ -119,7 +112,7 @@ export default function ConflictsPage() {
         setError("Failed to submit conflict resolution");
       }
     },
-    [projectName, sessionName, mergeMessage, router],
+    [projectName, sessionName, router],
   );
 
   const handleBack = useCallback(() => {

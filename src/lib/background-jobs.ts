@@ -301,7 +301,7 @@ export function dispatchMergeJob(params: {
           jobId: job.jobId,
           worktreePath,
         });
-        await commitChanges(worktreePath, message);
+        await commitChanges(worktreePath, "WIP: uncommitted changes");
       }
 
       // Phase 1: Merge main into feature branch
