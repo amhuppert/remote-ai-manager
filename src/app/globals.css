@@ -3456,7 +3456,8 @@ textarea {
   padding: var(--space-md) var(--space-lg);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-base);
-  flex-shrink: 0;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .ask-question-header {
