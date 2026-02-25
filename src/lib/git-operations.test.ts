@@ -27,6 +27,7 @@ import {
   getCommitDiff,
   squashMerge,
   mergeMainIntoFeature,
+  isBranchAncestorOfMain,
 } from "./git-operations";
 
 // ---------------------------------------------------------------------------
@@ -709,5 +710,61 @@ describe("mergeMainIntoFeature", () => {
       status: "conflicts",
       conflictFiles: ["src/a.ts", "src/b.ts"],
     });
+  });
+});
+
+// ===========================================================================
+// isBranchAncestorOfMain
+// ===========================================================================
+
+describe("isBranchAncestorOfMain", () => {
+  it("returns true when branch is ancestor and has diverged from merge base", async () => {
+    mockExecFileSequence([
+      // merge-base --is-ancestor → success (exit 0)
+      { stdout: "" },
+      // rev-parse branchName → branch tip
+      { stdout: "abc1234\n" },
+      // merge-base branchName main → different commit
+      { stdout: "def5678\n" },
+    ]);
+
+    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    expect(result).toBe(true);
+  });
+
+  it("returns false when branch tip equals merge base (never diverged)", async () => {
+    mockExecFileSequence([
+      // merge-base --is-ancestor → success (exit 0)
+      { stdout: "" },
+      // rev-parse branchName → branch tip
+      { stdout: "abc1234\n" },
+      // merge-base branchName main → same commit as branch tip
+      { stdout: "abc1234\n" },
+    ]);
+
+    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    expect(result).toBe(false);
+  });
+
+  it("returns false when branch is not ancestor of main", async () => {
+    mockExecFileSequence([
+      // merge-base --is-ancestor → failure (exit 1)
+      { error: new Error("not ancestor") },
+    ]);
+
+    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    expect(result).toBe(false);
+  });
+
+  it("returns false when git commands fail", async () => {
+    mockExecFileSequence([
+      // merge-base --is-ancestor → success
+      { stdout: "" },
+      // rev-parse fails
+      { error: new Error("fatal: bad ref") },
+    ]);
+
+    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    expect(result).toBe(false);
   });
 });

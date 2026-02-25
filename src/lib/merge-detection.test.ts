@@ -213,6 +213,28 @@ describe("checkAllSessionsForMerge", () => {
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 
+  it("does not mark session when branch never diverged (ancestor but tip == merge-base)", async () => {
+    mockReadState.mockResolvedValue(
+      makeState({
+        "no-commits-session": {
+          sessionName: "no-commits-session",
+          branchName: "csm/no-commits-session",
+          finished: false,
+        },
+      }),
+    );
+
+    // isBranchAncestorOfMain returns false for non-diverged branches now
+    mockIsBranchAncestorOfMain.mockResolvedValue(false);
+    mockIsBranchMentionedInMainLog.mockResolvedValue(false);
+
+    const count = await checkAllSessionsForMerge();
+
+    expect(count).toBe(0);
+    expect(mockSetSessionFinished).not.toHaveBeenCalled();
+    expect(mockBroadcast).not.toHaveBeenCalled();
+  });
+
   it("continues checking other sessions when one fails", async () => {
     mockReadState.mockResolvedValue(
       makeState({

@@ -232,7 +232,10 @@ export async function getCommitDiff(
 
 /**
  * Check if a branch has been merged into main via regular merge commit.
- * Returns true if the branch tip is an ancestor of main (exit code 0).
+ * Returns true if the branch tip is an ancestor of main AND the branch
+ * actually has commits beyond the merge base (i.e., it diverged from main
+ * at some point). Branches that never diverged (tip == merge-base) are
+ * not considered merged — they just never had any unique commits.
  */
 export async function isBranchAncestorOfMain(
   projectPath: string,
@@ -240,6 +243,24 @@ export async function isBranchAncestorOfMain(
 ): Promise<boolean> {
   try {
     await git(projectPath, ["merge-base", "--is-ancestor", branchName, "main"]);
+
+    // Branch is ancestor of main — but did it ever diverge?
+    // Compare the branch tip to the merge base. If they're identical,
+    // the branch never had unique commits and shouldn't be considered merged.
+    const { stdout: branchTip } = await git(projectPath, [
+      "rev-parse",
+      branchName,
+    ]);
+    const { stdout: mergeBase } = await git(projectPath, [
+      "merge-base",
+      branchName,
+      "main",
+    ]);
+
+    if (branchTip.trim() === mergeBase.trim()) {
+      return false;
+    }
+
     return true;
   } catch {
     return false;
