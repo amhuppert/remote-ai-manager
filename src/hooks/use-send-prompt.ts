@@ -86,8 +86,34 @@ export function useSendPrompt(
         })),
       ];
 
+      // Parse command tags so optimistic messages display formatted commands
+      // (matches the same parsing that transcript.ts does on re-read)
+      const displayContent: MessageContentBlock[] =
+        userContent.length === 1 && userContent[0]?.type === "text"
+          ? (() => {
+              const text = (userContent[0] as { type: "text"; text: string })
+                .text;
+              const nameMatch = text.match(
+                /<command-name>\/?(.+?)<\/command-name>/,
+              );
+              if (nameMatch) {
+                const argsMatch = text.match(
+                  /<command-args>([\s\S]*?)<\/command-args>/,
+                );
+                return [
+                  {
+                    type: "command" as const,
+                    name: `/${nameMatch[1]!}`,
+                    args: argsMatch?.[1]?.trim() || null,
+                  },
+                ];
+              }
+              return userContent;
+            })()
+          : userContent;
+
       // 1. Set optimistic state via Zustand
-      submitPrompt(userContent, currentMessageCount);
+      submitPrompt(displayContent, currentMessageCount);
 
       // 2. Build prompt URL
       const promptUrl = conversationId
@@ -157,7 +183,7 @@ export function useSendPrompt(
               try {
                 const block = JSON.parse(eventData) as MessageContentBlock;
                 streamBlocks.push(block);
-                receiveStreamContent(userContent, [...streamBlocks]);
+                receiveStreamContent(displayContent, [...streamBlocks]);
               } catch {
                 // Skip malformed content events
               }
