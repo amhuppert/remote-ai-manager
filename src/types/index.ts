@@ -141,6 +141,12 @@ export interface ConflictAnalysis {
   resolvedAt?: string;
 }
 
+/** Tree of available .kiro/ markdown files */
+export interface KiroDocTree {
+  steering: string[];
+  specs: Record<string, string[]>;
+}
+
 /** Generic API error response */
 export interface ApiError {
   /** Error message */

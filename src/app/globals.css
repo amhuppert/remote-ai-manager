@@ -4235,6 +4235,165 @@ textarea {
 }
 
 /* ============================================================
+   Spec Browser
+   ============================================================ */
+
+.spec-browser {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.spec-browser-nav {
+  width: 200px;
+  min-width: 200px;
+  border-right: 1px solid var(--border-subtle);
+  overflow-y: auto;
+  padding: 8px 0;
+  flex-shrink: 0;
+}
+
+.spec-browser-category {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.spec-browser-category:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.spec-browser-category.active {
+  color: var(--cyan);
+}
+
+.spec-browser-category-badge {
+  font-size: 0.6rem;
+  font-weight: 500;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-tertiary);
+}
+
+.spec-browser-files {
+  padding: 2px 0 4px 0;
+}
+
+.spec-browser-file {
+  display: block;
+  width: 100%;
+  padding: 5px 12px 5px 20px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border-left: 2px solid transparent;
+}
+
+.spec-browser-file:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.spec-browser-file.active {
+  background: var(--bg-raised);
+  color: var(--cyan);
+  border-left-color: var(--cyan);
+}
+
+.spec-browser-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.spec-browser-content .markdown-viewer {
+  flex: 1;
+  min-height: 0;
+}
+
+.spec-browser-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.spec-browser-back {
+  display: none;
+}
+
+/* Mobile: spec browser becomes single-column */
+@media (max-width: 768px) {
+  .spec-browser {
+    flex-direction: column;
+  }
+
+  .spec-browser-nav {
+    width: 100%;
+    min-width: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .spec-browser[data-has-file] .spec-browser-nav {
+    display: none;
+  }
+
+  .spec-browser[data-has-file] .spec-browser-back {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 12px;
+    border: none;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    color: var(--cyan);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .spec-browser[data-has-file] .spec-browser-back:hover {
+    background: var(--bg-hover);
+  }
+}
+
+/* ============================================================
    Session Mode Badge
    ============================================================ */
 
