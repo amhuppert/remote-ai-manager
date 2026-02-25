@@ -5,6 +5,7 @@ import {
   sessionKeys,
   conversationKeys,
   commandKeys,
+  kiroDocKeys,
 } from "@/lib/query-keys";
 import type {
   DiscoveredProject,
@@ -14,6 +15,7 @@ import type {
   ConversationState,
   TranscriptMessage,
   CommandsResponse,
+  KiroDocTree,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -223,5 +225,47 @@ export function useCommandsQuery(projectName: string, sessionName: string) {
       apiFetch<CommandsResponse>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commands`,
       ),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Kiro Doc Queries
+// ---------------------------------------------------------------------------
+
+export function useKiroDocTreeQuery(
+  projectName: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: kiroDocKeys.tree(projectName),
+    queryFn: () =>
+      apiFetch<KiroDocTree>(
+        `/api/projects/${encodeURIComponent(projectName)}/kiro-docs`,
+      ),
+    staleTime: 30_000,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useKiroDocFileQuery(
+  projectName: string,
+  filePath: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: kiroDocKeys.file(projectName, filePath ?? ""),
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/kiro-docs?path=${encodeURIComponent(filePath!)}`,
+      );
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        throw new Error("Failed to fetch kiro document");
+      }
+      const data = (await res.json()) as { content: string };
+      return data.content;
+    },
+    staleTime: 60_000,
+    enabled: (options?.enabled ?? true) && !!filePath,
   });
 }

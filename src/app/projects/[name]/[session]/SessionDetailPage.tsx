@@ -149,11 +149,12 @@ export default function SessionDetailPage({
   const switchMobilePanelRaw = useSwitchMobilePanel();
   const switchRightPaneTab = useSwitchRightPaneTab();
   const switchMobilePanel = useCallback(
-    (panel: "chat" | "diff" | "focus") => {
+    (panel: "chat" | "diff" | "focus" | "specs") => {
       switchMobilePanelRaw(panel);
-      // Sync right pane tab when switching to diff or focus via mobile tabs
+      // Sync right pane tab when switching to diff, focus, or specs via mobile tabs
       if (panel === "focus") switchRightPaneTab("focus");
       if (panel === "diff") switchRightPaneTab("diff");
+      if (panel === "specs") switchRightPaneTab("specs");
     },
     [switchMobilePanelRaw, switchRightPaneTab],
   );
@@ -1352,10 +1353,11 @@ export default function SessionDetailPage({
               )}
             </div>
 
-            {/* Right pane (diff + optional focus doc) — mounted when layout shows it OR mobile panel is "diff"/"focus" */}
+            {/* Right pane (diff + optional focus doc + specs) — mounted when layout shows it OR mobile panel is "diff"/"focus"/"specs" */}
             {(layout !== "conversation" ||
               mobilePanel === "diff" ||
-              mobilePanel === "focus") && (
+              mobilePanel === "focus" ||
+              mobilePanel === "specs") && (
               <RightPane
                 creationMode={session.creationMode}
                 diff={diff}
@@ -1391,6 +1393,12 @@ export default function SessionDetailPage({
               Focus
             </button>
           )}
+          <button
+            className={`mobile-tab${mobilePanel === "specs" ? " active" : ""}`}
+            onClick={() => switchMobilePanel("specs")}
+          >
+            Specs
+          </button>
         </div>
         <div className="mobile-actions">
           <button

@@ -141,6 +141,8 @@ vi.mock("@/lib/queries", () => ({
   }),
   useActiveConversationsQuery: () => ({ data: undefined }),
   useFocusDocQuery: () => ({ data: undefined, isPending: false }),
+  useKiroDocTreeQuery: () => ({ data: undefined, isPending: false }),
+  useKiroDocFileQuery: () => ({ data: undefined, isPending: false }),
 }));
 
 // Mock unified panel store
@@ -271,6 +273,10 @@ vi.mock("@/stores/session-detail.store", () => ({
   useClearQuestions: () => vi.fn(),
   useRightPaneTab: () => "diff",
   useSwitchRightPaneTab: () => vi.fn(),
+  useSpecBrowserSelection: () => null,
+  useSelectSpecCategory: () => vi.fn(),
+  useSelectSpecFile: () => vi.fn(),
+  useClearSpecSelection: () => vi.fn(),
 }));
 
 // Mock IntersectionObserver
