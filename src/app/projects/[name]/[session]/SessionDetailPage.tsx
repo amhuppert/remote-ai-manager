@@ -766,6 +766,41 @@ export default function SessionDetailPage({
     void error;
   }, []);
 
+  // --- Copy conversation context for debugging ---
+  const [contextCopied, setContextCopied] = useState(false);
+  const handleCopyContext = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const conv = session?.conversations.find((c) => c.id === conversationId);
+      const lines = [
+        "<conversation-context>",
+        `  <project>${projectName}</project>`,
+        `  <session>${sessionName}</session>`,
+        `  <branch>${session?.branchName ?? ""}</branch>`,
+        `  <worktree>${session?.worktreePath ?? ""}</worktree>`,
+        `  <created>${session?.createdAt ?? ""}</created>`,
+        `  <conversation-id>${conversationId}</conversation-id>`,
+        `  <claude-session-id>${conv?.claudeSessionId ?? ""}</claude-session-id>`,
+        `  <status>${conv?.status ?? ""}</status>`,
+        `  <prompt-count>${conv?.promptCount ?? 0}</prompt-count>`,
+        `  <last-activity>${conv?.lastActivityAt ?? ""}</last-activity>`,
+        `  <transcript-path>${conv?.transcriptPath ?? ""}</transcript-path>`,
+        `  <total-cost-usd>${conv?.totalCostUsd ?? ""}</total-cost-usd>`,
+        `  <total-duration-ms>${conv?.totalDurationMs ?? ""}</total-duration-ms>`,
+        `  <total-turns>${conv?.totalTurns ?? ""}</total-turns>`,
+        `  <source>${conv?.source ?? ""}</source>`,
+        `  <session-source>${session?.source ?? ""}</session-source>`,
+        `  <creation-mode>${session?.creationMode ?? ""}</creation-mode>`,
+        "</conversation-context>",
+      ];
+      void navigator.clipboard.writeText(lines.join("\n")).then(() => {
+        setContextCopied(true);
+        setTimeout(() => setContextCopied(false), 1500);
+      });
+    },
+    [session, conversationId, projectName, sessionName],
+  );
+
   // Lifted voice recorder hook
   const {
     isRecording,
@@ -951,6 +986,16 @@ export default function SessionDetailPage({
                   </>
                 ) : null;
               })()}
+              <div className="si-sep" />
+              <button
+                className="si-copy-context-btn"
+                onClick={handleCopyContext}
+                data-tooltip={
+                  contextCopied ? "Copied!" : "Copy context to clipboard"
+                }
+              >
+                {contextCopied ? "\u2713" : "\u2398"} Context
+              </button>
             </div>
           </div>
 
