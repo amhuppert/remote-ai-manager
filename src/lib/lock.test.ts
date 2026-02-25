@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { acquireSessionLock, isSessionBusy } from "./lock";
+import {
+  acquireSessionLock,
+  isSessionBusy,
+  acquireProjectLock,
+  isProjectLocked,
+} from "./lock";
 
 describe("lock", () => {
   const project = "/tmp/test-project";
@@ -53,5 +58,80 @@ describe("lock", () => {
     release();
     // Second release should not throw
     expect(() => release()).not.toThrow();
+  });
+});
+
+describe("project lock", () => {
+  const projectA = "/tmp/project-a";
+  const projectB = "/tmp/project-b";
+
+  it("acquireProjectLock succeeds when no lock held, returns release function", () => {
+    const release = acquireProjectLock(projectA);
+    expect(typeof release).toBe("function");
+    release();
+  });
+
+  it("after release, lock can be re-acquired", () => {
+    const release1 = acquireProjectLock(projectA);
+    release1();
+
+    // Should not throw — lock was released
+    const release2 = acquireProjectLock(projectA);
+    expect(isProjectLocked(projectA)).toBe(true);
+    release2();
+  });
+
+  it("acquireProjectLock throws when lock already held for same project", () => {
+    const release = acquireProjectLock(projectA);
+    expect(() => acquireProjectLock(projectA)).toThrow();
+    release();
+  });
+
+  it("two different projects can hold locks concurrently", () => {
+    const releaseA = acquireProjectLock(projectA);
+    const releaseB = acquireProjectLock(projectB);
+
+    expect(isProjectLocked(projectA)).toBe(true);
+    expect(isProjectLocked(projectB)).toBe(true);
+
+    releaseA();
+    expect(isProjectLocked(projectA)).toBe(false);
+    expect(isProjectLocked(projectB)).toBe(true);
+
+    releaseB();
+  });
+
+  it("project locks are independent from session locks", () => {
+    const projectRelease = acquireProjectLock(projectA);
+    const sessionRelease = acquireSessionLock(projectA, "some-session");
+
+    // Both locks held simultaneously
+    expect(isProjectLocked(projectA)).toBe(true);
+    expect(isSessionBusy(projectA, "some-session")).toBe(true);
+
+    // Releasing project lock does not affect session lock
+    projectRelease();
+    expect(isProjectLocked(projectA)).toBe(false);
+    expect(isSessionBusy(projectA, "some-session")).toBe(true);
+
+    sessionRelease();
+    expect(isSessionBusy(projectA, "some-session")).toBe(false);
+  });
+
+  it("isProjectLocked returns correct state", () => {
+    expect(isProjectLocked(projectA)).toBe(false);
+
+    const release = acquireProjectLock(projectA);
+    expect(isProjectLocked(projectA)).toBe(true);
+
+    release();
+    expect(isProjectLocked(projectA)).toBe(false);
+  });
+
+  it("release is idempotent (no error on double release)", () => {
+    const release = acquireProjectLock(projectA);
+    release();
+    expect(() => release()).not.toThrow();
+    expect(isProjectLocked(projectA)).toBe(false);
   });
 });

@@ -271,8 +271,71 @@ export const answerQuestionRequestSchema = z.object({
 });
 export type AnswerQuestionRequest = z.infer<typeof answerQuestionRequestSchema>;
 
+// ============================================================
+// Background Job Schemas
+// ============================================================
+
+export const jobTypeSchema = z.enum(["commit", "merge", "resolve-conflicts"]);
+export type JobType = z.infer<typeof jobTypeSchema>;
+
+export const jobStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "conflicts",
+]);
+export type JobStatus = z.infer<typeof jobStatusSchema>;
+
+export const jobStatusEventSchema = z.object({
+  type: z.literal("job-status"),
+  jobType: jobTypeSchema,
+  status: jobStatusSchema,
+  projectName: z.string(),
+  sessionName: z.string(),
+  jobId: z.string(),
+  branchName: z.string(),
+  mergeHash: z.string().optional(),
+  commitHash: z.string().optional(),
+  conflictCount: z.number().optional(),
+  conflictFiles: z.array(z.string()).optional(),
+  errorMessage: z.string().optional(),
+});
+export type JobStatusEvent = z.infer<typeof jobStatusEventSchema>;
+
+export const smartMergeRequestSchema = z.object({
+  message: z.string().trim().min(1),
+  autoResolve: z.boolean(),
+});
+export type SmartMergeRequest = z.infer<typeof smartMergeRequestSchema>;
+
+export const conflictEntrySchema = z.object({
+  file: z.string(),
+  description: z.string(),
+  resolution: z.string(),
+  rationale: z.string(),
+});
+export type ConflictEntry = z.infer<typeof conflictEntrySchema>;
+
+export const conflictDecisionInputSchema = z.object({
+  file: z.string(),
+  decision: z.enum(["approved", "rejected", "pending"]),
+  feedback: z.string().optional(),
+});
+export type ConflictDecisionInput = z.infer<typeof conflictDecisionInputSchema>;
+
+export const resolveConflictsRequestSchema = z.object({
+  mergeMessage: z.string().trim().min(1),
+  decisions: z.array(conflictDecisionInputSchema).optional(),
+});
+export type ResolveConflictsRequest = z.infer<
+  typeof resolveConflictsRequestSchema
+>;
+
 /** SSE event type */
-export type SSEEvent = ConversationStatusEvent | AskQuestionEvent;
+export type SSEEvent =
+  | ConversationStatusEvent
+  | AskQuestionEvent
+  | JobStatusEvent;
 
 // ============================================================
 // Command Autocomplete Schemas

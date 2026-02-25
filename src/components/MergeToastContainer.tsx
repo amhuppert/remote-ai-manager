@@ -1,0 +1,71 @@
+"use client";
+
+import { useCallback } from "react";
+import { useRouter } from "next/navigation";
+import MergeToast from "./MergeToast";
+import {
+  useNotificationToastQueue,
+  useDismissToast,
+} from "@/stores/notification.store";
+
+export default function MergeToastContainer() {
+  const toastQueue = useNotificationToastQueue();
+  const dismissToast = useDismissToast();
+  const router = useRouter();
+
+  const currentToast = toastQueue[0];
+
+  const handleAction = useCallback(() => {
+    if (!currentToast) return;
+    const basePath = `/projects/${encodeURIComponent(currentToast.projectName)}/${encodeURIComponent(currentToast.sessionName)}`;
+
+    if (
+      currentToast.jobType === "merge" &&
+      currentToast.status === "completed"
+    ) {
+      router.push(basePath);
+    } else if (
+      currentToast.jobType === "merge" &&
+      currentToast.status === "conflicts"
+    ) {
+      router.push(`${basePath}/conflicts`);
+    } else if (
+      currentToast.jobType === "commit" &&
+      currentToast.status === "completed"
+    ) {
+      router.push(basePath);
+    } else {
+      router.push(basePath);
+    }
+    dismissToast();
+  }, [currentToast, router, dismissToast]);
+
+  const handleDismiss = useCallback(() => {
+    dismissToast();
+  }, [dismissToast]);
+
+  if (!currentToast) return null;
+
+  // Map job status to toast variant
+  let variant: "success" | "conflicts" | "error";
+  if (currentToast.status === "completed") {
+    variant = "success";
+  } else if (currentToast.status === "conflicts") {
+    variant = "conflicts";
+  } else {
+    variant = "error";
+  }
+
+  return (
+    <MergeToast
+      variant={variant}
+      branchName={currentToast.branchName}
+      conflictCount={currentToast.conflictCount}
+      mergeHash={currentToast.mergeHash}
+      errorMessage={currentToast.errorMessage}
+      onAction={handleAction}
+      onDismiss={handleDismiss}
+      autoDismissMs={8000}
+    />
+  );
+}

@@ -53,6 +53,13 @@ export type {
   AskQuestionItem,
   AskQuestionEvent,
   AnswerQuestionRequest,
+  JobType,
+  JobStatus,
+  JobStatusEvent,
+  SmartMergeRequest,
+  ConflictEntry,
+  ConflictDecisionInput,
+  ResolveConflictsRequest,
 } from "@/lib/schemas";
 
 /** Parsed transcript message */
@@ -107,6 +114,32 @@ export type { RunPromptRequest, ImagePayload } from "@/lib/schemas";
 
 /** Layout mode for the session detail view */
 export type LayoutMode = "conversation" | "default" | "split" | "diff";
+
+/** Background job state */
+export interface BackgroundJob {
+  jobId: string;
+  jobType: "commit" | "merge" | "resolve-conflicts";
+  status: "running" | "completed" | "failed" | "conflicts";
+  projectName: string;
+  sessionName: string;
+  branchName: string;
+  startedAt: string;
+  completedAt?: string;
+  mergeHash?: string;
+  commitHash?: string;
+  conflictCount?: number;
+  conflictFiles?: string[];
+  errorMessage?: string;
+}
+
+/** Conflict analysis result stored in memory */
+export interface ConflictAnalysis {
+  jobId: string;
+  projectName: string;
+  sessionName: string;
+  conflicts: import("@/lib/schemas").ConflictEntry[];
+  resolvedAt?: string;
+}
 
 /** Generic API error response */
 export interface ApiError {

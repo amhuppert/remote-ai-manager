@@ -1,5 +1,7 @@
 import type { SSEEvent } from "@/types";
+import { createLogger } from "./logging";
 
+const logger = createLogger("sse");
 const encoder = new TextEncoder();
 
 /**
@@ -30,7 +32,10 @@ export function removeClient(
 
 export function broadcast(event: SSEEvent): void {
   const clients = getClients();
-  if (clients.size === 0) return;
+  if (clients.size === 0) {
+    logger.warn("broadcast.no_clients", { eventType: event.type });
+    return;
+  }
 
   const frame = encoder.encode(
     `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,

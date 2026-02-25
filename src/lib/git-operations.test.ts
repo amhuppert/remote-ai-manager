@@ -26,6 +26,7 @@ import {
   getCommitLog,
   getCommitDiff,
   squashMerge,
+  mergeMainIntoFeature,
 } from "./git-operations";
 
 // ---------------------------------------------------------------------------
@@ -499,5 +500,151 @@ describe("squashMerge", () => {
     await expect(
       squashMerge("/project", "csm/branch", "Merge"),
     ).rejects.toThrow("fatal: not a valid branch name");
+  });
+});
+
+// ===========================================================================
+// mergeMainIntoFeature
+// ===========================================================================
+
+describe("mergeMainIntoFeature", () => {
+  it("returns clean status when git merge main succeeds", async () => {
+    mockExecFileSuccess("Already up to date.\n");
+
+    const result = await mergeMainIntoFeature("/worktree");
+    expect(result).toEqual({ status: "clean" });
+
+    // Verify git merge main was called in the worktree
+    expect(execFileMock).toHaveBeenCalledWith(
+      "git",
+      ["merge", "main"],
+      expect.objectContaining({ cwd: "/worktree" }),
+      expect.any(Function),
+    );
+  });
+
+  it("returns conflicts with file list when merge has CONFLICT in stderr", async () => {
+    mockExecFileSequence([
+      // git merge main → fails with CONFLICT
+      {
+        error: Object.assign(
+          new Error(
+            "CONFLICT (content): Merge conflict in src/index.ts\nAutomatic merge failed; fix conflicts and then commit the result.",
+          ),
+          {
+            stderr:
+              "CONFLICT (content): Merge conflict in src/index.ts\nAutomatic merge failed; fix conflicts and then commit the result.",
+          },
+        ),
+      },
+      // git diff --name-only --diff-filter=U → list conflicted files
+      { stdout: "src/index.ts\nsrc/utils.ts\n" },
+    ]);
+
+    const result = await mergeMainIntoFeature("/worktree");
+    expect(result).toEqual({
+      status: "conflicts",
+      conflictFiles: ["src/index.ts", "src/utils.ts"],
+    });
+
+    // Verify git diff was called to list conflicted files
+    expect(execFileMock.mock.calls[1]![1]).toEqual([
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+    ]);
+  });
+
+  it("returns conflicts when 'merge conflict' appears in error message", async () => {
+    mockExecFileSequence([
+      // git merge main → fails with "merge conflict" in message
+      {
+        error: Object.assign(new Error("Automatic merge conflict in file.ts"), {
+          stderr: "Automatic merge conflict in file.ts",
+        }),
+      },
+      // git diff --name-only --diff-filter=U
+      { stdout: "file.ts\n" },
+    ]);
+
+    const result = await mergeMainIntoFeature("/worktree");
+    expect(result).toEqual({
+      status: "conflicts",
+      conflictFiles: ["file.ts"],
+    });
+  });
+
+  it("detects CONFLICT from error message when stderr is absent", async () => {
+    mockExecFileSequence([
+      // git merge main → fails with CONFLICT only in message (no stderr property)
+      {
+        error: new Error(
+          "CONFLICT (content): Merge conflict in src/app.ts\nAutomatic merge failed",
+        ),
+      },
+      // git diff --name-only --diff-filter=U
+      { stdout: "src/app.ts\n" },
+    ]);
+
+    const result = await mergeMainIntoFeature("/worktree");
+    expect(result).toEqual({
+      status: "conflicts",
+      conflictFiles: ["src/app.ts"],
+    });
+  });
+
+  it("rethrows non-conflict errors", async () => {
+    mockExecFileFailure(new Error("fatal: not something we can merge"));
+
+    await expect(mergeMainIntoFeature("/worktree")).rejects.toThrow(
+      "fatal: not something we can merge",
+    );
+
+    // Verify only one call was made (no git diff, no merge --abort)
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT abort the merge on conflict (leaves worktree in conflict state)", async () => {
+    mockExecFileSequence([
+      // git merge main → conflict
+      {
+        error: Object.assign(
+          new Error("CONFLICT (content): Merge conflict in src/index.ts"),
+          { stderr: "CONFLICT (content): Merge conflict in src/index.ts" },
+        ),
+      },
+      // git diff --name-only --diff-filter=U
+      { stdout: "src/index.ts\n" },
+    ]);
+
+    await mergeMainIntoFeature("/worktree");
+
+    // Verify exactly 2 calls: git merge main + git diff
+    expect(execFileMock).toHaveBeenCalledTimes(2);
+
+    // Verify no merge --abort was called
+    const allArgs = execFileMock.mock.calls.map(
+      (call: unknown[]) => call[1] as string[],
+    );
+    const hasAbort = allArgs.some((args: string[]) => args.includes("--abort"));
+    expect(hasAbort).toBe(false);
+  });
+
+  it("filters empty lines from conflicted file list", async () => {
+    mockExecFileSequence([
+      {
+        error: Object.assign(new Error("CONFLICT (content): Merge conflict"), {
+          stderr: "CONFLICT (content): Merge conflict",
+        }),
+      },
+      // git diff output with trailing newlines / empty lines
+      { stdout: "src/a.ts\n\nsrc/b.ts\n\n" },
+    ]);
+
+    const result = await mergeMainIntoFeature("/worktree");
+    expect(result).toEqual({
+      status: "conflicts",
+      conflictFiles: ["src/a.ts", "src/b.ts"],
+    });
   });
 });

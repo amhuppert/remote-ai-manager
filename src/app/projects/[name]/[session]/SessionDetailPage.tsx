@@ -69,7 +69,7 @@ import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
 import RightPane from "./RightPane";
 import CommitDialog from "./CommitDialog";
-import MergeDialog from "./MergeDialog";
+import SmartMergeDialog from "./SmartMergeDialog";
 import ConversationSidebar from "./ConversationSidebar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MessageContent from "@/components/MessageContent";
@@ -788,10 +788,8 @@ export default function SessionDetailPage({
   // --- Derived display values ---
   const decodedProjectName = decodeURIComponent(projectName);
   const hasUncommittedChanges = diff.files.length > 0;
-  const hasCommits = commits.length > 0;
   const commitDisabled = !hasUncommittedChanges || isBusy || isFinished;
-  const mergeDisabled =
-    !hasCommits || hasUncommittedChanges || isBusy || isFinished;
+  const mergeDisabled = isBusy || isFinished;
 
   const displayStatus = isFinished
     ? "merged"
@@ -1372,13 +1370,14 @@ export default function SessionDetailPage({
         sessionName={session.sessionName}
       />
 
-      <MergeDialog
+      <SmartMergeDialog
         open={showMergeDialog}
         onClose={cancelMerge}
         projectName={projectName}
         sessionName={session.sessionName}
         branchName={session.branchName}
         commitCount={commits.length}
+        hasUncommittedChanges={hasUncommittedChanges}
       />
     </div>
   );

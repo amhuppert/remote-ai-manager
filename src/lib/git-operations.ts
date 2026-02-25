@@ -221,6 +221,53 @@ export async function getCommitDiff(
 }
 
 // ============================================================
+// Merge Main into Feature Branch
+// ============================================================
+
+export type MergeMainResult =
+  | { status: "clean" }
+  | { status: "conflicts"; conflictFiles: string[] };
+
+/** Merge main into the current feature branch in the given worktree.
+ *  On conflict the worktree is left in conflict state (merge is NOT aborted). */
+export async function mergeMainIntoFeature(
+  worktreePath: string,
+): Promise<MergeMainResult> {
+  try {
+    await git(worktreePath, ["merge", "main"]);
+    return { status: "clean" };
+  } catch (err) {
+    const errObj = err as Error & { stderr?: string };
+    const stderr = errObj.stderr ?? "";
+    const message = errObj.message ?? "";
+    const combined = `${stderr}\n${message}`;
+
+    const isConflict =
+      combined.includes("CONFLICT") || combined.includes("merge conflict");
+
+    if (!isConflict) {
+      throw err;
+    }
+
+    // List conflicted (unmerged) files — do NOT abort the merge
+    const { stdout } = await git(worktreePath, [
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+    ]);
+
+    const conflictFiles = stdout
+      .split("\n")
+      .map((f) => f.trim())
+      .filter(Boolean);
+
+    logger.info("git.mergeMain.conflicts", { worktreePath, conflictFiles });
+
+    return { status: "conflicts", conflictFiles };
+  }
+}
+
+// ============================================================
 // Squash Merge
 // ============================================================
 
@@ -284,7 +331,8 @@ export async function squashMerge(
         .join("\n")
         .trim();
       const newErr = new Error("Commit failed");
-      (newErr as Error & { gitOutput?: string }).gitOutput = rawOutput || undefined;
+      (newErr as Error & { gitOutput?: string }).gitOutput =
+        rawOutput || undefined;
       throw newErr;
     }
     throw err;

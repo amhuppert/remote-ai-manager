@@ -6,6 +6,7 @@ import {
   useToggleUnifiedPanel,
 } from "@/stores/unified-panel.store";
 import { useActiveConversationsQuery } from "@/lib/queries";
+import { useActiveJobs } from "@/stores/notification.store";
 
 export interface BreadcrumbSegment {
   label: string;
@@ -32,7 +33,8 @@ export default function Topbar({
   const panelOpen = useUnifiedPanelOpen();
   const togglePanel = useToggleUnifiedPanel();
   const { data: activeConversations } = useActiveConversationsQuery();
-  const activeCount = activeConversations?.length ?? 0;
+  const activeJobs = useActiveJobs();
+  const activeCount = (activeConversations?.length ?? 0) + activeJobs.length;
 
   return (
     <header className="topbar">

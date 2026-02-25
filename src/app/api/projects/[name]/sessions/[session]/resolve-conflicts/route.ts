@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
-import { commitRequestSchema } from "@/lib/schemas";
-import { dispatchCommitJob } from "@/lib/background-jobs";
+import { resolveConflictsRequestSchema } from "@/lib/schemas";
+import { dispatchResolveConflictsJob } from "@/lib/background-jobs";
 import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-/** POST /api/projects/[name]/sessions/[session]/commit — dispatch async commit job */
+/** POST /api/projects/[name]/sessions/[session]/resolve-conflicts — dispatch async conflict resolution job */
 export const POST = withTracing(async (request, { params }) => {
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
@@ -31,33 +31,31 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  if (session.finished) {
-    return NextResponse.json(
-      {
-        error: "Session is finished and read-only",
-        code: "SESSION_FINISHED",
-      } satisfies ApiError,
-      { status: 409 },
-    );
-  }
-
-  let body: { message: string };
+  let body: {
+    mergeMessage: string;
+    decisions?: {
+      file: string;
+      decision: "approved" | "rejected" | "pending";
+      feedback?: string;
+    }[];
+  };
   try {
-    body = commitRequestSchema.parse(await request.json());
+    body = resolveConflictsRequestSchema.parse(await request.json());
   } catch {
     return NextResponse.json(
-      { error: "Commit message is required" } satisfies ApiError,
+      { error: "Merge message is required" } satisfies ApiError,
       { status: 400 },
     );
   }
 
-  const result = dispatchCommitJob({
+  const result = dispatchResolveConflictsJob({
     projectPath,
     projectName: name,
     sessionName,
     worktreePath: session.worktreePath,
     branchName: session.branchName,
-    message: body.message,
+    mergeMessage: body.mergeMessage,
+    decisions: body.decisions,
   });
 
   if (!result.ok) {
