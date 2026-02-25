@@ -306,10 +306,11 @@ export async function mergeMainIntoFeature(
     await git(worktreePath, ["merge", "main"]);
     return { status: "clean" };
   } catch (err) {
-    const errObj = err as Error & { stderr?: string };
+    const errObj = err as Error & { stderr?: string; stdout?: string };
     const stderr = errObj.stderr ?? "";
+    const stdout = errObj.stdout ?? "";
     const message = errObj.message ?? "";
-    const combined = `${stderr}\n${message}`;
+    const combined = `${stderr}\n${stdout}\n${message}`;
 
     const isConflict =
       combined.includes("CONFLICT") || combined.includes("merge conflict");
@@ -319,13 +320,13 @@ export async function mergeMainIntoFeature(
     }
 
     // List conflicted (unmerged) files — do NOT abort the merge
-    const { stdout } = await git(worktreePath, [
+    const { stdout: diffOut } = await git(worktreePath, [
       "diff",
       "--name-only",
       "--diff-filter=U",
     ]);
 
-    const conflictFiles = stdout
+    const conflictFiles = diffOut
       .split("\n")
       .map((f) => f.trim())
       .filter(Boolean);
