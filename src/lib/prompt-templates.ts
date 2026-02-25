@@ -4,7 +4,9 @@
  * Does NOT write focus.md — that happens in a separate step after user confirmation.
  */
 export function getUnderstandObjectivePrompt(objective: string): string {
-  return `You are starting a new coding session. Your task is to deeply understand the following objective before beginning any implementation.
+  return `<command-name>focus:understand-objective</command-name>
+<command-args>${objective}</command-args>
+You are starting a new coding session. Your task is to deeply understand the following objective before beginning any implementation.
 
 <objective>
 ${objective}
@@ -64,7 +66,8 @@ The user will review your understanding and confirm when they are satisfied. Do 
  * Sent after the user confirms the agent has sufficient understanding.
  */
 export function getWriteFocusDocumentPrompt(): string {
-  return `Based on everything we've discussed — the research, your questions, and my answers — write the enriched \`memory-bank/focus.md\` file now.
+  return `<command-name>focus:write-document</command-name>
+Based on everything we've discussed — the research, your questions, and my answers — write the enriched \`memory-bank/focus.md\` file now.
 
 Use the following structure:
 

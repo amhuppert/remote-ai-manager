@@ -32,6 +32,18 @@ describe("getUnderstandObjectivePrompt", () => {
     const prompt = getUnderstandObjectivePrompt("Any objective");
     expect(prompt).toContain("Do NOT begin implementing");
   });
+
+  it("includes command-name tag for transcript display", () => {
+    const prompt = getUnderstandObjectivePrompt("Build a REST API");
+    expect(prompt).toContain(
+      "<command-name>focus:understand-objective</command-name>",
+    );
+  });
+
+  it("includes command-args tag with the objective", () => {
+    const prompt = getUnderstandObjectivePrompt("Build a REST API");
+    expect(prompt).toContain("<command-args>Build a REST API</command-args>");
+  });
 });
 
 describe("getWriteFocusDocumentPrompt", () => {
@@ -57,5 +69,12 @@ describe("getWriteFocusDocumentPrompt", () => {
   it("instructs to write and nothing else", () => {
     const prompt = getWriteFocusDocumentPrompt();
     expect(prompt).toContain("Write the file and nothing else");
+  });
+
+  it("includes command-name tag for transcript display", () => {
+    const prompt = getWriteFocusDocumentPrompt();
+    expect(prompt).toContain(
+      "<command-name>focus:write-document</command-name>",
+    );
   });
 });
