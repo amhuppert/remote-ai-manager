@@ -6,6 +6,7 @@ import { tracedFetch } from "@/lib/traced-fetch";
 import {
   useCompletePrompt,
   useClearQuestions,
+  useMarkCancelled,
 } from "@/stores/session-detail.store";
 import { sessionKeys, conversationKeys } from "@/lib/query-keys";
 
@@ -23,6 +24,7 @@ export function useAbortPrompt(
   const queryClient = useQueryClient();
   const completePrompt = useCompletePrompt();
   const clearQuestions = useClearQuestions();
+  const markCancelled = useMarkCancelled();
 
   return useCallback(async () => {
     if (!conversationId) return;
@@ -38,6 +40,7 @@ export function useAbortPrompt(
         // 409 means nothing was running — still safe to clean up UI state
         clearQuestions();
         completePrompt();
+        markCancelled();
 
         // Invalidate caches so the UI refreshes with final state
         void queryClient.invalidateQueries({
@@ -65,5 +68,6 @@ export function useAbortPrompt(
     queryClient,
     completePrompt,
     clearQuestions,
+    markCancelled,
   ]);
 }

@@ -25,6 +25,7 @@ import {
   useSending,
   usePromptPlaceholder,
   usePromptError,
+  usePromptCancelled,
   useOptimisticMessages,
   useMessageCountBeforeSubmit,
   useCurrentMsgIndex,
@@ -37,6 +38,7 @@ import {
   useHydrateLayout,
   useSwitchMobilePanel,
   useDismissError,
+  useDismissCancelled,
   useReconcileMessages,
   useNavigateToMessage,
   useStartRecording,
@@ -130,6 +132,7 @@ export default function SessionDetailPage({
   const sending = useSending();
   const promptPlaceholder = usePromptPlaceholder();
   const promptError = usePromptError();
+  const promptCancelled = usePromptCancelled();
   const optimisticMessages = useOptimisticMessages();
   const messageCountBeforeSubmit = useMessageCountBeforeSubmit();
   const currentMsgIndex = useCurrentMsgIndex();
@@ -154,6 +157,7 @@ export default function SessionDetailPage({
     [switchMobilePanelRaw, switchRightPaneTab],
   );
   const dismissError = useDismissError();
+  const dismissCancelled = useDismissCancelled();
   const reconcileMessages = useReconcileMessages();
   const navigateToMessage = useNavigateToMessage();
   const startRecording = useStartRecording();
@@ -1001,6 +1005,12 @@ export default function SessionDetailPage({
                   <div className="prompt-error">
                     <span>{promptError}</span>
                     <button onClick={dismissError}>&times;</button>
+                  </div>
+                )}
+                {promptCancelled && (
+                  <div className="prompt-cancelled">
+                    <span>Prompt cancelled</span>
+                    <button onClick={dismissCancelled}>&times;</button>
                   </div>
                 )}
                 <div className="conversation">

@@ -22,6 +22,7 @@ interface SessionDetailState {
   isVoiceRecording: boolean;
   promptPlaceholder: string | null;
   promptError: string | null;
+  promptCancelled: boolean;
   optimisticMessages: TranscriptMessage[];
   messageCountBeforeSubmit: number;
   currentMsgIndex: number;
@@ -53,6 +54,8 @@ interface SessionDetailActions {
   completePrompt: () => void;
   failPrompt: (error: string) => void;
   dismissError: () => void;
+  markCancelled: () => void;
+  dismissCancelled: () => void;
   reconcileMessages: (serverCount: number) => void;
   navigateToMessage: (index: number) => void;
   startRecording: () => void;
@@ -92,6 +95,7 @@ type SessionDetailStore = SessionDetailState & SessionDetailActions;
 // ---------------------------------------------------------------------------
 
 const SIDEBAR_STORAGE_KEY = "csm-sidebar-collapsed";
+let cancelledTimer: ReturnType<typeof setTimeout> | null = null;
 
 const validLayouts: LayoutMode[] = ["conversation", "default", "split", "diff"];
 
@@ -103,6 +107,7 @@ const initialState: SessionDetailState = {
   isVoiceRecording: false,
   promptPlaceholder: null,
   promptError: null,
+  promptCancelled: false,
   optimisticMessages: [],
   messageCountBeforeSubmit: 0,
   currentMsgIndex: 0,
@@ -207,6 +212,24 @@ const useSessionDetailStore = create<SessionDetailStore>()(
     dismissError: () =>
       set((state) => {
         state.promptError = null;
+      }),
+
+    markCancelled: () => {
+      if (cancelledTimer) clearTimeout(cancelledTimer);
+      set((state) => {
+        state.promptCancelled = true;
+      });
+      cancelledTimer = setTimeout(() => {
+        cancelledTimer = null;
+        set((state) => {
+          state.promptCancelled = false;
+        });
+      }, 2500);
+    },
+
+    dismissCancelled: () =>
+      set((state) => {
+        state.promptCancelled = false;
       }),
 
     reconcileMessages: (serverCount) => {
@@ -390,6 +413,8 @@ export const useIsVoiceRecording = () =>
 export const usePromptPlaceholder = () =>
   useSessionDetailStore((s) => s.promptPlaceholder);
 export const usePromptError = () => useSessionDetailStore((s) => s.promptError);
+export const usePromptCancelled = () =>
+  useSessionDetailStore((s) => s.promptCancelled);
 export const useOptimisticMessages = () =>
   useSessionDetailStore((s) => s.optimisticMessages);
 export const useMessageCountBeforeSubmit = () =>
@@ -434,6 +459,10 @@ export const useCompletePrompt = () =>
 export const useFailPrompt = () => useSessionDetailStore((s) => s.failPrompt);
 export const useDismissError = () =>
   useSessionDetailStore((s) => s.dismissError);
+export const useMarkCancelled = () =>
+  useSessionDetailStore((s) => s.markCancelled);
+export const useDismissCancelled = () =>
+  useSessionDetailStore((s) => s.dismissCancelled);
 export const useReconcileMessages = () =>
   useSessionDetailStore((s) => s.reconcileMessages);
 export const useNavigateToMessage = () =>

@@ -171,6 +171,21 @@ body::after {
   }
 }
 
+@keyframes fadeInOut {
+  0% {
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 @keyframes slideUp {
   from {
     transform: translateY(10px);
@@ -2533,6 +2548,36 @@ textarea {
 }
 
 .prompt-error button:hover {
+  opacity: 1;
+}
+
+.prompt-cancelled {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--amber-glow);
+  border: 1px solid rgba(255, 179, 0, 0.2);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--amber);
+  animation: fadeInOut 2.5s ease forwards;
+}
+
+.prompt-cancelled button {
+  background: none;
+  border: none;
+  color: var(--amber);
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0 var(--space-xs);
+  opacity: 0.7;
+}
+
+.prompt-cancelled button:hover {
   opacity: 1;
 }
 
