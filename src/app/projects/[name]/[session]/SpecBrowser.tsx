@@ -11,6 +11,7 @@ import {
 
 interface SpecBrowserProps {
   projectName: string;
+  sessionName: string;
 }
 
 /** Preferred ordering for common spec files */
@@ -94,15 +95,20 @@ function getFilesForCategory(
 
 export default function SpecBrowser({
   projectName,
+  sessionName,
 }: SpecBrowserProps): React.JSX.Element {
-  const treeQuery = useKiroDocTreeQuery(projectName);
+  const treeQuery = useKiroDocTreeQuery(projectName, sessionName);
   const selection = useSpecBrowserSelection();
   const selectCategory = useSelectSpecCategory();
   const selectFile = useSelectSpecFile();
   const clearSelection = useClearSpecSelection();
 
   const selectedFilePath = buildFilePath(selection);
-  const fileQuery = useKiroDocFileQuery(projectName, selectedFilePath);
+  const fileQuery = useKiroDocFileQuery(
+    projectName,
+    selectedFilePath,
+    sessionName,
+  );
   const categories = buildCategories(treeQuery.data);
   const files = getFilesForCategory(treeQuery.data, selection?.category);
 

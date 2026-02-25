@@ -234,14 +234,19 @@ export function useCommandsQuery(projectName: string, sessionName: string) {
 
 export function useKiroDocTreeQuery(
   projectName: string,
+  sessionName?: string,
   options?: { enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: kiroDocKeys.tree(projectName),
-    queryFn: () =>
-      apiFetch<KiroDocTree>(
-        `/api/projects/${encodeURIComponent(projectName)}/kiro-docs`,
-      ),
+    queryKey: kiroDocKeys.tree(projectName, sessionName),
+    queryFn: () => {
+      const params = sessionName
+        ? `?session=${encodeURIComponent(sessionName)}`
+        : "";
+      return apiFetch<KiroDocTree>(
+        `/api/projects/${encodeURIComponent(projectName)}/kiro-docs${params}`,
+      );
+    },
     staleTime: 30_000,
     enabled: options?.enabled ?? true,
   });
@@ -250,13 +255,17 @@ export function useKiroDocTreeQuery(
 export function useKiroDocFileQuery(
   projectName: string,
   filePath: string | null,
+  sessionName?: string,
   options?: { enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: kiroDocKeys.file(projectName, filePath ?? ""),
+    queryKey: kiroDocKeys.file(projectName, filePath ?? "", sessionName),
     queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("path", filePath!);
+      if (sessionName) params.set("session", sessionName);
       const res = await fetch(
-        `/api/projects/${encodeURIComponent(projectName)}/kiro-docs?path=${encodeURIComponent(filePath!)}`,
+        `/api/projects/${encodeURIComponent(projectName)}/kiro-docs?${params.toString()}`,
       );
       if (res.status === 404) return null;
       if (!res.ok) {

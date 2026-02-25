@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
+import { getSession } from "@/lib/state";
 import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/types";
 
@@ -55,8 +57,21 @@ export const GET = withTracing(async (request, { params }) => {
 
   const url = new URL(request.url);
   const filePath = url.searchParams.get("path");
+  const sessionName = url.searchParams.get("session");
 
-  const kiroRoot = path.join(projectPath, ".kiro");
+  // When a session is specified, read from its worktree instead of the project root
+  let basePath = projectPath;
+  if (sessionName) {
+    const session = await getSession(projectPath, sessionName);
+    if (session?.worktreePath) {
+      const worktreeKiro = path.join(session.worktreePath, ".kiro");
+      if (existsSync(worktreeKiro)) {
+        basePath = session.worktreePath;
+      }
+    }
+  }
+
+  const kiroRoot = path.join(basePath, ".kiro");
 
   // --- Read mode: return content of a specific file ---
   if (filePath) {

@@ -100,7 +100,7 @@ export default function RightPane({
             minHeight: 0,
           }}
         >
-          <SpecBrowser projectName={projectName} />
+          <SpecBrowser projectName={projectName} sessionName={sessionName} />
         </div>
       </div>
     </div>

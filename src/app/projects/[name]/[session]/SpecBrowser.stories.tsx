@@ -31,12 +31,14 @@ type Story = StoryObj<typeof meta>;
 export const Default: Story = {
   args: {
     projectName: "remote-ai-manager",
+    sessionName: "example-session",
   },
 };
 
 export const MobileWidth: Story = {
   args: {
     projectName: "remote-ai-manager",
+    sessionName: "example-session",
   },
   parameters: {
     viewport: { defaultViewport: "mobile1" },
