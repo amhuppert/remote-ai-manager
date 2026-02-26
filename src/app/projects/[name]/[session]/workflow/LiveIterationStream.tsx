@@ -53,57 +53,73 @@ export default function LiveIterationStream({
   const scrollRef = useRef<HTMLDivElement>(null);
   const entryIdRef = useRef(0);
 
-  const processStream = useCallback(async (signal: AbortSignal) => {
-    const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow/stream`;
+  // Reset state on new connection (state-during-render pattern)
+  const [prevStreamKey, setPrevStreamKey] = useState({
+    isRunning,
+    iterationNumber,
+  });
+  if (
+    isRunning !== prevStreamKey.isRunning ||
+    iterationNumber !== prevStreamKey.iterationNumber
+  ) {
+    setPrevStreamKey({ isRunning, iterationNumber });
+    if (isRunning) {
+      setEntries([]);
+      setIsDone(false);
+    }
+  }
 
-    try {
-      const response = await fetch(url, { signal });
-      if (!response.ok || !response.body) return;
+  const processStream = useCallback(
+    async (signal: AbortSignal) => {
+      const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow/stream`;
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      try {
+        const response = await fetch(url, { signal });
+        if (!response.ok || !response.body) return;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const frame = JSON.parse(trimmed) as WorkflowStreamFrame;
-            if (frame.type === "done") {
-              setIsDone(true);
-            } else if (frame.type === "content") {
-              const id = ++entryIdRef.current;
-              setEntries((prev) => [...prev, { id, frame }]);
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const frame = JSON.parse(trimmed) as WorkflowStreamFrame;
+              if (frame.type === "done") {
+                setIsDone(true);
+              } else if (frame.type === "content") {
+                const id = ++entryIdRef.current;
+                setEntries((prev) => [...prev, { id, frame }]);
+              }
+            } catch {
+              // Skip malformed lines
             }
-          } catch {
-            // Skip malformed lines
           }
         }
+      } catch {
+        if (signal.aborted) return;
+        // Connection error — stream will be retried on next SSE trigger
       }
-    } catch (err) {
-      if (signal.aborted) return;
-      // Connection error — stream will be retried on next SSE trigger
-    }
-  }, [projectName, sessionName]);
+    },
+    [projectName, sessionName],
+  );
 
   useEffect(() => {
     if (!isRunning) return;
 
-    // Reset state on new connection
-    setEntries([]);
-    setIsDone(false);
     entryIdRef.current = 0;
-
     const controller = new AbortController();
     abortRef.current = controller;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState calls are async (after await fetch), not synchronous
     void processStream(controller.signal);
 
     return () => {
@@ -132,13 +148,9 @@ export default function LiveIterationStream({
           }
           return null;
         })}
-        {isDone && (
-          <div className="stream-done">Iteration complete</div>
-        )}
+        {isDone && <div className="stream-done">Iteration complete</div>}
         {entries.length === 0 && !isDone && (
-          <div className="stream-waiting">
-            Waiting for Claude output...
-          </div>
+          <div className="stream-waiting">Waiting for Claude output...</div>
         )}
       </div>
     </div>

@@ -14,7 +14,9 @@ function createMockStream(frames: WorkflowStreamFrame[]) {
       controller.close();
     },
   });
-  return new Response(readable, { headers: { "Content-Type": "application/x-ndjson" } });
+  return new Response(readable, {
+    headers: { "Content-Type": "application/x-ndjson" },
+  });
 }
 
 describe("LiveIterationStream", () => {
@@ -49,7 +51,9 @@ describe("LiveIterationStream", () => {
       },
     ];
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createMockStream(frames));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      createMockStream(frames),
+    );
 
     let container: HTMLElement;
     await act(async () => {
@@ -84,7 +88,9 @@ describe("LiveIterationStream", () => {
       },
     ];
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createMockStream(frames));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      createMockStream(frames),
+    );
 
     let container: HTMLElement;
     await act(async () => {
@@ -126,7 +132,9 @@ describe("LiveIterationStream", () => {
       { type: "done", reason: "iteration_complete" },
     ];
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createMockStream(frames));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      createMockStream(frames),
+    );
 
     let container: HTMLElement;
     await act(async () => {

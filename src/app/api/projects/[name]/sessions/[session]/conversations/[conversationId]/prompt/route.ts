@@ -62,7 +62,8 @@ export const POST = withTracing(async (request, { params }) => {
   if (session.workflow?.status === "running") {
     return NextResponse.json(
       {
-        error: "Session has an active workflow — prompts are blocked during execution",
+        error:
+          "Session has an active workflow — prompts are blocked during execution",
         code: "WORKFLOW_ACTIVE",
       } satisfies ApiError,
       { status: 409 },

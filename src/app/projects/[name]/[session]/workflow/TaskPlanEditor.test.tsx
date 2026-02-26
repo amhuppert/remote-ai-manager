@@ -41,24 +41,18 @@ describe("TaskPlanEditor", () => {
   // --- Existing features ---
 
   it("renders all tasks", () => {
-    const { container } = render(
-      <TaskPlanEditor tasks={baseTasks} />,
-    );
+    const { container } = render(<TaskPlanEditor tasks={baseTasks} />);
     const items = container.querySelectorAll(".task-plan-item");
     expect(items.length).toBe(3);
   });
 
   it("shows add input when not readOnly", () => {
-    const { container } = render(
-      <TaskPlanEditor tasks={baseTasks} />,
-    );
+    const { container } = render(<TaskPlanEditor tasks={baseTasks} />);
     expect(container.querySelector(".task-plan-add-input")).not.toBeNull();
   });
 
   it("hides add input when readOnly", () => {
-    const { container } = render(
-      <TaskPlanEditor tasks={baseTasks} readOnly />,
-    );
+    const { container } = render(<TaskPlanEditor tasks={baseTasks} readOnly />);
     expect(container.querySelector(".task-plan-add-input")).toBeNull();
   });
 
@@ -67,7 +61,9 @@ describe("TaskPlanEditor", () => {
     const { container } = render(
       <TaskPlanEditor tasks={baseTasks} onTaskAdd={onTaskAdd} />,
     );
-    const input = container.querySelector(".task-plan-add-input") as HTMLInputElement;
+    const input = container.querySelector(
+      ".task-plan-add-input",
+    ) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "New task" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onTaskAdd).toHaveBeenCalledWith("New task", "medium");
@@ -122,7 +118,9 @@ describe("TaskPlanEditor", () => {
     const { container } = render(
       <TaskPlanEditor tasks={baseTasks} onTaskEdit={vi.fn()} />,
     );
-    const descriptions = container.querySelectorAll(".task-plan-item-description");
+    const descriptions = container.querySelectorAll(
+      ".task-plan-item-description",
+    );
     fireEvent.doubleClick(descriptions[0]!);
     const editInput = container.querySelector(".task-plan-edit-input");
     expect(editInput).not.toBeNull();
@@ -133,7 +131,9 @@ describe("TaskPlanEditor", () => {
     const { container } = render(
       <TaskPlanEditor tasks={baseTasks} onTaskEdit={vi.fn()} />,
     );
-    const descriptions = container.querySelectorAll(".task-plan-item-description");
+    const descriptions = container.querySelectorAll(
+      ".task-plan-item-description",
+    );
     // Third task is completed
     fireEvent.doubleClick(descriptions[2]!);
     const editInput = container.querySelector(".task-plan-edit-input");
@@ -144,7 +144,9 @@ describe("TaskPlanEditor", () => {
     const { container } = render(
       <TaskPlanEditor tasks={baseTasks} readOnly onTaskEdit={vi.fn()} />,
     );
-    const descriptions = container.querySelectorAll(".task-plan-item-description");
+    const descriptions = container.querySelectorAll(
+      ".task-plan-item-description",
+    );
     fireEvent.doubleClick(descriptions[0]!);
     expect(container.querySelector(".task-plan-edit-input")).toBeNull();
   });
@@ -154,9 +156,13 @@ describe("TaskPlanEditor", () => {
     const { container } = render(
       <TaskPlanEditor tasks={baseTasks} onTaskEdit={onTaskEdit} />,
     );
-    const descriptions = container.querySelectorAll(".task-plan-item-description");
+    const descriptions = container.querySelectorAll(
+      ".task-plan-item-description",
+    );
     fireEvent.doubleClick(descriptions[0]!);
-    const editInput = container.querySelector(".task-plan-edit-input") as HTMLInputElement;
+    const editInput = container.querySelector(
+      ".task-plan-edit-input",
+    ) as HTMLInputElement;
     fireEvent.change(editInput, { target: { value: "Updated auth" } });
     fireEvent.keyDown(editInput, { key: "Enter" });
     expect(onTaskEdit).toHaveBeenCalledWith("t1", "Updated auth");
@@ -167,9 +173,13 @@ describe("TaskPlanEditor", () => {
     const { container } = render(
       <TaskPlanEditor tasks={baseTasks} onTaskEdit={onTaskEdit} />,
     );
-    const descriptions = container.querySelectorAll(".task-plan-item-description");
+    const descriptions = container.querySelectorAll(
+      ".task-plan-item-description",
+    );
     fireEvent.doubleClick(descriptions[0]!);
-    const editInput = container.querySelector(".task-plan-edit-input") as HTMLInputElement;
+    const editInput = container.querySelector(
+      ".task-plan-edit-input",
+    ) as HTMLInputElement;
     fireEvent.change(editInput, { target: { value: "Changed" } });
     fireEvent.keyDown(editInput, { key: "Escape" });
     expect(onTaskEdit).not.toHaveBeenCalled();
@@ -181,9 +191,13 @@ describe("TaskPlanEditor", () => {
     const { container } = render(
       <TaskPlanEditor tasks={baseTasks} onTaskEdit={onTaskEdit} />,
     );
-    const descriptions = container.querySelectorAll(".task-plan-item-description");
+    const descriptions = container.querySelectorAll(
+      ".task-plan-item-description",
+    );
     fireEvent.doubleClick(descriptions[0]!);
-    const editInput = container.querySelector(".task-plan-edit-input") as HTMLInputElement;
+    const editInput = container.querySelector(
+      ".task-plan-edit-input",
+    ) as HTMLInputElement;
     fireEvent.change(editInput, { target: { value: "Blurred edit" } });
     fireEvent.blur(editInput);
     expect(onTaskEdit).toHaveBeenCalledWith("t1", "Blurred edit");
@@ -194,9 +208,13 @@ describe("TaskPlanEditor", () => {
     const { container } = render(
       <TaskPlanEditor tasks={baseTasks} onTaskEdit={onTaskEdit} />,
     );
-    const descriptions = container.querySelectorAll(".task-plan-item-description");
+    const descriptions = container.querySelectorAll(
+      ".task-plan-item-description",
+    );
     fireEvent.doubleClick(descriptions[0]!);
-    const editInput = container.querySelector(".task-plan-edit-input") as HTMLInputElement;
+    const editInput = container.querySelector(
+      ".task-plan-edit-input",
+    ) as HTMLInputElement;
     fireEvent.change(editInput, { target: { value: "  " } });
     fireEvent.keyDown(editInput, { key: "Enter" });
     expect(onTaskEdit).not.toHaveBeenCalled();

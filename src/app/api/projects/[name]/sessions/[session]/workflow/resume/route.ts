@@ -42,7 +42,9 @@ export const POST = withTracing(async (_request, { params }) => {
     session.workflow.status !== "halted"
   ) {
     return NextResponse.json(
-      { error: "Workflow must be paused or halted to resume" } satisfies ApiError,
+      {
+        error: "Workflow must be paused or halted to resume",
+      } satisfies ApiError,
       { status: 409 },
     );
   }

@@ -51,28 +51,28 @@ export default function ConnectedWorkflowPanel({
 
   // Local objective state for debounced editing
   const [localObjective, setLocalObjective] = useState<string | null>(null);
-  const displayedObjective =
-    localObjective ?? workflow?.objective ?? "";
+  const displayedObjective = localObjective ?? workflow?.objective ?? "";
 
   const handleActivate = useCallback(() => {
     startMutation.mutate(undefined);
   }, [startMutation]);
 
-  const handleObjectiveChange = useCallback(
-    (value: string) => {
-      setLocalObjective(value);
-      // Persist objective by updating the workflow config
-      // The objective is stored on the workflow entity, updated via the main workflow route
-      // For now, we'll persist it when confirming start. The local state handles editing.
-    },
-    [],
-  );
+  const handleObjectiveChange = useCallback((value: string) => {
+    setLocalObjective(value);
+    // Persist objective by updating the workflow config
+    // The objective is stored on the workflow entity, updated via the main workflow route
+    // For now, we'll persist it when confirming start. The local state handles editing.
+  }, []);
 
   const handleConfirmStart = useCallback(() => {
     // If there's a local objective, we need to save it first.
     // The objective is part of the workflow state; update it via the fix-plan/config route
     // or just rely on it being set at creation. For now: use the start mutation with the objective.
-    if (workflow && localObjective !== null && localObjective !== workflow.objective) {
+    if (
+      workflow &&
+      localObjective !== null &&
+      localObjective !== workflow.objective
+    ) {
       // Update objective by re-POSTing to the workflow route — but it already exists.
       // The objective was set at creation time. For editing, we need a separate endpoint.
       // For the MVP, the objective is set at workflow creation and confirmed as-is.

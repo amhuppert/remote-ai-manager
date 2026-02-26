@@ -13,7 +13,9 @@ describe("ConfirmDialog stories", () => {
   it("Default renders title, message, and standard buttons", async () => {
     await Default.run();
     expect(screen.getByText("Confirm Action")).toBeInTheDocument();
-    expect(screen.getByText("Are you sure you want to proceed?")).toBeInTheDocument();
+    expect(
+      screen.getByText("Are you sure you want to proceed?"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Confirm")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });

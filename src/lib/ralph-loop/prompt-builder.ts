@@ -71,9 +71,7 @@ function buildTaskPlanSection(fixPlan: FixPlanTask[]): string {
   }
 
   const activeTasks = getActiveTasksSorted(fixPlan);
-  const completedCount = fixPlan.filter(
-    (t) => t.status === "completed",
-  ).length;
+  const completedCount = fixPlan.filter((t) => t.status === "completed").length;
   const skippedCount = fixPlan.filter((t) => t.status === "skipped").length;
   const totalCount = fixPlan.length;
 
@@ -97,15 +95,15 @@ function buildTaskPlanSection(fixPlan: FixPlanTask[]): string {
           ? "[MED]"
           : "[LOW]";
     const statusLabel = task.status === "in_progress" ? " (in progress)" : "";
-    lines.push(`- ${priorityLabel} [${task.id}] ${task.description}${statusLabel}`);
+    lines.push(
+      `- ${priorityLabel} [${task.id}] ${task.description}${statusLabel}`,
+    );
   }
 
   return lines.join("\n");
 }
 
-function buildPreviousContextSection(
-  ctx: PreviousIterationContext,
-): string {
+function buildPreviousContextSection(ctx: PreviousIterationContext): string {
   const lines: string[] = [];
 
   if (ctx.statusReport) {

@@ -69,8 +69,7 @@ const useSessionsStore = create<SessionsStore>()(
 
 export const useShowCreateModal = () =>
   useSessionsStore((s) => s.showCreateModal);
-export const useDeleteTarget = () =>
-  useSessionsStore((s) => s.deleteTarget);
+export const useDeleteTarget = () => useSessionsStore((s) => s.deleteTarget);
 export const useShowArchivedSessions = () =>
   useSessionsStore((s) => s.showArchived);
 

@@ -40,7 +40,9 @@ export const POST = withTracing(async (_request, { params }) => {
   const paused = requestPause(projectPath, sessionName);
   if (!paused) {
     return NextResponse.json(
-      { error: "Workflow not found in orchestrator registry" } satisfies ApiError,
+      {
+        error: "Workflow not found in orchestrator registry",
+      } satisfies ApiError,
       { status: 409 },
     );
   }

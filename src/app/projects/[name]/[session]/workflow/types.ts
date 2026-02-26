@@ -19,4 +19,8 @@ export type {
 
 // Convenience re-exports for common sub-types
 export type TaskPriority = "high" | "medium" | "low";
-export type WorkType = "implementation" | "testing" | "documentation" | "refactoring";
+export type WorkType =
+  | "implementation"
+  | "testing"
+  | "documentation"
+  | "refactoring";

@@ -373,35 +373,32 @@ describe("deriveSessionStatus", () => {
   it("returns running when workflow status is running", async () => {
     const { deriveSessionStatus } = await import("./conversations");
 
-    const session = makeSessionWith(
-      [makeConvo({ status: "awaiting" })],
-      {
-        workflow: {
-          status: "running",
-          objective: "test",
-          fixPlan: [],
-          config: {
-            maxIterations: 20,
-            iterationTimeoutMs: 3_600_000,
-            circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
-          },
-          circuitBreaker: {
-            state: "closed",
-            consecutiveNoProgress: 0,
-            consecutiveSameError: 0,
-            lastErrorPattern: null,
-            lastProgressIteration: 0,
-          },
-          iterations: [],
-          haltReason: null,
-          createdAt: "2024-01-01T00:00:00Z",
-          startedAt: "2024-01-01T00:00:00Z",
-          completedAt: null,
-          totalCostUsd: 0,
-          totalDurationMs: 0,
+    const session = makeSessionWith([makeConvo({ status: "awaiting" })], {
+      workflow: {
+        status: "running",
+        objective: "test",
+        fixPlan: [],
+        config: {
+          maxIterations: 20,
+          iterationTimeoutMs: 3_600_000,
+          circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
         },
+        circuitBreaker: {
+          state: "closed",
+          consecutiveNoProgress: 0,
+          consecutiveSameError: 0,
+          lastErrorPattern: null,
+          lastProgressIteration: 0,
+        },
+        iterations: [],
+        haltReason: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        startedAt: "2024-01-01T00:00:00Z",
+        completedAt: null,
+        totalCostUsd: 0,
+        totalDurationMs: 0,
       },
-    );
+    });
 
     expect(deriveSessionStatus(session)).toBe("running");
   });
@@ -409,35 +406,32 @@ describe("deriveSessionStatus", () => {
   it("returns awaiting when workflow status is paused", async () => {
     const { deriveSessionStatus } = await import("./conversations");
 
-    const session = makeSessionWith(
-      [makeConvo({ status: "new" })],
-      {
-        workflow: {
-          status: "paused",
-          objective: "test",
-          fixPlan: [],
-          config: {
-            maxIterations: 20,
-            iterationTimeoutMs: 3_600_000,
-            circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
-          },
-          circuitBreaker: {
-            state: "closed",
-            consecutiveNoProgress: 0,
-            consecutiveSameError: 0,
-            lastErrorPattern: null,
-            lastProgressIteration: 0,
-          },
-          iterations: [],
-          haltReason: null,
-          createdAt: "2024-01-01T00:00:00Z",
-          startedAt: "2024-01-01T00:00:00Z",
-          completedAt: null,
-          totalCostUsd: 0,
-          totalDurationMs: 0,
+    const session = makeSessionWith([makeConvo({ status: "new" })], {
+      workflow: {
+        status: "paused",
+        objective: "test",
+        fixPlan: [],
+        config: {
+          maxIterations: 20,
+          iterationTimeoutMs: 3_600_000,
+          circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
         },
+        circuitBreaker: {
+          state: "closed",
+          consecutiveNoProgress: 0,
+          consecutiveSameError: 0,
+          lastErrorPattern: null,
+          lastProgressIteration: 0,
+        },
+        iterations: [],
+        haltReason: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        startedAt: "2024-01-01T00:00:00Z",
+        completedAt: null,
+        totalCostUsd: 0,
+        totalDurationMs: 0,
       },
-    );
+    });
 
     expect(deriveSessionStatus(session)).toBe("awaiting");
   });
@@ -445,35 +439,32 @@ describe("deriveSessionStatus", () => {
   it("falls through to conversation status for non-active workflow states", async () => {
     const { deriveSessionStatus } = await import("./conversations");
 
-    const session = makeSessionWith(
-      [makeConvo({ status: "running" })],
-      {
-        workflow: {
-          status: "completed",
-          objective: "test",
-          fixPlan: [],
-          config: {
-            maxIterations: 20,
-            iterationTimeoutMs: 3_600_000,
-            circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
-          },
-          circuitBreaker: {
-            state: "closed",
-            consecutiveNoProgress: 0,
-            consecutiveSameError: 0,
-            lastErrorPattern: null,
-            lastProgressIteration: 0,
-          },
-          iterations: [],
-          haltReason: { type: "plan_complete" },
-          createdAt: "2024-01-01T00:00:00Z",
-          startedAt: "2024-01-01T00:00:00Z",
-          completedAt: "2024-01-02T00:00:00Z",
-          totalCostUsd: 1.5,
-          totalDurationMs: 60000,
+    const session = makeSessionWith([makeConvo({ status: "running" })], {
+      workflow: {
+        status: "completed",
+        objective: "test",
+        fixPlan: [],
+        config: {
+          maxIterations: 20,
+          iterationTimeoutMs: 3_600_000,
+          circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
         },
+        circuitBreaker: {
+          state: "closed",
+          consecutiveNoProgress: 0,
+          consecutiveSameError: 0,
+          lastErrorPattern: null,
+          lastProgressIteration: 0,
+        },
+        iterations: [],
+        haltReason: { type: "plan_complete" },
+        createdAt: "2024-01-01T00:00:00Z",
+        startedAt: "2024-01-01T00:00:00Z",
+        completedAt: "2024-01-02T00:00:00Z",
+        totalCostUsd: 1.5,
+        totalDurationMs: 60000,
       },
-    );
+    });
 
     expect(deriveSessionStatus(session)).toBe("running");
   });

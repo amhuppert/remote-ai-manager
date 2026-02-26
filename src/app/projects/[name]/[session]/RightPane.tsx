@@ -32,7 +32,6 @@ export default function RightPane({
   const switchRightPaneTab = useSwitchRightPaneTab();
 
   const isFocusMode = creationMode === "focus";
-  const showTabs = isFocusMode || hasWorkflow;
 
   const focusDocQuery = useFocusDocQuery(projectName, sessionName, {
     enabled: isFocusMode,

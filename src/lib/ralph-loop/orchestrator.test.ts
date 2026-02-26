@@ -71,7 +71,9 @@ vi.mock("../conversations", () => ({
 // Transcript mocks
 vi.mock("../transcript", () => ({
   appendTranscriptEntry: vi.fn(async () => {}),
-  getTranscriptPath: vi.fn(async (id: string) => `/tmp/transcripts/${id}.jsonl`),
+  getTranscriptPath: vi.fn(
+    async (id: string) => `/tmp/transcripts/${id}.jsonl`,
+  ),
 }));
 
 // SSE broadcast mock
@@ -103,7 +105,9 @@ let mockExitDecision: { action: string; reason?: Record<string, unknown> } = {
 };
 vi.mock("./exit-detector", () => ({
   evaluate: vi.fn(() => mockExitDecision),
-  isSuccessfulHalt: vi.fn((reason: { type: string }) => reason.type === "plan_complete"),
+  isSuccessfulHalt: vi.fn(
+    (reason: { type: string }) => reason.type === "plan_complete",
+  ),
 }));
 
 // Circuit breaker mock
@@ -132,11 +136,15 @@ vi.mock("./fix-plan-manager", () => ({
 vi.mock("./orchestrator-registry", () => {
   const entries = new Map<string, { pauseRequested: boolean }>();
   return {
-    register: vi.fn((_pp: string, _sn: string, entry: { pauseRequested: boolean }) => {
-      entries.set(`${_pp}::${_sn}`, entry);
-    }),
+    register: vi.fn(
+      (_pp: string, _sn: string, entry: { pauseRequested: boolean }) => {
+        entries.set(`${_pp}::${_sn}`, entry);
+      },
+    ),
     get: vi.fn((_pp: string, _sn: string) => entries.get(`${_pp}::${_sn}`)),
-    remove: vi.fn((_pp: string, _sn: string) => entries.delete(`${_pp}::${_sn}`)),
+    remove: vi.fn((_pp: string, _sn: string) =>
+      entries.delete(`${_pp}::${_sn}`),
+    ),
   };
 });
 
@@ -156,7 +164,9 @@ vi.mock("./prompt-builder", () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeWorkflow(overrides?: Partial<RalphLoopWorkflow>): RalphLoopWorkflow {
+function makeWorkflow(
+  overrides?: Partial<RalphLoopWorkflow>,
+): RalphLoopWorkflow {
   return {
     status: "running",
     objective: "Implement auth system",
@@ -291,11 +301,9 @@ describe("Orchestrator", () => {
 
     await new Promise((r) => setTimeout(r, 200));
 
-    expect(createConversation).toHaveBeenCalledWith(
-      PROJECT,
-      SESSION_NAME,
-      { role: "iteration" },
-    );
+    expect(createConversation).toHaveBeenCalledWith(PROJECT, SESSION_NAME, {
+      role: "iteration",
+    });
   });
 
   it("calls the prompt builder with workflow context", async () => {
@@ -365,7 +373,8 @@ describe("Orchestrator", () => {
     });
 
     const { startOrchestrator } = await import("./orchestrator");
-    const { captureSnapshot, computeDiff } = await import("./progress-detector");
+    const { captureSnapshot, computeDiff } =
+      await import("./progress-detector");
 
     const session = sessions.get(`${PROJECT}::${SESSION_NAME}`)!;
     startOrchestrator({
@@ -377,7 +386,10 @@ describe("Orchestrator", () => {
     await new Promise((r) => setTimeout(r, 200));
 
     expect(captureSnapshot).toHaveBeenCalledWith(session.worktreePath);
-    expect(computeDiff).toHaveBeenCalledWith(session.worktreePath, "snapshot-hash");
+    expect(computeDiff).toHaveBeenCalledWith(
+      session.worktreePath,
+      "snapshot-hash",
+    );
   });
 
   it("evaluates exit conditions after each iteration", async () => {
@@ -430,9 +442,11 @@ describe("Orchestrator", () => {
     await new Promise((r) => setTimeout(r, 300));
 
     // Should have broadcast workflow-status at least twice (running + halt)
-    const statusCalls = vi.mocked(broadcast).mock.calls.filter(
-      (call) => (call[0] as { type: string }).type === "workflow-status",
-    );
+    const statusCalls = vi
+      .mocked(broadcast)
+      .mock.calls.filter(
+        (call) => (call[0] as { type: string }).type === "workflow-status",
+      );
     expect(statusCalls.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -500,9 +514,19 @@ describe("Orchestrator", () => {
       callCount++;
       // Second call to get() — simulate pause requested
       if (callCount > 1) {
-        return { pauseRequested: true, projectPath: PROJECT, sessionName: SESSION_NAME, abortController: new AbortController() };
+        return {
+          pauseRequested: true,
+          projectPath: PROJECT,
+          sessionName: SESSION_NAME,
+          abortController: new AbortController(),
+        };
       }
-      return { pauseRequested: false, projectPath: PROJECT, sessionName: SESSION_NAME, abortController: new AbortController() };
+      return {
+        pauseRequested: false,
+        projectPath: PROJECT,
+        sessionName: SESSION_NAME,
+        abortController: new AbortController(),
+      };
     });
 
     const { startOrchestrator } = await import("./orchestrator");

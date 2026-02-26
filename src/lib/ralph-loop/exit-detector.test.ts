@@ -44,7 +44,12 @@ function makeIteration(
     durationMs: 60000,
     costUsd: 0.5,
     turns: 10,
-    gitMetrics: { filesChanged: 1, linesAdded: 10, linesRemoved: 2, changedFiles: ["a.ts"] },
+    gitMetrics: {
+      filesChanged: 1,
+      linesAdded: 10,
+      linesRemoved: 2,
+      changedFiles: ["a.ts"],
+    },
     statusReport: null,
     tasksCompleted: [],
     tasksSkipped: [],
@@ -169,9 +174,7 @@ describe("ExitDetector", () => {
 
   describe("circuit_breaker", () => {
     it("halts when circuit breaker is open", () => {
-      const result = evaluate(
-        makeParams({ circuitBreakerState: "open" }),
-      );
+      const result = evaluate(makeParams({ circuitBreakerState: "open" }));
       expect(result).toEqual({
         action: "halt",
         reason: { type: "circuit_breaker", reason: "no_progress" },
@@ -179,9 +182,7 @@ describe("ExitDetector", () => {
     });
 
     it("does not halt when half_open", () => {
-      const result = evaluate(
-        makeParams({ circuitBreakerState: "half_open" }),
-      );
+      const result = evaluate(makeParams({ circuitBreakerState: "half_open" }));
       expect(result.action).toBe("continue");
     });
   });
@@ -466,9 +467,7 @@ describe("ExitDetector", () => {
     });
 
     it("returns true when all skipped", () => {
-      expect(
-        isAllTasksResolved([makeTask({ status: "skipped" })]),
-      ).toBe(true);
+      expect(isAllTasksResolved([makeTask({ status: "skipped" })])).toBe(true);
     });
 
     it("returns false when any pending", () => {
@@ -487,11 +486,17 @@ describe("ExitDetector", () => {
     });
 
     it("all other reasons are not successful", () => {
-      expect(isSuccessfulHalt({ type: "iteration_cap", maxIterations: 20 })).toBe(false);
-      expect(isSuccessfulHalt({ type: "circuit_breaker", reason: "no_progress" })).toBe(false);
+      expect(
+        isSuccessfulHalt({ type: "iteration_cap", maxIterations: 20 }),
+      ).toBe(false);
+      expect(
+        isSuccessfulHalt({ type: "circuit_breaker", reason: "no_progress" }),
+      ).toBe(false);
       expect(isSuccessfulHalt({ type: "permission_denied" })).toBe(false);
       expect(isSuccessfulHalt({ type: "test_saturation" })).toBe(false);
-      expect(isSuccessfulHalt({ type: "stalled_exit_signal", remainingTasks: 3 })).toBe(false);
+      expect(
+        isSuccessfulHalt({ type: "stalled_exit_signal", remainingTasks: 3 }),
+      ).toBe(false);
       expect(isSuccessfulHalt({ type: "aborted" })).toBe(false);
     });
   });

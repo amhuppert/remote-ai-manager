@@ -36,7 +36,10 @@ function makeIteration(overrides: Partial<IterationMeta> = {}): IterationMeta {
 
 describe("IterationTimeline", () => {
   it("renders all iteration cards", () => {
-    const iterations = [makeIteration(), makeIteration({ iterationNumber: 2, conversationId: "conv-002" })];
+    const iterations = [
+      makeIteration(),
+      makeIteration({ iterationNumber: 2, conversationId: "conv-002" }),
+    ];
     const { container } = render(<IterationTimeline iterations={iterations} />);
     const cards = container.querySelectorAll(".iteration-card");
     expect(cards.length).toBe(2);
@@ -97,7 +100,9 @@ describe("IterationTimeline", () => {
     );
     const toggle = container.querySelector(".iteration-card-expand")!;
     fireEvent.click(toggle);
-    const transcriptLink = container.querySelector(".iteration-transcript-link");
+    const transcriptLink = container.querySelector(
+      ".iteration-transcript-link",
+    );
     expect(transcriptLink).not.toBeNull();
     expect(transcriptLink!.textContent).toContain("View transcript");
   });
@@ -124,9 +129,7 @@ describe("IterationTimeline", () => {
         changedFiles: [],
       },
     });
-    const { container } = render(
-      <IterationTimeline iterations={[iter]} />,
-    );
+    const { container } = render(<IterationTimeline iterations={[iter]} />);
     const toggle = container.querySelector(".iteration-card-expand")!;
     fireEvent.click(toggle);
     const noFiles = container.querySelector(".iteration-diff-empty");

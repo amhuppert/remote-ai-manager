@@ -37,7 +37,13 @@ function negotiateMimeType(): string | undefined {
 export function useVoiceRecorder(
   options: UseVoiceRecorderOptions,
 ): UseVoiceRecorderReturn {
-  const { projectName, maxDuration = 300, getContext, onResult, onError } = options;
+  const {
+    projectName,
+    maxDuration = 300,
+    getContext,
+    onResult,
+    onError,
+  } = options;
 
   const [state, setState] = useState<RecordingState>("idle");
   const [elapsedTime, setElapsedTime] = useState(0);

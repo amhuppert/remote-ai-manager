@@ -8,27 +8,162 @@ import type { FixPlanTask } from "./types";
 // ---------------------------------------------------------------------------
 
 const pendingTasks: FixPlanTask[] = [
-  { id: "t1", description: "Implement user authentication with JWT tokens", priority: "high", status: "pending", createdAt: "2026-02-25T10:00:00Z", completedAt: null, skipReason: null, addedByIteration: null },
-  { id: "t2", description: "Create database schema for user profiles", priority: "high", status: "pending", createdAt: "2026-02-25T10:00:00Z", completedAt: null, skipReason: null, addedByIteration: null },
-  { id: "t3", description: "Add input validation for registration form", priority: "medium", status: "pending", createdAt: "2026-02-25T10:00:00Z", completedAt: null, skipReason: null, addedByIteration: null },
-  { id: "t4", description: "Write integration tests for auth endpoints", priority: "medium", status: "pending", createdAt: "2026-02-25T10:00:00Z", completedAt: null, skipReason: null, addedByIteration: null },
-  { id: "t5", description: "Add rate limiting to login endpoint", priority: "low", status: "pending", createdAt: "2026-02-25T10:00:00Z", completedAt: null, skipReason: null, addedByIteration: null },
+  {
+    id: "t1",
+    description: "Implement user authentication with JWT tokens",
+    priority: "high",
+    status: "pending",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: null,
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t2",
+    description: "Create database schema for user profiles",
+    priority: "high",
+    status: "pending",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: null,
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t3",
+    description: "Add input validation for registration form",
+    priority: "medium",
+    status: "pending",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: null,
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t4",
+    description: "Write integration tests for auth endpoints",
+    priority: "medium",
+    status: "pending",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: null,
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t5",
+    description: "Add rate limiting to login endpoint",
+    priority: "low",
+    status: "pending",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: null,
+    skipReason: null,
+    addedByIteration: null,
+  },
 ];
 
 const mixedTasks: FixPlanTask[] = [
-  { id: "t1", description: "Implement user authentication with JWT tokens", priority: "high", status: "completed", createdAt: "2026-02-25T10:00:00Z", completedAt: "2026-02-25T10:30:00Z", skipReason: null, addedByIteration: null },
-  { id: "t2", description: "Create database schema for user profiles", priority: "high", status: "completed", createdAt: "2026-02-25T10:00:00Z", completedAt: "2026-02-25T10:45:00Z", skipReason: null, addedByIteration: null },
-  { id: "t3", description: "Add input validation for registration form", priority: "medium", status: "in_progress", createdAt: "2026-02-25T10:00:00Z", completedAt: null, skipReason: null, addedByIteration: null },
-  { id: "t4", description: "Write integration tests for auth endpoints", priority: "medium", status: "pending", createdAt: "2026-02-25T10:00:00Z", completedAt: null, skipReason: null, addedByIteration: null },
-  { id: "t5", description: "Add rate limiting to login endpoint", priority: "low", status: "skipped", createdAt: "2026-02-25T10:00:00Z", completedAt: null, skipReason: "Already handled by API gateway middleware", addedByIteration: null },
-  { id: "t6", description: "Fix CORS configuration for auth callbacks", priority: "high", status: "completed", createdAt: "2026-02-25T11:00:00Z", completedAt: "2026-02-25T11:15:00Z", skipReason: null, addedByIteration: 3 },
+  {
+    id: "t1",
+    description: "Implement user authentication with JWT tokens",
+    priority: "high",
+    status: "completed",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: "2026-02-25T10:30:00Z",
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t2",
+    description: "Create database schema for user profiles",
+    priority: "high",
+    status: "completed",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: "2026-02-25T10:45:00Z",
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t3",
+    description: "Add input validation for registration form",
+    priority: "medium",
+    status: "in_progress",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: null,
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t4",
+    description: "Write integration tests for auth endpoints",
+    priority: "medium",
+    status: "pending",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: null,
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t5",
+    description: "Add rate limiting to login endpoint",
+    priority: "low",
+    status: "skipped",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: null,
+    skipReason: "Already handled by API gateway middleware",
+    addedByIteration: null,
+  },
+  {
+    id: "t6",
+    description: "Fix CORS configuration for auth callbacks",
+    priority: "high",
+    status: "completed",
+    createdAt: "2026-02-25T11:00:00Z",
+    completedAt: "2026-02-25T11:15:00Z",
+    skipReason: null,
+    addedByIteration: 3,
+  },
 ];
 
 const allCompleteTasks: FixPlanTask[] = [
-  { id: "t1", description: "Implement user authentication", priority: "high", status: "completed", createdAt: "2026-02-25T10:00:00Z", completedAt: "2026-02-25T10:30:00Z", skipReason: null, addedByIteration: null },
-  { id: "t2", description: "Create database schema", priority: "high", status: "completed", createdAt: "2026-02-25T10:00:00Z", completedAt: "2026-02-25T11:00:00Z", skipReason: null, addedByIteration: null },
-  { id: "t3", description: "Add input validation", priority: "medium", status: "completed", createdAt: "2026-02-25T10:00:00Z", completedAt: "2026-02-25T11:30:00Z", skipReason: null, addedByIteration: null },
-  { id: "t4", description: "Legacy migration helper", priority: "low", status: "skipped", createdAt: "2026-02-25T10:00:00Z", completedAt: null, skipReason: "Not needed for v2 architecture", addedByIteration: null },
+  {
+    id: "t1",
+    description: "Implement user authentication",
+    priority: "high",
+    status: "completed",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: "2026-02-25T10:30:00Z",
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t2",
+    description: "Create database schema",
+    priority: "high",
+    status: "completed",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: "2026-02-25T11:00:00Z",
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t3",
+    description: "Add input validation",
+    priority: "medium",
+    status: "completed",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: "2026-02-25T11:30:00Z",
+    skipReason: null,
+    addedByIteration: null,
+  },
+  {
+    id: "t4",
+    description: "Legacy migration helper",
+    priority: "low",
+    status: "skipped",
+    createdAt: "2026-02-25T10:00:00Z",
+    completedAt: null,
+    skipReason: "Not needed for v2 architecture",
+    addedByIteration: null,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -47,7 +182,13 @@ const meta = {
   },
   decorators: [
     (Story) => (
-      <div style={{ maxWidth: 560, background: "var(--bg-base)", padding: "var(--space-md)" }}>
+      <div
+        style={{
+          maxWidth: 560,
+          background: "var(--bg-base)",
+          padding: "var(--space-md)",
+        }}
+      >
         <Story />
       </div>
     ),

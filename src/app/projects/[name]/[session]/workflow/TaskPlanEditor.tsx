@@ -96,23 +96,17 @@ export default function TaskPlanEditor({
 
   // --- Drag-to-reorder ---
 
-  const handleDragStart = useCallback(
-    (e: React.DragEvent, taskId: string) => {
-      dragSourceId.current = taskId;
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", taskId);
-    },
-    [],
-  );
+  const handleDragStart = useCallback((e: React.DragEvent, taskId: string) => {
+    dragSourceId.current = taskId;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", taskId);
+  }, []);
 
-  const handleDragOver = useCallback(
-    (e: React.DragEvent, taskId: string) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      setDragOverId(taskId);
-    },
-    [],
-  );
+  const handleDragOver = useCallback((e: React.DragEvent, taskId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverId(taskId);
+  }, []);
 
   const handleDragLeave = useCallback(() => {
     setDragOverId(null);
@@ -189,19 +183,13 @@ export default function TaskPlanEditor({
                 className={`task-plan-item ${task.status}${isDragOver ? " drag-over" : ""}`}
                 draggable={isDraggable}
                 onDragStart={
-                  isDraggable
-                    ? (e) => handleDragStart(e, task.id)
-                    : undefined
+                  isDraggable ? (e) => handleDragStart(e, task.id) : undefined
                 }
                 onDragOver={
-                  canDrag
-                    ? (e) => handleDragOver(e, task.id)
-                    : undefined
+                  canDrag ? (e) => handleDragOver(e, task.id) : undefined
                 }
                 onDragLeave={canDrag ? handleDragLeave : undefined}
-                onDrop={
-                  canDrag ? (e) => handleDrop(e, task.id) : undefined
-                }
+                onDrop={canDrag ? (e) => handleDrop(e, task.id) : undefined}
                 onDragEnd={canDrag ? handleDragEnd : undefined}
               >
                 {isDraggable && (
@@ -283,9 +271,7 @@ export default function TaskPlanEditor({
           <select
             className="task-plan-add-priority"
             value={newTaskPriority}
-            onChange={(e) =>
-              setNewTaskPriority(e.target.value as TaskPriority)
-            }
+            onChange={(e) => setNewTaskPriority(e.target.value as TaskPriority)}
           >
             <option value="high">High</option>
             <option value="medium">Medium</option>

@@ -9,11 +9,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import type {
-  SessionState,
-  RalphLoopWorkflow,
-  FixPlanTask,
-} from "@/types";
+import type { SessionState, RalphLoopWorkflow, FixPlanTask } from "@/types";
 import { getSession, updateSession } from "../state";
 import { createLogger } from "../logging";
 import { readConversationMessages } from "../transcript";
@@ -77,7 +73,10 @@ async function generatePlan(
   const prompt = buildPlanningPrompt(workflow.objective, context);
 
   // Capture plan via MCP tool
-  let generatedTasks: Array<{ description: string; priority: "high" | "medium" | "low" }> = [];
+  let generatedTasks: Array<{
+    description: string;
+    priority: "high" | "medium" | "low";
+  }> = [];
 
   const planToolServer = createSdkMcpServer({
     name: "ralph-plan-generator",
@@ -87,18 +86,28 @@ async function generatePlan(
         "submit_plan",
         "Submit the generated task plan. Call this exactly once with the list of tasks.",
         {
-          tasks: z.array(z.object({
-            description: z.string().describe("Clear, actionable task description"),
-            priority: z.enum(["high", "medium", "low"]).describe("Task priority"),
-          })).describe("Array of tasks for the fix plan"),
+          tasks: z
+            .array(
+              z.object({
+                description: z
+                  .string()
+                  .describe("Clear, actionable task description"),
+                priority: z
+                  .enum(["high", "medium", "low"])
+                  .describe("Task priority"),
+              }),
+            )
+            .describe("Array of tasks for the fix plan"),
         },
         async (args) => {
           generatedTasks = args.tasks;
           return {
-            content: [{
-              type: "text" as const,
-              text: `Plan submitted with ${args.tasks.length} tasks.`,
-            }],
+            content: [
+              {
+                type: "text" as const,
+                text: `Plan submitted with ${args.tasks.length} tasks.`,
+              },
+            ],
           };
         },
       ),
@@ -131,7 +140,8 @@ async function generatePlan(
           if (toolName === "AskUserQuestion") {
             return {
               behavior: "deny" as const,
-              message: "Plan generation is automated. Submit the plan directly.",
+              message:
+                "Plan generation is automated. Submit the plan directly.",
             };
           }
           return { behavior: "allow" as const, updatedInput: {} };
@@ -140,7 +150,8 @@ async function generatePlan(
     });
 
     // Consume the stream
-    for await (const _message of q) {
+    for await (const _ of q) {
+       
       // Just consume — we only care about the tool call result
     }
   } catch (err) {
@@ -201,9 +212,7 @@ async function generatePlan(
 // Helpers
 // ============================================================
 
-async function gatherSessionContext(
-  session: SessionState,
-): Promise<string> {
+async function gatherSessionContext(session: SessionState): Promise<string> {
   // Find the most recent non-iteration conversation with a transcript
   const candidates = [...session.conversations]
     .filter((c) => c.role !== "iteration" && c.transcriptPath)

@@ -39,7 +39,9 @@ export const POST = withTracing(async (_request, { params }) => {
 
   if (session.workflow.status !== "planning") {
     return NextResponse.json(
-      { error: "Workflow can only be confirmed during planning phase" } satisfies ApiError,
+      {
+        error: "Workflow can only be confirmed during planning phase",
+      } satisfies ApiError,
       { status: 409 },
     );
   }

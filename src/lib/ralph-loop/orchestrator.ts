@@ -110,7 +110,7 @@ async function runLoop(
     broadcastWorkflowStatus(projectPath, projectName, sessionName);
 
     // Main iteration loop
-    // eslint-disable-next-line no-constant-condition
+
     while (true) {
       // Check for pause between iterations
       const entry = getOrchestrator(projectPath, sessionName);
@@ -388,10 +388,7 @@ async function runIteration(
         );
       }
     } catch (err) {
-      if (
-        iterationAbort.signal.aborted &&
-        !abortController.signal.aborted
-      ) {
+      if (iterationAbort.signal.aborted && !abortController.signal.aborted) {
         // Timeout
         iterationStatus = "timeout";
         errors.push(
@@ -411,8 +408,7 @@ async function runIteration(
       } else {
         // SDK error
         iterationStatus = "error";
-        const errorMsg =
-          err instanceof Error ? err.message : String(err);
+        const errorMsg = err instanceof Error ? err.message : String(err);
         errors.push(errorMsg);
         logger.error("orchestrator.iteration_error", {
           sessionName,
@@ -437,14 +433,9 @@ async function runIteration(
     if (release) release();
 
     // Mark conversation as awaiting
-    await mutateConversation(
-      projectPath,
-      sessionName,
-      conversationId,
-      (c) => {
-        c.status = "awaiting";
-      },
-    ).catch(() => {});
+    await mutateConversation(projectPath, sessionName, conversationId, (c) => {
+      c.status = "awaiting";
+    }).catch(() => {});
   }
 
   // Capture post-iteration git diff
@@ -452,8 +443,7 @@ async function runIteration(
 
   // Classify progress
   const tasksCompletedCount =
-    taskMutations.completedIds.length +
-    taskMutations.skippedIds.length;
+    taskMutations.completedIds.length + taskMutations.skippedIds.length;
   const progressResult = classifyProgress(
     gitMetrics,
     statusReport,
@@ -706,13 +696,13 @@ async function processSDKMessage(
 // Helpers
 // ============================================================
 
-function buildPreviousContext(
-  workflow: RalphLoopWorkflow,
-): {
-  statusReport?: ReportStatusInput;
-  errors?: string[];
-  gitMetrics?: GitIterationMetrics;
-} | undefined {
+function buildPreviousContext(workflow: RalphLoopWorkflow):
+  | {
+      statusReport?: ReportStatusInput;
+      errors?: string[];
+      gitMetrics?: GitIterationMetrics;
+    }
+  | undefined {
   const lastIteration =
     workflow.iterations.length > 0
       ? workflow.iterations[workflow.iterations.length - 1]
@@ -730,10 +720,7 @@ function buildPreviousContext(
     context.statusReport = lastIteration.statusReport;
   }
 
-  if (
-    lastIteration.status === "error" ||
-    lastIteration.status === "timeout"
-  ) {
+  if (lastIteration.status === "error" || lastIteration.status === "timeout") {
     context.errors = [
       `Previous iteration ${lastIteration.status}: iteration ${lastIteration.iterationNumber}`,
     ];

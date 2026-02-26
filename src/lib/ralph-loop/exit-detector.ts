@@ -23,13 +23,8 @@ export interface ExitEvaluationParams {
  * Pure function: takes iteration history and current state, returns exit decision.
  */
 export function evaluate(params: ExitEvaluationParams): ExitDecision {
-  const {
-    fixPlan,
-    iterations,
-    currentIteration,
-    circuitBreakerState,
-    config,
-  } = params;
+  const { fixPlan, iterations, currentIteration, circuitBreakerState, config } =
+    params;
 
   // 1. Plan complete — all tasks resolved (completed or skipped)
   if (isAllTasksResolved(fixPlan)) {
@@ -91,7 +86,10 @@ function hasConsecutivePermissionDenials(
     const iter = iterations[i];
     if (!iter) break;
     const report = iter.statusReport;
-    if (report?.status === "blocked" && report.work_summary.toLowerCase().includes("permission")) {
+    if (
+      report?.status === "blocked" &&
+      report.work_summary.toLowerCase().includes("permission")
+    ) {
       consecutive++;
       if (consecutive >= threshold) return true;
     } else {

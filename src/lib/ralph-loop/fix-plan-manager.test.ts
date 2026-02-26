@@ -92,9 +92,7 @@ describe("FixPlanManager", () => {
 
     it("reports not found IDs", () => {
       const plan = [makeTask({ id: "t1" })];
-      const result = skipTasks(plan, [
-        { taskId: "t-nope", reason: "Gone" },
-      ]);
+      const result = skipTasks(plan, [{ taskId: "t-nope", reason: "Gone" }]);
       expect(result.skippedIds).toEqual([]);
       expect(result.notFound).toEqual(["t-nope"]);
     });

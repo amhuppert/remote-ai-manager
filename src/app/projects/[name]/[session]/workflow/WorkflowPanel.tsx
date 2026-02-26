@@ -131,8 +131,7 @@ function getHaltDisplay(reason: HaltReason): {
     case "permission_denied":
       return {
         title: "Permission Denied",
-        description:
-          "Claude was denied tool access in consecutive iterations.",
+        description: "Claude was denied tool access in consecutive iterations.",
         icon: "\uD83D\uDD12",
         classification: "problem",
       };
@@ -266,9 +265,7 @@ export default function WorkflowPanel({
       </div>
 
       {/* Footer — control bar for active states */}
-      {(status === "running" ||
-        status === "paused" ||
-        status === "halted") && (
+      {(status === "running" || status === "paused" || status === "halted") && (
         <div className="workflow-panel-footer">
           <ControlBar
             status={status}
@@ -419,9 +416,7 @@ function MonitoringView({
   const isPaused = status === "paused";
   const currentIteration = iterations.length;
 
-  const completedTasks = fixPlan.filter(
-    (t) => t.status === "completed",
-  ).length;
+  const completedTasks = fixPlan.filter((t) => t.status === "completed").length;
   const skippedTasks = fixPlan.filter((t) => t.status === "skipped").length;
   const resolvedTasks = completedTasks + skippedTasks;
   const totalTasks = fixPlan.length;
@@ -435,7 +430,9 @@ function MonitoringView({
         <div className="workflow-metric">
           <span className="workflow-metric-label">Iteration</span>
           <span className="workflow-iteration-counter">
-            <span className="current">{String(currentIteration).padStart(2, "0")}</span>
+            <span className="current">
+              {String(currentIteration).padStart(2, "0")}
+            </span>
             <span className="separator">/</span>
             <span className="max">{config.maxIterations}</span>
           </span>
@@ -493,7 +490,8 @@ function MonitoringView({
 
       {isPaused && (
         <div className="workflow-between-iterations">
-          Workflow paused after iteration {currentIteration}. Edit tasks or config, then resume.
+          Workflow paused after iteration {currentIteration}. Edit tasks or
+          config, then resume.
         </div>
       )}
 
@@ -540,7 +538,12 @@ function CompletionView({
 }) {
   const halt = workflow.haltReason
     ? getHaltDisplay(workflow.haltReason)
-    : { title: "Unknown", description: "", icon: "?", classification: "neutral" as const };
+    : {
+        title: "Unknown",
+        description: "",
+        icon: "?",
+        classification: "neutral" as const,
+      };
 
   const bannerClass =
     halt.classification === "success"
@@ -563,9 +566,7 @@ function CompletionView({
         <span className="workflow-completion-icon">{halt.icon}</span>
         <div className="workflow-completion-text">
           <span className="workflow-completion-title">{halt.title}</span>
-          <span className="workflow-completion-reason">
-            {halt.description}
-          </span>
+          <span className="workflow-completion-reason">{halt.description}</span>
         </div>
       </div>
 
@@ -616,10 +617,7 @@ function CompletionView({
           </span>
           <div className="workflow-recovery-actions">
             {workflow.haltReason?.type === "circuit_breaker" && (
-              <button
-                className="btn btn-sm"
-                onClick={onResetCircuitBreaker}
-              >
+              <button className="btn btn-sm" onClick={onResetCircuitBreaker}>
                 Reset Circuit Breaker
               </button>
             )}
@@ -678,10 +676,7 @@ function ControlBar({
       {(status === "paused" || status === "halted") && (
         <>
           {circuitBreakerState === "open" && (
-            <button
-              className="btn btn-sm"
-              onClick={onResetCircuitBreaker}
-            >
+            <button className="btn btn-sm" onClick={onResetCircuitBreaker}>
               Reset CB
             </button>
           )}

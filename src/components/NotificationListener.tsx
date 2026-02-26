@@ -95,8 +95,7 @@ export default function NotificationListener(): null {
     es.addEventListener("workflow-iteration-complete", (event) => {
       try {
         const parsed = JSON.parse(event.data);
-        const result =
-          workflowIterationCompleteEventSchema.safeParse(parsed);
+        const result = workflowIterationCompleteEventSchema.safeParse(parsed);
         if (!result.success) return;
         handleIterationComplete(result.data);
 

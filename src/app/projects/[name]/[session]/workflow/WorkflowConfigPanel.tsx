@@ -99,7 +99,9 @@ export default function WorkflowConfigPanel({
               onChange={(e) => handleChange(field, e.target.value)}
             />
             {!isValid && (
-              <span className="workflow-config-error">{field.errorMessage}</span>
+              <span className="workflow-config-error">
+                {field.errorMessage}
+              </span>
             )}
           </div>
         );

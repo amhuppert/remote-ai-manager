@@ -18,7 +18,9 @@ describe("WorkflowConfigPanel", () => {
     const { container } = render(
       <WorkflowConfigPanel config={defaultConfig} onConfigChange={vi.fn()} />,
     );
-    const inputs = container.querySelectorAll<HTMLInputElement>("input[type='number']");
+    const inputs = container.querySelectorAll<HTMLInputElement>(
+      "input[type='number']",
+    );
     expect(inputs.length).toBe(4);
     // Max iterations
     expect(inputs[0]!.value).toBe("20");
@@ -33,9 +35,14 @@ describe("WorkflowConfigPanel", () => {
   it("calls onConfigChange when max iterations changes", () => {
     const onConfigChange = vi.fn();
     const { container } = render(
-      <WorkflowConfigPanel config={defaultConfig} onConfigChange={onConfigChange} />,
+      <WorkflowConfigPanel
+        config={defaultConfig}
+        onConfigChange={onConfigChange}
+      />,
     );
-    const inputs = container.querySelectorAll<HTMLInputElement>("input[type='number']");
+    const inputs = container.querySelectorAll<HTMLInputElement>(
+      "input[type='number']",
+    );
     fireEvent.change(inputs[0]!, { target: { value: "50" } });
     expect(onConfigChange).toHaveBeenCalledWith({
       ...defaultConfig,
@@ -46,9 +53,14 @@ describe("WorkflowConfigPanel", () => {
   it("calls onConfigChange when timeout changes (converts minutes to ms)", () => {
     const onConfigChange = vi.fn();
     const { container } = render(
-      <WorkflowConfigPanel config={defaultConfig} onConfigChange={onConfigChange} />,
+      <WorkflowConfigPanel
+        config={defaultConfig}
+        onConfigChange={onConfigChange}
+      />,
     );
-    const inputs = container.querySelectorAll<HTMLInputElement>("input[type='number']");
+    const inputs = container.querySelectorAll<HTMLInputElement>(
+      "input[type='number']",
+    );
     fireEvent.change(inputs[1]!, { target: { value: "30" } });
     expect(onConfigChange).toHaveBeenCalledWith({
       ...defaultConfig,
@@ -58,7 +70,10 @@ describe("WorkflowConfigPanel", () => {
 
   it("shows validation error for max iterations out of range", () => {
     const { container } = render(
-      <WorkflowConfigPanel config={{ ...defaultConfig, maxIterations: 0 }} onConfigChange={vi.fn()} />,
+      <WorkflowConfigPanel
+        config={{ ...defaultConfig, maxIterations: 0 }}
+        onConfigChange={vi.fn()}
+      />,
     );
     const errors = container.querySelectorAll(".workflow-config-error");
     expect(errors.length).toBeGreaterThan(0);
@@ -85,9 +100,15 @@ describe("WorkflowConfigPanel", () => {
 
   it("disables inputs in readOnly mode", () => {
     const { container } = render(
-      <WorkflowConfigPanel config={defaultConfig} readOnly onConfigChange={vi.fn()} />,
+      <WorkflowConfigPanel
+        config={defaultConfig}
+        readOnly
+        onConfigChange={vi.fn()}
+      />,
     );
-    const inputs = container.querySelectorAll<HTMLInputElement>("input[type='number']");
+    const inputs = container.querySelectorAll<HTMLInputElement>(
+      "input[type='number']",
+    );
     for (const input of inputs) {
       expect(input.disabled).toBe(true);
     }

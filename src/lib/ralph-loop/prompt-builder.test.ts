@@ -84,9 +84,21 @@ describe("PromptBuilder", () => {
     const prompt = buildIterationPrompt({
       objective: "Test",
       fixPlan: [
-        makeTask({ id: "t-done", description: "Done task", status: "completed" }),
-        makeTask({ id: "t-skip", description: "Skipped task", status: "skipped" }),
-        makeTask({ id: "t-pending", description: "Active task", status: "pending" }),
+        makeTask({
+          id: "t-done",
+          description: "Done task",
+          status: "completed",
+        }),
+        makeTask({
+          id: "t-skip",
+          description: "Skipped task",
+          status: "skipped",
+        }),
+        makeTask({
+          id: "t-pending",
+          description: "Active task",
+          status: "pending",
+        }),
       ],
       iterationNumber: 1,
       maxIterations: 10,

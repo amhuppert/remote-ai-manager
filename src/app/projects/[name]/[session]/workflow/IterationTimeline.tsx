@@ -31,7 +31,9 @@ function getDotVariant(
 export default function IterationTimeline({
   iterations,
 }: IterationTimelineProps) {
-  const [expandedIteration, setExpandedIteration] = useState<number | null>(null);
+  const [expandedIteration, setExpandedIteration] = useState<number | null>(
+    null,
+  );
 
   if (iterations.length === 0) return null;
 
@@ -71,7 +73,9 @@ export default function IterationTimeline({
                     className="iteration-card-expand"
                     onClick={() => toggleExpand(iter.iterationNumber)}
                     aria-expanded={isExpanded}
-                    aria-label={isExpanded ? "Collapse details" : "Expand details"}
+                    aria-label={
+                      isExpanded ? "Collapse details" : "Expand details"
+                    }
                   >
                     {isExpanded ? "\u25BC" : "\u25B6"}
                   </button>
@@ -103,7 +107,8 @@ export default function IterationTimeline({
                     <span
                       className={`iteration-card-exit-signal ${String(iter.statusReport.exit_signal)}`}
                     >
-                      exit: {iter.statusReport.exit_signal ? "\u2713" : "\u2014"}
+                      exit:{" "}
+                      {iter.statusReport.exit_signal ? "\u2713" : "\u2014"}
                     </span>
                   )}
                   {iter.status === "error" && (
@@ -129,8 +134,12 @@ export default function IterationTimeline({
                       <>
                         <div className="iteration-diff-summary">
                           {iter.gitMetrics.filesChanged} files{" "}
-                          <span className="added">+{iter.gitMetrics.linesAdded}</span>{" "}
-                          <span className="removed">-{iter.gitMetrics.linesRemoved}</span>
+                          <span className="added">
+                            +{iter.gitMetrics.linesAdded}
+                          </span>{" "}
+                          <span className="removed">
+                            -{iter.gitMetrics.linesRemoved}
+                          </span>
                         </div>
                         <div className="iteration-diff-files">
                           {iter.gitMetrics.changedFiles.map((file) => (

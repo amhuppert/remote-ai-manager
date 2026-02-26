@@ -42,7 +42,9 @@ export const PUT = withTracing(async (request, { params }) => {
     session.workflow.status !== "paused"
   ) {
     return NextResponse.json(
-      { error: "Config can only be edited during planning or paused phases" } satisfies ApiError,
+      {
+        error: "Config can only be edited during planning or paused phases",
+      } satisfies ApiError,
       { status: 409 },
     );
   }

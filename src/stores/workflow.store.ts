@@ -70,11 +70,7 @@ function makeKey(projectName: string, sessionName: string): string {
   return `${projectName}::${sessionName}`;
 }
 
-const TERMINAL_STATUSES: WorkflowStatus[] = [
-  "completed",
-  "halted",
-  "aborted",
-];
+const TERMINAL_STATUSES: WorkflowStatus[] = ["completed", "halted", "aborted"];
 
 // ---------------------------------------------------------------------------
 // Store (private)

@@ -27,7 +27,9 @@ export default function CreateSessionModal({
   const nameInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const objectiveRef = useRef(objective);
-  objectiveRef.current = objective;
+  useEffect(() => {
+    objectiveRef.current = objective;
+  });
 
   const createMutation = useCreateSessionMutation(projectName);
 

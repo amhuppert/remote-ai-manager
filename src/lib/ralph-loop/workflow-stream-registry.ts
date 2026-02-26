@@ -9,7 +9,11 @@ const GLOBAL_KEY = "__csm_workflow_streams" as const;
 
 export type WorkflowStreamFrame =
   | { type: "content"; iterationNumber: number; content: MessageContentBlock }
-  | { type: "iteration-boundary"; iterationNumber: number; status: "started" | "completed" }
+  | {
+      type: "iteration-boundary";
+      iterationNumber: number;
+      status: "started" | "completed";
+    }
   | { type: "done"; reason: string };
 
 const encoder = new TextEncoder();
@@ -72,10 +76,7 @@ export function emit(
 }
 
 /** Close all stream clients for a workflow. */
-export function closeAll(
-  projectPath: string,
-  sessionName: string,
-): void {
+export function closeAll(projectPath: string, sessionName: string): void {
   const key = makeKey(projectPath, sessionName);
   const set = getStreams().get(key);
   if (!set) return;
@@ -92,10 +93,7 @@ export function closeAll(
 }
 
 /** Check if any clients are connected (for conditional processing). */
-export function hasClients(
-  projectPath: string,
-  sessionName: string,
-): boolean {
+export function hasClients(projectPath: string, sessionName: string): boolean {
   const key = makeKey(projectPath, sessionName);
   const set = getStreams().get(key);
   return set != null && set.size > 0;

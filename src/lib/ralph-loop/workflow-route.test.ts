@@ -17,7 +17,7 @@ vi.mock("@/lib/state", () => ({
 }));
 
 vi.mock("@/lib/logging", () => ({
-  withTracing: (fn: Function) => fn,
+  withTracing: (fn: (...args: unknown[]) => unknown) => fn,
   createLogger: () => ({
     info: vi.fn(),
     warn: vi.fn(),
@@ -104,12 +104,12 @@ function makeWorkflow(
   };
 }
 
-function makeRequest(
-  url: string,
-  method: string,
-  body?: unknown,
-): NextRequest {
-  const init: { method: string; headers?: Record<string, string>; body?: string } = { method };
+function makeRequest(url: string, method: string, body?: unknown): NextRequest {
+  const init: {
+    method: string;
+    headers?: Record<string, string>;
+    body?: string;
+  } = { method };
   if (body) {
     init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(body);
@@ -135,9 +135,8 @@ describe("workflow lifecycle", () => {
     vi.mocked(getSession).mockResolvedValue(session);
     vi.mocked(updateSession).mockResolvedValue(undefined);
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/route");
 
     const response = await POST(
       makeRequest("/api/workflow", "POST", {
@@ -159,9 +158,8 @@ describe("workflow lifecycle", () => {
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     vi.mocked(getSession).mockResolvedValue(makeSession(makeWorkflow()));
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/route");
 
     const response = await POST(
       makeRequest("/api/workflow", "POST", { objective: "Duplicate" }),
@@ -180,9 +178,8 @@ describe("workflow lifecycle", () => {
     const workflow = makeWorkflow({ objective: "Active objective" });
     vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
 
-    const { GET } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/route"
-    );
+    const { GET } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/route");
 
     const response = await GET(makeRequest("/api/workflow", "GET"), {
       params: routeParams,
@@ -221,9 +218,8 @@ describe("confirm and start", () => {
     });
     vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route");
 
     const response = await POST(makeRequest("/api/confirm", "POST"), {
       params: routeParams,
@@ -256,9 +252,8 @@ describe("confirm and start", () => {
     });
     vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route");
 
     const response = await POST(makeRequest("/api/confirm", "POST"), {
       params: routeParams,
@@ -276,9 +271,8 @@ describe("confirm and start", () => {
     const workflow = makeWorkflow({ objective: "Good objective", fixPlan: [] });
     vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route");
 
     const response = await POST(makeRequest("/api/confirm", "POST"), {
       params: routeParams,
@@ -296,9 +290,8 @@ describe("confirm and start", () => {
     const workflow = makeWorkflow({ status: "running" });
     vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route");
 
     const response = await POST(makeRequest("/api/confirm", "POST"), {
       params: routeParams,
@@ -323,9 +316,8 @@ describe("pause", () => {
     );
     vi.mocked(requestPause).mockReturnValue(true);
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/pause/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/pause/route");
 
     const response = await POST(makeRequest("/api/pause", "POST"), {
       params: routeParams,
@@ -346,9 +338,8 @@ describe("pause", () => {
       makeSession(makeWorkflow({ status: "paused" })),
     );
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/pause/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/pause/route");
 
     const response = await POST(makeRequest("/api/pause", "POST"), {
       params: routeParams,
@@ -368,9 +359,8 @@ describe("resume", () => {
       makeSession(makeWorkflow({ status: "paused" })),
     );
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/resume/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/resume/route");
 
     const response = await POST(makeRequest("/api/resume", "POST"), {
       params: routeParams,
@@ -394,9 +384,8 @@ describe("resume", () => {
       ),
     );
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/resume/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/resume/route");
 
     const response = await POST(makeRequest("/api/resume", "POST"), {
       params: routeParams,
@@ -414,9 +403,8 @@ describe("resume", () => {
       makeSession(makeWorkflow({ status: "running" })),
     );
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/resume/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/resume/route");
 
     const response = await POST(makeRequest("/api/resume", "POST"), {
       params: routeParams,
@@ -437,9 +425,8 @@ describe("abort", () => {
     );
     vi.mocked(requestAbort).mockReturnValue(true);
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/abort/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/abort/route");
 
     const response = await POST(makeRequest("/api/abort", "POST"), {
       params: routeParams,
@@ -463,9 +450,8 @@ describe("abort", () => {
     vi.mocked(requestAbort).mockReturnValue(false); // not in registry
     vi.mocked(updateSession).mockResolvedValue(undefined);
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/abort/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/abort/route");
 
     const response = await POST(makeRequest("/api/abort", "POST"), {
       params: routeParams,
@@ -483,9 +469,8 @@ describe("abort", () => {
       makeSession(makeWorkflow({ status: "completed" })),
     );
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/abort/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/abort/route");
 
     const response = await POST(makeRequest("/api/abort", "POST"), {
       params: routeParams,
@@ -509,9 +494,8 @@ describe("fix plan update", () => {
     );
     vi.mocked(updateSession).mockResolvedValue(undefined);
 
-    const { PUT } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/fix-plan/route"
-    );
+    const { PUT } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/fix-plan/route");
 
     const tasks = [
       {
@@ -546,9 +530,8 @@ describe("fix plan update", () => {
       makeSession(makeWorkflow({ status: "running" })),
     );
 
-    const { PUT } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/workflow/fix-plan/route"
-    );
+    const { PUT } =
+      await import("@/app/api/projects/[name]/sessions/[session]/workflow/fix-plan/route");
 
     const response = await PUT(
       makeRequest("/api/fix-plan", "PUT", { fixPlan: [] }),
@@ -598,9 +581,8 @@ describe("prompt route workflow guards", () => {
       conversationId: "conv-1",
     });
 
-    const { POST } = await import(
-      "@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/prompt/route"
-    );
+    const { POST } =
+      await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/prompt/route");
 
     const response = await POST(
       makeRequest("/api/prompt", "POST", { prompt: "Hello" }),

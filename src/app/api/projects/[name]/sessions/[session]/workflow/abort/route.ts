@@ -36,7 +36,9 @@ export const POST = withTracing(async (_request, { params }) => {
       session.workflow.status !== "paused")
   ) {
     return NextResponse.json(
-      { error: "Workflow must be running or paused to abort" } satisfies ApiError,
+      {
+        error: "Workflow must be running or paused to abort",
+      } satisfies ApiError,
       { status: 409 },
     );
   }

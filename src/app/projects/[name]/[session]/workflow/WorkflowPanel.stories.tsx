@@ -243,7 +243,8 @@ const runningMidProgress = workflow({
       statusReport: {
         status: "in_progress",
         exit_signal: false,
-        work_summary: "Implemented JWT token generation, validation, and refresh rotation",
+        work_summary:
+          "Implemented JWT token generation, validation, and refresh rotation",
         work_type: "implementation",
       },
     }),
@@ -254,7 +255,8 @@ const runningMidProgress = workflow({
       statusReport: {
         status: "in_progress",
         exit_signal: false,
-        work_summary: "Created user profile schema with Drizzle ORM and ran migrations",
+        work_summary:
+          "Created user profile schema with Drizzle ORM and ran migrations",
         work_type: "implementation",
       },
     }),
@@ -278,7 +280,8 @@ const runningMidProgress = workflow({
       statusReport: {
         status: "in_progress",
         exit_signal: false,
-        work_summary: "Implemented email verification with token expiry and fixed CORS for OAuth",
+        work_summary:
+          "Implemented email verification with token expiry and fixed CORS for OAuth",
         work_type: "implementation",
       },
     }),
@@ -327,36 +330,54 @@ const haltedCircuitBreaker = workflow({
     iteration(3, {
       durationMs: 165_000,
       costUsd: 0.29,
-      gitMetrics: { filesChanged: 0, linesAdded: 0, linesRemoved: 0, changedFiles: [] },
+      gitMetrics: {
+        filesChanged: 0,
+        linesAdded: 0,
+        linesRemoved: 0,
+        changedFiles: [],
+      },
       progressClassification: "no_progress",
       statusReport: {
         status: "blocked",
         exit_signal: false,
-        work_summary: "Attempting to fix flaky E2E test but unable to reproduce consistently",
+        work_summary:
+          "Attempting to fix flaky E2E test but unable to reproduce consistently",
         work_type: "testing",
       },
     }),
     iteration(4, {
       durationMs: 172_000,
       costUsd: 0.25,
-      gitMetrics: { filesChanged: 0, linesAdded: 0, linesRemoved: 0, changedFiles: [] },
+      gitMetrics: {
+        filesChanged: 0,
+        linesAdded: 0,
+        linesRemoved: 0,
+        changedFiles: [],
+      },
       progressClassification: "no_progress",
       statusReport: {
         status: "blocked",
         exit_signal: false,
-        work_summary: "Still unable to fix flaky test — may be a timing issue in CI",
+        work_summary:
+          "Still unable to fix flaky test — may be a timing issue in CI",
         work_type: "testing",
       },
     }),
     iteration(5, {
       durationMs: 140_000,
       costUsd: 0.22,
-      gitMetrics: { filesChanged: 0, linesAdded: 0, linesRemoved: 0, changedFiles: [] },
+      gitMetrics: {
+        filesChanged: 0,
+        linesAdded: 0,
+        linesRemoved: 0,
+        changedFiles: [],
+      },
       progressClassification: "no_progress",
       statusReport: {
         status: "blocked",
         exit_signal: false,
-        work_summary: "No progress on flaky test fix. Circuit breaker entering recovery mode.",
+        work_summary:
+          "No progress on flaky test fix. Circuit breaker entering recovery mode.",
         work_type: "testing",
       },
     }),
@@ -427,7 +448,12 @@ const haltedStalledExitSignal = workflow({
           "Reviewed remaining tasks — password reset and RBAC are optional for the initial release.",
         work_type: "documentation",
       },
-      gitMetrics: { filesChanged: 1, linesAdded: 8, linesRemoved: 0, changedFiles: ["README.md"] },
+      gitMetrics: {
+        filesChanged: 1,
+        linesAdded: 8,
+        linesRemoved: 0,
+        changedFiles: ["README.md"],
+      },
     }),
   ],
   haltReason: { type: "stalled_exit_signal", remainingTasks: 2 },
@@ -481,21 +507,23 @@ const completedSuccess = workflow({
       statusReport: {
         status: i === 11 ? "complete" : "in_progress",
         exit_signal: i >= 10,
-        work_summary: [
-          "Implemented JWT token generation with RS256 signing",
-          "Created user profile schema with Drizzle ORM",
-          "Added Zod validation for registration form",
-          "Implemented email verification with token expiry",
-          "Built password reset flow with secure links",
-          "Added RBAC middleware with role hierarchy",
-          "Wrote unit tests for JWT and validation",
-          "Integration tested email verification",
-          "Tested password reset edge cases",
-          "Verified RBAC permissions across endpoints",
-          "Final cleanup and code review",
-          "All tasks complete, all tests passing",
-        ][i] ?? `Completed iteration ${i + 1} work`,
-        work_type: i < 6 ? "implementation" : i < 10 ? "testing" : "refactoring",
+        work_summary:
+          [
+            "Implemented JWT token generation with RS256 signing",
+            "Created user profile schema with Drizzle ORM",
+            "Added Zod validation for registration form",
+            "Implemented email verification with token expiry",
+            "Built password reset flow with secure links",
+            "Added RBAC middleware with role hierarchy",
+            "Wrote unit tests for JWT and validation",
+            "Integration tested email verification",
+            "Tested password reset edge cases",
+            "Verified RBAC permissions across endpoints",
+            "Final cleanup and code review",
+            "All tasks complete, all tests passing",
+          ][i] ?? `Completed iteration ${i + 1} work`,
+        work_type:
+          i < 6 ? "implementation" : i < 10 ? "testing" : "refactoring",
       },
     }),
   ),
@@ -524,7 +552,12 @@ const aborted = workflow({
       status: "aborted",
       durationMs: 45_000,
       costUsd: 0.08,
-      gitMetrics: { filesChanged: 1, linesAdded: 30, linesRemoved: 0, changedFiles: ["src/db/schema.ts"] },
+      gitMetrics: {
+        filesChanged: 1,
+        linesAdded: 30,
+        linesRemoved: 0,
+        changedFiles: ["src/db/schema.ts"],
+      },
       statusReport: null,
       progressClassification: "progress",
     }),

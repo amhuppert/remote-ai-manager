@@ -1,8 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type {
-  SessionState,
-  RalphLoopWorkflow,
-} from "@/types";
+import type { SessionState, RalphLoopWorkflow } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -17,35 +14,45 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
   let capturedToolHandler: ((args: unknown) => Promise<unknown>) | null = null;
 
   return {
-    query: vi.fn((_args: { options?: { mcpServers?: Record<string, unknown> } }) => {
-      // Access the MCP server to get the submit_plan handler
-      // (In real flow, the SDK invokes the tool — here we simulate it)
-      return {
-        async *[Symbol.asyncIterator]() {
-          for (const msg of mockStreamMessages) {
-            yield msg;
+    query: vi.fn(
+      (_args: { options?: { mcpServers?: Record<string, unknown> } }) => {
+         
+        // Access the MCP server to get the submit_plan handler
+        // (In real flow, the SDK invokes the tool — here we simulate it)
+        return {
+          async *[Symbol.asyncIterator]() {
+            for (const msg of mockStreamMessages) {
+              yield msg;
+            }
+            // Simulate the tool call if a handler was captured
+            if (capturedToolHandler) {
+              await capturedToolHandler({
+                tasks: [
+                  { description: "Implement JWT tokens", priority: "high" },
+                  { description: "Add user registration", priority: "medium" },
+                  { description: "Write integration tests", priority: "low" },
+                ],
+              });
+            }
+          },
+        };
+      },
+    ),
+    createSdkMcpServer: vi.fn(
+      (config: {
+        tools: Array<{
+          name: string;
+          handler: (args: unknown) => Promise<unknown>;
+        }>;
+      }) => {
+        for (const t of config.tools) {
+          if (t.name === "submit_plan") {
+            capturedToolHandler = t.handler;
           }
-          // Simulate the tool call if a handler was captured
-          if (capturedToolHandler) {
-            await capturedToolHandler({
-              tasks: [
-                { description: "Implement JWT tokens", priority: "high" },
-                { description: "Add user registration", priority: "medium" },
-                { description: "Write integration tests", priority: "low" },
-              ],
-            });
-          }
-        },
-      };
-    }),
-    createSdkMcpServer: vi.fn((config: { tools: Array<{ name: string; handler: (args: unknown) => Promise<unknown> }> }) => {
-      for (const t of config.tools) {
-        if (t.name === "submit_plan") {
-          capturedToolHandler = t.handler;
         }
-      }
-      return { __mock: true };
-    }),
+        return { __mock: true };
+      },
+    ),
     tool: vi.fn(
       (
         name: string,
@@ -97,7 +104,9 @@ vi.mock("../sse-broadcaster", () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeWorkflow(overrides?: Partial<RalphLoopWorkflow>): RalphLoopWorkflow {
+function makeWorkflow(
+  overrides?: Partial<RalphLoopWorkflow>,
+): RalphLoopWorkflow {
   return {
     status: "planning",
     objective: "Implement user authentication system",
@@ -323,7 +332,9 @@ describe("PlanGenerator", () => {
     await new Promise((r) => setTimeout(r, 200));
 
     const callArgs = vi.mocked(query).mock.calls[0]?.[0] as {
-      options?: { canUseTool?: (name: string) => Promise<{ behavior: string }> };
+      options?: {
+        canUseTool?: (name: string) => Promise<{ behavior: string }>;
+      };
     };
     const canUseTool = callArgs?.options?.canUseTool;
     if (canUseTool) {

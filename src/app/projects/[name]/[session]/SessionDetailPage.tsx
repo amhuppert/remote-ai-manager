@@ -416,7 +416,7 @@ export default function SessionDetailPage({
   }, [turnStartIndices, currentMsgIndex]);
 
   // --- Virtualizer for conversation messages ---
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual API is intentionally used
+
   const virtualizer = useVirtualizer({
     count: displayMessages.length,
     getScrollElement: () => panelBodyRef.current,
@@ -1230,7 +1230,8 @@ export default function SessionDetailPage({
                           ? "Session is merged and read-only"
                           : workflowActive
                             ? "Prompts blocked during active workflow"
-                            : (promptPlaceholder ?? "Send a prompt to Claude...")
+                            : (promptPlaceholder ??
+                              "Send a prompt to Claude...")
                       }
                       rows={1}
                       value={promptText}

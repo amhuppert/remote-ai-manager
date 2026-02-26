@@ -13,11 +13,9 @@ export async function captureSnapshot(
 ): Promise<GitSnapshot> {
   try {
     // Get a hash representing the current working tree state (tracked + untracked)
-    const { stdout } = await execFileAsync(
-      "git",
-      ["diff", "HEAD", "--stat"],
-      { cwd: worktreePath },
-    );
+    const { stdout } = await execFileAsync("git", ["diff", "HEAD", "--stat"], {
+      cwd: worktreePath,
+    });
     return stdout.trim();
   } catch {
     return "";
@@ -35,7 +33,12 @@ export async function computeDiff(
 
     // If snapshots are identical, no changes were made
     if (preSnapshot === postSnapshot) {
-      return { filesChanged: 0, linesAdded: 0, linesRemoved: 0, changedFiles: [] };
+      return {
+        filesChanged: 0,
+        linesAdded: 0,
+        linesRemoved: 0,
+        changedFiles: [],
+      };
     }
 
     // Use numstat for precise metrics
@@ -47,7 +50,12 @@ export async function computeDiff(
 
     return parseNumstat(stdout);
   } catch {
-    return { filesChanged: 0, linesAdded: 0, linesRemoved: 0, changedFiles: [] };
+    return {
+      filesChanged: 0,
+      linesAdded: 0,
+      linesRemoved: 0,
+      changedFiles: [],
+    };
   }
 }
 

@@ -1,7 +1,4 @@
-import {
-  createSdkMcpServer,
-  tool,
-} from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import {
@@ -33,18 +30,24 @@ export function createToolServer(
         "report_status",
         "Report the status and progress of the current iteration. Call this at the end of your work with an honest assessment.",
         {
-          status: z.enum(["in_progress", "complete", "blocked"]).describe(
-            "Current iteration status: in_progress if still working, complete if the objective is done, blocked if you cannot proceed",
-          ),
-          exit_signal: z.boolean().describe(
-            "Set to true if you believe the overall objective is complete and the loop should stop",
-          ),
-          work_summary: z.string().describe(
-            "Brief description of what you accomplished this iteration",
-          ),
-          work_type: z.enum(["implementation", "testing", "documentation", "refactoring"]).describe(
-            "The primary type of work performed this iteration",
-          ),
+          status: z
+            .enum(["in_progress", "complete", "blocked"])
+            .describe(
+              "Current iteration status: in_progress if still working, complete if the objective is done, blocked if you cannot proceed",
+            ),
+          exit_signal: z
+            .boolean()
+            .describe(
+              "Set to true if you believe the overall objective is complete and the loop should stop",
+            ),
+          work_summary: z
+            .string()
+            .describe(
+              "Brief description of what you accomplished this iteration",
+            ),
+          work_type: z
+            .enum(["implementation", "testing", "documentation", "refactoring"])
+            .describe("The primary type of work performed this iteration"),
         },
         async (args) => {
           const parsed = reportStatusInputSchema.safeParse(args);
@@ -74,21 +77,28 @@ export function createToolServer(
         "update_fix_plan",
         "Update the task plan: mark tasks as completed, skip tasks with a reason, or add newly discovered tasks. Call this whenever tasks are completed, discovered, or determined unnecessary.",
         {
-          completedTaskIds: z.array(z.string()).optional().describe(
-            "Array of task IDs that have been completed",
-          ),
-          skippedTasks: z.array(z.object({
-            taskId: z.string(),
-            reason: z.string(),
-          })).optional().describe(
-            "Array of tasks to skip, each with a taskId and reason",
-          ),
-          newTasks: z.array(z.object({
-            description: z.string(),
-            priority: z.enum(["high", "medium", "low"]),
-          })).optional().describe(
-            "Array of newly discovered tasks to add to the plan",
-          ),
+          completedTaskIds: z
+            .array(z.string())
+            .optional()
+            .describe("Array of task IDs that have been completed"),
+          skippedTasks: z
+            .array(
+              z.object({
+                taskId: z.string(),
+                reason: z.string(),
+              }),
+            )
+            .optional()
+            .describe("Array of tasks to skip, each with a taskId and reason"),
+          newTasks: z
+            .array(
+              z.object({
+                description: z.string(),
+                priority: z.enum(["high", "medium", "low"]),
+              }),
+            )
+            .optional()
+            .describe("Array of newly discovered tasks to add to the plan"),
         },
         async (args) => {
           const parsed = updateFixPlanInputSchema.safeParse(args);
@@ -108,10 +118,14 @@ export function createToolServer(
             await context.onFixPlanUpdate(parsed.data);
             const summary: string[] = [];
             if (parsed.data.completedTaskIds?.length) {
-              summary.push(`${parsed.data.completedTaskIds.length} task(s) completed`);
+              summary.push(
+                `${parsed.data.completedTaskIds.length} task(s) completed`,
+              );
             }
             if (parsed.data.skippedTasks?.length) {
-              summary.push(`${parsed.data.skippedTasks.length} task(s) skipped`);
+              summary.push(
+                `${parsed.data.skippedTasks.length} task(s) skipped`,
+              );
             }
             if (parsed.data.newTasks?.length) {
               summary.push(`${parsed.data.newTasks.length} task(s) added`);
