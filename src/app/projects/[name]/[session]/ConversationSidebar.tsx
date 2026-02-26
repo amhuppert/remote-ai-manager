@@ -292,6 +292,7 @@ export default function ConversationSidebar({
                                 e.preventDefault();
                                 void handleRenameSubmit(convo.id);
                               } else if (e.key === "Escape") {
+                                e.stopPropagation();
                                 setEditingId(null);
                               }
                             }}
@@ -459,6 +460,7 @@ export default function ConversationSidebar({
                                   e.preventDefault();
                                   void handleActiveRenameSubmit(convo.id);
                                 } else if (e.key === "Escape") {
+                                  e.stopPropagation();
                                   setActiveEditingId(null);
                                 }
                               }}
