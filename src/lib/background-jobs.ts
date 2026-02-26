@@ -22,6 +22,13 @@ import { resolveConflicts } from "./conflict-resolution";
 import { broadcast } from "./sse-broadcaster";
 import { setSessionFinished } from "./state";
 import { createLogger } from "./logging";
+import {
+  createJobRecord,
+  updateJobRecord,
+  createNotification,
+  deriveNotificationType,
+  deriveNotificationTitle,
+} from "./notification-db";
 import type { BackgroundJob, ConflictAnalysis, JobStatusEvent } from "@/types";
 import type { ConflictDecisionInput } from "@/lib/schemas";
 
@@ -117,6 +124,88 @@ function broadcastJobStatus(job: BackgroundJob): void {
     ...(job.errorMessage && { errorMessage: job.errorMessage }),
   };
   broadcast(event);
+
+  // On terminal state: persist to DB and create notification
+  if (
+    job.status === "completed" ||
+    job.status === "failed" ||
+    job.status === "conflicts"
+  ) {
+    persistTerminalState(job);
+  }
+}
+
+// ============================================================
+// Notification Persistence Helpers
+// ============================================================
+
+/** Persist a job record to the DB. Non-throwing — logs errors. */
+function persistJobRecord(job: BackgroundJob): void {
+  try {
+    createJobRecord(job);
+  } catch (err) {
+    logger.error("background-jobs.persist_job_record_failed", {
+      jobId: job.jobId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/** Persist terminal state to DB and create a notification. Non-throwing. */
+function persistTerminalState(job: BackgroundJob): void {
+  try {
+    updateJobRecord(job.jobId, {
+      status: job.status,
+      mergeHash: job.mergeHash,
+      commitHash: job.commitHash,
+      conflictCount: job.conflictCount,
+      conflictFiles: job.conflictFiles,
+      errorMessage: job.errorMessage,
+    });
+
+    const notifType = deriveNotificationType(job.jobType, job.status);
+    const title = deriveNotificationTitle(notifType);
+    const message = buildNotificationMessage(job);
+
+    createNotification({
+      type: notifType,
+      title,
+      message,
+      projectName: job.projectName,
+      sessionName: job.sessionName,
+      branchName: job.branchName,
+      jobId: job.jobId,
+      jobType: job.jobType,
+      mergeHash: job.mergeHash,
+      commitHash: job.commitHash,
+      conflictCount: job.conflictCount,
+      conflictFiles: job.conflictFiles,
+      errorMessage: job.errorMessage,
+    });
+  } catch (err) {
+    logger.error("background-jobs.persist_terminal_failed", {
+      jobId: job.jobId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+function buildNotificationMessage(job: BackgroundJob): string {
+  const branch = job.branchName;
+  switch (job.status) {
+    case "completed":
+      if (job.jobType === "merge")
+        return `Branch ${branch} merged successfully${job.mergeHash ? ` (${job.mergeHash.slice(0, 7)})` : ""}`;
+      if (job.jobType === "commit")
+        return `Changes committed${job.commitHash ? ` (${job.commitHash.slice(0, 7)})` : ""}`;
+      return `Conflicts on ${branch} resolved successfully`;
+    case "conflicts":
+      return `${job.conflictCount ?? 0} conflict${(job.conflictCount ?? 0) !== 1 ? "s" : ""} detected during merge of ${branch}`;
+    case "failed":
+      return job.errorMessage ?? `${job.jobType} failed on ${branch}`;
+    default:
+      return `${job.jobType} on ${branch}`;
+  }
 }
 
 // ============================================================
@@ -220,6 +309,7 @@ function prepareDispatch(params: {
 
   registry.set(key, job);
   broadcastJobStatus(job);
+  persistJobRecord(job);
 
   return { ok: true, value: { job, release } };
 }

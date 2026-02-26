@@ -38,6 +38,7 @@ const mockSessionsData = {
 vi.mock("@/lib/queries", () => ({
   useSessionsQuery: () => mockSessionsData,
   useActiveConversationsQuery: () => ({ data: undefined }),
+  useNotificationsQuery: () => ({ data: undefined }),
 }));
 
 // Mock unified panel store

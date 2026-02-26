@@ -19,21 +19,8 @@ export default function MergeToastContainer() {
     if (!currentToast) return;
     const basePath = `/projects/${encodeURIComponent(currentToast.projectName)}/${encodeURIComponent(currentToast.sessionName)}`;
 
-    if (
-      currentToast.jobType === "merge" &&
-      currentToast.status === "completed"
-    ) {
-      router.push(basePath);
-    } else if (
-      currentToast.jobType === "merge" &&
-      currentToast.status === "conflicts"
-    ) {
+    if (currentToast.type === "merge-conflicts") {
       router.push(`${basePath}/conflicts`);
-    } else if (
-      currentToast.jobType === "commit" &&
-      currentToast.status === "completed"
-    ) {
-      router.push(basePath);
     } else {
       router.push(basePath);
     }
@@ -46,11 +33,11 @@ export default function MergeToastContainer() {
 
   if (!currentToast) return null;
 
-  // Map job status to toast variant
+  // Map notification type to toast variant
   let variant: "success" | "conflicts" | "error";
-  if (currentToast.status === "completed") {
+  if (currentToast.type.endsWith("-completed")) {
     variant = "success";
-  } else if (currentToast.status === "conflicts") {
+  } else if (currentToast.type === "merge-conflicts") {
     variant = "conflicts";
   } else {
     variant = "error";

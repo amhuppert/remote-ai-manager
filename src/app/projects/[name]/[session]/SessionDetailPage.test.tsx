@@ -140,6 +140,7 @@ vi.mock("@/lib/queries", () => ({
     isError: false,
   }),
   useActiveConversationsQuery: () => ({ data: undefined }),
+  useNotificationsQuery: () => ({ data: undefined }),
   useFocusDocQuery: () => ({ data: undefined, isPending: false }),
   useKiroDocTreeQuery: () => ({ data: undefined, isPending: false }),
   useKiroDocFileQuery: () => ({ data: undefined, isPending: false }),

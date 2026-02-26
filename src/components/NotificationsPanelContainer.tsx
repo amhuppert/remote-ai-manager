@@ -1,25 +1,79 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import NotificationsPanel, {
   type NotificationItem,
   type ConversationNotification,
   type MergeNotification,
   type CommitNotification,
+  type ResolveConflictsNotification,
 } from "./NotificationsPanel";
-import { useActiveConversationsQuery } from "@/lib/queries";
+import {
+  useActiveConversationsQuery,
+  useNotificationsQuery,
+} from "@/lib/queries";
 import { useNotificationJobs } from "@/stores/notification.store";
 import {
   useUnifiedPanelOpen,
   useCloseUnifiedPanel,
 } from "@/stores/unified-panel.store";
+import { notificationKeys } from "@/lib/query-keys";
 
 export default function NotificationsPanelContainer() {
   const panelOpen = useUnifiedPanelOpen();
   const closePanel = useCloseUnifiedPanel();
-  const { data: activeConversations, isPending } =
+  const queryClient = useQueryClient();
+  const { data: activeConversations, isPending: convLoading } =
     useActiveConversationsQuery();
+  const { data: notificationsData, isPending: notifLoading } =
+    useNotificationsQuery({ enabled: panelOpen });
   const jobs = useNotificationJobs();
+
+  const handleMarkAsRead = useCallback(
+    async (id: string) => {
+      try {
+        await fetch(`/api/notifications/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ read: true }),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: notificationKeys.all,
+        });
+      } catch {
+        // best-effort
+      }
+    },
+    [queryClient],
+  );
+
+  const handleMarkAllAsRead = useCallback(async () => {
+    try {
+      await fetch("/api/notifications/mark-all-read", { method: "POST" });
+      void queryClient.invalidateQueries({
+        queryKey: notificationKeys.all,
+      });
+    } catch {
+      // best-effort
+    }
+  }, [queryClient]);
+
+  const handleDismiss = useCallback(
+    async (id: string) => {
+      try {
+        await fetch(`/api/notifications/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+        });
+        void queryClient.invalidateQueries({
+          queryKey: notificationKeys.all,
+        });
+      } catch {
+        // best-effort
+      }
+    },
+    [queryClient],
+  );
 
   const items: NotificationItem[] = useMemo(() => {
     const result: NotificationItem[] = [];
@@ -39,47 +93,87 @@ export default function NotificationsPanelContainer() {
       }
     }
 
-    // Map background jobs
+    // Map currently running jobs from Zustand store
     for (const job of jobs.values()) {
       if (job.jobType === "merge") {
-        const statusMap: Record<
-          string,
-          "running" | "success" | "conflicts" | "error"
-        > = {
-          running: "running",
-          completed: "success",
-          failed: "error",
-          conflicts: "conflicts",
-        };
         result.push({
           type: "merge",
           id: job.jobId,
-          timestamp: job.completedAt ?? job.startedAt,
+          timestamp: job.startedAt,
           projectName: job.projectName,
           sessionName: job.sessionName,
           branchName: job.branchName,
-          status: statusMap[job.status] ?? "running",
-          mergeHash: job.mergeHash,
-          conflictCount: job.conflictCount,
-          errorMessage: job.errorMessage,
+          status: "running",
+          read: true,
         } satisfies MergeNotification);
       } else if (job.jobType === "commit") {
-        const statusMap: Record<string, "running" | "success" | "error"> = {
-          running: "running",
-          completed: "success",
-          failed: "error",
-        };
         result.push({
           type: "commit",
           id: job.jobId,
-          timestamp: job.completedAt ?? job.startedAt,
+          timestamp: job.startedAt,
           projectName: job.projectName,
           sessionName: job.sessionName,
           branchName: job.branchName,
-          status: statusMap[job.status] ?? "running",
-          commitHash: job.commitHash,
-          errorMessage: job.errorMessage,
+          status: "running",
+          read: true,
         } satisfies CommitNotification);
+      } else if (job.jobType === "resolve-conflicts") {
+        result.push({
+          type: "resolve-conflicts",
+          id: job.jobId,
+          timestamp: job.startedAt,
+          projectName: job.projectName,
+          sessionName: job.sessionName,
+          branchName: job.branchName,
+          status: "running",
+          read: true,
+        } satisfies ResolveConflictsNotification);
+      }
+    }
+
+    // Map server-persisted notifications
+    if (notificationsData) {
+      for (const notif of notificationsData.notifications) {
+        const base = {
+          id: notif.id,
+          timestamp: notif.createdAt,
+          projectName: notif.projectName,
+          sessionName: notif.sessionName,
+          branchName: notif.branchName,
+          read: notif.read,
+        };
+
+        if (notif.jobType === "merge") {
+          const statusMap: Record<string, "success" | "conflicts" | "error"> = {
+            "merge-completed": "success",
+            "merge-failed": "error",
+            "merge-conflicts": "conflicts",
+          };
+          result.push({
+            ...base,
+            type: "merge",
+            status: statusMap[notif.type] ?? "error",
+            mergeHash: notif.mergeHash,
+            conflictCount: notif.conflictCount,
+            errorMessage: notif.errorMessage,
+          } satisfies MergeNotification);
+        } else if (notif.jobType === "commit") {
+          result.push({
+            ...base,
+            type: "commit",
+            status: notif.type === "commit-completed" ? "success" : "error",
+            commitHash: notif.commitHash,
+            errorMessage: notif.errorMessage,
+          } satisfies CommitNotification);
+        } else if (notif.jobType === "resolve-conflicts") {
+          result.push({
+            ...base,
+            type: "resolve-conflicts",
+            status: notif.type === "resolve-completed" ? "success" : "error",
+            mergeHash: notif.mergeHash,
+            errorMessage: notif.errorMessage,
+          } satisfies ResolveConflictsNotification);
+        }
       }
     }
 
@@ -89,14 +183,20 @@ export default function NotificationsPanelContainer() {
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
     );
     return result;
-  }, [activeConversations, jobs]);
+  }, [activeConversations, jobs, notificationsData]);
+
+  const unreadCount = notificationsData?.unreadCount ?? 0;
 
   return (
     <NotificationsPanel
       open={panelOpen}
       items={items}
-      loading={isPending}
+      loading={convLoading || notifLoading}
+      unreadCount={unreadCount}
       onClose={closePanel}
+      onMarkAsRead={handleMarkAsRead}
+      onMarkAllAsRead={handleMarkAllAsRead}
+      onDismiss={handleDismiss}
     />
   );
 }

@@ -9,6 +9,7 @@ vi.mock("./git-operations");
 vi.mock("./conflict-resolution");
 vi.mock("./sse-broadcaster");
 vi.mock("./state");
+vi.mock("./notification-db");
 vi.mock("./logging", () => ({
   createLogger: () => ({
     info: vi.fn(),

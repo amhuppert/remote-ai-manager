@@ -334,12 +334,85 @@ export const sessionFinishedEventSchema = z.object({
 });
 export type SessionFinishedEvent = z.infer<typeof sessionFinishedEventSchema>;
 
+// ============================================================
+// Notification Schemas
+// ============================================================
+
+export const notificationTypeSchema = z.enum([
+  "merge-completed",
+  "merge-failed",
+  "merge-conflicts",
+  "commit-completed",
+  "commit-failed",
+  "resolve-completed",
+  "resolve-failed",
+]);
+export type NotificationType = z.infer<typeof notificationTypeSchema>;
+
+export const notificationSchema = z.object({
+  id: z.string(),
+  type: notificationTypeSchema,
+  title: z.string(),
+  message: z.string(),
+  read: z.boolean(),
+  projectName: z.string(),
+  sessionName: z.string(),
+  branchName: z.string(),
+  jobId: z.string(),
+  jobType: jobTypeSchema,
+  mergeHash: z.string().optional(),
+  commitHash: z.string().optional(),
+  conflictCount: z.number().optional(),
+  conflictFiles: z.array(z.string()).optional(),
+  errorMessage: z.string().optional(),
+  createdAt: z.string(),
+});
+export type Notification = z.infer<typeof notificationSchema>;
+
+export const notificationCreatedEventSchema = z.object({
+  type: z.literal("notification-created"),
+  notification: notificationSchema,
+});
+export type NotificationCreatedEvent = z.infer<
+  typeof notificationCreatedEventSchema
+>;
+
+export const notificationUpdatedEventSchema = z.object({
+  type: z.literal("notification-updated"),
+  id: z.string(),
+  read: z.boolean(),
+});
+export type NotificationUpdatedEvent = z.infer<
+  typeof notificationUpdatedEventSchema
+>;
+
+export const getNotificationsQuerySchema = z.object({
+  unread: z.coerce.boolean().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type GetNotificationsQuery = z.infer<typeof getNotificationsQuerySchema>;
+
+export const notificationsResponseSchema = z.object({
+  notifications: z.array(notificationSchema),
+  total: z.number(),
+  unreadCount: z.number(),
+});
+export type NotificationsResponse = z.infer<typeof notificationsResponseSchema>;
+
+export const markReadRequestSchema = z.object({
+  read: z.literal(true),
+});
+export type MarkReadRequest = z.infer<typeof markReadRequestSchema>;
+
 /** SSE event type */
 export type SSEEvent =
   | ConversationStatusEvent
   | AskQuestionEvent
   | JobStatusEvent
-  | SessionFinishedEvent;
+  | SessionFinishedEvent
+  | NotificationCreatedEvent
+  | NotificationUpdatedEvent;
 
 // ============================================================
 // Command Autocomplete Schemas

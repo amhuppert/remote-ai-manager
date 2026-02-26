@@ -5,7 +5,7 @@ import {
   useUnifiedPanelOpen,
   useToggleUnifiedPanel,
 } from "@/stores/unified-panel.store";
-import { useActiveConversationsQuery } from "@/lib/queries";
+import { useNotificationsQuery } from "@/lib/queries";
 import { useActiveJobs } from "@/stores/notification.store";
 
 export interface BreadcrumbSegment {
@@ -32,9 +32,11 @@ export default function Topbar({
 }: TopbarProps): React.JSX.Element {
   const panelOpen = useUnifiedPanelOpen();
   const togglePanel = useToggleUnifiedPanel();
-  const { data: activeConversations } = useActiveConversationsQuery();
+  const { data: notificationsData } = useNotificationsQuery();
   const activeJobs = useActiveJobs();
-  const activeCount = (activeConversations?.length ?? 0) + activeJobs.length;
+  // Badge shows unread notification count + running jobs
+  const unreadCount = notificationsData?.unreadCount ?? 0;
+  const badgeCount = unreadCount + activeJobs.length;
 
   return (
     <header className="topbar">
@@ -80,12 +82,12 @@ export default function Topbar({
         <button
           className={`unified-panel-toggle${panelOpen ? " active" : ""}`}
           onClick={togglePanel}
-          title="Active conversations"
+          title="Activity & Notifications"
           type="button"
         >
           <span className="unified-panel-toggle-icon">&#9776;</span>
-          {activeCount > 0 && (
-            <span className="unified-panel-toggle-badge">{activeCount}</span>
+          {badgeCount > 0 && (
+            <span className="unified-panel-toggle-badge">{badgeCount}</span>
           )}
         </button>
         {page !== "detail" && (

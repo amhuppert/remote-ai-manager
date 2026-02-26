@@ -6,6 +6,7 @@ import {
   conversationKeys,
   commandKeys,
   kiroDocKeys,
+  notificationKeys,
 } from "@/lib/query-keys";
 import type {
   DiscoveredProject,
@@ -16,6 +17,7 @@ import type {
   TranscriptMessage,
   CommandsResponse,
   KiroDocTree,
+  NotificationsResponse,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -276,5 +278,17 @@ export function useKiroDocFileQuery(
     },
     staleTime: 60_000,
     enabled: (options?.enabled ?? true) && !!filePath,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Notification Queries
+// ---------------------------------------------------------------------------
+
+export function useNotificationsQuery(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: notificationKeys.list(),
+    queryFn: () => apiFetch<NotificationsResponse>("/api/notifications"),
+    enabled: options?.enabled ?? true,
   });
 }

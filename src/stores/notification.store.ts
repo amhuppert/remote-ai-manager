@@ -1,19 +1,22 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import type { BackgroundJob, JobStatusEvent } from "@/types";
+import type { BackgroundJob, JobStatusEvent, Notification } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 interface NotificationState {
+  /** Running jobs only — removed on terminal state */
   jobs: Map<string, BackgroundJob>;
-  toastQueue: JobStatusEvent[];
+  /** Toast queue fed exclusively by notification-created SSE events */
+  toastQueue: Notification[];
 }
 
 interface NotificationActions {
   addOrUpdateJob: (event: JobStatusEvent) => void;
+  enqueueToast: (notification: Notification) => void;
   dismissToast: () => void;
 }
 
@@ -30,6 +33,19 @@ const useNotificationStore = create<NotificationStore>()(
 
     addOrUpdateJob: (event: JobStatusEvent) =>
       set((state) => {
+        const isTerminal =
+          event.status === "completed" ||
+          event.status === "failed" ||
+          event.status === "conflicts";
+
+        if (isTerminal) {
+          // Terminal state: remove from running jobs map.
+          // Toast display is handled by notification-created events, not here.
+          state.jobs.delete(event.jobId);
+          return;
+        }
+
+        // Running state: upsert into jobs map
         const now = new Date().toISOString();
         const existing = state.jobs.get(event.jobId);
 
@@ -41,29 +57,14 @@ const useNotificationStore = create<NotificationStore>()(
           sessionName: event.sessionName,
           branchName: event.branchName,
           startedAt: existing?.startedAt ?? now,
-          completedAt:
-            event.status === "completed" ||
-            event.status === "failed" ||
-            event.status === "conflicts"
-              ? now
-              : existing?.completedAt,
-          mergeHash: event.mergeHash ?? existing?.mergeHash,
-          commitHash: event.commitHash ?? existing?.commitHash,
-          conflictCount: event.conflictCount ?? existing?.conflictCount,
-          conflictFiles: event.conflictFiles ?? existing?.conflictFiles,
-          errorMessage: event.errorMessage ?? existing?.errorMessage,
         };
 
         state.jobs.set(event.jobId, job);
+      }),
 
-        // Push terminal events to the toast queue
-        if (
-          event.status === "completed" ||
-          event.status === "failed" ||
-          event.status === "conflicts"
-        ) {
-          state.toastQueue.push(event);
-        }
+    enqueueToast: (notification: Notification) =>
+      set((state) => {
+        state.toastQueue.push(notification);
       }),
 
     dismissToast: () =>
@@ -107,5 +108,7 @@ export const useJobsBySession = (projectName: string, sessionName: string) => {
 
 export const useAddOrUpdateJob = () =>
   useNotificationStore((s) => s.addOrUpdateJob);
+export const useEnqueueToast = () =>
+  useNotificationStore((s) => s.enqueueToast);
 export const useDismissToast = () =>
   useNotificationStore((s) => s.dismissToast);

@@ -1,24 +1,35 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { sessionKeys, conversationKeys } from "@/lib/query-keys";
-import { jobStatusEventSchema } from "@/lib/schemas";
-import { useAddOrUpdateJob } from "@/stores/notification.store";
+import {
+  sessionKeys,
+  conversationKeys,
+  notificationKeys,
+} from "@/lib/query-keys";
+import {
+  jobStatusEventSchema,
+  notificationCreatedEventSchema,
+  notificationUpdatedEventSchema,
+} from "@/lib/schemas";
+import {
+  useAddOrUpdateJob,
+  useEnqueueToast,
+} from "@/stores/notification.store";
 
 export default function NotificationListener(): null {
   const queryClient = useQueryClient();
   const addOrUpdateJob = useAddOrUpdateJob();
+  const enqueueToast = useEnqueueToast();
+  const hadErrorRef = useRef(false);
 
   useEffect(() => {
     const es = new EventSource("/api/events");
 
     es.addEventListener("conversation-status", () => {
-      // Invalidate active conversations query for unified panel refresh
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active,
       });
-      // Also invalidate session queries for status display updates
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     });
 
@@ -41,12 +52,13 @@ export default function NotificationListener(): null {
         const data = result.data;
         addOrUpdateJob(data);
 
-        // On completed merge: invalidate session queries
-        if (data.jobType === "merge" && data.status === "completed") {
-          void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
-        }
-        // On completed commit: invalidate session queries
-        if (data.jobType === "commit" && data.status === "completed") {
+        // On completed merge/commit/resolve: invalidate session queries
+        if (
+          data.status === "completed" &&
+          (data.jobType === "merge" ||
+            data.jobType === "commit" ||
+            data.jobType === "resolve-conflicts")
+        ) {
           void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
         }
       } catch {
@@ -54,10 +66,56 @@ export default function NotificationListener(): null {
       }
     });
 
+    // New: notification-created events → invalidate cache + enqueue toast
+    es.addEventListener("notification-created", (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        const result = notificationCreatedEventSchema.safeParse(parsed);
+        if (!result.success) return;
+
+        void queryClient.invalidateQueries({
+          queryKey: notificationKeys.all,
+        });
+        enqueueToast(result.data.notification);
+      } catch {
+        // best-effort
+      }
+    });
+
+    // New: notification-updated events → invalidate cache
+    es.addEventListener("notification-updated", (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        const result = notificationUpdatedEventSchema.safeParse(parsed);
+        if (!result.success) return;
+
+        void queryClient.invalidateQueries({
+          queryKey: notificationKeys.all,
+        });
+      } catch {
+        // best-effort
+      }
+    });
+
+    // SSE reconnection recovery: refetch notifications on reconnect after error
+    es.onerror = () => {
+      hadErrorRef.current = true;
+    };
+
+    es.onopen = () => {
+      if (hadErrorRef.current) {
+        hadErrorRef.current = false;
+        // Reconnected after error — refetch to reconcile missed events
+        void queryClient.invalidateQueries({
+          queryKey: notificationKeys.all,
+        });
+      }
+    };
+
     return () => {
       es.close();
     };
-  }, [queryClient, addOrUpdateJob]);
+  }, [queryClient, addOrUpdateJob, enqueueToast]);
 
   return null;
 }

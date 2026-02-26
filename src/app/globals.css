@@ -2463,6 +2463,77 @@ textarea {
   white-space: nowrap;
 }
 
+/* Resolve-conflicts icon */
+.np-icon-resolve {
+  color: var(--text-secondary);
+}
+
+/* Unread notification styling */
+.np-item-unread {
+  background: rgba(99, 179, 237, 0.04);
+  border-left-color: var(--accent-blue, #63b3ed);
+  position: relative;
+}
+
+.np-item-unread .np-item-title {
+  font-weight: 600;
+}
+
+.np-unread-dot {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-blue, #63b3ed);
+  flex-shrink: 0;
+}
+
+/* Dismiss button */
+.np-item-dismiss {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  font-size: 0.6rem;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  margin-left: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.np-item:hover .np-item-dismiss {
+  display: flex;
+}
+
+.np-item-dismiss:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+/* Mark all read button */
+.np-mark-all-read {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--accent-blue, #63b3ed);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  margin-left: auto;
+  margin-right: var(--space-sm);
+}
+
+.np-mark-all-read:hover {
+  background: rgba(99, 179, 237, 0.08);
+}
+
 /* ---- Notifications Panel Mobile ---- */
 
 @media (max-width: 768px) {

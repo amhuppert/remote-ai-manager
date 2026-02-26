@@ -60,6 +60,13 @@ export type {
   ConflictEntry,
   ConflictDecisionInput,
   ResolveConflictsRequest,
+  NotificationType,
+  Notification,
+  NotificationCreatedEvent,
+  NotificationUpdatedEvent,
+  GetNotificationsQuery,
+  NotificationsResponse,
+  MarkReadRequest,
 } from "@/lib/schemas";
 
 /** Parsed transcript message */

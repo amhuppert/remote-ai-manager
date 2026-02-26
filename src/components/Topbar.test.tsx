@@ -26,9 +26,10 @@ vi.mock("@/stores/unified-panel.store", () => ({
   useToggleUnifiedPanel: () => vi.fn(),
 }));
 
-// Mock active conversations query
+// Mock query hooks
 vi.mock("@/lib/queries", () => ({
   useActiveConversationsQuery: () => ({ data: undefined }),
+  useNotificationsQuery: () => ({ data: undefined }),
 }));
 
 describe("Topbar", () => {

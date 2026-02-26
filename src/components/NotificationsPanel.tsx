@@ -18,39 +18,54 @@ export interface ConversationNotification extends BaseNotification {
   status: "running" | "awaiting" | "waiting_for_input";
 }
 
-export interface MergeNotification extends BaseNotification {
-  type: "merge";
+interface ServerNotificationBase extends BaseNotification {
   branchName: string;
+  read?: boolean;
+}
+
+export interface MergeNotification extends ServerNotificationBase {
+  type: "merge";
   status: "running" | "success" | "conflicts" | "error";
   mergeHash?: string;
   conflictCount?: number;
   errorMessage?: string;
 }
 
-export interface CommitNotification extends BaseNotification {
+export interface CommitNotification extends ServerNotificationBase {
   type: "commit";
-  branchName: string;
   status: "running" | "success" | "error";
   commitHash?: string;
   errorMessage?: string;
 }
 
+export interface ResolveConflictsNotification extends ServerNotificationBase {
+  type: "resolve-conflicts";
+  status: "running" | "success" | "error";
+  mergeHash?: string;
+  errorMessage?: string;
+}
+
+export type ServerNotificationItem =
+  | MergeNotification
+  | CommitNotification
+  | ResolveConflictsNotification;
+
 export type NotificationItem =
   | ConversationNotification
   | MergeNotification
-  | CommitNotification;
+  | CommitNotification
+  | ResolveConflictsNotification;
 
 interface NotificationsPanelProps {
-  /** Whether the panel is visible */
   open: boolean;
-  /** Notification items to display, sorted by timestamp descending */
   items: NotificationItem[];
-  /** Loading state */
   loading?: boolean;
-  /** Close the panel */
+  unreadCount?: number;
   onClose: () => void;
-  /** Navigate to an item — called with href string */
   onNavigate?: (href: string) => void;
+  onMarkAsRead?: (id: string) => void;
+  onMarkAllAsRead?: () => void;
+  onDismiss?: (id: string) => void;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -72,8 +87,11 @@ function getItemHref(item: NotificationItem): string {
     case "conversation":
       return `${base}/${item.id}`;
     case "merge":
+      if (item.status === "conflicts") return `${base}/conflicts`;
       return base;
     case "commit":
+      return base;
+    case "resolve-conflicts":
       return base;
   }
 }
@@ -100,6 +118,12 @@ function getItemLabel(item: NotificationItem): string {
         : item.status === "success"
           ? "Committed"
           : "Commit failed";
+    case "resolve-conflicts":
+      return item.status === "running"
+        ? "Resolving..."
+        : item.status === "success"
+          ? "Resolved"
+          : "Resolution failed";
   }
 }
 
@@ -111,6 +135,8 @@ function getItemTitle(item: NotificationItem): string {
       return `Merge ${item.branchName}`;
     case "commit":
       return `Commit on ${item.branchName}`;
+    case "resolve-conflicts":
+      return `Resolve conflicts on ${item.branchName}`;
   }
 }
 
@@ -122,13 +148,15 @@ function getItemCategory(item: NotificationItem): string {
       return "merge";
     case "commit":
       return "commit";
+    case "resolve-conflicts":
+      return "resolve";
   }
 }
 
 function getItemStatusClass(item: NotificationItem): string {
   switch (item.type) {
     case "conversation":
-      return item.status; // "running" | "awaiting" | "waiting_for_input"
+      return item.status;
     case "merge":
       return item.status === "success"
         ? "success"
@@ -138,12 +166,18 @@ function getItemStatusClass(item: NotificationItem): string {
             ? "error"
             : "running";
     case "commit":
+    case "resolve-conflicts":
       return item.status === "success"
         ? "success"
         : item.status === "error"
           ? "error"
           : "running";
   }
+}
+
+function isUnread(item: NotificationItem): boolean {
+  if (item.type === "conversation") return false;
+  return item.read === false;
 }
 
 // ── Icons ──────────────────────────────────────────────────────
@@ -213,6 +247,21 @@ function CommitIcon() {
   );
 }
 
+function ResolveIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 14 14" fill="none">
+      <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M4.5 7.5L6.5 9.5L9.5 5.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function getItemIcon(item: NotificationItem) {
   switch (item.type) {
     case "conversation":
@@ -221,6 +270,8 @@ function getItemIcon(item: NotificationItem) {
       return <MergeIcon />;
     case "commit":
       return <CommitIcon />;
+    case "resolve-conflicts":
+      return <ResolveIcon />;
   }
 }
 
@@ -229,17 +280,43 @@ function getItemIcon(item: NotificationItem) {
 function NotificationRow({
   item,
   onClose,
+  onMarkAsRead,
+  onDismiss,
 }: {
   item: NotificationItem;
   onClose: () => void;
+  onMarkAsRead?: (id: string) => void;
+  onDismiss?: (id: string) => void;
 }) {
   const href = getItemHref(item);
   const statusClass = getItemStatusClass(item);
   const category = getItemCategory(item);
+  const unread = isUnread(item);
+
+  const handleClick = useCallback(() => {
+    if (unread && onMarkAsRead) {
+      onMarkAsRead(item.id);
+    }
+    onClose();
+  }, [item.id, unread, onMarkAsRead, onClose]);
+
+  const handleDismiss = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onDismiss?.(item.id);
+    },
+    [item.id, onDismiss],
+  );
 
   return (
     <li>
-      <Link href={href} className="np-item" onClick={onClose}>
+      <Link
+        href={href}
+        className={`np-item${unread ? " np-item-unread" : ""}`}
+        onClick={handleClick}
+      >
+        {unread && <span className="np-unread-dot" />}
         <span className={`np-item-icon np-icon-${category}`}>
           {getItemIcon(item)}
         </span>
@@ -257,6 +334,15 @@ function NotificationRow({
             {formatRelativeTime(item.timestamp)}
           </span>
         </div>
+        {item.type !== "conversation" && onDismiss && (
+          <button
+            className="np-item-dismiss"
+            onClick={handleDismiss}
+            title="Dismiss"
+          >
+            &#10005;
+          </button>
+        )}
       </Link>
     </li>
   );
@@ -266,7 +352,11 @@ export default function NotificationsPanel({
   open,
   items,
   loading,
+  unreadCount = 0,
   onClose,
+  onMarkAsRead,
+  onMarkAllAsRead,
+  onDismiss,
 }: NotificationsPanelProps) {
   const handleBackdropClick = useCallback(() => {
     onClose();
@@ -283,6 +373,15 @@ export default function NotificationsPanel({
       <aside className="np-panel">
         <div className="np-header">
           <span className="np-title">Activity</span>
+          {unreadCount > 0 && onMarkAllAsRead && (
+            <button
+              className="np-mark-all-read"
+              onClick={onMarkAllAsRead}
+              title="Mark all as read"
+            >
+              Mark all read
+            </button>
+          )}
           <button
             className="btn-icon-only np-close"
             onClick={onClose}
@@ -336,6 +435,8 @@ export default function NotificationsPanel({
                         key={item.id}
                         item={item}
                         onClose={onClose}
+                        onMarkAsRead={onMarkAsRead}
+                        onDismiss={onDismiss}
                       />
                     ))}
                   </ul>
