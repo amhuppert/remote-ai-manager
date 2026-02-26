@@ -341,6 +341,38 @@ describe("readConversationMessages", () => {
       timestamp: "2024-01-01T00:00:00Z",
     });
   });
+
+  it("detects plain text slash commands in user messages", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "plain-command.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "/kiro:spec-requirements voice-transcription-integration",
+          },
+        ],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "command",
+          name: "/kiro:spec-requirements",
+          args: "voice-transcription-integration",
+        },
+      ],
+      timestamp: "2024-01-01T00:00:00Z",
+    });
+  });
 });
 
 // ==========================================================================
@@ -393,6 +425,61 @@ describe("parseCommandContent", () => {
       type: "command",
       name: "/test",
       args: null,
+    });
+  });
+
+  // Plain text slash commands
+  it("parses plain slash command with args", () => {
+    const result = parseCommandContent(
+      "/kiro:spec-requirements voice-transcription-integration",
+    );
+    expect(result).toEqual({
+      type: "command",
+      name: "/kiro:spec-requirements",
+      args: "voice-transcription-integration",
+    });
+  });
+
+  it("parses plain slash command without args", () => {
+    const result = parseCommandContent("/commit");
+    expect(result).toEqual({
+      type: "command",
+      name: "/commit",
+      args: null,
+    });
+  });
+
+  it("parses plain namespaced slash command without args", () => {
+    const result = parseCommandContent("/kiro:spec-status");
+    expect(result).toEqual({
+      type: "command",
+      name: "/kiro:spec-status",
+      args: null,
+    });
+  });
+
+  it("parses plain slash command with multi-word args", () => {
+    const result = parseCommandContent("/kiro:spec-init notifications feature");
+    expect(result).toEqual({
+      type: "command",
+      name: "/kiro:spec-init",
+      args: "notifications feature",
+    });
+  });
+
+  it("does not parse regular text as a slash command", () => {
+    expect(parseCommandContent("Hello Claude, please help")).toBeNull();
+    expect(
+      parseCommandContent("I need help with /path/to/file in my project"),
+    ).toBeNull();
+  });
+
+  it("handles plain slash command with leading/trailing whitespace", () => {
+    const result = parseCommandContent("  /commit fix bug  ");
+    expect(result).toEqual({
+      type: "command",
+      name: "/commit",
+      args: "fix bug",
     });
   });
 });
