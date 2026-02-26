@@ -86,13 +86,14 @@ export function useSendPrompt(
         })),
       ];
 
-      // Parse command tags so optimistic messages display formatted commands
-      // (matches the same parsing that transcript.ts does on re-read)
+      // Parse command tags or plain slash commands so optimistic messages
+      // display formatted commands (matches transcript.ts parseCommandContent)
       const displayContent: MessageContentBlock[] =
         userContent.length === 1 && userContent[0]?.type === "text"
           ? (() => {
               const text = (userContent[0] as { type: "text"; text: string })
                 .text;
+              // XML-tagged commands (from prompt templates like focus mode)
               const nameMatch = text.match(
                 /<command-name>\/?(.+?)<\/command-name>/,
               );
@@ -105,6 +106,19 @@ export function useSendPrompt(
                     type: "command" as const,
                     name: `/${nameMatch[1]!}`,
                     args: argsMatch?.[1]?.trim() || null,
+                  },
+                ];
+              }
+              // Plain text slash commands (e.g., "/commit", "/kiro:spec-init feature")
+              const plainMatch = text
+                .trim()
+                .match(/^\/([a-zA-Z][\w:-]*)(?:\s+([\s\S]*))?$/);
+              if (plainMatch) {
+                return [
+                  {
+                    type: "command" as const,
+                    name: `/${plainMatch[1]!}`,
+                    args: plainMatch[2]?.trim() || null,
                   },
                 ];
               }
