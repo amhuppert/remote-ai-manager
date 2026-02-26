@@ -55,6 +55,7 @@ export type {
   JobType,
   JobStatus,
   JobStatusEvent,
+  JobDispatchResponse,
   SessionFinishedEvent,
   SmartMergeRequest,
   ConflictEntry,

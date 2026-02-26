@@ -6,12 +6,14 @@ import {
   workflowKeys,
 } from "@/lib/query-keys";
 import { tracedFetch } from "@/lib/traced-fetch";
+import { useAddOrUpdateJob } from "@/stores/notification.store";
 import type {
   SessionState,
   ConversationState,
   RalphLoopWorkflow,
   FixPlanTask,
   RalphLoopConfig,
+  JobDispatchResponse,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -191,10 +193,11 @@ export function usePinProjectMutation() {
 
 export function useCommitMutation(projectName: string, sessionName: string) {
   const queryClient = useQueryClient();
+  const addOrUpdateJob = useAddOrUpdateJob();
 
   return useMutation({
     mutationFn: (message: string) =>
-      mutationFetch<{ success: boolean; hash: string }>(
+      mutationFetch<JobDispatchResponse>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commit`,
         "commit-changes",
         {
@@ -203,7 +206,16 @@ export function useCommitMutation(projectName: string, sessionName: string) {
           body: JSON.stringify({ message }),
         },
       ),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      addOrUpdateJob({
+        type: "job-status",
+        jobType: data.jobType,
+        status: "running",
+        projectName,
+        sessionName,
+        jobId: data.jobId,
+        branchName: data.branchName,
+      });
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.diff(projectName, sessionName),
       });
@@ -216,10 +228,11 @@ export function useCommitMutation(projectName: string, sessionName: string) {
 
 export function useMergeMutation(projectName: string, sessionName: string) {
   const queryClient = useQueryClient();
+  const addOrUpdateJob = useAddOrUpdateJob();
 
   return useMutation({
     mutationFn: () =>
-      mutationFetch<{ success: boolean; mergeHash: string }>(
+      mutationFetch<JobDispatchResponse>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge`,
         "merge-session",
         {
@@ -228,7 +241,16 @@ export function useMergeMutation(projectName: string, sessionName: string) {
           body: JSON.stringify({ autoResolve: false }),
         },
       ),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      addOrUpdateJob({
+        type: "job-status",
+        jobType: data.jobType,
+        status: "running",
+        projectName,
+        sessionName,
+        jobId: data.jobId,
+        branchName: data.branchName,
+      });
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });

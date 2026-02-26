@@ -3,13 +3,16 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import MergeConflictsPage from "../MergeConflictsPage";
-import type { ConflictEntry, SessionState } from "@/types";
+import { useAddOrUpdateJob } from "@/stores/notification.store";
+import type { ConflictEntry, JobDispatchResponse, SessionState } from "@/types";
 
 export default function ConflictsPage() {
   const params = useParams<{ name: string; session: string }>();
   const router = useRouter();
   const projectName = params.name;
   const sessionName = decodeURIComponent(params.session);
+
+  const addOrUpdateJob = useAddOrUpdateJob();
 
   const [conflicts, setConflicts] = useState<ConflictEntry[]>([]);
   const [branchName, setBranchName] = useState("");
@@ -72,7 +75,16 @@ export default function ConflictsPage() {
         }),
       });
       if (res.status === 202) {
-        // Job dispatched -- navigate back, user will be notified via toast
+        const data = (await res.json()) as JobDispatchResponse;
+        addOrUpdateJob({
+          type: "job-status",
+          jobType: data.jobType,
+          status: "running",
+          projectName,
+          sessionName,
+          jobId: data.jobId,
+          branchName: data.branchName,
+        });
         router.push(
           `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`,
         );
@@ -80,7 +92,7 @@ export default function ConflictsPage() {
     } catch {
       setError("Failed to submit conflict resolution");
     }
-  }, [projectName, sessionName, conflicts, router]);
+  }, [projectName, sessionName, conflicts, router, addOrUpdateJob]);
 
   const handleFixApproved = useCallback(
     async (
@@ -104,6 +116,16 @@ export default function ConflictsPage() {
           }),
         });
         if (res.status === 202) {
+          const data = (await res.json()) as JobDispatchResponse;
+          addOrUpdateJob({
+            type: "job-status",
+            jobType: data.jobType,
+            status: "running",
+            projectName,
+            sessionName,
+            jobId: data.jobId,
+            branchName: data.branchName,
+          });
           router.push(
             `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`,
           );
@@ -112,7 +134,7 @@ export default function ConflictsPage() {
         setError("Failed to submit conflict resolution");
       }
     },
-    [projectName, sessionName, router],
+    [projectName, sessionName, router, addOrUpdateJob],
   );
 
   const handleBack = useCallback(() => {

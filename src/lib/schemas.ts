@@ -483,6 +483,14 @@ export const jobStatusEventSchema = z.object({
 });
 export type JobStatusEvent = z.infer<typeof jobStatusEventSchema>;
 
+export const jobDispatchResponseSchema = z.object({
+  jobId: z.string(),
+  jobType: jobTypeSchema,
+  branchName: z.string(),
+  startedAt: z.string(),
+});
+export type JobDispatchResponse = z.infer<typeof jobDispatchResponseSchema>;
+
 export const smartMergeRequestSchema = z.object({
   autoResolve: z.boolean(),
 });

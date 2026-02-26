@@ -23,10 +23,10 @@ interface NotificationActions {
 type NotificationStore = NotificationState & NotificationActions;
 
 // ---------------------------------------------------------------------------
-// Store (private)
+// Store
 // ---------------------------------------------------------------------------
 
-const useNotificationStore = create<NotificationStore>()(
+export const useNotificationStore = create<NotificationStore>()(
   immer((set) => ({
     jobs: new Map<string, BackgroundJob>(),
     toastQueue: [],

@@ -73,5 +73,13 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  return NextResponse.json({ jobId: result.value.jobId }, { status: 202 });
+  return NextResponse.json(
+    {
+      jobId: result.value.jobId,
+      jobType: "resolve-conflicts" as const,
+      branchName: session.branchName,
+      startedAt: new Date().toISOString(),
+    },
+    { status: 202 },
+  );
 });
