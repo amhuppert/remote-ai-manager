@@ -2,6 +2,7 @@
 
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import MermaidDiagram from "./MermaidDiagram";
 
 interface MarkdownViewerProps {
   /** Raw markdown content to render, or null if not yet loaded */
@@ -52,7 +53,22 @@ export default function MarkdownViewer({
   return (
     <div className={`markdown-viewer${className ? ` ${className}` : ""}`}>
       <div className="markdown-content">
-        <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            code({ className, children }) {
+              const match = /language-(\w+)/.exec(className || "");
+              if (match?.[1] === "mermaid") {
+                return (
+                  <MermaidDiagram code={String(children).replace(/\n$/, "")} />
+                );
+              }
+              return <code className={className}>{children}</code>;
+            },
+          }}
+        >
+          {content}
+        </Markdown>
       </div>
     </div>
   );

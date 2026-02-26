@@ -35,4 +35,17 @@ describe("MarkdownContent", () => {
     const tokenSpans = inlineCode?.querySelectorAll("span.token");
     expect(tokenSpans?.length ?? 0).toBe(0);
   });
+
+  it("renders mermaid code blocks with MermaidDiagram component", () => {
+    const md = "```mermaid\ngraph LR\n    A --> B\n```";
+    const { container } = render(<MarkdownContent content={md} />);
+
+    // Should render a MermaidDiagram container, not syntax highlighter tokens
+    const mermaidDiv = container.querySelector(".mermaid-diagram");
+    expect(mermaidDiv).not.toBeNull();
+
+    // Should NOT have syntax highlighter tokens
+    const tokenSpans = container.querySelectorAll("span.token");
+    expect(tokenSpans.length).toBe(0);
+  });
 });

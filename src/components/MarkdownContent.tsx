@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import MermaidDiagram from "./MermaidDiagram";
 
 interface Props {
   content: string;
@@ -106,6 +107,10 @@ export default memo(function MarkdownContent({
           const codeString = String(children).replace(/\n$/, "");
 
           if (match) {
+            if (match[1] === "mermaid") {
+              return <MermaidDiagram code={codeString} />;
+            }
+
             return (
               <div className="code-block-wrapper">
                 <SyntaxHighlighter
