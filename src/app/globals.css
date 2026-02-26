@@ -5136,13 +5136,6 @@ textarea {
   min-height: 30px;
 }
 
-.command-icon {
-  color: var(--purple, #b388ff);
-  font-size: 0.85rem;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
 .command-name {
   color: var(--text-primary);
   font-weight: 600;
