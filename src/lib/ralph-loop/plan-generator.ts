@@ -151,7 +151,6 @@ async function generatePlan(
 
     // Consume the stream
     for await (const _ of q) {
-       
       // Just consume — we only care about the tool call result
     }
   } catch (err) {

@@ -16,7 +16,6 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
   return {
     query: vi.fn(
       (_args: { options?: { mcpServers?: Record<string, unknown> } }) => {
-         
         // Access the MCP server to get the submit_plan handler
         // (In real flow, the SDK invokes the tool — here we simulate it)
         return {

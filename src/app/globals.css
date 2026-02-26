@@ -5311,24 +5311,23 @@ textarea {
   /* ---- Session detail: mobile bottom bar ---- */
 
   .app[data-page="detail"] .main {
-    padding-bottom: calc(var(--space-md) + 56px);
+    padding-bottom: calc(var(--space-md) + 100px);
   }
 
   .mobile-bottom-bar {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: var(--space-xs);
     position: fixed;
     bottom: 0;
     left: 0;
     right: 0;
     z-index: 100;
-    height: 56px;
-    padding: 0 var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    padding-bottom: calc(var(--space-sm) + env(safe-area-inset-bottom, 0));
     background: rgba(11, 16, 25, 0.92);
     backdrop-filter: blur(16px) saturate(140%);
     border-top: 1px solid var(--border-subtle);
-    padding-bottom: env(safe-area-inset-bottom, 0);
   }
 
   .mobile-panel-tabs {
@@ -5342,11 +5341,12 @@ textarea {
 
   .mobile-tab {
     display: flex;
+    flex: 1;
     align-items: center;
     justify-content: center;
-    min-width: 64px;
+    min-width: 0;
     height: 36px;
-    padding: 0 var(--space-md);
+    padding: 0 var(--space-sm);
     border: none;
     border-radius: var(--radius-sm);
     background: transparent;
@@ -5367,6 +5367,19 @@ textarea {
   .mobile-actions {
     display: flex;
     gap: var(--space-sm);
+    justify-content: flex-end;
+  }
+
+  .mobile-bottom-bar .btn-sm {
+    min-height: 36px;
+    padding: 6px 14px;
+    font-size: 0.72rem;
+  }
+
+  .mobile-bottom-bar .btn-icon-only {
+    width: 36px;
+    height: 36px;
+    font-size: 0.85rem;
   }
 
   /* Mobile panel switching via data attribute */
@@ -5379,6 +5392,15 @@ textarea {
   }
 
   .app[data-mobile-panel="focus"] .prompt-panel {
+    display: none;
+  }
+
+  .app[data-mobile-panel="specs"] .prompt-panel {
+    display: none;
+  }
+
+  /* Hide right pane internal tabs on mobile (bottom bar handles tab switching) */
+  .right-pane-tabs {
     display: none;
   }
 
@@ -5422,7 +5444,7 @@ textarea {
 
   /* Session detail layout: account for mobile bottom bar */
   .session-detail-layout {
-    height: calc(100vh - var(--topbar-height) - var(--space-md) * 2 - 56px);
+    height: calc(100vh - var(--topbar-height) - var(--space-md) * 2 - 100px);
     min-height: 300px;
   }
 
@@ -5488,11 +5510,6 @@ textarea {
     width: 44px;
     height: 44px;
     font-size: 1rem;
-  }
-
-  .mobile-bottom-bar .btn-icon-only {
-    width: 44px;
-    height: 44px;
   }
 
   .btn-sm {
@@ -6295,6 +6312,11 @@ textarea {
     display: flex;
   }
   .app[data-mobile-panel="focus"]
+    .session-content-area.with-sidebar
+    > .sidebar-diff-panel {
+    display: flex;
+  }
+  .app[data-mobile-panel="specs"]
     .session-content-area.with-sidebar
     > .sidebar-diff-panel {
     display: flex;
