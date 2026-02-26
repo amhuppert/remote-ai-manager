@@ -105,3 +105,68 @@ export const GET = withTracing(async (_request, { params }) => {
 
   return NextResponse.json({ workflow: session.workflow ?? null });
 });
+
+const patchWorkflowSchema = z.object({
+  objective: z.string().min(1),
+});
+
+/** PATCH — Update workflow objective */
+export const PATCH = withTracing(async (request, { params }) => {
+  const resolvedParams = await params;
+  const name = resolvedParams["name"] ?? "";
+  const sessionSlug = resolvedParams["session"] ?? "";
+  const sessionName = decodeURIComponent(sessionSlug);
+
+  const projectPath = await resolveProjectPath(name);
+  if (!projectPath) {
+    return NextResponse.json(
+      { error: "Project not found" } satisfies ApiError,
+      { status: 404 },
+    );
+  }
+
+  const session = await getSession(projectPath, sessionName);
+  if (!session) {
+    return NextResponse.json(
+      { error: "Session not found" } satisfies ApiError,
+      { status: 404 },
+    );
+  }
+
+  if (!session.workflow) {
+    return NextResponse.json(
+      { error: "No workflow exists" } satisfies ApiError,
+      { status: 404 },
+    );
+  }
+
+  if (session.workflow.status !== "planning") {
+    return NextResponse.json(
+      {
+        error: "Objective can only be changed during planning phase",
+      } satisfies ApiError,
+      { status: 409 },
+    );
+  }
+
+  const parsed = patchWorkflowSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request body" } satisfies ApiError,
+      { status: 400 },
+    );
+  }
+
+  const workflow = await mutateSession(
+    projectPath,
+    sessionName,
+    "workflow.updateObjective",
+    (sess) => {
+      if (!sess.workflow) return null;
+      sess.workflow.objective = parsed.data.objective;
+      return sess.workflow;
+    },
+  );
+
+  return NextResponse.json({ workflow });
+});

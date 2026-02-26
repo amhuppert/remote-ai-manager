@@ -6,6 +6,7 @@ import { workflowKeys } from "@/lib/query-keys";
 import { useWorkflowQuery } from "@/lib/queries";
 import {
   useStartWorkflowMutation,
+  useUpdateWorkflowObjectiveMutation,
   useConfirmWorkflowMutation,
   usePauseWorkflowMutation,
   useResumeWorkflowMutation,
@@ -44,6 +45,10 @@ export default function ConnectedWorkflowPanel({
     projectName,
     sessionName,
   );
+  const updateObjectiveMutation = useUpdateWorkflowObjectiveMutation(
+    projectName,
+    sessionName,
+  );
   const updateConfigMutation = useUpdateWorkflowConfigMutation(
     projectName,
     sessionName,
@@ -65,21 +70,21 @@ export default function ConnectedWorkflowPanel({
   }, []);
 
   const handleConfirmStart = useCallback(() => {
-    // If there's a local objective, we need to save it first.
-    // The objective is part of the workflow state; update it via the fix-plan/config route
-    // or just rely on it being set at creation. For now: use the start mutation with the objective.
-    if (
-      workflow &&
-      localObjective !== null &&
-      localObjective !== workflow.objective
-    ) {
-      // Update objective by re-POSTing to the workflow route — but it already exists.
-      // The objective was set at creation time. For editing, we need a separate endpoint.
-      // For the MVP, the objective is set at workflow creation and confirmed as-is.
+    const objectiveToSave =
+      localObjective !== null ? localObjective : workflow?.objective;
+    if (objectiveToSave && objectiveToSave !== workflow?.objective) {
+      // Persist the edited objective, then confirm
+      updateObjectiveMutation.mutate(objectiveToSave, {
+        onSuccess: () => {
+          confirmMutation.mutate();
+          setLocalObjective(null);
+        },
+      });
+    } else {
+      confirmMutation.mutate();
+      setLocalObjective(null);
     }
-    confirmMutation.mutate();
-    setLocalObjective(null);
-  }, [confirmMutation, workflow, localObjective]);
+  }, [confirmMutation, updateObjectiveMutation, workflow, localObjective]);
 
   const handlePause = useCallback(() => {
     pauseMutation.mutate();
@@ -145,16 +150,40 @@ export default function ConnectedWorkflowPanel({
   );
 
   const handleGeneratePlan = useCallback(() => {
-    generatePlanMutation.mutate();
-    // Poll for updates since plan generation is async
-    const pollInterval = setInterval(() => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
+    const startGeneration = () => {
+      generatePlanMutation.mutate();
+      // Poll for updates since plan generation is async
+      const pollInterval = setInterval(() => {
+        void queryClient.invalidateQueries({
+          queryKey: workflowKeys.status(projectName, sessionName),
+        });
+      }, 2000);
+      // Stop polling after 2.5 minutes (generation has 2 min timeout)
+      setTimeout(() => clearInterval(pollInterval), 150_000);
+    };
+
+    // Persist the objective before generating so the backend has it
+    const objectiveToSave =
+      localObjective !== null ? localObjective : workflow?.objective;
+    if (objectiveToSave && objectiveToSave !== workflow?.objective) {
+      updateObjectiveMutation.mutate(objectiveToSave, {
+        onSuccess: () => {
+          setLocalObjective(null);
+          startGeneration();
+        },
       });
-    }, 2000);
-    // Stop polling after 2.5 minutes (generation has 2 min timeout)
-    setTimeout(() => clearInterval(pollInterval), 150_000);
-  }, [generatePlanMutation, queryClient, projectName, sessionName]);
+    } else {
+      startGeneration();
+    }
+  }, [
+    generatePlanMutation,
+    updateObjectiveMutation,
+    queryClient,
+    projectName,
+    sessionName,
+    localObjective,
+    workflow,
+  ]);
 
   const handleConfigChange = useCallback(
     (config: import("@/types").RalphLoopConfig) => {

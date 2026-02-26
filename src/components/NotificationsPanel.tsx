@@ -50,6 +50,7 @@ export interface WorkflowNotification extends BaseNotification {
   status: "running" | "paused" | "completed" | "halted" | "aborted";
   iterationCount: number;
   maxIterations: number;
+  read?: boolean;
 }
 
 export type ServerNotificationItem =

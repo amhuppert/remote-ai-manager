@@ -486,6 +486,31 @@ export function useStartWorkflowMutation(
   });
 }
 
+export function useUpdateWorkflowObjectiveMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (objective: string) =>
+      mutationFetch<{ workflow: RalphLoopWorkflow }>(
+        workflowUrl(projectName, sessionName),
+        "update-workflow-objective",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ objective }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
+      });
+    },
+  });
+}
+
 export function useConfirmWorkflowMutation(
   projectName: string,
   sessionName: string,
