@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useCreateSessionMutation } from "@/lib/mutations";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
@@ -26,6 +26,8 @@ export default function CreateSessionModal({
   const [error, setError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const objectiveRef = useRef(objective);
+  objectiveRef.current = objective;
 
   const createMutation = useCreateSessionMutation(projectName);
 
@@ -37,6 +39,7 @@ export default function CreateSessionModal({
     toggleRecording,
   } = useVoiceRecorder({
     projectName,
+    getContext: useCallback(() => objectiveRef.current, []),
     onResult: (text) => {
       setObjective((prev) => (prev ? prev + "\n" + text : text));
     },

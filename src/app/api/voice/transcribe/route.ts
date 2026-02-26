@@ -49,6 +49,11 @@ export const POST = withTracing(async (request) => {
   upstreamFormData.set("audio", audio);
   upstreamFormData.set("projectPath", projectPath);
 
+  const context = formData.get("context");
+  if (typeof context === "string" && context.trim()) {
+    upstreamFormData.set("context", context);
+  }
+
   try {
     const response = await fetch(`${VOICE_SERVER_URL}/transcribe`, {
       method: "POST",

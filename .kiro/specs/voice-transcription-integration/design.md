@@ -6,13 +6,14 @@
 
 **Users**: Developers using CSM to manage Claude Code sessions will use voice input for faster prompt entry, especially when describing complex tasks or when remote (e.g., via Tailscale from a mobile device).
 
-**Impact**: Extends the Voice2Text CLI tool into an HTTP server, adds a proxy API layer in CSM, and introduces a voice record button in the session UI. No existing functionality is modified — the voice feature is additive and gracefully hidden when the Voice2Text server is unavailable.
+**Impact**: Extends the Voice2Text CLI tool into an HTTP server, adds a proxy API layer in CSM, and introduces a voice record button in the session UI. No existing functionality is modified — the voice feature is additive and gracefully hidden when the Voice2Text server is unavailable. When existing text is present in the input field, it is automatically forwarded as context so the cleanup phase produces output that continues naturally from the prior content.
 
 ### Goals
 - Enable browser-based voice dictation that flows into the existing prompt textarea
 - Proxy transcription through CSM so Voice2Text can remain localhost-bound
 - Support per-project voice configuration (context files, cleanup instructions)
 - Provide clear visual feedback for recording, processing, and error states
+- Automatically pass existing input text as context to improve transcription cleanup continuity
 
 ### Non-Goals
 - Real-time streaming transcription (batch recording is sufficient for prompt dictation)
@@ -60,10 +61,10 @@ graph TB
     VRB --> Hook
     Hook --> SDP
     Hook -->|health check| HealthRoute
-    Hook -->|audio + projectName| TranscribeRoute
+    Hook -->|audio + projectName + context| TranscribeRoute
     HealthRoute -->|proxy| V2THealth
     TranscribeRoute -->|resolve name| ProjectResolver
-    TranscribeRoute -->|audio + projectPath| V2TTranscribe
+    TranscribeRoute -->|audio + projectPath + context| V2TTranscribe
     V2TTranscribe --> ConfigLoader
     V2TTranscribe --> Transcriber
     V2TTranscribe --> Cleanup
@@ -111,12 +112,13 @@ sequenceDiagram
     U->>VRB: Click stop button
     VRB->>Hook: toggleRecording
     Hook->>Hook: Stop MediaRecorder, assemble Blob
-    Hook->>CSM: POST /api/voice/transcribe (audio + projectName)
+    Hook->>Hook: Read existing text from getContext callback
+    Hook->>CSM: POST /api/voice/transcribe (audio + projectName + context?)
     CSM->>CSM: resolveProjectPath(projectName)
-    CSM->>V2T: POST /transcribe (audio + projectPath)
+    CSM->>V2T: POST /transcribe (audio + projectPath + context?)
     V2T->>V2T: Write temp file, load project config
     V2T->>V2T: OpenAI transcribe
-    V2T->>V2T: Claude cleanup
+    V2T->>V2T: Claude cleanup (with priorOutput if context provided)
     V2T->>V2T: Delete temp file
     V2T-->>CSM: 200 text cleaned transcription
     CSM-->>Hook: 200 text cleaned transcription
@@ -174,20 +176,27 @@ sequenceDiagram
 | 8.4 | projectPath prop pass | page.tsx, SessionDetailPage | Props interface | — |
 | 9.1-9.5 | Error messages | useVoiceRecorder, TranscribeRoute | onError callback | — |
 | 9.6 | Cleanup fallback | V2TServer | — | Transcription |
+| 10.1 | Include context in FormData | useVoiceRecorder | getContext option, context field | Context-aware transcription |
+| 10.2 | Omit context when empty | useVoiceRecorder | — | — |
+| 10.3 | Proxy context field | TranscribeRoute | context form field forwarding | Context-aware transcription |
+| 10.4 | V2T uses context as priorOutput | V2TServer | context → priorOutput | Context-aware transcription |
+| 10.5 | Standard cleanup without context | V2TServer, CleanupService | — | Transcription |
+| 10.6 | Identical behavior in both UIs | SessionDetailPage, CreateSessionModal | getContext callback | Context-aware transcription |
 
 ## Components and Interfaces
 
 | Component | Domain / Layer | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|---------------|--------|--------------|------------------|-----------|
-| V2TServer | V2T / Server | HTTP server for transcription requests | 1.1-1.9 | Transcriber (P0), CleanupService (P0), ConfigLoader (P0) | API |
+| V2TServer | V2T / Server | HTTP server for transcription requests | 1.1-1.9, 10.4, 10.5 | Transcriber (P0), CleanupService (P0), ConfigLoader (P0) | API |
 | ConfigLoader | V2T / Config | Load project-specific voice.json | 2.1-2.3 | Filesystem (P0) | Service |
 | Transcriber | V2T / Service | MIME-aware OpenAI transcription | 3.1-3.3 | OpenAI API (P0) | Service |
 | ContextUtil | V2T / Util | Shared context file reader | 1.3 | Filesystem (P0) | Service |
-| TranscribeRoute | CSM / API | Proxy transcription to V2T | 4.1-4.8, 9.3-9.5 | resolveProjectPath (P0), V2T Server (P0) | API |
+| TranscribeRoute | CSM / API | Proxy transcription to V2T | 4.1-4.8, 9.3-9.5, 10.3 | resolveProjectPath (P0), V2T Server (P0) | API |
 | HealthRoute | CSM / API | Proxy health check to V2T | 5.1-5.2 | V2T Server (P1) | API |
-| useVoiceRecorder | CSM / Hook | Browser audio recording + transcription | 6.1-6.8, 9.1-9.2 | MediaRecorder (P0), CSM API (P0) | State |
+| useVoiceRecorder | CSM / Hook | Browser audio recording + transcription | 6.1-6.8, 9.1-9.2, 10.1, 10.2 | MediaRecorder (P0), CSM API (P0) | State |
 | VoiceRecordButton | CSM / UI | Voice input button with visual states | 7.1-7.6 | useVoiceRecorder (P0) | — |
-| SessionDetailPage | CSM / UI | Integration point for voice button | 8.1-8.4 | VoiceRecordButton (P1) | — |
+| SessionDetailPage | CSM / UI | Integration point for voice button | 8.1-8.4, 10.6 | VoiceRecordButton (P1) | — |
+| CreateSessionModal | CSM / UI | Focus mode session creation with voice | 10.6 | useVoiceRecorder (P1) | — |
 
 ### Voice2Text Server Layer
 
@@ -196,11 +205,11 @@ sequenceDiagram
 | Field | Detail |
 |-------|--------|
 | Intent | HTTP server exposing transcription and health endpoints via Bun.serve() |
-| Requirements | 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 9.6 |
+| Requirements | 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 9.6, 10.4, 10.5 |
 
 **Responsibilities & Constraints**
-- Accepts multipart form data with audio file and optional projectPath
-- Orchestrates: temp file write → config load → transcribe → cleanup → temp file delete
+- Accepts multipart form data with audio file, optional projectPath, and optional context
+- Orchestrates: temp file write → config load → transcribe → cleanup (with priorOutput if context provided) → temp file delete
 - Validates OPENAI_API_KEY on startup
 - Adds CORS headers to all responses
 - Temp file lifecycle managed in finally block (guaranteed cleanup)
@@ -219,7 +228,7 @@ sequenceDiagram
 | Method | Endpoint | Request | Response | Errors |
 |--------|----------|---------|----------|--------|
 | GET | /health | — | HealthResponse | — |
-| POST | /transcribe | FormData: audio (File), projectPath? (string) | TranscribeResponse | 400, 500 |
+| POST | /transcribe | FormData: audio (File), projectPath? (string), context? (string) | TranscribeResponse | 400, 500 |
 
 #### ConfigLoader (Extension)
 
@@ -304,12 +313,12 @@ function readContextFilesContent(files: ResolvedFileRef[]): string;
 | Field | Detail |
 |-------|--------|
 | Intent | Proxy voice transcription requests from browser to V2T server |
-| Requirements | 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 9.3, 9.4, 9.5 |
+| Requirements | 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 9.3, 9.4, 9.5, 10.3 |
 
 **Responsibilities & Constraints**
 - Wraps with `withTracing` (follows existing API route pattern)
 - Resolves projectName → projectPath via `resolveProjectPath`
-- Forwards audio blob + projectPath as FormData to V2T server
+- Forwards audio blob + projectPath + optional context as FormData to V2T server
 - 60-second timeout via AbortSignal.timeout
 - Maps V2T errors to appropriate HTTP status codes
 
@@ -324,7 +333,7 @@ function readContextFilesContent(files: ResolvedFileRef[]): string;
 
 | Method | Endpoint | Request | Response | Errors |
 |--------|----------|---------|----------|--------|
-| POST | /api/voice/transcribe | FormData: audio (File), projectName (string) | `{ text: string }` | 400, 404, 502, 504 |
+| POST | /api/voice/transcribe | FormData: audio (File), projectName (string), context? (string) | `{ text: string }` | 400, 404, 502, 504 |
 
 **Error mapping**:
 - Missing audio/projectName → 400 `{ error: "Missing audio file" }` / `{ error: "Missing projectName" }`
@@ -360,7 +369,7 @@ function readContextFilesContent(files: ResolvedFileRef[]): string;
 | Field | Detail |
 |-------|--------|
 | Intent | React hook managing audio recording lifecycle, transcription submission, and availability |
-| Requirements | 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 9.1, 9.2 |
+| Requirements | 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 9.1, 9.2, 10.1, 10.2 |
 
 **Responsibilities & Constraints**
 - State machine: `idle` → `recording` → `processing` → `idle`
@@ -370,6 +379,7 @@ function readContextFilesContent(files: ResolvedFileRef[]): string;
 - Auto-stops at maxDuration (default 300s)
 - Periodic health check (30s interval)
 - Aborts in-flight requests on unmount via AbortController
+- Calls optional `getContext()` callback when building FormData; includes non-empty result as `context` field
 
 **Dependencies**
 - External: MediaRecorder API (P0)
@@ -385,6 +395,7 @@ function readContextFilesContent(files: ResolvedFileRef[]): string;
 interface UseVoiceRecorderOptions {
   projectName: string;
   maxDuration?: number;       // seconds, default 300
+  getContext?: () => string;  // returns current input text for context-aware cleanup (10.1, 10.2)
   onResult: (text: string) => void;
   onError: (error: string) => void;
 }
@@ -395,12 +406,14 @@ interface UseVoiceRecorderReturn {
   elapsedTime: number;        // seconds elapsed while recording
   isAvailable: boolean;       // false if V2T down or no mic access
   toggleRecording: () => void; // start or stop recording
+  stopRecording: () => void;  // stop recording without toggle
 }
 ```
 
 - State model: Three-state machine (`idle` | `recording` | `processing`)
 - Persistence: None (ephemeral hook state)
 - Concurrency: Single recording at a time; toggleRecording is no-op during processing
+- Context passing: When `getContext` is provided and returns non-empty trimmed string, it is included as `context` field in the transcription FormData. Called at submission time (after recording stops), not at recording start, to capture the latest text content
 
 **MIME negotiation order**:
 1. `audio/webm;codecs=opus` (Chrome, Firefox, Edge)
@@ -437,7 +450,7 @@ interface VoiceRecordButtonProps {
 | Field | Detail |
 |-------|--------|
 | Intent | Integration point: add voice button to prompt area, wire callbacks |
-| Requirements | 8.1, 8.2, 8.3, 8.4 |
+| Requirements | 8.1, 8.2, 8.3, 8.4, 10.6 |
 
 **Implementation Notes**
 - Props extended: add `projectPath: string` (passed from server component)
@@ -445,6 +458,19 @@ interface VoiceRecordButtonProps {
 - `handleVoiceError`: calls `setPromptError(error)`
 - VoiceRecordButton placed in `.prompt-input-wrapper` between textarea and send-btn
 - `disabled={sending}` prevents recording during prompt execution
+- Passes `getContext` callback to `useVoiceRecorder` that returns current `promptText` value
+
+#### CreateSessionModal (Extension)
+
+| Field | Detail |
+|-------|--------|
+| Intent | Focus mode session creation dialog with voice input for objective |
+| Requirements | 10.6 |
+
+**Implementation Notes**
+- Already uses `useVoiceRecorder` hook with `projectName` and callbacks
+- Passes `getContext` callback to `useVoiceRecorder` that returns current `objective` value
+- Context behavior identical to SessionDetailPage: existing text in the objective textarea flows to V2T cleanup as prior output
 
 ## Data Models
 
@@ -482,8 +508,9 @@ interface VoiceHealthResponse {
 }
 
 // CSM transcribe — uses same TranscribeResponse shape
-// Request: FormData with audio (File) + projectName (string)
+// Request: FormData with audio (File) + projectName (string) + context? (string)
 // Response: { text: string } | { error: string }
+// When context is provided and non-empty, it is forwarded to V2T as context field
 ```
 
 #### MIME Type Mapping
@@ -539,13 +566,18 @@ Errors follow a layered approach: V2T server handles transcription/cleanup failu
 - ConfigLoader: `resolveConfig` with `projectDir` produces correct paths; without `projectDir` behaves identically to current
 - Transcriber: MIME mapping for each supported extension; unrecognized ext defaults to wav
 - useVoiceRecorder: state transitions (idle→recording→processing→idle); unmount cleanup; error callbacks
+- useVoiceRecorder: includes `context` field in FormData when `getContext` returns non-empty string (10.1)
+- useVoiceRecorder: omits `context` field when `getContext` returns empty string or is not provided (10.2)
 - VoiceRecordButton: renders null when unavailable; correct visual state for idle/recording/processing
 
 ### Integration Tests
 - V2T: `GET /health` returns correct response
 - V2T: `POST /transcribe` with audio file returns transcribed text
 - V2T: `POST /transcribe` without audio returns 400
+- V2T: `POST /transcribe` with context field uses file-mode cleanup (priorOutput) (10.4)
+- V2T: `POST /transcribe` without context field uses standard cleanup (10.5)
 - CSM: `POST /api/voice/transcribe` proxies correctly when V2T running
+- CSM: `POST /api/voice/transcribe` forwards optional context field to V2T (10.3)
 - CSM: `GET /api/voice/health` returns `{ available: true }` when V2T running
 - CSM: `GET /api/voice/health` returns `{ available: false }` when V2T not running
 

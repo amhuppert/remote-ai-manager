@@ -811,6 +811,7 @@ export default function SessionDetailPage({
     toggleRecording,
   } = useVoiceRecorder({
     projectName,
+    getContext: useCallback(() => promptTextRef.current, []),
     onResult: handleVoiceResult,
     onError: handleVoiceError,
   });
