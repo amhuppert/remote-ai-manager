@@ -102,7 +102,7 @@ describe("createConversation", () => {
     const { createConversation } = await import("./conversations");
 
     await expect(createConversation("/nonexistent", "test")).rejects.toThrow(
-      "Project not found: /nonexistent",
+      'Session "test" not found',
     );
   });
 
@@ -240,7 +240,7 @@ describe("setConversationArchived", () => {
 
     await expect(
       setConversationArchived("/nonexistent", "test", "any-id", true),
-    ).rejects.toThrow("Project not found: /nonexistent");
+    ).rejects.toThrow('Session "test" not found');
   });
 });
 
@@ -301,7 +301,7 @@ describe("renameConversation", () => {
 
     await expect(
       renameConversation("/nonexistent", "test", "any-id", "Name"),
-    ).rejects.toThrow("Project not found: /nonexistent");
+    ).rejects.toThrow('Session "test" not found');
   });
 });
 
@@ -609,7 +609,7 @@ describe("finalizeInitialization", () => {
 
     await expect(
       finalizeInitialization("/nonexistent", "test"),
-    ).rejects.toThrow("Project not found: /nonexistent");
+    ).rejects.toThrow('Session "test" not found');
   });
 
   it("throws for non-existent session", async () => {

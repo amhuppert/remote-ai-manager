@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveProjectPath } from "@/lib/project-resolver";
-import { getSession, updateSession } from "@/lib/state";
+import { getSession, mutateSession } from "@/lib/state";
 import { withTracing } from "@/lib/logging";
 import { createInitialCircuitBreakerState } from "@/lib/ralph-loop/circuit-breaker";
 import type { ApiError } from "@/types";
@@ -49,29 +49,35 @@ export const POST = withTracing(async (request, { params }) => {
     body = {};
   }
 
-  const now = new Date().toISOString();
-  session.workflow = {
-    status: "planning",
-    objective: body.objective ?? "",
-    fixPlan: [],
-    config: {
-      maxIterations: 20,
-      iterationTimeoutMs: 3_600_000,
-      circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
+  const workflow = await mutateSession(
+    projectPath,
+    sessionName,
+    "workflow.create",
+    (sess) => {
+      const now = new Date().toISOString();
+      sess.workflow = {
+        status: "planning",
+        objective: body.objective ?? "",
+        fixPlan: [],
+        config: {
+          maxIterations: 20,
+          iterationTimeoutMs: 3_600_000,
+          circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
+        },
+        circuitBreaker: createInitialCircuitBreakerState(),
+        iterations: [],
+        haltReason: null,
+        createdAt: now,
+        startedAt: null,
+        completedAt: null,
+        totalCostUsd: 0,
+        totalDurationMs: 0,
+      };
+      return sess.workflow;
     },
-    circuitBreaker: createInitialCircuitBreakerState(),
-    iterations: [],
-    haltReason: null,
-    createdAt: now,
-    startedAt: null,
-    completedAt: null,
-    totalCostUsd: 0,
-    totalDurationMs: 0,
-  };
-  session.lastActivityAt = now;
-  await updateSession(projectPath, session);
+  );
 
-  return NextResponse.json({ workflow: session.workflow }, { status: 201 });
+  return NextResponse.json({ workflow }, { status: 201 });
 });
 
 /** GET — Get current workflow state */

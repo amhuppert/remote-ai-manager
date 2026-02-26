@@ -25,7 +25,7 @@ import type {
   MessageContentBlock,
   GitIterationMetrics,
 } from "@/types";
-import { getSession, updateSession } from "../state";
+import { getSession, mutateSession, mutateConversation } from "../state";
 import { acquireSessionLock } from "../lock";
 import { createLogger } from "../logging";
 import { createConversation } from "../conversations";
@@ -235,10 +235,16 @@ async function runIteration(
 
   // Set transcript path eagerly
   const transcriptPath = await getTranscriptPath(conversationId);
-  await mutateConversation(projectPath, sessionName, conversationId, (c) => {
-    c.transcriptPath = transcriptPath;
-    c.status = "running";
-  });
+  await mutateConversation(
+    projectPath,
+    sessionName,
+    conversationId,
+    "workflow.conversationSetup",
+    (c) => {
+      c.transcriptPath = transcriptPath;
+      c.status = "running";
+    },
+  );
 
   // Broadcast iteration started
   workflowStream.emit(projectPath, sessionName, {
@@ -276,35 +282,43 @@ async function runIteration(
       statusReport = report;
     },
     onFixPlanUpdate: async (update: UpdateFixPlanInput) => {
-      // Apply mutations to workflow state
-      const freshSession = await getSession(projectPath, sessionName);
-      if (!freshSession?.workflow) return;
+      // Apply mutations inside the lock
+      const updatedPlan = await mutateSession(
+        projectPath,
+        sessionName,
+        "workflow.fixPlanUpdate",
+        (sess) => {
+          if (!sess.workflow) return null;
 
-      const result = applyFixPlanUpdate(
-        freshSession.workflow.fixPlan,
-        update,
-        iterationNumber,
+          const result = applyFixPlanUpdate(
+            sess.workflow.fixPlan,
+            update,
+            iterationNumber,
+          );
+
+          sess.workflow.fixPlan = result.plan;
+
+          taskMutations.completedIds.push(...result.completedIds);
+          taskMutations.skippedIds.push(...result.skippedIds);
+          taskMutations.addedIds.push(...result.addedIds);
+
+          return result.plan;
+        },
       );
 
-      // Persist updated plan
-      freshSession.workflow.fixPlan = result.plan;
-      await updateSession(projectPath, freshSession);
-
-      taskMutations.completedIds.push(...result.completedIds);
-      taskMutations.skippedIds.push(...result.skippedIds);
-      taskMutations.addedIds.push(...result.addedIds);
-
       // Broadcast fix plan update
-      try {
-        broadcast({
-          type: "workflow-fix-plan-updated",
-          projectName,
-          sessionName,
-          fixPlan: result.plan,
-          source: "tool",
-        });
-      } catch {
-        // fire-and-forget
+      if (updatedPlan) {
+        try {
+          broadcast({
+            type: "workflow-fix-plan-updated",
+            projectName,
+            sessionName,
+            fixPlan: updatedPlan,
+            source: "tool",
+          });
+        } catch {
+          // fire-and-forget
+        }
       }
     },
   });
@@ -433,9 +447,15 @@ async function runIteration(
     if (release) release();
 
     // Mark conversation as awaiting
-    await mutateConversation(projectPath, sessionName, conversationId, (c) => {
-      c.status = "awaiting";
-    }).catch(() => {});
+    await mutateConversation(
+      projectPath,
+      sessionName,
+      conversationId,
+      "workflow.conversationCleanup",
+      (c) => {
+        c.status = "awaiting";
+      },
+    ).catch(() => {});
   }
 
   // Capture post-iteration git diff
@@ -488,34 +508,39 @@ async function persistIterationResults(
   projectName: string,
   iteration: RalphLoopIterationMeta,
 ): Promise<void> {
-  const session = await getSession(projectPath, sessionName);
-  if (!session?.workflow) return;
+  const circuitBreaker = await mutateSession(
+    projectPath,
+    sessionName,
+    "workflow.iterationComplete",
+    (sess) => {
+      if (!sess.workflow) return null;
 
-  const workflow = session.workflow;
+      const workflow = sess.workflow;
 
-  // Add iteration to history
-  workflow.iterations.push(iteration);
+      // Add iteration to history
+      workflow.iterations.push(iteration);
 
-  // Accumulate totals
-  workflow.totalCostUsd += iteration.costUsd;
-  workflow.totalDurationMs += iteration.durationMs;
+      // Accumulate totals
+      workflow.totalCostUsd += iteration.costUsd;
+      workflow.totalDurationMs += iteration.durationMs;
 
-  // Update circuit breaker
-  const errorPattern =
-    iteration.status === "error" || iteration.status === "timeout"
-      ? iteration.status
-      : undefined;
-  workflow.circuitBreaker = processCircuitBreaker(
-    workflow.circuitBreaker,
-    {
-      classification: iteration.progressClassification,
-      errorPattern,
+      // Update circuit breaker
+      const errorPattern =
+        iteration.status === "error" || iteration.status === "timeout"
+          ? iteration.status
+          : undefined;
+      workflow.circuitBreaker = processCircuitBreaker(
+        workflow.circuitBreaker,
+        {
+          classification: iteration.progressClassification,
+          errorPattern,
+        },
+        workflow.config.circuitBreaker,
+      );
+
+      return workflow.circuitBreaker;
     },
-    workflow.config.circuitBreaker,
   );
-
-  session.lastActivityAt = new Date().toISOString();
-  await updateSession(projectPath, session);
 
   // Broadcast events
   try {
@@ -529,15 +554,17 @@ async function persistIterationResults(
     // fire-and-forget
   }
 
-  try {
-    broadcast({
-      type: "workflow-circuit-breaker",
-      projectName,
-      sessionName,
-      circuitBreaker: workflow.circuitBreaker,
-    });
-  } catch {
-    // fire-and-forget
+  if (circuitBreaker) {
+    try {
+      broadcast({
+        type: "workflow-circuit-breaker",
+        projectName,
+        sessionName,
+        circuitBreaker,
+      });
+    } catch {
+      // fire-and-forget
+    }
   }
 }
 
@@ -546,15 +573,18 @@ async function updateWorkflowStatus(
   sessionName: string,
   status: RalphLoopWorkflow["status"],
 ): Promise<void> {
-  const session = await getSession(projectPath, sessionName);
-  if (!session?.workflow) return;
-
-  session.workflow.status = status;
-  if (status === "running" && !session.workflow.startedAt) {
-    session.workflow.startedAt = new Date().toISOString();
-  }
-  session.lastActivityAt = new Date().toISOString();
-  await updateSession(projectPath, session);
+  await mutateSession(
+    projectPath,
+    sessionName,
+    "workflow.statusUpdate",
+    (sess) => {
+      if (!sess.workflow) return;
+      sess.workflow.status = status;
+      if (status === "running" && !sess.workflow.startedAt) {
+        sess.workflow.startedAt = new Date().toISOString();
+      }
+    },
+  );
 }
 
 async function updateWorkflowHalt(
@@ -563,14 +593,12 @@ async function updateWorkflowHalt(
   status: "completed" | "halted" | "aborted",
   haltReason: RalphLoopWorkflow["haltReason"],
 ): Promise<void> {
-  const session = await getSession(projectPath, sessionName);
-  if (!session?.workflow) return;
-
-  session.workflow.status = status;
-  session.workflow.haltReason = haltReason;
-  session.workflow.completedAt = new Date().toISOString();
-  session.lastActivityAt = new Date().toISOString();
-  await updateSession(projectPath, session);
+  await mutateSession(projectPath, sessionName, "workflow.halt", (sess) => {
+    if (!sess.workflow) return;
+    sess.workflow.status = status;
+    sess.workflow.haltReason = haltReason;
+    sess.workflow.completedAt = new Date().toISOString();
+  });
 }
 
 async function handleAbort(
@@ -780,25 +808,4 @@ async function appendEntry(
       error: err instanceof Error ? err.message : String(err),
     });
   }
-}
-
-/** Read a conversation, apply a mutation, and persist via updateSession */
-async function mutateConversation(
-  projectPath: string,
-  sessionName: string,
-  conversationId: string,
-  mutate: (conversation: import("@/types").ConversationState) => void,
-): Promise<void> {
-  const session = await getSession(projectPath, sessionName);
-  if (!session) return;
-
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
-  );
-  if (!conversation) return;
-
-  mutate(conversation);
-  conversation.lastActivityAt = new Date().toISOString();
-  session.lastActivityAt = new Date().toISOString();
-  await updateSession(projectPath, session);
 }

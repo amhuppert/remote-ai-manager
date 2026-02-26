@@ -16,7 +16,7 @@ import type {
   ImagePayload,
 } from "@/types";
 import { readConfig } from "./config";
-import { getSession, updateSession } from "./state";
+import { mutateConversation } from "./state";
 import { acquireSessionLock } from "./lock";
 import { createLogger } from "./logging";
 import { getConversation, createConversation } from "./conversations";
@@ -86,6 +86,7 @@ export async function executePromptStream(
       projectPath,
       session.sessionName,
       conversationId,
+      "prompt.setTranscriptPath",
       (c) => {
         c.transcriptPath = transcriptPath;
       },
@@ -107,6 +108,7 @@ export async function executePromptStream(
       projectPath,
       session.sessionName,
       conversationId,
+      "prompt.setRunning",
       (c) => {
         c.status = "running";
       },
@@ -212,6 +214,7 @@ export async function executePromptStream(
               projectPath,
               session.sessionName,
               conversationId!,
+              "prompt.setWaitingForInput",
               (c) => {
                 c.status = "waiting_for_input";
                 c.pendingQuestionId = questionId;
@@ -243,6 +246,7 @@ export async function executePromptStream(
               projectPath,
               session.sessionName,
               conversationId!,
+              "prompt.resumeRunning",
               (c) => {
                 c.status = "running";
                 c.pendingQuestionId = null;
@@ -339,6 +343,7 @@ export async function executePromptStream(
         projectPath,
         session.sessionName,
         conversationId,
+        "prompt.storeResponse",
         (c) => {
           c.promptCount++;
           if (sessionId) {
@@ -386,6 +391,7 @@ export async function executePromptStream(
       projectPath,
       session.sessionName,
       conversationId,
+      "prompt.setAwaiting",
       (c) => {
         c.status = "awaiting";
         c.pendingQuestionId = null;
@@ -600,25 +606,4 @@ async function appendEntry(
       error: err instanceof Error ? err.message : String(err),
     });
   }
-}
-
-/** Read a conversation, apply a mutation, and persist via updateSession */
-async function mutateConversation(
-  projectPath: string,
-  sessionName: string,
-  conversationId: string,
-  mutate: (conversation: ConversationState) => void,
-): Promise<void> {
-  const session = await getSession(projectPath, sessionName);
-  if (!session) return;
-
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
-  );
-  if (!conversation) return;
-
-  mutate(conversation);
-  conversation.lastActivityAt = new Date().toISOString();
-  session.lastActivityAt = new Date().toISOString();
-  await updateSession(projectPath, session);
 }

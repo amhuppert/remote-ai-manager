@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
-import { getSession, updateSession } from "@/lib/state";
+import { getSession, mutateConversation } from "@/lib/state";
 import { resolveQuestion } from "@/lib/question-registry";
 import { answerQuestionRequestSchema } from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
@@ -61,12 +61,17 @@ export const POST = withTracing(async (request, { params }) => {
       conversation.pendingQuestionId === body.questionId &&
       conversation.status === "waiting_for_input"
     ) {
-      conversation.pendingQuestionId = null;
-      conversation.pendingQuestions = null;
-      conversation.status = "awaiting";
-      conversation.lastActivityAt = new Date().toISOString();
-      session.lastActivityAt = new Date().toISOString();
-      await updateSession(projectPath, session).catch(() => {});
+      await mutateConversation(
+        projectPath,
+        sessionName,
+        conversationId,
+        "answer.resolveStaleQuestion",
+        (c) => {
+          c.pendingQuestionId = null;
+          c.pendingQuestions = null;
+          c.status = "awaiting";
+        },
+      ).catch(() => {});
 
       return NextResponse.json(
         {
@@ -84,11 +89,16 @@ export const POST = withTracing(async (request, { params }) => {
   }
 
   // Clear persisted question data on successful resolution
-  conversation.pendingQuestionId = null;
-  conversation.pendingQuestions = null;
-  conversation.lastActivityAt = new Date().toISOString();
-  session.lastActivityAt = new Date().toISOString();
-  await updateSession(projectPath, session).catch(() => {});
+  await mutateConversation(
+    projectPath,
+    sessionName,
+    conversationId,
+    "answer.clearPending",
+    (c) => {
+      c.pendingQuestionId = null;
+      c.pendingQuestions = null;
+    },
+  ).catch(() => {});
 
   return NextResponse.json({ ok: true });
 });

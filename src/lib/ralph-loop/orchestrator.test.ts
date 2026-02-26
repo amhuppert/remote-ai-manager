@@ -38,6 +38,38 @@ vi.mock("../state", () => ({
   updateSession: vi.fn(async (projectPath: string, session: SessionState) => {
     sessions.set(`${projectPath}::${session.sessionName}`, session);
   }),
+  mutateSession: vi.fn(
+    async (
+      projectPath: string,
+      sessionName: string,
+      _label: string,
+      mutate: (session: SessionState) => unknown,
+    ) => {
+      const session = sessions.get(`${projectPath}::${sessionName}`);
+      if (!session) throw new Error(`Session not found: ${sessionName}`);
+      const result = await mutate(session);
+      session.lastActivityAt = new Date().toISOString();
+      return result;
+    },
+  ),
+  mutateConversation: vi.fn(
+    async (
+      projectPath: string,
+      sessionName: string,
+      conversationId: string,
+      _label: string,
+      mutate: (conversation: ConversationState) => unknown,
+    ) => {
+      const session = sessions.get(`${projectPath}::${sessionName}`);
+      if (!session) throw new Error(`Session not found: ${sessionName}`);
+      const conv = session.conversations.find((c) => c.id === conversationId);
+      if (!conv) throw new Error(`Conversation not found: ${conversationId}`);
+      const result = await mutate(conv);
+      conv.lastActivityAt = new Date().toISOString();
+      session.lastActivityAt = new Date().toISOString();
+      return result;
+    },
+  ),
 }));
 
 // Lock mock
@@ -58,14 +90,27 @@ vi.mock("../logging", () => ({
 // Conversation mock
 let conversationCounter = 0;
 vi.mock("../conversations", () => ({
-  createConversation: vi.fn(async () => {
-    conversationCounter++;
-    return {
-      id: `conv-iter-${conversationCounter}`,
-      status: "new",
-      role: "iteration",
-    } as Partial<ConversationState>;
-  }),
+  createConversation: vi.fn(
+    async (projectPath: string, sessionName: string) => {
+      conversationCounter++;
+      const conv = {
+        id: `conv-iter-${conversationCounter}`,
+        name: `Iteration ${conversationCounter}`,
+        status: "new",
+        role: "iteration",
+        createdAt: new Date().toISOString(),
+        lastActivityAt: new Date().toISOString(),
+        promptCount: 0,
+        totalCostUsd: 0,
+        totalDurationMs: 0,
+        totalTurns: 0,
+      } as ConversationState;
+      // Insert into sessions map so mutateConversation can find it
+      const session = sessions.get(`${projectPath}::${sessionName}`);
+      if (session) session.conversations.push(conv);
+      return conv;
+    },
+  ),
 }));
 
 // Transcript mocks

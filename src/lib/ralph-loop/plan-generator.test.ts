@@ -71,6 +71,20 @@ vi.mock("../state", () => ({
   updateSession: vi.fn(async (projectPath: string, session: SessionState) => {
     sessions.set(`${projectPath}::${session.sessionName}`, session);
   }),
+  mutateSession: vi.fn(
+    async (
+      projectPath: string,
+      sessionName: string,
+      _label: string,
+      mutate: (session: SessionState) => unknown,
+    ) => {
+      const session = sessions.get(`${projectPath}::${sessionName}`);
+      if (!session) throw new Error(`Session not found: ${sessionName}`);
+      const result = await mutate(session);
+      session.lastActivityAt = new Date().toISOString();
+      return result;
+    },
+  ),
 }));
 
 vi.mock("../logging", () => ({

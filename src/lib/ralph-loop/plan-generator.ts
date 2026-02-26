@@ -10,7 +10,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { SessionState, RalphLoopWorkflow, FixPlanTask } from "@/types";
-import { getSession, updateSession } from "../state";
+import { mutateSession } from "../state";
 import { createLogger } from "../logging";
 import { readConversationMessages } from "../transcript";
 import { broadcast } from "../sse-broadcaster";
@@ -168,9 +168,6 @@ async function generatePlan(
 
   // Persist generated tasks
   if (generatedTasks.length > 0) {
-    const freshSession = await getSession(projectPath, sessionName);
-    if (!freshSession?.workflow) return;
-
     // Append to existing tasks (don't replace)
     const newTasks: FixPlanTask[] = generatedTasks.map((t) =>
       createTask({
@@ -179,11 +176,16 @@ async function generatePlan(
       }),
     );
 
-    freshSession.workflow.fixPlan = [
-      ...freshSession.workflow.fixPlan,
-      ...newTasks,
-    ];
-    await updateSession(projectPath, freshSession);
+    const updatedPlan = await mutateSession(
+      projectPath,
+      sessionName,
+      "planGenerator.appendTasks",
+      (sess) => {
+        if (!sess.workflow) return null;
+        sess.workflow.fixPlan = [...sess.workflow.fixPlan, ...newTasks];
+        return sess.workflow.fixPlan;
+      },
+    );
 
     logger.info("plan_generator.complete", {
       sessionName,
@@ -191,16 +193,18 @@ async function generatePlan(
     });
 
     // Broadcast plan update
-    try {
-      broadcast({
-        type: "workflow-fix-plan-updated",
-        projectName,
-        sessionName,
-        fixPlan: freshSession.workflow.fixPlan,
-        source: "tool",
-      });
-    } catch {
-      // fire-and-forget
+    if (updatedPlan) {
+      try {
+        broadcast({
+          type: "workflow-fix-plan-updated",
+          projectName,
+          sessionName,
+          fixPlan: updatedPlan,
+          source: "tool",
+        });
+      } catch {
+        // fire-and-forget
+      }
     }
   } else {
     logger.warn("plan_generator.no_tasks", { sessionName });

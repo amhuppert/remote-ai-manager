@@ -1,12 +1,22 @@
 import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { ManagerState, ProjectState, SessionState } from "@/types";
+import type {
+  ManagerState,
+  ProjectState,
+  SessionState,
+  ConversationState,
+} from "@/types";
 import { managerStateSchema } from "./schemas";
 import { readConfig } from "./config";
 import { createLogger } from "./logging";
+import { withStateLock } from "./state-mutex";
 
 const logger = createLogger("state");
+
+// ============================================================
+// Core I/O (private after migration)
+// ============================================================
 
 /** Default empty manager state */
 function emptyState(): ManagerState {
@@ -41,8 +51,15 @@ export async function readState(): Promise<ManagerState> {
 /**
  * Write manager state to disk atomically (write to temp, then rename).
  * This prevents partial writes from corrupting the state file.
+ *
+ * @deprecated Use `mutateState` instead — direct `writeState` calls
+ * bypass the mutex and can cause lost updates. Will be unexported
+ * once all callers are migrated.
  */
-export async function writeState(state: ManagerState): Promise<void> {
+export async function writeState(
+  state: ManagerState,
+  label?: string,
+): Promise<void> {
   const config = await readConfig();
   const statePath = config.stateFilePath;
 
@@ -62,17 +79,13 @@ export async function writeState(state: ManagerState): Promise<void> {
   }
 
   logger.debug("state.write", {
+    label,
     projectCount,
     sessionCount,
     fileSize: json.length,
   });
 
   await writeFile(tmpPath, json, "utf-8");
-
-  logger.debug("state.atomic_write", {
-    tmpPath,
-    finalPath: statePath,
-  });
 
   try {
     await rename(tmpPath, statePath);
@@ -87,58 +100,97 @@ export async function writeState(state: ManagerState): Promise<void> {
   }
 }
 
-/** Get or create a ProjectState entry for a given project path */
-export async function getOrCreateProject(
-  projectPath: string,
-): Promise<ProjectState> {
-  const state = await readState();
-  const existing = state.projects[projectPath];
-  if (existing) {
-    return existing;
-  }
+// ============================================================
+// Functional Mutation API (mutex-protected)
+// ============================================================
 
-  const project: ProjectState = {
-    rootPath: projectPath,
-    sessions: {},
-  };
+/**
+ * Read state inside the mutex, apply a mutation, write back.
+ * The mutation callback receives a mutable reference to the full state.
+ * Returns whatever the callback returns.
+ */
+export async function mutateState<T = void>(
+  label: string,
+  mutate: (state: ManagerState) => T | Promise<T>,
+): Promise<T> {
+  return withStateLock(label, async () => {
+    const state = await readState();
+    const result = await mutate(state);
+    await writeState(state, label);
 
-  state.projects[projectPath] = project;
-  await writeState(state);
-  return project;
+    logger.info("state.mutation", { label });
+
+    return result;
+  });
 }
 
-/** Update a specific session within a project and persist */
-export async function updateSession(
-  projectPath: string,
-  session: SessionState,
-): Promise<void> {
-  const state = await readState();
-
-  if (!state.projects[projectPath]) {
-    state.projects[projectPath] = {
-      rootPath: projectPath,
-      sessions: {},
-    };
-  }
-
-  // Safe to assert: we just ensured the project exists above
-  state.projects[projectPath]!.sessions[session.sessionName] = session;
-
-  await writeState(state);
-}
-
-/** Remove a session from a project's state */
-export async function removeSession(
+/**
+ * Read state, locate a session, apply a mutation, write back.
+ * Creates the project entry if it doesn't exist.
+ * Returns whatever the callback returns.
+ *
+ * Throws if the session is not found.
+ */
+export async function mutateSession<T = void>(
   projectPath: string,
   sessionName: string,
-): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) return;
+  label: string,
+  mutate: (session: SessionState, project: ProjectState) => T | Promise<T>,
+): Promise<T> {
+  return mutateState<T>(`${label}[${sessionName}]`, async (state) => {
+    if (!state.projects[projectPath]) {
+      state.projects[projectPath] = {
+        rootPath: projectPath,
+        sessions: {},
+      };
+    }
 
-  delete project.sessions[sessionName];
-  await writeState(state);
+    const project = state.projects[projectPath]!;
+    const session = project.sessions[sessionName];
+    if (!session) {
+      throw new Error(
+        `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
+      );
+    }
+
+    return mutate(session, project);
+  });
 }
+
+/**
+ * Mutate a specific conversation within a session.
+ * Auto-updates lastActivityAt on both conversation and session.
+ * Returns whatever the callback returns.
+ *
+ * Throws if session or conversation is not found.
+ */
+export async function mutateConversation<T = void>(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+  label: string,
+  mutate: (conversation: ConversationState) => T | Promise<T>,
+): Promise<T> {
+  return mutateSession<T>(projectPath, sessionName, label, async (session) => {
+    const conversation = session.conversations.find(
+      (c) => c.id === conversationId,
+    );
+    if (!conversation) {
+      throw new Error(
+        `Conversation "${conversationId}" not found in session "${sessionName}" during ${label}`,
+      );
+    }
+
+    const result = await mutate(conversation);
+    conversation.lastActivityAt = new Date().toISOString();
+    session.lastActivityAt = new Date().toISOString();
+    return result;
+  });
+}
+
+// ============================================================
+// Read-only Queries (no mutex needed)
+// ============================================================
 
 /** Get all sessions for a project */
 export async function getProjectSessions(
@@ -163,137 +215,10 @@ export async function getSession(
   return project.sessions[sessionName] ?? null;
 }
 
-/** Set a session's archived flag */
-export async function setSessionArchived(
-  projectPath: string,
-  sessionName: string,
-  archived: boolean,
-): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
-
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
-
-  session.archived = archived;
-  await writeState(state);
-}
-
-/** Mark a session as finished (merged) and archived atomically */
-export async function setSessionFinished(
-  projectPath: string,
-  sessionName: string,
-): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
-
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
-
-  session.finished = true;
-  session.archived = true;
-  await writeState(state);
-}
-
 /** Read archived project paths from persisted state */
 export async function getArchivedProjects(): Promise<Set<string>> {
   const state = await readState();
   return new Set(state.archivedProjects);
-}
-
-/** Add or remove a project path from the archived set */
-export async function setProjectArchived(
-  projectPath: string,
-  archived: boolean,
-): Promise<void> {
-  const state = await readState();
-  const current = new Set(state.archivedProjects);
-
-  if (archived) {
-    current.add(projectPath);
-  } else {
-    current.delete(projectPath);
-  }
-
-  state.archivedProjects = [...current];
-  await writeState(state);
-}
-
-/**
- * Reset any conversations stuck in "running" or "waiting_for_input" back to "awaiting".
- * Called on server startup — no prompt can survive a restart, so these are stale.
- * Returns the number of conversations recovered.
- */
-export async function recoverStaleConversations(): Promise<number> {
-  const state = await readState();
-  let recovered = 0;
-
-  for (const project of Object.values(state.projects)) {
-    for (const session of Object.values(project.sessions)) {
-      for (const conversation of session.conversations) {
-        if (
-          conversation.status === "running" ||
-          conversation.status === "waiting_for_input"
-        ) {
-          logger.warn("state.recover_stale_conversation", {
-            sessionName: session.sessionName,
-            conversationId: conversation.id,
-            previousStatus: conversation.status,
-          });
-          conversation.status = "awaiting";
-          conversation.pendingQuestionId = null;
-          conversation.pendingQuestions = null;
-          recovered++;
-        }
-      }
-    }
-  }
-
-  if (recovered > 0) {
-    await writeState(state);
-    logger.info("state.recovery_complete", { recovered });
-  }
-
-  return recovered;
-}
-
-/**
- * On startup, detect workflows stuck in "running" status and reset to "paused".
- * Follows the same recovery pattern as recoverStaleConversations.
- */
-export async function recoverStaleWorkflows(): Promise<number> {
-  const state = await readState();
-  let recovered = 0;
-
-  for (const project of Object.values(state.projects)) {
-    for (const session of Object.values(project.sessions)) {
-      if (session.workflow && session.workflow.status === "running") {
-        logger.warn("state.recover_stale_workflow", {
-          sessionName: session.sessionName,
-          previousStatus: session.workflow.status,
-        });
-        session.workflow.status = "paused";
-        recovered++;
-      }
-    }
-  }
-
-  if (recovered > 0) {
-    await writeState(state);
-    logger.info("state.workflow_recovery_complete", { recovered });
-  }
-
-  return recovered;
 }
 
 /** Read pinned project paths from persisted state */
@@ -302,20 +227,196 @@ export async function getPinnedProjects(): Promise<Set<string>> {
   return new Set(state.pinnedProjects);
 }
 
+// ============================================================
+// Mutex-Protected Mutations (public API)
+// ============================================================
+
+/** Get or create a ProjectState entry for a given project path */
+export async function getOrCreateProject(
+  projectPath: string,
+): Promise<ProjectState> {
+  return mutateState("getOrCreateProject", async (state) => {
+    const existing = state.projects[projectPath];
+    if (existing) {
+      return existing;
+    }
+
+    const project: ProjectState = {
+      rootPath: projectPath,
+      sessions: {},
+    };
+
+    state.projects[projectPath] = project;
+    return project;
+  });
+}
+
+/**
+ * Update a specific session within a project and persist.
+ *
+ * @deprecated Use `mutateSession` instead — this function replaces the
+ * entire session object, which can overwrite concurrent changes.
+ */
+export async function updateSession(
+  projectPath: string,
+  session: SessionState,
+): Promise<void> {
+  return mutateState("updateSession.deprecated", (state) => {
+    if (!state.projects[projectPath]) {
+      state.projects[projectPath] = {
+        rootPath: projectPath,
+        sessions: {},
+      };
+    }
+
+    state.projects[projectPath]!.sessions[session.sessionName] = session;
+  });
+}
+
+/** Remove a session from a project's state */
+export async function removeSession(
+  projectPath: string,
+  sessionName: string,
+): Promise<void> {
+  return mutateState("removeSession", (state) => {
+    const project = state.projects[projectPath];
+    if (!project) return;
+
+    delete project.sessions[sessionName];
+  });
+}
+
+/** Set a session's archived flag */
+export async function setSessionArchived(
+  projectPath: string,
+  sessionName: string,
+  archived: boolean,
+): Promise<void> {
+  return mutateSession(
+    projectPath,
+    sessionName,
+    "setSessionArchived",
+    (session) => {
+      session.archived = archived;
+    },
+  );
+}
+
+/** Mark a session as finished (merged) and archived atomically */
+export async function setSessionFinished(
+  projectPath: string,
+  sessionName: string,
+): Promise<void> {
+  return mutateSession(
+    projectPath,
+    sessionName,
+    "setSessionFinished",
+    (session) => {
+      session.finished = true;
+      session.archived = true;
+    },
+  );
+}
+
+/** Add or remove a project path from the archived set */
+export async function setProjectArchived(
+  projectPath: string,
+  archived: boolean,
+): Promise<void> {
+  return mutateState("setProjectArchived", (state) => {
+    const current = new Set(state.archivedProjects);
+
+    if (archived) {
+      current.add(projectPath);
+    } else {
+      current.delete(projectPath);
+    }
+
+    state.archivedProjects = [...current];
+  });
+}
+
 /** Add or remove a project path from the pinned set */
 export async function setProjectPinned(
   projectPath: string,
   pinned: boolean,
 ): Promise<void> {
-  const state = await readState();
-  const current = new Set(state.pinnedProjects);
+  return mutateState("setProjectPinned", (state) => {
+    const current = new Set(state.pinnedProjects);
 
-  if (pinned) {
-    current.add(projectPath);
-  } else {
-    current.delete(projectPath);
-  }
+    if (pinned) {
+      current.add(projectPath);
+    } else {
+      current.delete(projectPath);
+    }
 
-  state.pinnedProjects = [...current];
-  await writeState(state);
+    state.pinnedProjects = [...current];
+  });
+}
+
+/**
+ * Reset any conversations stuck in "running" or "waiting_for_input" back to "awaiting".
+ * Called on server startup — no prompt can survive a restart, so these are stale.
+ * Returns the number of conversations recovered.
+ */
+export async function recoverStaleConversations(): Promise<number> {
+  return mutateState("recoverStaleConversations", (state) => {
+    let recovered = 0;
+
+    for (const project of Object.values(state.projects)) {
+      for (const session of Object.values(project.sessions)) {
+        for (const conversation of session.conversations) {
+          if (
+            conversation.status === "running" ||
+            conversation.status === "waiting_for_input"
+          ) {
+            logger.warn("state.recover_stale_conversation", {
+              sessionName: session.sessionName,
+              conversationId: conversation.id,
+              previousStatus: conversation.status,
+            });
+            conversation.status = "awaiting";
+            conversation.pendingQuestionId = null;
+            conversation.pendingQuestions = null;
+            recovered++;
+          }
+        }
+      }
+    }
+
+    if (recovered > 0) {
+      logger.info("state.recovery_complete", { recovered });
+    }
+
+    return recovered;
+  });
+}
+
+/**
+ * On startup, detect workflows stuck in "running" status and reset to "paused".
+ * Follows the same recovery pattern as recoverStaleConversations.
+ */
+export async function recoverStaleWorkflows(): Promise<number> {
+  return mutateState("recoverStaleWorkflows", (state) => {
+    let recovered = 0;
+
+    for (const project of Object.values(state.projects)) {
+      for (const session of Object.values(project.sessions)) {
+        if (session.workflow && session.workflow.status === "running") {
+          logger.warn("state.recover_stale_workflow", {
+            sessionName: session.sessionName,
+            previousStatus: session.workflow.status,
+          });
+          session.workflow.status = "paused";
+          recovered++;
+        }
+      }
+    }
+
+    if (recovered > 0) {
+      logger.info("state.workflow_recovery_complete", { recovered });
+    }
+
+    return recovered;
+  });
 }

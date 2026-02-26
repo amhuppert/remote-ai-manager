@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveProjectPath } from "@/lib/project-resolver";
-import { getSession, updateSession } from "@/lib/state";
+import { getSession, mutateSession } from "@/lib/state";
 import { withTracing } from "@/lib/logging";
 import { fixPlanTaskSchema } from "@/lib/schemas";
 import { broadcast } from "@/lib/sse-broadcaster";
@@ -65,21 +65,28 @@ export const PUT = withTracing(async (request, { params }) => {
     );
   }
 
-  session.workflow.fixPlan = body.fixPlan;
-  session.lastActivityAt = new Date().toISOString();
-  await updateSession(projectPath, session);
+  const fixPlan = await mutateSession(
+    projectPath,
+    sessionName,
+    "workflow.updateFixPlan",
+    (sess) => {
+      if (!sess.workflow) return null;
+      sess.workflow.fixPlan = body.fixPlan;
+      return sess.workflow.fixPlan;
+    },
+  );
 
   try {
     broadcast({
       type: "workflow-fix-plan-updated",
       projectName: name,
       sessionName,
-      fixPlan: session.workflow.fixPlan,
+      fixPlan: fixPlan ?? [],
       source: "user",
     });
   } catch {
     // fire-and-forget
   }
 
-  return NextResponse.json({ fixPlan: session.workflow.fixPlan });
+  return NextResponse.json({ fixPlan });
 });

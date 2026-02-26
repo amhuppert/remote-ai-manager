@@ -11,7 +11,7 @@ import type {
   SessionCreationMode,
   SessionState,
 } from "@/types";
-import { readState, writeState } from "./state";
+import { readState, mutateState } from "./state";
 import { createLogger } from "./logging";
 import { ensureUniqueName } from "./worktrees";
 import { readRepoConfig } from "./repo-config";
@@ -253,15 +253,15 @@ async function provisionSession(
   };
 
   // Persist to state
-  const state = await readState();
-  if (!state.projects[projectPath]) {
-    state.projects[projectPath] = {
-      rootPath: projectPath,
-      sessions: {},
-    };
-  }
-  state.projects[projectPath]!.sessions[sessionName] = session;
-  await writeState(state);
+  await mutateState("createSession", (state) => {
+    if (!state.projects[projectPath]) {
+      state.projects[projectPath] = {
+        rootPath: projectPath,
+        sessions: {},
+      };
+    }
+    state.projects[projectPath]!.sessions[sessionName] = session;
+  });
 
   return session;
 }
@@ -370,8 +370,12 @@ export async function deleteSession(
   });
 
   // Remove from state
-  delete project.sessions[sessionName];
-  await writeState(state);
+  await mutateState("deleteSession", (state) => {
+    const proj = state.projects[projectPath];
+    if (proj) {
+      delete proj.sessions[sessionName];
+    }
+  });
 
   return { worktreeRemoved };
 }

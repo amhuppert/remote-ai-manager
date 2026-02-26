@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
-import { getSession, updateSession } from "@/lib/state";
+import { getSession, mutateSession } from "@/lib/state";
 import { withTracing } from "@/lib/logging";
 import { ralphLoopConfigSchema } from "@/lib/schemas";
 import type { ApiError } from "@/types";
@@ -67,9 +67,16 @@ export const PUT = withTracing(async (request, { params }) => {
     );
   }
 
-  session.workflow.config = parsed.data;
-  session.lastActivityAt = new Date().toISOString();
-  await updateSession(projectPath, session);
+  const config = await mutateSession(
+    projectPath,
+    sessionName,
+    "workflow.updateConfig",
+    (sess) => {
+      if (!sess.workflow) return null;
+      sess.workflow.config = parsed.data;
+      return sess.workflow.config;
+    },
+  );
 
-  return NextResponse.json({ config: session.workflow.config });
+  return NextResponse.json({ config });
 });

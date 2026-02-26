@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
-import { getSession } from "@/lib/state";
+import { getSession, mutateSession } from "@/lib/state";
 import { withTracing } from "@/lib/logging";
 import { requestAbort } from "@/lib/ralph-loop/orchestrator-registry";
 import type { ApiError } from "@/types";
@@ -46,11 +46,12 @@ export const POST = withTracing(async (_request, { params }) => {
   const aborted = requestAbort(projectPath, sessionName);
   if (!aborted) {
     // Workflow is paused (not in registry) — mark as aborted directly
-    const { updateSession } = await import("@/lib/state");
-    session.workflow.status = "aborted";
-    session.workflow.haltReason = { type: "aborted" };
-    session.workflow.completedAt = new Date().toISOString();
-    await updateSession(projectPath, session);
+    await mutateSession(projectPath, sessionName, "workflow.abort", (sess) => {
+      if (!sess.workflow) return;
+      sess.workflow.status = "aborted";
+      sess.workflow.haltReason = { type: "aborted" };
+      sess.workflow.completedAt = new Date().toISOString();
+    });
   }
 
   return NextResponse.json({ status: "aborted" });

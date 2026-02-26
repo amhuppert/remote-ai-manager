@@ -13,6 +13,7 @@ const {
   writeFileMock,
   readStateMock,
   writeStateMock,
+  mutateStateMock,
   ensureUniqueNameMock,
   queryMock,
   readRepoConfigMock,
@@ -25,6 +26,7 @@ const {
   writeFileMock: vi.fn(),
   readStateMock: vi.fn(),
   writeStateMock: vi.fn(),
+  mutateStateMock: vi.fn(),
   ensureUniqueNameMock: vi.fn(),
   queryMock: vi.fn(),
   readRepoConfigMock: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock("node:fs/promises", () => ({
 vi.mock("./state", () => ({
   readState: readStateMock,
   writeState: writeStateMock,
+  mutateState: mutateStateMock,
 }));
 
 vi.mock("./worktrees", () => ({
@@ -227,6 +230,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   readStateMock.mockResolvedValue(emptyState());
   writeStateMock.mockResolvedValue(undefined);
+  mutateStateMock.mockImplementation(
+    async (_label: string, mutate: (state: unknown) => unknown) => {
+      const state = await readStateMock();
+      const result = await mutate(state);
+      await writeStateMock(state, _label);
+      return result;
+    },
+  );
   existsSyncMock.mockReturnValue(false);
   rmMock.mockResolvedValue(undefined);
   readFileMock.mockRejectedValue(new Error("file not found"));

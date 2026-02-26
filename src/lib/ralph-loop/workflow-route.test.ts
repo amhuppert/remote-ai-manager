@@ -14,6 +14,7 @@ vi.mock("@/lib/project-resolver", () => ({
 vi.mock("@/lib/state", () => ({
   getSession: vi.fn(),
   updateSession: vi.fn(),
+  mutateSession: vi.fn(),
 }));
 
 vi.mock("@/lib/logging", () => ({
@@ -129,11 +130,13 @@ const routeParams = Promise.resolve({
 describe("workflow lifecycle", () => {
   it("creates a workflow in planning status", async () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession, updateSession } = await import("@/lib/state");
+    const { getSession, mutateSession } = await import("@/lib/state");
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const session = makeSession(null);
     vi.mocked(getSession).mockResolvedValue(session);
-    vi.mocked(updateSession).mockResolvedValue(undefined);
+    vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
+      mutate(session, { rootPath: _p, sessions: {} }),
+    );
 
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/workflow/route");
@@ -149,7 +152,7 @@ describe("workflow lifecycle", () => {
     const body = await response.json();
     expect(body.workflow.status).toBe("planning");
     expect(body.workflow.objective).toBe("Build the feature");
-    expect(updateSession).toHaveBeenCalled();
+    expect(mutateSession).toHaveBeenCalled();
   });
 
   it("rejects duplicate workflow creation", async () => {
@@ -441,14 +444,15 @@ describe("abort", () => {
 
   it("aborts a paused workflow directly (not in registry)", async () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession, updateSession } = await import("@/lib/state");
+    const { getSession, mutateSession } = await import("@/lib/state");
     const { requestAbort } = await import("./orchestrator-registry");
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
-      makeSession(makeWorkflow({ status: "paused" })),
-    );
+    const session = makeSession(makeWorkflow({ status: "paused" }));
+    vi.mocked(getSession).mockResolvedValue(session);
     vi.mocked(requestAbort).mockReturnValue(false); // not in registry
-    vi.mocked(updateSession).mockResolvedValue(undefined);
+    vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
+      mutate(session, { rootPath: _p, sessions: {} }),
+    );
 
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/workflow/abort/route");
@@ -458,7 +462,7 @@ describe("abort", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(updateSession).toHaveBeenCalled();
+    expect(mutateSession).toHaveBeenCalled();
   });
 
   it("rejects abort for completed workflow", async () => {
@@ -487,12 +491,13 @@ describe("abort", () => {
 describe("fix plan update", () => {
   it("updates fix plan during planning phase", async () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession, updateSession } = await import("@/lib/state");
+    const { getSession, mutateSession } = await import("@/lib/state");
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
-      makeSession(makeWorkflow({ status: "planning" })),
+    const session = makeSession(makeWorkflow({ status: "planning" }));
+    vi.mocked(getSession).mockResolvedValue(session);
+    vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
+      mutate(session, { rootPath: _p, sessions: {} }),
     );
-    vi.mocked(updateSession).mockResolvedValue(undefined);
 
     const { PUT } =
       await import("@/app/api/projects/[name]/sessions/[session]/workflow/fix-plan/route");
@@ -519,7 +524,7 @@ describe("fix plan update", () => {
     const body = await response.json();
     expect(body.fixPlan).toHaveLength(1);
     expect(body.fixPlan[0].description).toBe("New task");
-    expect(updateSession).toHaveBeenCalled();
+    expect(mutateSession).toHaveBeenCalled();
   });
 
   it("rejects fix plan update during running phase", async () => {
