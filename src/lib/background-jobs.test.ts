@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("./lock");
 vi.mock("./git-operations");
 vi.mock("./conflict-resolution");
+vi.mock("./repo-config");
+vi.mock("./config");
 vi.mock("./sse-broadcaster");
 vi.mock("./state");
 vi.mock("./logging", () => ({
@@ -34,6 +36,8 @@ import {
   hasUncommittedChanges,
 } from "./git-operations";
 import { resolveConflicts } from "./conflict-resolution";
+import { runPreMergeValidation } from "./repo-config";
+import { readConfig } from "./config";
 import { broadcast } from "./sse-broadcaster";
 import { setSessionFinished } from "./state";
 import type { JobStatusEvent } from "@/types";
@@ -49,6 +53,8 @@ const mockMergeMainIntoFeature = vi.mocked(mergeMainIntoFeature);
 const mockSquashMerge = vi.mocked(squashMerge);
 const mockCommitChanges = vi.mocked(commitChanges);
 const mockResolveConflicts = vi.mocked(resolveConflicts);
+const mockRunPreMergeValidation = vi.mocked(runPreMergeValidation);
+const mockReadConfig = vi.mocked(readConfig);
 const mockBroadcast = vi.mocked(broadcast);
 const mockSetSessionFinished = vi.mocked(setSessionFinished);
 
@@ -121,6 +127,17 @@ describe("background-jobs", () => {
     mockAcquireProjectLock.mockReturnValue(releaseProject);
     // Default: no uncommitted changes (skip Phase 0 commit)
     mockHasUncommittedChanges.mockResolvedValue(false);
+    // Default: pre-merge validation passes (no-op)
+    mockRunPreMergeValidation.mockResolvedValue(undefined);
+    // Default: config returns defaults
+    mockReadConfig.mockResolvedValue({
+      baseDir: "/home/user/projects",
+      ignorePatterns: [],
+      stateFilePath: "/tmp/state.json",
+      claudeTimeoutMs: 3_600_000,
+      defaultModel: "opus",
+      preMergeTimeoutMs: 300_000,
+    });
   });
 
   // ----------------------------------------------------------
@@ -324,10 +341,21 @@ describe("background-jobs", () => {
       expect(mockResolveConflicts).toHaveBeenCalledWith({
         worktreePath: BASE_MERGE_PARAMS.worktreePath,
       });
-      // Verify resolution was committed
+      // Verify resolution was committed with skipHooks
       expect(mockCommitChanges).toHaveBeenCalledWith(
         BASE_MERGE_PARAMS.worktreePath,
         "resolve merge conflicts",
+        { skipHooks: true },
+      );
+      // Verify pre-merge validation was called
+      expect(mockRunPreMergeValidation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: BASE_MERGE_PARAMS.projectPath,
+          worktreePath: BASE_MERGE_PARAMS.worktreePath,
+          sessionName: BASE_MERGE_PARAMS.sessionName,
+          branchName: BASE_MERGE_PARAMS.branchName,
+          timeoutMs: 300_000,
+        }),
       );
       // Verify squash merge after resolution
       expect(mockSquashMerge).toHaveBeenCalled();
@@ -478,6 +506,58 @@ describe("background-jobs", () => {
       );
       expect(job?.errorMessage).toContain("Commit failed");
       expect(job?.errorMessage).toContain("pre-commit script failed");
+    });
+
+    // ----------------------------------------------------------
+    // Pre-merge validation is called before squash merge (clean path)
+    // ----------------------------------------------------------
+    it("pre-merge validation is called before squash merge", async () => {
+      mockMergeMainIntoFeature.mockResolvedValue({ status: "clean" });
+      mockSquashMerge.mockResolvedValue({ mergeHash: "abc123" });
+      mockSetSessionFinished.mockResolvedValue(undefined);
+
+      dispatchMergeJob(BASE_MERGE_PARAMS);
+      await settle();
+
+      expect(mockRunPreMergeValidation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: BASE_MERGE_PARAMS.projectPath,
+          worktreePath: BASE_MERGE_PARAMS.worktreePath,
+          sessionName: BASE_MERGE_PARAMS.sessionName,
+          branchName: BASE_MERGE_PARAMS.branchName,
+          timeoutMs: 300_000,
+        }),
+      );
+
+      // Verify ordering: validation before squash merge
+      const validationOrder =
+        mockRunPreMergeValidation.mock.invocationCallOrder[0]!;
+      const squashOrder = mockSquashMerge.mock.invocationCallOrder[0]!;
+      expect(validationOrder).toBeLessThan(squashOrder);
+    });
+
+    // ----------------------------------------------------------
+    // Failed validation blocks squash merge
+    // ----------------------------------------------------------
+    it("failed pre-merge validation blocks squash merge", async () => {
+      mockMergeMainIntoFeature.mockResolvedValue({ status: "clean" });
+      const err = new Error("Pre-merge validation failed") as Error & {
+        gitOutput?: string;
+      };
+      err.gitOutput = "lint errors found";
+      mockRunPreMergeValidation.mockRejectedValue(err);
+
+      dispatchMergeJob(BASE_MERGE_PARAMS);
+      await settle();
+
+      // Squash merge should NOT have been called
+      expect(mockSquashMerge).not.toHaveBeenCalled();
+
+      // Job failed with validation error
+      const last = lastBroadcast();
+      expect(last.status).toBe("failed");
+      expect(last.errorMessage).toContain("Pre-merge validation failed");
+      expect(last.errorMessage).toContain("lint errors found");
     });
 
     // ----------------------------------------------------------
@@ -669,11 +749,14 @@ describe("background-jobs", () => {
         worktreePath: BASE_RESOLVE_PARAMS.worktreePath,
         decisions: undefined,
       });
-      // Verify commit
+      // Verify commit with skipHooks
       expect(mockCommitChanges).toHaveBeenCalledWith(
         BASE_RESOLVE_PARAMS.worktreePath,
         "resolve merge conflicts",
+        { skipHooks: true },
       );
+      // Verify pre-merge validation was called
+      expect(mockRunPreMergeValidation).toHaveBeenCalled();
       // Verify squash merge
       expect(mockSquashMerge).toHaveBeenCalledWith(
         BASE_RESOLVE_PARAMS.projectPath,
@@ -752,6 +835,53 @@ describe("background-jobs", () => {
         worktreePath: BASE_RESOLVE_PARAMS.worktreePath,
         decisions,
       });
+    });
+
+    it("pre-merge validation is called in resolve-conflicts job", async () => {
+      mockResolveConflicts.mockResolvedValue({
+        status: "resolved",
+        conflicts: [],
+      });
+      mockCommitChanges.mockResolvedValue({ hash: "h" });
+      mockSquashMerge.mockResolvedValue({ mergeHash: "m" });
+      mockSetSessionFinished.mockResolvedValue(undefined);
+
+      dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
+      await settle();
+
+      // Verify validation was called before squash
+      expect(mockRunPreMergeValidation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: BASE_RESOLVE_PARAMS.projectPath,
+          worktreePath: BASE_RESOLVE_PARAMS.worktreePath,
+          sessionName: BASE_RESOLVE_PARAMS.sessionName,
+          branchName: BASE_RESOLVE_PARAMS.branchName,
+        }),
+      );
+
+      const validationOrder =
+        mockRunPreMergeValidation.mock.invocationCallOrder[0]!;
+      const squashOrder = mockSquashMerge.mock.invocationCallOrder[0]!;
+      expect(validationOrder).toBeLessThan(squashOrder);
+    });
+
+    it("failed validation in resolve-conflicts blocks squash", async () => {
+      mockResolveConflicts.mockResolvedValue({
+        status: "resolved",
+        conflicts: [],
+      });
+      mockCommitChanges.mockResolvedValue({ hash: "h" });
+      mockRunPreMergeValidation.mockRejectedValue(
+        new Error("Pre-merge validation failed"),
+      );
+
+      dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
+      await settle();
+
+      expect(mockSquashMerge).not.toHaveBeenCalled();
+      const last = lastBroadcast();
+      expect(last.status).toBe("failed");
+      expect(last.errorMessage).toContain("Pre-merge validation failed");
     });
 
     it("error in pipeline → failed broadcast", async () => {

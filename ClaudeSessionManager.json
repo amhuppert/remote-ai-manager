@@ -1,3 +1,4 @@
 {
-  "initScriptPath": "scripts/worktree-init.sh"
+  "initScriptPath": "scripts/worktree-init.sh",
+  "preMergeCommand": "scripts/pre-merge-validate.sh"
 }
