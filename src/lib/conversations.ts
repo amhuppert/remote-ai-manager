@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { ConversationState, ConversationRole, ForkedFrom } from "@/types";
-import { readState, writeState } from "./state";
+import { mutateSession } from "./state";
 import { createLogger } from "./logging";
 import { copyTranscriptUpTo, getTranscriptPath } from "./transcript";
 import { readConversationMessages } from "./transcript";
@@ -17,42 +17,38 @@ export async function createConversation(
   sessionName: string,
   opts?: { role?: ConversationRole },
 ): Promise<ConversationState> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
+  const conversation = await mutateSession(
+    projectPath,
+    sessionName,
+    "createConversation",
+    (session) => {
+      const now = new Date().toISOString();
+      const sequenceNumber = session.conversations.length + 1;
+      const conv: ConversationState = {
+        id: crypto.randomUUID(),
+        name: `${sessionName} ${sequenceNumber}`,
+        claudeSessionId: null,
+        transcriptPath: null,
+        status: "new",
+        promptCount: 0,
+        createdAt: now,
+        lastActivityAt: now,
+        source: "csm",
+        summary: null,
+        archived: false,
+        totalCostUsd: null,
+        totalDurationMs: null,
+        totalTurns: null,
+        pendingQuestionId: null,
+        pendingQuestions: null,
+        forkedFrom: null,
+        role: opts?.role ?? null,
+      };
 
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
-
-  const now = new Date().toISOString();
-  const sequenceNumber = session.conversations.length + 1;
-  const conversation: ConversationState = {
-    id: crypto.randomUUID(),
-    name: `${sessionName} ${sequenceNumber}`,
-    claudeSessionId: null,
-    transcriptPath: null,
-    status: "new",
-    promptCount: 0,
-    createdAt: now,
-    lastActivityAt: now,
-    source: "csm",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    forkedFrom: null,
-    role: opts?.role ?? null,
-  };
-
-  session.conversations.push(conversation);
-  await writeState(state);
+      session.conversations.push(conv);
+      return conv;
+    },
+  );
 
   logger.info("conversation.created", {
     projectPath,
@@ -64,11 +60,14 @@ export async function createConversation(
 }
 
 /** Get a specific conversation by ID within a session */
-export async function getConversation(
+export { getConversation, getSessionConversations };
+
+async function getConversation(
   projectPath: string,
   sessionName: string,
   conversationId: string,
 ): Promise<ConversationState | null> {
+  const { readState } = await import("./state");
   const state = await readState();
   const project = state.projects[projectPath];
   if (!project) return null;
@@ -80,10 +79,11 @@ export async function getConversation(
 }
 
 /** Get all conversations for a session, ordered by most recently active first */
-export async function getSessionConversations(
+async function getSessionConversations(
   projectPath: string,
   sessionName: string,
 ): Promise<ConversationState[]> {
+  const { readState } = await import("./state");
   const state = await readState();
   const project = state.projects[projectPath];
   if (!project) return [];
@@ -105,28 +105,23 @@ export async function setConversationArchived(
   conversationId: string,
   archived: boolean,
 ): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
+  await mutateSession(
+    projectPath,
+    sessionName,
+    "setConversationArchived",
+    (session) => {
+      const conversation = session.conversations.find(
+        (c) => c.id === conversationId,
+      );
+      if (!conversation) {
+        throw new Error(
+          `Conversation "${conversationId}" not found in session "${sessionName}"`,
+        );
+      }
 
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
-
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
+      conversation.archived = archived;
+    },
   );
-  if (!conversation) {
-    throw new Error(
-      `Conversation "${conversationId}" not found in session "${sessionName}"`,
-    );
-  }
-
-  conversation.archived = archived;
-  await writeState(state);
 }
 
 /** Rename a conversation */
@@ -136,28 +131,23 @@ export async function renameConversation(
   conversationId: string,
   name: string,
 ): Promise<void> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
+  await mutateSession(
+    projectPath,
+    sessionName,
+    "renameConversation",
+    (session) => {
+      const conversation = session.conversations.find(
+        (c) => c.id === conversationId,
+      );
+      if (!conversation) {
+        throw new Error(
+          `Conversation "${conversationId}" not found in session "${sessionName}"`,
+        );
+      }
 
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
-
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
+      conversation.name = name;
+    },
   );
-  if (!conversation) {
-    throw new Error(
-      `Conversation "${conversationId}" not found in session "${sessionName}"`,
-    );
-  }
-
-  conversation.name = name;
-  await writeState(state);
 }
 
 // ============================================================
@@ -200,13 +190,9 @@ export async function forkConversation(
     editedText,
   } = input;
 
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
-
-  const session = project.sessions[sessionName];
+  // --- Phase 1: Read source data and validate (outside lock) ---
+  const { getSession } = await import("./state");
+  const session = await getSession(projectPath, sessionName);
   if (!session) {
     throw new Error(`Session "${sessionName}" not found in project`);
   }
@@ -218,18 +204,15 @@ export async function forkConversation(
     throw new Error(`Source conversation not found: ${sourceConversationId}`);
   }
 
-  // Validate source has a resolvable Claude session ID
   const sourceClaudeSessionId = resolveSourceClaudeSessionId(source);
   if (!sourceClaudeSessionId) {
     throw new Error("Cannot fork: conversation has no history with Claude");
   }
 
-  // Validate transcript exists
   if (!source.transcriptPath) {
     throw new Error("Cannot fork: conversation has no transcript");
   }
 
-  // Validate messageIndex is in range by reading visible messages
   const messages = await readConversationMessages(source.transcriptPath);
   if (messageIndex < 0 || messageIndex >= messages.length) {
     throw new Error(
@@ -237,7 +220,7 @@ export async function forkConversation(
     );
   }
 
-  // Create the forked conversation
+  // --- Phase 2: I/O-heavy transcript copy (outside lock) ---
   const now = new Date().toISOString();
   const newId = crypto.randomUUID();
   const turnNumber = Math.floor(messageIndex / 2) + 1;
@@ -250,7 +233,6 @@ export async function forkConversation(
     messageIndex,
   };
 
-  // Copy transcript
   const transcriptPath = await getTranscriptPath(newId);
   await copyTranscriptUpTo({
     sourceTranscriptPath: source.transcriptPath,
@@ -262,29 +244,31 @@ export async function forkConversation(
       : undefined,
   });
 
-  const conversation: ConversationState = {
-    id: newId,
-    name: forkName,
-    claudeSessionId: null,
-    transcriptPath,
-    status: "new",
-    promptCount: 0,
-    createdAt: now,
-    lastActivityAt: now,
-    source: "csm",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    forkedFrom,
-    role: null,
-  };
+  // --- Phase 3: State mutation (inside lock) ---
+  await mutateSession(projectPath, sessionName, "forkConversation", (sess) => {
+    const conversation: ConversationState = {
+      id: newId,
+      name: forkName,
+      claudeSessionId: null,
+      transcriptPath,
+      status: "new",
+      promptCount: 0,
+      createdAt: now,
+      lastActivityAt: now,
+      source: "csm",
+      summary: null,
+      archived: false,
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      pendingQuestionId: null,
+      pendingQuestions: null,
+      forkedFrom,
+      role: null,
+    };
 
-  session.conversations.push(conversation);
-  await writeState(state);
+    sess.conversations.push(conversation);
+  });
 
   logger.info("conversation.forked", {
     projectPath,
@@ -317,63 +301,57 @@ export async function finalizeInitialization(
   projectPath: string,
   sessionName: string,
 ): Promise<FinalizeInitializationResult> {
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
-
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found in project`);
-  }
-
-  // Find the initialization conversation
-  const initConvo = session.conversations.find(
-    (c) => c.role === "initialization",
-  );
-  if (!initConvo) {
-    throw new Error("No initialization conversation found in this session");
-  }
-
-  // Archive it
-  initConvo.archived = true;
-
-  // Create a new regular conversation
-  const now = new Date().toISOString();
-  const sequenceNumber = session.conversations.length + 1;
-  const newConvo: ConversationState = {
-    id: crypto.randomUUID(),
-    name: `${sessionName} ${sequenceNumber}`,
-    claudeSessionId: null,
-    transcriptPath: null,
-    status: "new",
-    promptCount: 0,
-    createdAt: now,
-    lastActivityAt: now,
-    source: "csm",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    forkedFrom: null,
-    role: null,
-  };
-
-  session.conversations.push(newConvo);
-  await writeState(state);
-
-  logger.info("initialization.finalized", {
+  const result = await mutateSession(
     projectPath,
     sessionName,
-    archivedConversationId: initConvo.id,
-    newConversationId: newConvo.id,
-  });
+    "finalizeInitialization",
+    (session) => {
+      const initConvo = session.conversations.find(
+        (c) => c.role === "initialization",
+      );
+      if (!initConvo) {
+        throw new Error("No initialization conversation found in this session");
+      }
 
-  return { conversationId: newConvo.id, name: newConvo.name! };
+      initConvo.archived = true;
+
+      const now = new Date().toISOString();
+      const sequenceNumber = session.conversations.length + 1;
+      const newConvo: ConversationState = {
+        id: crypto.randomUUID(),
+        name: `${sessionName} ${sequenceNumber}`,
+        claudeSessionId: null,
+        transcriptPath: null,
+        status: "new",
+        promptCount: 0,
+        createdAt: now,
+        lastActivityAt: now,
+        source: "csm",
+        summary: null,
+        archived: false,
+        totalCostUsd: null,
+        totalDurationMs: null,
+        totalTurns: null,
+        pendingQuestionId: null,
+        pendingQuestions: null,
+        forkedFrom: null,
+        role: null,
+      };
+
+      session.conversations.push(newConvo);
+
+      logger.info("initialization.finalized", {
+        projectPath,
+        sessionName,
+        archivedConversationId: initConvo.id,
+        newConversationId: newConvo.id,
+      });
+
+      return { conversationId: newConvo.id, name: newConvo.name! };
+    },
+  );
+
+  return result;
 }
 
 // ============================================================

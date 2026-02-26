@@ -8,12 +8,14 @@ import NotificationsPanel, {
   type MergeNotification,
   type CommitNotification,
   type ResolveConflictsNotification,
+  type WorkflowNotification,
 } from "./NotificationsPanel";
 import {
   useActiveConversationsQuery,
   useNotificationsQuery,
 } from "@/lib/queries";
 import { useNotificationJobs } from "@/stores/notification.store";
+import { useActiveWorkflows } from "@/stores/workflow.store";
 import {
   useUnifiedPanelOpen,
   useCloseUnifiedPanel,
@@ -29,6 +31,7 @@ export default function NotificationsPanelContainer() {
   const { data: notificationsData, isPending: notifLoading } =
     useNotificationsQuery({ enabled: panelOpen });
   const jobs = useNotificationJobs();
+  const activeWorkflows = useActiveWorkflows();
 
   const handleMarkAsRead = useCallback(
     async (id: string) => {
@@ -77,6 +80,20 @@ export default function NotificationsPanelContainer() {
 
   const items: NotificationItem[] = useMemo(() => {
     const result: NotificationItem[] = [];
+
+    // Map active workflows
+    for (const wf of activeWorkflows) {
+      result.push({
+        type: "workflow",
+        id: `wf-${wf.projectName}-${wf.sessionName}`,
+        timestamp: wf.updatedAt,
+        projectName: wf.projectName,
+        sessionName: wf.sessionName,
+        status: wf.status as WorkflowNotification["status"],
+        iterationCount: wf.iterationCount,
+        maxIterations: wf.maxIterations,
+      } satisfies WorkflowNotification);
+    }
 
     // Map active conversations
     if (activeConversations) {
@@ -183,7 +200,7 @@ export default function NotificationsPanelContainer() {
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
     );
     return result;
-  }, [activeConversations, jobs, notificationsData]);
+  }, [activeConversations, jobs, notificationsData, activeWorkflows]);
 
   const unreadCount = notificationsData?.unreadCount ?? 0;
 

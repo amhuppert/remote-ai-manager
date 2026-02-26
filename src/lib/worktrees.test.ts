@@ -4,13 +4,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mocks
 // ---------------------------------------------------------------------------
 
-const { execFileMock, existsSyncMock, readStateMock, writeStateMock } =
-  vi.hoisted(() => ({
-    execFileMock: vi.fn(),
-    existsSyncMock: vi.fn<(p: string) => boolean>(),
-    readStateMock: vi.fn(),
-    writeStateMock: vi.fn(),
-  }));
+const {
+  execFileMock,
+  existsSyncMock,
+  readStateMock,
+  writeStateMock,
+  mutateStateMock,
+} = vi.hoisted(() => ({
+  execFileMock: vi.fn(),
+  existsSyncMock: vi.fn<(p: string) => boolean>(),
+  readStateMock: vi.fn(),
+  writeStateMock: vi.fn(),
+  mutateStateMock: vi.fn(),
+}));
 
 vi.mock("node:child_process", () => ({
   execFile: execFileMock,
@@ -23,6 +29,7 @@ vi.mock("node:fs", () => ({
 vi.mock("./state", () => ({
   readState: readStateMock,
   writeState: writeStateMock,
+  mutateState: mutateStateMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -91,6 +98,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   readStateMock.mockResolvedValue(emptyState());
   writeStateMock.mockResolvedValue(undefined);
+  mutateStateMock.mockImplementation(
+    async (_label: string, mutate: (state: unknown) => unknown) => {
+      const state = await readStateMock();
+      const result = await mutate(state);
+      await writeStateMock(state, _label);
+      return result;
+    },
+  );
   existsSyncMock.mockReturnValue(true);
 });
 
@@ -391,6 +406,7 @@ describe("discoverAndImportWorktrees", () => {
     source: "csm",
     objective: null,
     creationMode: "fast" as const,
+    workflow: null,
   };
 
   it("imports untracked worktrees as sessions with source=imported", async () => {
@@ -466,6 +482,7 @@ describe("discoverAndImportWorktrees", () => {
       source: "csm",
       objective: null,
       creationMode: "fast" as const,
+      workflow: null,
     };
 
     // Git returns only main worktree — orphan's path doesn't exist on disk
@@ -517,6 +534,7 @@ describe("discoverAndImportWorktrees", () => {
       source: "csm",
       objective: null,
       creationMode: "fast" as const,
+      workflow: null,
     };
 
     mockExecFileSuccess(

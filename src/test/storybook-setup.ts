@@ -11,6 +11,10 @@
 // resolve in Node/jsdom. The renderer's portable-stories API is identical.
 import "@testing-library/jest-dom/vitest";
 import { setProjectAnnotations } from "@storybook/react";
+
+// react-syntax-highlighter calls HTMLCanvasElement.getContext() internally.
+// JSDOM doesn't implement it, so stub it to suppress the "Not implemented" warning.
+HTMLCanvasElement.prototype.getContext = () => null;
 import * as a11yAnnotations from "@storybook/addon-a11y/preview";
 import * as previewAnnotations from "../../.storybook/preview";
 

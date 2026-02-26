@@ -6,22 +6,37 @@ import {
   sessionKeys,
   conversationKeys,
   notificationKeys,
+  workflowKeys,
 } from "@/lib/query-keys";
 import {
   jobStatusEventSchema,
   notificationCreatedEventSchema,
   notificationUpdatedEventSchema,
+  workflowStatusEventSchema,
+  workflowIterationCompleteEventSchema,
+  workflowFixPlanUpdatedEventSchema,
+  workflowCircuitBreakerEventSchema,
 } from "@/lib/schemas";
 import {
   useAddOrUpdateJob,
   useEnqueueToast,
 } from "@/stores/notification.store";
+import {
+  useHandleWorkflowStatusEvent,
+  useHandleWorkflowIterationComplete,
+  useHandleWorkflowFixPlanUpdated,
+  useHandleWorkflowCircuitBreaker,
+} from "@/stores/workflow.store";
 
 export default function NotificationListener(): null {
   const queryClient = useQueryClient();
   const addOrUpdateJob = useAddOrUpdateJob();
   const enqueueToast = useEnqueueToast();
   const hadErrorRef = useRef(false);
+  const handleWorkflowStatus = useHandleWorkflowStatusEvent();
+  const handleIterationComplete = useHandleWorkflowIterationComplete();
+  const handleFixPlanUpdated = useHandleWorkflowFixPlanUpdated();
+  const handleCircuitBreaker = useHandleWorkflowCircuitBreaker();
 
   useEffect(() => {
     const es = new EventSource("/api/events");
@@ -97,6 +112,88 @@ export default function NotificationListener(): null {
       }
     });
 
+    // --- Workflow SSE events ---
+
+    es.addEventListener("workflow-status", (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        const result = workflowStatusEventSchema.safeParse(parsed);
+        if (!result.success) return;
+        handleWorkflowStatus(result.data);
+
+        // Invalidate workflow and session queries so UI refreshes
+        void queryClient.invalidateQueries({
+          queryKey: workflowKeys.status(
+            result.data.projectName,
+            result.data.sessionName,
+          ),
+        });
+        void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("workflow-iteration-complete", (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        const result = workflowIterationCompleteEventSchema.safeParse(parsed);
+        if (!result.success) return;
+        handleIterationComplete(result.data);
+
+        void queryClient.invalidateQueries({
+          queryKey: workflowKeys.status(
+            result.data.projectName,
+            result.data.sessionName,
+          ),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: workflowKeys.iterations(
+            result.data.projectName,
+            result.data.sessionName,
+          ),
+        });
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("workflow-fix-plan-updated", (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        const result = workflowFixPlanUpdatedEventSchema.safeParse(parsed);
+        if (!result.success) return;
+        handleFixPlanUpdated(result.data);
+
+        void queryClient.invalidateQueries({
+          queryKey: workflowKeys.status(
+            result.data.projectName,
+            result.data.sessionName,
+          ),
+        });
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("workflow-circuit-breaker", (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        const result = workflowCircuitBreakerEventSchema.safeParse(parsed);
+        if (!result.success) return;
+        handleCircuitBreaker(result.data);
+
+        void queryClient.invalidateQueries({
+          queryKey: workflowKeys.status(
+            result.data.projectName,
+            result.data.sessionName,
+          ),
+        });
+      } catch {
+        // best-effort
+      }
+    });
+
     // SSE reconnection recovery: refetch notifications on reconnect after error
     es.onerror = () => {
       hadErrorRef.current = true;
@@ -115,7 +212,15 @@ export default function NotificationListener(): null {
     return () => {
       es.close();
     };
-  }, [queryClient, addOrUpdateJob, enqueueToast]);
+  }, [
+    queryClient,
+    addOrUpdateJob,
+    enqueueToast,
+    handleWorkflowStatus,
+    handleIterationComplete,
+    handleFixPlanUpdated,
+    handleCircuitBreaker,
+  ]);
 
   return null;
 }

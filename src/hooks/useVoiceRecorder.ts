@@ -6,6 +6,7 @@ import { tracedFetch } from "@/lib/traced-fetch";
 interface UseVoiceRecorderOptions {
   projectName: string;
   maxDuration?: number;
+  getContext?: () => string;
   onResult: (text: string) => void;
   onError: (error: string) => void;
 }
@@ -36,7 +37,13 @@ function negotiateMimeType(): string | undefined {
 export function useVoiceRecorder(
   options: UseVoiceRecorderOptions,
 ): UseVoiceRecorderReturn {
-  const { projectName, maxDuration = 300, onResult, onError } = options;
+  const {
+    projectName,
+    maxDuration = 300,
+    getContext,
+    onResult,
+    onError,
+  } = options;
 
   const [state, setState] = useState<RecordingState>("idle");
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -56,8 +63,10 @@ export function useVoiceRecorder(
   // Stable callback refs
   const onResultRef = useRef(onResult);
   const onErrorRef = useRef(onError);
+  const getContextRef = useRef(getContext);
   onResultRef.current = onResult;
   onErrorRef.current = onError;
+  getContextRef.current = getContext;
 
   // Health check — only checks server availability; client capability
   // (navigator.mediaDevices) is validated at recording time so the button
@@ -175,6 +184,11 @@ export function useVoiceRecorder(
           new File([blob], `recording${ext}`, { type: mimeType }),
         );
         formData.set("projectName", projectName);
+
+        const contextText = getContextRef.current?.();
+        if (contextText && contextText.trim()) {
+          formData.set("context", contextText);
+        }
 
         try {
           const response = await tracedFetch(

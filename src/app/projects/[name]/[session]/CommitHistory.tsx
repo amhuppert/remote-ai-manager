@@ -53,9 +53,7 @@ function CommitEntry({
             {commit.filesChanged} file
             {commit.filesChanged !== 1 ? "s" : ""}
           </span>
-          <span className="commit-date">
-            {formatRelativeTime(commit.date)}
-          </span>
+          <span className="commit-date">{formatRelativeTime(commit.date)}</span>
         </span>
       </div>
 
@@ -77,10 +75,7 @@ function CommitEntry({
                   {file.hunks.map((hunk, hunkIdx) => (
                     <div key={hunkIdx}>
                       {hunk.lines.map((line, lineIdx) => (
-                        <div
-                          key={lineIdx}
-                          className={`diff-line ${line.type}`}
-                        >
+                        <div key={lineIdx} className={`diff-line ${line.type}`}>
                           {line.content}
                         </div>
                       ))}

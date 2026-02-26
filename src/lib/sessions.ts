@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -11,10 +11,10 @@ import type {
   SessionCreationMode,
   SessionState,
 } from "@/types";
-import { perRepoConfigSchema, type PerRepoConfig } from "./schemas";
-import { readState, writeState } from "./state";
+import { readState, mutateState } from "./state";
 import { createLogger } from "./logging";
 import { ensureUniqueName } from "./worktrees";
+import { readRepoConfig } from "./repo-config";
 
 const logger = createLogger("sessions");
 
@@ -41,15 +41,6 @@ export function validateSessionName(name: string): string | null {
     return "Session name must start with a letter or number and contain only letters, numbers, spaces, hyphens, or underscores";
   }
   return null;
-}
-
-/** Read optional per-repo config */
-async function readRepoConfig(repoRoot: string): Promise<PerRepoConfig | null> {
-  const configPath = path.join(repoRoot, "ClaudeSessionManager.json");
-  if (!existsSync(configPath)) return null;
-
-  const raw = await readFile(configPath, "utf-8");
-  return perRepoConfigSchema.parse(JSON.parse(raw));
 }
 
 /** Execute a git command in the given working directory */
@@ -258,18 +249,19 @@ async function provisionSession(
     source: "csm",
     objective: opts.objective,
     creationMode: opts.mode,
+    workflow: null,
   };
 
   // Persist to state
-  const state = await readState();
-  if (!state.projects[projectPath]) {
-    state.projects[projectPath] = {
-      rootPath: projectPath,
-      sessions: {},
-    };
-  }
-  state.projects[projectPath]!.sessions[sessionName] = session;
-  await writeState(state);
+  await mutateState("createSession", (state) => {
+    if (!state.projects[projectPath]) {
+      state.projects[projectPath] = {
+        rootPath: projectPath,
+        sessions: {},
+      };
+    }
+    state.projects[projectPath]!.sessions[sessionName] = session;
+  });
 
   return session;
 }
@@ -378,8 +370,12 @@ export async function deleteSession(
   });
 
   // Remove from state
-  delete project.sessions[sessionName];
-  await writeState(state);
+  await mutateState("deleteSession", (state) => {
+    const proj = state.projects[projectPath];
+    if (proj) {
+      delete proj.sessions[sessionName];
+    }
+  });
 
   return { worktreeRemoved };
 }

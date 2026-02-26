@@ -71,6 +71,7 @@ function makeState(
       source: "csm",
       objective: null,
       creationMode: "fast",
+      workflow: null,
     };
   }
   return {
@@ -297,6 +298,7 @@ describe("checkAllSessionsForMerge", () => {
               source: "csm",
               objective: null,
               creationMode: "fast",
+              workflow: null,
             },
           },
         },
@@ -315,6 +317,7 @@ describe("checkAllSessionsForMerge", () => {
               source: "csm",
               objective: null,
               creationMode: "fast",
+              workflow: null,
             },
           },
         },

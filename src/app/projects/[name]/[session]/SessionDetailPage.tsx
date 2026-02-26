@@ -191,6 +191,10 @@ export default function SessionDetailPage({
   const conversations = conversationsQuery.data;
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
   const isFinished = session?.finished ?? false;
+  const workflowActive =
+    session?.workflow?.status === "running" ||
+    session?.workflow?.status === "paused";
+  const isReadOnly = isFinished || workflowActive;
   const isBusy =
     sending ||
     sessionStatus === "running" ||
@@ -412,7 +416,7 @@ export default function SessionDetailPage({
   }, [turnStartIndices, currentMsgIndex]);
 
   // --- Virtualizer for conversation messages ---
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual API is intentionally used
+
   const virtualizer = useVirtualizer({
     count: displayMessages.length,
     getScrollElement: () => panelBodyRef.current,
@@ -811,6 +815,7 @@ export default function SessionDetailPage({
     toggleRecording,
   } = useVoiceRecorder({
     projectName,
+    getContext: useCallback(() => promptTextRef.current, []),
     onResult: handleVoiceResult,
     onError: handleVoiceError,
   });
@@ -829,8 +834,8 @@ export default function SessionDetailPage({
   // --- Derived display values ---
   const decodedProjectName = decodeURIComponent(projectName);
   const hasUncommittedChanges = diff.files.length > 0;
-  const commitDisabled = !hasUncommittedChanges || isBusy || isFinished;
-  const mergeDisabled = isBusy || isFinished;
+  const commitDisabled = !hasUncommittedChanges || isBusy || isReadOnly;
+  const mergeDisabled = isBusy || isReadOnly;
 
   const displayStatus = isFinished
     ? "merged"
@@ -1006,6 +1011,11 @@ export default function SessionDetailPage({
               This session has been merged into main and is read-only.
             </div>
           )}
+          {workflowActive && !isFinished && (
+            <div className="finished-banner">
+              Workflow is active — prompts are blocked during execution.
+            </div>
+          )}
 
           {/* Content area */}
           <div
@@ -1019,7 +1029,7 @@ export default function SessionDetailPage({
                 sessionName={session.sessionName}
                 conversations={conversations}
                 activeConversationId={conversationId}
-                isFinished={isFinished}
+                isFinished={isReadOnly}
                 mobileOpen={mobileSidebarOpen}
                 onMobileClose={() => setMobileSidebarOpen(false)}
               />
@@ -1126,7 +1136,7 @@ export default function SessionDetailPage({
                                   messageIndex={virtualRow.index}
                                   onFork={handleFork}
                                   onEdit={startEditing}
-                                  disabled={isBusy || isFinished}
+                                  disabled={isBusy || isReadOnly}
                                 />
                               )}
                               {!isUserMsg && (
@@ -1181,7 +1191,7 @@ export default function SessionDetailPage({
                 (activeConversation?.promptCount ?? 0) > 0 && (
                   <FocusConfirmationBar
                     onConfirm={handleConfirmFocus}
-                    disabled={isFinished}
+                    disabled={isReadOnly}
                     loading={focusConfirmLoading}
                   />
                 )}
@@ -1210,7 +1220,7 @@ export default function SessionDetailPage({
                       onPlaceholderChange={showPlaceholder}
                       projectName={projectName}
                       sessionName={session.sessionName}
-                      disabled={isBusy || isFinished}
+                      disabled={isBusy || isReadOnly}
                     />
                     <textarea
                       ref={textareaRef}
@@ -1218,7 +1228,10 @@ export default function SessionDetailPage({
                       placeholder={
                         isFinished
                           ? "Session is merged and read-only"
-                          : (promptPlaceholder ?? "Send a prompt to Claude...")
+                          : workflowActive
+                            ? "Prompts blocked during active workflow"
+                            : (promptPlaceholder ??
+                              "Send a prompt to Claude...")
                       }
                       rows={1}
                       value={promptText}
@@ -1253,7 +1266,7 @@ export default function SessionDetailPage({
                           void handleSendPrompt();
                         }
                       }}
-                      disabled={isFinished}
+                      disabled={isReadOnly}
                     />
                     <input
                       ref={fileInputRef}
@@ -1282,7 +1295,7 @@ export default function SessionDetailPage({
                         <button
                           className="attachment-btn"
                           onClick={() => fileInputRef.current?.click()}
-                          disabled={isAtLimit || sending || isFinished}
+                          disabled={isAtLimit || sending || isReadOnly}
                           title="Attach image"
                           type="button"
                         >
@@ -1302,7 +1315,7 @@ export default function SessionDetailPage({
                         <ModelSelector
                           value={selectedModel}
                           onChange={setSelectedModel}
-                          disabled={sending || isFinished}
+                          disabled={sending || isReadOnly}
                         />
                       </div>
                       <div className="prompt-toolbar-end">
@@ -1320,12 +1333,12 @@ export default function SessionDetailPage({
                             (!promptText.trim() &&
                               pendingImages.length === 0) ||
                             sending ||
-                            isFinished ||
+                            isReadOnly ||
                             isRecording
                           }
                           onClick={() => void handleSendPrompt()}
                           title={
-                            isFinished
+                            isReadOnly
                               ? "Session is read-only"
                               : sending
                                 ? "Session is busy"
@@ -1364,6 +1377,7 @@ export default function SessionDetailPage({
                 commits={commits}
                 projectName={projectName}
                 sessionName={session.sessionName}
+                hasWorkflow={session.workflow != null}
               />
             )}
           </div>

@@ -19,6 +19,8 @@ import {
   hasUncommittedChanges,
 } from "./git-operations";
 import { resolveConflicts } from "./conflict-resolution";
+import { runPreMergeValidation } from "./repo-config";
+import { readConfig } from "./config";
 import { broadcast } from "./sse-broadcaster";
 import { setSessionFinished } from "./state";
 import { createLogger } from "./logging";
@@ -404,7 +406,17 @@ export function dispatchMergeJob(params: {
       const mergeResult = await mergeMainIntoFeature(worktreePath);
 
       if (mergeResult.status === "clean") {
-        // Phase 2: Squash merge into main
+        // Phase 2: Pre-merge validation
+        const config = await readConfig();
+        await runPreMergeValidation({
+          projectPath,
+          worktreePath,
+          sessionName,
+          branchName,
+          timeoutMs: config.preMergeTimeoutMs ?? 300_000,
+        });
+
+        // Phase 3: Squash merge into main
         logger.info("merge.phase2_squash", { jobId: job.jobId });
         await executePhase2(job, projectPath, branchName, message, sessionName);
 
@@ -436,9 +448,21 @@ export function dispatchMergeJob(params: {
             );
 
             // Commit the resolution
-            await commitChanges(worktreePath, "resolve merge conflicts");
+            await commitChanges(worktreePath, "resolve merge conflicts", {
+              skipHooks: true,
+            });
 
-            // Phase 2: Squash merge into main
+            // Pre-merge validation
+            const resolveConfig = await readConfig();
+            await runPreMergeValidation({
+              projectPath,
+              worktreePath,
+              sessionName,
+              branchName,
+              timeoutMs: resolveConfig.preMergeTimeoutMs ?? 300_000,
+            });
+
+            // Squash merge into main
             logger.info("merge.phase2_squash_after_resolve", {
               jobId: job.jobId,
             });
@@ -624,9 +648,21 @@ export function dispatchResolveConflictsJob(params: {
         );
 
         // Commit the resolution
-        await commitChanges(worktreePath, "resolve merge conflicts");
+        await commitChanges(worktreePath, "resolve merge conflicts", {
+          skipHooks: true,
+        });
 
-        // Phase 2: Squash merge into main
+        // Pre-merge validation
+        const rcConfig = await readConfig();
+        await runPreMergeValidation({
+          projectPath,
+          worktreePath,
+          sessionName,
+          branchName,
+          timeoutMs: rcConfig.preMergeTimeoutMs ?? 300_000,
+        });
+
+        // Squash merge into main
         logger.info("resolve-conflicts.phase2_squash", {
           jobId: job.jobId,
         });

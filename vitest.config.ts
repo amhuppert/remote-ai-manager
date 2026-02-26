@@ -36,6 +36,24 @@ export default defineConfig({
     reporters: getReporters(),
     globals: true,
     exclude: ["**/node_modules/**", "**/.worktrees/**", "**/dist/**"],
+
+    // AI-specific noise reduction: stop early, suppress console output,
+    // filter node_modules from stack traces, and truncate large diffs.
+    ...(isAI && {
+      bail: 3,
+      onConsoleLog() {
+        return false;
+      },
+      onStackTrace(_error, { file }) {
+        if (file.includes("node_modules")) return false;
+      },
+      diff: {
+        truncateThreshold: 2000,
+        truncateAnnotation: "... diff truncated",
+        expand: false,
+      },
+    }),
+
     workspace: [
       // Unit tests — runs existing *.test.ts files in Node/jsdom
       {

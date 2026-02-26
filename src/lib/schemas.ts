@@ -15,6 +15,7 @@ export const globalConfigSchema = z.object({
   defaultModel: claudeModelSchema.default("opus"),
   maxTurns: z.number().int().positive().optional(),
   mergeCheckIntervalMs: z.number().int().positive().optional(),
+  preMergeTimeoutMs: z.number().int().positive().optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -96,7 +97,7 @@ export const forkedFromSchema = z
 export type ForkedFrom = z.infer<typeof forkedFromSchema>;
 
 export const conversationRoleSchema = z
-  .enum(["initialization"])
+  .enum(["initialization", "iteration"])
   .nullable()
   .default(null);
 export type ConversationRole = z.infer<typeof conversationRoleSchema>;
@@ -129,6 +130,188 @@ export type SessionSource = z.infer<typeof sessionSourceSchema>;
 export const sessionCreationModeSchema = z.enum(["fast", "focus"]);
 export type SessionCreationMode = z.infer<typeof sessionCreationModeSchema>;
 
+// ============================================================
+// Ralph Loop Workflow Schemas
+// (defined before sessionStateSchema so it can reference ralphLoopWorkflowSchema)
+// ============================================================
+
+// --- Fix Plan Task ---
+export const fixPlanTaskStatusSchema = z.enum([
+  "pending",
+  "in_progress",
+  "completed",
+  "skipped",
+]);
+export type FixPlanTaskStatus = z.infer<typeof fixPlanTaskStatusSchema>;
+
+export const fixPlanTaskSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  priority: z.enum(["high", "medium", "low"]),
+  status: fixPlanTaskStatusSchema,
+  createdAt: z.string(),
+  completedAt: z.string().nullable().default(null),
+  skipReason: z.string().nullable().default(null),
+  addedByIteration: z.number().nullable().default(null),
+});
+export type FixPlanTask = z.infer<typeof fixPlanTaskSchema>;
+
+// --- Circuit Breaker ---
+export const circuitBreakerStateEnumSchema = z.enum([
+  "closed",
+  "half_open",
+  "open",
+]);
+export type CircuitBreakerStateEnum = z.infer<
+  typeof circuitBreakerStateEnumSchema
+>;
+
+export const circuitBreakerStateSchema = z.object({
+  state: circuitBreakerStateEnumSchema,
+  consecutiveNoProgress: z.number().default(0),
+  consecutiveSameError: z.number().default(0),
+  lastErrorPattern: z.string().nullable().default(null),
+  lastProgressIteration: z.number().default(0),
+});
+export type CircuitBreakerState = z.infer<typeof circuitBreakerStateSchema>;
+
+// --- Configuration ---
+export const circuitBreakerConfigSchema = z.object({
+  noProgressThreshold: z.number().int().min(1).default(3),
+  sameErrorThreshold: z.number().int().min(1).default(5),
+});
+export type CircuitBreakerConfig = z.infer<typeof circuitBreakerConfigSchema>;
+
+export const ralphLoopConfigSchema = z.object({
+  maxIterations: z.number().int().min(1).max(100).default(20),
+  iterationTimeoutMs: z
+    .number()
+    .int()
+    .min(60_000)
+    .max(7_200_000)
+    .default(3_600_000),
+  circuitBreaker: circuitBreakerConfigSchema.default({
+    noProgressThreshold: 3,
+    sameErrorThreshold: 5,
+  }),
+});
+export type RalphLoopConfig = z.infer<typeof ralphLoopConfigSchema>;
+
+// --- Custom Tool Input Schemas ---
+export const reportStatusInputSchema = z.object({
+  status: z.enum(["in_progress", "complete", "blocked"]),
+  exit_signal: z.boolean(),
+  work_summary: z.string(),
+  work_type: z.enum([
+    "implementation",
+    "testing",
+    "documentation",
+    "refactoring",
+  ]),
+});
+export type ReportStatusInput = z.infer<typeof reportStatusInputSchema>;
+
+export const updateFixPlanInputSchema = z.object({
+  completedTaskIds: z.array(z.string()).optional(),
+  skippedTasks: z
+    .array(
+      z.object({
+        taskId: z.string(),
+        reason: z.string(),
+      }),
+    )
+    .optional(),
+  newTasks: z
+    .array(
+      z.object({
+        description: z.string(),
+        priority: z.enum(["high", "medium", "low"]),
+      }),
+    )
+    .optional(),
+});
+export type UpdateFixPlanInput = z.infer<typeof updateFixPlanInputSchema>;
+
+// --- Halt Reason ---
+export const haltReasonSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("plan_complete") }),
+  z.object({ type: z.literal("iteration_cap"), maxIterations: z.number() }),
+  z.object({
+    type: z.literal("circuit_breaker"),
+    reason: z.enum(["no_progress", "repeated_error"]),
+  }),
+  z.object({ type: z.literal("permission_denied") }),
+  z.object({ type: z.literal("test_saturation") }),
+  z.object({
+    type: z.literal("stalled_exit_signal"),
+    remainingTasks: z.number(),
+  }),
+  z.object({ type: z.literal("aborted") }),
+]);
+export type HaltReason = z.infer<typeof haltReasonSchema>;
+
+// --- Git Iteration Metrics ---
+export const gitIterationMetricsSchema = z.object({
+  filesChanged: z.number(),
+  linesAdded: z.number(),
+  linesRemoved: z.number(),
+  changedFiles: z.array(z.string()),
+});
+export type GitIterationMetrics = z.infer<typeof gitIterationMetricsSchema>;
+
+// --- Iteration Metadata ---
+export const ralphLoopIterationMetaSchema = z.object({
+  iterationNumber: z.number().int(),
+  conversationId: z.string(),
+  status: z.enum(["completed", "error", "timeout", "aborted"]),
+  startedAt: z.string(),
+  completedAt: z.string(),
+  durationMs: z.number(),
+  costUsd: z.number().default(0),
+  turns: z.number().default(0),
+  gitMetrics: gitIterationMetricsSchema,
+  statusReport: reportStatusInputSchema.nullable().default(null),
+  tasksCompleted: z.array(z.string()).default([]),
+  tasksSkipped: z.array(z.string()).default([]),
+  tasksAdded: z.array(z.string()).default([]),
+  progressClassification: z.enum(["progress", "no_progress"]),
+});
+export type RalphLoopIterationMeta = z.infer<
+  typeof ralphLoopIterationMetaSchema
+>;
+
+// --- Workflow Status ---
+export const workflowStatusSchema = z.enum([
+  "planning",
+  "running",
+  "paused",
+  "completed",
+  "halted",
+  "aborted",
+]);
+export type WorkflowStatus = z.infer<typeof workflowStatusSchema>;
+
+// --- Workflow Entity ---
+export const ralphLoopWorkflowSchema = z.object({
+  status: workflowStatusSchema,
+  objective: z.string(),
+  fixPlan: z.array(fixPlanTaskSchema),
+  config: ralphLoopConfigSchema,
+  circuitBreaker: circuitBreakerStateSchema,
+  iterations: z.array(ralphLoopIterationMetaSchema).default([]),
+  haltReason: haltReasonSchema.nullable().default(null),
+  createdAt: z.string(),
+  startedAt: z.string().nullable().default(null),
+  completedAt: z.string().nullable().default(null),
+  totalCostUsd: z.number().default(0),
+  totalDurationMs: z.number().default(0),
+});
+export type RalphLoopWorkflow = z.infer<typeof ralphLoopWorkflowSchema>;
+
+// ============================================================
+// Session & Project State
+// ============================================================
+
 export const sessionStateSchema = z.object({
   sessionName: z.string(),
   worktreePath: z.string(),
@@ -141,6 +324,7 @@ export const sessionStateSchema = z.object({
   source: sessionSourceSchema.default("csm"),
   objective: z.string().nullable().default(null),
   creationMode: sessionCreationModeSchema.default("fast"),
+  workflow: ralphLoopWorkflowSchema.nullable().default(null),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 
@@ -159,6 +343,7 @@ export type ManagerState = z.infer<typeof managerStateSchema>;
 
 export const perRepoConfigSchema = z.object({
   initScriptPath: z.string().nullable(),
+  preMergeCommand: z.string().nullable().optional(),
 });
 export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 
@@ -325,6 +510,58 @@ export type ResolveConflictsRequest = z.infer<
   typeof resolveConflictsRequestSchema
 >;
 
+// ============================================================
+// Workflow SSE Event Schemas
+// ============================================================
+
+export const workflowStatusEventSchema = z.object({
+  type: z.literal("workflow-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  workflowStatus: workflowStatusSchema,
+  iterationCount: z.number(),
+  maxIterations: z.number(),
+  taskProgress: z.object({
+    total: z.number(),
+    completed: z.number(),
+    skipped: z.number(),
+    pending: z.number(),
+  }),
+  haltReason: haltReasonSchema.nullable(),
+});
+export type WorkflowStatusEvent = z.infer<typeof workflowStatusEventSchema>;
+
+export const workflowIterationCompleteEventSchema = z.object({
+  type: z.literal("workflow-iteration-complete"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  iteration: ralphLoopIterationMetaSchema,
+});
+export type WorkflowIterationCompleteEvent = z.infer<
+  typeof workflowIterationCompleteEventSchema
+>;
+
+export const workflowFixPlanUpdatedEventSchema = z.object({
+  type: z.literal("workflow-fix-plan-updated"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  fixPlan: z.array(fixPlanTaskSchema),
+  source: z.enum(["tool", "user"]),
+});
+export type WorkflowFixPlanUpdatedEvent = z.infer<
+  typeof workflowFixPlanUpdatedEventSchema
+>;
+
+export const workflowCircuitBreakerEventSchema = z.object({
+  type: z.literal("workflow-circuit-breaker"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  circuitBreaker: circuitBreakerStateSchema,
+});
+export type WorkflowCircuitBreakerEvent = z.infer<
+  typeof workflowCircuitBreakerEventSchema
+>;
+
 export const sessionFinishedEventSchema = z.object({
   type: z.literal("session-finished"),
   projectName: z.string(),
@@ -412,7 +649,11 @@ export type SSEEvent =
   | JobStatusEvent
   | SessionFinishedEvent
   | NotificationCreatedEvent
-  | NotificationUpdatedEvent;
+  | NotificationUpdatedEvent
+  | WorkflowStatusEvent
+  | WorkflowIterationCompleteEvent
+  | WorkflowFixPlanUpdatedEvent
+  | WorkflowCircuitBreakerEvent;
 
 // ============================================================
 // Command Autocomplete Schemas

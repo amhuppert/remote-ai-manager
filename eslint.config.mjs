@@ -10,8 +10,21 @@ const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   prettier,
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts"]),
-  ...storybook.configs["flat/recommended"]
+  globalIgnores([
+    ".next/**",
+    "out/**",
+    "build/**",
+    "dist/**",
+    "storybook-static/**",
+    ".worktrees/**",
+    "next-env.d.ts",
+  ]),
+  ...storybook.configs["flat/recommended"],
+  {
+    linterOptions: {
+      reportUnusedDisableDirectives: "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

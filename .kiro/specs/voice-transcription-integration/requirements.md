@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This specification covers integrating browser-based voice transcription into CSM by extending the existing Voice2Text CLI tool into an HTTP server and adding audio capture with a voice button UI in CSM's session detail page. The feature spans two workstreams: Voice2Text server extension and CSM voice integration. The browser captures audio via MediaRecorder, sends it through a CSM API proxy route, which forwards it to the Voice2Text HTTP server with project context for transcription and cleanup. The cleaned text is returned and populates the prompt textarea.
+This specification covers integrating browser-based voice transcription into CSM by extending the existing Voice2Text CLI tool into an HTTP server and adding audio capture with a voice button UI in CSM's session detail page. The feature spans two workstreams: Voice2Text server extension and CSM voice integration. The browser captures audio via MediaRecorder, sends it through a CSM API proxy route, which forwards it to the Voice2Text HTTP server with project context for transcription and cleanup. The cleaned text is returned and populates the prompt textarea. Additionally, when the user initiates voice recording from a text input that already contains text, that existing text is automatically sent as additional context to the Voice2Text server so that the cleanup phase can produce output that flows naturally from the prior content.
 
 ## Requirements
 
@@ -117,4 +117,17 @@ This specification covers integrating browser-based voice transcription into CSM
 4. If the transcription request times out, the CSM shall display "Transcription timed out".
 5. If the Voice2Text server becomes unreachable mid-request, the CSM shall display "Voice server is not available".
 6. If Claude cleanup fails on the Voice2Text server, the Voice2Text server shall fall back to returning the raw (unformatted) transcription.
+
+### Requirement 10: Context-Aware Voice Transcription
+
+**Objective:** As a developer, I want the voice transcription to consider any text already typed in the input field, so that the cleaned transcription flows naturally from my existing content rather than being formatted in isolation.
+
+#### Acceptance Criteria
+
+1. When the user initiates voice recording and the associated text input contains existing text, the CSM recording hook shall include that text as a `context` field in the transcription request FormData.
+2. If the associated text input is empty when recording starts, the CSM recording hook shall omit the `context` field from the transcription request.
+3. When the CSM transcription API proxy receives a `context` field in the request FormData, the CSM API route shall forward it to the Voice2Text server as a `context` field.
+4. When the Voice2Text server receives a `context` field in the `POST /transcribe` request, the Voice2Text server shall pass it as the `priorOutput` parameter to the cleanup service so the transcription is formatted to continue naturally from the existing content.
+5. If the `context` field is omitted from the `POST /transcribe` request, the Voice2Text server shall perform cleanup using the standard (non-continuation) prompt template.
+6. The context-passing behavior shall work identically in both the session detail prompt textarea and the focus mode session creation objective textarea.
 

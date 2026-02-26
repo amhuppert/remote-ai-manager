@@ -72,6 +72,11 @@ export async function checkAllSessionsForMerge(): Promise<number> {
           });
 
           await setSessionFinished(projectPath, sessionName);
+          logger.info("merge-detection.persisted", {
+            sessionName,
+            branchName,
+            method: "ancestor",
+          });
           broadcastSessionFinished(
             projectPath,
             sessionName,
@@ -97,6 +102,11 @@ export async function checkAllSessionsForMerge(): Promise<number> {
           });
 
           await setSessionFinished(projectPath, sessionName);
+          logger.info("merge-detection.persisted", {
+            sessionName,
+            branchName,
+            method: "commit-message",
+          });
           broadcastSessionFinished(
             projectPath,
             sessionName,

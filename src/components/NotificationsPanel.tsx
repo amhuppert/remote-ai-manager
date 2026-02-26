@@ -45,6 +45,13 @@ export interface ResolveConflictsNotification extends ServerNotificationBase {
   errorMessage?: string;
 }
 
+export interface WorkflowNotification extends BaseNotification {
+  type: "workflow";
+  status: "running" | "paused" | "completed" | "halted" | "aborted";
+  iterationCount: number;
+  maxIterations: number;
+}
+
 export type ServerNotificationItem =
   | MergeNotification
   | CommitNotification
@@ -54,7 +61,8 @@ export type NotificationItem =
   | ConversationNotification
   | MergeNotification
   | CommitNotification
-  | ResolveConflictsNotification;
+  | ResolveConflictsNotification
+  | WorkflowNotification;
 
 interface NotificationsPanelProps {
   open: boolean;
@@ -93,6 +101,8 @@ function getItemHref(item: NotificationItem): string {
       return base;
     case "resolve-conflicts":
       return base;
+    case "workflow":
+      return base;
   }
 }
 
@@ -124,6 +134,16 @@ function getItemLabel(item: NotificationItem): string {
         : item.status === "success"
           ? "Resolved"
           : "Resolution failed";
+    case "workflow": {
+      const labels: Record<string, string> = {
+        running: `${item.iterationCount}/${item.maxIterations}`,
+        paused: "Paused",
+        completed: "Complete",
+        halted: "Halted",
+        aborted: "Aborted",
+      };
+      return labels[item.status] ?? item.status;
+    }
   }
 }
 
@@ -137,6 +157,8 @@ function getItemTitle(item: NotificationItem): string {
       return `Commit on ${item.branchName}`;
     case "resolve-conflicts":
       return `Resolve conflicts on ${item.branchName}`;
+    case "workflow":
+      return "Ralph Loop";
   }
 }
 
@@ -150,6 +172,8 @@ function getItemCategory(item: NotificationItem): string {
       return "commit";
     case "resolve-conflicts":
       return "resolve";
+    case "workflow":
+      return "workflow";
   }
 }
 
@@ -172,6 +196,14 @@ function getItemStatusClass(item: NotificationItem): string {
         : item.status === "error"
           ? "error"
           : "running";
+    case "workflow":
+      return item.status === "completed"
+        ? "success"
+        : item.status === "halted"
+          ? "warning"
+          : item.status === "aborted"
+            ? "error"
+            : item.status; // "running" | "paused"
   }
 }
 
@@ -262,6 +294,26 @@ function ResolveIcon() {
   );
 }
 
+function WorkflowIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 14 14" fill="none">
+      <path
+        d="M7 1L7 5M7 9L7 13"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+      <circle cx="7" cy="7" r="2" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M3 3L5.5 5.5M8.5 8.5L11 11"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function getItemIcon(item: NotificationItem) {
   switch (item.type) {
     case "conversation":
@@ -272,6 +324,8 @@ function getItemIcon(item: NotificationItem) {
       return <CommitIcon />;
     case "resolve-conflicts":
       return <ResolveIcon />;
+    case "workflow":
+      return <WorkflowIcon />;
   }
 }
 

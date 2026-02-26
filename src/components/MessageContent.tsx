@@ -88,6 +88,7 @@ export default memo(function MessageContent({
         }
         if (block.type === "image") {
           return (
+            // eslint-disable-next-line @next/next/no-img-element -- base64 data URLs
             <img
               key={i}
               src={`data:${block.mediaType};base64,${block.base64Data}`}

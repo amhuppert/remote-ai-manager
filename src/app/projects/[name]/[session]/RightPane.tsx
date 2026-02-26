@@ -4,6 +4,7 @@ import type { SessionDiff, CommitLogEntry, SessionCreationMode } from "@/types";
 import DiffPanel from "./DiffPanel";
 import SpecBrowser from "./SpecBrowser";
 import MarkdownViewer from "@/components/MarkdownViewer";
+import ConnectedWorkflowPanel from "./workflow/ConnectedWorkflowPanel";
 import { useFocusDocQuery } from "@/lib/queries";
 import {
   useRightPaneTab,
@@ -16,6 +17,7 @@ interface RightPaneProps {
   commits: CommitLogEntry[];
   projectName: string;
   sessionName: string;
+  hasWorkflow?: boolean;
 }
 
 export default function RightPane({
@@ -24,6 +26,7 @@ export default function RightPane({
   commits,
   projectName,
   sessionName,
+  hasWorkflow,
 }: RightPaneProps): React.JSX.Element {
   const rightPaneTab = useRightPaneTab();
   const switchRightPaneTab = useSwitchRightPaneTab();
@@ -53,6 +56,15 @@ export default function RightPane({
               type="button"
             >
               Focus
+            </button>
+          )}
+          {hasWorkflow && (
+            <button
+              className={`filter-pill${rightPaneTab === "workflow" ? " active" : ""}`}
+              onClick={() => switchRightPaneTab("workflow")}
+              type="button"
+            >
+              Workflow
             </button>
           )}
           <button
@@ -89,6 +101,22 @@ export default function RightPane({
               content={focusDocQuery.data ?? null}
               isLoading={focusDocQuery.isPending}
               emptyMessage="Focus document not yet available. It will appear once the agent has analyzed the session objective."
+            />
+          </div>
+        )}
+        {hasWorkflow && (
+          <div
+            style={{
+              display: rightPaneTab === "workflow" ? "flex" : "none",
+              flexDirection: "column",
+              flex: 1,
+              minHeight: 0,
+              overflow: "auto",
+            }}
+          >
+            <ConnectedWorkflowPanel
+              projectName={projectName}
+              sessionName={sessionName}
             />
           </div>
         )}

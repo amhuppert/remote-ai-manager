@@ -9,6 +9,7 @@ import {
   useCloseUnifiedPanel,
   useToggleUnifiedPanel,
 } from "@/stores/unified-panel.store";
+import { useActiveWorkflows } from "@/stores/workflow.store";
 
 function formatRelativeTime(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
@@ -26,6 +27,7 @@ export default function UnifiedPanel(): React.JSX.Element | null {
   const close = useCloseUnifiedPanel();
   const togglePanel = useToggleUnifiedPanel();
   const { data: conversations, isPending } = useActiveConversationsQuery();
+  const activeWorkflows = useActiveWorkflows();
   const pathname = usePathname();
   // Extract conversation ID from URL: /projects/<name>/<session>/<conversationId>
   const pathSegments = pathname.split("/");
@@ -53,16 +55,56 @@ export default function UnifiedPanel(): React.JSX.Element | null {
           </button>
         </div>
         <div className="unified-panel-body">
+          {/* Active Workflows */}
+          {activeWorkflows.length > 0 && (
+            <div className="unified-panel-section">
+              <div className="unified-panel-section-title">
+                Active Workflows
+              </div>
+              <ul className="unified-panel-list">
+                {activeWorkflows.map((wf) => (
+                  <li key={`${wf.projectName}::${wf.sessionName}`}>
+                    <Link
+                      href={`/projects/${encodeURIComponent(wf.projectName)}/${encodeURIComponent(wf.sessionName)}`}
+                      className="unified-panel-item"
+                      onClick={close}
+                    >
+                      <span
+                        className={`unified-panel-dot ${wf.status}`}
+                        title={wf.status}
+                      />
+                      <div className="unified-panel-item-body">
+                        <div className="unified-panel-item-name">
+                          Ralph Loop
+                        </div>
+                        <div className="unified-panel-item-meta">
+                          {wf.projectName} / {wf.sessionName}
+                        </div>
+                      </div>
+                      <div className="unified-panel-item-time">
+                        {wf.iterationCount}/{wf.maxIterations}
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Active Conversations */}
           {isPending ? (
             <div className="unified-panel-empty">Loading...</div>
           ) : !conversations || conversations.length === 0 ? (
-            <div className="unified-panel-empty">
-              No active conversations.
-              <br />
-              <span className="unified-panel-empty-hint">
-                Conversations with status running or awaiting will appear here.
-              </span>
-            </div>
+            activeWorkflows.length === 0 && (
+              <div className="unified-panel-empty">
+                No active conversations.
+                <br />
+                <span className="unified-panel-empty-hint">
+                  Conversations with status running or awaiting will appear
+                  here.
+                </span>
+              </div>
+            )
           ) : (
             <ul className="unified-panel-list">
               {conversations.map((convo) => (

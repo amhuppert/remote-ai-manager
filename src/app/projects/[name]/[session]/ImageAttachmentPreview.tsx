@@ -18,6 +18,7 @@ export default memo(function ImageAttachmentPreview({
     <div className="attachment-preview-strip">
       {images.map((img) => (
         <div key={img.id} className="attachment-thumbnail">
+          {/* eslint-disable-next-line @next/next/no-img-element -- blob URLs from client-side file selection */}
           <img
             src={img.previewUrl}
             alt={img.fileName}

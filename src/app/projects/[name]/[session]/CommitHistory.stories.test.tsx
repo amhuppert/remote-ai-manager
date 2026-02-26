@@ -18,7 +18,9 @@ describe("CommitHistory stories", () => {
   it("SingleCommit renders commit hash and message", async () => {
     await SingleCommit.run();
     expect(screen.getByText("a1b2c3d")).toBeInTheDocument();
-    expect(screen.getByText("Add session validation layer")).toBeInTheDocument();
+    expect(
+      screen.getByText("Add session validation layer"),
+    ).toBeInTheDocument();
   });
 
   it("MultipleCommits renders all commits", async () => {

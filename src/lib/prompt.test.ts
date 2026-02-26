@@ -8,6 +8,7 @@ const {
   queryMock,
   getSessionMock,
   updateSessionMock,
+  mutateConversationMock,
   readConfigMock,
   acquireSessionLockMock,
   getConversationMock,
@@ -19,6 +20,7 @@ const {
   queryMock: vi.fn(),
   getSessionMock: vi.fn(),
   updateSessionMock: vi.fn(),
+  mutateConversationMock: vi.fn(),
   readConfigMock: vi.fn(),
   acquireSessionLockMock: vi.fn(),
   getConversationMock: vi.fn(),
@@ -35,6 +37,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 vi.mock("./state", () => ({
   getSession: getSessionMock,
   updateSession: updateSessionMock,
+  mutateConversation: mutateConversationMock,
 }));
 
 vi.mock("./config", () => ({
@@ -72,7 +75,7 @@ vi.mock("./sse-broadcaster", () => ({
 // Import module under test
 // ---------------------------------------------------------------------------
 import { executePromptStream } from "./prompt";
-import type { SessionState } from "@/types";
+import type { SessionState, ConversationState } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -115,6 +118,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     source: "csm" as const,
     objective: null,
     creationMode: "fast" as const,
+    workflow: null,
     ...overrides,
   };
 }
@@ -167,6 +171,26 @@ beforeEach(() => {
     updateSnapshots.push(JSON.parse(JSON.stringify(s)));
     return Promise.resolve();
   });
+  mutateConversationMock.mockImplementation(
+    async (
+      _path: string,
+      _sessName: string,
+      convId: string,
+      _label: string,
+      mutate: (c: ConversationState) => void,
+    ) => {
+      const s = await getSessionMock();
+      if (!s) return;
+      const c = s.conversations.find(
+        (conv: ConversationState) => conv.id === convId,
+      );
+      if (!c) return;
+      await mutate(c);
+      c.lastActivityAt = new Date().toISOString();
+      s.lastActivityAt = new Date().toISOString();
+      updateSnapshots.push(JSON.parse(JSON.stringify(s)));
+    },
+  );
 });
 
 // ===========================================================================

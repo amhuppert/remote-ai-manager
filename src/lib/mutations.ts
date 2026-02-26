@@ -1,7 +1,18 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { projectKeys, sessionKeys, conversationKeys } from "@/lib/query-keys";
+import {
+  projectKeys,
+  sessionKeys,
+  conversationKeys,
+  workflowKeys,
+} from "@/lib/query-keys";
 import { tracedFetch } from "@/lib/traced-fetch";
-import type { SessionState, ConversationState } from "@/types";
+import type {
+  SessionState,
+  ConversationState,
+  RalphLoopWorkflow,
+  FixPlanTask,
+  RalphLoopConfig,
+} from "@/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -434,6 +445,206 @@ export function useGenericRenameConversationMutation() {
       });
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active,
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Workflow Mutations
+// ---------------------------------------------------------------------------
+
+function workflowUrl(projectName: string, sessionName: string, path = "") {
+  return `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow${path}`;
+}
+
+export function useStartWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (objective?: string) =>
+      mutationFetch<{ workflow: RalphLoopWorkflow }>(
+        workflowUrl(projectName, sessionName),
+        "start-workflow",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ objective }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function useConfirmWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch<{ workflow: RalphLoopWorkflow }>(
+        workflowUrl(projectName, sessionName, "/confirm"),
+        "confirm-workflow",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function usePauseWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch<{ status: string }>(
+        workflowUrl(projectName, sessionName, "/pause"),
+        "pause-workflow",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function useResumeWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch<{ workflow: RalphLoopWorkflow }>(
+        workflowUrl(projectName, sessionName, "/resume"),
+        "resume-workflow",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function useAbortWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch<{ status: string }>(
+        workflowUrl(projectName, sessionName, "/abort"),
+        "abort-workflow",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function useUpdateFixPlanMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (fixPlan: FixPlanTask[]) =>
+      mutationFetch<{ fixPlan: FixPlanTask[] }>(
+        workflowUrl(projectName, sessionName, "/fix-plan"),
+        "update-fix-plan",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fixPlan }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function useUpdateWorkflowConfigMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (config: RalphLoopConfig) =>
+      mutationFetch<{ config: RalphLoopConfig }>(
+        workflowUrl(projectName, sessionName, "/config"),
+        "update-workflow-config",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function useGeneratePlanMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch<{ status: string }>(
+        workflowUrl(projectName, sessionName, "/generate-plan"),
+        "generate-plan",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
       });
     },
   });

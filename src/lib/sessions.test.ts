@@ -13,8 +13,10 @@ const {
   writeFileMock,
   readStateMock,
   writeStateMock,
+  mutateStateMock,
   ensureUniqueNameMock,
   queryMock,
+  readRepoConfigMock,
 } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
   existsSyncMock: vi.fn<(p: string) => boolean>(),
@@ -24,8 +26,10 @@ const {
   writeFileMock: vi.fn(),
   readStateMock: vi.fn(),
   writeStateMock: vi.fn(),
+  mutateStateMock: vi.fn(),
   ensureUniqueNameMock: vi.fn(),
   queryMock: vi.fn(),
+  readRepoConfigMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -46,6 +50,7 @@ vi.mock("node:fs/promises", () => ({
 vi.mock("./state", () => ({
   readState: readStateMock,
   writeState: writeStateMock,
+  mutateState: mutateStateMock,
 }));
 
 vi.mock("./worktrees", () => ({
@@ -54,6 +59,10 @@ vi.mock("./worktrees", () => ({
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
+}));
+
+vi.mock("./repo-config", () => ({
+  readRepoConfig: readRepoConfigMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -102,6 +111,7 @@ function stateWithSession(
             source: "csm",
             objective: null,
             creationMode: "fast" as const,
+            workflow: null,
             ...overrides,
           },
         },
@@ -207,7 +217,7 @@ function mockQueryResponse(text: string) {
 function mockQueryError(error: Error) {
   async function* generate() {
     throw error;
-    // eslint-disable-next-line no-unreachable
+
     yield undefined as never;
   }
   return generate();
@@ -220,12 +230,21 @@ beforeEach(() => {
   vi.clearAllMocks();
   readStateMock.mockResolvedValue(emptyState());
   writeStateMock.mockResolvedValue(undefined);
+  mutateStateMock.mockImplementation(
+    async (_label: string, mutate: (state: unknown) => unknown) => {
+      const state = await readStateMock();
+      const result = await mutate(state);
+      await writeStateMock(state, _label);
+      return result;
+    },
+  );
   existsSyncMock.mockReturnValue(false);
   rmMock.mockResolvedValue(undefined);
   readFileMock.mockRejectedValue(new Error("file not found"));
   mkdirMock.mockResolvedValue(undefined);
   writeFileMock.mockResolvedValue(undefined);
   ensureUniqueNameMock.mockImplementation((name: string) => name);
+  readRepoConfigMock.mockResolvedValue(null);
 });
 
 // ===========================================================================
@@ -549,12 +568,9 @@ describe("createSessionFocus", () => {
       { stdout: "" }, // init script
     ]);
 
-    readFileMock.mockResolvedValue(
-      JSON.stringify({ initScriptPath: "./setup.sh" }),
-    );
+    readRepoConfigMock.mockResolvedValue({ initScriptPath: "./setup.sh" });
 
     existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
       if (String(p).includes("setup.sh")) return true;
       return false;
     });
@@ -582,9 +598,7 @@ describe("createSessionFocus", () => {
     queryMock.mockReturnValue(mockQueryResponse("Missing Script"));
     mockExecFileSuccess(); // git worktree add
 
-    readFileMock.mockResolvedValue(
-      JSON.stringify({ initScriptPath: "./missing.sh" }),
-    );
+    readRepoConfigMock.mockResolvedValue({ initScriptPath: "./missing.sh" });
 
     let worktreeCheckCount = 0;
     existsSyncMock.mockImplementation((p: string) => {
@@ -592,7 +606,6 @@ describe("createSessionFocus", () => {
         worktreeCheckCount++;
         return worktreeCheckCount > 1; // false first, true after
       }
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
       if (String(p).includes("missing.sh")) return false;
       return false;
     });
@@ -613,9 +626,7 @@ describe("createSessionFocus", () => {
       { stdout: "" }, // rollback: branch delete
     ]);
 
-    readFileMock.mockResolvedValue(
-      JSON.stringify({ initScriptPath: "./fail.sh" }),
-    );
+    readRepoConfigMock.mockResolvedValue({ initScriptPath: "./fail.sh" });
 
     let worktreeCheckCount = 0;
     existsSyncMock.mockImplementation((p: string) => {
@@ -623,7 +634,6 @@ describe("createSessionFocus", () => {
         worktreeCheckCount++;
         return worktreeCheckCount > 1; // false first, true for cleanup
       }
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
       if (String(p).includes("fail.sh")) return true;
       return false;
     });
@@ -658,9 +668,7 @@ describe("createSessionFocus", () => {
       { stdout: "" }, // git branch -D
     ]);
 
-    readFileMock.mockResolvedValue(
-      JSON.stringify({ initScriptPath: "./fail.sh" }),
-    );
+    readRepoConfigMock.mockResolvedValue({ initScriptPath: "./fail.sh" });
 
     let worktreeCheckCount = 0;
     existsSyncMock.mockImplementation((p: string) => {
@@ -668,7 +676,6 @@ describe("createSessionFocus", () => {
         worktreeCheckCount++;
         return worktreeCheckCount > 1; // false first, true for cleanup
       }
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
       if (String(p).includes("fail.sh")) return true;
       return false;
     });

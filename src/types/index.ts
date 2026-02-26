@@ -60,6 +60,7 @@ export type {
   ConflictEntry,
   ConflictDecisionInput,
   ResolveConflictsRequest,
+  // Notification types
   NotificationType,
   Notification,
   NotificationCreatedEvent,
@@ -67,6 +68,24 @@ export type {
   GetNotificationsQuery,
   NotificationsResponse,
   MarkReadRequest,
+  // Ralph Loop Workflow types
+  FixPlanTaskStatus,
+  FixPlanTask,
+  CircuitBreakerStateEnum,
+  CircuitBreakerState,
+  CircuitBreakerConfig,
+  RalphLoopConfig,
+  ReportStatusInput,
+  UpdateFixPlanInput,
+  HaltReason,
+  GitIterationMetrics,
+  RalphLoopIterationMeta,
+  WorkflowStatus,
+  RalphLoopWorkflow,
+  WorkflowStatusEvent,
+  WorkflowIterationCompleteEvent,
+  WorkflowFixPlanUpdatedEvent,
+  WorkflowCircuitBreakerEvent,
 } from "@/lib/schemas";
 
 /** Parsed transcript message */

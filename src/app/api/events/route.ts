@@ -11,9 +11,7 @@ export function GET(): Response {
     start(controller) {
       savedController = controller;
       addClient(controller);
-      controller.enqueue(
-        encoder.encode(`event: connected\ndata: {}\n\n`),
-      );
+      controller.enqueue(encoder.encode(`event: connected\ndata: {}\n\n`));
     },
     cancel() {
       removeClient(savedController);

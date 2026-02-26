@@ -30,7 +30,8 @@ export default function ModelSelector({
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const selected = MODEL_OPTIONS.find((m) => m.id === value) ?? MODEL_OPTIONS[1]!;
+  const selected =
+    MODEL_OPTIONS.find((m) => m.id === value) ?? MODEL_OPTIONS[1]!;
 
   const toggle = useCallback(() => {
     if (!disabled) setOpen((prev) => !prev);
@@ -48,7 +49,10 @@ export default function ModelSelector({
   useEffect(() => {
     if (!open) return;
     function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
         setOpen(false);
       }
     }
@@ -76,7 +80,9 @@ export default function ModelSelector({
         title={`Model: ${selected.label} — ${selected.description}`}
       >
         <span className="model-selector-label">{selected.label}</span>
-        <span className="model-selector-chevron">{open ? "\u25B2" : "\u25BC"}</span>
+        <span className="model-selector-chevron">
+          {open ? "\u25B2" : "\u25BC"}
+        </span>
       </button>
 
       <div className={`model-selector-dropdown${open ? " open" : ""}`}>
