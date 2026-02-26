@@ -207,7 +207,7 @@ function mockQueryResponse(text: string) {
 function mockQueryError(error: Error) {
   async function* generate() {
     throw error;
-    // eslint-disable-next-line no-unreachable
+
     yield undefined as never;
   }
   return generate();

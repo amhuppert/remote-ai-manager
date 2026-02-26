@@ -31,7 +31,9 @@ describe("DiffPanel stories", () => {
     await MultipleFiles.run();
     expect(screen.getByText("src/lib/sessions.ts")).toBeInTheDocument();
     expect(screen.getByText("src/lib/validation.ts")).toBeInTheDocument();
-    expect(screen.getByText("src/app/api/sessions/route.ts")).toBeInTheDocument();
+    expect(
+      screen.getByText("src/app/api/sessions/route.ts"),
+    ).toBeInTheDocument();
   });
 
   it("WithCommits renders both tab buttons", async () => {

@@ -1,3 +1,6 @@
-npx lint-staged
+npx prettier --write .
+git add -u
+npx eslint . --fix
+git add -u
 npx tsc --noEmit --pretty
 npx vitest run --project unit

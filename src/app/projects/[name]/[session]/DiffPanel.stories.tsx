@@ -21,7 +21,10 @@ const singleFileDiff = {
             { type: "context", content: "  const session = getSession(id);" },
             { type: "remove", content: "  return session.status;" },
             { type: "add", content: "  if (!session) {" },
-            { type: "add", content: '    throw new Error("Session not found");' },
+            {
+              type: "add",
+              content: '    throw new Error("Session not found");',
+            },
             { type: "add", content: "  }" },
             { type: "add", content: "  return session.status;" },
             { type: "context", content: "}" },
@@ -44,8 +47,14 @@ const multiFileDiff = {
         {
           header: "@@ -10,6 +10,12 @@",
           lines: [
-            { type: "context", content: "import { readState } from './state';" },
-            { type: "add", content: "import { validateSession } from './validation';" },
+            {
+              type: "context",
+              content: "import { readState } from './state';",
+            },
+            {
+              type: "add",
+              content: "import { validateSession } from './validation';",
+            },
             { type: "context", content: "" },
           ],
         },
@@ -53,14 +62,20 @@ const multiFileDiff = {
           header: "@@ -45,8 +51,20 @@",
           lines: [
             { type: "remove", content: "  // TODO: validate input" },
-            { type: "add", content: "  const validated = validateSession(input);" },
+            {
+              type: "add",
+              content: "  const validated = validateSession(input);",
+            },
             { type: "add", content: "  if (!validated.success) {" },
             {
               type: "add",
               content: '    throw new Error("Invalid session data");',
             },
             { type: "add", content: "  }" },
-            { type: "context", content: "  return createWorktree(validated.data);" },
+            {
+              type: "context",
+              content: "  return createWorktree(validated.data);",
+            },
           ],
         },
       ],
@@ -91,14 +106,24 @@ const multiFileDiff = {
         {
           header: "@@ -12,4 +12,7 @@",
           lines: [
-            { type: "remove", content: "  const session = await createSession(body);" },
-            { type: "add", content: "  const session = await createSession(body);" },
+            {
+              type: "remove",
+              content: "  const session = await createSession(body);",
+            },
+            {
+              type: "add",
+              content: "  const session = await createSession(body);",
+            },
             { type: "add", content: "  // Log creation for audit trail" },
             {
               type: "add",
-              content: '  logger.info("session.created", { name: session.sessionName });',
+              content:
+                '  logger.info("session.created", { name: session.sessionName });',
             },
-            { type: "context", content: "  return NextResponse.json(session);" },
+            {
+              type: "context",
+              content: "  return NextResponse.json(session);",
+            },
           ],
         },
       ],

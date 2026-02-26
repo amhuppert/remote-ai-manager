@@ -412,7 +412,7 @@ export default function SessionDetailPage({
   }, [turnStartIndices, currentMsgIndex]);
 
   // --- Virtualizer for conversation messages ---
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual API is intentionally used
+
   const virtualizer = useVirtualizer({
     count: displayMessages.length,
     getScrollElement: () => panelBodyRef.current,
