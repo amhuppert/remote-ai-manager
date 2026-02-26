@@ -258,6 +258,7 @@ async function provisionSession(
     source: "csm",
     objective: opts.objective,
     creationMode: opts.mode,
+    workflow: null,
   };
 
   // Persist to state

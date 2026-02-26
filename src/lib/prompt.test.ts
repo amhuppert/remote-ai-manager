@@ -115,6 +115,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     source: "csm" as const,
     objective: null,
     creationMode: "fast" as const,
+    workflow: null,
     ...overrides,
   };
 }

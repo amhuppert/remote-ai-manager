@@ -12,7 +12,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 type MobilePanel = "chat" | "diff" | "focus";
-type RightPaneTab = "diff" | "focus";
+type RightPaneTab = "diff" | "focus" | "workflow";
 
 interface SessionDetailState {
   layout: LayoutMode;

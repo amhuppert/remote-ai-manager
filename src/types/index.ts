@@ -60,6 +60,24 @@ export type {
   ConflictEntry,
   ConflictDecisionInput,
   ResolveConflictsRequest,
+  // Ralph Loop Workflow types
+  FixPlanTaskStatus,
+  FixPlanTask,
+  CircuitBreakerStateEnum,
+  CircuitBreakerState,
+  CircuitBreakerConfig,
+  RalphLoopConfig,
+  ReportStatusInput,
+  UpdateFixPlanInput,
+  HaltReason,
+  GitIterationMetrics,
+  RalphLoopIterationMeta,
+  WorkflowStatus,
+  RalphLoopWorkflow,
+  WorkflowStatusEvent,
+  WorkflowIterationCompleteEvent,
+  WorkflowFixPlanUpdatedEvent,
+  WorkflowCircuitBreakerEvent,
 } from "@/lib/schemas";
 
 /** Parsed transcript message */

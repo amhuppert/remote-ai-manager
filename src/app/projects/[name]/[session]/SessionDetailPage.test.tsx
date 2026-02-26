@@ -87,6 +87,7 @@ const baseSession: SessionState = {
   source: "csm" as const,
   objective: null,
   creationMode: "fast" as const,
+  workflow: null,
 };
 
 const emptyDiff: SessionDiff = {

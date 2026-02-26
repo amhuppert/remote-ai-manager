@@ -47,6 +47,28 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
+  // Reject prompts to managed iteration conversations
+  if (conversation.role === "iteration") {
+    return NextResponse.json(
+      {
+        error: "Managed workflow conversations are not user-interactive",
+        code: "MANAGED_CONVERSATION",
+      } satisfies ApiError,
+      { status: 403 },
+    );
+  }
+
+  // Reject prompts when a workflow is actively running
+  if (session.workflow?.status === "running") {
+    return NextResponse.json(
+      {
+        error: "Session has an active workflow — prompts are blocked during execution",
+        code: "WORKFLOW_ACTIVE",
+      } satisfies ApiError,
+      { status: 409 },
+    );
+  }
+
   // Check single-flight lock at session level
   if (isSessionBusy(projectPath, sessionName)) {
     return NextResponse.json(

@@ -102,6 +102,7 @@ function stateWithSession(
             source: "csm",
             objective: null,
             creationMode: "fast" as const,
+            workflow: null,
             ...overrides,
           },
         },

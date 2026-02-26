@@ -79,6 +79,7 @@ describe("state", () => {
               source: "csm" as const,
               objective: null,
               creationMode: "fast" as const,
+              workflow: null,
             },
           },
         },
@@ -105,6 +106,7 @@ describe("state", () => {
       source: "csm" as const,
       objective: null,
       creationMode: "fast" as const,
+      workflow: null,
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -133,6 +135,7 @@ describe("state", () => {
       source: "csm" as const,
       objective: null,
       creationMode: "fast" as const,
+      workflow: null,
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -160,6 +163,7 @@ describe("state", () => {
       source: "csm" as const,
       objective: null,
       creationMode: "fast" as const,
+      workflow: null,
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -247,6 +251,7 @@ describe("archive helpers", () => {
       source: "csm" as const,
       objective: null,
       creationMode: "fast" as const,
+      workflow: null,
     };
 
     await writeState({
@@ -331,6 +336,7 @@ describe("pin helpers", () => {
       source: "csm" as const,
       objective: null,
       creationMode: "fast" as const,
+      workflow: null,
     };
 
     await writeState({

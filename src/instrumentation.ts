@@ -1,4 +1,7 @@
-import { recoverStaleConversations } from "./lib/state";
+import {
+  recoverStaleConversations,
+  recoverStaleWorkflows,
+} from "./lib/state";
 import { createLogger } from "./lib/logging";
 
 const logger = createLogger("startup");
@@ -11,6 +14,13 @@ export async function register() {
     const recovered = await recoverStaleConversations();
     if (recovered > 0) {
       logger.info("startup.recovered_stale_conversations", { recovered });
+    }
+
+    const workflowsRecovered = await recoverStaleWorkflows();
+    if (workflowsRecovered > 0) {
+      logger.info("startup.recovered_stale_workflows", {
+        recovered: workflowsRecovered,
+      });
     }
   } catch (err) {
     logger.error("startup.recovery_failed", {

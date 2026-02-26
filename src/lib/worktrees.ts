@@ -245,6 +245,7 @@ export async function discoverAndImportWorktrees(
       source: "imported",
       objective: null,
       creationMode: "fast",
+      workflow: null,
     });
   }
 

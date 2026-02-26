@@ -5,6 +5,7 @@ import {
   sessionKeys,
   conversationKeys,
   commandKeys,
+  workflowKeys,
 } from "@/lib/query-keys";
 import type {
   DiscoveredProject,
@@ -14,6 +15,8 @@ import type {
   ConversationState,
   TranscriptMessage,
   CommandsResponse,
+  RalphLoopWorkflow,
+  RalphLoopIterationMeta,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -223,5 +226,33 @@ export function useCommandsQuery(projectName: string, sessionName: string) {
       apiFetch<CommandsResponse>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commands`,
       ),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Workflow Queries
+// ---------------------------------------------------------------------------
+
+export function useWorkflowQuery(projectName: string, sessionName: string) {
+  return useQuery({
+    queryKey: workflowKeys.status(projectName, sessionName),
+    queryFn: () =>
+      apiFetch<{ workflow: RalphLoopWorkflow | null }>(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow`,
+      ).then((r) => r.workflow),
+  });
+}
+
+export function useWorkflowIterationsQuery(
+  projectName: string,
+  sessionName: string,
+) {
+  return useQuery({
+    queryKey: workflowKeys.iterations(projectName, sessionName),
+    queryFn: () =>
+      apiFetch<{ iterations: RalphLoopIterationMeta[] }>(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow/iterations`,
+      ).then((r) => r.iterations),
+    enabled: false, // Only fetch on demand
   });
 }

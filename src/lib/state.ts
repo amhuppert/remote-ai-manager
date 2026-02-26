@@ -267,6 +267,35 @@ export async function recoverStaleConversations(): Promise<number> {
   return recovered;
 }
 
+/**
+ * On startup, detect workflows stuck in "running" status and reset to "paused".
+ * Follows the same recovery pattern as recoverStaleConversations.
+ */
+export async function recoverStaleWorkflows(): Promise<number> {
+  const state = await readState();
+  let recovered = 0;
+
+  for (const project of Object.values(state.projects)) {
+    for (const session of Object.values(project.sessions)) {
+      if (session.workflow && session.workflow.status === "running") {
+        logger.warn("state.recover_stale_workflow", {
+          sessionName: session.sessionName,
+          previousStatus: session.workflow.status,
+        });
+        session.workflow.status = "paused";
+        recovered++;
+      }
+    }
+  }
+
+  if (recovered > 0) {
+    await writeState(state);
+    logger.info("state.workflow_recovery_complete", { recovered });
+  }
+
+  return recovered;
+}
+
 /** Read pinned project paths from persisted state */
 export async function getPinnedProjects(): Promise<Set<string>> {
   const state = await readState();
