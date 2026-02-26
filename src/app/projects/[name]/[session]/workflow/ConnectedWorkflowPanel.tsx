@@ -158,8 +158,8 @@ export default function ConnectedWorkflowPanel({
           queryKey: workflowKeys.status(projectName, sessionName),
         });
       }, 2000);
-      // Stop polling after 2.5 minutes (generation has 2 min timeout)
-      setTimeout(() => clearInterval(pollInterval), 150_000);
+      // Stop polling after 10.5 minutes (generation has 10 min timeout)
+      setTimeout(() => clearInterval(pollInterval), 630_000);
     };
 
     // Persist the objective before generating so the backend has it
@@ -224,7 +224,9 @@ export default function ConnectedWorkflowPanel({
       onGeneratePlan={handleGeneratePlan}
       onConfigChange={handleConfigChange}
       onResetCircuitBreaker={handleResetCircuitBreaker}
-      isGenerating={generatePlanMutation.isPending}
+      isGenerating={
+        generatePlanMutation.isPending || workflow?.generatingPlan === true
+      }
     />
   );
 }

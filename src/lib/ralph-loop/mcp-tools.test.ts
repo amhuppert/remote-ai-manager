@@ -82,6 +82,7 @@ function makeContext(overrides?: Partial<ToolContext>): ToolContext {
     projectPath: "/home/user/my-project",
     sessionName: "feature-auth",
     iterationNumber: 1,
+    isWindingDown: () => false,
     onStatusReport: vi.fn(),
     onFixPlanUpdate: vi.fn(async () => {}),
     ...overrides,

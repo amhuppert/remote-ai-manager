@@ -127,6 +127,8 @@ function makeWorkflow(
     config: {
       maxIterations: 20,
       iterationTimeoutMs: 3_600_000,
+      contextSoftLimitTokens: 160_000,
+      contextHardLimitTokens: 180_000,
       circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
     },
     circuitBreaker: {
@@ -138,6 +140,7 @@ function makeWorkflow(
     },
     iterations: [],
     haltReason: null,
+    generatingPlan: false,
     createdAt: "2026-02-25T10:00:00Z",
     startedAt: null,
     completedAt: null,
@@ -226,7 +229,6 @@ describe("PlanGenerator", () => {
     expect(query).toHaveBeenCalledWith(
       expect.objectContaining({
         options: expect.objectContaining({
-          maxTurns: 3,
           permissionMode: "bypassPermissions",
           persistSession: false,
           cwd: session.worktreePath,

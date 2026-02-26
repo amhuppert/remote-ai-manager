@@ -230,6 +230,8 @@ function makeWorkflow(
     config: {
       maxIterations: 20,
       iterationTimeoutMs: 3_600_000,
+      contextSoftLimitTokens: 160_000,
+      contextHardLimitTokens: 180_000,
       circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
     },
     circuitBreaker: {
@@ -241,6 +243,7 @@ function makeWorkflow(
     },
     iterations: [],
     haltReason: null,
+    generatingPlan: false,
     createdAt: "2026-02-25T10:00:00Z",
     startedAt: "2026-02-25T10:05:00Z",
     completedAt: null,

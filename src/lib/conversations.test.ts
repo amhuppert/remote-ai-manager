@@ -381,6 +381,8 @@ describe("deriveSessionStatus", () => {
         config: {
           maxIterations: 20,
           iterationTimeoutMs: 3_600_000,
+          contextSoftLimitTokens: 160_000,
+          contextHardLimitTokens: 180_000,
           circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
         },
         circuitBreaker: {
@@ -392,6 +394,7 @@ describe("deriveSessionStatus", () => {
         },
         iterations: [],
         haltReason: null,
+        generatingPlan: false,
         createdAt: "2024-01-01T00:00:00Z",
         startedAt: "2024-01-01T00:00:00Z",
         completedAt: null,
@@ -414,6 +417,8 @@ describe("deriveSessionStatus", () => {
         config: {
           maxIterations: 20,
           iterationTimeoutMs: 3_600_000,
+          contextSoftLimitTokens: 160_000,
+          contextHardLimitTokens: 180_000,
           circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
         },
         circuitBreaker: {
@@ -425,6 +430,7 @@ describe("deriveSessionStatus", () => {
         },
         iterations: [],
         haltReason: null,
+        generatingPlan: false,
         createdAt: "2024-01-01T00:00:00Z",
         startedAt: "2024-01-01T00:00:00Z",
         completedAt: null,
@@ -447,6 +453,8 @@ describe("deriveSessionStatus", () => {
         config: {
           maxIterations: 20,
           iterationTimeoutMs: 3_600_000,
+          contextSoftLimitTokens: 160_000,
+          contextHardLimitTokens: 180_000,
           circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
         },
         circuitBreaker: {
@@ -458,6 +466,7 @@ describe("deriveSessionStatus", () => {
         },
         iterations: [],
         haltReason: { type: "plan_complete" },
+        generatingPlan: false,
         createdAt: "2024-01-01T00:00:00Z",
         startedAt: "2024-01-01T00:00:00Z",
         completedAt: "2024-01-02T00:00:00Z",

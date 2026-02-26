@@ -62,6 +62,24 @@ function getFields(config: RalphLoopConfig): FieldDef[] {
       toDisplay: (c) => c.circuitBreaker.sameErrorThreshold,
       errorMessage: "Must be between 1 and 20",
     },
+    {
+      label: "Soft Limit (K tokens)",
+      value: Math.round(config.contextSoftLimitTokens / 1000),
+      min: 10,
+      max: 500,
+      toConfig: (v) => ({ contextSoftLimitTokens: v * 1000 }),
+      toDisplay: (c) => Math.round(c.contextSoftLimitTokens / 1000),
+      errorMessage: "Must be between 10K and 500K",
+    },
+    {
+      label: "Hard Limit (K tokens)",
+      value: Math.round(config.contextHardLimitTokens / 1000),
+      min: 10,
+      max: 500,
+      toConfig: (v) => ({ contextHardLimitTokens: v * 1000 }),
+      toDisplay: (c) => Math.round(c.contextHardLimitTokens / 1000),
+      errorMessage: "Must be between 10K and 500K",
+    },
   ];
 }
 

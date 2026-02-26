@@ -268,6 +268,8 @@ async function runIteration(
 
   // Set up MCP tool handlers — closures over mutable state
   let statusReport: ReportStatusInput | null = null;
+  let peakContextTokens = 0;
+  let softLimitReached = false;
   const taskMutations = {
     completedIds: [] as string[],
     skippedIds: [] as string[],
@@ -278,6 +280,7 @@ async function runIteration(
     projectPath,
     sessionName,
     iterationNumber,
+    isWindingDown: () => softLimitReached,
     onStatusReport: (report: ReportStatusInput) => {
       statusReport = report;
     },
@@ -388,7 +391,7 @@ async function runIteration(
 
     try {
       for await (const message of q) {
-        await processSDKMessage(
+        const contextTokens = await processSDKMessage(
           message,
           conversationId,
           iterationNumber,
@@ -400,18 +403,56 @@ async function runIteration(
             resultNumTurns = turns;
           },
         );
+
+        // Track context token usage from assistant messages
+        if (contextTokens > 0) {
+          peakContextTokens = Math.max(peakContextTokens, contextTokens);
+
+          // Soft limit — trigger wrap-up warnings in tool responses
+          if (
+            peakContextTokens >= workflow.config.contextSoftLimitTokens &&
+            !softLimitReached
+          ) {
+            softLimitReached = true;
+            logger.info("orchestrator.soft_limit_reached", {
+              sessionName,
+              iterationNumber,
+              peakContextTokens,
+              softLimit: workflow.config.contextSoftLimitTokens,
+            });
+          }
+
+          // Hard limit — force-end the iteration
+          if (peakContextTokens >= workflow.config.contextHardLimitTokens) {
+            iterationStatus = "context_limit";
+            iterationAbort.abort();
+            logger.warn("orchestrator.hard_limit_reached", {
+              sessionName,
+              iterationNumber,
+              peakContextTokens,
+              hardLimit: workflow.config.contextHardLimitTokens,
+            });
+          }
+        }
       }
     } catch (err) {
       if (iterationAbort.signal.aborted && !abortController.signal.aborted) {
-        // Timeout
-        iterationStatus = "timeout";
-        errors.push(
-          `Iteration timed out after ${workflow.config.iterationTimeoutMs}ms`,
-        );
-        logger.warn("orchestrator.iteration_timeout", {
-          sessionName,
-          iterationNumber,
-        });
+        if (iterationStatus === "context_limit") {
+          // Already set by hard limit — keep it
+          errors.push(
+            `Iteration ended at context limit (${peakContextTokens} tokens)`,
+          );
+        } else {
+          // Timeout
+          iterationStatus = "timeout";
+          errors.push(
+            `Iteration timed out after ${workflow.config.iterationTimeoutMs}ms`,
+          );
+          logger.warn("orchestrator.iteration_timeout", {
+            sessionName,
+            iterationNumber,
+          });
+        }
       } else if (abortController.signal.aborted) {
         // User abort
         iterationStatus = "aborted";
@@ -493,6 +534,7 @@ async function runIteration(
     tasksSkipped: taskMutations.skippedIds,
     tasksAdded: taskMutations.addedIds,
     progressClassification: progressResult,
+    peakContextTokens,
   };
 
   return iterationMeta;
@@ -629,7 +671,7 @@ async function processSDKMessage(
   sessionName: string,
   contentBlocks: MessageContentBlock[],
   setResultData: (cost: number, duration: number, turns: number) => void,
-): Promise<void> {
+): Promise<number> {
   const timestamp = new Date().toISOString();
 
   switch (message.type) {
@@ -640,7 +682,7 @@ async function processSDKMessage(
         type: "system",
         raw: { subtype: sysMsg.subtype, session_id: sysMsg.session_id },
       });
-      break;
+      return 0;
     }
 
     case "assistant": {
@@ -681,7 +723,14 @@ async function processSDKMessage(
         role: "assistant",
         content: blocks,
       });
-      break;
+
+      // Extract context token usage for iteration boundary tracking
+      const usage = asstMsg.message.usage;
+      const contextTokens =
+        (usage?.input_tokens ?? 0) +
+        (usage?.cache_read_input_tokens ?? 0) +
+        (usage?.cache_creation_input_tokens ?? 0);
+      return contextTokens;
     }
 
     case "user": {
@@ -690,7 +739,7 @@ async function processSDKMessage(
         type: "tool_result",
         raw: message,
       });
-      break;
+      return 0;
     }
 
     case "result": {
@@ -706,7 +755,7 @@ async function processSDKMessage(
         type: "result",
         raw: resultMsg,
       });
-      break;
+      return 0;
     }
 
     default: {
@@ -715,7 +764,7 @@ async function processSDKMessage(
         type: message.type,
         raw: message,
       });
-      break;
+      return 0;
     }
   }
 }

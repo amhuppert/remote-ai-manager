@@ -39,11 +39,25 @@ export function dispatchPlanGeneration(params: GeneratePlanParams): void {
   const projectName = projectPath.split("/").pop() ?? projectPath;
 
   void generatePlan(projectPath, sessionName, projectName, session).catch(
-    (err) => {
+    async (err) => {
       logger.error("plan_generator.fatal", {
         sessionName,
         error: err instanceof Error ? err.message : String(err),
       });
+      // Ensure the generating flag is cleared even on unexpected errors
+      try {
+        await mutateSession(
+          projectPath,
+          sessionName,
+          "planGenerator.clearGenerating",
+          (sess) => {
+            if (sess.workflow) sess.workflow.generatingPlan = false;
+            return null;
+          },
+        );
+      } catch {
+        // best-effort
+      }
     },
   );
 }
@@ -114,9 +128,9 @@ async function generatePlan(
     ],
   });
 
-  // Execute with short timeout and low max turns
+  // Execute with timeout (no turn limit — let the SDK explore freely)
   const abortController = new AbortController();
-  const timeoutHandle = setTimeout(() => abortController.abort(), 120_000); // 2 min
+  const timeoutHandle = setTimeout(() => abortController.abort(), 600_000); // 10 min
 
   try {
     const q = query({
@@ -131,7 +145,7 @@ async function generatePlan(
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         cwd: session.worktreePath,
-        maxTurns: 3,
+        maxTurns: undefined,
         persistSession: false,
         abortController,
         env: { ...process.env, CLAUDECODE: "" },
@@ -166,9 +180,9 @@ async function generatePlan(
     clearTimeout(timeoutHandle);
   }
 
-  // Persist generated tasks
+  // Persist generated tasks and clear generating flag
   if (generatedTasks.length > 0) {
-    // Append to existing tasks (don't replace)
+    // Append to existing tasks (don't replace) and clear generatingPlan flag
     const newTasks: FixPlanTask[] = generatedTasks.map((t) =>
       createTask({
         description: t.description,
@@ -182,6 +196,7 @@ async function generatePlan(
       "planGenerator.appendTasks",
       (sess) => {
         if (!sess.workflow) return null;
+        sess.workflow.generatingPlan = false;
         sess.workflow.fixPlan = [...sess.workflow.fixPlan, ...newTasks];
         return sess.workflow.fixPlan;
       },
@@ -207,6 +222,16 @@ async function generatePlan(
       }
     }
   } else {
+    // No tasks generated — clear the flag anyway
+    await mutateSession(
+      projectPath,
+      sessionName,
+      "planGenerator.clearGenerating",
+      (sess) => {
+        if (sess.workflow) sess.workflow.generatingPlan = false;
+        return null;
+      },
+    );
     logger.warn("plan_generator.no_tasks", { sessionName });
   }
 }

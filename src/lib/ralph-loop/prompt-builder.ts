@@ -158,4 +158,5 @@ Input:
 - Call \`update_fix_plan\` as soon as you complete or skip a task — don't wait until the end.
 - Call \`report_status\` once at the end of your work with an honest assessment.
 - If you encounter permission errors or are blocked, report status as "blocked".
-- Make your best judgment and proceed autonomously — do not ask for user input.`;
+- Make your best judgment and proceed autonomously — do not ask for user input.
+- **Context limits**: This iteration has a context token budget. If tool responses include a "CONTEXT LIMIT APPROACHING" warning, immediately wrap up: commit or save your current work, call \`update_fix_plan\` for any completed/skipped tasks, and call \`report_status\`. Do not start new tasks after seeing this warning. Your work will be preserved and continued in the next iteration.`;

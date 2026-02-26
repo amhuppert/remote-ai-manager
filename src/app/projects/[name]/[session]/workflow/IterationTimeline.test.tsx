@@ -30,6 +30,7 @@ function makeIteration(overrides: Partial<IterationMeta> = {}): IterationMeta {
     tasksSkipped: [],
     tasksAdded: [],
     progressClassification: "progress",
+    peakContextTokens: 0,
     ...overrides,
   };
 }

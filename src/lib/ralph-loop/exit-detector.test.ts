@@ -15,6 +15,8 @@ import type {
 const defaultConfig: RalphLoopConfig = {
   maxIterations: 20,
   iterationTimeoutMs: 3_600_000,
+  contextSoftLimitTokens: 160_000,
+  contextHardLimitTokens: 180_000,
   circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
 };
 
@@ -55,6 +57,7 @@ function makeIteration(
     tasksSkipped: [],
     tasksAdded: [],
     progressClassification: "progress",
+    peakContextTokens: 0,
     ...overrides,
   };
 }

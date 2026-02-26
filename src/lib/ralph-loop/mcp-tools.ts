@@ -11,6 +11,7 @@ export interface ToolContext {
   projectPath: string;
   sessionName: string;
   iterationNumber: number;
+  isWindingDown: () => boolean;
   onStatusReport: (report: ReportStatusInput) => void;
   onFixPlanUpdate: (update: UpdateFixPlanInput) => Promise<void>;
 }
@@ -63,11 +64,14 @@ export function createToolServer(
             };
           }
           context.onStatusReport(parsed.data);
+          const statusText = `Status report recorded: ${parsed.data.status} (exit_signal: ${parsed.data.exit_signal})`;
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Status report recorded: ${parsed.data.status} (exit_signal: ${parsed.data.exit_signal})`,
+                text: context.isWindingDown()
+                  ? `${statusText}\n\n${CONTEXT_LIMIT_WARNING}`
+                  : statusText,
               },
             ],
           };
@@ -130,11 +134,14 @@ export function createToolServer(
             if (parsed.data.newTasks?.length) {
               summary.push(`${parsed.data.newTasks.length} task(s) added`);
             }
+            const planText = `Plan updated: ${summary.join(", ") || "no changes"}`;
             return {
               content: [
                 {
                   type: "text" as const,
-                  text: `Plan updated: ${summary.join(", ") || "no changes"}`,
+                  text: context.isWindingDown()
+                    ? `${planText}\n\n${CONTEXT_LIMIT_WARNING}`
+                    : planText,
                 },
               ],
             };
@@ -154,3 +161,6 @@ export function createToolServer(
     ],
   });
 }
+
+const CONTEXT_LIMIT_WARNING =
+  "⚠️ CONTEXT LIMIT APPROACHING: You are nearing the context token limit for this iteration. Wrap up your current task now — call update_fix_plan for any completed/skipped tasks, then call report_status. The iteration will be forcefully ended soon.";

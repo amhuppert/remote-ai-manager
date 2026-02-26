@@ -190,6 +190,18 @@ export const ralphLoopConfigSchema = z.object({
     .min(60_000)
     .max(7_200_000)
     .default(3_600_000),
+  contextSoftLimitTokens: z
+    .number()
+    .int()
+    .min(10_000)
+    .max(500_000)
+    .default(160_000),
+  contextHardLimitTokens: z
+    .number()
+    .int()
+    .min(10_000)
+    .max(500_000)
+    .default(180_000),
   circuitBreaker: circuitBreakerConfigSchema.default({
     noProgressThreshold: 3,
     sameErrorThreshold: 5,
@@ -247,6 +259,7 @@ export const haltReasonSchema = z.discriminatedUnion("type", [
     remainingTasks: z.number(),
   }),
   z.object({ type: z.literal("aborted") }),
+  z.object({ type: z.literal("context_limit") }),
 ]);
 export type HaltReason = z.infer<typeof haltReasonSchema>;
 
@@ -263,7 +276,7 @@ export type GitIterationMetrics = z.infer<typeof gitIterationMetricsSchema>;
 export const ralphLoopIterationMetaSchema = z.object({
   iterationNumber: z.number().int(),
   conversationId: z.string(),
-  status: z.enum(["completed", "error", "timeout", "aborted"]),
+  status: z.enum(["completed", "error", "timeout", "aborted", "context_limit"]),
   startedAt: z.string(),
   completedAt: z.string(),
   durationMs: z.number(),
@@ -275,6 +288,7 @@ export const ralphLoopIterationMetaSchema = z.object({
   tasksSkipped: z.array(z.string()).default([]),
   tasksAdded: z.array(z.string()).default([]),
   progressClassification: z.enum(["progress", "no_progress"]),
+  peakContextTokens: z.number().default(0),
 });
 export type RalphLoopIterationMeta = z.infer<
   typeof ralphLoopIterationMetaSchema
@@ -300,6 +314,7 @@ export const ralphLoopWorkflowSchema = z.object({
   circuitBreaker: circuitBreakerStateSchema,
   iterations: z.array(ralphLoopIterationMetaSchema).default([]),
   haltReason: haltReasonSchema.nullable().default(null),
+  generatingPlan: z.boolean().default(false),
   createdAt: z.string(),
   startedAt: z.string().nullable().default(null),
   completedAt: z.string().nullable().default(null),

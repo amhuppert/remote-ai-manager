@@ -7,6 +7,8 @@ import type { RalphLoopConfig } from "./types";
 const defaultConfig: RalphLoopConfig = {
   maxIterations: 20,
   iterationTimeoutMs: 3_600_000,
+  contextSoftLimitTokens: 160_000,
+  contextHardLimitTokens: 180_000,
   circuitBreaker: {
     noProgressThreshold: 3,
     sameErrorThreshold: 5,
@@ -21,7 +23,7 @@ describe("WorkflowConfigPanel", () => {
     const inputs = container.querySelectorAll<HTMLInputElement>(
       "input[type='number']",
     );
-    expect(inputs.length).toBe(4);
+    expect(inputs.length).toBe(6);
     // Max iterations
     expect(inputs[0]!.value).toBe("20");
     // Timeout in minutes (3600000 / 60000 = 60)
@@ -30,6 +32,10 @@ describe("WorkflowConfigPanel", () => {
     expect(inputs[2]!.value).toBe("3");
     // Same-error threshold
     expect(inputs[3]!.value).toBe("5");
+    // Soft limit (160000 / 1000 = 160)
+    expect(inputs[4]!.value).toBe("160");
+    // Hard limit (180000 / 1000 = 180)
+    expect(inputs[5]!.value).toBe("180");
   });
 
   it("calls onConfigChange when max iterations changes", () => {

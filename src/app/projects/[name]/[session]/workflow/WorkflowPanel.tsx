@@ -157,6 +157,14 @@ function getHaltDisplay(reason: HaltReason): {
         icon: "\u2715",
         classification: "neutral",
       };
+    case "context_limit":
+      return {
+        title: "Context Limit Reached",
+        description:
+          "The iteration was ended because it exceeded the context token limit.",
+        icon: "\u26A1",
+        classification: "neutral",
+      };
   }
 }
 

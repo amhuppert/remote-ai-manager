@@ -59,6 +59,7 @@ function createIteration(
     tasksSkipped: [],
     tasksAdded: [],
     progressClassification: "progress",
+    peakContextTokens: 0,
     ...overrides,
   };
 }
