@@ -22,6 +22,7 @@ import {
 } from "@/stores/conversations.store";
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import DevServerPanel from "./DevServerPanel";
 
 interface Props {
   projectName: string;
@@ -332,6 +333,12 @@ export default function ConversationList({
                 </div>
               </div>
             )}
+
+            {/* Dev Server Panel */}
+            <DevServerPanel
+              projectName={projectName}
+              sessionName={sessionName}
+            />
 
             {/* Finished banner */}
             {isFinished && (

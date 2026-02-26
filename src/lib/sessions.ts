@@ -15,6 +15,7 @@ import { readState, mutateState } from "./state";
 import { createLogger } from "./logging";
 import { ensureUniqueName } from "./worktrees";
 import { readRepoConfig } from "./repo-config";
+import { stopAllForSession } from "./dev-server-registry";
 
 const logger = createLogger("sessions");
 
@@ -334,6 +335,13 @@ export async function deleteSession(
   const session = project.sessions[sessionName];
   if (!session) {
     throw new Error(`Session "${sessionName}" not found in project`);
+  }
+
+  // Stop all running dev servers before worktree removal (best-effort)
+  try {
+    await stopAllForSession({ projectPath, sessionName });
+  } catch {
+    // best-effort: don't block deletion
   }
 
   const source = session.source ?? "csm";

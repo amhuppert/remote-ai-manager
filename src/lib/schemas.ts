@@ -341,9 +341,64 @@ export const managerStateSchema = z.object({
 });
 export type ManagerState = z.infer<typeof managerStateSchema>;
 
+// ============================================================
+// Dev Server Schemas
+// ============================================================
+
+export const devServerConfigSchema = z.object({
+  name: z.string().min(1),
+  command: z.string().min(1),
+});
+export type DevServerConfig = z.infer<typeof devServerConfigSchema>;
+
+export const devServerStatusSchema = z.enum([
+  "starting",
+  "running",
+  "stopped",
+  "error",
+]);
+export type DevServerStatus = z.infer<typeof devServerStatusSchema>;
+
+export const devServerStatusEventSchema = z.object({
+  type: z.literal("dev-server-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  serverName: z.string(),
+  status: devServerStatusSchema,
+  port: z.number().nullable(),
+  remoteUrl: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+});
+export type DevServerStatusEvent = z.infer<typeof devServerStatusEventSchema>;
+
+export const devServerRuntimeStateSchema = z.object({
+  serverName: z.string(),
+  command: z.string(),
+  status: devServerStatusSchema,
+  pid: z.number().nullable(),
+  port: z.number().nullable(),
+  remoteUrl: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  recentOutput: z.array(z.string()),
+});
+export type DevServerRuntimeState = z.infer<typeof devServerRuntimeStateSchema>;
+
+export const devServersStatusResponseSchema = z.object({
+  servers: z.array(devServerRuntimeStateSchema),
+});
+export type DevServersStatusResponse = z.infer<
+  typeof devServersStatusResponseSchema
+>;
+
+// ============================================================
+// Per-Repo Config
+// ============================================================
+
 export const perRepoConfigSchema = z.object({
   initScriptPath: z.string().nullable(),
   preMergeCommand: z.string().nullable().optional(),
+  devServers: z.array(devServerConfigSchema).optional(),
 });
 export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 
@@ -671,7 +726,8 @@ export type SSEEvent =
   | WorkflowStatusEvent
   | WorkflowIterationCompleteEvent
   | WorkflowFixPlanUpdatedEvent
-  | WorkflowCircuitBreakerEvent;
+  | WorkflowCircuitBreakerEvent
+  | DevServerStatusEvent;
 
 // ============================================================
 // Command Autocomplete Schemas

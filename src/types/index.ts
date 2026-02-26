@@ -88,6 +88,12 @@ export type {
   WorkflowIterationCompleteEvent,
   WorkflowFixPlanUpdatedEvent,
   WorkflowCircuitBreakerEvent,
+  // Dev Server types
+  DevServerConfig,
+  DevServerStatus,
+  DevServerStatusEvent,
+  DevServerRuntimeState,
+  DevServersStatusResponse,
 } from "@/lib/schemas";
 
 /** Parsed transcript message */

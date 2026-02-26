@@ -23,6 +23,7 @@ import { runPreMergeValidation } from "./repo-config";
 import { readConfig } from "./config";
 import { broadcast } from "./sse-broadcaster";
 import { setSessionFinished } from "./state";
+import { stopAllForSession } from "./dev-server-registry";
 import { createLogger } from "./logging";
 import {
   createJobRecord,
@@ -333,6 +334,13 @@ async function executePhase2(
     job.mergeHash = mergeHash;
   } finally {
     releaseProject();
+  }
+
+  // Stop all dev servers before marking session as finished (best-effort)
+  try {
+    await stopAllForSession({ projectPath, sessionName });
+  } catch {
+    // best-effort: don't block merge
   }
 
   await setSessionFinished(projectPath, sessionName);

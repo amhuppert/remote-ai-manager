@@ -1,0 +1,269 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as registry from "./dev-server-registry";
+
+// Mock tailscale
+vi.mock("./tailscale", () => ({
+  register: vi.fn().mockResolvedValue("https://mock.ts.net:3000"),
+  unregister: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock sse-broadcaster
+vi.mock("./sse-broadcaster", () => ({
+  broadcast: vi.fn(),
+}));
+
+import * as tailscale from "./tailscale";
+import { broadcast } from "./sse-broadcaster";
+
+describe("DevServerRegistry", () => {
+  beforeEach(() => {
+    registry._resetForTesting();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    registry._resetForTesting();
+  });
+
+  describe("getSessionServers / getServer", () => {
+    it("returns empty array when no servers registered", () => {
+      const servers = registry.getSessionServers({
+        projectPath: "/proj",
+        sessionName: "s1",
+      });
+      expect(servers).toEqual([]);
+    });
+
+    it("returns undefined for non-existent server", () => {
+      const server = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+      });
+      expect(server).toBeUndefined();
+    });
+  });
+
+  describe("startServer", () => {
+    it("spawns process and transitions to starting", async () => {
+      // Use a command that will stay alive briefly
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: "/tmp",
+      });
+
+      const server = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+      });
+
+      expect(server).toBeDefined();
+      expect(server!.status).toBe("starting");
+      expect(server!.pid).toBeGreaterThan(0);
+      expect(server!.serverName).toBe("web");
+
+      // SSE broadcast should have been called with 'starting'
+      expect(broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "dev-server-status",
+          serverName: "web",
+          status: "starting",
+        }),
+      );
+    });
+
+    it("rejects duplicate start for running/starting server", async () => {
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: "/tmp",
+      });
+
+      await expect(
+        registry.startServer({
+          projectPath: "/proj",
+          sessionName: "s1",
+          serverName: "web",
+          command: "sleep 60",
+          worktreePath: "/tmp",
+        }),
+      ).rejects.toThrow('Server "web" is already starting');
+    });
+
+    it("detects CSM_PORT and transitions to running", async () => {
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "port-test",
+        command: "echo CSM_PORT=3000 && sleep 60",
+        worktreePath: "/tmp",
+      });
+
+      // Wait for stdout processing + tailscale registration
+      await new Promise((r) => setTimeout(r, 200));
+
+      const server = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "port-test",
+      });
+
+      expect(server!.status).toBe("running");
+      expect(server!.port).toBe(3000);
+      expect(server!.remoteUrl).toBe("https://mock.ts.net:3000");
+      expect(tailscale.register).toHaveBeenCalledWith(3000);
+    });
+
+    it("transitions to error when process exits before CSM_PORT", async () => {
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "fail-test",
+        command: "echo 'server failed' && exit 1",
+        worktreePath: "/tmp",
+      });
+
+      // Wait for process exit
+      await new Promise((r) => setTimeout(r, 200));
+
+      const server = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "fail-test",
+      });
+
+      expect(server!.status).toBe("error");
+      expect(server!.errorMessage).toContain("before reporting CSM_PORT");
+    });
+
+    it("captures recent output in buffer", async () => {
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "output-test",
+        command: "echo line1 && echo line2 && echo line3 && sleep 60 &",
+        worktreePath: "/tmp",
+      });
+
+      await new Promise((r) => setTimeout(r, 200));
+
+      const server = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "output-test",
+      });
+
+      expect(server!.recentOutput.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("stopServer", () => {
+    it("stops a running server gracefully", async () => {
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "stop-test",
+        command: "echo CSM_PORT=4000 && sleep 60",
+        worktreePath: "/tmp",
+      });
+
+      await new Promise((r) => setTimeout(r, 200));
+
+      await registry.stopServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "stop-test",
+      });
+
+      const server = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "stop-test",
+      });
+
+      expect(server!.status).toBe("stopped");
+      expect(tailscale.unregister).toHaveBeenCalledWith(4000);
+    });
+
+    it("is a no-op for non-existent server", async () => {
+      await registry.stopServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "nonexistent",
+      });
+      // Should not throw
+    });
+  });
+
+  describe("stopAllForSession", () => {
+    it("stops all servers for a session", async () => {
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: "/tmp",
+      });
+
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "storybook",
+        command: "sleep 60",
+        worktreePath: "/tmp",
+      });
+
+      await registry.stopAllForSession({
+        projectPath: "/proj",
+        sessionName: "s1",
+      });
+
+      const servers = registry.getSessionServers({
+        projectPath: "/proj",
+        sessionName: "s1",
+      });
+
+      expect(servers.every((s) => s.status === "stopped")).toBe(true);
+    });
+  });
+
+  describe("getSessionServers", () => {
+    it("only returns servers for the requested session", async () => {
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: "/tmp",
+      });
+
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s2",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: "/tmp",
+      });
+
+      const s1Servers = registry.getSessionServers({
+        projectPath: "/proj",
+        sessionName: "s1",
+      });
+      const s2Servers = registry.getSessionServers({
+        projectPath: "/proj",
+        sessionName: "s2",
+      });
+
+      expect(s1Servers).toHaveLength(1);
+      expect(s1Servers[0]!.sessionName).toBe("s1");
+      expect(s2Servers).toHaveLength(1);
+      expect(s2Servers[0]!.sessionName).toBe("s2");
+    });
+  });
+});

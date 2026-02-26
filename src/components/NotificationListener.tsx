@@ -7,6 +7,7 @@ import {
   conversationKeys,
   notificationKeys,
   workflowKeys,
+  devServerKeys,
 } from "@/lib/query-keys";
 import {
   jobStatusEventSchema,
@@ -110,6 +111,11 @@ export default function NotificationListener(): null {
       } catch {
         // best-effort
       }
+    });
+
+    // --- Dev Server SSE events ---
+    es.addEventListener("dev-server-status", () => {
+      void queryClient.invalidateQueries({ queryKey: devServerKeys.all });
     });
 
     // --- Workflow SSE events ---

@@ -8433,3 +8433,113 @@ textarea {
 .workflow-lock-banner-icon {
   flex-shrink: 0;
 }
+
+/* ============================================================
+   Dev Server Panel
+   ============================================================ */
+
+.dev-server-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.dev-server-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.dev-server-panel-title {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.dev-server-panel-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.dev-server-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.dev-server-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.dev-server-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+  min-width: 0;
+}
+
+.dev-server-name {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dev-server-status {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dev-server-url {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--cyan);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dev-server-url:hover {
+  text-decoration: underline;
+}
+
+.dev-server-actions {
+  flex-shrink: 0;
+}
+
+.dev-server-error {
+  width: 100%;
+  margin-top: var(--space-xs);
+}
+
+.dev-server-error-output {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--red);
+  background: var(--surface);
+  border: 1px solid var(--red-glow);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  margin: 0;
+  max-height: 80px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
