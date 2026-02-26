@@ -255,6 +255,7 @@ export default function SessionDetailPage({
   const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const promptTextRef = useRef(promptText);
   promptTextRef.current = promptText;
+  const fireAndForgetRef = useRef(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -762,13 +763,26 @@ export default function SessionDetailPage({
     void sendPrompt(pending.text, 0, selectedModel);
   }, [conversationId, consumePendingForkPrompt, sendPrompt, selectedModel]);
 
-  const handleVoiceResult = useCallback((text: string) => {
-    setPromptText((prev) => (prev.trim() ? `${prev}\n${text}` : text));
-    requestAnimationFrame(() => textareaRef.current?.focus());
-  }, []);
+  const handleVoiceResult = useCallback(
+    (text: string) => {
+      const newText = promptTextRef.current.trim()
+        ? `${promptTextRef.current}\n${text}`
+        : text;
+      promptTextRef.current = newText;
+      setPromptText(newText);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+
+      if (fireAndForgetRef.current) {
+        fireAndForgetRef.current = false;
+        void handleSendPrompt();
+      }
+    },
+    [handleSendPrompt],
+  );
 
   const handleVoiceError = useCallback((error: string) => {
     void error;
+    fireAndForgetRef.current = false;
   }, []);
 
   // --- Copy conversation context for debugging ---
@@ -827,9 +841,32 @@ export default function SessionDetailPage({
   }, [isRecording, startRecording, stopRecording]);
 
   // Voice toggle hotkey
-  useAppHotkey("voiceToggle", () => void toggleRecording(), {
-    enabled: voiceAvailable && !isProcessing,
-  });
+  useAppHotkey(
+    "voiceToggle",
+    () => {
+      if (!isRecording && !isProcessing) {
+        fireAndForgetRef.current = false;
+      }
+      void toggleRecording();
+    },
+    {
+      enabled: voiceAvailable && !isProcessing,
+    },
+  );
+
+  // Voice fire-and-forget hotkey
+  useAppHotkey(
+    "voiceFireAndForget",
+    () => {
+      if (!isRecording && !isProcessing) {
+        fireAndForgetRef.current = true;
+      }
+      void toggleRecording();
+    },
+    {
+      enabled: voiceAvailable && !isProcessing,
+    },
+  );
 
   // --- Derived display values ---
   const decodedProjectName = decodeURIComponent(projectName);

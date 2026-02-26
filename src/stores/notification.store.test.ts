@@ -89,15 +89,13 @@ describe("notification.store — optimistic job addition", () => {
     useNotificationStore
       .getState()
       .addOrUpdateJob(makeRunningEvent({ jobId: "job-1", jobType: "merge" }));
-    useNotificationStore
-      .getState()
-      .addOrUpdateJob(
-        makeRunningEvent({
-          jobId: "job-2",
-          jobType: "commit",
-          sessionName: "other-session",
-        }),
-      );
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        jobId: "job-2",
+        jobType: "commit",
+        sessionName: "other-session",
+      }),
+    );
 
     expect(useNotificationStore.getState().jobs.size).toBe(2);
 

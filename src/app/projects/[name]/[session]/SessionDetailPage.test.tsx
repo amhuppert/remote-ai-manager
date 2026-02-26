@@ -4,6 +4,8 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import SessionDetailPage from "./SessionDetailPage";
 import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 
 // Mock next/link
 vi.mock("next/link", () => ({
@@ -181,13 +183,14 @@ vi.mock("@/hooks/use-abort-prompt", () => ({
 
 // Mock useVoiceRecorder
 vi.mock("@/hooks/useVoiceRecorder", () => ({
-  useVoiceRecorder: () => ({
+  useVoiceRecorder: vi.fn(() => ({
     isRecording: false,
     isProcessing: false,
     elapsedTime: 0,
     isAvailable: false,
     toggleRecording: vi.fn(),
-  }),
+    stopRecording: vi.fn(),
+  })),
 }));
 
 // Mock useAppHotkey
@@ -494,5 +497,95 @@ describe("SessionDetailPage", () => {
       />,
     );
     expect(screen.getByText("Loading session...")).toBeDefined();
+  });
+
+  describe("fire-and-forget voice mode", () => {
+    it("auto-submits prompt when fire-and-forget voice result arrives", () => {
+      // Override voice recorder mock to capture onResult and mark voice as available
+      let capturedOnResult: ((text: string) => void) | undefined;
+      vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
+        onResult: (text: string) => void;
+      }) => {
+        capturedOnResult = opts.onResult;
+        return {
+          isRecording: false,
+          isProcessing: false,
+          elapsedTime: 0,
+          isAvailable: true,
+          toggleRecording: vi.fn(),
+          stopRecording: vi.fn(),
+        };
+      }) as typeof useVoiceRecorder);
+
+      // Clear hotkey mock to capture fresh calls
+      vi.mocked(useAppHotkey).mockClear();
+
+      renderWithQuery(
+        <SessionDetailPage
+          projectName="repo"
+          sessionName="test-session"
+          conversationId="conv-1"
+          defaultModel="sonnet"
+        />,
+      );
+
+      // Find the fire-and-forget hotkey callback
+      const ffCall = vi
+        .mocked(useAppHotkey)
+        .mock.calls.find(([id]) => id === "voiceFireAndForget");
+      expect(ffCall).toBeDefined();
+      const fireAndForgetCallback = ffCall![1];
+
+      // Trigger fire-and-forget (sets internal ref)
+      fireAndForgetCallback({} as KeyboardEvent);
+
+      // Simulate voice transcription result
+      expect(capturedOnResult).toBeDefined();
+      capturedOnResult!("Hello from voice");
+
+      // Verify prompt was auto-submitted
+      expect(sendPromptMock).toHaveBeenCalled();
+    });
+
+    it("does NOT auto-submit in normal voice mode", () => {
+      let capturedOnResult: ((text: string) => void) | undefined;
+      vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
+        onResult: (text: string) => void;
+      }) => {
+        capturedOnResult = opts.onResult;
+        return {
+          isRecording: false,
+          isProcessing: false,
+          elapsedTime: 0,
+          isAvailable: true,
+          toggleRecording: vi.fn(),
+          stopRecording: vi.fn(),
+        };
+      }) as typeof useVoiceRecorder);
+
+      vi.mocked(useAppHotkey).mockClear();
+
+      renderWithQuery(
+        <SessionDetailPage
+          projectName="repo"
+          sessionName="test-session"
+          conversationId="conv-1"
+          defaultModel="sonnet"
+        />,
+      );
+
+      // Find the normal voice toggle callback
+      const vtCall = vi
+        .mocked(useAppHotkey)
+        .mock.calls.find(([id]) => id === "voiceToggle");
+      expect(vtCall).toBeDefined();
+      vtCall![1]({} as KeyboardEvent);
+
+      // Simulate voice result
+      capturedOnResult!("Hello from voice");
+
+      // Should NOT auto-submit
+      expect(sendPromptMock).not.toHaveBeenCalled();
+    });
   });
 });

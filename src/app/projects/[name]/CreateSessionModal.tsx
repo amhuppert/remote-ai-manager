@@ -27,6 +27,8 @@ export default function CreateSessionModal({
   const nameInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const objectiveRef = useRef(objective);
+  const fireAndForgetRef = useRef(false);
+  const autoSubmitPendingRef = useRef(false);
   useEffect(() => {
     objectiveRef.current = objective;
   });
@@ -43,15 +45,51 @@ export default function CreateSessionModal({
     projectName,
     getContext: useCallback(() => objectiveRef.current, []),
     onResult: (text) => {
-      setObjective((prev) => (prev ? prev + "\n" + text : text));
+      const newObjective = objectiveRef.current
+        ? objectiveRef.current + "\n" + text
+        : text;
+      setObjective(newObjective);
+      objectiveRef.current = newObjective;
+
+      if (fireAndForgetRef.current) {
+        fireAndForgetRef.current = false;
+        autoSubmitPendingRef.current = true;
+      }
     },
-    onError: (err) => setError(err),
+    onError: (err) => {
+      setError(err);
+      fireAndForgetRef.current = false;
+      autoSubmitPendingRef.current = false;
+    },
   });
 
   // Alt+V hotkey to toggle voice recording while modal is open (focus mode only)
-  useAppHotkey("voiceToggle", () => void toggleRecording(), {
-    enabled: open && mode === "focus" && voiceAvailable && !isProcessing,
-  });
+  useAppHotkey(
+    "voiceToggle",
+    () => {
+      if (!isRecording && !isProcessing) {
+        fireAndForgetRef.current = false;
+      }
+      void toggleRecording();
+    },
+    {
+      enabled: open && mode === "focus" && voiceAvailable && !isProcessing,
+    },
+  );
+
+  // Ctrl+Alt+V hotkey for fire-and-forget voice (auto-submit on completion)
+  useAppHotkey(
+    "voiceFireAndForget",
+    () => {
+      if (!isRecording && !isProcessing) {
+        fireAndForgetRef.current = true;
+      }
+      void toggleRecording();
+    },
+    {
+      enabled: open && mode === "focus" && voiceAvailable && !isProcessing,
+    },
+  );
 
   // Reset state when modal opens (state-during-render pattern)
   const [prevOpen, setPrevOpen] = useState(false);
@@ -62,6 +100,8 @@ export default function CreateSessionModal({
       setObjective("");
       setMode("fast");
       setError(null);
+      fireAndForgetRef.current = false;
+      autoSubmitPendingRef.current = false;
     }
   }
 
@@ -126,6 +166,15 @@ export default function CreateSessionModal({
       },
     });
   };
+
+  // Auto-submit after fire-and-forget voice result
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally runs every render; ref guard prevents repeated calls
+  useEffect(() => {
+    if (autoSubmitPendingRef.current && canSubmit) {
+      autoSubmitPendingRef.current = false;
+      handleSubmit();
+    }
+  });
 
   if (!open) return null;
 

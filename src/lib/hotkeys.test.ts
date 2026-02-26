@@ -7,6 +7,7 @@ describe("HOTKEY_REGISTRY", () => {
     const expectedIds: HotkeyId[] = [
       "helpModal",
       "voiceToggle",
+      "voiceFireAndForget",
       "abortPrompt",
       "nextMessage",
       "prevMessage",
@@ -44,6 +45,11 @@ describe("HOTKEY_REGISTRY", () => {
   it("voiceToggle has enableOnFormTags set", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     expect(HOTKEY_REGISTRY.voiceToggle.enableOnFormTags).toBe(true);
+  });
+
+  it("voiceFireAndForget has enableOnFormTags set", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    expect(HOTKEY_REGISTRY.voiceFireAndForget.enableOnFormTags).toBe(true);
   });
 
   it("abortPrompt has enableOnFormTags set", async () => {
@@ -187,6 +193,11 @@ describe("formatHotkeyDisplay", () => {
       const { formatHotkeyDisplay } = await import("./hotkeys");
       expect(formatHotkeyDisplay("mod+s")).toBe("Ctrl S");
     });
+
+    it("formats mod+alt+v with Ctrl and Alt prefixes", async () => {
+      const { formatHotkeyDisplay } = await import("./hotkeys");
+      expect(formatHotkeyDisplay("mod+alt+v")).toBe("Ctrl Alt V");
+    });
   });
 
   describe("on macOS", () => {
@@ -221,6 +232,11 @@ describe("formatHotkeyDisplay", () => {
     it("formats single key by capitalizing", async () => {
       const { formatHotkeyDisplay } = await import("./hotkeys");
       expect(formatHotkeyDisplay("b")).toBe("B");
+    });
+
+    it("formats mod+alt+v with command and option symbols", async () => {
+      const { formatHotkeyDisplay } = await import("./hotkeys");
+      expect(formatHotkeyDisplay("mod+alt+v")).toBe("\u2318 \u2325 V");
     });
   });
 });
