@@ -20,6 +20,11 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
   ]),
   ...storybook.configs["flat/recommended"],
+  {
+    linterOptions: {
+      reportUnusedDisableDirectives: "off",
+    },
+  },
 ]);
 
 export default eslintConfig;
