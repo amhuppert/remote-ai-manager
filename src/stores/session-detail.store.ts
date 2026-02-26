@@ -11,8 +11,15 @@ import type {
 // Types
 // ---------------------------------------------------------------------------
 
-type MobilePanel = "chat" | "diff" | "focus";
-type RightPaneTab = "diff" | "focus" | "workflow";
+type MobilePanel = "chat" | "diff" | "focus" | "specs";
+type RightPaneTab = "diff" | "focus" | "workflow" | "specs";
+
+interface SpecBrowserSelection {
+  /** "steering" or a feature name like "browser-notifications" */
+  category: string;
+  /** Selected filename like "design.md", or null if only category selected */
+  file: string | null;
+}
 
 interface SessionDetailState {
   layout: LayoutMode;
@@ -36,6 +43,7 @@ interface SessionDetailState {
   currentQuestionIndex: number;
   editingIndex: number | null;
   pendingForkPrompt: { conversationId: string; text: string } | null;
+  specBrowserSelection: SpecBrowserSelection | null;
 }
 
 interface SessionDetailActions {
@@ -84,6 +92,9 @@ interface SessionDetailActions {
     conversationId: string;
     text: string;
   } | null;
+  selectSpecCategory: (category: string) => void;
+  selectSpecFile: (category: string, file: string) => void;
+  clearSpecSelection: () => void;
   clearConversationMessages: () => void;
   resetStore: () => void;
 }
@@ -121,6 +132,7 @@ const initialState: SessionDetailState = {
   currentQuestionIndex: 0,
   editingIndex: null,
   pendingForkPrompt: null,
+  specBrowserSelection: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -387,6 +399,23 @@ const useSessionDetailStore = create<SessionDetailStore>()(
       return pendingForkPrompt;
     },
 
+    // -- Spec Browser --
+
+    selectSpecCategory: (category) =>
+      set((state) => {
+        state.specBrowserSelection = { category, file: null };
+      }),
+
+    selectSpecFile: (category, file) =>
+      set((state) => {
+        state.specBrowserSelection = { category, file };
+      }),
+
+    clearSpecSelection: () =>
+      set((state) => {
+        state.specBrowserSelection = null;
+      }),
+
     // -- Reset --
 
     clearConversationMessages: () =>
@@ -437,6 +466,8 @@ export const usePendingForkPrompt = () =>
   useSessionDetailStore((s) => s.pendingForkPrompt);
 export const useRightPaneTab = () =>
   useSessionDetailStore((s) => s.rightPaneTab);
+export const useSpecBrowserSelection = () =>
+  useSessionDetailStore((s) => s.specBrowserSelection);
 
 // ---------------------------------------------------------------------------
 // Action hooks
@@ -512,6 +543,12 @@ export const useSetPendingForkPrompt = () =>
   useSessionDetailStore((s) => s.setPendingForkPrompt);
 export const useConsumePendingForkPrompt = () =>
   useSessionDetailStore((s) => s.consumePendingForkPrompt);
+export const useSelectSpecCategory = () =>
+  useSessionDetailStore((s) => s.selectSpecCategory);
+export const useSelectSpecFile = () =>
+  useSessionDetailStore((s) => s.selectSpecFile);
+export const useClearSpecSelection = () =>
+  useSessionDetailStore((s) => s.clearSpecSelection);
 export const useClearConversationMessages = () =>
   useSessionDetailStore((s) => s.clearConversationMessages);
 export const useResetSessionDetailStore = () =>

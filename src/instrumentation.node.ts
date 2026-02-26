@@ -2,14 +2,12 @@ import {
   recoverStaleConversations,
   recoverStaleWorkflows,
 } from "./lib/state";
+import { startMergeDetection } from "./lib/merge-detection";
 import { createLogger } from "./lib/logging";
 
 const logger = createLogger("startup");
 
 export async function register() {
-  // Only run on the server (not edge runtime)
-  if (typeof globalThis.process === "undefined") return;
-
   try {
     const recovered = await recoverStaleConversations();
     if (recovered > 0) {
@@ -24,6 +22,14 @@ export async function register() {
     }
   } catch (err) {
     logger.error("startup.recovery_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    await startMergeDetection();
+  } catch (err) {
+    logger.error("startup.merge_detection_failed", {
       error: err instanceof Error ? err.message : String(err),
     });
   }

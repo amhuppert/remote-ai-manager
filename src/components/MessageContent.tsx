@@ -81,7 +81,6 @@ export default memo(function MessageContent({
         if (block.type === "command") {
           return (
             <div key={i} className="command-indicator">
-              <span className="command-icon">/</span>
               <span className="command-name">{block.name}</span>
               {block.args && <span className="command-args">{block.args}</span>}
             </div>

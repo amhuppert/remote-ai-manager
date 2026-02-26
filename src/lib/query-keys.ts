@@ -56,3 +56,17 @@ export const commandKeys = {
   list: (projectName: string, sessionName: string) =>
     [...commandKeys.all, "list", projectName, sessionName] as const,
 };
+
+export const kiroDocKeys = {
+  all: ["kiro-docs"] as const,
+  tree: (projectName: string, sessionName?: string) =>
+    [...kiroDocKeys.all, "tree", projectName, sessionName ?? ""] as const,
+  file: (projectName: string, filePath: string, sessionName?: string) =>
+    [
+      ...kiroDocKeys.all,
+      "file",
+      projectName,
+      sessionName ?? "",
+      filePath,
+    ] as const,
+};

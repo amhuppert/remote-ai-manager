@@ -86,8 +86,48 @@ export function useSendPrompt(
         })),
       ];
 
+      // Parse command tags or plain slash commands so optimistic messages
+      // display formatted commands (matches transcript.ts parseCommandContent)
+      const displayContent: MessageContentBlock[] =
+        userContent.length === 1 && userContent[0]?.type === "text"
+          ? (() => {
+              const text = (userContent[0] as { type: "text"; text: string })
+                .text;
+              // XML-tagged commands (from prompt templates like focus mode)
+              const nameMatch = text.match(
+                /<command-name>\/?(.+?)<\/command-name>/,
+              );
+              if (nameMatch) {
+                const argsMatch = text.match(
+                  /<command-args>([\s\S]*?)<\/command-args>/,
+                );
+                return [
+                  {
+                    type: "command" as const,
+                    name: `/${nameMatch[1]!}`,
+                    args: argsMatch?.[1]?.trim() || null,
+                  },
+                ];
+              }
+              // Plain text slash commands (e.g., "/commit", "/kiro:spec-init feature")
+              const plainMatch = text
+                .trim()
+                .match(/^\/([a-zA-Z][\w:-]*)(?:\s+([\s\S]*))?$/);
+              if (plainMatch) {
+                return [
+                  {
+                    type: "command" as const,
+                    name: `/${plainMatch[1]!}`,
+                    args: plainMatch[2]?.trim() || null,
+                  },
+                ];
+              }
+              return userContent;
+            })()
+          : userContent;
+
       // 1. Set optimistic state via Zustand
-      submitPrompt(userContent, currentMessageCount);
+      submitPrompt(displayContent, currentMessageCount);
 
       // 2. Build prompt URL
       const promptUrl = conversationId
@@ -157,7 +197,7 @@ export function useSendPrompt(
               try {
                 const block = JSON.parse(eventData) as MessageContentBlock;
                 streamBlocks.push(block);
-                receiveStreamContent(userContent, [...streamBlocks]);
+                receiveStreamContent(displayContent, [...streamBlocks]);
               } catch {
                 // Skip malformed content events
               }

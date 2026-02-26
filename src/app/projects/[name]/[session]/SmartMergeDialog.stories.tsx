@@ -19,7 +19,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Default state — configure merge message and auto-resolve toggle */
+/** Default state — configure auto-resolve toggle */
 export const Default = {
   args: {},
 } satisfies Story;

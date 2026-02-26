@@ -6,6 +6,7 @@ import {
   conversationKeys,
   commandKeys,
   workflowKeys,
+  kiroDocKeys,
 } from "@/lib/query-keys";
 import type {
   DiscoveredProject,
@@ -17,6 +18,7 @@ import type {
   CommandsResponse,
   RalphLoopWorkflow,
   RalphLoopIterationMeta,
+  KiroDocTree,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -254,5 +256,56 @@ export function useWorkflowIterationsQuery(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow/iterations`,
       ).then((r) => r.iterations),
     enabled: false, // Only fetch on demand
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Kiro Doc Queries
+// ---------------------------------------------------------------------------
+
+export function useKiroDocTreeQuery(
+  projectName: string,
+  sessionName?: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: kiroDocKeys.tree(projectName, sessionName),
+    queryFn: () => {
+      const params = sessionName
+        ? `?session=${encodeURIComponent(sessionName)}`
+        : "";
+      return apiFetch<KiroDocTree>(
+        `/api/projects/${encodeURIComponent(projectName)}/kiro-docs${params}`,
+      );
+    },
+    staleTime: 30_000,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useKiroDocFileQuery(
+  projectName: string,
+  filePath: string | null,
+  sessionName?: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: kiroDocKeys.file(projectName, filePath ?? "", sessionName),
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("path", filePath!);
+      if (sessionName) params.set("session", sessionName);
+      const res = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/kiro-docs?${params.toString()}`,
+      );
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        throw new Error("Failed to fetch kiro document");
+      }
+      const data = (await res.json()) as { content: string };
+      return data.content;
+    },
+    staleTime: 60_000,
+    enabled: (options?.enabled ?? true) && !!filePath,
   });
 }

@@ -37,10 +37,12 @@ export async function hasUncommittedChanges(
   return stdout.trim().length > 0;
 }
 
-/** Stage all changes and commit with the given message */
+/** Stage all changes and commit with the given message.
+ *  When `skipHooks` is true, passes `--no-verify` to skip pre-commit hooks. */
 export async function commitChanges(
   worktreePath: string,
   message: string,
+  options?: { skipHooks?: boolean },
 ): Promise<CommitResult> {
   if (!message.trim()) {
     throw new Error("Commit message cannot be empty");
@@ -54,7 +56,11 @@ export async function commitChanges(
   logger.info("git.commit", { worktreePath, messageLength: message.length });
 
   await git(worktreePath, ["add", "-A"]);
-  const { stdout } = await git(worktreePath, ["commit", "-m", message]);
+  const commitArgs = ["commit", "-m", message];
+  if (options?.skipHooks) {
+    commitArgs.push("--no-verify");
+  }
+  const { stdout } = await git(worktreePath, commitArgs);
 
   // Extract commit hash from output — git commit prints it in the first line
   // Format: [branchName hashPrefix] message
@@ -221,6 +227,69 @@ export async function getCommitDiff(
 }
 
 // ============================================================
+// Merge Detection
+// ============================================================
+
+/**
+ * Check if a branch has been merged into main via regular merge commit.
+ * Returns true if the branch tip is an ancestor of main AND the branch
+ * actually has commits beyond the merge base (i.e., it diverged from main
+ * at some point). Branches that never diverged (tip == merge-base) are
+ * not considered merged — they just never had any unique commits.
+ */
+export async function isBranchAncestorOfMain(
+  projectPath: string,
+  branchName: string,
+): Promise<boolean> {
+  try {
+    await git(projectPath, ["merge-base", "--is-ancestor", branchName, "main"]);
+
+    // Branch is ancestor of main — but did it ever diverge?
+    // Compare the branch tip to the merge base. If they're identical,
+    // the branch never had unique commits and shouldn't be considered merged.
+    const { stdout: branchTip } = await git(projectPath, [
+      "rev-parse",
+      branchName,
+    ]);
+    const { stdout: mergeBase } = await git(projectPath, [
+      "merge-base",
+      branchName,
+      "main",
+    ]);
+
+    if (branchTip.trim() === mergeBase.trim()) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if main's recent commit log mentions the branch name.
+ * Catches squash/rebase merges where the commit message references the branch.
+ */
+export async function isBranchMentionedInMainLog(
+  projectPath: string,
+  branchName: string,
+): Promise<boolean> {
+  try {
+    const { stdout } = await git(projectPath, [
+      "log",
+      "main",
+      "--oneline",
+      "-100",
+      `--grep=${branchName}`,
+    ]);
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================
 // Merge Main into Feature Branch
 // ============================================================
 
@@ -237,10 +306,11 @@ export async function mergeMainIntoFeature(
     await git(worktreePath, ["merge", "main"]);
     return { status: "clean" };
   } catch (err) {
-    const errObj = err as Error & { stderr?: string };
+    const errObj = err as Error & { stderr?: string; stdout?: string };
     const stderr = errObj.stderr ?? "";
+    const stdout = errObj.stdout ?? "";
     const message = errObj.message ?? "";
-    const combined = `${stderr}\n${message}`;
+    const combined = `${stderr}\n${stdout}\n${message}`;
 
     const isConflict =
       combined.includes("CONFLICT") || combined.includes("merge conflict");
@@ -250,13 +320,13 @@ export async function mergeMainIntoFeature(
     }
 
     // List conflicted (unmerged) files — do NOT abort the merge
-    const { stdout } = await git(worktreePath, [
+    const { stdout: diffOut } = await git(worktreePath, [
       "diff",
       "--name-only",
       "--diff-filter=U",
     ]);
 
-    const conflictFiles = stdout
+    const conflictFiles = diffOut
       .split("\n")
       .map((f) => f.trim())
       .filter(Boolean);
@@ -323,6 +393,9 @@ export async function squashMerge(
     const result = await git(projectPath, ["commit", "-m", message]);
     commitOutput = result.stdout;
   } catch (err) {
+    // Clean up: reset staged squash changes so project root stays clean
+    await git(projectPath, ["reset", "--hard", "HEAD"]).catch(() => {});
+
     if (err instanceof Error) {
       // Capture stderr/stdout from the failed commit (e.g. pre-commit hook output)
       const childErr = err as Error & { stderr?: string; stdout?: string };

@@ -32,7 +32,6 @@ export const POST = withTracing(async (request, { params }) => {
   }
 
   let body: {
-    mergeMessage: string;
     decisions?: {
       file: string;
       decision: "approved" | "rejected" | "pending";
@@ -43,10 +42,12 @@ export const POST = withTracing(async (request, { params }) => {
     body = resolveConflictsRequestSchema.parse(await request.json());
   } catch {
     return NextResponse.json(
-      { error: "Merge message is required" } satisfies ApiError,
+      { error: "Invalid request body" } satisfies ApiError,
       { status: 400 },
     );
   }
+
+  const mergeMessage = `Merge ${session.branchName} into main`;
 
   const result = dispatchResolveConflictsJob({
     projectPath,
@@ -54,7 +55,7 @@ export const POST = withTracing(async (request, { params }) => {
     sessionName,
     worktreePath: session.worktreePath,
     branchName: session.branchName,
-    mergeMessage: body.mergeMessage,
+    mergeMessage,
     decisions: body.decisions,
   });
 

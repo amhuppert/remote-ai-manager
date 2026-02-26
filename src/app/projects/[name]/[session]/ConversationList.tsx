@@ -321,6 +321,7 @@ export default function ConversationList({
                               e.preventDefault();
                               void handleRenameSubmit(convo.id);
                             } else if (e.key === "Escape") {
+                              e.stopPropagation();
                               setEditingId(null);
                             }
                           }}

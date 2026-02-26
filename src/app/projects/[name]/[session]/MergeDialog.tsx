@@ -29,30 +29,26 @@ export default function MergeDialog({
   defaultOutput,
 }: MergeDialogProps): React.JSX.Element | null {
   const router = useRouter();
-  const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(defaultError ?? null);
   const [output, setOutput] = useState<string | null>(defaultOutput ?? null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const mergeMutation = useMergeMutation(projectName, sessionName);
 
   // Track previous open value to detect closed→open transition
   const prevOpenRef = useRef(open);
 
-  // Reset and pre-fill only when dialog transitions from closed to open
+  // Reset only when dialog transitions from closed to open
   useEffect(() => {
     const wasOpen = prevOpenRef.current;
     prevOpenRef.current = open;
 
     if (open && !wasOpen) {
       /* eslint-disable react-hooks/set-state-in-effect -- intentional reset on closed→open transition */
-      setMessage(sessionName);
       setError(null);
       setOutput(null);
       /* eslint-enable react-hooks/set-state-in-effect */
-      setTimeout(() => textareaRef.current?.focus(), 100);
     }
-  }, [open, sessionName]);
+  }, [open]);
 
   // Escape key to close
   useEffect(() => {
@@ -65,11 +61,11 @@ export default function MergeDialog({
   }, [open, onClose]);
 
   const handleSubmit = () => {
-    if (!message.trim() || mergeMutation.isPending) return;
+    if (mergeMutation.isPending) return;
     setError(null);
     setOutput(null);
 
-    mergeMutation.mutate(message.trim(), {
+    mergeMutation.mutate(undefined, {
       onSuccess: () => {
         onClose();
         router.push(`/projects/${encodeURIComponent(projectName)}`);
@@ -105,24 +101,6 @@ export default function MergeDialog({
           </div>
         </div>
 
-        <div className="form-group">
-          <label className="form-label">Merge Commit Message</label>
-          <textarea
-            ref={textareaRef}
-            className="form-input"
-            rows={3}
-            placeholder="Describe this merge..."
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                handleSubmit();
-              }
-            }}
-          />
-        </div>
-
         {error && (
           <div className="merge-error-banner">
             <div className="merge-error-title">{error}</div>
@@ -140,7 +118,7 @@ export default function MergeDialog({
           </button>
           <button
             className="btn btn-primary btn-sm"
-            disabled={!message.trim() || mergeMutation.isPending}
+            disabled={mergeMutation.isPending}
             onClick={handleSubmit}
           >
             {mergeMutation.isPending ? "Merging..." : "Merge"}

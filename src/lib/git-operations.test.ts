@@ -27,6 +27,7 @@ import {
   getCommitDiff,
   squashMerge,
   mergeMainIntoFeature,
+  isBranchAncestorOfMain,
 } from "./git-operations";
 
 // ---------------------------------------------------------------------------
@@ -177,6 +178,44 @@ describe("commitChanges", () => {
     await expect(commitChanges("/worktree", "msg")).rejects.toThrow(
       "No uncommitted changes to commit",
     );
+  });
+
+  it("passes --no-verify when skipHooks is true", async () => {
+    mockExecFileSequence([
+      { stdout: " M file.ts\n" },
+      { stdout: "" },
+      { stdout: "[csm/my-session abc1234] WIP commit\n 1 file changed\n" },
+    ]);
+
+    const result = await commitChanges("/worktree", "WIP commit", {
+      skipHooks: true,
+    });
+    expect(result.hash).toBe("abc1234");
+
+    // Verify git commit was called with --no-verify
+    expect(execFileMock.mock.calls[2]![1]).toEqual([
+      "commit",
+      "-m",
+      "WIP commit",
+      "--no-verify",
+    ]);
+  });
+
+  it("does not pass --no-verify by default", async () => {
+    mockExecFileSequence([
+      { stdout: " M file.ts\n" },
+      { stdout: "" },
+      { stdout: "[csm/my-session abc1234] Add feature\n 1 file changed\n" },
+    ]);
+
+    await commitChanges("/worktree", "Add feature");
+
+    // Verify git commit was called WITHOUT --no-verify
+    expect(execFileMock.mock.calls[2]![1]).toEqual([
+      "commit",
+      "-m",
+      "Add feature",
+    ]);
   });
 
   it("returns empty hash when git output format is unexpected", async () => {
@@ -487,6 +526,31 @@ describe("squashMerge", () => {
     expect(execFileMock.mock.calls[3]![1]).toEqual(["reset", "--hard", "HEAD"]);
   });
 
+  it("resets project root when commit fails (e.g. pre-commit hook)", async () => {
+    const commitError = Object.assign(new Error("Command failed: git commit"), {
+      stderr: "husky - pre-commit script failed (code 1)",
+      stdout: "",
+    });
+
+    mockExecFileSequence([
+      // git status --porcelain (clean)
+      { stdout: "" },
+      // git merge --squash (succeeds — changes staged)
+      { stdout: "" },
+      // git commit → fails (pre-commit hook)
+      { error: commitError },
+      // git reset --hard HEAD (cleanup)
+      { stdout: "" },
+    ]);
+
+    await expect(
+      squashMerge("/project", "csm/branch", "Merge"),
+    ).rejects.toThrow("Commit failed");
+
+    // Verify cleanup: reset --hard to undo staged squash changes
+    expect(execFileMock.mock.calls[3]![1]).toEqual(["reset", "--hard", "HEAD"]);
+  });
+
   it("re-throws non-conflict merge errors without conflict message", async () => {
     mockExecFileSequence([
       { stdout: "" },
@@ -646,5 +710,61 @@ describe("mergeMainIntoFeature", () => {
       status: "conflicts",
       conflictFiles: ["src/a.ts", "src/b.ts"],
     });
+  });
+});
+
+// ===========================================================================
+// isBranchAncestorOfMain
+// ===========================================================================
+
+describe("isBranchAncestorOfMain", () => {
+  it("returns true when branch is ancestor and has diverged from merge base", async () => {
+    mockExecFileSequence([
+      // merge-base --is-ancestor → success (exit 0)
+      { stdout: "" },
+      // rev-parse branchName → branch tip
+      { stdout: "abc1234\n" },
+      // merge-base branchName main → different commit
+      { stdout: "def5678\n" },
+    ]);
+
+    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    expect(result).toBe(true);
+  });
+
+  it("returns false when branch tip equals merge base (never diverged)", async () => {
+    mockExecFileSequence([
+      // merge-base --is-ancestor → success (exit 0)
+      { stdout: "" },
+      // rev-parse branchName → branch tip
+      { stdout: "abc1234\n" },
+      // merge-base branchName main → same commit as branch tip
+      { stdout: "abc1234\n" },
+    ]);
+
+    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    expect(result).toBe(false);
+  });
+
+  it("returns false when branch is not ancestor of main", async () => {
+    mockExecFileSequence([
+      // merge-base --is-ancestor → failure (exit 1)
+      { error: new Error("not ancestor") },
+    ]);
+
+    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    expect(result).toBe(false);
+  });
+
+  it("returns false when git commands fail", async () => {
+    mockExecFileSequence([
+      // merge-base --is-ancestor → success
+      { stdout: "" },
+      // rev-parse fails
+      { error: new Error("fatal: bad ref") },
+    ]);
+
+    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    expect(result).toBe(false);
   });
 });

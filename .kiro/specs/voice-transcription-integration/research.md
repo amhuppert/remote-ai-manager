@@ -7,6 +7,7 @@
   - Voice2Text already has full transcription/cleanup pipeline — only needs HTTP wrapper and config parameterization
   - CSM has established patterns (withTracing, API routes, resolveProjectPath) that voice integration follows directly
   - Zero new npm dependencies in either project (Bun.serve() for V2T, native MediaRecorder for browser)
+  - CleanupService already accepts `priorOutput` parameter with file-mode prompt template — context-aware transcription requires only data plumbing through the 4-layer chain
 
 ## Research Log
 
@@ -61,6 +62,23 @@
   - Three-tier MIME negotiation: `audio/webm;codecs=opus` → `audio/webm` → browser default
   - No audio conversion step needed — browser webm sent directly through proxy to OpenAI
 
+### Context-Aware Transcription Discovery (Requirement 10)
+- **Context**: Need to pass existing input text through the entire chain (hook → CSM API → V2T server → cleanup) so transcription is formatted to continue from existing content
+- **Sources Consulted**: Direct analysis of `cleanup.ts`, `server.ts`, `useVoiceRecorder.ts`, `transcribe/route.ts`, `SessionDetailPage.tsx`, `CreateSessionModal.tsx`
+- **Findings**:
+  - CleanupService already accepts optional `priorOutput` parameter (cleanup.ts line 16)
+  - File-mode cleanup prompt template (`FILE_MODE_CLEANUP_PROMPT_TEMPLATE`) already exists with `{PRIOR_OUTPUT}` placeholder (cleanup.ts line 144)
+  - File-mode cleanup system prompt includes continuation-aware instructions: "continue naturally from the prior document content" (cleanup.ts line 137)
+  - V2T server currently calls `cleanupService.cleanup(transcription, contextFiles, instructionsFiles)` without `priorOutput` — the fourth argument is omitted (server.ts line 144)
+  - CSM useVoiceRecorder builds FormData with only `audio` and `projectName` — no context field (useVoiceRecorder.ts line 173-177)
+  - CSM transcribe route forwards only `audio` and `projectPath` — no context forwarding (route.ts line 48-50)
+  - Both SessionDetailPage and CreateSessionModal use `useVoiceRecorder` and have access to their current input text state (`promptText` / `objective`)
+- **Implications**:
+  - The cleanup infrastructure for context-aware formatting is fully built; only data plumbing is needed
+  - All 4 layers need a single optional field added — no new prompt templates or cleanup logic
+  - Using a `getContext` callback (rather than a static value or ref) ensures the latest text is captured at FormData build time
+  - The `getContext` approach keeps the hook generic — callers decide what constitutes "existing context"
+
 ## Architecture Pattern Evaluation
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
@@ -93,6 +111,26 @@
 - **Selected Approach**: Voice button renders only when health check returns available. Periodic re-check every 30s
 - **Rationale**: Graceful degradation — UI remains clean when voice is unavailable. Re-check enables button to appear/disappear dynamically
 - **Trade-offs**: +Clean UX when voice unavailable; −30s delay for button to appear after V2T starts
+
+### Decision: getContext Callback for Input Text Passing
+- **Context**: Need to pass existing text from the input field to V2T for context-aware cleanup
+- **Alternatives Considered**:
+  1. Pass text as a static `context` option prop — stale if text changes between recording start and stop
+  2. Pass a ref to the input text — works but couples hook to React ref semantics
+  3. Pass a `getContext` callback — called at FormData build time, always captures latest value
+- **Selected Approach**: `getContext?: () => string` callback in `UseVoiceRecorderOptions`
+- **Rationale**: Called at submission time (after recording stops) so it captures the text that was in the field when the user stopped recording. Keeps the hook generic — any caller can provide any context source
+- **Trade-offs**: +Always fresh value, +Generic API; −Caller must provide stable callback (wrap in useCallback)
+- **Follow-up**: Ensure both SessionDetailPage and CreateSessionModal provide memoized getContext callbacks
+
+### Decision: Reuse File-Mode Cleanup for Context
+- **Context**: V2T cleanup has two prompt paths — standard and file-mode (with priorOutput). Need to decide how to handle input text context
+- **Alternatives Considered**:
+  1. Create a third prompt template specific to "input context" mode
+  2. Reuse the existing file-mode template and `priorOutput` parameter
+- **Selected Approach**: Reuse file-mode cleanup by mapping `context` → `priorOutput`
+- **Rationale**: The file-mode template is already designed for continuation-style cleanup with instructions like "continue naturally from the prior document content" and "output ONLY the new text to append". This is exactly the behavior needed when there's existing text in the input
+- **Trade-offs**: +Zero new prompt engineering, +Proven template; −File-mode label is slightly misleading (it's not a file), but this is internal and not user-facing
 
 ## Risks & Mitigations
 - **V2T server not running** — Health-gated button hides feature entirely; no broken state

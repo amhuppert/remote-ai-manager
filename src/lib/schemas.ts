@@ -14,6 +14,7 @@ export const globalConfigSchema = z.object({
   claudeTimeoutMs: z.number(),
   defaultModel: claudeModelSchema.default("opus"),
   maxTurns: z.number().int().positive().optional(),
+  mergeCheckIntervalMs: z.number().int().positive().optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -383,11 +384,6 @@ export const commitRequestSchema = z.object({
 });
 export type CommitRequest = z.infer<typeof commitRequestSchema>;
 
-export const mergeRequestSchema = z.object({
-  message: z.string().trim().min(1),
-});
-export type MergeRequest = z.infer<typeof mergeRequestSchema>;
-
 export const sessionArchiveRequestSchema = z.object({
   archived: z.boolean(),
 });
@@ -486,7 +482,6 @@ export const jobStatusEventSchema = z.object({
 export type JobStatusEvent = z.infer<typeof jobStatusEventSchema>;
 
 export const smartMergeRequestSchema = z.object({
-  message: z.string().trim().min(1),
   autoResolve: z.boolean(),
 });
 export type SmartMergeRequest = z.infer<typeof smartMergeRequestSchema>;
@@ -507,7 +502,6 @@ export const conflictDecisionInputSchema = z.object({
 export type ConflictDecisionInput = z.infer<typeof conflictDecisionInputSchema>;
 
 export const resolveConflictsRequestSchema = z.object({
-  mergeMessage: z.string().trim().min(1),
   decisions: z.array(conflictDecisionInputSchema).optional(),
 });
 export type ResolveConflictsRequest = z.infer<
@@ -566,6 +560,15 @@ export type WorkflowCircuitBreakerEvent = z.infer<
   typeof workflowCircuitBreakerEventSchema
 >;
 
+export const sessionFinishedEventSchema = z.object({
+  type: z.literal("session-finished"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  branchName: z.string(),
+  detectionMethod: z.enum(["ancestor", "commit-message"]),
+});
+export type SessionFinishedEvent = z.infer<typeof sessionFinishedEventSchema>;
+
 /** SSE event type */
 export type SSEEvent =
   | ConversationStatusEvent
@@ -574,7 +577,8 @@ export type SSEEvent =
   | WorkflowStatusEvent
   | WorkflowIterationCompleteEvent
   | WorkflowFixPlanUpdatedEvent
-  | WorkflowCircuitBreakerEvent;
+  | WorkflowCircuitBreakerEvent
+  | SessionFinishedEvent;
 
 // ============================================================
 // Command Autocomplete Schemas

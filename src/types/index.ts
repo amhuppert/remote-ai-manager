@@ -40,7 +40,6 @@ export type {
   CreateSessionRequest,
   SessionCreationMode,
   CommitRequest,
-  MergeRequest,
   SessionArchiveRequest,
   RenameConversationRequest,
   CommitLogEntry,
@@ -56,6 +55,7 @@ export type {
   JobType,
   JobStatus,
   JobStatusEvent,
+  SessionFinishedEvent,
   SmartMergeRequest,
   ConflictEntry,
   ConflictDecisionInput,
@@ -157,6 +157,12 @@ export interface ConflictAnalysis {
   sessionName: string;
   conflicts: import("@/lib/schemas").ConflictEntry[];
   resolvedAt?: string;
+}
+
+/** Tree of available .kiro/ markdown files */
+export interface KiroDocTree {
+  steering: string[];
+  specs: Record<string, string[]>;
 }
 
 /** Generic API error response */

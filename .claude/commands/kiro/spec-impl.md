@@ -1,7 +1,7 @@
 ---
 description: Execute spec tasks using TDD methodology
 allowed-tools: Bash, Read, Write, Edit, MultiEdit, Grep, Glob, LS, WebFetch, WebSearch
-argument-hint: <feature-name> [task-numbers]
+argument-hint: <feature-name> [-y] [task-numbers]
 ---
 
 # Implementation Task Executor
@@ -28,12 +28,13 @@ Execute implementation tasks for feature **$1** using Test-Driven Development.
 - **Entire `.kiro/steering/` directory** for complete project memory
 
 **Validate approvals**:
-- Verify tasks are approved in spec.json (stop if not, see Safety & Fallback)
+- If `-y` flag present in arguments: Auto-approve tasks in spec.json (set `tasks.approved: true` and `ready_for_implementation: true`)
+- Otherwise: Verify tasks are approved in spec.json (stop if not, see Safety & Fallback)
 
 ### Step 2: Select Tasks
 
-**Determine which tasks to execute**:
-- If `$2` provided: Execute specified task numbers (e.g., "1.1" or "1,2,3")
+**Parse arguments** (remaining args after removing `-y` flag):
+- If task numbers provided: Execute specified task numbers (e.g., "1.1" or "1,2,3")
 - Otherwise: Execute all pending tasks (unchecked `- [ ]` in tasks.md)
 
 ### Step 3: Execute with TDD
@@ -92,13 +93,16 @@ Provide brief summary in the language specified in spec.json:
 
 **Tasks Not Approved or Missing Spec Files**:
 - **Stop Execution**: All spec files must exist and tasks must be approved
-- **Suggested Action**: "Complete previous phases: `/kiro:spec-requirements`, `/kiro:spec-design`, `/kiro:spec-tasks`"
+- **Suggested Action**: "Run `/kiro:spec-impl $1 -y` to auto-approve tasks and proceed, or complete previous phases: `/kiro:spec-requirements`, `/kiro:spec-design`, `/kiro:spec-tasks`"
 
 **Test Failures**:
 - **Stop Implementation**: Fix failing tests before continuing
 - **Action**: Debug and fix, then re-run
 
 ### Task Execution
+
+**Auto-approve and execute all**:
+- `/kiro:spec-impl $1 -y` - Auto-approve tasks and execute all pending
 
 **Execute specific task(s)**:
 - `/kiro:spec-impl $1 1.1` - Single task

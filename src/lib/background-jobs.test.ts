@@ -224,10 +224,12 @@ describe("background-jobs", () => {
 
       await settle();
 
-      // Phase 0 commit was called first with worktree path and merge message
+      // Phase 0 commit was called first with worktree path, WIP message,
+      // and skipHooks: true to bypass pre-commit hooks
       expect(mockCommitChanges).toHaveBeenCalledWith(
         BASE_MERGE_PARAMS.worktreePath,
-        BASE_MERGE_PARAMS.message,
+        "WIP: uncommitted changes",
+        { skipHooks: true },
       );
 
       // Phase 1 merge still happened after commit
@@ -454,6 +456,28 @@ describe("background-jobs", () => {
       expect(job?.completedAt).toBeDefined();
 
       expect(releaseSession).toHaveBeenCalled();
+    });
+
+    // ----------------------------------------------------------
+    // Merge pipeline includes gitOutput in error message
+    // ----------------------------------------------------------
+    it("merge pipeline includes gitOutput in error message", async () => {
+      mockMergeMainIntoFeature.mockResolvedValue({ status: "clean" });
+      const err = new Error("Commit failed") as Error & {
+        gitOutput?: string;
+      };
+      err.gitOutput = "husky - pre-commit script failed (code 1)";
+      mockSquashMerge.mockRejectedValue(err);
+
+      dispatchMergeJob(BASE_MERGE_PARAMS);
+      await settle();
+
+      const job = getJob(
+        BASE_MERGE_PARAMS.projectPath,
+        BASE_MERGE_PARAMS.sessionName,
+      );
+      expect(job?.errorMessage).toContain("Commit failed");
+      expect(job?.errorMessage).toContain("pre-commit script failed");
     });
 
     // ----------------------------------------------------------

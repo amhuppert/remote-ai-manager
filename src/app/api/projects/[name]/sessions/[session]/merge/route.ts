@@ -41,17 +41,19 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  let body: { message: string; autoResolve: boolean };
+  let body: { autoResolve: boolean };
   try {
     body = smartMergeRequestSchema.parse(await request.json());
   } catch {
     return NextResponse.json(
       {
-        error: "Merge message and autoResolve flag are required",
+        error: "autoResolve flag is required",
       } satisfies ApiError,
       { status: 400 },
     );
   }
+
+  const mergeMessage = `Merge ${session.branchName} into main`;
 
   const result = dispatchMergeJob({
     projectPath,
@@ -59,7 +61,7 @@ export const POST = withTracing(async (request, { params }) => {
     sessionName,
     worktreePath: session.worktreePath,
     branchName: session.branchName,
-    message: body.message,
+    message: mergeMessage,
     autoResolve: body.autoResolve,
   });
 

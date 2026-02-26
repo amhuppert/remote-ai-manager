@@ -76,6 +76,7 @@ import ConversationSidebar from "./ConversationSidebar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MessageContent from "@/components/MessageContent";
 import MessageActions from "@/components/MessageActions";
+import AssistantMessageActions from "@/components/AssistantMessageActions";
 import MessageEditor from "@/components/MessageEditor";
 import ConversationNav from "@/components/ConversationNav";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
@@ -148,11 +149,12 @@ export default function SessionDetailPage({
   const switchMobilePanelRaw = useSwitchMobilePanel();
   const switchRightPaneTab = useSwitchRightPaneTab();
   const switchMobilePanel = useCallback(
-    (panel: "chat" | "diff" | "focus") => {
+    (panel: "chat" | "diff" | "focus" | "specs") => {
       switchMobilePanelRaw(panel);
-      // Sync right pane tab when switching to diff or focus via mobile tabs
+      // Sync right pane tab when switching to diff, focus, or specs via mobile tabs
       if (panel === "focus") switchRightPaneTab("focus");
       if (panel === "diff") switchRightPaneTab("diff");
+      if (panel === "specs") switchRightPaneTab("specs");
     },
     [switchMobilePanelRaw, switchRightPaneTab],
   );
@@ -769,6 +771,41 @@ export default function SessionDetailPage({
     void error;
   }, []);
 
+  // --- Copy conversation context for debugging ---
+  const [contextCopied, setContextCopied] = useState(false);
+  const handleCopyContext = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const conv = session?.conversations.find((c) => c.id === conversationId);
+      const lines = [
+        "<conversation-context>",
+        `  <project>${projectName}</project>`,
+        `  <session>${sessionName}</session>`,
+        `  <branch>${session?.branchName ?? ""}</branch>`,
+        `  <worktree>${session?.worktreePath ?? ""}</worktree>`,
+        `  <created>${session?.createdAt ?? ""}</created>`,
+        `  <conversation-id>${conversationId}</conversation-id>`,
+        `  <claude-session-id>${conv?.claudeSessionId ?? ""}</claude-session-id>`,
+        `  <status>${conv?.status ?? ""}</status>`,
+        `  <prompt-count>${conv?.promptCount ?? 0}</prompt-count>`,
+        `  <last-activity>${conv?.lastActivityAt ?? ""}</last-activity>`,
+        `  <transcript-path>${conv?.transcriptPath ?? ""}</transcript-path>`,
+        `  <total-cost-usd>${conv?.totalCostUsd ?? ""}</total-cost-usd>`,
+        `  <total-duration-ms>${conv?.totalDurationMs ?? ""}</total-duration-ms>`,
+        `  <total-turns>${conv?.totalTurns ?? ""}</total-turns>`,
+        `  <source>${conv?.source ?? ""}</source>`,
+        `  <session-source>${session?.source ?? ""}</session-source>`,
+        `  <creation-mode>${session?.creationMode ?? ""}</creation-mode>`,
+        "</conversation-context>",
+      ];
+      void navigator.clipboard.writeText(lines.join("\n")).then(() => {
+        setContextCopied(true);
+        setTimeout(() => setContextCopied(false), 1500);
+      });
+    },
+    [session, conversationId, projectName, sessionName],
+  );
+
   // Lifted voice recorder hook
   const {
     isRecording,
@@ -778,6 +815,7 @@ export default function SessionDetailPage({
     toggleRecording,
   } = useVoiceRecorder({
     projectName,
+    getContext: useCallback(() => promptTextRef.current, []),
     onResult: handleVoiceResult,
     onError: handleVoiceError,
   });
@@ -954,6 +992,16 @@ export default function SessionDetailPage({
                   </>
                 ) : null;
               })()}
+              <div className="si-sep" />
+              <button
+                className="si-copy-context-btn"
+                onClick={handleCopyContext}
+                data-tooltip={
+                  contextCopied ? "Copied!" : "Copy context to clipboard"
+                }
+              >
+                {contextCopied ? "\u2713" : "\u2398"} Context
+              </button>
             </div>
           </div>
 
@@ -1089,6 +1137,11 @@ export default function SessionDetailPage({
                                   onFork={handleFork}
                                   onEdit={startEditing}
                                   disabled={isBusy || isReadOnly}
+                                />
+                              )}
+                              {!isUserMsg && (
+                                <AssistantMessageActions
+                                  content={msg.content}
                                 />
                               )}
                             </div>
@@ -1312,10 +1365,11 @@ export default function SessionDetailPage({
               )}
             </div>
 
-            {/* Right pane (diff + optional focus doc) — mounted when layout shows it OR mobile panel is "diff"/"focus" */}
+            {/* Right pane (diff + optional focus doc + specs) — mounted when layout shows it OR mobile panel is "diff"/"focus"/"specs" */}
             {(layout !== "conversation" ||
               mobilePanel === "diff" ||
-              mobilePanel === "focus") && (
+              mobilePanel === "focus" ||
+              mobilePanel === "specs") && (
               <RightPane
                 creationMode={session.creationMode}
                 diff={diff}
@@ -1352,6 +1406,12 @@ export default function SessionDetailPage({
               Focus
             </button>
           )}
+          <button
+            className={`mobile-tab${mobilePanel === "specs" ? " active" : ""}`}
+            onClick={() => switchMobilePanel("specs")}
+          >
+            Specs
+          </button>
         </div>
         <div className="mobile-actions">
           <button

@@ -2,6 +2,7 @@
 
 import type { SessionDiff, CommitLogEntry, SessionCreationMode } from "@/types";
 import DiffPanel from "./DiffPanel";
+import SpecBrowser from "./SpecBrowser";
 import MarkdownViewer from "@/components/MarkdownViewer";
 import ConnectedWorkflowPanel from "./workflow/ConnectedWorkflowPanel";
 import { useFocusDocQuery } from "@/lib/queries";
@@ -37,21 +38,9 @@ export default function RightPane({
     enabled: isFocusMode,
   });
 
-  // Simple mode: no tabs needed (fast mode, no workflow)
-  if (!showTabs) {
-    return (
-      <DiffPanel
-        diff={diff}
-        commits={commits}
-        projectName={projectName}
-        sessionName={sessionName}
-      />
-    );
-  }
-
   return (
     <div className="right-pane sidebar-diff-panel">
-      {/* Tab bar */}
+      {/* Tab bar — always visible */}
       <div className="right-pane-tabs">
         <div className="filter-pills">
           <button
@@ -79,6 +68,13 @@ export default function RightPane({
               Workflow
             </button>
           )}
+          <button
+            className={`filter-pill${rightPaneTab === "specs" ? " active" : ""}`}
+            onClick={() => switchRightPaneTab("specs")}
+            type="button"
+          >
+            Specs
+          </button>
         </div>
       </div>
 
@@ -125,6 +121,16 @@ export default function RightPane({
             />
           </div>
         )}
+        <div
+          style={{
+            display: rightPaneTab === "specs" ? "flex" : "none",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          <SpecBrowser projectName={projectName} sessionName={sessionName} />
+        </div>
       </div>
     </div>
   );
