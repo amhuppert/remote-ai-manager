@@ -15,6 +15,7 @@ export const globalConfigSchema = z.object({
   defaultModel: claudeModelSchema.default("opus"),
   maxTurns: z.number().int().positive().optional(),
   mergeCheckIntervalMs: z.number().int().positive().optional(),
+  preMergeTimeoutMs: z.number().int().positive().optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -342,6 +343,7 @@ export type ManagerState = z.infer<typeof managerStateSchema>;
 
 export const perRepoConfigSchema = z.object({
   initScriptPath: z.string().nullable(),
+  preMergeCommand: z.string().nullable().optional(),
 });
 export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 

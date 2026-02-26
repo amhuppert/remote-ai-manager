@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -11,10 +11,10 @@ import type {
   SessionCreationMode,
   SessionState,
 } from "@/types";
-import { perRepoConfigSchema, type PerRepoConfig } from "./schemas";
 import { readState, writeState } from "./state";
 import { createLogger } from "./logging";
 import { ensureUniqueName } from "./worktrees";
+import { readRepoConfig } from "./repo-config";
 
 const logger = createLogger("sessions");
 
@@ -41,15 +41,6 @@ export function validateSessionName(name: string): string | null {
     return "Session name must start with a letter or number and contain only letters, numbers, spaces, hyphens, or underscores";
   }
   return null;
-}
-
-/** Read optional per-repo config */
-async function readRepoConfig(repoRoot: string): Promise<PerRepoConfig | null> {
-  const configPath = path.join(repoRoot, "ClaudeSessionManager.json");
-  if (!existsSync(configPath)) return null;
-
-  const raw = await readFile(configPath, "utf-8");
-  return perRepoConfigSchema.parse(JSON.parse(raw));
 }
 
 /** Execute a git command in the given working directory */

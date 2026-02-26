@@ -40,6 +40,7 @@ function defaultConfig(): GlobalConfig {
     claudeTimeoutMs: 3_600_000,
     defaultModel: "opus",
     mergeCheckIntervalMs: 5 * 60 * 1000,
+    preMergeTimeoutMs: 300_000,
   };
 }
 

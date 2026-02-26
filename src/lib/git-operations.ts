@@ -390,7 +390,12 @@ export async function squashMerge(
   // Commit the squash merge
   let commitOutput: string;
   try {
-    const result = await git(projectPath, ["commit", "-m", message]);
+    const result = await git(projectPath, [
+      "commit",
+      "--no-verify",
+      "-m",
+      message,
+    ]);
     commitOutput = result.stdout;
   } catch (err) {
     // Clean up: reset staged squash changes so project root stays clean

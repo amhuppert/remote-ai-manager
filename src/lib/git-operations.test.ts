@@ -466,9 +466,10 @@ describe("squashMerge", () => {
       "--squash",
       "csm/my-session",
     ]);
-    // Verify commit args
+    // Verify commit args (--no-verify skips hooks since validation runs before squash)
     expect(execFileMock.mock.calls[2]![1]).toEqual([
       "commit",
+      "--no-verify",
       "-m",
       "Merge session",
     ]);
