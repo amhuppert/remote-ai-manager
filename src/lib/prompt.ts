@@ -29,6 +29,7 @@ import {
   registerAbortController,
   unregisterAbortController,
 } from "./abort-registry";
+import { registerQuery, unregisterQuery } from "./query-registry";
 import { randomUUID } from "node:crypto";
 
 // Prevent nested session detection when CSM runs inside Claude Code
@@ -278,6 +279,9 @@ export async function executePromptStream(
       },
     });
 
+    // Register query so queued messages can be delivered via streamInput()
+    registerQuery(conversationId, q);
+
     // Safety-net timeout: abort if prompt exceeds configured max duration
     timeoutHandle = setTimeout(() => {
       logger.warn("prompt.timeout", {
@@ -383,8 +387,9 @@ export async function executePromptStream(
     // Clear safety-net timeout
     clearTimeout(timeoutHandle);
 
-    // Clean up abort controller registration
+    // Clean up abort controller and query registrations
     unregisterAbortController(conversationId);
+    unregisterQuery(conversationId);
 
     // Always mark conversation as awaiting when done (even on error)
     await mutateConversation(

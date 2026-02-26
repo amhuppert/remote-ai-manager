@@ -16,6 +16,8 @@ const {
   appendTranscriptEntryMock,
   getTranscriptPathMock,
   broadcastMock,
+  registerQueryMock,
+  unregisterQueryMock,
 } = vi.hoisted(() => ({
   queryMock: vi.fn(),
   getSessionMock: vi.fn(),
@@ -28,6 +30,8 @@ const {
   appendTranscriptEntryMock: vi.fn(),
   getTranscriptPathMock: vi.fn(),
   broadcastMock: vi.fn(),
+  registerQueryMock: vi.fn(),
+  unregisterQueryMock: vi.fn(),
 }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -69,6 +73,11 @@ vi.mock("./transcript", () => ({
 
 vi.mock("./sse-broadcaster", () => ({
   broadcast: broadcastMock,
+}));
+
+vi.mock("./query-registry", () => ({
+  registerQuery: registerQueryMock,
+  unregisterQuery: unregisterQueryMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -588,5 +597,28 @@ describe("executePromptStream", () => {
       "SDK process crashed",
     );
     expect(events.find(([e]) => e === "done")).toBeTruthy();
+  });
+
+  it("registers query in query-registry during execution", async () => {
+    const mockQuery = createMockQuery([
+      { type: "system", subtype: "init", session_id: "sess-1", uuid: "u1" },
+    ]);
+    queryMock.mockReturnValue(mockQuery);
+
+    await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
+
+    expect(registerQueryMock).toHaveBeenCalledWith("conv-123", mockQuery);
+  });
+
+  it("unregisters query from query-registry in finally block", async () => {
+    const mockQuery = (async function* () {
+      throw new Error("SDK crash");
+    })();
+    queryMock.mockReturnValue(mockQuery);
+
+    await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
+
+    // Should be unregistered even after an error
+    expect(unregisterQueryMock).toHaveBeenCalledWith("conv-123");
   });
 });

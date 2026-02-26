@@ -65,6 +65,7 @@ export type {
   Notification,
   NotificationCreatedEvent,
   NotificationUpdatedEvent,
+  MessageQueuedEvent,
   GetNotificationsQuery,
   NotificationsResponse,
   MarkReadRequest,

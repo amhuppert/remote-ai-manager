@@ -642,6 +642,15 @@ export const markReadRequestSchema = z.object({
 });
 export type MarkReadRequest = z.infer<typeof markReadRequestSchema>;
 
+export const messageQueuedEventSchema = z.object({
+  type: z.literal("message-queued"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  text: z.string(),
+});
+export type MessageQueuedEvent = z.infer<typeof messageQueuedEventSchema>;
+
 /** SSE event type */
 export type SSEEvent =
   | ConversationStatusEvent
@@ -650,6 +659,7 @@ export type SSEEvent =
   | SessionFinishedEvent
   | NotificationCreatedEvent
   | NotificationUpdatedEvent
+  | MessageQueuedEvent
   | WorkflowStatusEvent
   | WorkflowIterationCompleteEvent
   | WorkflowFixPlanUpdatedEvent
