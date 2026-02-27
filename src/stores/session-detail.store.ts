@@ -12,7 +12,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 type MobilePanel = "chat" | "diff" | "focus" | "specs";
-type RightPaneTab = "diff" | "focus" | "workflow" | "specs";
+type RightPaneTab = "diff" | "focus" | "specs";
 
 interface SpecBrowserSelection {
   /** "steering" or a feature name like "browser-notifications" */

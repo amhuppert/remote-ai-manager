@@ -6116,6 +6116,106 @@ textarea {
 }
 
 /* ============================================================
+   Workflow Card (session overview)
+   ============================================================ */
+
+.workflow-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.workflow-card:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+}
+
+.workflow-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.workflow-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.workflow-card-badge-icon {
+  font-size: 0.75rem;
+}
+
+.workflow-card-iteration {
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+.workflow-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workflow-card-label {
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.workflow-card-objective {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.workflow-card-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.workflow-card-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-inset);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.workflow-card-progress-fill {
+  height: 100%;
+  background: var(--cyan);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.workflow-card-progress-text {
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* ============================================================
    Conversation sidebar (task 14.2)
    ============================================================ */
 

@@ -14,7 +14,6 @@ import {
   useCreateConversationMutation,
   useArchiveConversationMutation,
   useRenameConversationMutation,
-  useStartWorkflowMutation,
 } from "@/lib/mutations";
 import {
   useShowArchivedConversations,
@@ -23,6 +22,7 @@ import {
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import DevServerPanel from "./DevServerPanel";
+import WorkflowCard from "./WorkflowCard";
 
 interface Props {
   projectName: string;
@@ -87,10 +87,6 @@ export default function ConversationList({
     projectName,
     sessionName,
   );
-  const startWorkflowMutation = useStartWorkflowMutation(
-    projectName,
-    sessionName,
-  );
 
   // --- Local UI state ---
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -145,39 +141,6 @@ export default function ConversationList({
     },
     [archiveConvoMutation],
   );
-
-  const handleStartWorkflow = useCallback(() => {
-    if (startWorkflowMutation.isPending || isFinished || hasWorkflow) return;
-    startWorkflowMutation.mutate(undefined, {
-      onSuccess: () => {
-        // Navigate to the most recent conversation to show the Workflow tab,
-        // or create one if none exist
-        const firstConvo = conversations[0];
-        if (firstConvo) {
-          router.push(
-            `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${firstConvo.id}`,
-          );
-        } else {
-          createConvoMutation.mutate(undefined, {
-            onSuccess: (convo) => {
-              router.push(
-                `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`,
-              );
-            },
-          });
-        }
-      },
-    });
-  }, [
-    startWorkflowMutation,
-    isFinished,
-    hasWorkflow,
-    conversations,
-    router,
-    projectName,
-    sessionName,
-    createConvoMutation,
-  ]);
 
   // --- Rename conversation ---
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -308,18 +271,6 @@ export default function ConversationList({
                       Archived ({archivedCount})
                     </button>
                   )}
-                  {!hasWorkflow && !isFinished && (
-                    <button
-                      className="btn btn-sm"
-                      onClick={handleStartWorkflow}
-                      disabled={startWorkflowMutation.isPending}
-                    >
-                      <span className="btn-icon">&#x25C7;</span>
-                      {startWorkflowMutation.isPending
-                        ? "Starting..."
-                        : "Ralph Loop"}
-                    </button>
-                  )}
                   <button
                     className="btn btn-primary btn-sm"
                     onClick={handleNewConversation}
@@ -332,6 +283,15 @@ export default function ConversationList({
                   </button>
                 </div>
               </div>
+            )}
+
+            {/* Workflow Card */}
+            {hasWorkflow && session?.workflow && (
+              <WorkflowCard
+                projectName={projectName}
+                sessionName={sessionName}
+                workflow={session.workflow}
+              />
             )}
 
             {/* Dev Server Panel */}

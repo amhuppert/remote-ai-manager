@@ -30,6 +30,7 @@ import {
   unregisterAbortController,
 } from "./abort-registry";
 import { registerQuery, unregisterQuery } from "./query-registry";
+import { createInitToolServer } from "./ralph-loop/init-tool";
 import { randomUUID } from "node:crypto";
 
 // Prevent nested session detection when CSM runs inside Claude Code
@@ -167,6 +168,16 @@ export async function executePromptStream(
       | AsyncIterable<import("@anthropic-ai/claude-agent-sdk").SDKUserMessage> =
       hasImages ? buildMultiModalPrompt(promptText, images) : promptText;
 
+    // Conditionally register the Ralph Loop init tool when no workflow exists
+    const initToolServer =
+      session.workflow == null
+        ? createInitToolServer({
+            projectPath,
+            sessionName: session.sessionName,
+            projectName,
+          })
+        : null;
+
     // Create SDK query
     const abortController = new AbortController();
     registerAbortController(conversationId, abortController);
@@ -198,6 +209,9 @@ export async function executePromptStream(
         persistSession: true,
         abortController,
         env: { ...process.env, CLAUDECODE: "" },
+        ...(initToolServer
+          ? { mcpServers: { "ralph-loop-init": initToolServer } }
+          : {}),
         canUseTool: async (
           toolName: string,
           input: Record<string, unknown>,

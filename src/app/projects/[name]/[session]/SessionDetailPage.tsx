@@ -1414,7 +1414,6 @@ export default function SessionDetailPage({
                 commits={commits}
                 projectName={projectName}
                 sessionName={session.sessionName}
-                hasWorkflow={session.workflow != null}
               />
             )}
           </div>

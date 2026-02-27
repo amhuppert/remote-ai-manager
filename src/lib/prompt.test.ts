@@ -36,6 +36,13 @@ const {
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
+  createSdkMcpServer: vi.fn(() => ({ __mock: true })),
+  tool: vi.fn(
+    (name: string, _desc: string, _schema: unknown, handler: unknown) => ({
+      name,
+      handler,
+    }),
+  ),
 }));
 
 vi.mock("./state", () => ({
@@ -78,6 +85,10 @@ vi.mock("./sse-broadcaster", () => ({
 vi.mock("./query-registry", () => ({
   registerQuery: registerQueryMock,
   unregisterQuery: unregisterQueryMock,
+}));
+
+vi.mock("./ralph-loop/init-tool", () => ({
+  createInitToolServer: vi.fn(() => ({ __mock: true })),
 }));
 
 // ---------------------------------------------------------------------------
