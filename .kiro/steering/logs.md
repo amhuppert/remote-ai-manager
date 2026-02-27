@@ -126,12 +126,22 @@ ManagerState
 
 ## SSE Events
 
-Real-time broadcasts to connected UI clients via `sse-broadcaster.ts`.
+Real-time broadcasts to connected UI clients via `sse-broadcaster.ts`. All events are Zod-validated on the client.
 
-| Event Type | Fields | Trigger |
+| Event Type | Domain | Trigger |
 |-----------|--------|---------|
-| `conversation-status` | `projectName`, `sessionName`, `conversationId`, `status` | Status transitions |
-| `ask-question` | `projectName`, `sessionName`, `conversationId`, `questionId`, `questions` | SDK asks user a question |
+| `conversation-status` | Core | Conversation status transitions (`running`/`awaiting`/`waiting_for_input`) |
+| `ask-question` | Core | SDK asks user a question (permission, input) |
+| `session-finished` | Core | Session reaches terminal state |
+| `message-queued` | Core | Message queued into running conversation via `streamInput()` |
+| `job-status` | Jobs | Background job state change (merge, commit, resolve-conflicts) |
+| `notification-created` | Notifications | New persistent notification created |
+| `notification-updated` | Notifications | Notification marked as read/dismissed |
+| `workflow-status` | Ralph Loop | Workflow started/completed/failed/halted |
+| `workflow-iteration-complete` | Ralph Loop | Single iteration finished (with progress info) |
+| `workflow-fix-plan-updated` | Ralph Loop | Fix plan tasks updated |
+| `workflow-circuit-breaker` | Ralph Loop | Consecutive failure threshold hit |
+| `dev-server-status` | Dev Server | Dev server started/stopped/health change |
 
 ## Tracing Architecture
 

@@ -53,6 +53,11 @@ Project steering files are loaded automatically below. Custom files are supporte
 @.kiro/steering/structure.md
 @.kiro/steering/logs.md
 
+Additional steering (read on demand, not auto-loaded):
+
+- `.kiro/steering/notifications.md` — Notifications & background jobs architecture
+- `.kiro/steering/ralph-loop.md` — Ralph Loop autonomous workflow engine
+
 ## Next.js MCP Tools
 
 This project uses Next.js 16 with two MCP servers configured in `.mcp.json`:

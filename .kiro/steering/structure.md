@@ -28,7 +28,8 @@ Hybrid approach: **feature-colocated components** within App Router pages, **sha
 
 **Location**: `src/lib/`
 **Purpose**: All business logic, data access, and utilities
-**Pattern**: One module per domain concept (e.g., `sessions.ts`, `state.ts`, `config.ts`, `prompt.ts`, `transcript.ts`); use nested directories when a domain has multiple related files (e.g., `src/lib/logging/`)
+**Pattern**: One module per domain concept (e.g., `sessions.ts`, `state.ts`, `config.ts`, `prompt.ts`, `transcript.ts`); use nested directories when a domain has multiple related files (e.g., `src/lib/logging/`, `src/lib/ralph-loop/`)
+**React Query**: Query factories in `queries.ts`, mutation factories in `mutations.ts`, key definitions in `query-keys.ts`
 
 ### API Routes (`src/app/api/`)
 
@@ -36,6 +37,20 @@ Hybrid approach: **feature-colocated components** within App Router pages, **sha
 **Purpose**: REST-style API endpoints
 **Pattern**: `route.ts` files with exported HTTP method handlers (GET, POST, DELETE)
 **Example**: `src/app/api/projects/[name]/sessions/[session]/prompt/route.ts`
+
+### Stores (`src/stores/`)
+
+**Location**: `src/stores/`
+**Purpose**: Zustand stores for client-side state management
+**Pattern**: One store per domain concern (e.g., `notification.store.ts`, `workflow.store.ts`, `sessions.store.ts`); stores use Immer middleware for immutable updates
+**Example**: `notification.store.ts` (toast queue + running jobs), `unified-panel.store.ts` (side panel state)
+
+### Hooks (`src/hooks/`)
+
+**Location**: `src/hooks/`
+**Purpose**: Shared custom React hooks used across multiple pages
+**Pattern**: `use-<name>.ts` (kebab-case) or `use<Name>.ts` (camelCase); promoted to this directory when reused across routes
+**Example**: `use-send-prompt.ts`, `useAppHotkey.ts`, `useVoiceRecorder.ts`
 
 ### Schemas & Types
 

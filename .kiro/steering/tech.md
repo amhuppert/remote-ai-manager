@@ -2,12 +2,12 @@
 
 ## Architecture
 
-Server-rendered Next.js application with API routes acting as the backend. No database — state is persisted as JSON files on the local filesystem. Claude Code is driven via the `@anthropic-ai/claude-agent-sdk` `query()` API for prompt execution.
+Server-rendered Next.js application with API routes acting as the backend. Dual storage: JSON state file for session/project state, SQLite for notification/job history. Claude Code is driven via the `@anthropic-ai/claude-agent-sdk` `query()` API for prompt execution.
 
 ## Core Technologies
 
 - **Language**: TypeScript (strict mode, `noUncheckedIndexedAccess`)
-- **Framework**: Next.js 15 (App Router)
+- **Framework**: Next.js 16 (App Router)
 - **Runtime**: Node.js with React 19
 - **Validation**: Zod v4 (schemas define all data entities)
 
@@ -15,8 +15,14 @@ Server-rendered Next.js application with API routes acting as the backend. No da
 
 - **`@anthropic-ai/claude-agent-sdk`** — SDK wrapping Claude Code CLI as a typed async generator; `query()` returns streamed `SDKMessage` objects
 - **Zod v4** — Schema-first data modeling; all entity types derived via `z.infer`
+- **Zustand + Immer** — Client-side state management; stores in `src/stores/` (notifications, sessions, workflow, etc.)
+- **@tanstack/react-query** — Server state caching; query/mutation factories in `src/lib/queries.ts` and `mutations.ts`
+- **@tanstack/react-virtual** — Virtualized lists for large message histories
+- **react-markdown + remark-gfm + react-syntax-highlighter** — Markdown rendering with GFM and syntax highlighting
+- **mermaid + svg-pan-zoom** — Mermaid diagram rendering with pan/zoom
+- **react-hotkeys-hook** — Keyboard shortcut handling
+- **better-sqlite3** — SQLite for notification/job persistence (WAL mode)
 - **next/font/google** — Typography (Anybody, Manrope, Geist Mono)
-- No external state management, HTTP client, or ORM libraries — kept deliberately minimal
 
 ### Zod v4 Convention
 
@@ -74,7 +80,7 @@ bun run lint
 
 ## Key Technical Decisions
 
-- **Filesystem-backed state** — No database; JSON state file with atomic writes (write-to-temp + rename) for crash safety
+- **Dual storage** — JSON state file with atomic writes (write-to-temp + rename) for session/project state; SQLite (`better-sqlite3`, WAL mode) for notification and background job persistence
 - **Git worktrees for isolation** — Each session creates a worktree + branch, avoiding workspace conflicts between parallel sessions
 - **Single-flight locking** — In-memory promise map prevents concurrent prompt execution on the same session
 - **Claude Agent SDK** — Prompts executed via `@anthropic-ai/claude-agent-sdk` `query()` API (typed async generator), replacing direct CLI subprocess spawning. SDK options include `systemPrompt: { type: "preset", preset: "claude_code" }`, `permissionMode: "bypassPermissions"`, and `settingSources: ["user", "project", "local"]` for CLI parity
