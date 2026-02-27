@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This specification formalizes the CSM (Claude Session Manager) UI design system — the complete visual language, design tokens, component patterns, typography rules, color semantics, layout architecture, responsive behaviors, and atmospheric effects that all UI features must follow.
+This specification formalizes the CC (Command Center) UI design system — the complete visual language, design tokens, component patterns, typography rules, color semantics, layout architecture, responsive behaviors, and atmospheric effects that all UI features must follow.
 
 The design system serves as the single source of truth for visual consistency across the project list, session list, and session detail views, replacing the legacy `memory-bank/design-system.md` document. The canonical design prototype lives at `ui-design/index.html`.
 

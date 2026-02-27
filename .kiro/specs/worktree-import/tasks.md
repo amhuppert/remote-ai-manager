@@ -1,8 +1,8 @@
 # Implementation Plan
 
 - [x] 1. (P) Add source field to session state schema
-  - Add a `source` field to the session schema with values "csm" and "imported", defaulting to "csm" for backward compatibility
-  - Set source to "csm" explicitly when creating sessions through the existing creation flow
+  - Add a `source: "cc" for backward compatibility
+  - Set source: "cc" explicitly when creating sessions through the existing creation flow
   - Verify that existing state file entries lacking the source field parse correctly with the default value applied
   - _Requirements: 4.1, 4.2, 4.4_
 
@@ -16,7 +16,7 @@
   - _Requirements: 1.2, 1.3_
 
 - [x] 2.2 (P) Derive session names and handle uniqueness
-  - Strip the `refs/heads/` prefix (from git porcelain output) and the `csm/` prefix (CSM convention) from branch names to produce a human-readable display name
+  - Strip the `refs/heads/` prefix (from git porcelain output) and the `csm/` prefix (CC convention) from branch names to produce a human-readable display name
   - Preserve other branch prefixes like `feature/` or `bugfix/` as part of the display name since they carry user intent
   - Fall back to the worktree directory basename when the worktree has a detached HEAD and no branch name
   - When a derived name conflicts with an existing session name in the same project, append a numeric suffix (e.g., `name-2`, `name-3`) incrementing until unique
@@ -38,7 +38,7 @@
 
 - [x] 4. (P) Modify session deletion based on source
   - When deleting an imported session, remove only the session record from the state file without attempting to remove the worktree directory from disk
-  - When deleting a CSM-created session, continue the existing behavior: remove the worktree from disk via git worktree remove, then remove the state record
+  - When deleting a CC-created session, continue the existing behavior: remove the worktree from disk via git worktree remove, then remove the state record
   - Return an indicator from the deletion function showing whether the worktree was actually removed from disk, so the API layer can report it
   - Update existing deletion tests to cover both source-based paths
   - _Requirements: 5.1, 5.2_

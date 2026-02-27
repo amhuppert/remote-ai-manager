@@ -12,7 +12,7 @@ import { createLogger } from "./logging";
 
 const logger = createLogger("query-registry");
 
-const GLOBAL_KEY = "__csm_active_queries" as const;
+const GLOBAL_KEY = "__cc_active_queries" as const;
 
 function getRegistry(): Map<string, Query> {
   const g = globalThis as unknown as Record<string, unknown>;

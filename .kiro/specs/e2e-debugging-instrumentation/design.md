@@ -4,9 +4,9 @@
 
 ## Overview
 
-**Purpose**: This feature adds structured, end-to-end logging instrumentation to CSM so that Claude Code agents can read a single NDJSON log file and trace any user interaction from the UI through API routes to Claude CLI execution, diagnosing failures without needing to reproduce them.
+**Purpose**: This feature adds structured, end-to-end logging instrumentation to CC so that Claude Code agents can read a single NDJSON log file and trace any user interaction from the UI through API routes to Claude CLI execution, diagnosing failures without needing to reproduce them.
 
-**Users**: Developers using Claude Code agents to debug CSM issues — the AI agent reads the log file, greps for trace IDs or session names, and reconstructs what happened.
+**Users**: Developers using Claude Code agents to debug CC issues — the AI agent reads the log file, greps for trace IDs or session names, and reconstructs what happened.
 
 **Impact**: Adds a logging layer across all existing modules (API routes, sessions, state, hooks, prompt execution) with no changes to existing behavior or data models.
 
@@ -16,16 +16,16 @@
 - Zero new external dependencies — use only Node.js built-ins
 
 ### Non-Goals
-- Log viewing in the CSM dashboard UI
+- Log viewing in the CC dashboard UI
 - Log aggregation, rotation, or shipping to external services
-- Distributed tracing across multiple CSM instances
+- Distributed tracing across multiple CC instances
 - Performance profiling or metrics collection
 
 ## Architecture
 
 ### Existing Architecture Analysis
 
-CSM has a clean layered architecture with no existing logging:
+CC has a clean layered architecture with no existing logging:
 
 - **API routes** (`src/app/api/`) delegate to **lib modules** (`src/lib/`)
 - **Lib modules** are single-domain: `sessions.ts`, `state.ts`, `hooks.ts`, `prompt.ts`, `lock.ts`, `config.ts`; nested directories used when a domain has multiple related files
@@ -102,7 +102,7 @@ graph TB
 |-------|------------------|-----------------|-------|
 | Frontend | `crypto.randomUUID()` | Trace ID generation | Built into all modern browsers |
 | Backend | `node:async_hooks` AsyncLocalStorage | Request-scoped context propagation | Stable since Node.js 16 |
-| Backend | `node:fs` appendFileSync | NDJSON log file writes | Sync for simplicity at CSM scale |
+| Backend | `node:fs` appendFileSync | NDJSON log file writes | Sync for simplicity at CC scale |
 | Data | NDJSON flat file | Structured log storage | Grep-friendly, one JSON object per line |
 
 No new dependencies. All implementations use Node.js built-in modules.
@@ -150,7 +150,7 @@ sequenceDiagram
     WT-->>TF: Response with X-Trace-Id header
 ```
 
-The traceId generated in the browser flows through every log entry, enabling a single `grep traceId csm-debug.log` to reconstruct the full chain.
+The traceId generated in the browser flows through every log entry, enabling a single `grep traceId cc-debug.log` to reconstruct the full chain.
 
 ### Hook Event Correlation Flow
 
@@ -181,9 +181,9 @@ Hook events get their own traceId (since they originate from Claude CLI, not the
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
 | 1.1 | NDJSON log format | Logger | LogEntry type | — |
-| 1.2 | Configurable log level | Logger | CSM_LOG_LEVEL env var | — |
+| 1.2 | Configurable log level | Logger | CC_LOG_LEVEL env var | — |
 | 1.3 | Session context in log entries | Logger, ALS context | LogEntry.projectName, sessionName | — |
-| 1.4 | Log file output | Logger | CSM_LOG_FILE env var | — |
+| 1.4 | Log file output | Logger | CC_LOG_FILE env var | — |
 | 1.5 | Invalid log level fallback | Logger | — | — |
 | 1.6 | Stderr for warn/error | Logger | — | — |
 | 2.1 | Frontend trace ID generation | tracedFetch | X-Trace-Id header | UI Action to CLI |
@@ -276,7 +276,7 @@ interface Logger {
 /** Factory: creates a logger scoped to a module name */
 function createLogger(module: string): Logger;
 ```
-- Preconditions: None — log file path is lazily resolved from config on first log call (using `readConfig().stateFilePath` to derive the config directory, then appending `csM_LOG_FILE` override or default `csm-debug.log`)
+- Preconditions: None — log file path is lazily resolved from config on first log call (using `readConfig().stateFilePath` to derive the config directory, then appending `csM_LOG_FILE` override or default `cc-debug.log`)
 - Postconditions: Each call appends exactly one NDJSON line to the log file (if level passes filter)
 - Invariants: Logger never throws; failed writes are silently dropped
 
@@ -304,7 +304,7 @@ function getTraceContext(): TraceContext | undefined;
 - Integration: New `src/lib/logging/` directory containing `logger.ts`, `context.ts` (ALS TraceContext), and `tracing.ts` (withTracing wrapper) — no changes to existing module signatures
 - Initialization: Log file path and log level are lazily resolved on first log call using a `once` guard — no explicit init step required, compatible with Next.js lazy route loading
 - Validation: Log level validated on first use; invalid values fall back to `info`
-- Risks: AsyncLocalStorage context loss in untracked async (mitigated: CSM lib code is fully promise-based, no timers)
+- Risks: AsyncLocalStorage context loss in untracked async (mitigated: CC lib code is fully promise-based, no timers)
 
 ---
 
@@ -504,7 +504,7 @@ interface LogEntry {
 The logging layer itself must never disrupt application behavior. All logging operations are wrapped in try-catch internally — a failed log write is silently dropped rather than propagating an error to the caller.
 
 ### Error Categories and Responses
-**Log File Write Failures**: Silent drop — CSM continues operating without logs. This is acceptable because logging is a diagnostic tool, not a critical path.
+**Log File Write Failures**: Silent drop — CC continues operating without logs. This is acceptable because logging is a diagnostic tool, not a critical path.
 
 **Invalid Log Level Config**: Fall back to `info` level, emit warning to stderr on startup.
 

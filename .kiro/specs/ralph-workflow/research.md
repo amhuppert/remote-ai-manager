@@ -2,7 +2,7 @@
 
 ## Summary
 - **Feature**: ralph-workflow
-- **Discovery Scope**: Complex Integration (new orchestrator subsystem within existing CSM architecture)
+- **Discovery Scope**: Complex Integration (new orchestrator subsystem within existing CC architecture)
 - **Key Findings**:
   - Custom MCP tools via `createSdkMcpServer` + `tool()` are the correct integration pattern for `report_status` and `update_fix_plan` — requires async generator prompt format
   - The existing `executePromptStream()` is too tightly coupled to interactive prompt flows; the orchestrator needs its own execution function that reuses transcript/SSE/state helpers
@@ -11,7 +11,7 @@
 ## Research Log
 
 ### Agent SDK Custom Tool Integration
-- **Context**: Ralph Loop requires two custom tools (`report_status`, `update_fix_plan`) that Claude can call during iterations to report structured data back to CSM.
+- **Context**: Ralph Loop requires two custom tools (`report_status`, `update_fix_plan`) that Claude can call during iterations to report structured data back to CC.
 - **Sources**: Anthropic Agent SDK docs (custom-tools), npm package docs, claude-agent-sdk-demos
 - **Findings**:
   - Custom tools are defined via `createSdkMcpServer()` + `tool()` helper — creates an in-process MCP server
@@ -23,7 +23,7 @@
 - **Implications**: The orchestrator must use the async generator prompt pattern. Tool handlers are closures over iteration context (workflow state, broadcast functions). MCP server is recreated per iteration with fresh context.
 
 ### canUseTool vs MCP Server Pattern
-- **Context**: CSM already uses `canUseTool` to intercept `AskUserQuestion` in `prompt.ts`. Should Ralph Loop tools use `canUseTool` interception or proper MCP servers?
+- **Context**: CC already uses `canUseTool` to intercept `AskUserQuestion` in `prompt.ts`. Should Ralph Loop tools use `canUseTool` interception or proper MCP servers?
 - **Sources**: Existing `prompt.ts` (lines 198-273), SDK TypeScript reference
 - **Findings**:
   - `canUseTool` is for permission gating — intercepts tool calls to approve/deny/modify input. Returns `PermissionResult` with `behavior: "allow" | "deny"`.
@@ -32,7 +32,7 @@
 - **Implications**: Use `createSdkMcpServer` for `report_status` and `update_fix_plan`. Use `canUseTool` to deny `AskUserQuestion` during iterations.
 
 ### Orchestrator Execution Model
-- **Context**: How should the long-running orchestrator loop execute within CSM's Next.js architecture?
+- **Context**: How should the long-running orchestrator loop execute within CC's Next.js architecture?
 - **Sources**: Existing `background-jobs.ts`, `lock.ts`, `prompt.ts`
 - **Findings**:
   - Background jobs use fire-and-forget promises stored in globalThis registry
@@ -48,7 +48,7 @@
 - **Findings**:
   - Existing prompt execution streams content via per-request ReadableStream (prompt route)
   - Background jobs use global SSE for status only, not content
-  - CSM is a single-user tool — broadcasting content to all clients is acceptable
+  - CC is a single-user tool — broadcasting content to all clients is acceptable
   - TanStack React Query with conditional polling (`refetchInterval: isBusy ? 3000 : false`) used for message refresh
 - **Implications**: Two-pronged approach: (1) Broadcast iteration content via global SSE for real-time display, (2) Write to transcript JSONL for persistent access. The UI listens for `workflow-content` SSE events during active iteration and falls back to transcript queries for historical iterations.
 
@@ -102,7 +102,7 @@
 - **Alternatives**: (1) Per-request long-polling, (2) Separate process, (3) Fire-and-forget async with registry
 - **Selected Approach**: Fire-and-forget async function stored in globalThis registry with AbortController and pause flag
 - **Rationale**: Follows existing background job pattern. No external process management. Survives HMR. Supports pause/abort via shared state.
-- **Trade-offs**: Loop state lost on server restart (mitigated by stale recovery). Single-server only (acceptable for CSM's local deployment model).
+- **Trade-offs**: Loop state lost on server restart (mitigated by stale recovery). Single-server only (acceptable for CC's local deployment model).
 
 ### Decision: Deny AskUserQuestion During Iterations
 - **Context**: What happens if Claude tries to ask the user a question during an autonomous iteration?
@@ -121,7 +121,7 @@
 ## Risks & Mitigations
 - **Risk**: Orchestrator loop lost on server restart → **Mitigation**: Stale recovery resets "running" to "paused"; user can resume from UI
 - **Risk**: Claude ignores custom tool instructions → **Mitigation**: Default to exit_signal: false and status: in_progress when tool not called; circuit breaker catches stagnation
-- **Risk**: Large SSE broadcast volume during streaming → **Mitigation**: CSM is single-user; broadcast volume is acceptable. Throttle if needed later.
+- **Risk**: Large SSE broadcast volume during streaming → **Mitigation**: CC is single-user; broadcast volume is acceptable. Throttle if needed later.
 - **Risk**: Planning phase generates poor task plan → **Mitigation**: User reviews and edits plan before confirming; optional generation, not mandatory
 - **Risk**: Abort during iteration leaves dirty git state → **Mitigation**: Each iteration works in the session's worktree (already isolated); user can inspect and clean up
 
@@ -129,4 +129,4 @@
 - [Custom Tools - Claude API Docs](https://platform.claude.com/docs/en/agent-sdk/custom-tools)
 - [Agent SDK TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
 - [Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview)
-- Existing CSM patterns: `prompt.ts`, `background-jobs.ts`, `lock.ts`, `sse-broadcaster.ts`, `schemas.ts`
+- Existing CC patterns: `prompt.ts`, `background-jobs.ts`, `lock.ts`, `sse-broadcaster.ts`, `schemas.ts`

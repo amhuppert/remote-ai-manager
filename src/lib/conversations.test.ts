@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
-const TEST_DIR = path.join("/tmp", "csm-conversations-test-" + Date.now());
+const TEST_DIR = path.join("/tmp", "cc-conversations-test-" + Date.now());
 const STATE_FILE = path.join(TEST_DIR, "state.json");
 
 vi.mock("./config", () => ({

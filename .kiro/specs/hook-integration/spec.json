@@ -4,7 +4,7 @@
   "updated_at": "2026-02-22T00:00:00Z",
   "language": "en",
   "phase": "deprecated",
-  "deprecated_reason": "Entire hook system removed during migration to @anthropic-ai/claude-agent-sdk. CSM no longer receives Claude Code lifecycle events via HTTP hooks. Session status is now tracked directly via SDK query() stream data. All hook-related files deleted: hooks.ts, install-hooks.ts, api/hooks/ routes.",
+  "deprecated_reason": "Entire hook system removed during migration to @anthropic-ai/claude-agent-sdk. CC no longer receives Claude Code lifecycle events via HTTP hooks. Session status is now tracked directly via SDK query() stream data. All hook-related files deleted: hooks.ts, install-hooks.ts, api/hooks/ routes.",
   "approvals": {
     "requirements": {
       "generated": true,

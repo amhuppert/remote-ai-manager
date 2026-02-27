@@ -121,7 +121,7 @@ export default function SessionDetailPage({
   autoFocus,
 }: Props): React.JSX.Element {
   const router = useRouter();
-  const storageKey = `csm-layout-${projectName}-${sessionName}`;
+  const storageKey = `cc-layout-${projectName}-${sessionName}`;
 
   // --- TanStack Query ---
   const sessionQuery = useSessionQuery(projectName, sessionName);

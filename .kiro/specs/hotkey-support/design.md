@@ -2,9 +2,9 @@
 
 ## Overview
 
-**Purpose**: This feature delivers a centralized keyboard shortcut system to CSM users, enabling efficient navigation and action execution without mouse interaction.
+**Purpose**: This feature delivers a centralized keyboard shortcut system to CC users, enabling efficient navigation and action execution without mouse interaction.
 
-**Users**: Developers using CSM to manage Claude Code sessions will use hotkeys for voice recording, conversation navigation, sidebar management, and diff review workflows.
+**Users**: Developers using CC to manage Claude Code sessions will use hotkeys for voice recording, conversation navigation, sidebar management, and diff review workflows.
 
 **Impact**: Adds a new cross-cutting infrastructure layer (`src/lib/hotkeys.ts`, `src/hooks/useAppHotkey.ts`) and a help modal component. Modifies existing session detail, diff panel, and sidebar components to register hotkey bindings.
 
@@ -24,7 +24,7 @@
 
 ### Existing Architecture Analysis
 
-The CSM app is a Next.js App Router application. Keyboard handling is currently ad-hoc:
+The CC app is a Next.js App Router application. Keyboard handling is currently ad-hoc:
 - `ConfirmDialog.tsx` — global `keydown` listener for Escape
 - `CommandAutocomplete.tsx` — forwarded ref with `handleKeyDown` method for arrow/Enter/Tab/Escape
 - `SessionDetailPage.tsx` — textarea `onKeyDown` for Enter/Escape

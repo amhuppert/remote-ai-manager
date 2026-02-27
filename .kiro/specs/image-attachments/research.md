@@ -27,7 +27,7 @@
   - App Router API routes use the standard Web Request API (`request.json()`), which does not impose a body size limit at the framework level
   - The Pages Router `bodyParser.sizeLimit` config does not apply to App Router routes
   - Practical limits come from the Node.js runtime and reverse proxy (if any)
-  - For the CSM local-first use case (no reverse proxy), payloads up to ~50 MB are handled by Node.js without issue
+  - For the CC local-first use case (no reverse proxy), payloads up to ~50 MB are handled by Node.js without issue
 - **Implications**: No framework-level configuration change needed. The existing `request.json()` calls in the API routes handle larger payloads transparently.
 
 ### Browser Clipboard API for Images
@@ -46,7 +46,7 @@
 - **Findings**:
   - Storing full base64 keeps transcripts self-contained and enables full history replay
   - A single 5 MB image adds ~6.7 MB to the JSONL file; five images per prompt could add ~33 MB per prompt turn
-  - CSM is a local-first developer tool — disk space is not typically constrained
+  - CC is a local-first developer tool — disk space is not typically constrained
   - Alternative (disk file storage) adds file lifecycle management complexity that exceeds the value for this use case
 - **Implications**: Store full base64 in transcript for simplicity. This matches the existing pattern where all content is self-contained in JSONL entries.
 
@@ -54,7 +54,7 @@
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
 |--------|-------------|-----------|---------------------|-------|
-| Extend existing (inline base64) | Widen existing types, send base64 in JSON body, store in transcript | Minimal new code, single request, self-contained transcripts | Large payloads, transcript growth | Recommended — fits CSM's local-first model |
+| Extend existing (inline base64) | Widen existing types, send base64 in JSON body, store in transcript | Minimal new code, single request, self-contained transcripts | Large payloads, transcript growth | Recommended — fits CC's local-first model |
 | Separate upload endpoint | Upload images to disk, reference by ID in prompt | Small payloads, small transcripts | Two-phase flow, file lifecycle management, more failure modes | Over-engineered for local tool |
 
 ## Design Decisions
@@ -76,18 +76,18 @@
   2. Save images to disk, store path reference in JSONL (smaller files, complex lifecycle)
   3. Omit images from transcript, show placeholder in history (lossy)
 - **Selected Approach**: Store full base64 in JSONL
-- **Rationale**: CSM is local-first; disk space is not a constraint. Self-contained transcripts are simpler and enable full history replay. Adding file management for images adds complexity disproportionate to the benefit.
+- **Rationale**: CC is local-first; disk space is not a constraint. Self-contained transcripts are simpler and enable full history replay. Adding file management for images adds complexity disproportionate to the benefit.
 - **Trade-offs**: Transcript files grow significantly with image-heavy sessions
 - **Follow-up**: None — acceptable for v1
 
 ### Decision: Client-Side Validation Only
 - **Context**: Where to enforce image constraints (format, size, count)
 - **Selected Approach**: Validate entirely on the client before submission
-- **Rationale**: The user attaches images locally via clipboard/file picker. Validating at attachment time provides instant feedback. Server-side validation would duplicate the effort with no additional safety benefit (CSM is a local-first single-user tool).
+- **Rationale**: The user attaches images locally via clipboard/file picker. Validating at attachment time provides instant feedback. Server-side validation would duplicate the effort with no additional safety benefit (CC is a local-first single-user tool).
 - **Trade-offs**: Trusts client-side code; acceptable for a local tool
 
 ## Risks & Mitigations
-- **Large payload memory pressure**: Base64 encoding multiple 5 MB images could create ~33 MB JSON strings. Mitigated by the 5-image limit and the fact that CSM is a local tool with ample resources.
+- **Large payload memory pressure**: Base64 encoding multiple 5 MB images could create ~33 MB JSON strings. Mitigated by the 5-image limit and the fact that CC is a local tool with ample resources.
 - **Transcript file size growth**: Frequent image prompts could create large JSONL files. Acceptable for v1; can add transcript compaction later if needed.
 - **SDK async iterable compatibility with resume**: Untested combination. Mitigated by testing early; the SDK documentation does not indicate restrictions.
 

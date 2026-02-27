@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
-const TEST_DIR = path.join("/tmp", "csm-discovery-test-" + Date.now());
+const TEST_DIR = path.join("/tmp", "cc-discovery-test-" + Date.now());
 const BASE_DIR = path.join(TEST_DIR, "projects");
 
 // Mock node:os to redirect homedir to test directory
@@ -126,7 +126,7 @@ describe("discoverProjects — scanning and filtering", () => {
   });
 
   it("returns empty list when baseDir does not exist", async () => {
-    await setupConfig({ baseDir: "/tmp/csm-nonexistent-" + Date.now() });
+    await setupConfig({ baseDir: "/tmp/cc-nonexistent-" + Date.now() });
 
     const { discoverProjects } = await import("./discovery");
     const projects = await discoverProjects();

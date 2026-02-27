@@ -88,7 +88,7 @@
   - `ManagerState.projects` is keyed by absolute path, but only contains projects that have had sessions created
   - Projects without sessions have no entry in state — they're ephemeral filesystem scan results
   - `SessionState.archived` already exists and works by excluding from `activeSessions` count
-  - State is persisted via atomic JSON writes to `~/.config/csm/state.json`
+  - State is persisted via atomic JSON writes to `~/.config/cc/state.json`
 - **Implications**: Need a top-level `archivedProjects` array in `ManagerState` to store project paths, since project entries may not exist in `projects` map. This avoids creating empty project entries just to hold an archive flag.
 
 ### Client-Side Filtering Architecture (Req 9, 10)

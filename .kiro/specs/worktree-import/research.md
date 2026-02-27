@@ -22,11 +22,11 @@
 - **Implications**: Parse line-by-line, accumulate fields into a struct, emit on blank line. Filter out the main worktree (first entry or matching projectPath).
 
 ### Existing conversation import pattern
-- **Context**: CSM already imports Claude Code sessions — can we follow the same pattern for worktrees?
+- **Context**: CC already imports Claude Code sessions — can we follow the same pattern for worktrees?
 - **Sources Consulted**: `src/lib/conversations.ts` (lines 136-376)
 - **Findings**:
   - `discoverAndImportConversations()` follows: discover → deduplicate by ID → create records → persist atomically via `writeState()`
-  - Uses `source: "imported"` to distinguish auto-imported from CSM-created records
+  - Uses `source: "imported"` to distinguish auto-imported from CC-created records
   - Called on-demand when sessions are listed with `?import=true` query param
 - **Implications**: The worktree import can use the same pattern. Match by `worktreePath` instead of `claudeSessionId`. The `source` field convention already exists at the conversation level and can be extended to sessions.
 
@@ -59,17 +59,17 @@
   3. Background timer — periodic scan
 - **Selected Approach**: On-demand in GET handler
 - **Rationale**: Follows the principle of least surprise. Users see all worktrees immediately without extra steps. The `git worktree list` command is fast enough to not impact perceived latency.
-- **Trade-offs**: Every listing makes a git subprocess call. Acceptable for CSM's usage patterns (single user, local repos).
+- **Trade-offs**: Every listing makes a git subprocess call. Acceptable for CC's usage patterns (single user, local repos).
 - **Follow-up**: Monitor if git call latency becomes an issue for repos with many worktrees.
 
 ### Decision: Unlink-only deletion for imported sessions
-- **Context**: Imported worktrees are managed externally; CSM should not destroy them
+- **Context**: Imported worktrees are managed externally; CC should not destroy them
 - **Alternatives Considered**:
   1. Always remove worktree on delete (current behavior)
   2. Never remove worktree, only unlink from state
-  3. Branch on `source` field — remove CSM-created, unlink imported
+  3. Branch on `source` field — remove CC-created, unlink imported
 - **Selected Approach**: Branch on `source` field
-- **Rationale**: CSM-created sessions are fully owned by CSM and should be cleaned up. Imported sessions are owned externally and CSM should only untrack them.
+- **Rationale**: CC-created sessions are fully owned by CC and should be cleaned up. Imported sessions are owned externally and CC should only untrack them.
 - **Trade-offs**: An unlinked imported session will reappear on next listing since the worktree still exists on disk. This is actually desirable — the user can re-import it if needed.
 - **Follow-up**: Consider adding an "ignore list" in the future to permanently hide specific worktrees.
 
@@ -80,7 +80,7 @@
   2. Strip prefix and use remainder (e.g., `login` from `feature/login`)
   3. Use worktree directory name
 - **Selected Approach**: Strip `csm/` and `refs/heads/` prefixes; use remaining branch name as-is. Fall back to directory name for detached HEAD.
-- **Rationale**: The branch name is the most semantically meaningful identifier. Only stripping CSM's own `csm/` prefix and git's `refs/heads/` prefix preserves user intent. Other prefixes like `feature/` are part of the branch naming convention and should be kept.
+- **Rationale**: The branch name is the most semantically meaningful identifier. Only stripping CC's own `csm/` prefix and git's `refs/heads/` prefix preserves user intent. Other prefixes like `feature/` are part of the branch naming convention and should be kept.
 - **Trade-offs**: Session names may contain `/` characters, which the current `validateSessionName` does not allow. This is fine because imported sessions bypass the creation validation.
 
 ## Risks & Mitigations

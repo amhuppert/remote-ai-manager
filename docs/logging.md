@@ -1,6 +1,6 @@
 # Logging & Debugging Infrastructure
 
-CSM includes structured end-to-end logging that traces user interactions from the web UI through API routes to Claude CLI execution. Logs are designed to answer the question: *"What happened, and why did it fail?"* — without needing to reproduce the problem.
+CC includes structured end-to-end logging that traces user interactions from the web UI through API routes to Claude CLI execution. Logs are designed to answer the question: *"What happened, and why did it fail?"* — without needing to reproduce the problem.
 
 ## How It Works
 
@@ -24,7 +24,7 @@ Browser                    Server
 └─────────────┘           └──────────────┼───────────────────────────┘
                                          │
                                          ▼
-                                   csm-debug.log
+                                   cc-debug.log
                                    (NDJSON, one JSON object per line)
 ```
 
@@ -39,21 +39,21 @@ Browser                    Server
 
 | Platform | Default Path |
 |----------|-------------|
-| Linux | `~/.config/csm/csm-debug.log` |
-| macOS | `~/Library/Application Support/csm/csm-debug.log` |
+| Linux | `~/.config/cc/cc-debug.log` |
+| macOS | `~/Library/Application Support/cc/cc-debug.log` |
 
-Override with the `CSM_LOG_FILE` environment variable (absolute path).
+Override with the `CC_LOG_FILE` environment variable (absolute path).
 
 ## Configuration
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `CSM_LOG_LEVEL` | `info` | Minimum level to log. Options: `debug`, `info`, `warn`, `error` |
-| `CSM_LOG_FILE` | *(see above)* | Absolute path to the log file |
+| `CC_LOG_LEVEL` | `info` | Minimum level to log. Options: `debug`, `info`, `warn`, `error` |
+| `CC_LOG_FILE` | *(see above)* | Absolute path to the log file |
 
-- Setting `CSM_LOG_LEVEL=debug` enables verbose output including state file writes and lock acquisition/release events.
+- Setting `CC_LOG_LEVEL=debug` enables verbose output including state file writes and lock acquisition/release events.
 - `warn` and `error` entries are also written to **stderr** for immediate visibility in the terminal.
-- Invalid `CSM_LOG_LEVEL` values fall back to `info` with a warning on stderr.
+- Invalid `CC_LOG_LEVEL` values fall back to `info` with a warning on stderr.
 
 ## Log Entry Format
 
@@ -108,20 +108,20 @@ Since the log is NDJSON, pipe it through `jq` for readable output:
 
 ```bash
 # Readable view of the last 10 entries
-tail -10 ~/.config/csm/csm-debug.log | jq .
+tail -10 ~/.config/cc/cc-debug.log | jq .
 
 # Compact summary view
-tail -20 ~/.config/csm/csm-debug.log | jq '{timestamp, level, module, message, sessionName}'
+tail -20 ~/.config/cc/cc-debug.log | jq '{timestamp, level, module, message, sessionName}'
 ```
 
 ### Finding errors
 
 ```bash
 # All errors
-grep '"level":"error"' ~/.config/csm/csm-debug.log | jq .
+grep '"level":"error"' ~/.config/cc/cc-debug.log | jq .
 
 # Count errors by type
-grep '"level":"error"' ~/.config/csm/csm-debug.log | jq -r .message | sort | uniq -c | sort -rn
+grep '"level":"error"' ~/.config/cc/cc-debug.log | jq -r .message | sort | uniq -c | sort -rn
 ```
 
 ### Tracing a request end-to-end
@@ -129,7 +129,7 @@ grep '"level":"error"' ~/.config/csm/csm-debug.log | jq -r .message | sort | uni
 If you have a trace ID (from an error log entry, API response header, or browser dev tools):
 
 ```bash
-grep 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' ~/.config/csm/csm-debug.log | jq .
+grep 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' ~/.config/cc/cc-debug.log | jq .
 ```
 
 This shows every log entry produced during that request, in chronological order. A typical sequence looks like:
@@ -144,18 +144,18 @@ This shows every log entry produced during that request, in chronological order.
 ### Investigating a specific session
 
 ```bash
-grep '"sessionName":"feature-auth"' ~/.config/csm/csm-debug.log | jq .
+grep '"sessionName":"feature-auth"' ~/.config/cc/cc-debug.log | jq .
 ```
 
 ### Finding slow operations
 
 ```bash
 # Prompts that took longer than 30 seconds
-grep '"message":"prompt.complete"' ~/.config/csm/csm-debug.log | \
+grep '"message":"prompt.complete"' ~/.config/cc/cc-debug.log | \
   jq 'select(.durationMs > 30000) | {sessionName, durationMs}'
 
 # Slow API requests (over 5 seconds)
-grep '"message":"request.complete"' ~/.config/csm/csm-debug.log | \
+grep '"message":"request.complete"' ~/.config/cc/cc-debug.log | \
   jq 'select(.durationMs > 5000) | {method, path, status, durationMs}'
 ```
 
@@ -163,10 +163,10 @@ grep '"message":"request.complete"' ~/.config/csm/csm-debug.log | \
 
 ```bash
 # See all hook events received
-grep '"message":"hook.event_received"' ~/.config/csm/csm-debug.log | jq .
+grep '"message":"hook.event_received"' ~/.config/cc/cc-debug.log | jq .
 
-# Find events from sessions CSM doesn't recognize
-grep '"message":"hook.unknown_session"' ~/.config/csm/csm-debug.log | jq .
+# Find events from sessions CC doesn't recognize
+grep '"message":"hook.unknown_session"' ~/.config/cc/cc-debug.log | jq .
 ```
 
 ## Understanding Hook Correlation
@@ -178,7 +178,7 @@ To correlate a hook event with its originating prompt:
 1. Find the hook event and note the `sessionName` and `timestamp`
 2. Search for prompt events on the same session around the same time:
    ```bash
-   grep '"sessionName":"feature-auth"' ~/.config/csm/csm-debug.log | \
+   grep '"sessionName":"feature-auth"' ~/.config/cc/cc-debug.log | \
      grep -E '"module":"(prompt|hooks)"' | jq '{timestamp, module, message}'
    ```
 

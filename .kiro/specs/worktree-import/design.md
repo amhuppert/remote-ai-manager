@@ -2,23 +2,23 @@
 
 ## Overview
 
-**Purpose**: This feature delivers automatic discovery and import of existing git worktrees as CSM sessions, enabling developers to manage all worktrees — regardless of origin — through the CSM dashboard.
+**Purpose**: This feature delivers automatic discovery and import of existing git worktrees as CC sessions, enabling developers to manage all worktrees — regardless of origin — through the CC dashboard.
 
-**Users**: Developers using CSM who also create worktrees manually, via other tools, or through other CSM instances. They will see all worktrees appear as sessions without manual registration.
+**Users**: Developers using CC who also create worktrees manually, via other tools, or through other CC instances. They will see all worktrees appear as sessions without manual registration.
 
 **Impact**: Changes the session listing flow to reconcile state against disk on every request, and modifies the session schema to track provenance (`source` field).
 
 ### Goals
 - Discover all git worktrees for a project via `git worktree list --porcelain`
-- Automatically import untracked worktrees as CSM sessions with derived names
-- Distinguish imported vs. CSM-created sessions for appropriate deletion behavior
+- Automatically import untracked worktrees as CC sessions with derived names
+- Distinguish imported vs. CC-created sessions for appropriate deletion behavior
 - Support arbitrary branch names and worktree paths (not just `csm/*` and `.worktrees/`)
 
 ### Non-Goals
 - UI changes to visually distinguish imported sessions (can be added later using the `source` field)
 - Ignore-list for permanently hiding specific worktrees from import
 - Importing worktrees from other repositories (only the current project's worktrees)
-- Modifying how CSM-created sessions work (creation flow unchanged)
+- Modifying how CC-created sessions work (creation flow unchanged)
 
 ## Architecture
 
@@ -97,7 +97,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     A[DELETE session request] --> B{session.source?}
-    B -->|csm| C[git worktree remove --force]
+    B -->|cc| C[git worktree remove --force]
     C --> D[Remove from state]
     B -->|imported| E[Remove from state only]
     D --> F[Return response with worktreeRemoved=true]
@@ -123,11 +123,11 @@ flowchart TD
 | 3.5 | Set timestamps to import time | worktrees.ts | discoverAndImportWorktrees() | Reconciliation |
 | 3.6 | Set source to imported | worktrees.ts, schemas.ts | sessionStateSchema | Reconciliation |
 | 4.1 | source field on SessionState | schemas.ts | sessionStateSchema | - |
-| 4.2 | source=csm for created sessions | sessions.ts | createSession() | - |
+| 4.2 | source=cc for created sessions | sessions.ts | createSession() | - |
 | 4.3 | source=imported for imported sessions | worktrees.ts | discoverAndImportWorktrees() | Reconciliation |
 | 4.4 | Backward-compatible default | schemas.ts | sessionStateSchema | - |
 | 5.1 | Unlink-only delete for imported | sessions.ts | deleteSession() | Deletion |
-| 5.2 | Disk removal for CSM-created | sessions.ts | deleteSession() | Deletion |
+| 5.2 | Disk removal for CC-created | sessions.ts | deleteSession() | Deletion |
 | 5.3 | Response indicates removal type | sessions route | DELETE handler | Deletion |
 | 6.1 | Accept any branch name | worktrees.ts | discoverAndImportWorktrees() | Reconciliation |
 | 6.2 | Accept any worktree path | worktrees.ts | discoverAndImportWorktrees() | Reconciliation |
@@ -167,11 +167,11 @@ export const sessionStateSchema = z.object({
   archived: z.boolean(),
   finished: z.boolean().default(false),
   conversations: z.array(conversationStateSchema).default([]),
-  source: z.enum(["csm", "imported"]).default("csm"), // NEW
+  source: "cc"), // NEW
 });
 ```
 
-- Backward compatibility: `.default("csm")` ensures existing state files parse correctly
+- Backward compatibility: `.default("cc")` ensures existing state files parse correctly
 - No migration needed: Zod applies the default on parse
 
 ### Lib/Domain Layer
@@ -271,7 +271,7 @@ function discoverAndImportWorktrees(
 ##### Service Interface Changes
 
 ```typescript
-// createSession: set source: "csm" on the new SessionState
+// createSession: set source: "cc" on the new SessionState
 // No signature change — internal behavior change only
 
 // deleteSession: branch on session.source
@@ -283,7 +283,7 @@ function deleteSession(
 
 - `deleteSession` currently returns `Promise<void>`. It will return `Promise<{ worktreeRemoved: boolean }>` to inform the API layer.
 - When `source === "imported"`: skip `git worktree remove`, remove from state only, return `{ worktreeRemoved: false }`
-- When `source === "csm"`: existing behavior (remove worktree + state), return `{ worktreeRemoved: true }`
+- When `source: "cc"`: existing behavior (remove worktree + state), return `{ worktreeRemoved: true }`
 
 ### API Layer
 
@@ -328,10 +328,10 @@ function deleteSession(
 The `SessionState` entity gains one new field:
 
 ```typescript
-source: "csm" | "imported"  // default: "csm"
+source: "cc"
 ```
 
-- `"csm"`: Session was created by CSM (existing behavior)
+- `"cc"`: Session was created by CC (existing behavior)
 - `"imported"`: Session was auto-imported from a discovered worktree
 
 No new entities are introduced. `DiscoveredWorktree` is a transient data structure used only during reconciliation (not persisted).
@@ -346,7 +346,7 @@ ManagerState
               ├── sessionName: string
               ├── worktreePath: string      // now accepts any absolute path
               ├── branchName: string         // now accepts any branch name
-              ├── source: "csm" | "imported" // NEW
+              ├── source: "cc" | "imported" // NEW
               ├── createdAt: string
               ├── lastActivityAt: string
               ├── archived: boolean
@@ -384,6 +384,6 @@ ManagerState
 ### Integration Tests
 1. **GET sessions with reconciliation**: Verify imported sessions appear in response alongside existing sessions
 2. **DELETE imported session**: Verify worktree NOT removed from disk, session removed from state
-3. **DELETE CSM session**: Verify worktree removed from disk (existing behavior preserved)
+3. **DELETE CC session**: Verify worktree removed from disk (existing behavior preserved)
 4. **Git failure graceful degradation**: Verify state-only sessions returned when git fails
-5. **Backward compatibility**: Verify sessions without `source` field parse as `source: "csm"`
+5. **Backward compatibility**: Verify sessions without `source` field parse as `source: "cc"`

@@ -1,6 +1,6 @@
 # Product Overview
 
-CSM (Claude Session Manager) is a web-based control plane for managing remote Claude Code coding sessions. It allows developers to create, monitor, and interact with multiple isolated Claude Code instances — each running in its own git worktree — through a centralized dashboard.
+CC (Command Center) is a web-based control plane for managing remote Claude Code coding sessions. It allows developers to create, monitor, and interact with multiple isolated Claude Code instances — each running in its own git worktree — through a centralized dashboard.
 
 ## Core Capabilities
 
@@ -23,7 +23,7 @@ CSM (Claude Session Manager) is a web-based control plane for managing remote Cl
 
 ## Value Proposition
 
-CSM acts as "ground control" for Claude Code — turning ad-hoc CLI usage into a structured, multi-session workflow. Each session gets full git isolation (worktree + branch), preventing interference between parallel tasks while keeping everything within the same repository.
+CC acts as "ground control" for Claude Code — turning ad-hoc CLI usage into a structured, multi-session workflow. Each session gets full git isolation (worktree + branch), preventing interference between parallel tasks while keeping everything within the same repository.
 
 ---
 

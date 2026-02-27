@@ -1,4 +1,4 @@
-# Claude Session Manager — UI Requirements
+# Command Center — UI Requirements
 
 ## App Summary
 
@@ -39,7 +39,7 @@
 ### FR1: App Shell and Topbar
 
 - Sticky topbar pinned to the top of every view
-- **Left side**: app logo ("CSM" in display font, cyan with glow) + vertical divider + breadcrumb
+- **Left side**: app logo ("CC" in display font, cyan with glow) + vertical divider + breadcrumb
 - **Right side**: context-aware controls that swap based on the current view
 - Frosted-glass topbar background (semi-transparent dark with backdrop blur)
 - Topbar height is fixed; content area fills the remaining viewport

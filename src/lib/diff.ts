@@ -18,7 +18,7 @@ const MAX_BUFFER = 10 * 1024 * 1024;
  */
 export async function computeDiff(worktreePath: string): Promise<SessionDiff> {
   let rawDiff: string;
-  const tmpIndex = join(tmpdir(), `csm-diff-${randomUUID()}`);
+  const tmpIndex = join(tmpdir(), `cc-diff-${randomUUID()}`);
   try {
     const opts = { cwd: worktreePath, maxBuffer: MAX_BUFFER };
     const tmpEnv = { ...process.env, GIT_INDEX_FILE: tmpIndex };

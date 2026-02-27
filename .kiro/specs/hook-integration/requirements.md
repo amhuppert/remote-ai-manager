@@ -1,16 +1,16 @@
 # Requirements Document
 
-> **DEPRECATED (2026-02-22):** This entire feature was removed during the migration to `@anthropic-ai/claude-agent-sdk`. CSM no longer receives Claude Code lifecycle events via HTTP hooks. Session metadata (status, session ID, transcript) is now tracked directly via the SDK `query()` stream. All hook-related files have been deleted: `hooks.ts`, `install-hooks.ts`, `api/hooks/route.ts`, `api/hooks/status/route.ts`. The requirements below are historical only.
+> **DEPRECATED (2026-02-22):** This entire feature was removed during the migration to `@anthropic-ai/claude-agent-sdk`. CC no longer receives Claude Code lifecycle events via HTTP hooks. Session metadata (status, session ID, transcript) is now tracked directly via the SDK `query()` stream. All hook-related files have been deleted: `hooks.ts`, `install-hooks.ts`, `api/hooks/route.ts`, `api/hooks/status/route.ts`. The requirements below are historical only.
 
 ## Introduction
 
-The Hook Integration feature connects CSM to Claude Code's lifecycle event system. Claude Code emits hook events (such as `UserPromptSubmit` and `Stop`) during its operation, and CSM receives these events via an HTTP API to update session metadata. This is the primary mechanism for capturing the Claude session ID and transcript file path — data that enables the transcript viewer and session observability features. The feature also provides hook installation detection so the UI can warn users when hooks are not configured.
+The Hook Integration feature connects CC to Claude Code's lifecycle event system. Claude Code emits hook events (such as `UserPromptSubmit` and `Stop`) during its operation, and CC receives these events via an HTTP API to update session metadata. This is the primary mechanism for capturing the Claude session ID and transcript file path — data that enables the transcript viewer and session observability features. The feature also provides hook installation detection so the UI can warn users when hooks are not configured.
 
 ## Requirements
 
 ### Requirement 1: Hook Event Reception
 
-**Objective:** As a developer, I want CSM to receive hook events from Claude Code via an HTTP endpoint, so that session metadata is updated automatically during Claude Code operation.
+**Objective:** As a developer, I want CC to receive hook events from Claude Code via an HTTP endpoint, so that session metadata is updated automatically during Claude Code operation.
 
 #### Acceptance Criteria
 
@@ -44,13 +44,13 @@ The Hook Integration feature connects CSM to Claude Code's lifecycle event syste
 
 ### Requirement 4: Hook Installation Detection
 
-**Objective:** As a developer, I want CSM to detect whether Claude Code hooks are properly configured, so that the UI can display installation status and guide setup.
+**Objective:** As a developer, I want CC to detect whether Claude Code hooks are properly configured, so that the UI can display installation status and guide setup.
 
 #### Acceptance Criteria
 
 1. The Hook Detector shall read Claude Code's global settings file (`~/.claude/settings.json`).
 2. The Hook Detector shall check for the presence of both `UserPromptSubmit` and `Stop` hook events.
-3. The Hook Detector shall verify that hook commands contain a reference to `csm` in the command string.
+3. The Hook Detector shall verify that hook commands contain a reference to `cc` in the command string.
 4. The Hook Detector shall return a status object with `installed` (true only if both hooks present), `hasUserPromptSubmit`, and `hasStop` fields.
 5. If the settings file does not exist or cannot be parsed, the Hook Detector shall return `installed: false` with both event flags false.
 

@@ -24,11 +24,11 @@
 - **Context**: Need file-based structured logging that Claude Code agents can grep and parse
 - **Sources Consulted**: Node.js `fs.appendFileSync` vs write streams, NDJSON format spec
 - **Findings**:
-  - `appendFileSync` is simplest for low-throughput logging (CSM is a single-user dev tool, not high-traffic)
+  - `appendFileSync` is simplest for low-throughput logging (CC is a single-user dev tool, not high-traffic)
   - NDJSON (one JSON object per line) is ideal for `grep` and `Read` tool consumption by AI agents
   - No external logging library needed — custom logger is ~50 lines
   - Async append (`fs.promises.appendFile`) avoids blocking but adds complexity for error paths; sync append is acceptable given low volume
-- **Implications**: Use synchronous file append for simplicity; no need for log rotation or buffering at CSM's scale
+- **Implications**: Use synchronous file append for simplicity; no need for log rotation or buffering at CC's scale
 
 ### Next.js API Route "Middleware" Pattern
 - **Context**: Next.js App Router doesn't support per-route middleware; need a pattern to wrap all route handlers with tracing logic
@@ -52,7 +52,7 @@
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
 |--------|-------------|-----------|---------------------|-------|
-| AsyncLocalStorage + wrapper | Request-scoped context via ALS, HOF wrapper for routes | Zero param threading, idiomatic Node.js, no lib changes needed | ALS has minor perf overhead (negligible at CSM scale) | Selected approach |
+| AsyncLocalStorage + wrapper | Request-scoped context via ALS, HOF wrapper for routes | Zero param threading, idiomatic Node.js, no lib changes needed | ALS has minor perf overhead (negligible at CC scale) | Selected approach |
 | Explicit context parameter | Pass `TraceContext` as first arg to every function | Fully explicit, no hidden state | Requires changing every function signature in lib/, invasive | Rejected: too invasive |
 | Global request context | Store context in module-level variable | Simple | Not safe with concurrent requests | Rejected: unsafe |
 
@@ -75,7 +75,7 @@
   2. Write stream with buffering — async, better for high-throughput
   3. External logging library (pino, winston) — feature-rich, adds dependency
 - **Selected Approach**: `appendFileSync` with `fs.appendFileSync`
-- **Rationale**: CSM is a single-user developer tool with low log volume; simplicity outweighs throughput optimization. Zero new dependencies.
+- **Rationale**: CC is a single-user developer tool with low log volume; simplicity outweighs throughput optimization. Zero new dependencies.
 - **Trade-offs**: Blocks event loop briefly per log write (acceptable at low volume) vs. zero complexity
 
 ### Decision: Traced Fetch Wrapper on Frontend
@@ -89,9 +89,9 @@
 - **Trade-offs**: Requires updating 3-4 call sites vs. provides consistent tracing for all future calls too
 
 ## Risks & Mitigations
-- **AsyncLocalStorage context loss**: If a lib function uses `setTimeout` or untracked async, ALS context may be lost → Mitigation: CSM's lib code is fully synchronous/promise-based, no timers
-- **Log file growth**: Unbounded append → Mitigation: Document log rotation as operational concern; CSM is a dev tool, not production infrastructure
-- **Perf impact of sync writes**: Could block event loop → Mitigation: Negligible at CSM's single-user scale; can switch to async if needed later
+- **AsyncLocalStorage context loss**: If a lib function uses `setTimeout` or untracked async, ALS context may be lost → Mitigation: CC's lib code is fully synchronous/promise-based, no timers
+- **Log file growth**: Unbounded append → Mitigation: Document log rotation as operational concern; CC is a dev tool, not production infrastructure
+- **Perf impact of sync writes**: Could block event loop → Mitigation: Negligible at CC's single-user scale; can switch to async if needed later
 
 ## References
 - [Node.js AsyncLocalStorage](https://nodejs.org/api/async_context.html#class-asynclocalstorage) — core API for request-scoped context

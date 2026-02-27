@@ -43,7 +43,7 @@ export const ShortValue = {
 export const CustomTruncation = {
   args: {
     label: "Transcript",
-    value: "/home/user/.config/csm/transcripts/a1b2c3d4-e5f6.jsonl",
+    value: "/home/user/.config/cc/transcripts/a1b2c3d4-e5f6.jsonl",
     truncateAt: 20,
   },
 } satisfies Story;

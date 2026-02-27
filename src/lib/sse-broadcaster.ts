@@ -10,7 +10,7 @@ const encoder = new TextEncoder();
  * route and hooks route can end up with different Set instances, meaning
  * broadcast() writes to an empty Set while clients live in another.
  */
-const GLOBAL_KEY = "__csm_sse_clients" as const;
+const GLOBAL_KEY = "__cc_sse_clients" as const;
 
 function getClients(): Set<ReadableStreamDefaultController> {
   const g = globalThis as unknown as Record<string, unknown>;

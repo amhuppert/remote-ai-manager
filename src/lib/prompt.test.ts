@@ -145,7 +145,7 @@ function createMockQuery(messages: Record<string, unknown>[]) {
 const defaultConfig = {
   baseDir: "/tmp/projects",
   ignorePatterns: [],
-  stateFilePath: "/tmp/csm/state.json",
+  stateFilePath: "/tmp/cc/state.json",
   claudeTimeoutMs: 300_000,
   maxTurns: 50,
 };
@@ -169,9 +169,7 @@ beforeEach(() => {
   getConversationMock.mockResolvedValue(conversation);
 
   appendTranscriptEntryMock.mockResolvedValue(undefined);
-  getTranscriptPathMock.mockResolvedValue(
-    "/tmp/csm/transcripts/conv-123.jsonl",
-  );
+  getTranscriptPathMock.mockResolvedValue("/tmp/cc/transcripts/conv-123.jsonl");
 
   const session = makeSession();
   session.conversations = [conversation];

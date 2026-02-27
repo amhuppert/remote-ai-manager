@@ -154,7 +154,7 @@ describe("runPreMergeValidation", () => {
 
   it("no-op when preMergeCommand is null", async () => {
     existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
+      if (String(p).includes("CommandCenter.json")) return true;
       return false;
     });
     readFileMock.mockResolvedValue(
@@ -166,7 +166,7 @@ describe("runPreMergeValidation", () => {
 
   it("no-op when preMergeCommand is absent", async () => {
     existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
+      if (String(p).includes("CommandCenter.json")) return true;
       return false;
     });
     readFileMock.mockResolvedValue(JSON.stringify({ initScriptPath: null }));
@@ -176,7 +176,7 @@ describe("runPreMergeValidation", () => {
 
   it("executes script with correct env vars", async () => {
     existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
+      if (String(p).includes("CommandCenter.json")) return true;
       if (String(p).includes("validate.sh")) return true;
       return false;
     });
@@ -209,7 +209,7 @@ describe("runPreMergeValidation", () => {
 
   it("throws when script file does not exist", async () => {
     existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
+      if (String(p).includes("CommandCenter.json")) return true;
       if (String(p).includes("validate.sh")) return false;
       return false;
     });
@@ -227,7 +227,7 @@ describe("runPreMergeValidation", () => {
 
   it("throws with gitOutput on script failure", async () => {
     existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
+      if (String(p).includes("CommandCenter.json")) return true;
       if (String(p).includes("validate.sh")) return true;
       return false;
     });
@@ -257,7 +257,7 @@ describe("runPreMergeValidation", () => {
 
   it("commits auto-fixes when script modifies files", async () => {
     existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
+      if (String(p).includes("CommandCenter.json")) return true;
       if (String(p).includes("validate.sh")) return true;
       return false;
     });
@@ -281,7 +281,7 @@ describe("runPreMergeValidation", () => {
 
   it("does not commit when script leaves no changes", async () => {
     existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("ClaudeSessionManager.json")) return true;
+      if (String(p).includes("CommandCenter.json")) return true;
       if (String(p).includes("validate.sh")) return true;
       return false;
     });

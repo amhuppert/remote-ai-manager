@@ -2,9 +2,9 @@
 
 ## Overview
 
-**Purpose**: The Command Autocomplete feature provides a discoverable, keyboard-driven interface for invoking custom Claude Code commands and skills from CSM's prompt input. It surfaces all available custom slash commands (project-level, user-level, plugin-sourced) and skills in a filterable dropdown overlay, eliminating the need to memorize command names. Built-in CLI commands (e.g., `/help`, `/clear`, `/fast`) are excluded.
+**Purpose**: The Command Autocomplete feature provides a discoverable, keyboard-driven interface for invoking custom Claude Code commands and skills from CC's prompt input. It surfaces all available custom slash commands (project-level, user-level, plugin-sourced) and skills in a filterable dropdown overlay, eliminating the need to memorize command names. Built-in CLI commands (e.g., `/help`, `/clear`, `/fast`) are excluded.
 
-**Users**: CSM users interacting with the session detail prompt input will use this to discover and select commands before sending them to Claude Code.
+**Users**: CC users interacting with the session detail prompt input will use this to discover and select commands before sending them to Claude Code.
 
 **Impact**: Adds a new API route for command discovery, a new React component for the autocomplete overlay, a fuzzy filtering utility, and a command file parser. Modifies `SessionDetailPage.tsx` to integrate the autocomplete with the existing prompt textarea.
 
@@ -18,7 +18,7 @@
 
 ### Non-Goals
 
-- Command execution logic (CSM already sends prompts to Claude CLI verbatim)
+- Command execution logic (CC already sends prompts to Claude CLI verbatim)
 - Real-time command file watching or hot-reload
 - Custom command creation UI
 - Autocomplete for non-slash content (arguments, file paths, etc.)

@@ -2,16 +2,16 @@
 
 ## Overview
 
-**Purpose**: The UI Design System formalizes the existing CSM visual language — design tokens, component patterns, typography rules, color semantics, layout architecture, responsive behaviors, and atmospheric effects — into a spec-driven single source of truth that replaces the legacy `memory-bank/design-system.md`.
+**Purpose**: The UI Design System formalizes the existing CC visual language — design tokens, component patterns, typography rules, color semantics, layout architecture, responsive behaviors, and atmospheric effects — into a spec-driven single source of truth that replaces the legacy `memory-bank/design-system.md`.
 
-**Users**: Developers implementing or extending CSM UI features reference this spec to ensure visual consistency across all views.
+**Users**: Developers implementing or extending CC UI features reference this spec to ensure visual consistency across all views.
 
 **Impact**: Replaces the existing design system document (which had drifted from the CSS implementation) with a validated, requirements-traced specification. No code changes to `globals.css` are required — the design system is already fully implemented.
 
 ### Goals
 
 - Formalize the existing design system as a testable specification
-- Provide a complete component and token reference for all CSM UI development
+- Provide a complete component and token reference for all CC UI development
 - Ensure the spec accurately reflects the current CSS implementation
 - Replace `memory-bank/design-system.md` with the spec as the canonical reference
 
@@ -24,7 +24,7 @@
 
 ## Design Language Reference
 
-This section captures the design intent, usage contracts, and decision rules that CSS cannot express. It replaces `memory-bank/design-system.md` as the canonical reference for the CSM visual identity.
+This section captures the design intent, usage contracts, and decision rules that CSS cannot express. It replaces `memory-bank/design-system.md` as the canonical reference for the CC visual identity.
 
 ### Vision: "Ground Control"
 

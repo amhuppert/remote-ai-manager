@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Purpose**: This feature delivers in-app viewing of the `focus.md` document and session mode visibility to CSM users managing focus mode coding sessions.
+**Purpose**: This feature delivers in-app viewing of the `focus.md` document and session mode visibility to CC users managing focus mode coding sessions.
 
 **Users**: Developers monitoring focus mode sessions use the markdown viewer to read the agent's captured objective alongside the conversation, and the mode indicator to quickly identify session types in the session list.
 
@@ -15,7 +15,7 @@
 
 ### Non-Goals
 - Live-reloading/watching `focus.md` for changes (manual refresh is sufficient)
-- Editing markdown files from the CSM UI
+- Editing markdown files from the CC UI
 - Viewing markdown files other than `focus.md` (component is generic, but UI integration is scoped to `focus.md` only)
 - Changing the layout switcher modes or adding new page-level layout arrangements
 
@@ -152,7 +152,7 @@ sequenceDiagram
 
 **Responsibilities & Constraints**
 - Accept raw markdown string and render it using `react-markdown` with `remark-gfm`
-- Apply CSS classes consistent with the CSM design system (mono font for code, proper heading hierarchy)
+- Apply CSS classes consistent with the CC design system (mono font for code, proper heading hierarchy)
 - Handle three states: loading (spinner), content (rendered markdown), empty (informational message)
 - Scrollable via CSS `overflow-y: auto` on the content container
 - Generic — no knowledge of `focus.md` or any specific file; receives content as a prop
@@ -306,7 +306,7 @@ interface SessionModeBadgeProps {
 
 ### Domain Model
 
-No new entities. The existing `SessionState` already includes `creationMode: "fast" | "focus"` (defaults to `"fast"`). The `focus.md` file is an external filesystem artifact — not persisted in CSM state.
+No new entities. The existing `SessionState` already includes `creationMode: "fast" | "focus"` (defaults to `"fast"`). The `focus.md` file is an external filesystem artifact — not persisted in CC state.
 
 ### Data Contracts & Integration
 

@@ -13,7 +13,7 @@ const { ProjectsPage, SessionsPage, DetailPage, DeepBreadcrumbs } =
 describe("Topbar stories", () => {
   it("ProjectsPage renders logo and global status", async () => {
     await ProjectsPage.run();
-    expect(screen.getByText("CSM")).toBeInTheDocument();
+    expect(screen.getByText("CC")).toBeInTheDocument();
     expect(screen.getByText("3 projects")).toBeInTheDocument();
   });
 

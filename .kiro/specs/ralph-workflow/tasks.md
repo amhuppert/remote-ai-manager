@@ -103,7 +103,7 @@
 
 - [x] 6.2 Implement state persistence, streaming, and error handling
   - After each iteration, persist iteration metadata (duration, cost, turns, git metrics, status report, task mutations, progress classification) to the workflow state via atomic writes
-  - Write each iteration's transcript following existing CSM JSONL patterns using the managed conversation
+  - Write each iteration's transcript following existing CC JSONL patterns using the managed conversation
   - Stream live iteration content (SDK messages) to connected UI clients via the workflow stream registry during execution
   - Catch SDK errors and timeouts per-iteration: log the error, record the iteration with error/timeout status, update the circuit breaker, and proceed to exit evaluation rather than halting immediately
   - Include context from failed iterations (errors, blocked tasks) in the next iteration's prompt via the prompt builder

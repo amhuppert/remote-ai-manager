@@ -72,7 +72,7 @@
   1. Offline migration script — explicit but requires manual execution
   2. Read-time migration — transparent, automatic, no user action needed
 - **Selected Approach**: Read-time migration via Zod schema defaults and a `migrateSessionState()` utility
-- **Rationale**: CSM is a local-first tool with no deployment pipeline. Users should not need to run migration commands.
+- **Rationale**: CC is a local-first tool with no deployment pipeline. Users should not need to run migration commands.
 - **Trade-offs**: Slightly more complex schema parsing; legacy fields kept as optional in schema for compatibility
 
 ### Decision: Session-level locking for conversations

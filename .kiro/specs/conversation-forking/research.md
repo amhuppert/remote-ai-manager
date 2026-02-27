@@ -5,7 +5,7 @@
 - **Discovery Scope**: Extension (existing conversation system)
 - **Key Findings**:
   - Claude Agent SDK has native `forkSession` + `resume` support — no manual history replay needed
-  - SDK's `resumeSessionAt` requires message UUIDs not currently stored in CSM transcripts
+  - SDK's `resumeSessionAt` requires message UUIDs not currently stored in CC transcripts
   - UI components (MessageActions, MessageEditor) already created during prototyping phase
 
 ## Research Log
@@ -16,15 +16,15 @@
 - **Findings**:
   - `query()` options include `resume: string` (session ID to resume), `forkSession: boolean` (fork to new session ID), `resumeSessionAt: string` (resume up to specific message UUID)
   - When `forkSession: true` is used with `resume`, the SDK loads the conversation history from the original session and creates a new forked session ID
-  - `resumeSessionAt` requires `SDKAssistantMessage.uuid` — a field CSM does not currently persist in transcript entries
-  - The SDK stores its own session data in `~/.claude/projects/` via `persistSession: true` (already enabled in CSM)
-- **Implications**: CSM can leverage SDK-native forking rather than building its own history management. For v1, use `resume` + `forkSession: true` without `resumeSessionAt` — the SDK loads the full session and the new prompt provides the divergence context.
+  - `resumeSessionAt` requires `SDKAssistantMessage.uuid` — a field CC does not currently persist in transcript entries
+  - The SDK stores its own session data in `~/.claude/projects/` via `persistSession: true` (already enabled in CC)
+- **Implications**: CC can leverage SDK-native forking rather than building its own history management. For v1, use `resume` + `forkSession: true` without `resumeSessionAt` — the SDK loads the full session and the new prompt provides the divergence context.
 
 ### Transcript Storage & Fork Point
 - **Context**: How to copy transcript entries up to a fork point
 - **Sources Consulted**: `src/lib/transcript.ts`, JSONL file format
 - **Findings**:
-  - Transcripts are append-only JSONL files at `~/.config/csm/transcripts/{id}.jsonl`
+  - Transcripts are append-only JSONL files at `~/.config/cc/transcripts/{id}.jsonl`
   - Each line is a `TranscriptEntry` with `timestamp`, `type`, `role?`, `content?`, `raw?`
   - `readConversationMessages()` filters to only `role === "user" | "assistant"` entries with content
   - Raw JSONL lines include system/tool_result entries not visible in the UI
@@ -67,7 +67,7 @@
   2. SDK `resume` + `forkSession: true` — let SDK handle session forking natively
   3. SDK `resume` + `forkSession: true` + `resumeSessionAt` — fork at specific message
 - **Selected Approach**: Option 2 — `resume` + `forkSession: true` without `resumeSessionAt`
-- **Rationale**: Simplest approach. CSM doesn't store message UUIDs, and the SDK's internal session files contain the full conversation state. The new prompt naturally provides divergence context.
+- **Rationale**: Simplest approach. CC doesn't store message UUIDs, and the SDK's internal session files contain the full conversation state. The new prompt naturally provides divergence context.
 - **Trade-offs**: SDK loads full session history (slightly more work for Claude), but avoids schema changes for UUID storage
 - **Follow-up**: If performance becomes an issue with long conversations, add `resumeSessionAt` support by storing UUIDs in transcript entries
 
@@ -90,13 +90,13 @@
 - **Trade-offs**: Slightly larger schema, but eliminates runtime dependency on source conversation existence
 
 ## Risks & Mitigations
-- **SDK forkSession untested in CSM** — Mitigate with integration test using real SDK session
+- **SDK forkSession untested in CC** — Mitigate with integration test using real SDK session
 - **Source conversation deleted before fork prompted** — Mitigate by storing `sourceClaudeSessionId` in fork metadata (SDK session files persist independently)
 - **Large transcript copy for long conversations** — Mitigate with streaming copy (read line by line) rather than loading full file into memory
 - **Mid-stream fork attempt** — Mitigate by disabling fork actions while `isBusy` (already in requirements)
 
 ## References
 - Claude Agent SDK type declarations: `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`
-- CSM conversation management: `src/lib/conversations.ts`
-- CSM prompt execution: `src/lib/prompt.ts`
-- CSM transcript storage: `src/lib/transcript.ts`
+- CC conversation management: `src/lib/conversations.ts`
+- CC prompt execution: `src/lib/prompt.ts`
+- CC transcript storage: `src/lib/transcript.ts`

@@ -164,13 +164,13 @@ describe("DevServerRegistry", () => {
   });
 
   describe("adopted servers", () => {
-    it("detects CSM_ADOPTED markers and sets entry.adopted", async () => {
+    it("detects CC_ADOPTED markers and sets entry.adopted", async () => {
       await registry.startServer({
         projectPath: "/proj",
         sessionName: "s1",
         serverName: "adopted-test",
         command:
-          "echo CSM_ADOPTED=1 && echo CSM_ADOPTED_PID=99999 && echo CC_PORT=3000 && exit 0",
+          "echo CC_ADOPTED=1 && echo CC_ADOPTED_PID=99999 && echo CC_PORT=3000 && exit 0",
         worktreePath: "/tmp",
       });
 
@@ -195,7 +195,7 @@ describe("DevServerRegistry", () => {
         sessionName: "s1",
         serverName: "adopted-exit",
         command:
-          "echo CSM_ADOPTED=1 && echo CSM_ADOPTED_PID=99999 && echo CC_PORT=3000 && exit 0",
+          "echo CC_ADOPTED=1 && echo CC_ADOPTED_PID=99999 && echo CC_PORT=3000 && exit 0",
         worktreePath: "/tmp",
       });
 
@@ -219,7 +219,7 @@ describe("DevServerRegistry", () => {
         sessionName: "s1",
         serverName: "adopted-stop",
         command:
-          "echo CSM_ADOPTED=1 && echo CSM_ADOPTED_PID=99999 && echo CC_PORT=5000 && exit 0",
+          "echo CC_ADOPTED=1 && echo CC_ADOPTED_PID=99999 && echo CC_PORT=5000 && exit 0",
         worktreePath: "/tmp",
       });
 

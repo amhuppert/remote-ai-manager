@@ -846,20 +846,20 @@ describe("deleteSession", () => {
     );
   });
 
-  it("returns worktreeRemoved=true for CSM-created sessions", async () => {
+  it("returns worktreeRemoved=true for CC-created sessions", async () => {
     readStateMock.mockResolvedValue(
-      stateWithSession("/projects/repo", "csm-session", { source: "cc" }),
+      stateWithSession("/projects/repo", "cc-session", { source: "cc" }),
     );
     existsSyncMock.mockReturnValue(true);
     mockExecFileSuccess();
 
-    const result = await deleteSession("/projects/repo", "csm-session");
+    const result = await deleteSession("/projects/repo", "cc-session");
 
     expect(result.worktreeRemoved).toBe(true);
     expect(execFileMock).toHaveBeenCalled();
   });
 
-  it("removes worktree for imported sessions the same as CSM-created ones", async () => {
+  it("removes worktree for imported sessions the same as CC-created ones", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "imported-session", {
         source: "imported",
@@ -880,7 +880,7 @@ describe("deleteSession", () => {
     ).toBeUndefined();
   });
 
-  it("treats sessions without source field as CSM-created (backward compat)", async () => {
+  it("treats sessions without source field as CC-created (backward compat)", async () => {
     const stateWithoutSource = {
       projects: {
         "/projects/repo": {

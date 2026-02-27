@@ -61,8 +61,8 @@ type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 // globalThis Singleton Registries (HMR-safe)
 // ============================================================
 
-const JOB_REGISTRY_KEY = "__csm_background_jobs" as const;
-const ANALYSIS_REGISTRY_KEY = "__csm_conflict_analysis" as const;
+const JOB_REGISTRY_KEY = "__cc_background_jobs" as const;
+const ANALYSIS_REGISTRY_KEY = "__cc_conflict_analysis" as const;
 
 function getJobRegistry(): Map<string, BackgroundJob> {
   const g = globalThis as unknown as Record<string, unknown>;

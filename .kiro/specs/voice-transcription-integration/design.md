@@ -2,15 +2,15 @@
 
 ## Overview
 
-**Purpose**: This feature delivers voice-to-text input to CSM developers, enabling dictation of prompts on the session detail page instead of (or alongside) typing.
+**Purpose**: This feature delivers voice-to-text input to CC developers, enabling dictation of prompts on the session detail page instead of (or alongside) typing.
 
-**Users**: Developers using CSM to manage Claude Code sessions will use voice input for faster prompt entry, especially when describing complex tasks or when remote (e.g., via Tailscale from a mobile device).
+**Users**: Developers using CC to manage Claude Code sessions will use voice input for faster prompt entry, especially when describing complex tasks or when remote (e.g., via Tailscale from a mobile device).
 
-**Impact**: Extends the Voice2Text CLI tool into an HTTP server, adds a proxy API layer in CSM, and introduces a voice record button in the session UI. No existing functionality is modified — the voice feature is additive and gracefully hidden when the Voice2Text server is unavailable. When existing text is present in the input field, it is automatically forwarded as context so the cleanup phase produces output that continues naturally from the prior content.
+**Impact**: Extends the Voice2Text CLI tool into an HTTP server, adds a proxy API layer in CC, and introduces a voice record button in the session UI. No existing functionality is modified — the voice feature is additive and gracefully hidden when the Voice2Text server is unavailable. When existing text is present in the input field, it is automatically forwarded as context so the cleanup phase produces output that continues naturally from the prior content.
 
 ### Goals
 - Enable browser-based voice dictation that flows into the existing prompt textarea
-- Proxy transcription through CSM so Voice2Text can remain localhost-bound
+- Proxy transcription through CC so Voice2Text can remain localhost-bound
 - Support per-project voice configuration (context files, cleanup instructions)
 - Provide clear visual feedback for recording, processing, and error states
 - Automatically pass existing input text as context to improve transcription cleanup continuity
@@ -30,7 +30,7 @@ The integration touches two existing systems:
 
 **Voice2Text CLI** (`voice-to-text` project): Hotkey-driven CLI that records audio, transcribes via OpenAI gpt-4o-transcribe, cleans up via Claude CLI, and outputs to clipboard or file. Config resolution merges 4 layers (global → local → specified → CLI). The CLI's core services (Transcriber, CleanupService) are stateless and reusable.
 
-**CSM** (`remote-ai-manager` project): Next.js App Router application with REST API routes proxying to local services. The session detail page has an existing prompt input area (textarea + send button) with error display. Project paths are resolved via `resolveProjectPath()`.
+**CC** (`remote-ai-manager` project): Next.js App Router application with REST API routes proxying to local services. The session detail page has an existing prompt input area (textarea + send button) with error display. Project paths are resolved via `resolveProjectPath()`.
 
 Both systems are extended without breaking existing behavior.
 
@@ -44,7 +44,7 @@ graph TB
         SDP[SessionDetailPage]
     end
 
-    subgraph CSM_Server[CSM Next.js Server]
+    subgraph CC_Server[CC Next.js Server]
         HealthRoute[GET api voice health]
         TranscribeRoute[POST api voice transcribe]
         ProjectResolver[resolveProjectPath]
@@ -71,10 +71,10 @@ graph TB
 ```
 
 **Architecture Integration**:
-- **Selected pattern**: API proxy — CSM forwards voice requests to localhost-bound V2T server, consistent with CSM's role as a control plane
-- **Domain boundaries**: V2T owns transcription/cleanup; CSM owns project resolution, UI, and remote access
+- **Selected pattern**: API proxy — CC forwards voice requests to localhost-bound V2T server, consistent with CC's role as a control plane
+- **Domain boundaries**: V2T owns transcription/cleanup; CC owns project resolution, UI, and remote access
 - **Existing patterns preserved**: `withTracing` for API routes, `resolveProjectPath` for project lookup, `promptError` for error display, flex layout for prompt input area
-- **New components rationale**: V2T server (HTTP access to transcription), CSM proxy routes (remote access bridge), recording hook (browser audio capture), voice button (UI entry point)
+- **New components rationale**: V2T server (HTTP access to transcription), CC proxy routes (remote access bridge), recording hook (browser audio capture), voice button (UI entry point)
 - **Steering compliance**: No new npm dependencies, TypeScript strict mode, Zod validation at boundaries, colocated structure
 
 ### Technology Stack
@@ -82,7 +82,7 @@ graph TB
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
 | Frontend | React 19, MediaRecorder API | Audio capture, voice button UI | Native browser APIs, no libraries |
-| Backend (CSM) | Next.js App Router | API proxy routes | Follows existing route patterns |
+| Backend (CC) | Next.js App Router | API proxy routes | Follows existing route patterns |
 | Backend (V2T) | Bun.serve() | HTTP server for transcription | Built-in to Bun runtime, zero deps |
 | External API | OpenAI gpt-4o-transcribe | Speech-to-text transcription | Existing dependency in V2T |
 | External CLI | Claude CLI | Transcription cleanup | Existing dependency in V2T |
@@ -96,14 +96,14 @@ sequenceDiagram
     participant U as User
     participant VRB as VoiceRecordButton
     participant Hook as useVoiceRecorder
-    participant CSM as CSM API
+    participant CC as CC API
     participant V2T as Voice2Text Server
 
     Note over Hook: On mount: check availability
-    Hook->>CSM: GET /api/voice/health
-    CSM->>V2T: GET /health
-    V2T-->>CSM: 200 status ok
-    CSM-->>Hook: available true
+    Hook->>CC: GET /api/voice/health
+    CC->>V2T: GET /health
+    V2T-->>CC: 200 status ok
+    CC-->>Hook: available true
 
     U->>VRB: Click mic button
     VRB->>Hook: toggleRecording
@@ -113,20 +113,20 @@ sequenceDiagram
     VRB->>Hook: toggleRecording
     Hook->>Hook: Stop MediaRecorder, assemble Blob
     Hook->>Hook: Read existing text from getContext callback
-    Hook->>CSM: POST /api/voice/transcribe (audio + projectName + context?)
-    CSM->>CSM: resolveProjectPath(projectName)
-    CSM->>V2T: POST /transcribe (audio + projectPath + context?)
+    Hook->>CC: POST /api/voice/transcribe (audio + projectName + context?)
+    CC->>CC: resolveProjectPath(projectName)
+    CC->>V2T: POST /transcribe (audio + projectPath + context?)
     V2T->>V2T: Write temp file, load project config
     V2T->>V2T: OpenAI transcribe
     V2T->>V2T: Claude cleanup (with priorOutput if context provided)
     V2T->>V2T: Delete temp file
-    V2T-->>CSM: 200 text cleaned transcription
-    CSM-->>Hook: 200 text cleaned transcription
+    V2T-->>CC: 200 text cleaned transcription
+    CC-->>Hook: 200 text cleaned transcription
     Hook->>VRB: onResult callback
     VRB->>U: Text appears in prompt textarea
 ```
 
-**Key decisions**: The flow is synchronous request-response (no WebSocket streaming). The 60-second timeout at the CSM proxy layer protects against hung V2T processes.
+**Key decisions**: The flow is synchronous request-response (no WebSocket streaming). The 60-second timeout at the CC proxy layer protects against hung V2T processes.
 
 ## Requirements Traceability
 
@@ -147,14 +147,14 @@ sequenceDiagram
 | 3.1 | Extension-based MIME | Transcriber | — | — |
 | 3.2 | Multi-format support | Transcriber | MIME map | — |
 | 3.3 | Unrecognized ext default | Transcriber | — | — |
-| 4.1 | CSM transcribe proxy | TranscribeRoute | POST /api/voice/transcribe | Transcription |
+| 4.1 | CC transcribe proxy | TranscribeRoute | POST /api/voice/transcribe | Transcription |
 | 4.2-4.3 | Missing field validation | TranscribeRoute | 400 errors | — |
 | 4.4 | Project not found | TranscribeRoute | 404 error | — |
 | 4.5 | V2T unreachable | TranscribeRoute | 502 error | — |
 | 4.6 | V2T error forwarding | TranscribeRoute | upstream status | — |
 | 4.7 | Timeout handling | TranscribeRoute | 504 error | — |
 | 4.8 | Configurable V2T URL | TranscribeRoute | VOICE_SERVER_URL env | — |
-| 5.1 | CSM health proxy | HealthRoute | GET /api/voice/health | Health check |
+| 5.1 | CC health proxy | HealthRoute | GET /api/voice/health | Health check |
 | 5.2 | Health timeout | HealthRoute | 3s timeout | — |
 | 6.1 | Mic access + recording | useVoiceRecorder | getUserMedia, MediaRecorder | Transcription |
 | 6.2 | MIME negotiation | useVoiceRecorder | isTypeSupported | — |
@@ -191,12 +191,12 @@ sequenceDiagram
 | ConfigLoader | V2T / Config | Load project-specific voice.json | 2.1-2.3 | Filesystem (P0) | Service |
 | Transcriber | V2T / Service | MIME-aware OpenAI transcription | 3.1-3.3 | OpenAI API (P0) | Service |
 | ContextUtil | V2T / Util | Shared context file reader | 1.3 | Filesystem (P0) | Service |
-| TranscribeRoute | CSM / API | Proxy transcription to V2T | 4.1-4.8, 9.3-9.5, 10.3 | resolveProjectPath (P0), V2T Server (P0) | API |
-| HealthRoute | CSM / API | Proxy health check to V2T | 5.1-5.2 | V2T Server (P1) | API |
-| useVoiceRecorder | CSM / Hook | Browser audio recording + transcription | 6.1-6.8, 9.1-9.2, 10.1, 10.2 | MediaRecorder (P0), CSM API (P0) | State |
-| VoiceRecordButton | CSM / UI | Voice input button with visual states | 7.1-7.6 | useVoiceRecorder (P0) | — |
-| SessionDetailPage | CSM / UI | Integration point for voice button | 8.1-8.4, 10.6 | VoiceRecordButton (P1) | — |
-| CreateSessionModal | CSM / UI | Focus mode session creation with voice | 10.6 | useVoiceRecorder (P1) | — |
+| TranscribeRoute | CC / API | Proxy transcription to V2T | 4.1-4.8, 9.3-9.5, 10.3 | resolveProjectPath (P0), V2T Server (P0) | API |
+| HealthRoute | CC / API | Proxy health check to V2T | 5.1-5.2 | V2T Server (P1) | API |
+| useVoiceRecorder | CC / Hook | Browser audio recording + transcription | 6.1-6.8, 9.1-9.2, 10.1, 10.2 | MediaRecorder (P0), CC API (P0) | State |
+| VoiceRecordButton | CC / UI | Voice input button with visual states | 7.1-7.6 | useVoiceRecorder (P0) | — |
+| SessionDetailPage | CC / UI | Integration point for voice button | 8.1-8.4, 10.6 | VoiceRecordButton (P1) | — |
+| CreateSessionModal | CC / UI | Focus mode session creation with voice | 10.6 | useVoiceRecorder (P1) | — |
 
 ### Voice2Text Server Layer
 
@@ -306,7 +306,7 @@ function readContextFilesContent(files: ResolvedFileRef[]): string;
 // Returns transcription prompt string with context block, or basic instructions if no files
 ```
 
-### CSM API Layer
+### CC API Layer
 
 #### TranscribeRoute
 
@@ -362,7 +362,7 @@ function readContextFilesContent(files: ResolvedFileRef[]): string;
 - No withTracing needed (lightweight poll)
 - Reads VOICE_SERVER_URL from env (default: http://localhost:7880)
 
-### CSM Client Layer
+### CC Client Layer
 
 #### useVoiceRecorder
 
@@ -384,8 +384,8 @@ function readContextFilesContent(files: ResolvedFileRef[]): string;
 **Dependencies**
 - External: MediaRecorder API (P0)
 - External: navigator.mediaDevices.getUserMedia (P0)
-- Outbound: CSM health API (P1)
-- Outbound: CSM transcribe API (P0)
+- Outbound: CC health API (P1)
+- Outbound: CC transcribe API (P0)
 
 **Contracts**: State [x]
 
@@ -499,15 +499,15 @@ interface HealthResponse {
 }
 ```
 
-#### CSM API Request/Response
+#### CC API Request/Response
 
 ```typescript
-// CSM voice health response
+// CC voice health response
 interface VoiceHealthResponse {
   available: boolean;
 }
 
-// CSM transcribe — uses same TranscribeResponse shape
+// CC transcribe — uses same TranscribeResponse shape
 // Request: FormData with audio (File) + projectName (string) + context? (string)
 // Response: { text: string } | { error: string }
 // When context is provided and non-empty, it is forwarded to V2T as context field
@@ -532,20 +532,20 @@ const MIME_MAP: Record<string, { mime: string; filename: string }> = {
 
 ### Error Strategy
 
-Errors follow a layered approach: V2T server handles transcription/cleanup failures with fallback behavior; CSM API routes map upstream errors to appropriate HTTP status codes; the client hook delivers error messages to the UI via callback.
+Errors follow a layered approach: V2T server handles transcription/cleanup failures with fallback behavior; CC API routes map upstream errors to appropriate HTTP status codes; the client hook delivers error messages to the UI via callback.
 
 ### Error Categories and Responses
 
 **User Errors (4xx)**:
-- Missing audio file → 400 at CSM route
-- Missing projectName → 400 at CSM route
-- Project not found → 404 at CSM route
+- Missing audio file → 400 at CC route
+- Missing projectName → 400 at CC route
+- Project not found → 404 at CC route
 - Microphone denied → client-side error message
 - Recording too short → client-side error message
 
 **System Errors (5xx)**:
-- V2T server unreachable → 502 at CSM route → "Voice server is not available"
-- Transcription timeout → 504 at CSM route → "Transcription timed out"
+- V2T server unreachable → 502 at CC route → "Voice server is not available"
+- Transcription timeout → 504 at CC route → "Transcription timed out"
 - OpenAI API failure → 500 from V2T → forwarded to client
 - V2T internal error → 500 from V2T → forwarded to client
 
@@ -557,7 +557,7 @@ Errors follow a layered approach: V2T server handles transcription/cleanup failu
 ### Monitoring
 
 - V2T server: verbose logging flag for request lifecycle (audio size, transcription time, cleanup time)
-- CSM API: `withTracing` on transcribe route logs request start/complete/error with trace ID
+- CC API: `withTracing` on transcribe route logs request start/complete/error with trace ID
 - Client: errors routed through existing `promptError` display
 
 ## Testing Strategy
@@ -576,10 +576,10 @@ Errors follow a layered approach: V2T server handles transcription/cleanup failu
 - V2T: `POST /transcribe` without audio returns 400
 - V2T: `POST /transcribe` with context field uses file-mode cleanup (priorOutput) (10.4)
 - V2T: `POST /transcribe` without context field uses standard cleanup (10.5)
-- CSM: `POST /api/voice/transcribe` proxies correctly when V2T running
-- CSM: `POST /api/voice/transcribe` forwards optional context field to V2T (10.3)
-- CSM: `GET /api/voice/health` returns `{ available: true }` when V2T running
-- CSM: `GET /api/voice/health` returns `{ available: false }` when V2T not running
+- CC: `POST /api/voice/transcribe` proxies correctly when V2T running
+- CC: `POST /api/voice/transcribe` forwards optional context field to V2T (10.3)
+- CC: `GET /api/voice/health` returns `{ available: true }` when V2T running
+- CC: `GET /api/voice/health` returns `{ available: false }` when V2T not running
 
 ### E2E Tests
 - Voice button visible when V2T server running, hidden when not

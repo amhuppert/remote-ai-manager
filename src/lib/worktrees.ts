@@ -115,7 +115,7 @@ export function deriveSessionName(worktree: DiscoveredWorktree): string {
     if (name.startsWith("refs/heads/")) {
       name = name.slice("refs/heads/".length);
     }
-    // Strip csm/ prefix (CSM convention)
+    // Strip csm/ prefix (branch naming convention)
     if (name.startsWith("csm/")) {
       name = name.slice("csm/".length);
     }

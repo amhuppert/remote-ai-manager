@@ -1,6 +1,6 @@
 # Requirements Document
 
-> **UPDATED (2026-02-22) — SDK Migration:** The JSONL transcript parser (Requirements 1-5) now reads CSM's own transcript files at `<configDir>/transcripts/<conversationId>.jsonl` rather than Claude Code's external filesystem. The primary data path (`session.messages`) is unchanged.
+> **UPDATED (2026-02-22) — SDK Migration:** The JSONL transcript parser (Requirements 1-5) now reads CC's own transcript files at `<configDir>/transcripts/<conversationId>.jsonl` rather than Claude Code's external filesystem. The primary data path (`session.messages`) is unchanged.
 
 ## Introduction
 

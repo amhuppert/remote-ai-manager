@@ -2,13 +2,13 @@
 
 ## Overview
 
-Integrate browser-based voice transcription into CSM by extending the existing Voice2Text CLI tool (`/home/alex/github/my-ai-resources/voice-to-text`) into an HTTP server and adding audio capture + voice button UI in CSM's session detail page.
+Integrate browser-based voice transcription into CC by extending the existing Voice2Text CLI tool (`/home/alex/github/my-ai-resources/voice-to-text`) into an HTTP server and adding audio capture + voice button UI in CC's session detail page.
 
-**Architecture**: Browser captures audio via MediaRecorder → sends to CSM API proxy route → CSM forwards to Voice2Text HTTP server with project path → server runs transcription (OpenAI) + cleanup (Claude CLI) → returns cleaned text → populates prompt textarea.
+**Architecture**: Browser captures audio via MediaRecorder → sends to CC API proxy route → CC forwards to Voice2Text HTTP server with project path → server runs transcription (OpenAI) + cleanup (Claude CLI) → returns cleaned text → populates prompt textarea.
 
 **Two workstreams**:
 1. Voice2Text server extension (changes to the voice-to-text project)
-2. CSM voice integration (changes to the CSM project)
+2. CC voice integration (changes to the CC project)
 
 ## Architecture
 
@@ -16,7 +16,7 @@ Integrate browser-based voice transcription into CSM by extending the existing V
 Browser (any machine)
   │ POST /api/voice/transcribe  (FormData: audio blob + projectName)
   ▼
-CSM Next.js API Route (machine A)
+CC Next.js API Route (machine A)
   │ resolves projectName → projectPath
   │ POST http://localhost:7880/transcribe  (FormData: audio blob + projectPath)
   ▼
@@ -29,10 +29,10 @@ Voice2Text Server (machine A, localhost:7880)
   ▼
 Returns { text: "cleaned transcription" }
   ▼
-CSM API Route → Browser → populates prompt textarea
+CC API Route → Browser → populates prompt textarea
 ```
 
-CSM proxies the request rather than having the browser call Voice2Text directly because Voice2Text runs on localhost and CSM may be accessed remotely via Tailscale.
+CC proxies the request rather than having the browser call Voice2Text directly because Voice2Text runs on localhost and CC may be accessed remotely via Tailscale.
 
 ## Technology Stack
 
@@ -40,10 +40,10 @@ CSM proxies the request rather than having the browser call Voice2Text directly 
 |---|---|
 | Voice2Text server | Bun.serve() (built-in, zero new dependencies) |
 | Audio format from browser | WebM/Opus via MediaRecorder (OpenAI accepts webm natively) |
-| CSM audio recording | Custom React hook wrapping native MediaRecorder API |
-| CSM voice button | React component with CSS animations |
-| CSM proxy route | Next.js App Router route handler |
-| CSM ↔ Voice2Text | HTTP multipart/form-data via fetch |
+| CC audio recording | Custom React hook wrapping native MediaRecorder API |
+| CC voice button | React component with CSS animations |
+| CC proxy route | Next.js App Router route handler |
+| CC ↔ Voice2Text | HTTP multipart/form-data via fetch |
 
 No new npm dependencies required in either project.
 
@@ -64,7 +64,7 @@ voice-to-text/src/
     ...                # UNCHANGED
 ```
 
-### CSM Changes
+### CC Changes
 
 ```
 remote-ai-manager/src/
@@ -188,7 +188,7 @@ export interface HealthResponse {
 
 **All other routes**: Return 404 `{ error: "Not found" }`
 
-**CORS**: Add `Access-Control-Allow-Origin: *` header to all responses (allows direct browser access if needed in the future, though currently proxied through CSM).
+**CORS**: Add `Access-Control-Allow-Origin: *` header to all responses (allows direct browser access if needed in the future, though currently proxied through CC).
 
 ### 5. Voice2Text: Main Entry Point Changes
 
@@ -226,7 +226,7 @@ The compiled binary (`bun build src/main.ts --compile --outfile dist/voice-to-te
 
 ---
 
-### 7. CSM: Voice Transcribe API Route
+### 7. CC: Voice Transcribe API Route
 
 **File**: `src/app/api/voice/transcribe/route.ts`
 
@@ -263,7 +263,7 @@ The compiled binary (`bun build src/main.ts --compile --outfile dist/voice-to-te
 - Voice server error → forward status code and error message
 - Timeout → 504 `{ error: "Transcription timed out" }`
 
-### 8. CSM: Voice Health API Route
+### 8. CC: Voice Health API Route
 
 **File**: `src/app/api/voice/health/route.ts`
 
@@ -280,7 +280,7 @@ The compiled binary (`bun build src/main.ts --compile --outfile dist/voice-to-te
 
 No authentication. No tracing needed (lightweight health check).
 
-### 9. CSM: useVoiceRecorder Hook
+### 9. CC: useVoiceRecorder Hook
 
 **File**: `src/hooks/useVoiceRecorder.ts`
 
@@ -334,7 +334,7 @@ interface UseVoiceRecorderReturn {
 
 **Cleanup** (on unmount): Stop any active MediaRecorder, clear timers, abort in-flight fetch via AbortController.
 
-### 10. CSM: VoiceRecordButton Component
+### 10. CC: VoiceRecordButton Component
 
 **File**: `src/components/VoiceRecordButton.tsx`
 
@@ -375,7 +375,7 @@ interface VoiceRecordButtonProps {
 - Microphone: Simple mic path (12x18 viewBox)
 - Stop: Filled square (simple rect)
 
-### 11. CSM: SessionDetailPage Integration
+### 11. CC: SessionDetailPage Integration
 
 **File**: `src/app/projects/[name]/[session]/SessionDetailPage.tsx`
 
@@ -428,7 +428,7 @@ interface VoiceRecordButtonProps {
    </div>
    ```
 
-### 12. CSM: Server Component Changes
+### 12. CC: Server Component Changes
 
 **File**: `src/app/projects/[name]/[session]/page.tsx`
 
@@ -446,7 +446,7 @@ Pass `projectPath` to SessionDetailPage:
 
 `projectPath` is already resolved on line 20 of this file.
 
-### 13. CSM: CSS Additions
+### 13. CC: CSS Additions
 
 **File**: `src/app/globals.css`
 
@@ -543,7 +543,7 @@ Execute in this exact order. Each step should be verified before proceeding.
    # Should return: {"status":"ok","version":"1.0.0"}
    ```
 
-### Phase 2: CSM API Proxy Routes
+### Phase 2: CC API Proxy Routes
 
 9. **Create health check route** — Write `src/app/api/voice/health/route.ts` as specified.
 
@@ -555,7 +555,7 @@ Execute in this exact order. Each step should be verified before proceeding.
     # Should return: {"available":true}
     ```
 
-### Phase 3: CSM UI Integration
+### Phase 3: CC UI Integration
 
 12. **Create useVoiceRecorder hook** — Write `src/hooks/useVoiceRecorder.ts` as specified.
 
@@ -571,7 +571,7 @@ Execute in this exact order. Each step should be verified before proceeding.
     - Add handleVoiceResult callback
     - Insert VoiceRecordButton in prompt-input-wrapper between textarea and send button
 
-17. **End-to-end test** — With both Voice2Text server and CSM dev server running:
+17. **End-to-end test** — With both Voice2Text server and CC dev server running:
     - Open a session detail page
     - Verify voice button appears (or is absent if server is down)
     - Click voice button, speak, click stop
@@ -608,7 +608,7 @@ Execute in this exact order. Each step should be verified before proceeding.
 
 **Global config** (`~/.config/voice-to-text/config.json`): Existing fields apply as defaults for cleanup (claudeModel, etc.). Server-specific config is CLI-flag only.
 
-### CSM
+### CC
 
 **Environment variable**:
 - `VOICE_SERVER_URL` — URL of Voice2Text server (default: `http://localhost:7880`)
@@ -620,7 +620,7 @@ VOICE_SERVER_URL=http://localhost:7880
 
 ### Per-Project Voice Config
 
-Each project can have a `voice.json` at its root (already exists for CSM). The Voice2Text server loads this when it receives a request with that project's path. Format is the existing Voice2Text config format:
+Each project can have a `voice.json` at its root (already exists for CC). The Voice2Text server loads this when it receives a request with that project's path. Format is the existing Voice2Text config format:
 
 ```json
 {
@@ -644,7 +644,7 @@ Fields used by the server: `contextFile` (transcription hints + cleanup context)
 - **Integration**: `POST /transcribe` without audio returns 400
 - **Integration**: `POST /transcribe` with invalid projectPath falls back to global config
 
-### CSM
+### CC
 
 - **Unit**: `useVoiceRecorder` hook state transitions (mock MediaRecorder and fetch)
 - **Unit**: `VoiceRecordButton` renders correctly in each state (idle, recording, processing, unavailable)

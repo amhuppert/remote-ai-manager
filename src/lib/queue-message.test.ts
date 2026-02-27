@@ -50,9 +50,7 @@ import { queueMessage } from "./queue-message";
 beforeEach(() => {
   vi.clearAllMocks();
   appendTranscriptEntryMock.mockResolvedValue(undefined);
-  getTranscriptPathMock.mockResolvedValue(
-    "/tmp/csm/transcripts/conv-123.jsonl",
-  );
+  getTranscriptPathMock.mockResolvedValue("/tmp/cc/transcripts/conv-123.jsonl");
 });
 
 // ===========================================================================

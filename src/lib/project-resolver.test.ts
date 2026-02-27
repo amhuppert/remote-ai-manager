@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
-const TEST_DIR = path.join("/tmp", "csm-resolver-test-" + Date.now());
+const TEST_DIR = path.join("/tmp", "cc-resolver-test-" + Date.now());
 const BASE_DIR = path.join(TEST_DIR, "projects");
 
 // Mock node:os to redirect homedir to test directory

@@ -19,7 +19,7 @@
 - **Findings**:
   - `processHookEvent()` takes `HookEventData`, finds the session by matching `cwd` to `worktreePath`, updates `claudeSessionId` / `transcriptPath` / `lastActivityAt`, and persists state
   - `findSessionByCwd()` helper iterates all projects/sessions to find a match
-  - `detectHooksStatus()` reads `~/.claude/settings.json`, parses it permissively, checks for `UserPromptSubmit` and `Stop` events with `csm` in the command string
+  - `detectHooksStatus()` reads `~/.claude/settings.json`, parses it permissively, checks for `UserPromptSubmit` and `Stop` events with `cc` in the command string
   - `hookEventDataSchema` validates incoming events with all fields optional (graceful handling of partial data)
   - POST `/api/hooks` validates body and forwards to `processHookEvent()`
   - GET `/api/hooks/status` calls `detectHooksStatus()` and returns the result
@@ -31,12 +31,12 @@
 - **Context**: Understanding how Claude Code's hook system works.
 - **Findings**:
   - Hooks configured in `~/.claude/settings.json` under `hooks` key
-  - Two event types used by CSM: `UserPromptSubmit` (fires on prompt submission) and `Stop` (fires when Claude finishes)
-  - Hook commands receive JSON on stdin; CSM hook pipes it via `cat | curl -s -X POST http://localhost:3000/api/hooks -H "Content-Type: application/json" -d @-`
+  - Two event types used by CC: `UserPromptSubmit` (fires on prompt submission) and `Stop` (fires when Claude finishes)
+  - Hook commands receive JSON on stdin; CC hook pipes it via `cat | curl -s -X POST http://localhost:3000/api/hooks -H "Content-Type: application/json" -d @-`
   - Hooks are snapshotted at Claude Code startup — changes require restart
   - Must use absolute paths in hook commands to avoid cwd issues
   - JSON payload includes `session_id`, `transcript_path`, `cwd`, and `hook_event_name`
-- **Implications**: CSM's hook design is event-driven and non-invasive — it only observes Claude Code events without modifying behavior.
+- **Implications**: CC's hook design is event-driven and non-invasive — it only observes Claude Code events without modifying behavior.
 
 ## Design Decisions
 
@@ -60,12 +60,12 @@
 
 - **Context**: Whether hooks should be configured per-project or globally.
 - **Selected Approach**: Global configuration in `~/.claude/settings.json`
-- **Rationale**: Claude Code hooks are global by design. A single hook configuration forwards all events to CSM, which then matches by cwd. This avoids per-project hook setup and works for any managed session.
+- **Rationale**: Claude Code hooks are global by design. A single hook configuration forwards all events to CC, which then matches by cwd. This avoids per-project hook setup and works for any managed session.
 
 ## Risks & Mitigations
 
 - **Hooks not installed** — UI warning banners guide users to configure hooks. Detection runs server-side on page load.
-- **Hooks snapshotted at startup** — Claude Code must be restarted after hook configuration changes. This is a Claude Code limitation, not a CSM issue.
+- **Hooks snapshotted at startup** — Claude Code must be restarted after hook configuration changes. This is a Claude Code limitation, not a CC issue.
 - **Race conditions on state update** — State module uses atomic write (temp file + rename). Hook events are infrequent (two per prompt cycle), so contention is minimal.
 - **Unknown cwd** — If Claude Code runs outside a managed worktree, the event is silently ignored (returns false).
 

@@ -1,6 +1,6 @@
 # Technical Design: Transcript Viewer
 
-> **UPDATED (2026-02-22) — SDK Migration:** `transcript.ts` was rewritten to manage CSM's own JSONL transcript files at `<configDir>/transcripts/<conversationId>.jsonl`, populated from SDK stream data via `appendTranscriptEntry()`. It no longer reads Claude Code's `~/.claude/projects/` filesystem. The primary data path (session.messages) is unchanged. The JSONL parser now reads CSM-owned files rather than external Claude Code transcripts.
+> **UPDATED (2026-02-22) — SDK Migration:** `transcript.ts` was rewritten to manage CC's own JSONL transcript files at `<configDir>/transcripts/<conversationId>.jsonl`, populated from SDK stream data via `appendTranscriptEntry()`. It no longer reads Claude Code's `~/.claude/projects/` filesystem. The primary data path (session.messages) is unchanged. The JSONL parser now reads CC-owned files rather than external Claude Code transcripts.
 
 ## Overview
 

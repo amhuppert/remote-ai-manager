@@ -51,9 +51,9 @@ describe("PresetInstaller", () => {
       expect(stat.mode & 0o100).toBeTruthy();
     });
 
-    it("creates ClaudeSessionManager.json when missing", async () => {
+    it("creates CommandCenter.json when missing", async () => {
       await installPreset({ projectPath: projectDir, presetId: "nextjs" });
-      const configPath = path.join(projectDir, "ClaudeSessionManager.json");
+      const configPath = path.join(projectDir, "CommandCenter.json");
       expect(existsSync(configPath)).toBe(true);
       const config = JSON.parse(readFileSync(configPath, "utf-8"));
       expect(config.devServers).toHaveLength(1);
@@ -63,7 +63,7 @@ describe("PresetInstaller", () => {
 
     it("appends to existing devServers array without removing entries", async () => {
       // Create existing config with a custom entry
-      const configPath = path.join(projectDir, "ClaudeSessionManager.json");
+      const configPath = path.join(projectDir, "CommandCenter.json");
       await writeFile(
         configPath,
         JSON.stringify({
@@ -81,7 +81,7 @@ describe("PresetInstaller", () => {
     });
 
     it("preserves existing config fields", async () => {
-      const configPath = path.join(projectDir, "ClaudeSessionManager.json");
+      const configPath = path.join(projectDir, "CommandCenter.json");
       await writeFile(
         configPath,
         JSON.stringify({
@@ -100,7 +100,7 @@ describe("PresetInstaller", () => {
     });
 
     it("rejects installation when server name already exists", async () => {
-      const configPath = path.join(projectDir, "ClaudeSessionManager.json");
+      const configPath = path.join(projectDir, "CommandCenter.json");
       await writeFile(
         configPath,
         JSON.stringify({
@@ -127,7 +127,7 @@ describe("PresetInstaller", () => {
       });
       expect(result.installedFiles).toContain(".cc/dev-servers/_helpers.sh");
       expect(result.installedFiles).toContain(".cc/dev-servers/nextjs.sh");
-      expect(result.installedFiles).toContain("ClaudeSessionManager.json");
+      expect(result.installedFiles).toContain("CommandCenter.json");
       expect(result.configUpdated).toBe(true);
     });
 
@@ -138,7 +138,7 @@ describe("PresetInstaller", () => {
         presetId: "storybook",
       });
 
-      const configPath = path.join(projectDir, "ClaudeSessionManager.json");
+      const configPath = path.join(projectDir, "CommandCenter.json");
       const config = JSON.parse(readFileSync(configPath, "utf-8"));
       expect(config.devServers).toHaveLength(2);
 
@@ -165,7 +165,7 @@ describe("PresetInstaller", () => {
 
     it("returns empty array when config has no devServers", async () => {
       await writeFile(
-        path.join(projectDir, "ClaudeSessionManager.json"),
+        path.join(projectDir, "CommandCenter.json"),
         JSON.stringify({ initScriptPath: null }),
       );
       const installed = await getInstalledPresets(projectDir);
@@ -174,7 +174,7 @@ describe("PresetInstaller", () => {
 
     it("detects installed nextjs preset", async () => {
       await writeFile(
-        path.join(projectDir, "ClaudeSessionManager.json"),
+        path.join(projectDir, "CommandCenter.json"),
         JSON.stringify({
           initScriptPath: null,
           devServers: [
@@ -188,7 +188,7 @@ describe("PresetInstaller", () => {
 
     it("detects multiple installed presets", async () => {
       await writeFile(
-        path.join(projectDir, "ClaudeSessionManager.json"),
+        path.join(projectDir, "CommandCenter.json"),
         JSON.stringify({
           initScriptPath: null,
           devServers: [
@@ -204,7 +204,7 @@ describe("PresetInstaller", () => {
 
     it("ignores non-preset server names", async () => {
       await writeFile(
-        path.join(projectDir, "ClaudeSessionManager.json"),
+        path.join(projectDir, "CommandCenter.json"),
         JSON.stringify({
           initScriptPath: null,
           devServers: [{ name: "custom-server", command: "run.sh" }],

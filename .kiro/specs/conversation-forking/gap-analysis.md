@@ -12,7 +12,7 @@
 | mutateConversation() | `src/lib/conversations.ts` | Atomic mutation of conversation fields |
 | readConversationMessages() | `src/lib/transcript.ts:102-148` | Reads JSONL transcript into TranscriptMessage[] |
 | appendTranscriptEntry() | `src/lib/transcript.ts:58-65` | Appends a single JSONL entry |
-| getTranscriptPath() | `src/lib/transcript.ts:42-48` | Returns `~/.config/csm/transcripts/{id}.jsonl` |
+| getTranscriptPath() | `src/lib/transcript.ts:42-48` | Returns `~/.config/cc/transcripts/{id}.jsonl` |
 | executePromptStream() | `src/lib/prompt.ts:48-361` | SDK query execution with SSE streaming |
 | processMessage() | `src/lib/prompt.ts:393-518` | SDK message → transcript/SSE translation |
 | useSendPrompt() | `src/hooks/use-send-prompt.ts` | Client-side prompt dispatch hook |
@@ -37,7 +37,7 @@ query({
 })
 ```
 
-This means CSM does **not** need to manually replay conversation history. The SDK handles loading and forking the conversation context internally via `persistSession` data stored in `~/.claude/projects/`.
+This means CC does **not** need to manually replay conversation history. The SDK handles loading and forking the conversation context internally via `persistSession` data stored in `~/.claude/projects/`.
 
 ### Conventions Observed
 
@@ -80,14 +80,14 @@ This means CSM does **not** need to manually replay conversation history. The SD
 
 ### Critical Finding: SDK Message UUIDs
 
-The SDK's `resumeSessionAt` requires the `uuid` from `SDKAssistantMessage`. CSM currently **does not store** this UUID in transcript entries — it only stores `role`, `content`, and `timestamp`.
+The SDK's `resumeSessionAt` requires the `uuid` from `SDKAssistantMessage`. CC currently **does not store** this UUID in transcript entries — it only stores `role`, `content`, and `timestamp`.
 
 **Options**:
 - **Option A**: Store `uuid` in transcript entries going forward (extend `TranscriptEntry` type). Forking only works for conversations created after this change.
-- **Option B**: Don't use `resumeSessionAt`. Instead, use `resume` + `forkSession` without specifying a point — the SDK resumes the full conversation, and CSM truncates its own transcript. The new prompt sent to the forked session provides the divergence point.
+- **Option B**: Don't use `resumeSessionAt`. Instead, use `resume` + `forkSession` without specifying a point — the SDK resumes the full conversation, and CC truncates its own transcript. The new prompt sent to the forked session provides the divergence point.
 - **Option C**: Store the `uuid` and also backfill from the `raw` field in existing transcript entries (system/result entries already store the full SDK message which includes `uuid`).
 
-**Recommendation**: Option B is simplest — fork the entire SDK session and send the new/edited prompt. The SDK handles context. CSM only needs to manage its own transcript (copy up to fork point). Future enhancement could add `resumeSessionAt` for efficiency.
+**Recommendation**: Option B is simplest — fork the entire SDK session and send the new/edited prompt. The SDK handles context. CC only needs to manage its own transcript (copy up to fork point). Future enhancement could add `resumeSessionAt` for efficiency.
 
 ### Complexity Signals
 
@@ -145,7 +145,7 @@ Extend schemas and UI in place. Extract fork business logic into `src/lib/fork.t
 
 **Effort: M (3-7 days)** — Uses existing patterns throughout. SDK native fork support eliminates the hardest part (conversation history management). Main work is wiring UI components, a new API route, and transcript copying.
 
-**Risk: Low-Medium** — SDK `forkSession` + `resume` is documented but untested in CSM context. The `claudeSessionId` must be available for forking (won't work for conversations that never ran a prompt). Edge cases around mid-stream forking need handling.
+**Risk: Low-Medium** — SDK `forkSession` + `resume` is documented but untested in CC context. The `claudeSessionId` must be available for forking (won't work for conversations that never ran a prompt). Edge cases around mid-stream forking need handling.
 
 ---
 

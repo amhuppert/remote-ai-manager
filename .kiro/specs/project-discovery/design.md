@@ -2,11 +2,11 @@
 
 ## Overview
 
-**Purpose**: This feature delivers automatic git repository detection and session-enriched project listing to developers using CSM as their session management dashboard.
+**Purpose**: This feature delivers automatic git repository detection and session-enriched project listing to developers using CC as their session management dashboard.
 
 **Users**: Developers managing multiple Claude Code sessions across repositories will use this to browse available projects, see which have active work, and navigate to project-specific views.
 
-**Impact**: Provides the entry point for all CSM workflows — session creation, monitoring, and prompt execution all begin with project discovery.
+**Impact**: Provides the entry point for all CC workflows — session creation, monitoring, and prompt execution all begin with project discovery.
 
 ### Goals
 
@@ -26,7 +26,7 @@
 
 ### Existing Architecture Analysis
 
-The project discovery feature operates within CSM's existing flat-module architecture:
+The project discovery feature operates within CC's existing flat-module architecture:
 
 - **Domain logic** in `src/lib/` as standalone async functions (no classes)
 - **Schemas** centralized in `src/lib/schemas.ts` with Zod v4

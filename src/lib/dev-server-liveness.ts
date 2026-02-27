@@ -5,7 +5,7 @@ import * as registryModule from "./dev-server-registry";
 import type { DevServerStatusEvent } from "@/types";
 
 const logger = createLogger("dev-server");
-const GLOBAL_KEY = "__csm_dev_server_liveness" as const;
+const GLOBAL_KEY = "__cc_dev_server_liveness" as const;
 const POLL_INTERVAL_MS = 5_000;
 
 function getIntervalId(): ReturnType<typeof setInterval> | null {

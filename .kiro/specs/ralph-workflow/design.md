@@ -2,31 +2,31 @@
 
 ## Overview
 
-**Purpose**: The Ralph Loop workflow delivers autonomous iterative Claude Code execution to CSM users, enabling objective-driven development sessions where CSM orchestrates repeated Claude Code invocations until a structured task plan is complete.
+**Purpose**: The Ralph Loop workflow delivers autonomous iterative Claude Code execution to CC users, enabling objective-driven development sessions where CC orchestrates repeated Claude Code invocations until a structured task plan is complete.
 
-**Users**: Developers using CSM who want to define an objective and task plan, then let Claude work autonomously — monitoring progress in real-time and intervening only when needed.
+**Users**: Developers using CC who want to define an objective and task plan, then let Claude work autonomously — monitoring progress in real-time and intervening only when needed.
 
 **Impact**: Extends the existing session model with an optional workflow entity. Introduces a new orchestrator engine module, custom SDK tools, new API routes, SSE event types, and workflow-specific UI components. Does not modify existing conversational prompt execution.
 
 ### Goals
-- Enable autonomous loop execution within existing CSM sessions (no new session type)
+- Enable autonomous loop execution within existing CC sessions (no new session type)
 - Provide deterministic orchestration — loop control, exit detection, and progress tracking are all code-driven, not LLM-driven
-- Expose structured custom tools (`report_status`, `update_fix_plan`) for reliable Claude-to-CSM communication
+- Expose structured custom tools (`report_status`, `update_fix_plan`) for reliable Claude-to-CC communication
 - Deliver first-class UI for workflow configuration, real-time monitoring, and iteration history
-- Integrate with existing CSM infrastructure: sessions, conversations, transcripts, SSE, state management, notifications
+- Integrate with existing CC infrastructure: sessions, conversations, transcripts, SSE, state management, notifications
 
 ### Non-Goals
 - Generic orchestrator framework — build Ralph Loop directly, extract common patterns when adding a second workflow type
-- Rate limiting — API provider handles rate limits; CSM uses iteration caps instead
+- Rate limiting — API provider handles rate limits; CC uses iteration caps instead
 - SDK session resume between iterations — each iteration uses fresh context
 - Modification of existing conversational prompt execution (`executePromptStream`)
-- Multi-user workflow coordination (CSM is single-user)
+- Multi-user workflow coordination (CC is single-user)
 
 ## Architecture
 
 ### Existing Architecture Analysis
 
-The orchestrator builds on these existing CSM systems:
+The orchestrator builds on these existing CC systems:
 
 - **Session model** (`schemas.ts`): `SessionState` with conversations array, objective, worktree path, branch name. Extended with optional `workflow` field.
 - **Conversation lifecycle** (`conversations.ts`): `createConversation()` with role support (`"initialization" | null`). Extended to support `"iteration"` role for managed conversations.
@@ -63,7 +63,7 @@ graph TB
         WSR[Workflow Stream Registry]
     end
 
-    subgraph Existing[Existing CSM Infrastructure]
+    subgraph Existing[Existing CC Infrastructure]
         SDK[Agent SDK query]
         State[State Manager]
         Transcript[Transcript Writer]
@@ -322,7 +322,7 @@ interface StartOrchestratorParams {
 
 **Implementation Notes**
 - Each iteration creates a managed conversation with `role: "iteration"` via `createConversation()`
-- SDK `query()` configured with `permissionMode: "bypassPermissions"`, `maxTurns: undefined` (rely on timeout), `persistSession: false` (each iteration uses fresh context; CSM writes its own transcripts), `settingSources: ["user", "project", "local"]`, `env: { ...process.env, CLAUDECODE: "" }`
+- SDK `query()` configured with `permissionMode: "bypassPermissions"`, `maxTurns: undefined` (rely on timeout), `persistSession: false` (each iteration uses fresh context; CC writes its own transcripts), `settingSources: ["user", "project", "local"]`, `env: { ...process.env, CLAUDECODE: "" }`
 - `canUseTool` callback denies `AskUserQuestion` with instructive message: "Autonomous iteration — make your best judgment and proceed."
 - AbortController per iteration with configurable timeout (default 60 min)
 - Iteration-level error handling: catch SDK errors, log, update circuit breaker, continue to exit evaluation
@@ -540,7 +540,7 @@ interface RunningWorkflow {
 ```
 
 **Implementation Notes**
-- globalThis singleton: `globalThis.__csm_running_workflows: Map<string, RunningWorkflow>`
+- globalThis singleton: `globalThis.__cc_running_workflows: Map<string, RunningWorkflow>`
 - Key format: `${projectPath}::${sessionName}` (same pattern as session locks)
 - On pause: set `pauseRequested = true`; orchestrator checks between iterations
 - On abort: call `abortController.abort()`; SDK query terminates
@@ -635,7 +635,7 @@ type WorkflowStreamFrame =
 ```
 
 **Implementation Notes**
-- globalThis singleton: `globalThis.__csm_workflow_streams: Map<string, Set<ReadableStreamDefaultController>>`
+- globalThis singleton: `globalThis.__cc_workflow_streams: Map<string, Set<ReadableStreamDefaultController>>`
 - Same resilient pattern as `sse-broadcaster.ts`: if `controller.enqueue()` throws, silently remove the client
 - Frame format: NDJSON (one JSON object per line) — simpler than SSE for high-frequency content, no event type overhead
 - The orchestrator conditionally emits content only when `hasClients()` is true, avoiding serialization overhead when no UI is watching
@@ -672,7 +672,7 @@ All routes nested under `/api/projects/[name]/sessions/[session]/workflow/`.
 | GET | /workflow/iterations | — | `{ iterations: RalphLoopIterationMeta[] }` | 404 |
 | GET | /workflow/stream | — | `ReadableStream<WorkflowStreamFrame>` (NDJSON) | 404, 409 not running |
 
-All routes wrapped with `withTracing()`. Error responses follow existing CSM pattern: `{ error: string, code: string }`.
+All routes wrapped with `withTracing()`. Error responses follow existing CC pattern: `{ error: string, code: string }`.
 
 **Workflow Stream Endpoint** (`GET /workflow/stream`): Returns a `ReadableStream` response that emits NDJSON frames of iteration content in real-time. The client connects while the workflow is running and receives SDK message content as it happens. The stream closes when the iteration completes, the workflow pauses/halts/aborts, or the client disconnects. The UI reconnects automatically between iterations. This mirrors the existing prompt route's streaming pattern — content flows through a dedicated per-client channel rather than the global SSE broadcaster. For completed iterations, the UI reads content from the transcript via the existing conversation transcript viewer.
 

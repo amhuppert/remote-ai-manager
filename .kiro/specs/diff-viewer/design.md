@@ -76,7 +76,7 @@ graph TB
 | Subprocess | Node.js `execFile`          | Executes `git diff` safely (no shell)             | 10MB max buffer                    |
 | Frontend   | React 19 Client Component   | Interactive diff panel with navigation            | `useRef`, `useState` for collapse  |
 | Types      | TypeScript interfaces       | `FileDiff`, `DiffHunk`, `DiffLine`, `SessionDiff` | No Zod — internal data only        |
-| Storage    | localStorage                | Layout mode persistence per session               | `csm-layout-${project}-${session}` |
+| Storage    | localStorage                | Layout mode persistence per session               | `cc-layout-${project}-${session}` |
 
 ## System Flows
 

@@ -4,7 +4,7 @@
 
 **Purpose**: This feature transforms focus mode session creation from a single monolithic prompt into a structured two-phase initialization flow with explicit user confirmation. It gives users control over when the focus document is written, and cleanly transitions them from the initialization phase to regular conversation.
 
-**Users**: Developers using CSM's focus mode sessions will experience a guided initialization flow — research and Q&A first, then explicit confirmation before the focus document is written and a fresh conversation is created.
+**Users**: Developers using CC's focus mode sessions will experience a guided initialization flow — research and Q&A first, then explicit confirmation before the focus document is written and a fresh conversation is created.
 
 **Impact**: Changes the focus session initialization from a one-shot prompt that combines research + document writing into a two-step flow with a confirmation gate between them. Adds a new `role` field to conversations and a new API endpoint for finalization.
 
@@ -23,7 +23,7 @@
 ## Architecture
 
 ### Existing Architecture Analysis
-- CSM uses a Next.js App Router with API routes as the backend, filesystem-backed JSON state
+- CC uses a Next.js App Router with API routes as the backend, filesystem-backed JSON state
 - Sessions contain an ordered array of `ConversationState` objects
 - Prompt execution uses `@anthropic-ai/claude-agent-sdk` `query()` API with SSE streaming
 - UI state is managed via TanStack Query (server state) and Zustand (UI state)

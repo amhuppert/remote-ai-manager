@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Mock dependencies before importing the module under test
 vi.mock("./sse-broadcaster");
 vi.mock("./config", () => ({
-  getConfigDirPath: () => "/tmp/csm-test",
+  getConfigDirPath: () => "/tmp/cc-test",
 }));
 vi.mock("./logging", () => ({
   createLogger: () => ({

@@ -12,9 +12,9 @@ WORKTREE_DIR="$(pwd)"
 adopt_port() {
   local port="$1"
   ADOPTED_PID=$(get_pid_on_port "$port")
-  echo "CSM_ADOPTED=1"
-  echo "CSM_ADOPTED_PID=$ADOPTED_PID"
-  echo "CSM_PORT=$port"
+  echo "CC_ADOPTED=1"
+  echo "CC_ADOPTED_PID=$ADOPTED_PID"
+  echo "CC_PORT=$port"
   exit 0
 }
 

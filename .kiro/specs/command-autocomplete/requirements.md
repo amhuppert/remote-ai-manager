@@ -2,15 +2,15 @@
 
 ## Introduction
 
-The Command Autocomplete feature adds a slash-command autocomplete UI to CSM's prompt input area. When a user types `/` at the beginning of the prompt textarea, a dropdown overlay appears listing all available custom commands and skills — sourced from the project level, user level, and installed plugins. The list filters in real time using fuzzy matching as the user continues typing. Selecting an item inserts the command name into the textarea for execution.
+The Command Autocomplete feature adds a slash-command autocomplete UI to CC's prompt input area. When a user types `/` at the beginning of the prompt textarea, a dropdown overlay appears listing all available custom commands and skills — sourced from the project level, user level, and installed plugins. The list filters in real time using fuzzy matching as the user continues typing. Selecting an item inserts the command name into the textarea for execution.
 
-This feature addresses ROADMAP item #11 ("UI for easily invoking Claude Code commands/skills") and enhances CSM's role as "ground control" by making the full command surface discoverable within the prompt interface.
+This feature addresses ROADMAP item #11 ("UI for easily invoking Claude Code commands/skills") and enhances CC's role as "ground control" by making the full command surface discoverable within the prompt interface.
 
 ## Requirements
 
 ### Requirement 1: Trigger Behavior
 
-**Objective:** As a CSM user, I want the autocomplete to appear when I type `/` in the prompt, so that I can discover and select commands without memorizing them.
+**Objective:** As a CC user, I want the autocomplete to appear when I type `/` in the prompt, so that I can discover and select commands without memorizing them.
 
 #### Acceptance Criteria
 
@@ -22,7 +22,7 @@ This feature addresses ROADMAP item #11 ("UI for easily invoking Claude Code com
 
 ### Requirement 2: Command Discovery API
 
-**Objective:** As a CSM user, I want the autocomplete to show all commands and skills available to my Claude session, so that I have a complete picture of what I can invoke.
+**Objective:** As a CC user, I want the autocomplete to show all commands and skills available to my Claude session, so that I have a complete picture of what I can invoke.
 
 #### Acceptance Criteria
 
@@ -38,7 +38,7 @@ This feature addresses ROADMAP item #11 ("UI for easily invoking Claude Code com
 
 ### Requirement 3: Fuzzy Filtering
 
-**Objective:** As a CSM user, I want flexible filtering so that partial or imprecise typing still finds the command I'm looking for.
+**Objective:** As a CC user, I want flexible filtering so that partial or imprecise typing still finds the command I'm looking for.
 
 #### Acceptance Criteria
 
@@ -53,7 +53,7 @@ This feature addresses ROADMAP item #11 ("UI for easily invoking Claude Code com
 
 ### Requirement 4: Visual Display
 
-**Objective:** As a CSM user, I want the autocomplete to be visually clear and consistent with CSM's design system, so that I can quickly scan and identify commands.
+**Objective:** As a CC user, I want the autocomplete to be visually clear and consistent with CC's design system, so that I can quickly scan and identify commands.
 
 #### Acceptance Criteria
 
@@ -71,7 +71,7 @@ This feature addresses ROADMAP item #11 ("UI for easily invoking Claude Code com
 
 ### Requirement 5: Keyboard Navigation
 
-**Objective:** As a CSM user, I want full keyboard control of the autocomplete, so that I can select commands without reaching for the mouse.
+**Objective:** As a CC user, I want full keyboard control of the autocomplete, so that I can select commands without reaching for the mouse.
 
 #### Acceptance Criteria
 
@@ -85,7 +85,7 @@ This feature addresses ROADMAP item #11 ("UI for easily invoking Claude Code com
 
 ### Requirement 6: Selection Behavior
 
-**Objective:** As a CSM user, I want selecting a command to prepare it for execution in the textarea, so that I can add arguments before sending.
+**Objective:** As a CC user, I want selecting a command to prepare it for execution in the textarea, so that I can add arguments before sending.
 
 #### Acceptance Criteria
 
@@ -97,7 +97,7 @@ This feature addresses ROADMAP item #11 ("UI for easily invoking Claude Code com
 
 ### Requirement 7: Responsive Behavior
 
-**Objective:** As a CSM user, I want the autocomplete to work on any screen size, so that I can use commands from desktop or mobile.
+**Objective:** As a CC user, I want the autocomplete to work on any screen size, so that I can use commands from desktop or mobile.
 
 #### Acceptance Criteria
 

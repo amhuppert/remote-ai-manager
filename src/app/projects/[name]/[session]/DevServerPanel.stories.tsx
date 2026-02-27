@@ -278,7 +278,7 @@ export const WithError = {
         remoteUrl: null,
         startedAt: new Date().toISOString(),
         errorMessage:
-          "Process exited (code=1) before reporting CSM_PORT.\nError: Cannot find module 'next'",
+          "Process exited (code=1) before reporting CC_PORT.\nError: Cannot find module 'next'",
         recentOutput: [],
         adopted: false,
       },
@@ -298,7 +298,7 @@ export const WithError = {
   },
 } satisfies Story;
 
-/** Adopted server: running externally, CSM monitors but cannot stop it */
+/** Adopted server: running externally, CC monitors but cannot stop it */
 export const AdoptedServer = {
   args: {
     servers: [

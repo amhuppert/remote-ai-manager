@@ -4,7 +4,7 @@
 
 - [x] 1. Add unit tests for detectHooksStatus
 - [x] 1.1 (P) Test successful detection with both hooks configured
-  - Mock filesystem to return settings.json with both UserPromptSubmit and Stop events containing "csm" command
+  - Mock filesystem to return settings.json with both UserPromptSubmit and Stop events containing "cc" command
   - Verify `installed` is true, `hasUserPromptSubmit` is true, `hasStop` is true
   - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
@@ -23,8 +23,8 @@
   - _Requirements: 4.5_
 
 - [x] 1.4 (P) Test command string matching
-  - Mock settings with hooks that don't contain "csm" in the command
-  - Verify the hooks are not detected (treated as non-CSM hooks)
+  - Mock settings with hooks that don't contain "cc" in the command
+  - Verify the hooks are not detected (treated as non-CC hooks)
   - _Requirements: 4.3_
 
 - [x] 2. Add API route tests for hook endpoints

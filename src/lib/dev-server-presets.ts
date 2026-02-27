@@ -177,9 +177,9 @@ WORKTREE_DIR="$(pwd)"
 adopt_port() {
   local port="\$1"
   ADOPTED_PID=$(get_pid_on_port "\$port")
-  echo "CSM_ADOPTED=1"
-  echo "CSM_ADOPTED_PID=\$ADOPTED_PID"
-  echo "CSM_PORT=\$port"
+  echo "CC_ADOPTED=1"
+  echo "CC_ADOPTED_PID=\$ADOPTED_PID"
+  echo "CC_PORT=\$port"
   exit 0
 }
 
@@ -246,8 +246,8 @@ export async function installPreset(params: {
   });
   installedFiles.push(`.cc/dev-servers/${preset.scriptFileName}`);
 
-  // Update ClaudeSessionManager.json
-  const configPath = path.join(projectPath, "ClaudeSessionManager.json");
+  // Update CommandCenter.json
+  const configPath = path.join(projectPath, "CommandCenter.json");
   let config: PerRepoConfig;
   try {
     const raw = await readFile(configPath, "utf-8");
@@ -262,7 +262,7 @@ export async function installPreset(params: {
   config = { ...config, devServers };
 
   await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
-  installedFiles.push("ClaudeSessionManager.json");
+  installedFiles.push("CommandCenter.json");
 
   return { installedFiles, configUpdated: true };
 }

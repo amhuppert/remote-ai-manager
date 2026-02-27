@@ -302,7 +302,7 @@ index abc..def 100644
       const opts = execFileMock.mock.calls[i]![2] as {
         env: Record<string, string>;
       };
-      expect(opts.env.GIT_INDEX_FILE).toMatch(/csm-diff-/);
+      expect(opts.env.GIT_INDEX_FILE).toMatch(/cc-diff-/);
     }
 
     // Verify temp index cleanup

@@ -1,5 +1,5 @@
 // ============================================================
-// CSM Data Entities (derived from Zod schemas)
+// CC Data Entities (derived from Zod schemas)
 // ============================================================
 
 // Import MessageContentBlock locally for use in TranscriptMessage interface

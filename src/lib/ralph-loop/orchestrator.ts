@@ -52,7 +52,7 @@ import * as workflowStream from "./workflow-stream-registry";
 
 const logger = createLogger("ralph-loop");
 
-// Prevent nested session detection when CSM runs inside Claude Code
+// Prevent nested session detection when CC runs inside Claude Code
 delete process.env.CLAUDECODE;
 
 // ============================================================

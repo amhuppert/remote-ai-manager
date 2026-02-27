@@ -2,9 +2,9 @@
 
 ## Overview
 
-**Purpose**: Smart Merge delivers a safer, non-blocking, AI-assisted merge workflow for CSM sessions. It protects the main branch from conflicts by resolving them on the feature branch first, frees users from waiting on long-running git operations by running them as background jobs, and provides automated conflict resolution powered by Claude Code with structured per-conflict review controls.
+**Purpose**: Smart Merge delivers a safer, non-blocking, AI-assisted merge workflow for CC sessions. It protects the main branch from conflicts by resolving them on the feature branch first, frees users from waiting on long-running git operations by running them as background jobs, and provides automated conflict resolution powered by Claude Code with structured per-conflict review controls.
 
-**Users**: Developers using CSM to manage parallel Claude Code sessions will use this for merging completed session work into main without blocking their workflow or risking a dirty main branch.
+**Users**: Developers using CC to manage parallel Claude Code sessions will use this for merging completed session work into main without blocking their workflow or risking a dirty main branch.
 
 **Impact**: Replaces the current synchronous merge dialog and flow with an async two-phase pipeline. Replaces the UnifiedPanel with a NotificationsPanel that surfaces both conversation activity and background job results.
 
@@ -412,7 +412,7 @@ interface ConflictEntry {
 }
 ```
 
-- Persistence: `globalThis.__csm_background_jobs` Map keyed by `"${projectPath}::${sessionName}"`
+- Persistence: `globalThis.__cc_background_jobs` Map keyed by `"${projectPath}::${sessionName}"`
 - Consistency: Single-writer (only the background job's async execution writes to its own entry)
 - Concurrency: Dispatch functions check for existing active job before accepting; session lock prevents concurrent git operations
 
@@ -423,7 +423,7 @@ interface ConflictEntry {
 - **Lock safety**: The background job Promise MUST wrap its entire execution in `try/finally` to guarantee the session lock is released even on unhandled exceptions, OOM, or Claude SDK stream errors. The `finally` block releases the lock and transitions the job to `failed` if it hasn't already reached a terminal state.
 - **Stale lock recovery**: A `JOB_TIMEOUT_MS` constant (default: 10 minutes) acts as a safety net. When `dispatchMergeJob` / `dispatchCommitJob` rejects with `JOB_ALREADY_RUNNING`, the caller checks `startedAt` — if the running job exceeds `JOB_TIMEOUT_MS`, it is force-transitioned to `failed`, its lock is released, and the new job is accepted. This handles edge cases where `try/finally` is insufficient (e.g., process-level crashes between restarts are already handled since in-memory locks are cleared on restart).
 - On completion, the job entry remains in the registry for the conflicts API to read. Entries are overwritten on the next job dispatch for the same session.
-- Conflict analysis results are stored in a separate `globalThis.__csm_conflict_analysis` Map so they persist across job completions
+- Conflict analysis results are stored in a separate `globalThis.__cc_conflict_analysis` Map so they persist across job completions
 
 ---
 
@@ -448,7 +448,7 @@ function acquireProjectLock(projectPath: string): () => void;
 - Throws: If a project lock is already held for `projectPath`
 
 **Implementation Notes**
-- Uses the same `globalThis` singleton pattern as session locks: `globalThis.__csm_project_locks` Map keyed by `projectPath`
+- Uses the same `globalThis` singleton pattern as session locks: `globalThis.__cc_project_locks` Map keyed by `projectPath`
 - Scoped narrowly: acquired only around the `squashMerge()` call in the merge pipeline (not the entire job). This ensures that two sessions' Phase 1 (merge main into feature branch) can run concurrently, but Phase 2 (squash merge into main) is serialized.
 - The background-jobs merge pipeline acquires the project lock, calls `squashMerge()`, then releases it in a `try/finally` block — independent of the session lock lifecycle.
 - If the project lock is held when a job reaches Phase 2, the job waits with a simple retry-with-backoff loop (100ms intervals, up to 30s timeout). On timeout, the job transitions to `failed` with an explanatory error message.
@@ -846,7 +846,7 @@ erDiagram
     }
 ```
 
-- In-memory storage: `globalThis.__csm_background_jobs` (Map), `globalThis.__csm_conflict_analysis` (Map)
+- In-memory storage: `globalThis.__cc_background_jobs` (Map), `globalThis.__cc_conflict_analysis` (Map)
 - Same key structure as existing singletons: `"${projectPath}::${sessionName}"`
 - No persistence to state.json — jobs are ephemeral; conflict state is detectable from the worktree's git status
 

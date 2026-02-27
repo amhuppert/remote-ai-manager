@@ -25,7 +25,7 @@ export interface DevServerEntry {
   startedAt: string;
   errorMessage: string | null;
   recentOutput: string[];
-  /** Whether this server was adopted (discovered running externally, not spawned by CSM) */
+  /** Whether this server was adopted (discovered running externally, not spawned by CC) */
   adopted: boolean;
   /** Internal: child process handle (not exposed via API) */
   _process: ChildProcess | null;
@@ -169,10 +169,10 @@ export async function startServer(params: {
       appendOutput(entry, line);
 
       // Parse adoption markers (emitted before CC_PORT)
-      if (/^CSM_ADOPTED=1$/.test(line.trim())) {
+      if (/^CC_ADOPTED=1$/.test(line.trim())) {
         adoptedFlag = true;
       }
-      const adoptedPidMatch = /^CSM_ADOPTED_PID=(\d+)$/.exec(line.trim());
+      const adoptedPidMatch = /^CC_ADOPTED_PID=(\d+)$/.exec(line.trim());
       if (adoptedPidMatch) {
         adoptedPid = parseInt(adoptedPidMatch[1]!, 10);
       }
@@ -312,7 +312,7 @@ export async function stopServer(params: {
 
   if (!entry) return;
 
-  // Adopted servers cannot be stopped — CSM doesn't own the process
+  // Adopted servers cannot be stopped — CC doesn't own the process
   if (entry.adopted) {
     logger.warn("dev-server.stop_adopted_noop", {
       serverName,
@@ -387,7 +387,7 @@ export async function stopAllForSession(params: {
   );
 }
 
-/** Stop all dev servers across all sessions (CSM shutdown). */
+/** Stop all dev servers across all sessions (CC shutdown). */
 export async function stopAll(): Promise<void> {
   const registry = getRegistry();
   const entries = Array.from(registry.values()).filter(

@@ -318,7 +318,7 @@ export async function createSessionFocus(
 
 /**
  * Delete a session.
- * - For CSM-created sessions: removes the worktree directory from disk
+ * - For CC-created sessions: removes the worktree directory from disk
  * - For imported sessions: only removes the session record from state
  * - Does NOT delete the branch or transcripts
  */
