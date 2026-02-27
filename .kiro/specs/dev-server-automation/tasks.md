@@ -1,5 +1,7 @@
 # Implementation Plan
 
+## Phase 1: Dev Server Lifecycle Management
+
 - [x] 1. Schemas and Configuration
 - [x] 1.1 Define dev server schemas and types
   - Add `devServerConfigSchema` (name + command, both non-empty strings) and `devServerStatusSchema` enum (`starting`, `running`, `stopped`, `error`)
@@ -121,6 +123,51 @@
   - Log the shutdown cleanup for diagnostics
   - _Requirements: 10.3_
 
+---
+
+## Phase 2: Preset Configuration Support
+
+- [x] 8. Preset registry and script generation
+  - Define Next.js and Storybook preset definitions with complete metadata: ID, display name, description, badge character, base port, config server name, command string, and script filename
+  - Implement the shared helper script generator producing POSIX-compatible shell functions for: checking whether a TCP port is in use (via `ss` with `lsof` fallback), finding the PID listening on a port, resolving a process's working directory via `/proc/<pid>/cwd`, comparing it against the current worktree path, and scanning upward from a base port to find the next available port
+  - Use exit codes to communicate port status: 0 for available, 1 for owned by the current worktree, 2 for conflict with a different process
+  - Implement per-preset startup script generators that source the shared helpers, check the default port, reuse an owned server without spawning a duplicate (reporting `CSM_PORT` and exiting), or find an available port before starting the framework command
+  - Next.js preset: base port 3000, `npx next dev --port`; Storybook preset: base port 6006, `npx storybook dev --port`
+  - Each generated script emits `CSM_PORT=<port>` before `exec`-ing the dev server for immediate port detection by CSM
+  - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 12.1, 12.2, 12.3, 12.4, 12.5_
+  - _Contracts: PresetRegistry Service Interface_
+
+- [x] 9. Preset installation service
+  - Implement installation logic that creates the `.csm/dev-servers/` directory if missing, writes the shared helper script and the preset-specific startup script with executable permissions (mode 0755), and reads or creates `ClaudeSessionManager.json` to append the preset's `devServers` entry
+  - When the config file already exists with a `devServers` array, append the new entry without removing or modifying existing entries
+  - When a matching server name already exists in the config, reject the installation with a descriptive error
+  - Implement installed-preset detection by reading the project's config and matching server names against known preset definitions
+  - Write scripts before updating config — if script writing fails, the config remains untouched
+  - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.7_
+  - _Contracts: PresetInstaller Service Interface_
+
+- [x] 10. Preset API routes
+- [x] 10.1 (P) GET presets endpoint
+  - Create a GET endpoint that returns all available presets with their installed status for the given project
+  - Merge preset registry metadata with installed-preset detection from the installer service
+  - Return 404 if the project is not found
+  - Follow existing API route patterns: `withTracing` wrapper, `force-dynamic` export, decoded path params
+  - _Requirements: 13.6_
+
+- [x] 10.2 (P) POST install endpoint
+  - Create a POST endpoint that accepts a preset ID in the request body, validates it against a Zod schema, and delegates to the installer service
+  - Return the list of installed files and whether the config was updated on success
+  - Return 400 for unknown preset ID, 409 if the preset is already installed, 404 if the project is not found
+  - _Requirements: 13.1_
+
+- [x] 11. Wire PresetInstallDialog to backend
+  - Add a query that fetches available presets with installed status from the GET endpoint, using the existing query factory pattern
+  - Add a mutation that calls the POST install endpoint, using the existing mutation factory pattern
+  - Replace the `console.log` stub in SessionsList with the mutation call, passing installed presets from the query to the dialog's `installedPresets` prop
+  - On successful installation, close the dialog and invalidate the preset query cache
+  - On failure, display the error message within the dialog
+  - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7_
+
 ## Requirements Coverage
 
 | Requirement | Task(s) |
@@ -138,3 +185,8 @@
 | 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7 | 6.1, 6.2 |
 | 10.1, 10.2 | 7.1 |
 | 10.3 | 7.2 |
+| 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7 | 8 |
+| 12.1, 12.2, 12.3, 12.4, 12.5 | 8 |
+| 13.1, 13.2, 13.3, 13.4, 13.5, 13.7 | 9, 10.2 |
+| 13.6 | 10.1 |
+| 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7 | 11 |

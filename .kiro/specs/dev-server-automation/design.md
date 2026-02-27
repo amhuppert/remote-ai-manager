@@ -673,3 +673,519 @@ All operations log structured events via `createLogger("dev-server")`:
 - **Command injection**: Dev server commands come from the project's `ClaudeSessionManager.json`, which is under the repository maintainer's control. CSM passes the command string to `spawn` with `shell: true` without modification. This is acceptable because CSM already runs arbitrary code (Claude Agent SDK with `bypassPermissions` mode). No user-supplied input reaches the command string.
 - **Tailscale --operator**: CSM relies on the system's Tailscale `--operator` configuration for rootless operation. CSM does not attempt to elevate privileges.
 - **Port exposure**: Tailscale Serve exposes ports only to the tailnet (not the public internet), matching the existing security boundary for CSM.
+
+---
+
+# Phase 2: Preset Configuration Support
+
+## Overview
+
+**Purpose**: This extension delivers a preset installation system that automates dev server configuration for common frameworks (Next.js, Storybook), eliminating the need for manual `ClaudeSessionManager.json` editing and shell script authorship.
+
+**Users**: CSM users setting up new projects will select a preset from the sessions list page to install port-aware startup scripts and configuration into their project.
+
+**Impact**: Adds a preset registry module, port detection helper scripts, a project-level installation API, and wires the existing `PresetInstallDialog` UI component to the backend.
+
+### Goals
+- One-click dev server setup for Next.js and Storybook projects
+- Reusable, committed-to-repo helper scripts that handle port detection and worktree-aware port allocation
+- Extend the existing `ClaudeSessionManager.json` config without breaking existing setups
+
+### Non-Goals
+- Auto-detecting frameworks on project scan (manual preset selection only)
+- Supporting Windows or macOS-specific port detection (Linux only)
+- Custom preset authoring UI (new presets require code changes)
+- Managing package manager detection (scripts use `npx` for framework commands)
+
+## Architecture
+
+### Architecture Pattern & Boundary Map
+
+```mermaid
+graph TB
+    subgraph UI[UI Layer]
+        Dialog[PresetInstallDialog]
+        SList[SessionsList]
+    end
+
+    subgraph API[API Routes]
+        GetPresets[GET presets]
+        InstallPreset[POST presets install]
+    end
+
+    subgraph Core[Domain Logic]
+        PresetRegistry[PresetRegistry]
+        PresetInstaller[PresetInstaller]
+        ScriptGen[Script Generators]
+    end
+
+    subgraph FileSystem[Project Filesystem]
+        ConfigFile[ClaudeSessionManager.json]
+        ScriptDir[.csm/dev-servers/]
+        HelperScript[_helpers.sh]
+        PresetScript[nextjs.sh / storybook.sh]
+    end
+
+    SList --> Dialog
+    Dialog --> GetPresets
+    Dialog --> InstallPreset
+
+    GetPresets --> PresetRegistry
+    GetPresets --> ConfigFile
+    InstallPreset --> PresetRegistry
+    InstallPreset --> PresetInstaller
+
+    PresetInstaller --> ScriptGen
+    PresetInstaller --> ConfigFile
+    PresetInstaller --> ScriptDir
+    ScriptGen --> HelperScript
+    ScriptGen --> PresetScript
+```
+
+**Architecture Integration**:
+- **Selected pattern**: TypeScript preset registry with script generation via template literals
+- **Domain boundaries**: `dev-server-presets.ts` owns preset definitions and script generation; API routes handle HTTP orchestration; filesystem writes are atomic
+- **Existing patterns preserved**: Zod schema-first types, `withTracing` route wrappers, `readRepoConfig()`/`writeRepoConfig()` for config I/O, `mutationFetch` for client-side API calls
+- **New components rationale**: PresetRegistry (preset metadata and validation), script generators (produce shell script content), installation API (filesystem orchestration)
+- **Steering compliance**: TypeScript strict mode, Zod schemas, lib module per domain concept, kebab-case BEM CSS
+
+### Technology Stack
+
+| Layer | Choice / Version | Role in Feature | Notes |
+|-------|------------------|-----------------|-------|
+| Frontend | React 19, TanStack Query | PresetInstallDialog, usePresetInstall mutation | Existing component + new mutation |
+| Backend | Next.js 16 API Routes | GET presets, POST install | `withTracing` wrapper |
+| Filesystem | Node.js `fs/promises` | Write scripts, update config | `mkdir`, `writeFile`, `chmod` |
+| Validation | Zod v4 | Request/response schemas | Extends existing schemas |
+| Scripts | POSIX shell (bash-compatible) | Port detection, dev server startup | Installed into project `.csm/dev-servers/` |
+
+## System Flows
+
+### Preset Installation Flow
+
+```mermaid
+sequenceDiagram
+    participant UI as PresetInstallDialog
+    participant API as POST presets install
+    participant Reg as PresetRegistry
+    participant FS as Filesystem
+
+    UI->>API: POST /projects/{name}/dev-servers/presets/install {presetId}
+    API->>API: Resolve project path
+    API->>Reg: getPreset(presetId)
+    Reg-->>API: Preset definition
+    API->>FS: Read ClaudeSessionManager.json (or default)
+    API->>API: Check for duplicate server name
+    API->>Reg: generateHelperScript()
+    API->>Reg: generatePresetScript(presetId)
+    API->>FS: mkdir -p .csm/dev-servers/
+    API->>FS: Write _helpers.sh (chmod 755)
+    API->>FS: Write preset.sh (chmod 755)
+    API->>FS: Update ClaudeSessionManager.json
+    API-->>UI: 200 OK {installed files}
+```
+
+### Dev Server Startup with Preset Script
+
+```mermaid
+sequenceDiagram
+    participant CSM as CSM Registry
+    participant Script as preset.sh
+    participant Helper as _helpers.sh
+    participant Server as Dev Server Process
+
+    CSM->>Script: spawn(.csm/dev-servers/nextjs.sh)
+    Script->>Helper: source _helpers.sh
+    Script->>Helper: check_port(BASE_PORT)
+    alt Port available
+        Helper-->>Script: exit 0 (available)
+        Script->>Server: npx next dev --port BASE_PORT
+    else Port owned by this worktree
+        Helper-->>Script: exit 1 (owned)
+        Script->>Script: echo CSM_PORT=BASE_PORT
+        Note right of Script: Reuse existing server
+    else Port conflict
+        Helper-->>Script: exit 2 (conflict)
+        Script->>Helper: find_available_port(BASE_PORT)
+        Helper-->>Script: available port
+        Script->>Server: npx next dev --port AVAILABLE_PORT
+    end
+    Server->>Script: Server ready on port
+    Script->>CSM: echo CSM_PORT=PORT
+```
+
+## Requirements Traceability — Phase 2
+
+| Requirement | Summary | Components | Interfaces | Flows |
+|-------------|---------|------------|------------|-------|
+| 11.1 | Port detection helper script | _helpers.sh | Shell functions | Startup flow |
+| 11.2 | Determine PID on port | _helpers.sh (get_pid_on_port) | Shell functions | Startup flow |
+| 11.3 | Resolve process cwd for ownership | _helpers.sh (check_port_owner) | Shell functions | Startup flow |
+| 11.4 | Report "owned" status | _helpers.sh exit code 1 | Shell exit codes | Startup flow |
+| 11.5 | Report "in use" status | _helpers.sh exit code 2 | Shell exit codes | Startup flow |
+| 11.6 | Report "available" status | _helpers.sh exit code 0 | Shell exit codes | Startup flow |
+| 11.7 | POSIX-compatible, Linux | _helpers.sh | — | — |
+| 12.1 | Next.js preset definition | PresetRegistry | Preset interface | Install flow |
+| 12.2 | Storybook preset definition | PresetRegistry | Preset interface | Install flow |
+| 12.3 | Files list + config entry per preset | PresetRegistry | Preset interface | Install flow |
+| 12.4 | Preset scripts use port helpers | Generated preset scripts | — | Startup flow |
+| 12.5 | Reuse owned server without respawn | Generated preset scripts | — | Startup flow |
+| 13.1 | POST install endpoint | Preset API Routes | API contract | Install flow |
+| 13.2 | Create .csm/dev-servers/ if missing | PresetInstaller | — | Install flow |
+| 13.3 | Create ClaudeSessionManager.json if missing | PresetInstaller | — | Install flow |
+| 13.4 | Append to existing devServers | PresetInstaller | — | Install flow |
+| 13.5 | Reject duplicate preset | PresetInstaller | API contract | Install flow |
+| 13.6 | GET available presets endpoint | Preset API Routes | API contract | — |
+| 13.7 | chmod 755 on scripts | PresetInstaller | — | Install flow |
+| 14.1 | Install Preset button | SessionsList | — | — |
+| 14.2 | Modal with preset cards | PresetInstallDialog | — | — |
+| 14.3 | Card shows name, description, files | PresetInstallDialog | — | — |
+| 14.4 | Installed indicator | PresetInstallDialog | — | — |
+| 14.5 | Install triggers API call | PresetInstallDialog + mutation | API contract | Install flow |
+| 14.6 | Close on success | PresetInstallDialog | — | — |
+| 14.7 | Show error on failure | PresetInstallDialog | — | — |
+
+## Components and Interfaces — Phase 2
+
+| Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
+|-----------|-------------|--------|--------------|------------------|-----------|
+| PresetRegistry | Core/Config | Define available presets and generate script content | 12.1–12.5 | — | Service |
+| PresetInstaller | Core/Config | Write scripts and update config file | 13.1–13.5, 13.7 | PresetRegistry (P0), readRepoConfig (P0) | Service |
+| Preset API Routes | API Layer | REST endpoints for preset listing and installation | 13.1, 13.6 | PresetInstaller (P0), PresetRegistry (P0) | API |
+| _helpers.sh | Scripts/Installed | Port detection and worktree ownership functions | 11.1–11.7 | Linux /proc filesystem | — |
+| Preset startup scripts | Scripts/Installed | Framework-specific dev server startup | 12.1–12.5 | _helpers.sh | — |
+| PresetInstallDialog | UI/Sessions Page | Modal for selecting and installing presets | 14.1–14.7 | usePresetInstall mutation (P0) | — |
+
+### Core / Config
+
+#### PresetRegistry
+
+| Field | Detail |
+|-------|--------|
+| Intent | Define available presets with metadata, script templates, and config entries |
+| Requirements | 12.1, 12.2, 12.3, 12.4, 12.5 |
+
+**Responsibilities & Constraints**
+- Single source of truth for all available presets
+- Generates shell script content via template literals
+- Defines the `devServers` config entry each preset produces
+- Stateless — pure functions, no side effects
+
+**Dependencies**
+- None (self-contained preset definitions)
+
+**Contracts**: Service [x]
+
+##### Service Interface
+
+```typescript
+interface DevServerPresetDefinition {
+  id: string;                    // "nextjs" | "storybook"
+  name: string;                  // Display name
+  description: string;           // Brief description
+  badge: string;                 // Single-char icon for UI
+  basePort: number;              // Default port (3000, 6006)
+  serverName: string;            // Name used in devServers config
+  command: string;               // Command for devServers config entry
+  scriptFileName: string;        // e.g., "nextjs.sh"
+}
+
+interface PresetRegistryService {
+  /** Get all available presets. */
+  getPresets(): DevServerPresetDefinition[];
+
+  /** Get a specific preset by ID. Returns undefined if not found. */
+  getPreset(id: string): DevServerPresetDefinition | undefined;
+
+  /** Generate the shared port detection helper script content. */
+  generateHelperScript(): string;
+
+  /** Generate a preset-specific startup script content. */
+  generatePresetScript(presetId: string): string;
+}
+```
+
+- Preconditions: `generatePresetScript` — preset ID must exist in the registry
+- Postconditions: Returns syntactically valid POSIX shell script content
+- Invariants: Preset IDs are unique; script content is deterministic for a given preset
+
+**Implementation Notes**
+- Located at `src/lib/dev-server-presets.ts`
+- Preset scripts source `_helpers.sh` relative to their own directory (`$(dirname "$0")/_helpers.sh`)
+- Each preset script follows the pattern: check port → start or reuse → emit `CSM_PORT`
+
+---
+
+#### PresetInstaller
+
+| Field | Detail |
+|-------|--------|
+| Intent | Orchestrate filesystem writes for preset installation into a project |
+| Requirements | 13.1, 13.2, 13.3, 13.4, 13.5, 13.7 |
+
+**Responsibilities & Constraints**
+- Creates `.csm/dev-servers/` directory if missing
+- Writes helper and preset scripts with executable permissions
+- Reads, merges, and writes `ClaudeSessionManager.json` atomically
+- Validates no duplicate server name exists before installation
+
+**Dependencies**
+- Inbound: Preset API Routes — called from POST handler (P0)
+- Outbound: PresetRegistry — get preset definition and script content (P0)
+- Outbound: `readRepoConfig()` — read existing config (P0)
+- External: `fs/promises` — filesystem operations (P0)
+
+**Contracts**: Service [x]
+
+##### Service Interface
+
+```typescript
+interface InstallPresetResult {
+  installedFiles: string[];      // Relative paths of files written
+  configUpdated: boolean;        // Whether ClaudeSessionManager.json was modified
+}
+
+interface PresetInstallerService {
+  /** Install a preset into a project. Writes scripts and updates config. */
+  installPreset(params: {
+    projectPath: string;
+    presetId: string;
+  }): Promise<InstallPresetResult>;
+
+  /** Check which presets are already installed for a project. */
+  getInstalledPresets(projectPath: string): Promise<string[]>;
+}
+```
+
+- Preconditions: `installPreset` — `projectPath` must be a valid directory; preset must not already be installed (matching server name in `devServers`)
+- Postconditions: `.csm/dev-servers/` exists with helper + preset scripts (mode 0755); `ClaudeSessionManager.json` contains the preset's `devServers` entry
+- Invariants: Existing `devServers` entries are never removed or modified
+
+**Implementation Notes**
+- Located at `src/lib/dev-server-presets.ts` (alongside the registry)
+- `getInstalledPresets` reads `ClaudeSessionManager.json` and matches server names against known preset server names
+- Write order: scripts first, then config (if script write fails, config is untouched)
+- Uses `writeFile` with mode `0o755` for scripts; standard JSON write for config
+
+---
+
+### API Layer
+
+#### Preset API Routes
+
+| Field | Detail |
+|-------|--------|
+| Intent | REST endpoints for listing presets and installing them into projects |
+| Requirements | 13.1, 13.6 |
+
+**Responsibilities & Constraints**
+- Thin orchestration: validate input, delegate to PresetInstaller, return response
+- Project-level routes (not session-level) since installation targets the project root
+
+**Dependencies**
+- Outbound: PresetInstaller — installation logic (P0)
+- Outbound: PresetRegistry — preset listing (P0)
+- Outbound: `resolveProjectPath()` — resolve project name to path (P0)
+
+**Contracts**: API [x]
+
+##### API Contract
+
+| Method | Endpoint | Request | Response | Errors |
+|--------|----------|---------|----------|--------|
+| GET | `/api/projects/[name]/dev-servers/presets` | — | `{ presets: PresetInfo[] }` | 404 (project not found) |
+| POST | `/api/projects/[name]/dev-servers/presets/install` | `{ presetId: string }` | `{ installedFiles: string[], configUpdated: boolean }` | 404, 400 (invalid preset), 409 (already installed) |
+
+**Response types**:
+
+```typescript
+const presetInfoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  badge: z.string(),
+  files: z.array(z.string()),
+  installed: z.boolean(),
+});
+
+const presetsResponseSchema = z.object({
+  presets: z.array(presetInfoSchema),
+});
+
+const installPresetRequestSchema = z.object({
+  presetId: z.string().min(1),
+});
+
+const installPresetResponseSchema = z.object({
+  installedFiles: z.array(z.string()),
+  configUpdated: z.boolean(),
+});
+```
+
+**Implementation Notes**
+- Route location: `src/app/api/projects/[name]/dev-servers/presets/route.ts` (GET) and `src/app/api/projects/[name]/dev-servers/presets/install/route.ts` (POST)
+- GET merges preset registry with installed-status check from `getInstalledPresets()`
+- POST validates body with `installPresetRequestSchema`, delegates to `installPreset()`
+
+---
+
+### Scripts / Installed
+
+#### _helpers.sh
+
+| Field | Detail |
+|-------|--------|
+| Intent | Shared POSIX shell functions for port detection and worktree ownership verification |
+| Requirements | 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7 |
+
+**Shell Functions**:
+
+```bash
+# Check if a port is available, owned by this worktree, or in conflict.
+# Args: $1 = port, $2 = expected worktree path
+# Exit codes: 0 = available, 1 = owned (same worktree), 2 = conflict
+check_port() { ... }
+
+# Find the PID listening on a TCP port. Prints PID or empty string.
+# Args: $1 = port
+get_pid_on_port() { ... }
+
+# Resolve the working directory of a process.
+# Args: $1 = pid
+get_process_cwd() { ... }
+
+# Scan from a base port upward to find the first available port.
+# Args: $1 = base port, $2 = expected worktree path
+# Prints the available port number.
+find_available_port() { ... }
+```
+
+**Implementation Notes**
+- Uses `ss -tlnp sport = :<port>` to find listeners; falls back to `lsof` if `ss` unavailable
+- Uses `readlink /proc/<pid>/cwd` for process cwd resolution
+- `find_available_port` scans from base port upward in increments of 1 (max 100 attempts)
+- All output is to stdout; diagnostic messages to stderr
+
+#### Preset Startup Scripts (nextjs.sh, storybook.sh)
+
+| Field | Detail |
+|-------|--------|
+| Intent | Framework-specific dev server startup with port detection integration |
+| Requirements | 12.1, 12.2, 12.4, 12.5 |
+
+**Script Structure** (common pattern for all presets):
+
+```bash
+#!/bin/sh
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/_helpers.sh"
+
+BASE_PORT=<preset-default-port>
+WORKTREE_DIR="$(pwd)"
+
+check_port "$BASE_PORT" "$WORKTREE_DIR"
+case $? in
+  0) PORT="$BASE_PORT" ;;                           # Available
+  1) echo "CSM_PORT=$BASE_PORT"; exit 0 ;;          # Already running for this worktree
+  2) PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR") ;;  # Conflict, find another
+esac
+
+echo "CSM_PORT=$PORT"
+exec npx <framework-command> --port "$PORT"
+```
+
+**Implementation Notes**
+- Next.js: `BASE_PORT=3000`, command `npx next dev --port "$PORT"`
+- Storybook: `BASE_PORT=6006`, command `npx storybook dev --port "$PORT"`
+- `CSM_PORT` is emitted before `exec` so CSM detects the port immediately
+- `exec` replaces the shell process with the dev server (clean signal handling)
+
+---
+
+### UI / Sessions Page
+
+#### PresetInstallDialog (existing)
+
+| Field | Detail |
+|-------|--------|
+| Intent | Modal for selecting and installing dev server presets |
+| Requirements | 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7 |
+
+**Implementation Notes**
+- Component already exists at `src/app/projects/[name]/PresetInstallDialog.tsx` with Storybook story
+- Wiring needed: replace `console.log` stub in `SessionsList.tsx` with a TanStack Query mutation
+- New mutation `useInstallPresetMutation(projectName)` in `src/lib/mutations.ts`
+- New query `usePresetsQuery(projectName)` in `src/lib/queries.ts` for fetching available/installed presets
+- On success: close dialog and invalidate preset query cache
+- On error: display error message in dialog (set via `PresetInstallDialog` error state)
+
+## Data Models — Phase 2
+
+### Logical Data Model
+
+**Preset Definition (code-level, not persisted)**:
+
+```typescript
+const devServerPresetDefinitionSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string(),
+  badge: z.string().length(1),
+  basePort: z.number().int().positive(),
+  serverName: z.string().min(1),
+  command: z.string().min(1),
+  scriptFileName: z.string().min(1),
+});
+type DevServerPresetDefinition = z.infer<typeof devServerPresetDefinitionSchema>;
+```
+
+**Installation modifies existing data models**:
+- `ClaudeSessionManager.json` — appends to `devServers` array (existing `perRepoConfigSchema`)
+- `.csm/dev-servers/` — new directory with shell scripts (not schema-managed)
+
+### Data Contracts & Integration
+
+**API Request/Response schemas** defined in the API contract section above.
+
+**Query Keys**:
+
+```typescript
+export const presetKeys = {
+  all: ["presets"] as const,
+  list: (projectName: string) =>
+    [...presetKeys.all, "list", projectName] as const,
+};
+```
+
+## Error Handling — Phase 2
+
+### Error Categories and Responses
+
+**User Errors (4xx)**:
+- 404: Project not found → standard `ApiError` response
+- 400: Invalid preset ID → `{ error: "Unknown preset: <id>" }`
+- 409: Preset already installed → `{ error: "Preset '<name>' is already installed (server name '<serverName>' exists in devServers)" }`
+
+**System Errors (5xx)**:
+- Filesystem write failure → 500 with error message
+- JSON parse failure on existing config → 500 with diagnostic message
+
+**Script Errors (runtime, not HTTP)**:
+- `ss` / `lsof` not available → helper script falls back or prints diagnostic to stderr
+- Port scan exhausted → script exits with error; CSM detects exit before `CSM_PORT` and transitions to error status
+
+## Testing Strategy — Phase 2
+
+### Unit Tests
+- **PresetRegistry**: Test `getPresets()`, `getPreset()`, `generateHelperScript()`, `generatePresetScript()` — verify script content includes expected functions, port values, and framework commands
+- **PresetInstaller**: Test `installPreset()` with mock filesystem — verify directory creation, file writes, config merging, duplicate detection, executable permissions
+- **Schema validation**: Test `installPresetRequestSchema` and `presetInfoSchema` with valid/invalid inputs
+
+### Integration Tests
+- **Install preset end-to-end**: POST to install endpoint with a real temp directory; verify files written, config updated, response structure
+- **Install duplicate rejection**: POST twice with same preset; verify 409 on second attempt
+- **GET presets with installed status**: Install one preset, then GET; verify installed flags
+
+### Script Tests
+- **_helpers.sh functions**: Test `check_port` / `find_available_port` in a controlled environment with known port states
+- **Preset scripts**: Verify generated scripts are syntactically valid (`bash -n <script>`) and contain expected patterns

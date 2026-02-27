@@ -4,6 +4,8 @@
 
 This specification defines the requirements for automated dev server lifecycle management within CSM sessions. The feature allows users to launch, monitor, and stop project-defined dev servers directly from the session overview page, with each server automatically exposed to the tailnet via Tailscale Serve. Dev servers run in the session's worktree directory, report their ports via a structured stdout protocol, and are tracked in-memory with periodic liveness checks. Auto-cleanup ensures no orphaned processes or stale Tailscale configurations when sessions end.
 
+**Phase 2 — Preset Configuration Support** extends the dev server system with reusable presets that simplify project setup. Instead of manually writing shell commands and port management logic, users select a preset (e.g., Next.js, Storybook) from the CSM UI, and CSM installs framework-specific helper scripts into the project's `.csm/dev-servers/` directory and configures `ClaudeSessionManager.json` automatically. The helper scripts handle port detection, worktree-aware port selection, and the `CSM_PORT` protocol. Installed scripts are intended to be committed to the project repository for team reuse.
+
 ## Requirements
 
 ### Requirement 1: Per-Project Dev Server Configuration
@@ -116,3 +118,61 @@ This specification defines the requirements for automated dev server lifecycle m
 1. When a session is deleted, the CSM shall stop all running dev servers for that session and remove their Tailscale Serve registrations.
 2. When a session is merged, the CSM shall stop all running dev servers for that session and remove their Tailscale Serve registrations.
 3. When the CSM process exits, the CSM shall attempt to stop all running dev servers and remove their Tailscale Serve registrations.
+
+---
+
+## Phase 2: Preset Configuration Support
+
+### Requirement 11: Port Detection Helper Scripts
+
+**Objective:** As a project maintainer, I want reusable shell scripts that detect port availability and verify worktree ownership, so that my dev server startup scripts can automatically find a usable port without manual coordination.
+
+#### Acceptance Criteria
+
+1. The CSM shall provide a port detection helper script that checks whether a given TCP port is currently in use on the local machine.
+2. When a port is in use, the helper script shall determine the PID of the process listening on that port.
+3. When a PID is identified for a port, the helper script shall resolve the process's working directory and compare it against the current worktree path to determine ownership.
+4. When the process on a port belongs to the current worktree, the helper script shall report the port as "owned" (already running for this worktree).
+5. When the process on a port belongs to a different worktree or is unrelated, the helper script shall report the port as "in use" (conflict).
+6. When no process is listening on a port, the helper script shall report the port as "available".
+7. The helper scripts shall be implemented as POSIX-compatible shell scripts that work on Linux without additional dependencies.
+
+### Requirement 12: Dev Server Preset Definitions
+
+**Objective:** As a CSM developer, I want a registry of supported dev server presets, so that each preset encapsulates the framework-specific knowledge needed to generate helper scripts and configuration.
+
+#### Acceptance Criteria
+
+1. The CSM shall define a preset for Next.js dev servers that generates a startup script handling port detection, automatic port allocation, `next dev --port` invocation, and `CSM_PORT` output.
+2. The CSM shall define a preset for Storybook dev servers that generates a startup script handling port detection, automatic port allocation, `storybook dev --port` invocation, and `CSM_PORT` output.
+3. Each preset shall define the list of files it installs (e.g., `.csm/dev-servers/<preset>.sh`) and the `devServers` entry it adds to `ClaudeSessionManager.json`.
+4. Each preset's generated startup script shall use the port detection helpers (Requirement 11) to find an available port before starting the server.
+5. When a server is already running on the expected port for the correct worktree, the preset's startup script shall reuse that port and report it via `CSM_PORT` without spawning a duplicate process.
+
+### Requirement 13: Preset Installation API
+
+**Objective:** As a CSM frontend developer, I want an API endpoint for installing presets into projects, so that the UI can trigger preset installation and report results.
+
+#### Acceptance Criteria
+
+1. The CSM shall provide a POST endpoint that installs a preset (by ID) into a project, writing the helper scripts to `.csm/dev-servers/` in the project root and updating `ClaudeSessionManager.json` with the corresponding `devServers` entry.
+2. When the `.csm/dev-servers/` directory does not exist in the project, the CSM shall create it.
+3. When `ClaudeSessionManager.json` does not exist in the project, the CSM shall create it with the preset's `devServers` entry.
+4. When `ClaudeSessionManager.json` already exists with a `devServers` array, the CSM shall append the preset's entry without removing existing entries.
+5. If a preset is already installed (matching server name exists in `devServers`), the CSM shall return an appropriate error response indicating the preset is already configured.
+6. The CSM shall provide a GET endpoint that returns the list of available presets and which ones are already installed for a given project.
+7. The CSM shall make installed scripts executable (mode `0755`).
+
+### Requirement 14: Preset Installation UI
+
+**Objective:** As a CSM user, I want to install dev server presets from the sessions list page, so that I can quickly configure dev servers for common frameworks without editing configuration files manually.
+
+#### Acceptance Criteria
+
+1. The sessions list page shall display an "Install Preset" button in the action bar alongside the "New Session" button.
+2. When the user clicks "Install Preset", the CSM shall display a modal dialog listing available dev server presets as selectable cards.
+3. Each preset card shall display the preset name, a brief description, and the list of files that will be installed.
+4. Where a preset is already installed for the current project, the preset card shall display an "Installed" indicator and be non-selectable.
+5. When the user selects a preset and clicks "Install", the CSM shall call the preset installation API and display a loading state while the installation is in progress.
+6. When preset installation completes successfully, the CSM shall close the dialog.
+7. If preset installation fails, the CSM shall display the error message within the dialog.

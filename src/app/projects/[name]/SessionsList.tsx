@@ -1,16 +1,17 @@
 "use client";
 
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useState } from "react";
 import Link from "next/link";
 import type { SessionState } from "@/types";
 import {
   deriveSessionStatus,
   deriveSessionPromptCount,
 } from "@/lib/session-derived";
-import { useSessionsQuery } from "@/lib/queries";
+import { useSessionsQuery, usePresetsQuery } from "@/lib/queries";
 import {
   useDeleteSessionMutation,
   useArchiveSessionMutation,
+  useInstallPresetMutation,
 } from "@/lib/mutations";
 import {
   useShowCreateModal,
@@ -23,6 +24,7 @@ import {
   useToggleArchivedSessions,
 } from "@/stores/sessions.store";
 import CreateSessionModal from "./CreateSessionModal";
+import PresetInstallDialog from "./PresetInstallDialog";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Topbar from "@/components/Topbar";
 
@@ -103,6 +105,15 @@ export default function SessionsList({
 
   // --- Mutations ---
   const deleteMutation = useDeleteSessionMutation(projectName);
+  const installPresetMutation = useInstallPresetMutation(projectName);
+
+  // --- Preset install dialog ---
+  const [presetDialogOpen, setPresetDialogOpen] = useState(false);
+  const presetsQuery = usePresetsQuery(projectName);
+  const installedPresets = useMemo(
+    () => presetsQuery.data?.filter((p) => p.installed).map((p) => p.id) ?? [],
+    [presetsQuery.data],
+  );
 
   // --- Derived data ---
   const sessions = useMemo(
@@ -178,12 +189,26 @@ export default function SessionsList({
                     </button>
                   )}
                 </div>
-                <button
-                  className="btn btn-primary btn-sm"
-                  onClick={openCreateModal}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "var(--space-sm)",
+                    alignItems: "center",
+                  }}
                 >
-                  <span className="btn-icon">+</span> New Session
-                </button>
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => setPresetDialogOpen(true)}
+                  >
+                    Install Preset
+                  </button>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={openCreateModal}
+                  >
+                    <span className="btn-icon">+</span> New Session
+                  </button>
+                </div>
               </div>
 
               {filteredSessions.length > 0 ? (
@@ -288,6 +313,23 @@ export default function SessionsList({
               projectName={projectName}
               open={modalOpen}
               onClose={closeCreateModal}
+            />
+
+            <PresetInstallDialog
+              open={presetDialogOpen}
+              projectName={projectName}
+              installedPresets={installedPresets}
+              isInstalling={installPresetMutation.isPending}
+              onInstall={(presetId) => {
+                installPresetMutation.mutate(presetId, {
+                  onSuccess: () => setPresetDialogOpen(false),
+                });
+              }}
+              onClose={() => {
+                if (!installPresetMutation.isPending) {
+                  setPresetDialogOpen(false);
+                }
+              }}
             />
 
             <ConfirmDialog

@@ -4,6 +4,7 @@ import {
   sessionKeys,
   conversationKeys,
   workflowKeys,
+  presetKeys,
 } from "@/lib/query-keys";
 import { tracedFetch } from "@/lib/traced-fetch";
 import { useAddOrUpdateJob } from "@/stores/notification.store";
@@ -692,6 +693,32 @@ export function useGeneratePlanMutation(
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: workflowKeys.status(projectName, sessionName),
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Preset Mutations
+// ---------------------------------------------------------------------------
+
+export function useInstallPresetMutation(projectName: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (presetId: string) =>
+      mutationFetch<{ installedFiles: string[]; configUpdated: boolean }>(
+        `/api/projects/${encodeURIComponent(projectName)}/dev-servers/presets/install`,
+        "install-preset",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ presetId }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: presetKeys.list(projectName),
       });
     },
   });

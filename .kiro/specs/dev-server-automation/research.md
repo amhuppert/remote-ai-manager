@@ -148,8 +148,90 @@
 - **CSM_PORT never emitted** — Startup timeout (60s default) transitions to `error` with diagnostic output from captured stdout/stderr
 - **HMR re-evaluation** — globalThis singleton pattern prevents duplicate registries across module re-evaluations
 
+---
+
+## Phase 2: Preset Configuration Support
+
+### Summary
+- **Discovery Scope**: Extension (adding preset system to existing dev server infrastructure)
+- **Key Findings**:
+  - Linux `/proc/<pid>/cwd` symlink provides reliable process working directory resolution without additional dependencies
+  - `ss -tlnp` provides efficient port/PID lookup on Linux; fallback to `lsof -iTCP:<port> -sTCP:LISTEN` for broader compatibility
+  - Script generation via TypeScript template literals (not static file copying) allows presets to embed port detection helpers inline, reducing the number of files installed per preset
+
+### Research Log — Phase 2
+
+#### Port Detection on Linux
+- **Context**: Requirement 11 needs POSIX-compatible port checking and worktree ownership verification
+- **Sources Consulted**: Linux `/proc` filesystem docs, `ss` man page, `lsof` man page
+- **Findings**:
+  - `ss -tlnp sport = :<port>` lists TCP listeners on a specific port with PIDs (requires no root, available on all modern Linux)
+  - `lsof -iTCP:<port> -sTCP:LISTEN -t` outputs just the PID (more portable but slower)
+  - `/proc/<pid>/cwd` is a symlink to the process's working directory — `readlink /proc/<pid>/cwd` resolves it
+  - For worktree ownership: compare `readlink /proc/<pid>/cwd` against the expected worktree path
+  - Edge case: process may have changed cwd after startup (rare for dev servers which typically stay in project root)
+- **Implications**:
+  - Use `ss` as primary method (fast, available on all modern Linux distros)
+  - Fall back to `lsof` if `ss` is not available
+  - Script returns structured exit codes: 0=available, 1=owned (same worktree), 2=conflict (different worktree/process)
+
+#### Script Generation vs Static Files
+- **Context**: How to produce the shell scripts installed by presets
+- **Findings**:
+  - **Option A**: Static `.sh` files shipped in CSM's repo, copied during install — simple but can't parameterize
+  - **Option B**: TypeScript template functions that generate script content — can embed the port detection helpers inline, parameterize base port, framework command
+  - **Option C**: A shared helper script (`_helpers.sh`) + per-preset script that sources it
+- **Implications**:
+  - Option C selected: install a shared `_helpers.sh` (port detection functions) and a per-preset script (framework-specific startup logic) that sources it
+  - This keeps the port detection logic DRY and testable independently
+
+#### Config File Modification Strategy
+- **Context**: Requirement 13 needs atomic updates to `ClaudeSessionManager.json`
+- **Findings**:
+  - Existing `readRepoConfig` uses `fs.readFile` + `JSON.parse` + `perRepoConfigSchema.parse()`
+  - No existing write function for `ClaudeSessionManager.json` (read-only today)
+  - CSM's `state.ts` uses atomic write (write-to-temp + rename) for `state.json`
+  - For config modification: read existing → merge preset entry → write atomically
+  - Must handle: file missing (create new), `devServers` array missing (add it), existing entries (preserve them)
+- **Implications**:
+  - Add a `writeRepoConfig` utility to `repo-config.ts` for atomic config updates
+  - Validate with Zod after merge to ensure schema compliance
+
+### Design Decisions — Phase 2
+
+#### Decision: Shared Helper Script + Per-Preset Script
+- **Context**: How to structure the installed scripts in `.csm/dev-servers/`
+- **Alternatives Considered**:
+  1. Single monolithic script per preset with all logic embedded
+  2. Shared helper + per-preset script (separation of concerns)
+  3. TypeScript-generated scripts with no shared helpers
+- **Selected Approach**: Install `.csm/dev-servers/_helpers.sh` (port detection/ownership functions) and `.csm/dev-servers/<preset>.sh` (framework startup)
+- **Rationale**: Port detection logic is identical across presets; separating it avoids duplication and makes it independently testable
+- **Trade-offs**: Two files instead of one; `source ./_helpers.sh` adds a dependency between scripts
+
+#### Decision: Preset Registry as TypeScript Module
+- **Context**: Where to define preset metadata and script generators
+- **Alternatives Considered**:
+  1. JSON config files defining presets
+  2. TypeScript module with typed preset definitions and template functions
+  3. Database/external registry
+- **Selected Approach**: TypeScript module at `src/lib/dev-server-presets.ts` exporting a typed registry
+- **Rationale**: Type-safe, testable, follows CSM's schema-first pattern; script content generated via template literals
+- **Trade-offs**: Adding a new preset requires code changes (acceptable — presets are curated)
+
+#### Decision: Project-Level API Route (not Session-Level)
+- **Context**: Preset installation modifies project-level files, not session-specific state
+- **Alternatives Considered**:
+  1. Session-level route: `POST /api/projects/[name]/sessions/[session]/dev-servers/presets/install`
+  2. Project-level route: `POST /api/projects/[name]/dev-servers/presets/install`
+- **Selected Approach**: Project-level route — presets are installed into the project root, not a session worktree
+- **Rationale**: `ClaudeSessionManager.json` and `.csm/dev-servers/` live at the project root; installation affects all sessions
+- **Trade-offs**: None significant
+
 ## References
 - [tailscale serve command](https://tailscale.com/kb/1242/tailscale-serve) — CLI syntax, flags, and behavior
 - [Tailscale Serve examples](https://tailscale.com/kb/1313/serve-examples) — practical usage examples
 - [Node.js child_process docs](https://nodejs.org/api/child_process.html) — spawn, kill, signals
 - [Graceful Shutdown in Node.js](https://dtrunin.github.io/2022/04/05/nodejs-graceful-shutdown.html) — shutdown patterns
+- [Linux /proc filesystem](https://man7.org/linux/man-pages/man5/proc.5.html) — `/proc/<pid>/cwd` for process working directory
+- [ss man page](https://man7.org/linux/man-pages/man8/ss.8.html) — socket statistics utility for port detection

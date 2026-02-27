@@ -68,6 +68,12 @@ export const devServerKeys = {
     [...devServerKeys.all, "list", projectName, sessionName] as const,
 };
 
+export const presetKeys = {
+  all: ["presets"] as const,
+  list: (projectName: string) =>
+    [...presetKeys.all, "list", projectName] as const,
+};
+
 export const kiroDocKeys = {
   all: ["kiro-docs"] as const,
   tree: (projectName: string, sessionName?: string) =>

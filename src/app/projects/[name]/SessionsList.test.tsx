@@ -37,6 +37,7 @@ const mockSessionsData = {
 };
 vi.mock("@/lib/queries", () => ({
   useSessionsQuery: () => mockSessionsData,
+  usePresetsQuery: () => ({ data: undefined }),
   useActiveConversationsQuery: () => ({ data: undefined }),
   useNotificationsQuery: () => ({ data: undefined }),
 }));
@@ -56,6 +57,7 @@ vi.mock("@/lib/mutations", () => ({
     isPending: false,
   }),
   useArchiveSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useInstallPresetMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 // Mock sessions store

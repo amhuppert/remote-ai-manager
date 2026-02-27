@@ -8543,3 +8543,133 @@ textarea {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* ---- Preset Install Dialog ---- */
+
+.preset-install-modal {
+  max-width: 520px;
+}
+
+.preset-install-subtitle {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-lg);
+}
+
+.preset-install-project {
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.preset-card:hover:not(:disabled) {
+  background: var(--bg-surface);
+  border-color: var(--border-default);
+}
+
+.preset-card.selected {
+  border-color: var(--cyan-dim);
+  background: var(--bg-surface);
+  box-shadow:
+    0 0 12px var(--cyan-glow),
+    inset 0 0 12px var(--cyan-glow);
+}
+
+.preset-card.installed {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.preset-card:disabled {
+  cursor: default;
+}
+
+.preset-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.preset-card-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.preset-card.selected .preset-card-badge {
+  background: var(--cyan);
+  color: var(--text-inverse);
+  border-color: var(--cyan);
+}
+
+.preset-card-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.preset-card-installed {
+  margin-left: auto;
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--green);
+}
+
+.preset-card-description {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.preset-card-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-xs);
+}
+
+.preset-card-file {
+  font-size: 0.62rem;
+  color: var(--text-tertiary);
+  padding-left: var(--space-sm);
+  position: relative;
+}
+
+.preset-card-file::before {
+  content: "\2192";
+  position: absolute;
+  left: 0;
+}

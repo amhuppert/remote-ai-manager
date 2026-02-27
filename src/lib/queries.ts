@@ -8,6 +8,7 @@ import {
   workflowKeys,
   kiroDocKeys,
   notificationKeys,
+  presetKeys,
 } from "@/lib/query-keys";
 import type {
   DiscoveredProject,
@@ -321,5 +322,28 @@ export function useNotificationsQuery(options?: { enabled?: boolean }) {
     queryKey: notificationKeys.list(),
     queryFn: () => apiFetch<NotificationsResponse>("/api/notifications"),
     enabled: options?.enabled ?? true,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Preset Queries
+// ---------------------------------------------------------------------------
+
+export interface PresetInfo {
+  id: string;
+  name: string;
+  description: string;
+  badge: string;
+  files: string[];
+  installed: boolean;
+}
+
+export function usePresetsQuery(projectName: string) {
+  return useQuery({
+    queryKey: presetKeys.list(projectName),
+    queryFn: () =>
+      apiFetch<{ presets: PresetInfo[] }>(
+        `/api/projects/${encodeURIComponent(projectName)}/dev-servers/presets`,
+      ).then((r) => r.presets),
   });
 }
