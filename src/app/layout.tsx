@@ -5,6 +5,7 @@ import NotificationListener from "@/components/NotificationListener";
 import GlobalHotkeyHelp from "@/components/GlobalHotkeyHelp";
 import NotificationsPanelContainer from "@/components/NotificationsPanelContainer";
 import MergeToastContainer from "@/components/MergeToastContainer";
+import DevServerDrawerContainer from "@/components/DevServerDrawerContainer";
 import "./globals.css";
 
 const anybody = Anybody({
@@ -69,6 +70,7 @@ export default function RootLayout({
           <NotificationListener />
           <NotificationsPanelContainer />
           <MergeToastContainer />
+          <DevServerDrawerContainer />
           <GlobalHotkeyHelp />
         </Providers>
       </body>

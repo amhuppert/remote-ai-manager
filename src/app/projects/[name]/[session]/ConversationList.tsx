@@ -21,7 +21,6 @@ import {
 } from "@/stores/conversations.store";
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import DevServerPanel from "./DevServerPanel";
 import WorkflowCard from "./WorkflowCard";
 
 interface Props {
@@ -293,12 +292,6 @@ export default function ConversationList({
                 workflow={session.workflow}
               />
             )}
-
-            {/* Dev Server Panel */}
-            <DevServerPanel
-              projectName={projectName}
-              sessionName={sessionName}
-            />
 
             {/* Finished banner */}
             {isFinished && (
