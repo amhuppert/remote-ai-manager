@@ -12,6 +12,26 @@ const STARTUP_TIMEOUT_MS = 60_000;
 const OUTPUT_BUFFER_SIZE = 50;
 const KILL_GRACE_MS = 5_000;
 
+/**
+ * Build a sanitized copy of process.env for child dev servers.
+ * CC itself is a Next.js server, so its process.env contains internal
+ * `__NEXT_PRIVATE_*`, `NODE_CHANNEL_*`, and other vars that confuse or crash
+ * a child Next.js (or other Node) process.
+ */
+function buildChildEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (
+      key.startsWith("__NEXT_") ||
+      key.startsWith("NODE_CHANNEL_") ||
+      key.startsWith("__TURBOPACK_")
+    ) {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
 /** In-memory state for a single dev server */
 export interface DevServerEntry {
   serverName: string;
@@ -121,6 +141,7 @@ export async function startServer(params: {
     shell: true,
     cwd: worktreePath,
     stdio: "pipe",
+    env: buildChildEnv(),
   });
 
   const entry: DevServerEntry = {
@@ -253,6 +274,13 @@ export async function startServer(params: {
       });
     } else if (entry.status === "running") {
       // Unexpected exit while running — liveness poller may also detect this
+      logger.warn("dev-server.unexpected_exit", {
+        serverName,
+        pid: entry.pid,
+        code,
+        signal,
+        recentOutput: entry.recentOutput.slice(-10),
+      });
       if (entry.port) {
         tailscale.unregister(entry.port).catch(() => {});
       }

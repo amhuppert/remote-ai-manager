@@ -212,6 +212,15 @@ export default function NotificationListener(): null {
         void queryClient.invalidateQueries({
           queryKey: notificationKeys.all,
         });
+        void queryClient.invalidateQueries({
+          queryKey: devServerKeys.all,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: sessionKeys.all,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: workflowKeys.all,
+        });
       }
     };
 
