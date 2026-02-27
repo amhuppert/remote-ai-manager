@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("./state");
 vi.mock("./config");
 vi.mock("./git-operations");
+vi.mock("./dev-server-registry");
 vi.mock("./sse-broadcaster");
 vi.mock("./logging", () => ({
   createLogger: () => ({
@@ -29,6 +30,7 @@ import {
   isBranchAncestorOfMain,
   isBranchMentionedInMainLog,
 } from "./git-operations";
+import { stopAllForSession } from "./dev-server-registry";
 import { broadcast } from "./sse-broadcaster";
 import type { ManagerState, SessionFinishedEvent } from "@/types";
 
@@ -41,6 +43,7 @@ const mockSetSessionFinished = vi.mocked(setSessionFinished);
 const mockReadConfig = vi.mocked(readConfig);
 const mockIsBranchAncestorOfMain = vi.mocked(isBranchAncestorOfMain);
 const mockIsBranchMentionedInMainLog = vi.mocked(isBranchMentionedInMainLog);
+const mockStopAllForSession = vi.mocked(stopAllForSession);
 const mockBroadcast = vi.mocked(broadcast);
 
 // ============================================================
@@ -112,6 +115,7 @@ beforeEach(() => {
   mockIsBranchAncestorOfMain.mockResolvedValue(false);
   mockIsBranchMentionedInMainLog.mockResolvedValue(false);
   mockSetSessionFinished.mockResolvedValue(undefined);
+  mockStopAllForSession.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -138,6 +142,10 @@ describe("checkAllSessionsForMerge", () => {
     const count = await checkAllSessionsForMerge();
 
     expect(count).toBe(1);
+    expect(mockStopAllForSession).toHaveBeenCalledWith({
+      projectPath: "/projects/foo",
+      sessionName: "my-session",
+    });
     expect(mockSetSessionFinished).toHaveBeenCalledWith(
       "/projects/foo",
       "my-session",
@@ -167,6 +175,10 @@ describe("checkAllSessionsForMerge", () => {
     const count = await checkAllSessionsForMerge();
 
     expect(count).toBe(1);
+    expect(mockStopAllForSession).toHaveBeenCalledWith({
+      projectPath: "/projects/foo",
+      sessionName: "squash-session",
+    });
     expect(mockSetSessionFinished).toHaveBeenCalledWith(
       "/projects/foo",
       "squash-session",
@@ -194,6 +206,29 @@ describe("checkAllSessionsForMerge", () => {
     expect(mockIsBranchMentionedInMainLog).not.toHaveBeenCalled();
     expect(mockSetSessionFinished).not.toHaveBeenCalled();
     expect(mockBroadcast).not.toHaveBeenCalled();
+  });
+
+  it("still marks session finished when stopAllForSession fails", async () => {
+    mockReadState.mockResolvedValue(
+      makeState({
+        "my-session": {
+          sessionName: "my-session",
+          branchName: "csm/my-session",
+          finished: false,
+        },
+      }),
+    );
+    mockIsBranchAncestorOfMain.mockResolvedValue(true);
+    mockStopAllForSession.mockRejectedValue(new Error("kill failed"));
+
+    const count = await checkAllSessionsForMerge();
+
+    expect(count).toBe(1);
+    expect(mockStopAllForSession).toHaveBeenCalled();
+    expect(mockSetSessionFinished).toHaveBeenCalledWith(
+      "/projects/foo",
+      "my-session",
+    );
   });
 
   it("does not mark session when neither strategy detects a merge", async () => {

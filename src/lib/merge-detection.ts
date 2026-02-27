@@ -12,6 +12,7 @@ import {
   isBranchAncestorOfMain,
   isBranchMentionedInMainLog,
 } from "./git-operations";
+import { stopAllForSession } from "./dev-server-registry";
 import { broadcast } from "./sse-broadcaster";
 import { createLogger } from "./logging";
 import type { SessionFinishedEvent } from "@/types";
@@ -71,6 +72,13 @@ export async function checkAllSessionsForMerge(): Promise<number> {
             method: "ancestor",
           });
 
+          // Stop all dev servers before marking session as finished (best-effort)
+          try {
+            await stopAllForSession({ projectPath, sessionName });
+          } catch {
+            // best-effort: don't block merge detection
+          }
+
           await setSessionFinished(projectPath, sessionName);
           logger.info("merge-detection.persisted", {
             sessionName,
@@ -100,6 +108,13 @@ export async function checkAllSessionsForMerge(): Promise<number> {
             branchName,
             method: "commit-message",
           });
+
+          // Stop all dev servers before marking session as finished (best-effort)
+          try {
+            await stopAllForSession({ projectPath, sessionName });
+          } catch {
+            // best-effort: don't block merge detection
+          }
 
           await setSessionFinished(projectPath, sessionName);
           logger.info("merge-detection.persisted", {

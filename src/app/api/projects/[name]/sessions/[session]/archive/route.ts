@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession, setSessionArchived } from "@/lib/state";
+import { stopAllForSession } from "@/lib/dev-server-registry";
 import { sessionArchiveRequestSchema } from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/types";
@@ -41,6 +42,15 @@ export const PATCH = withTracing(async (request, { params }) => {
   }
 
   try {
+    // Stop all dev servers when archiving (best-effort, don't block)
+    if (body.archived) {
+      try {
+        await stopAllForSession({ projectPath, sessionName });
+      } catch {
+        // best-effort: don't block archival
+      }
+    }
+
     await setSessionArchived(projectPath, sessionName, body.archived);
     return NextResponse.json({ ok: true });
   } catch (err) {
