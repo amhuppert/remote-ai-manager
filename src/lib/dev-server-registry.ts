@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:net";
 import { createLogger } from "./logging";
 import { broadcast } from "./sse-broadcaster";
 import * as tailscale from "./tailscale";
@@ -11,6 +12,8 @@ const GLOBAL_KEY = "__cc_dev_servers" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
 const OUTPUT_BUFFER_SIZE = 50;
 const KILL_GRACE_MS = 5_000;
+const TAILSCALE_POLL_INTERVAL_MS = 500;
+const TAILSCALE_POLL_TIMEOUT_MS = 30_000;
 
 /**
  * Build a sanitized copy of process.env for child dev servers.
@@ -110,6 +113,75 @@ function cleanupTimer(entry: DevServerEntry): void {
   if (entry._startupTimer) {
     clearTimeout(entry._startupTimer);
     entry._startupTimer = null;
+  }
+}
+
+/**
+ * Check if a port is actually in use (something is listening on localhost).
+ * Attempts a TCP connection to 127.0.0.1:port.
+ * Returns true if the port is occupied, false if available.
+ */
+function isPortListening(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createServer();
+    socket.once("error", (err: NodeJS.ErrnoException) => {
+      socket.close();
+      // EADDRINUSE means something is listening
+      resolve(err.code === "EADDRINUSE");
+    });
+    socket.once("listening", () => {
+      // We were able to bind → nobody is listening
+      socket.close(() => resolve(false));
+    });
+    socket.listen(port, "127.0.0.1");
+  });
+}
+
+/**
+ * Wait for a port to become occupied on localhost, then register with Tailscale.
+ * This prevents Tailscale from binding the port before the dev server can.
+ */
+async function deferredTailscaleRegister(
+  entry: DevServerEntry,
+  port: number,
+): Promise<void> {
+  const deadline = Date.now() + TAILSCALE_POLL_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    // Abort if the server is no longer running (exited, stopped, errored)
+    if (entry.status !== "running") return;
+
+    if (await isPortListening(port)) {
+      const remoteUrl = await tailscale.register(port);
+      // Entry may have changed status while we awaited
+      if (entry.status === "running") {
+        entry.remoteUrl = remoteUrl ?? null;
+        broadcastStatus(entry);
+        logger.info("dev-server.tailscale_registered", {
+          serverName: entry.serverName,
+          port,
+          remoteUrl,
+        });
+      }
+      return;
+    }
+
+    await new Promise((r) => setTimeout(r, TAILSCALE_POLL_INTERVAL_MS));
+  }
+
+  // Timeout — server never started listening. Register anyway so remote URL
+  // works if the server starts later (liveness poller will catch actual death).
+  if (entry.status === "running") {
+    logger.warn("dev-server.tailscale_poll_timeout", {
+      serverName: entry.serverName,
+      port,
+      timeoutMs: TAILSCALE_POLL_TIMEOUT_MS,
+    });
+    const remoteUrl = await tailscale.register(port);
+    if (entry.status === "running") {
+      entry.remoteUrl = remoteUrl ?? null;
+      broadcastStatus(entry);
+    }
   }
 }
 
@@ -219,13 +291,21 @@ export async function startServer(params: {
 
         logger.info("dev-server.port_discovered", { serverName, port });
 
-        // Register with Tailscale (async, non-blocking)
-        tailscale.register(port).then((remoteUrl) => {
-          transitionTo(entry, "running", {
+        // Transition to running immediately so the UI knows the port.
+        // Tailscale registration is deferred until the server is actually
+        // listening — otherwise Tailscale's `serve --http=<port>` binds the
+        // port on the Tailscale interface before the dev server can, causing
+        // EADDRINUSE and interactive prompts that block forever.
+        transitionTo(entry, "running", { port, remoteUrl: null });
+        logger.info("dev-server.running", { serverName, port });
+
+        // Deferred: wait for the server to bind the port, then register Tailscale
+        deferredTailscaleRegister(entry, port).catch((err) => {
+          logger.warn("dev-server.tailscale_deferred_error", {
+            serverName,
             port,
-            remoteUrl: remoteUrl ?? null,
+            error: err instanceof Error ? err.message : String(err),
           });
-          logger.info("dev-server.running", { serverName, port, remoteUrl });
         });
       }
     }

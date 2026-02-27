@@ -97,15 +97,17 @@ describe("DevServerRegistry", () => {
     });
 
     it("detects CC_PORT and transitions to running", async () => {
+      // Use a port that's unlikely to be occupied so the deferred Tailscale
+      // poll doesn't fire within the test window
       await registry.startServer({
         projectPath: "/proj",
         sessionName: "s1",
         serverName: "port-test",
-        command: "echo CC_PORT=3000 && sleep 60",
+        command: "echo CC_PORT=59876 && sleep 60",
         worktreePath: "/tmp",
       });
 
-      // Wait for stdout processing + tailscale registration
+      // Wait for stdout processing
       await new Promise((r) => setTimeout(r, 200));
 
       const server = registry.getServer({
@@ -115,9 +117,50 @@ describe("DevServerRegistry", () => {
       });
 
       expect(server!.status).toBe("running");
-      expect(server!.port).toBe(3000);
-      expect(server!.remoteUrl).toBe("https://mock.ts.net:3000");
-      expect(tailscale.register).toHaveBeenCalledWith(3000);
+      expect(server!.port).toBe(59876);
+      // remoteUrl is null initially — Tailscale registration is deferred until
+      // the server is actually listening on the port
+      expect(server!.remoteUrl).toBeNull();
+      // Tailscale should NOT have been called yet since nothing is listening
+      expect(tailscale.register).not.toHaveBeenCalled();
+    });
+
+    it("registers Tailscale after server starts listening on port", async () => {
+      // Start a real TCP listener on a port so the deferred check can find it
+      const { createServer } = await import("node:net");
+      const tcpServer = createServer();
+      const port = await new Promise<number>((resolve) => {
+        tcpServer.listen(0, "127.0.0.1", () => {
+          const addr = tcpServer.address();
+          resolve(typeof addr === "object" && addr ? addr.port : 0);
+        });
+      });
+
+      try {
+        await registry.startServer({
+          projectPath: "/proj",
+          sessionName: "s1",
+          serverName: "tailscale-test",
+          command: `echo CC_PORT=${port} && sleep 60`,
+          worktreePath: "/tmp",
+        });
+
+        // Wait for stdout processing + deferred Tailscale poll (500ms interval)
+        await new Promise((r) => setTimeout(r, 1200));
+
+        const server = registry.getServer({
+          projectPath: "/proj",
+          sessionName: "s1",
+          serverName: "tailscale-test",
+        });
+
+        expect(server!.status).toBe("running");
+        expect(server!.port).toBe(port);
+        expect(tailscale.register).toHaveBeenCalledWith(port);
+        expect(server!.remoteUrl).toBe("https://mock.ts.net:3000");
+      } finally {
+        tcpServer.close();
+      }
     });
 
     it("transitions to error when process exits before CC_PORT", async () => {
