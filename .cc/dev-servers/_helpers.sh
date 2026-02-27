@@ -1,6 +1,6 @@
 #!/bin/sh
-# CSM Dev Server Helpers — shared port detection and worktree ownership functions
-# Installed by CSM (Claude Session Manager). Intended to be committed to the repo.
+# CC Dev Server Helpers — shared port detection and worktree ownership functions
+# Installed by CC (Claude Code). Intended to be committed to the repo.
 
 # Get the PID listening on a TCP port. Prints PID or empty string.
 # Args: $1 = port

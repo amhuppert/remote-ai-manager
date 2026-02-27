@@ -1,6 +1,6 @@
 #!/bin/sh
-# CSM Dev Server — Next.js
-# Installed by CSM (Claude Session Manager). Intended to be committed to the repo.
+# CC Dev Server — Next.js
+# Installed by CC (Claude Code). Intended to be committed to the repo.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_helpers.sh"
@@ -30,5 +30,5 @@ case $? in
     ;;
 esac
 
-echo "CSM_PORT=$PORT"
+echo "CC_PORT=$PORT"
 exec npx next dev --port "$PORT"

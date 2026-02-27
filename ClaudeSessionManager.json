@@ -4,11 +4,11 @@
   "devServers": [
     {
       "name": "nextjs",
-      "command": ".csm/dev-servers/nextjs.sh"
+      "command": ".cc/dev-servers/nextjs.sh"
     },
     {
       "name": "storybook",
-      "command": ".csm/dev-servers/storybook.sh"
+      "command": ".cc/dev-servers/storybook.sh"
     }
   ]
 }
