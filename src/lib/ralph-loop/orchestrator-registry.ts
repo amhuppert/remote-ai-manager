@@ -3,7 +3,7 @@
  * Uses globalThis singleton for HMR safety (same pattern as session locks).
  */
 
-const GLOBAL_KEY = "__csm_running_workflows" as const;
+const GLOBAL_KEY = "__cc_running_workflows" as const;
 
 export interface RunningWorkflow {
   projectPath: string;

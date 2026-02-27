@@ -1,6 +1,6 @@
 #!/bin/sh
-# CSM Dev Server Helpers — shared port detection and worktree ownership functions
-# Installed by CSM (Claude Session Manager). Intended to be committed to the repo.
+# CC Dev Server Helpers — shared port detection and worktree ownership functions
+# Installed by CC (Claude Code). Intended to be committed to the repo.
 
 # Get the PID listening on a TCP port. Prints PID or empty string.
 # Args: $1 = port
@@ -66,9 +66,10 @@ check_port() {
   return 2
 }
 
-# Scan from a base port upward to find the first available port.
+# Scan from a base port upward to find the first available or owned port.
 # Args: $1 = base port, $2 = expected worktree path
-# Prints the available port number.
+# Prints the port number.
+# Exit codes: 0 = found available port, 1 = found owned port (adopt), 2 = no port found
 find_available_port() {
   local base_port="$1"
   local expected_cwd="$2"
@@ -80,11 +81,11 @@ find_available_port() {
     check_port "$port" "$expected_cwd"
     case $? in
       0) echo "$port"; return 0 ;;
-      1) echo "$port"; return 0 ;;
+      1) echo "$port"; return 1 ;;
     esac
     max_attempts=$((max_attempts - 1))
   done
 
   echo "ERROR: Could not find an available port after scanning from $base_port" >&2
-  return 1
+  return 2
 }

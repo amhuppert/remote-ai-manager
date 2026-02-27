@@ -14,7 +14,7 @@
   - _Requirements: 7.1, 7.2, 7.3, 7.4_
 
 - [x] 1.2 Test Topbar breadcrumb rendering
-  - Verify CSM logo links to /projects
+  - Verify CC logo links to /projects
   - Verify breadcrumb segments render with correct labels and links
   - Verify session-specific controls render on detail page
   - Verify global status renders on projects/sessions pages

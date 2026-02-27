@@ -227,7 +227,7 @@ async function provisionSession(
     promptCount: 0,
     createdAt: now,
     lastActivityAt: now,
-    source: "csm",
+    source: "cc",
     summary: null,
     archived: false,
     totalCostUsd: null,
@@ -247,7 +247,7 @@ async function provisionSession(
     archived: false,
     finished: false,
     conversations: [initialConversation],
-    source: "csm",
+    source: "cc",
     objective: opts.objective,
     creationMode: opts.mode,
     workflow: null,
@@ -318,7 +318,7 @@ export async function createSessionFocus(
 
 /**
  * Delete a session.
- * - For CSM-created sessions: removes the worktree directory from disk
+ * - For CC-created sessions: removes the worktree directory from disk
  * - For imported sessions: only removes the session record from state
  * - Does NOT delete the branch or transcripts
  */
@@ -344,7 +344,7 @@ export async function deleteSession(
     // best-effort: don't block deletion
   }
 
-  const source = session.source ?? "csm";
+  const source = session.source ?? "cc";
   let worktreeRemoved = false;
   let worktreeCleanup = "skipped";
 

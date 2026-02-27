@@ -22,7 +22,7 @@ const logger = createLogger("merge-detection");
 // globalThis Singleton (HMR-safe)
 // ============================================================
 
-const INTERVAL_KEY = "__csm_merge_detection_interval" as const;
+const INTERVAL_KEY = "__cc_merge_detection_interval" as const;
 
 function getInterval(): ReturnType<typeof setInterval> | null {
   const g = globalThis as unknown as Record<string, unknown>;

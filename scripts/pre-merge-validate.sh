@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-merge validation script for CSM sessions.
+# Pre-merge validation script for CC sessions.
 # Runs automatically before squash-merging a session branch into main.
 # Auto-fixes (prettier, eslint) are committed by the caller after this script completes.
 

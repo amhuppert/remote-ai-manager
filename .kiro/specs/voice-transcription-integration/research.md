@@ -5,7 +5,7 @@
 - **Discovery Scope**: Extension
 - **Key Findings**:
   - Voice2Text already has full transcription/cleanup pipeline — only needs HTTP wrapper and config parameterization
-  - CSM has established patterns (withTracing, API routes, resolveProjectPath) that voice integration follows directly
+  - CC has established patterns (withTracing, API routes, resolveProjectPath) that voice integration follows directly
   - Zero new npm dependencies in either project (Bun.serve() for V2T, native MediaRecorder for browser)
   - CleanupService already accepts `priorOutput` parameter with file-mode prompt template — context-aware transcription requires only data plumbing through the 4-layer chain
 
@@ -28,8 +28,8 @@
   - Server: New `server.ts` reuses existing Transcriber + CleanupService instances. Extract `readContextFilesContent()` to `utils/context.ts`
   - Main: Add `serve` subcommand via Commander `.command("serve")`
 
-### CSM Integration Points
-- **Context**: Need to map voice integration onto existing CSM patterns
+### CC Integration Points
+- **Context**: Need to map voice integration onto existing CC patterns
 - **Sources Consulted**: Direct codebase analysis of session detail page, API routes, project resolver
 - **Findings**:
   - `resolveProjectPath(name)` in `src/lib/project-resolver.ts`: async, returns `string | null`. Already used by all project-scoped API routes
@@ -55,7 +55,7 @@
   - `MediaRecorder` API widely supported (Chrome, Firefox, Safari 14.1+, Edge)
   - `audio/webm;codecs=opus` preferred for Chrome/Edge/Firefox; Safari may need fallback
   - `MediaRecorder.isTypeSupported()` used for format negotiation
-  - `getUserMedia({ audio: true })` requires HTTPS or localhost (CSM accessed via Tailscale uses HTTPS)
+  - `getUserMedia({ audio: true })` requires HTTPS or localhost (CC accessed via Tailscale uses HTTPS)
   - `dataavailable` event fires chunks; `stop` event signals end
   - OpenAI accepts webm natively — no client-side conversion needed
 - **Implications**:
@@ -63,15 +63,15 @@
   - No audio conversion step needed — browser webm sent directly through proxy to OpenAI
 
 ### Context-Aware Transcription Discovery (Requirement 10)
-- **Context**: Need to pass existing input text through the entire chain (hook → CSM API → V2T server → cleanup) so transcription is formatted to continue from existing content
+- **Context**: Need to pass existing input text through the entire chain (hook → CC API → V2T server → cleanup) so transcription is formatted to continue from existing content
 - **Sources Consulted**: Direct analysis of `cleanup.ts`, `server.ts`, `useVoiceRecorder.ts`, `transcribe/route.ts`, `SessionDetailPage.tsx`, `CreateSessionModal.tsx`
 - **Findings**:
   - CleanupService already accepts optional `priorOutput` parameter (cleanup.ts line 16)
   - File-mode cleanup prompt template (`FILE_MODE_CLEANUP_PROMPT_TEMPLATE`) already exists with `{PRIOR_OUTPUT}` placeholder (cleanup.ts line 144)
   - File-mode cleanup system prompt includes continuation-aware instructions: "continue naturally from the prior document content" (cleanup.ts line 137)
   - V2T server currently calls `cleanupService.cleanup(transcription, contextFiles, instructionsFiles)` without `priorOutput` — the fourth argument is omitted (server.ts line 144)
-  - CSM useVoiceRecorder builds FormData with only `audio` and `projectName` — no context field (useVoiceRecorder.ts line 173-177)
-  - CSM transcribe route forwards only `audio` and `projectPath` — no context forwarding (route.ts line 48-50)
+  - CC useVoiceRecorder builds FormData with only `audio` and `projectName` — no context field (useVoiceRecorder.ts line 173-177)
+  - CC transcribe route forwards only `audio` and `projectPath` — no context forwarding (route.ts line 48-50)
   - Both SessionDetailPage and CreateSessionModal use `useVoiceRecorder` and have access to their current input text state (`promptText` / `objective`)
 - **Implications**:
   - The cleanup infrastructure for context-aware formatting is fully built; only data plumbing is needed
@@ -84,25 +84,25 @@
 | Option | Description | Strengths | Risks / Limitations | Notes |
 |--------|-------------|-----------|---------------------|-------|
 | Direct browser→V2T | Browser calls V2T server directly | Simpler, fewer hops | V2T binds localhost only; breaks remote/Tailscale access | Rejected |
-| CSM proxy | Browser→CSM API→V2T | Works remotely, centralized auth point | Extra hop adds latency | Selected — matches CSM's role as control plane |
+| CC proxy | Browser→CC API→V2T | Works remotely, centralized auth point | Extra hop adds latency | Selected — matches CC's role as control plane |
 | WebSocket streaming | Stream audio chunks in real-time | Lower latency start | Complexity, V2T not designed for streaming | Deferred — batch is sufficient for dictation |
 
 ## Design Decisions
 
-### Decision: CSM Proxy Architecture
-- **Context**: V2T server binds to localhost; CSM may be accessed remotely via Tailscale
+### Decision: CC Proxy Architecture
+- **Context**: V2T server binds to localhost; CC may be accessed remotely via Tailscale
 - **Alternatives Considered**:
   1. Direct browser→V2T — breaks remote access
-  2. CSM API proxy — adds hop but enables remote
-  3. CSM WebSocket relay — streaming complexity not justified
-- **Selected Approach**: CSM API proxy route forwards multipart form data to V2T
-- **Rationale**: CSM already serves as the control plane; voice is another resource it proxies. Pattern matches existing API routes
+  2. CC API proxy — adds hop but enables remote
+  3. CC WebSocket relay — streaming complexity not justified
+- **Selected Approach**: CC API proxy route forwards multipart form data to V2T
+- **Rationale**: CC already serves as the control plane; voice is another resource it proxies. Pattern matches existing API routes
 - **Trade-offs**: +Remote access, +Centralized error handling; −Extra network hop (negligible for audio dictation)
 - **Follow-up**: Monitor transcription latency in production
 
 ### Decision: No New Dependencies
 - **Context**: Both projects aim for minimal dependency footprint
-- **Selected Approach**: Bun.serve() for V2T server, native MediaRecorder for browser audio, native fetch for CSM proxy
+- **Selected Approach**: Bun.serve() for V2T server, native MediaRecorder for browser audio, native fetch for CC proxy
 - **Rationale**: Bun.serve() is zero-config HTTP server. MediaRecorder is well-supported. No form parsing library needed (Bun FormData is built-in)
 - **Trade-offs**: +No dependency management; −Bun.serve() less featureful than Express (acceptable for 2 routes)
 
@@ -135,7 +135,7 @@
 ## Risks & Mitigations
 - **V2T server not running** — Health-gated button hides feature entirely; no broken state
 - **Microphone permission denied** — Clear error message via existing promptError display
-- **Long transcription (>60s)** — AbortSignal timeout at CSM proxy; user sees timeout error
+- **Long transcription (>60s)** — AbortSignal timeout at CC proxy; user sees timeout error
 - **Claude cleanup failure** — V2T falls back to raw transcription (existing behavior)
 - **Browser MIME type incompatibility** — Three-tier fallback chain for MediaRecorder format
 

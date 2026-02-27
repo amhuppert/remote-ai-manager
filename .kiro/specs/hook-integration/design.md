@@ -4,9 +4,9 @@
 
 ## Overview
 
-**Purpose**: The Hook Integration feature connects CSM to Claude Code's lifecycle event system, receiving events via HTTP to update session metadata (Claude session ID and transcript path) and providing hook installation detection for the UI.
+**Purpose**: The Hook Integration feature connects CC to Claude Code's lifecycle event system, receiving events via HTTP to update session metadata (Claude session ID and transcript path) and providing hook installation detection for the UI.
 
-**Users**: Developers using CSM to manage Claude Code sessions. Hook events fire automatically during Claude Code operation; the UI displays hook installation status.
+**Users**: Developers using CC to manage Claude Code sessions. Hook events fire automatically during Claude Code operation; the UI displays hook installation status.
 
 **Impact**: Hooks provide supplementary session metadata. Conversation messages are now stored directly in session state by the prompt execution feature (see `prompt-execution` spec, Requirement 8), so hooks are no longer the sole mechanism for conversation display. However, hooks remain valuable for capturing the `transcriptPath` (useful for advanced debugging with the JSONL transcript parser) and `claudeSessionId` (as a secondary source, since prompt execution also sets this from CLI JSON output).
 
@@ -38,7 +38,7 @@ The hook integration is fully implemented across three layers:
 
 Key patterns preserved:
 
-- Event-driven architecture (hooks push data to CSM)
+- Event-driven architecture (hooks push data to CC)
 - Zod validation for external API input
 - Atomic state persistence via state.ts
 - Server-side status detection in page components
@@ -134,8 +134,8 @@ sequenceDiagram
     alt file exists
         FS-->>Hooks: JSON content
         Hooks->>Hooks: Parse hooks config
-        Hooks->>Hooks: Check UserPromptSubmit events for "csm"
-        Hooks->>Hooks: Check Stop events for "csm"
+        Hooks->>Hooks: Check UserPromptSubmit events for "cc"
+        Hooks->>Hooks: Check Stop events for "cc"
         Hooks-->>Page: {installed, hasUserPromptSubmit, hasStop}
     else file missing or invalid
         Hooks-->>Page: {installed: false, hasUserPromptSubmit: false, hasStop: false}
@@ -162,7 +162,7 @@ sequenceDiagram
 | 3.5         | Atomic state persistence             | processHookEvent  | state.ts   | Processing |
 | 4.1         | Read settings.json                   | detectHooksStatus | Filesystem | Detection  |
 | 4.2         | Check both event types               | detectHooksStatus | —          | Detection  |
-| 4.3         | Verify csm in command string         | detectHooksStatus | —          | Detection  |
+| 4.3         | Verify cc in command string          | detectHooksStatus | —          | Detection  |
 | 4.4         | Return structured status             | detectHooksStatus | —          | Detection  |
 | 4.5         | Graceful handling of missing file    | detectHooksStatus | —          | Detection  |
 | 5.1         | GET /api/hooks/status endpoint       | StatusRoute       | HTTP       | Detection  |
@@ -206,7 +206,7 @@ function processHookEvent(data: HookEventData): Promise<boolean>;
 
 | Field        | Detail                                                  |
 | ------------ | ------------------------------------------------------- |
-| Intent       | Detect whether Claude Code hooks are configured for CSM |
+| Intent       | Detect whether Claude Code hooks are configured for CC |
 | Requirements | 4.1, 4.2, 4.3, 4.4, 4.5                                 |
 
 ##### Service Interface

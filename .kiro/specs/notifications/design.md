@@ -2,9 +2,9 @@
 
 ## Overview
 
-**Purpose**: This feature replaces CSM's ephemeral notification system with a SQLite-backed persistence layer, adding read/unread tracking and reliable cross-tab/cross-device delivery.
+**Purpose**: This feature replaces CC's ephemeral notification system with a SQLite-backed persistence layer, adding read/unread tracking and reliable cross-tab/cross-device delivery.
 
-**Users**: Developers using the CSM dashboard to monitor background jobs (merge, commit, resolve-conflicts) across sessions and devices.
+**Users**: Developers using the CC dashboard to monitor background jobs (merge, commit, resolve-conflicts) across sessions and devices.
 
 **Impact**: Replaces in-memory `globalThis` job registries and client-only Zustand toast state with a server-authoritative SQLite database, while preserving the existing SSE broadcast and fire-and-forget dispatch patterns.
 
@@ -16,7 +16,7 @@
 
 ### Non-Goals
 - Push notifications (browser Notification API, mobile push) — future consideration
-- Notification preferences or per-user filtering — CSM is single-user
+- Notification preferences or per-user filtering — CC is single-user
 - Full-text search over notification history
 - Replacing the existing fire-and-forget job dispatch pattern (running jobs remain in-memory)
 
@@ -263,12 +263,12 @@ import Database from "better-sqlite3";
 // Database singleton via globalThis (HMR-safe)
 declare global {
   // eslint-disable-next-line no-var
-  var __csm_notification_db: InstanceType<typeof Database> | undefined;
+  var __cc_notification_db: InstanceType<typeof Database> | undefined;
 }
 
 // DB file location
-// Linux: ~/.config/csm/notifications.db
-// macOS: ~/Library/Application Support/csm/notifications.db
+// Linux: ~/.config/cc/notifications.db
+// macOS: ~/Library/Application Support/cc/notifications.db
 ```
 
 - Persistence: SQLite file in platform config directory
@@ -617,7 +617,7 @@ CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
 
 ### Error Strategy
 
-All errors follow existing CSM patterns: structured logging via `createLogger()`, HTTP error responses with appropriate status codes, and graceful degradation.
+All errors follow existing CC patterns: structured logging via `createLogger()`, HTTP error responses with appropriate status codes, and graceful degradation.
 
 ### Error Categories and Responses
 

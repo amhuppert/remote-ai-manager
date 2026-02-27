@@ -3,7 +3,7 @@ import { createLogger } from "./logging";
 const logger = createLogger("abort-registry");
 
 // Use globalThis to survive HMR (same pattern as sse-broadcaster.ts)
-const GLOBAL_KEY = "__csm_abort_controllers" as const;
+const GLOBAL_KEY = "__cc_abort_controllers" as const;
 
 function getRegistry(): Map<string, AbortController> {
   const g = globalThis as unknown as Record<string, unknown>;

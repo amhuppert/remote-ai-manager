@@ -3,16 +3,16 @@
 > **UPDATED (2026-02-22) — SDK Migration:** Several components described below have been removed or simplified:
 >
 > - **`hooks.ts (updated)`** and Requirement 16 (Hook Event Routing): Entire hook system removed. The "Hook Event Routing" flow diagram is obsolete.
-> - **Auto-Import Discovery**: `discoverAndImportConversations()`, `encodeProjectPath()`, `readSessionsIndex()`, and `~/.claude/projects/` filesystem scanning have been removed from `conversations.ts`. CSM no longer imports conversations from Claude Code's filesystem.
+> - **Auto-Import Discovery**: `discoverAndImportConversations()`, `encodeProjectPath()`, `readSessionsIndex()`, and `~/.claude/projects/` filesystem scanning have been removed from `conversations.ts`. CC no longer imports conversations from Claude Code's filesystem.
 > - **`?import=true` query param**: Removed from the conversations API route.
 > - **`-c` flag / `--session-id`**: Prompt continuation now uses SDK `resume: conversationId` option instead.
 > - **Components still valid**: `conversationStateSchema`, `sessionStateSchema`, CRUD operations in `conversations.ts`, `deriveSessionStatus/PromptCount/LastActivity`, conversation API routes (GET/POST), prompt API route, UI components.
 
 ## Overview
 
-**Purpose**: This feature expands CSM sessions from a one-to-one relationship with Claude Code sessions to a one-to-many relationship by introducing a **Conversation** entity. Each Conversation maps to a single Claude Code session and carries its own status, messages, and metadata. This enables seamless switching between CSM UI and terminal-based Claude Code usage within the same session.
+**Purpose**: This feature expands CC sessions from a one-to-one relationship with Claude Code sessions to a one-to-many relationship by introducing a **Conversation** entity. Each Conversation maps to a single Claude Code session and carries its own status, messages, and metadata. This enables seamless switching between CC UI and terminal-based Claude Code usage within the same session.
 
-**Users**: Developers who work with Claude Code through both CSM and the CLI will use this to track all their interactions in one place, switch between conversations, and start new ones from either interface.
+**Users**: Developers who work with Claude Code through both CC and the CLI will use this to track all their interactions in one place, switch between conversations, and start new ones from either interface.
 
 **Impact**: Changes the core `SessionState` data model by extracting per-conversation fields (`claudeSessionId`, `transcriptPath`, `status`, `messages`, `promptCount`) into a new `ConversationState` entity. Introduces a new `conversations.ts` module, new API routes, and updated UI views.
 
@@ -220,7 +220,7 @@ flowchart TD
 | 10.1–10.5 | Session-conversation relationship | sessionStateSchema, deriveSessionStatus | State | — |
 | 11.1–11.5 | Conversation list view | ConversationList, ConversationCard | Conversations API | — |
 | 12.1–12.6 | Conversation detail view | ConversationDetailPage, ConversationSidebar | Prompt API | Prompt Execution |
-| 13.1–13.4 | Conversation creation from CSM | createConversation, executePrompt | Conversations API, CLI | Prompt Execution |
+| 13.1–13.4 | Conversation creation from CC | createConversation, executePrompt | Conversations API, CLI | Prompt Execution |
 | 14.1–14.7 | Auto-import of Claude Code sessions | discoverConversations, importConversations | Claude Code Storage | Auto-Import |
 | 15.1–15.6 | Prompt execution per conversation | executePrompt | Prompt API, CLI, Lock | Prompt Execution |
 | 16.1–16.4 | Hook event routing | processHookEvent | Hooks API, State | Hook Routing |
@@ -269,7 +269,7 @@ const conversationStateSchema = z.object({
   promptCount: z.number(),
   createdAt: z.string(),
   lastActivityAt: z.string(),
-  source: z.enum(["csm", "imported"]).default("csm"),
+  source: "cc"),
   summary: z.string().nullable().default(null),
 });
 type ConversationState = z.infer<typeof conversationStateSchema>;
@@ -608,7 +608,7 @@ erDiagram
 - Conversation IDs are unique within a session
 - No two conversations in the same session share a `claudeSessionId` (enforced during import)
 - Session status is always derived, never stored
-- `source` is `"csm"` for CSM-created conversations, `"imported"` for auto-imported ones
+- `source` is `"cc"` for CC-created conversations, `"imported"` for auto-imported ones
 
 ### Logical Data Model
 
@@ -638,7 +638,7 @@ erDiagram
               "promptCount": 0,
               "createdAt": "ISO-8601",
               "lastActivityAt": "ISO-8601",
-              "source": "csm",
+              "source: "cc",
               "summary": null
             }
           ]

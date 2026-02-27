@@ -47,7 +47,7 @@
 
 - [x] 3. Add integration tests for init script execution
 - [x] 3.1 Test init script runs when configured
-  - Mock `ClaudeSessionManager.json` to contain an `initScriptPath`
+  - Mock `CommandCenter.json` to contain an `initScriptPath`
   - Verify the script is executed with the correct working directory (worktree path)
   - Verify environment variables `PROJECT_ROOT`, `WORKTREE_PATH`, `SESSION_NAME`, and `BRANCH_NAME` are passed
   - Verify a 60-second timeout is configured for script execution
@@ -104,8 +104,8 @@
 
 - [ ] 6. Define Conversation schema and update Session schema
 - [ ] 6.1 Add the Conversation entity schema with all required fields and export its type
-  - Define a Zod schema for the Conversation entity with: unique ID, nullable Claude Code session ID, nullable transcript path, status (idle/ready/running), messages array, prompt count, timestamps, source (csm/imported), and nullable summary
-  - Default status to `ready`, prompt count to 0, messages to empty array, source to `csm`
+  - Define a Zod schema for the Conversation entity with: unique ID, nullable Claude Code session ID, nullable transcript path, status (idle/ready/running), messages array, prompt count, timestamps, source (cc/imported), and nullable summary
+  - Default status to `ready`, prompt count to 0, messages to empty array, source to `cc`
   - Generate unique IDs using `crypto.randomUUID()` at creation time
   - Export the inferred TypeScript type from the types module
   - _Requirements: 9.1, 9.2, 9.3, 9.4_
@@ -137,7 +137,7 @@
   - _Contracts: conversations.ts Service_
 
 - [ ] 7.3 Implement read-time migration of legacy session state into the conversations array
-  - When a session has no conversations but has legacy fields (`claudeSessionId` or `messages` present), wrap them into a single Conversation record with source `csm`
+  - When a session has no conversations but has legacy fields (`claudeSessionId` or `messages` present), wrap them into a single Conversation record with source `cc`
   - Preserve all legacy data: session ID, transcript path, messages, prompt count, and status in the migrated conversation
   - Handle sessions that have neither conversations nor legacy fields gracefully (no migration needed)
   - Migration runs during state deserialization; the migrated state persists on the next write

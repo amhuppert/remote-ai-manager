@@ -1,4 +1,4 @@
-# Claude Session Manager — Project Report
+# Command Center — Project Report
 
 ## 1) Project overview
 
@@ -69,7 +69,7 @@ Enable fast, low-friction remote control of Claude Code sessions (start sessions
 
 ### 4.7 Worktree initialization is project-configurable
 
-- Each repo may include `ClaudeSessionManager.json` at repo root.
+- Each repo may include `CommandCenter.json` at repo root.
 - Config points to a **path to an executable init script**.
 - On session creation, the init script runs with env vars:
   - `PROJECT_ROOT`, `WORKTREE_PATH`, `SESSION_NAME`, `BRANCH_NAME`
@@ -119,7 +119,7 @@ Enable fast, low-friction remote control of Claude Code sessions (start sessions
     - `transcriptPath` (optional but strongly useful)
     - status metadata (archived flag, last activity timestamps)
 
-#### Per-repo config (`ClaudeSessionManager.json`)
+#### Per-repo config (`CommandCenter.json`)
 
 - Stores:
   - `initScriptPath` (relative to repo root or absolute)
@@ -136,7 +136,7 @@ Enable fast, low-friction remote control of Claude Code sessions (start sessions
 1. Validate unique `sessionName` within project (reject on collision)
 2. Create worktree from `main`
 3. Create new branch derived from `sessionName`
-4. If repo has `ClaudeSessionManager.json` with init script:
+4. If repo has `CommandCenter.json` with init script:
    - run script with env vars
    - on failure: roll back worktree creation + state
 5. Record session in manager state (without Claude session ID initially)

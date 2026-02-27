@@ -82,7 +82,7 @@ describe("TailscaleService", () => {
   });
 
   describe("register", () => {
-    it("registers port and returns remote URL", async () => {
+    it("registers port over HTTP and returns remote URL", async () => {
       // First call: getHostname
       mockExecFile.mockResolvedValueOnce({
         stdout: JSON.stringify({ Self: { DNSName: "my-host.ts.net." } }),
@@ -91,10 +91,10 @@ describe("TailscaleService", () => {
       mockExecFile.mockResolvedValueOnce({ stdout: "" });
 
       const url = await tailscale.register(3000);
-      expect(url).toBe("https://my-host.ts.net:3000");
+      expect(url).toBe("http://my-host.ts.net:3000");
       expect(mockExecFile).toHaveBeenCalledWith("tailscale", [
         "serve",
-        "--https=3000",
+        "--http=3000",
         "--bg",
         "localhost:3000",
       ]);
@@ -123,7 +123,7 @@ describe("TailscaleService", () => {
       await tailscale.unregister(3000);
       expect(mockExecFile).toHaveBeenCalledWith("tailscale", [
         "serve",
-        "--https=3000",
+        "--http=3000",
         "off",
       ]);
     });

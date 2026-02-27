@@ -105,7 +105,7 @@ type SessionDetailStore = SessionDetailState & SessionDetailActions;
 // Constants
 // ---------------------------------------------------------------------------
 
-const SIDEBAR_STORAGE_KEY = "csm-sidebar-collapsed";
+const SIDEBAR_STORAGE_KEY = "cc-sidebar-collapsed";
 let cancelledTimer: ReturnType<typeof setTimeout> | null = null;
 
 const validLayouts: LayoutMode[] = ["conversation", "default", "split", "diff"];

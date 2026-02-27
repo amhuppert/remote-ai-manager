@@ -1,6 +1,6 @@
 # Notifications & Background Jobs
 
-CSM uses a dual-layer architecture for async operations: in-memory job tracking for transient state, SQLite persistence for durable notification history, and SSE for real-time cross-tab/device sync.
+CC uses a dual-layer architecture for async operations: in-memory job tracking for transient state, SQLite persistence for durable notification history, and SSE for real-time cross-tab/device sync.
 
 ## Architecture
 

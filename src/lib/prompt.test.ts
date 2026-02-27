@@ -111,7 +111,7 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     promptCount: 0,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
-    source: "csm" as const,
+    source: "cc" as const,
     summary: null,
     archived: false,
     totalCostUsd: null,
@@ -135,7 +135,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     archived: false,
     finished: false,
     conversations: [],
-    source: "csm" as const,
+    source: "cc" as const,
     objective: null,
     creationMode: "fast" as const,
     workflow: null,
@@ -156,7 +156,7 @@ function createMockQuery(messages: Record<string, unknown>[]) {
 const defaultConfig = {
   baseDir: "/tmp/projects",
   ignorePatterns: [],
-  stateFilePath: "/tmp/csm/state.json",
+  stateFilePath: "/tmp/cc/state.json",
   claudeTimeoutMs: 300_000,
   maxTurns: 50,
 };
@@ -180,9 +180,7 @@ beforeEach(() => {
   getConversationMock.mockResolvedValue(conversation);
 
   appendTranscriptEntryMock.mockResolvedValue(undefined);
-  getTranscriptPathMock.mockResolvedValue(
-    "/tmp/csm/transcripts/conv-123.jsonl",
-  );
+  getTranscriptPathMock.mockResolvedValue("/tmp/cc/transcripts/conv-123.jsonl");
 
   const session = makeSession();
   session.conversations = [conversation];

@@ -147,7 +147,7 @@ env: { ...process.env, CLAUDECODE: "" }  // prevents nested-session detection
 ## Key Conventions
 
 - **State mutations**: All through `mutateSession()` — serialized, atomic writes to `state.json`
-- **HMR-safe singletons**: Registries use `globalThis.__csm_*` keyed maps
+- **HMR-safe singletons**: Registries use `globalThis.__cc_*` keyed maps
 - **Conversation role tagging**: Iteration conversations use `role: "iteration"` to distinguish from normal conversations
 - **Non-throwing background work**: Plan generation and orchestrator errors are caught and logged, never thrown to callers
 

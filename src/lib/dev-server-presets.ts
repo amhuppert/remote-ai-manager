@@ -26,7 +26,7 @@ const PRESETS: DevServerPresetDefinition[] = [
     badge: "N",
     basePort: 3000,
     serverName: "nextjs",
-    command: ".csm/dev-servers/nextjs.sh",
+    command: ".cc/dev-servers/nextjs.sh",
     scriptFileName: "nextjs.sh",
   },
   {
@@ -36,7 +36,7 @@ const PRESETS: DevServerPresetDefinition[] = [
     badge: "S",
     basePort: 6006,
     serverName: "storybook",
-    command: ".csm/dev-servers/storybook.sh",
+    command: ".cc/dev-servers/storybook.sh",
     scriptFileName: "storybook.sh",
   },
 ];
@@ -59,8 +59,8 @@ export function getPreset(id: string): DevServerPresetDefinition | undefined {
 
 export function generateHelperScript(): string {
   return `#!/bin/sh
-# CSM Dev Server Helpers — shared port detection and worktree ownership functions
-# Installed by CSM (Claude Session Manager). Intended to be committed to the repo.
+# CC Dev Server Helpers — shared port detection and worktree ownership functions
+# Installed by CC (Claude Code). Intended to be committed to the repo.
 
 # Get the PID listening on a TCP port. Prints PID or empty string.
 # Args: $1 = port
@@ -126,9 +126,10 @@ check_port() {
   return 2
 }
 
-# Scan from a base port upward to find the first available port.
+# Scan from a base port upward to find the first available or owned port.
 # Args: $1 = base port, $2 = expected worktree path
-# Prints the available port number.
+# Prints the port number.
+# Exit codes: 0 = found available port, 1 = found owned port (adopt), 2 = no port found
 find_available_port() {
   local base_port="\$1"
   local expected_cwd="\$2"
@@ -140,13 +141,13 @@ find_available_port() {
     check_port "\$port" "\$expected_cwd"
     case \$? in
       0) echo "\$port"; return 0 ;;
-      1) echo "\$port"; return 0 ;;
+      1) echo "\$port"; return 1 ;;
     esac
     max_attempts=$((max_attempts - 1))
   done
 
   echo "ERROR: Could not find an available port after scanning from \$base_port" >&2
-  return 1
+  return 2
 }
 `;
 }
@@ -163,8 +164,8 @@ export function generatePresetScript(presetId: string): string {
       : 'npx storybook dev --port "$PORT"';
 
   return `#!/bin/sh
-# CSM Dev Server — ${preset.name}
-# Installed by CSM (Claude Session Manager). Intended to be committed to the repo.
+# CC Dev Server — ${preset.name}
+# Installed by CC (Claude Code). Intended to be committed to the repo.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_helpers.sh"
@@ -172,14 +173,29 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_PORT=${preset.basePort}
 WORKTREE_DIR="$(pwd)"
 
+# Helper: emit adoption markers and exit
+adopt_port() {
+  local port="\$1"
+  ADOPTED_PID=$(get_pid_on_port "\$port")
+  echo "CC_ADOPTED=1"
+  echo "CC_ADOPTED_PID=\$ADOPTED_PID"
+  echo "CC_PORT=\$port"
+  exit 0
+}
+
 check_port "$BASE_PORT" "$WORKTREE_DIR"
 case $? in
   0) PORT="$BASE_PORT" ;;
-  1) echo "CSM_PORT=$BASE_PORT"; exit 0 ;;
-  2) PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR") ;;
+  1) adopt_port "$BASE_PORT" ;;
+  2)
+    PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR")
+    if [ $? -eq 1 ]; then
+      adopt_port "$PORT"
+    fi
+    ;;
 esac
 
-echo "CSM_PORT=$PORT"
+echo "CC_PORT=$PORT"
 exec ${frameworkCommand}
 `;
 }
@@ -212,8 +228,8 @@ export async function installPreset(params: {
     );
   }
 
-  // Create .csm/dev-servers/ directory
-  const scriptsDir = path.join(projectPath, ".csm", "dev-servers");
+  // Create .cc/dev-servers/ directory
+  const scriptsDir = path.join(projectPath, ".cc", "dev-servers");
   await mkdir(scriptsDir, { recursive: true });
 
   const installedFiles: string[] = [];
@@ -221,17 +237,17 @@ export async function installPreset(params: {
   // Write _helpers.sh (always overwrite to keep up-to-date)
   const helpersPath = path.join(scriptsDir, "_helpers.sh");
   await writeFile(helpersPath, generateHelperScript(), { mode: 0o755 });
-  installedFiles.push(".csm/dev-servers/_helpers.sh");
+  installedFiles.push(".cc/dev-servers/_helpers.sh");
 
   // Write preset-specific script
   const presetScriptPath = path.join(scriptsDir, preset.scriptFileName);
   await writeFile(presetScriptPath, generatePresetScript(presetId), {
     mode: 0o755,
   });
-  installedFiles.push(`.csm/dev-servers/${preset.scriptFileName}`);
+  installedFiles.push(`.cc/dev-servers/${preset.scriptFileName}`);
 
-  // Update ClaudeSessionManager.json
-  const configPath = path.join(projectPath, "ClaudeSessionManager.json");
+  // Update CommandCenter.json
+  const configPath = path.join(projectPath, "CommandCenter.json");
   let config: PerRepoConfig;
   try {
     const raw = await readFile(configPath, "utf-8");
@@ -246,7 +262,7 @@ export async function installPreset(params: {
   config = { ...config, devServers };
 
   await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
-  installedFiles.push("ClaudeSessionManager.json");
+  installedFiles.push("CommandCenter.json");
 
   return { installedFiles, configUpdated: true };
 }

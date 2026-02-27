@@ -17,7 +17,7 @@ const logger = createLogger("lock");
 /*  Session-level lock (HMR-safe via globalThis singleton)            */
 /* ------------------------------------------------------------------ */
 
-const SESSION_LOCK_KEY = "__csm_session_locks" as const;
+const SESSION_LOCK_KEY = "__cc_session_locks" as const;
 
 function getSessionLocks(): Map<string, Promise<void>> {
   const g = globalThis as unknown as Record<string, unknown>;
@@ -31,7 +31,7 @@ function getSessionLocks(): Map<string, Promise<void>> {
 /*  Project-level lock (HMR-safe via globalThis singleton)            */
 /* ------------------------------------------------------------------ */
 
-const PROJECT_LOCK_KEY = "__csm_project_locks" as const;
+const PROJECT_LOCK_KEY = "__cc_project_locks" as const;
 
 function getProjectLocks(): Map<string, true> {
   const g = globalThis as unknown as Record<string, unknown>;

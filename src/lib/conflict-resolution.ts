@@ -11,7 +11,7 @@ import { createLogger } from "./logging";
 
 const logger = createLogger("conflict-resolution");
 
-// Prevent nested session detection when CSM runs inside Claude Code
+// Prevent nested session detection when CC runs inside Claude Code
 delete process.env.CLAUDECODE;
 
 // ============================================================

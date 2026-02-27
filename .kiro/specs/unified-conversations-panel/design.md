@@ -4,7 +4,7 @@
 
 ## Overview
 
-**Purpose**: This feature delivers cross-project conversation awareness and a clearer status system to CSM users. It replaces confusing status labels (`idle`/`ready`/`running`) with intuitive ones (`new`/`awaiting`/`running`), fixes inconsistent project-level badges, and introduces a global side panel that surfaces all active conversations across every project.
+**Purpose**: This feature delivers cross-project conversation awareness and a clearer status system to CC users. It replaces confusing status labels (`idle`/`ready`/`running`) with intuitive ones (`new`/`awaiting`/`running`), fixes inconsistent project-level badges, and introduces a global side panel that surfaces all active conversations across every project.
 
 **Users**: Developers managing multiple concurrent Claude Code sessions across repositories will use the unified panel to monitor conversation status without navigating away from their current context.
 
@@ -121,7 +121,7 @@ graph TB
 
 ```mermaid
 stateDiagram-v2
-  [*] --> new: CSM creates or imports conversation
+  [*] --> new: CC creates or imports conversation
   new --> running: User submits prompt
   running --> awaiting: Claude finishes or errors
   awaiting --> running: User submits next prompt
@@ -159,7 +159,7 @@ Key decisions: The panel does not maintain its own WebSocket or polling loop. It
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
 | 1.1 | Three status values: new, running, awaiting | ConversationStatus schema | Status schema | — |
-| 1.2 | CSM-created conversations start as new | createConversation | — | Status lifecycle |
+| 1.2 | CC-created conversations start as new | createConversation | — | Status lifecycle |
 | 1.3 | Imported conversations start as new | discoverAndImportConversations | — | Status lifecycle |
 | 1.4 | Prompt submission sets running | executePromptStream | — | Status lifecycle |
 | 1.5 | Claude finish sets awaiting | executePromptStream, processHookEvent | — | Status lifecycle |

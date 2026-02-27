@@ -4,7 +4,7 @@
 
 **Purpose**: Conversation forking enables developers to branch from any previous user message in a conversation, creating a new conversation that inherits the history up to that point. Edit-and-fork extends this by allowing the user to modify the message before branching.
 
-**Users**: Developers using CSM to manage Claude Code sessions. They use this when a conversation took a wrong turn and they want to retry from an earlier point, or when they want to explore multiple approaches from the same starting context.
+**Users**: Developers using CC to manage Claude Code sessions. They use this when a conversation took a wrong turn and they want to retry from an earlier point, or when they want to explore multiple approaches from the same starting context.
 
 **Impact**: Extends the existing conversation system with fork provenance tracking (`forkedFrom` field on `ConversationState`), a new fork API endpoint, transcript copying logic, and SDK fork parameter injection. All changes are additive — existing conversations are unaffected.
 

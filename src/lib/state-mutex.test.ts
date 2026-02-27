@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
-const TEST_DIR = path.join("/tmp", "csm-state-mutex-test-" + Date.now());
+const TEST_DIR = path.join("/tmp", "cc-state-mutex-test-" + Date.now());
 const STATE_FILE = path.join(TEST_DIR, "state.json");
 
 vi.mock("./config", () => ({
@@ -115,7 +115,7 @@ describe("mutateState", () => {
               archived: false,
               finished: false,
               conversations: [],
-              source: "csm" as const,
+              source: "cc" as const,
               objective: null,
               creationMode: "fast" as const,
               workflow: null,
@@ -166,7 +166,7 @@ describe("mutateSession", () => {
               archived: false,
               finished: false,
               conversations: [],
-              source: "csm" as const,
+              source: "cc" as const,
               objective: null,
               creationMode: "fast" as const,
               workflow: null,
@@ -221,7 +221,7 @@ describe("mutateSession", () => {
               archived: false,
               finished: false,
               conversations: [],
-              source: "csm" as const,
+              source: "cc" as const,
               objective: null,
               creationMode: "fast" as const,
               workflow: null,
@@ -265,7 +265,7 @@ describe("the specific merge detection bug", () => {
               archived: false,
               finished: false,
               conversations: [],
-              source: "csm" as const,
+              source: "cc" as const,
               objective: null,
               creationMode: "fast" as const,
               workflow: null,

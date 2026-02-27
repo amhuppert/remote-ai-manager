@@ -15,7 +15,7 @@ const execFileAsync = promisify(execFile);
 export async function readRepoConfig(
   repoRoot: string,
 ): Promise<PerRepoConfig | null> {
-  const configPath = path.join(repoRoot, "ClaudeSessionManager.json");
+  const configPath = path.join(repoRoot, "CommandCenter.json");
   if (!existsSync(configPath)) return null;
 
   const raw = await readFile(configPath, "utf-8");
@@ -23,7 +23,7 @@ export async function readRepoConfig(
 }
 
 /**
- * Run the pre-merge validation command configured in ClaudeSessionManager.json.
+ * Run the pre-merge validation command configured in CommandCenter.json.
  * No-op if `preMergeCommand` is absent or null.
  * After the script runs, any uncommitted changes (auto-fixes) are committed
  * with `skipHooks: true` so they are included in the squash merge.

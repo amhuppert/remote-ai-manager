@@ -94,7 +94,7 @@ SSE Event → NotificationManager → Web Notification API
 
 const MOCK_STEERING_CONTENT = `# Product Overview
 
-CSM (Claude Session Manager) is a web-based control plane for managing remote Claude Code coding sessions. It allows developers to create, monitor, and interact with multiple isolated Claude Code instances — each running in its own git worktree — through a centralized dashboard.
+CC (Command Center) is a web-based control plane for managing remote Claude Code coding sessions. It allows developers to create, monitor, and interact with multiple isolated Claude Code instances — each running in its own git worktree — through a centralized dashboard.
 
 ## Core Capabilities
 

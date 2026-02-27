@@ -11,7 +11,7 @@
 ## Research Log
 
 ### Existing Hook Event Flow
-- **Context**: How does Claude Code's `Stop` event reach CSM, and what data is available?
+- **Context**: How does Claude Code's `Stop` event reach CC, and what data is available?
 - **Sources Consulted**: `src/app/api/hooks/route.ts`, `src/lib/hooks.ts`
 - **Findings**:
   - Claude CLI POSTs `{ session_id, transcript_path, cwd, hook_event_name }` to `/api/hooks`
@@ -53,7 +53,7 @@
   - `Notification.requestPermission()` returns a promise resolving to `"granted"`, `"denied"`, or `"default"`
   - `new Notification(title, { body, icon, tag })` creates an OS-level notification
   - `notification.onclick` handler for click-to-navigate
-  - Permission state is persisted by the browser per origin — no CSM-side storage needed
+  - Permission state is persisted by the browser per origin — no CC-side storage needed
   - Not all browsers support Notification API (notably iOS Safari requires PWA mode)
 - **Implications**: Check `"Notification" in window` before any API calls. Permission request should happen on user interaction or first load.
 
@@ -61,11 +61,11 @@
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
 |--------|-------------|-----------|---------------------|-------|
-| In-memory broadcaster | Module-level `Set` of SSE stream controllers | Zero dependencies, simple, fits single-process model | Lost on server restart; no cross-process support | Matches CSM's existing in-memory patterns (single-flight lock map) |
-| Redis pub/sub | External message broker for broadcasting | Supports multi-process, persistent | Adds external dependency; CSM has no database | Violates CSM's "no external services" philosophy |
+| In-memory broadcaster | Module-level `Set` of SSE stream controllers | Zero dependencies, simple, fits single-process model | Lost on server restart; no cross-process support | Matches CC's existing in-memory patterns (single-flight lock map) |
+| Redis pub/sub | External message broker for broadcasting | Supports multi-process, persistent | Adds external dependency; CC has no database | Violates CC's "no external services" philosophy |
 | Polling from client | Client polls a status endpoint | Simplest server-side implementation | Wastes bandwidth, delayed notifications, constant load | Rejected per user requirement |
 
-**Selected**: In-memory broadcaster. CSM runs as a single Node.js process; the in-memory pattern is consistent with existing patterns (e.g., the `promptLocks` map in `prompt.ts`).
+**Selected**: In-memory broadcaster. CC runs as a single Node.js process; the in-memory pattern is consistent with existing patterns (e.g., the `promptLocks` map in `prompt.ts`).
 
 ## Design Decisions
 
@@ -76,8 +76,8 @@
   2. File-based event queue — complex, disk I/O
   3. In-memory `Set<ReadableStreamDefaultController>` — zero dependencies
 - **Selected Approach**: Module-level `Set` storing active SSE stream controllers. `broadcast()` iterates the set and enqueues events. `addClient()` / `removeClient()` manage the set.
-- **Rationale**: CSM is a single-process app with no database. In-memory state is the established pattern (see `promptLocks`). Broadcaster state is ephemeral — losing it on restart is acceptable since clients auto-reconnect.
-- **Trade-offs**: No cross-process support. Acceptable since CSM is single-process.
+- **Rationale**: CC is a single-process app with no database. In-memory state is the established pattern (see `promptLocks`). Broadcaster state is ephemeral — losing it on restart is acceptable since clients auto-reconnect.
+- **Trade-offs**: No cross-process support. Acceptable since CC is single-process.
 - **Follow-up**: Ensure `removeClient` is called in the stream's `cancel` callback to prevent memory leaks.
 
 ### Decision: Enrich processHookEvent Return Type

@@ -13,8 +13,8 @@
   - Create a logger factory that produces module-scoped loggers (each logger tags entries with its module name)
   - Each log method (debug, info, warn, error) emits a single NDJSON line containing: ISO 8601 timestamp, level, module, message, and any trace context fields automatically read from the context store
   - Accept optional additional structured fields that get merged into the log entry
-  - Support configurable log level via `CSM_LOG_LEVEL` environment variable, defaulting to `info`; if the value is invalid, fall back to `info` and emit a stderr warning
-  - Write log entries to a file at the path specified by `CSM_LOG_FILE`, defaulting to `csm-debug.log` in the CSM config directory; resolve the path lazily on first log call using a once guard
+  - Support configurable log level via `CC_LOG_LEVEL` environment variable, defaulting to `info`; if the value is invalid, fall back to `info` and emit a stderr warning
+  - Write log entries to a file at the path specified by `CC_LOG_FILE`, defaulting to `cc-debug.log` in the CC config directory; resolve the path lazily on first log call using a once guard
   - Additionally write entries at warn level and above to stderr for immediate visibility
   - Preserve full error stack traces in log entries without truncation
   - Never throw — silently drop entries if file writes fail
@@ -27,7 +27,7 @@
   - Verify trace context auto-enrichment (entries within a trace context include traceId, action, projectName, sessionName)
   - Verify entries outside a trace context omit context fields gracefully
   - Verify warn/error entries appear on stderr in addition to the log file
-  - Verify invalid `CSM_LOG_LEVEL` falls back to info with a warning
+  - Verify invalid `CC_LOG_LEVEL` falls back to info with a warning
   - Verify the logger never throws even when the log file path is invalid
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 6.3_
 

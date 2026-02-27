@@ -101,7 +101,7 @@ describe("PresetRegistry", () => {
     it("generates a Next.js startup script", () => {
       const script = generatePresetScript("nextjs");
       expect(script).toMatch(/^#!/);
-      expect(script).toContain("CSM_PORT=");
+      expect(script).toContain("CC_PORT=");
       expect(script).toContain("_helpers.sh");
       expect(script).toContain("3000");
       expect(script).toContain("next dev");
@@ -110,24 +110,24 @@ describe("PresetRegistry", () => {
     it("generates a Storybook startup script", () => {
       const script = generatePresetScript("storybook");
       expect(script).toMatch(/^#!/);
-      expect(script).toContain("CSM_PORT=");
+      expect(script).toContain("CC_PORT=");
       expect(script).toContain("_helpers.sh");
       expect(script).toContain("6006");
       expect(script).toContain("storybook dev");
     });
 
-    it("emits CSM_PORT before exec for immediate detection", () => {
+    it("emits CC_PORT before exec for immediate detection", () => {
       for (const id of ["nextjs", "storybook"]) {
         const script = generatePresetScript(id);
-        const csmPortLine = script
+        const ccPortLine = script
           .split("\n")
-          .findIndex((l) => l.includes('echo "CSM_PORT=$PORT"'));
+          .findIndex((l) => l.includes('echo "CC_PORT=$PORT"'));
         const execLine = script
           .split("\n")
           .findIndex((l) => l.startsWith("exec "));
-        expect(csmPortLine).toBeGreaterThan(-1);
+        expect(ccPortLine).toBeGreaterThan(-1);
         expect(execLine).toBeGreaterThan(-1);
-        expect(csmPortLine).toBeLessThan(execLine);
+        expect(ccPortLine).toBeLessThan(execLine);
       }
     });
 

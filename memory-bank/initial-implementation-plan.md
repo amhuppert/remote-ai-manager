@@ -31,7 +31,7 @@
 ### 1.1 Create the Next.js app (Bun + TS)
 
 - Create the project:
-  - `bun create next-app claude-session-manager --typescript`
+  - `bun create next-app command-center --typescript`
 - Ensure you’re using the Node runtime for route handlers (not edge), since you’ll spawn local processes and read files.
 
 ### 1.2 Add required packages (explicit)
@@ -54,7 +54,7 @@ Command:
 Use this structure:
 
 ```
-claude-session-manager/
+command-center/
   app/
     page.tsx                              # Projects list
     projects/[projectId]/page.tsx          # Project sessions list
@@ -82,7 +82,7 @@ claude-session-manager/
       diffs.ts                             # git diff + status
       runs.ts                              # run lifecycle + single-flight
     bin/
-      csm.ts                               # bun executable entry (hooks installer + hook handler)
+      cc.ts                                # bun executable entry (hooks installer + hook handler)
 ```
 
 ## 3. Data Models (exact schemas)
@@ -117,7 +117,7 @@ GlobalConfig = {
 
 File name (repo root):
 
-- `ClaudeSessionManager.json`
+- `CommandCenter.json`
 
 Schema:
 
@@ -210,15 +210,15 @@ Commands (run in repo root):
 
 ### 4.3 Init script
 
-If `ClaudeSessionManager.json` has `initScript`:
+If `CommandCenter.json` has `initScript`:
 
 - Run it as a process:
   - `cwd = worktreePath`
   - `env` includes:
-    - `CSM_REPO_ROOT=<repoRoot>`
-    - `CSM_WORKTREE_PATH=<worktreePath>`
-    - `CSM_SESSION_NAME=<sessionName>`
-    - `CSM_BRANCH_NAME=<branchName>`
+    - `CC_REPO_ROOT=<repoRoot>`
+    - `CC_WORKTREE_PATH=<worktreePath>`
+    - `CC_SESSION_NAME=<sessionName>`
+    - `CC_BRANCH_NAME=<branchName>`
 - If exit code != 0:
   - Roll back:
     - `git worktree remove --force <worktreePath>`
@@ -285,12 +285,12 @@ Add to `~/.claude/settings.json`:
   "hooks": {
     "UserPromptSubmit": [
       {
-        "hooks": [{ "type": "command", "command": "/ABS/PATH/TO/csm hook" }]
+        "hooks": [{ "type": "command", "command": "/ABS/PATH/TO/cc hook" }]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "/ABS/PATH/TO/csm hook" }]
+        "hooks": [{ "type": "command", "command": "/ABS/PATH/TO/cc hook" }]
       }
     ]
   }
@@ -300,9 +300,9 @@ Add to `~/.claude/settings.json`:
 Implementation notes:
 
 - Use an **absolute path** to avoid cwd issues.
-- Your `csm hook` reads stdin JSON and updates manager state.
+- Your `cc hook` reads stdin JSON and updates manager state.
 
-### 6.3 `csm hook` behavior (deterministic)
+### 6.3 `cc hook` behavior (deterministic)
 
 Input: JSON from stdin with common fields: `session_id`, `transcript_path`, `cwd`, `hook_event_name`, etc. [Claude Code](https://code.claude.com/docs/en/hooks)
 
@@ -521,13 +521,13 @@ This exposes it to your tailnet over HTTPS on the device’s `*.ts.net` name (ta
 
 Use a services config file (huJSON) per Tailscale docs: [Tailscale](https://tailscale.com/kb/1589/tailscale-services-configuration-file)
 
-Example `csm-tailscale.json`:
+Example `cc-tailscale.json`:
 
 ```json
 {
   "version": "0.0.1",
   "services": {
-    "svc:claude-session-manager": {
+    "svc:command-center": {
       "endpoints": {
         "tcp:443": "http://localhost:3000"
       }
@@ -538,22 +538,22 @@ Example `csm-tailscale.json`:
 
 Apply:
 
-- `tailscale serve -config ./csm-tailscale.json`
+- `tailscale serve -config ./cc-tailscale.json`
 
 (Use whichever approach you prefer; the command approach is fastest.)
 
 ## 13. "Install Hooks" CLI (hard requirement enforcement)
 
-Implement `src/bin/csm.ts` with subcommands:
+Implement `src/bin/cc.ts` with subcommands:
 
-- `csm install-hooks`
+- `cc install-hooks`
   - Locates `~/.claude/settings.json` (per docs) [Claude Code+1](https://code.claude.com/docs/en/settings)
   - Reads JSON (create file if missing)
   - Merges in required hooks (UserPromptSubmit, Stop)
   - Writes back atomically
   - Prints reminder:
     - Hooks may require restarting sessions / review in `/hooks` [Claude Code](https://code.claude.com/docs/en/hooks)
-- `csm hook`
+- `cc hook`
   - Hook handler described above
 
 Your Next.js UI can also show a banner “Hooks not installed” based on a server-side check:
@@ -594,7 +594,7 @@ Use a temp directory and real git:
 - Expose to tailnet:
   - `tailscale serve https / http://localhost:3000` [Tailscale](https://tailscale.com/blog/tailscale-funnel-beta)
 - One-time setup:
-  - `bunx csm install-hooks`
+  - `bunx cc install-hooks`
   - Confirm in Claude Code `/hooks` that they’re active (if required by snapshotting behavior). [Claude Code](https://code.claude.com/docs/en/hooks)
 
 

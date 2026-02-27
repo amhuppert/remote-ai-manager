@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Worktree initialization script for CSM sessions.
-# Runs automatically after a worktree is created (configured via ClaudeSessionManager.json).
+# Worktree initialization script for CC sessions.
+# Runs automatically after a worktree is created (configured via CommandCenter.json).
 # Installs dependencies so tests, linting, and pre-commit hooks work in the worktree.
 
 set -euo pipefail

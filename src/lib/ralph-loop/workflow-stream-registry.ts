@@ -5,7 +5,7 @@
 
 import type { MessageContentBlock } from "@/types";
 
-const GLOBAL_KEY = "__csm_workflow_streams" as const;
+const GLOBAL_KEY = "__cc_workflow_streams" as const;
 
 export type WorkflowStreamFrame =
   | { type: "content"; iterationNumber: number; content: MessageContentBlock }

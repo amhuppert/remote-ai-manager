@@ -26,9 +26,9 @@ export const GET = withTracing(async (_request, { params }) => {
     description: p.description,
     badge: p.badge,
     files: [
-      `.csm/dev-servers/_helpers.sh`,
-      `.csm/dev-servers/${p.scriptFileName}`,
-      "ClaudeSessionManager.json",
+      `.cc/dev-servers/_helpers.sh`,
+      `.cc/dev-servers/${p.scriptFileName}`,
+      "CommandCenter.json",
     ],
     installed: installed.includes(p.id),
   }));

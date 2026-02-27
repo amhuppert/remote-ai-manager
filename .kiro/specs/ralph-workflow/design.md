@@ -4,7 +4,7 @@
 
 **Purpose**: This feature redesigns how Ralph Loop workflows are initialized and where they are displayed. Initialization moves from a session-level button to a conversation-driven custom tool, and the workflow UI moves from a conversation right-panel tab to a dedicated page.
 
-**Users**: Developers using CSM who want to seamlessly transition from exploratory conversations into autonomous Ralph Loop workflows without context-switching.
+**Users**: Developers using CC who want to seamlessly transition from exploratory conversations into autonomous Ralph Loop workflows without context-switching.
 
 **Impact**: Modifies the prompt execution pipeline to register a conditional MCP tool, introduces a dedicated workflow page route, redesigns the session overview layout, and removes the workflow tab from the conversation right panel. Does not modify the core Ralph Loop execution engine.
 
@@ -24,7 +24,7 @@
 
 ### Existing Architecture Analysis
 
-The redesign touches these existing CSM systems:
+The redesign touches these existing CC systems:
 
 - **Prompt execution** (`src/lib/prompt.ts`): Builds SDK `query()` options for every conversation prompt. Currently has no `mcpServers` registration — extended to conditionally include the init tool.
 - **Ralph Loop modules** (`src/lib/ralph-loop/`): `plan-generator.ts` provides `dispatchPlanGeneration()` for fire-and-forget plan generation. `mcp-tools.ts` provides the `createSdkMcpServer` + `tool()` pattern for in-process MCP tools.

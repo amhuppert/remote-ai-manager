@@ -4,15 +4,15 @@
 
 ## Overview
 
-**Purpose**: This feature delivers real-time OS-level browser notifications to CSM users when any Claude Code session finishes work and is ready for the next prompt.
+**Purpose**: This feature delivers real-time OS-level browser notifications to CC users when any Claude Code session finishes work and is ready for the next prompt.
 
-**Users**: Developers managing parallel Claude Code sessions will receive notifications even when they have switched away from the CSM tab, eliminating the need to manually check each session's status.
+**Users**: Developers managing parallel Claude Code sessions will receive notifications even when they have switched away from the CC tab, eliminating the need to manually check each session's status.
 
 **Impact**: Extends the existing hook event pipeline with a server-side broadcaster and adds a global SSE client to the root layout. No changes to the existing data model or session lifecycle.
 
 ### Goals
 - Deliver OS-level notifications via the Browser Notification API when any session transitions to "ready"
-- Provide a global SSE transport so notifications work from any CSM page
+- Provide a global SSE transport so notifications work from any CC page
 - Enable click-to-navigate from notification to the relevant session page
 
 ### Non-Goals
@@ -28,7 +28,7 @@
 The hook pipeline currently flows: Claude CLI `Stop` event → `POST /api/hooks` → `processHookEvent()` → state file write. This is fire-and-forget with no browser push. The existing SSE pattern (prompt streaming) is per-request and short-lived. The root layout has no client-side wrappers.
 
 Key constraints:
-- CSM is a single Node.js process with no database or message broker
+- CC is a single Node.js process with no database or message broker
 - In-memory state patterns exist (e.g., `promptLocks` map in `prompt.ts`)
 - All schemas are Zod-first in `src/lib/schemas.ts`
 
@@ -317,12 +317,12 @@ function processHookEvent(data: HookEventData): Promise<HookEventResult>;
 
 ##### State Management
 - State model: Notification permission status (read from `Notification.permission`)
-- Persistence: Managed by the browser per-origin, not by CSM
+- Persistence: Managed by the browser per-origin, not by CC
 - Concurrency: Single EventSource per component instance; React strict mode double-mount handled by cleanup
 
 **Implementation Notes**
 - Renders `null` — no visual output
-- Notification title: `"CSM: {sessionName}"`, body: `"Session ready in {projectName}"`
+- Notification title: `"CC: {sessionName}"`, body: `"Session ready in {projectName}"`
 - Click handler: `window.focus(); window.location.href = /projects/{projectName}/{sessionName}/{conversationId}`
 - Graceful degradation: If `Notification` is undefined, component is a no-op
 
@@ -393,7 +393,7 @@ Graceful degradation at every level. Notification failures must never disrupt th
 - SSE events route: Verify connection returns `text/event-stream` headers and initial heartbeat
 
 ### E2E Tests (manual verification)
-- Load CSM → notification permission prompt appears
+- Load CC → notification permission prompt appears
 - Grant permission → trigger Stop hook → OS notification appears with correct project/session
 - Click notification → browser focuses and navigates to session page
 - Close tab → SSE connection cleaned up (verify via server client count)

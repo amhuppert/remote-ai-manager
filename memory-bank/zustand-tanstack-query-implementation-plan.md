@@ -2,7 +2,7 @@
 
 ## Overview
 
-Refactor the CSM UI from server-component data fetching with local React state to:
+Refactor the CC UI from server-component data fetching with local React state to:
 - **TanStack Query** — all server data fetching (replaces server-component `await` + `router.refresh()` polling)
 - **Zustand** — centralized UI/interaction state (replaces scattered `useState` for shared state)
 - **`useState`** — strictly local state only (text inputs, ephemeral single-component UI)

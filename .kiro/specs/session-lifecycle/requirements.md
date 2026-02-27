@@ -2,9 +2,9 @@
 
 ## Introduction
 
-The Session Lifecycle feature manages the full create/monitor/delete lifecycle of isolated coding sessions within the Claude Session Manager (CSM). Each session is backed by a git worktree and a dedicated branch (`csm/<name>`), providing complete git isolation for parallel Claude Code instances working within the same repository.
+The Session Lifecycle feature manages the full create/monitor/delete lifecycle of isolated coding sessions within the Command Center (CC). Each session is backed by a git worktree and a dedicated branch (`csm/<name>`), providing complete git isolation for parallel Claude Code instances working within the same repository.
 
-This feature is expanded to support **multiple Conversations per session**. A Conversation maps one-to-one with a Claude Code session and carries its own Claude Code session ID, status, and message history. A CSM session can have many Conversations, enabling seamless switching between CSM UI and terminal-based Claude Code usage, as well as automatic import of CLI-created sessions.
+This feature is expanded to support **multiple Conversations per session**. A Conversation maps one-to-one with a Claude Code session and carries its own Claude Code session ID, status, and message history. A CC session can have many Conversations, enabling seamless switching between CC UI and terminal-based Claude Code usage, as well as automatic import of CLI-created sessions.
 
 ## Requirements
 
@@ -58,7 +58,7 @@ This feature is expanded to support **multiple Conversations per session**. A Co
 
 #### Acceptance Criteria
 
-1. When a session is created, the Session Manager shall check for a `ClaudeSessionManager.json` config file in the project root.
+1. When a session is created, the Session Manager shall check for a `CommandCenter.json` config file in the project root.
 2. Where the per-repo config specifies an `initScriptPath`, the Session Manager shall resolve the script path (absolute or relative to project root) and execute it in the worktree directory.
 3. When the init script executes, the Session Manager shall provide environment variables: `PROJECT_ROOT`, `WORKTREE_PATH`, `SESSION_NAME`, and `BRANCH_NAME`.
 4. The Session Manager shall enforce a 60-second timeout on init script execution.
@@ -104,7 +104,7 @@ This feature is expanded to support **multiple Conversations per session**. A Co
 
 ### Requirement 9: Conversation Entity
 
-**Objective:** As a developer, I want each Claude Code session interaction to be modeled as a distinct Conversation within a CSM session, so that a session can track multiple independent Claude Code sessions over its lifetime.
+**Objective:** As a developer, I want each Claude Code session interaction to be modeled as a distinct Conversation within a CC session, so that a session can track multiple independent Claude Code sessions over its lifetime.
 
 #### Acceptance Criteria
 
@@ -115,7 +115,7 @@ This feature is expanded to support **multiple Conversations per session**. A Co
 
 ### Requirement 10: Session-Conversation Relationship
 
-**Objective:** As a developer, I want CSM sessions to own multiple Conversations in a one-to-many relationship, so that switching between CSM UI and terminal-based Claude Code usage is seamless within the same session.
+**Objective:** As a developer, I want CC sessions to own multiple Conversations in a one-to-many relationship, so that switching between CC UI and terminal-based Claude Code usage is seamless within the same session.
 
 #### Acceptance Criteria
 
@@ -150,9 +150,9 @@ This feature is expanded to support **multiple Conversations per session**. A Co
 5. While the parent session is marked as `finished`, the Session Manager shall display the Conversation in read-only mode with the prompt input disabled.
 6. The Session Manager shall retain the existing layout modes (`conversation`, `default`, `split`, `diff`) for the Conversation detail view.
 
-### Requirement 13: Conversation Creation from CSM
+### Requirement 13: Conversation Creation from CC
 
-**Objective:** As a developer, I want to start new Claude Code Conversations directly from the CSM interface, so that I can begin fresh interactions without switching to the terminal.
+**Objective:** As a developer, I want to start new Claude Code Conversations directly from the CC interface, so that I can begin fresh interactions without switching to the terminal.
 
 #### Acceptance Criteria
 
@@ -163,7 +163,7 @@ This feature is expanded to support **multiple Conversations per session**. A Co
 
 ### Requirement 14: Auto-Import of Claude Code Sessions
 
-**Objective:** As a developer, I want CSM to automatically discover and import Claude Code sessions that were created via direct CLI usage in a session's worktree, so that terminal-initiated conversations appear in the CSM interface without manual action.
+**Objective:** As a developer, I want CC to automatically discover and import Claude Code sessions that were created via direct CLI usage in a session's worktree, so that terminal-initiated conversations appear in the CC interface without manual action.
 
 #### Acceptance Criteria
 
@@ -171,7 +171,7 @@ This feature is expanded to support **multiple Conversations per session**. A Co
 2. The Session Manager shall discover sessions by reading the Claude Code project directory at `~/.claude/projects/`, using the path-to-directory naming convention (slashes replaced with dashes, leading dash prefix).
 3. Where a `sessions-index.json` file exists in the Claude Code project directory, the Session Manager shall read it to obtain session metadata (session ID, first prompt, message count, timestamps, git branch).
 4. Where no `sessions-index.json` file exists, the Session Manager shall fall back to scanning JSONL transcript files in the project directory and parsing their initial entries for session metadata.
-5. When a discovered Claude Code session ID is not already tracked by any Conversation in the CSM session, the Session Manager shall create a new Conversation record for it with the discovered metadata.
+5. When a discovered Claude Code session ID is not already tracked by any Conversation in the CC session, the Session Manager shall create a new Conversation record for it with the discovered metadata.
 6. The Session Manager shall filter discovered sessions to only import those whose `cwd` or `gitBranch` match the session's worktree path or branch name.
 7. When importing a Conversation, the Session Manager shall populate its Claude Code session ID, transcript path, and available metadata (timestamps, message count).
 
@@ -190,7 +190,7 @@ This feature is expanded to support **multiple Conversations per session**. A Co
 
 ### Requirement 16: Hook Event Routing to Conversations
 
-**Objective:** As a developer, I want Claude Code hook events to be routed to the correct Conversation, so that status and metadata updates from both CSM-initiated and CLI-initiated sessions are accurately tracked.
+**Objective:** As a developer, I want Claude Code hook events to be routed to the correct Conversation, so that status and metadata updates from both CC-initiated and CLI-initiated sessions are accurately tracked.
 
 #### Acceptance Criteria
 

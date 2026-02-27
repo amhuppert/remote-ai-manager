@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { MessageContentBlock } from "@/types";
 
-const TEST_DIR = path.join("/tmp", "csm-transcript-images-test-" + Date.now());
+const TEST_DIR = path.join("/tmp", "cc-transcript-images-test-" + Date.now());
 
 vi.mock("./config", () => ({
   getConfigDirPath: () => TEST_DIR,

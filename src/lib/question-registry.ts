@@ -10,7 +10,7 @@ interface PendingQuestion {
 }
 
 // Use globalThis to survive HMR (same pattern as sse-broadcaster.ts)
-const GLOBAL_KEY = "__csm_pending_questions" as const;
+const GLOBAL_KEY = "__cc_pending_questions" as const;
 
 function getRegistry(): Map<string, PendingQuestion> {
   const g = globalThis as unknown as Record<string, unknown>;

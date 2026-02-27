@@ -2,7 +2,7 @@
 
 ## Project
 
-Claude Session Manager (CSM) — A Next.js application that manages Claude AI sessions across multiple projects, tracking worktrees, branches, transcripts, and session state.
+Command Center (CC) — A Next.js application that manages Claude AI sessions across multiple projects, tracking worktrees, branches, transcripts, and session state.
 
 ## Technologies
 
@@ -14,7 +14,7 @@ Claude Session Manager (CSM) — A Next.js application that manages Claude AI se
 
 ## Terminology
 
-- **CSM** - Claude Session Manager, the project name
+- **CC** - Command Center, the project name
 - **SessionState** - Data structure tracking a single Claude session (name, branch, status, etc.)
 - **SessionStatus** - Enum: "idle", "ready", "running"
 - **Worktree** - Git worktree path associated with a session

@@ -13,7 +13,7 @@
 
 ## Introduction
 
-The Prompt Execution feature enables developers to send prompts to Claude Code CLI processes running within session worktrees. It manages the full execution lifecycle: spawning the Claude CLI subprocess, enforcing single-flight concurrency locking (one prompt per session at a time), transitioning session status between ready and running states, tracking prompt counts for conversation continuity, and handling timeouts and errors gracefully. This feature is the core interaction mechanism between CSM and Claude Code.
+The Prompt Execution feature enables developers to send prompts to Claude Code CLI processes running within session worktrees. It manages the full execution lifecycle: spawning the Claude CLI subprocess, enforcing single-flight concurrency locking (one prompt per session at a time), transitioning session status between ready and running states, tracking prompt counts for conversation continuity, and handling timeouts and errors gracefully. This feature is the core interaction mechanism between CC and Claude Code.
 
 ## Requirements
 

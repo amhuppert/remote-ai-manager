@@ -19,7 +19,7 @@ const logger = createLogger("notification-db");
 // Database singleton (HMR-safe via globalThis)
 // ============================================================
 
-const GLOBAL_KEY = "__csm_notification_db" as const;
+const GLOBAL_KEY = "__cc_notification_db" as const;
 
 function getDb(): InstanceType<typeof Database> {
   const g = globalThis as unknown as Record<string, unknown>;

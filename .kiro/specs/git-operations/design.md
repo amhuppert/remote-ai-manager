@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Purpose**: This feature adds git commit, squash merge, commit history, session archiving, and a finished (merged) lifecycle state to the session detail and sessions list pages. It enables developers to manage the full lifecycle of a coding session's changes from within the CSM dashboard.
+**Purpose**: This feature adds git commit, squash merge, commit history, session archiving, and a finished (merged) lifecycle state to the session detail and sessions list pages. It enables developers to manage the full lifecycle of a coding session's changes from within the CC dashboard.
 
 **Users**: Developers managing Claude Code sessions use these operations to checkpoint work (commit), integrate completed work into `main` (merge), review session progress (commit history), organize sessions (archive/unarchive), and identify completed work (finished state).
 

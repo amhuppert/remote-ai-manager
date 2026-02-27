@@ -37,9 +37,9 @@ describe("Topbar", () => {
   // 6.2 – Topbar (Req 5.1–5.5)
   // =========================================================================
 
-  it("renders CSM logo linking to /projects (Req 5.1)", () => {
+  it("renders CC logo linking to /projects (Req 5.1)", () => {
     render(<Topbar breadcrumbs={[]} page="projects" />);
-    const logo = screen.getByText("CSM");
+    const logo = screen.getByText("CC");
     expect(logo.closest("a")?.getAttribute("href")).toBe("/projects");
   });
 
@@ -59,7 +59,7 @@ describe("Topbar", () => {
       />,
     );
     const links = screen.getAllByRole("link");
-    // CSM logo + 3 breadcrumb links
+    // CC logo + 3 breadcrumb links
     expect(links.length).toBeGreaterThanOrEqual(4);
     expect(screen.getByText("projects")).toBeDefined();
     expect(screen.getByText("my-repo")).toBeDefined();

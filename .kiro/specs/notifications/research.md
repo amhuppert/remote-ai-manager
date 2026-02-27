@@ -11,7 +11,7 @@
 ## Research Log
 
 ### SQLite Driver Selection for Bun Runtime
-- **Context**: Requirements mandate SQLite persistence. CSM runs on Bun runtime (see tech.md: `bun run dev`).
+- **Context**: Requirements mandate SQLite persistence. CC runs on Bun runtime (see tech.md: `bun run dev`).
 - **Sources Consulted**:
   - [bun:sqlite docs](https://bun.com/docs/runtime/sqlite)
   - [bun:sqlite API reference](https://bun.com/reference/bun/sqlite)

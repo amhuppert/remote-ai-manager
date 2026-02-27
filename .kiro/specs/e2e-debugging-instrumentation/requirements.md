@@ -3,19 +3,19 @@
 > **UPDATED (2026-02-22) — SDK Migration:** Requirement 4 (Hook Event Debugging) is obsolete — the hook system was removed. All references to `hooks.ts`, `hooks module`, hook event logging, and hook validation should be disregarded. The remaining requirements (1, 2, 3, 5, 6) are still valid but Req 3.2-3.4 should reference SDK `query()` execution instead of Claude CLI subprocess spawning.
 
 ## Introduction
-CSM (Claude Session Manager) orchestrates multiple remote Claude Code sessions across git worktrees. When things go wrong — dropped hooks, stalled prompts, corrupted state, worktree conflicts — the primary debugging workflow is a Claude Code agent reading log files to diagnose the issue. This feature adds structured, end-to-end logging that traces user interactions in the UI through API routes to Claude CLI invocations, producing logs with enough context for an AI agent to reconstruct what happened and identify root causes without needing to reproduce the problem.
+CC (Command Center) orchestrates multiple remote Claude Code sessions across git worktrees. When things go wrong — dropped hooks, stalled prompts, corrupted state, worktree conflicts — the primary debugging workflow is a Claude Code agent reading log files to diagnose the issue. This feature adds structured, end-to-end logging that traces user interactions in the UI through API routes to Claude CLI invocations, producing logs with enough context for an AI agent to reconstruct what happened and identify root causes without needing to reproduce the problem.
 
 ## Requirements
 
 ### Requirement 1: Structured Logging Foundation
-**Objective:** As a developer debugging with a Claude Code agent, I want all CSM server-side operations to produce structured, machine-parseable log entries, so that an AI agent can filter, correlate, and reason about system behavior from log files alone.
+**Objective:** As a developer debugging with a Claude Code agent, I want all CC server-side operations to produce structured, machine-parseable log entries, so that an AI agent can filter, correlate, and reason about system behavior from log files alone.
 
 #### Acceptance Criteria
 1. The Logging Module shall emit all log entries as newline-delimited JSON (NDJSON) objects containing: timestamp (ISO 8601), level (debug/info/warn/error), message, module name, and traceId.
-2. The Logging Module shall support configurable log levels via environment variable (`CSM_LOG_LEVEL`), defaulting to `info`.
+2. The Logging Module shall support configurable log levels via environment variable (`CC_LOG_LEVEL`), defaulting to `info`.
 3. When a log entry is associated with a session, the Logging Module shall include `projectName` and `sessionName` fields for correlation.
-4. The Logging Module shall write log output to a configurable log file path (`CSM_LOG_FILE`), defaulting to `csm-debug.log` in the CSM config directory.
-5. If the `CSM_LOG_LEVEL` environment variable contains an invalid value, the Logging Module shall fall back to `info` level and emit a warning.
+4. The Logging Module shall write log output to a configurable log file path (`CC_LOG_FILE`), defaulting to `cc-debug.log` in the CC config directory.
+5. If the `CC_LOG_LEVEL` environment variable contains an invalid value, the Logging Module shall fall back to `info` level and emit a warning.
 6. The Logging Module shall also write log entries at `warn` level and above to stderr for immediate visibility.
 
 ### Requirement 2: UI Action Tracing

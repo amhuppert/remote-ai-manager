@@ -2,22 +2,22 @@
 
 ## Overview
 
-**Purpose**: This feature delivers automated dev server lifecycle management within CSM sessions, enabling users to launch, monitor, and stop project-defined dev servers directly from the session overview page without manual terminal setup.
+**Purpose**: This feature delivers automated dev server lifecycle management within CC sessions, enabling users to launch, monitor, and stop project-defined dev servers directly from the session overview page without manual terminal setup.
 
-**Users**: CSM users managing coding sessions across projects will use this to spin up dev servers (e.g., Next.js, Storybook) in a session's worktree and access them over the Tailscale network from any device.
+**Users**: CC users managing coding sessions across projects will use this to spin up dev servers (e.g., Next.js, Storybook) in a session's worktree and access them over the Tailscale network from any device.
 
 **Impact**: Introduces a new in-memory process management subsystem, new API routes, new SSE event types, Tailscale Serve integration, and a UI control panel on the session overview page. No changes to the existing `state.json` persistence model.
 
 ### Goals
-- Enable per-project, multi-server dev server configuration via `ClaudeSessionManager.json`
+- Enable per-project, multi-server dev server configuration via `CommandCenter.json`
 - Provide start/stop/status lifecycle management with real-time SSE-driven UI updates
 - Expose dev servers over the tailnet via Tailscale Serve with zero manual setup
-- Auto-cleanup dev servers on session delete, merge, or CSM shutdown
-- Maintain port isolation across worktrees without CSM-managed port allocation
+- Auto-cleanup dev servers on session delete, merge, or CC shutdown
+- Maintain port isolation across worktrees without CC-managed port allocation
 
 ### Non-Goals
-- CSM-managed port allocation (dev servers choose their own ports; CSM discovers them via `CSM_PORT=` protocol)
-- Persistent dev server state across CSM restarts (in-memory only, per requirement 5.3)
+- CC-managed port allocation (dev servers choose their own ports; CC discovers them via `CC_PORT=` protocol)
+- Persistent dev server state across CC restarts (in-memory only, per requirement 5.3)
 - Auto-start dev servers on session creation (user-initiated only)
 - Support for dev server log streaming to the UI beyond recent diagnostic output
 - Dev server process restart/retry logic (manual restart via UI)
@@ -26,13 +26,13 @@
 
 ### Existing Architecture Analysis
 
-CSM is a server-rendered Next.js application with API routes as the backend. Key patterns relevant to this feature:
+CC is a server-rendered Next.js application with API routes as the backend. Key patterns relevant to this feature:
 
-- **In-memory singletons**: 7 modules use `globalThis`-backed singletons with `__csm_*` keys for HMR-safe state (SSE clients, abort controllers, background jobs, locks, query registry, state mutex, merge detection)
+- **In-memory singletons**: 7 modules use `globalThis`-backed singletons with `__cc_*` keys for HMR-safe state (SSE clients, abort controllers, background jobs, locks, query registry, state mutex, merge detection)
 - **SSE broadcasting**: `sse-broadcaster.ts` broadcasts typed events to all connected clients; the `SSEEvent` union in `schemas.ts` defines allowed event types
 - **Session lifecycle**: `sessions.ts` handles create/delete; `background-jobs.ts` handles merge via `setSessionFinished`; no existing shutdown hook
 - **Process execution**: All subprocess calls use `execFile` (promisified) for short-lived commands; no long-lived `spawn` usage exists
-- **Per-repo config**: `ClaudeSessionManager.json` parsed via `perRepoConfigSchema` in `schemas.ts`, read by `readRepoConfig()` in `repo-config.ts`
+- **Per-repo config**: `CommandCenter.json` parsed via `perRepoConfigSchema` in `schemas.ts`, read by `readRepoConfig()` in `repo-config.ts`
 
 ### Architecture Pattern & Boundary Map
 
@@ -84,7 +84,7 @@ graph TB
 ```
 
 **Architecture Integration**:
-- **Selected pattern**: In-memory registry with globalThis singleton — consistent with all existing CSM runtime state management
+- **Selected pattern**: In-memory registry with globalThis singleton — consistent with all existing CC runtime state management
 - **Domain boundaries**: `dev-server-registry.ts` owns all process state and lifecycle; `tailscale.ts` encapsulates CLI interactions; API routes are thin orchestration
 - **Existing patterns preserved**: `withTracing` route wrappers, `broadcast()` for SSE, Zod schema-first types, `readRepoConfig()` for project config
 - **New components rationale**: Registry (process lifecycle), TailscaleService (CLI abstraction), LivenessPoller (health monitoring), DevServerPanel (UI)
@@ -99,7 +99,7 @@ graph TB
 | Process Mgmt | Node.js `child_process.spawn` with `shell: true` | Long-lived dev server process management | First `spawn` usage in codebase; `shell: true` gives Node.js direct handle for clean termination |
 | Networking | Tailscale CLI (`tailscale serve`, `tailscale status`) | HTTPS exposure over tailnet | Requires `--operator` pre-configured |
 | Events | SSE via `sse-broadcaster.ts` | Real-time status updates to UI | New `dev-server-status` event type |
-| State | `globalThis` Map singleton | In-memory process registry, HMR-safe | Matches 7 existing `__csm_*` singletons |
+| State | `globalThis` Map singleton | In-memory process registry, HMR-safe | Matches 7 existing `__cc_*` singletons |
 | Validation | Zod v4 | Schema-first types for config, API, events | `devServerConfigSchema`, `devServerStatusEventSchema` |
 
 ## System Flows
@@ -125,7 +125,7 @@ sequenceDiagram
 
     loop stdout scanning
         Proc->>Reg: stdout line
-        Reg->>Reg: Match CSM_PORT=port
+        Reg->>Reg: Match CC_PORT=port
     end
 
     Reg->>Reg: Set status = running, record port
@@ -171,7 +171,7 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> stopped: configured
     stopped --> starting: user starts
-    starting --> running: CSM_PORT detected
+    starting --> running: CC_PORT detected
     starting --> error: process exits or timeout
     running --> stopped: user stops
     running --> stopped: process exits
@@ -184,14 +184,14 @@ stateDiagram-v2
 
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
-| 1.1 | devServers array in ClaudeSessionManager.json | perRepoConfigSchema, readRepoConfig | Config schema | — |
+| 1.1 | devServers array in CommandCenter.json | perRepoConfigSchema, readRepoConfig | Config schema | — |
 | 1.2 | Missing config = zero servers | readRepoConfig, DevServerPanel | Config schema | — |
 | 1.3 | Validate name + command non-empty | devServerConfigSchema | Config schema | — |
 | 1.4 | Multiple servers per project | devServers array, Registry keying | Config schema, Registry | — |
 | 2.1 | Spawn in worktree cwd | DevServerRegistry.startServer | Service interface | Start flow |
-| 2.2 | CSM_PORT stdout parsing | DevServerRegistry (stdout scanner) | — | Start flow |
+| 2.2 | CC_PORT stdout parsing | DevServerRegistry (stdout scanner) | — | Start flow |
 | 2.3 | starting → running transition | DevServerRegistry, SSE | Event contract | Start flow |
-| 2.4 | Exit before CSM_PORT → error | DevServerRegistry | Event contract | Start flow |
+| 2.4 | Exit before CC_PORT → error | DevServerRegistry | Event contract | Start flow |
 | 2.5 | No duplicate start | DevServerRegistry.startServer guard | Service interface | Start flow |
 | 2.6 | Capture recent output | DevServerRegistry (output buffer) | Service interface | — |
 | 3.1 | Stop = terminate + status change | DevServerRegistry.stopServer | Service interface | Stop flow |
@@ -224,7 +224,7 @@ stateDiagram-v2
 | 9.7 | Hidden when no config | DevServerPanel | — | — |
 | 10.1 | Stop on session delete | deleteSession hook | Service interface | — |
 | 10.2 | Stop on session merge | setSessionFinished hook | Service interface | — |
-| 10.3 | Stop on CSM exit | process SIGTERM handler | Service interface | — |
+| 10.3 | Stop on CC exit | process SIGTERM handler | Service interface | — |
 
 ## Components and Interfaces
 
@@ -251,7 +251,7 @@ stateDiagram-v2
 - Enforces single-instance-per-server (no duplicate starts for the same server name in a session)
 - Broadcasts SSE events on every status transition
 - Captures last N lines of stdout/stderr per server in a circular buffer
-- Registers a `process.on('SIGTERM')` handler at module init for CSM shutdown cleanup
+- Registers a `process.on('SIGTERM')` handler at module init for CC shutdown cleanup
 
 **Dependencies**
 - Outbound: TailscaleService — register/unregister on port discovery/stop (P0)
@@ -286,7 +286,7 @@ interface DevServerRegistryService {
     sessionName: string;
   }): Promise<void>;
 
-  /** Stop all dev servers across all sessions (CSM shutdown). */
+  /** Stop all dev servers across all sessions (CC shutdown). */
   stopAll(): Promise<void>;
 
   /** Get runtime state for all dev servers in a session. */
@@ -327,13 +327,13 @@ interface DevServerEntry {
 ```
 
 - **State model**: `Map<string, DevServerEntry>` keyed by `${projectPath}::${sessionName}::${serverName}`
-- **Persistence**: None — in-memory only via `globalThis.__csm_dev_servers`
+- **Persistence**: None — in-memory only via `globalThis.__cc_dev_servers`
 - **Concurrency**: Single-threaded Node.js; no mutex needed for the registry Map itself; async operations (Tailscale CLI) are fire-and-forget with error logging
 
 **Implementation Notes**
 - Use `spawn(command, { shell: true, cwd: worktreePath, stdio: 'pipe' })` for arbitrary shell commands — `shell: true` lets Node.js manage shell invocation and provides a direct `ChildProcess` handle where `child.kill()` targets the shell process directly, avoiding the signal-forwarding problem of explicit `spawn('sh', ['-c', ...])` where SIGTERM may not reach the actual dev server
-- Stdout scanning: line-buffer stdout, match `^CSM_PORT=(\d+)$`, transition to `running`
-- Startup timeout: 60s default; if `CSM_PORT` not detected, transition to `error` with captured output
+- Stdout scanning: line-buffer stdout, match `^CC_PORT=(\d+)$`, transition to `running`
+- Startup timeout: 60s default; if `CC_PORT` not detected, transition to `error` with captured output
 - Graceful kill: `child.kill('SIGTERM')` → 5s wait → `child.kill('SIGKILL')`
 - Output buffer: Circular buffer of last 50 lines (combined stdout + stderr)
 - Shutdown handler: `process.on('SIGTERM', () => registry.stopAll())` registered once at module init
@@ -420,7 +420,7 @@ interface LivenessPoller {
 - Invariants: Exactly one interval timer active at a time (guarded by globalThis key)
 
 **Implementation Notes**
-- Use `globalThis.__csm_dev_server_liveness` to store the interval ID (HMR-safe)
+- Use `globalThis.__cc_dev_server_liveness` to store the interval ID (HMR-safe)
 - Auto-start when the first dev server is registered; auto-stop when the registry empties
 - `process.kill(pid, 0)` throws if the process does not exist — catch `ESRCH` to detect dead processes
 - Polling interval: 5 seconds
@@ -459,7 +459,7 @@ interface LivenessPoller {
 | POST | `/api/projects/[name]/sessions/[session]/dev-servers/stop-all` | — | `{ status: "ok" }` | 404 |
 
 **Implementation Notes**
-- GET response merges configured servers (from `ClaudeSessionManager.json`) with runtime state (from registry) — a configured-but-not-started server appears with status `stopped`
+- GET response merges configured servers (from `CommandCenter.json`) with runtime state (from registry) — a configured-but-not-started server appears with status `stopped`
 - POST start returns 202 (async operation); POST stop returns 200 (synchronous)
 - All routes resolve project path via `resolveProjectPath(name)` and session via `getSession(projectPath, sessionName)`
 
@@ -533,7 +533,7 @@ erDiagram
     }
 ```
 
-- **PerRepoConfig** (persisted in `ClaudeSessionManager.json`): Extended with optional `devServers` array
+- **PerRepoConfig** (persisted in `CommandCenter.json`): Extended with optional `devServers` array
 - **DevServerEntry** (in-memory only): Runtime process state, not persisted
 
 ### Logical Data Model
@@ -613,7 +613,7 @@ type DevServersStatusResponse = z.infer<typeof devServersStatusResponseSchema>;
 Errors are categorized by their source and handled with appropriate recovery:
 
 - **Process spawn failure** (command not found, permission denied): Transition to `error` status immediately with the error message; broadcast SSE event
-- **CSM_PORT timeout**: After 60s without a `CSM_PORT=` line, transition to `error` with captured stdout/stderr for diagnostics
+- **CC_PORT timeout**: After 60s without a `CC_PORT=` line, transition to `error` with captured stdout/stderr for diagnostics
 - **Process unexpected exit**: Liveness poller detects; transitions to `stopped`; cleans up Tailscale registration
 - **Tailscale CLI failure**: Logged and swallowed; dev server continues running locally; `remoteUrl` set to null in SSE event and API response
 - **Tailscale unavailable**: `getHostname()` returns null; all `register`/`unregister` calls become no-ops with warning logs
@@ -630,7 +630,7 @@ Errors are categorized by their source and handled with appropriate recovery:
 
 **Process Errors (runtime, not HTTP)**:
 - Unexpected exit → `stopped` status via SSE
-- CSM_PORT timeout → `error` status via SSE with diagnostic output
+- CC_PORT timeout → `error` status via SSE with diagnostic output
 
 ### Monitoring
 
@@ -651,13 +651,13 @@ All operations log structured events via `createLogger("dev-server")`:
 ## Testing Strategy
 
 ### Unit Tests
-- **DevServerRegistry**: Test state transitions (starting → running → stopped), duplicate start prevention, `CSM_PORT` parsing, startup timeout, output buffer
+- **DevServerRegistry**: Test state transitions (starting → running → stopped), duplicate start prevention, `CC_PORT` parsing, startup timeout, output buffer
 - **TailscaleService**: Test hostname caching, CLI command construction, graceful degradation on Tailscale unavailability
 - **LivenessPoller**: Test dead process detection, auto-start/auto-stop behavior
 - **Schema validation**: Test `devServerConfigSchema` with valid/invalid inputs
 
 ### Integration Tests
-- **Start → port discovery → Tailscale register → SSE broadcast**: End-to-end flow using a mock dev server script that emits `CSM_PORT=<port>`
+- **Start → port discovery → Tailscale register → SSE broadcast**: End-to-end flow using a mock dev server script that emits `CC_PORT=<port>`
 - **Stop → Tailscale unregister → process kill → SSE broadcast**: Verify cleanup order
 - **Session delete cleanup**: Verify `stopAllForSession` is called before worktree removal
 - **API route validation**: Test GET/POST routes with mock registry
@@ -670,9 +670,9 @@ All operations log structured events via `createLogger("dev-server")`:
 
 ## Security Considerations
 
-- **Command injection**: Dev server commands come from the project's `ClaudeSessionManager.json`, which is under the repository maintainer's control. CSM passes the command string to `spawn` with `shell: true` without modification. This is acceptable because CSM already runs arbitrary code (Claude Agent SDK with `bypassPermissions` mode). No user-supplied input reaches the command string.
-- **Tailscale --operator**: CSM relies on the system's Tailscale `--operator` configuration for rootless operation. CSM does not attempt to elevate privileges.
-- **Port exposure**: Tailscale Serve exposes ports only to the tailnet (not the public internet), matching the existing security boundary for CSM.
+- **Command injection**: Dev server commands come from the project's `CommandCenter.json`, which is under the repository maintainer's control. CC passes the command string to `spawn` with `shell: true` without modification. This is acceptable because CC already runs arbitrary code (Claude Agent SDK with `bypassPermissions` mode). No user-supplied input reaches the command string.
+- **Tailscale --operator**: CC relies on the system's Tailscale `--operator` configuration for rootless operation. CC does not attempt to elevate privileges.
+- **Port exposure**: Tailscale Serve exposes ports only to the tailnet (not the public internet), matching the existing security boundary for CC.
 
 ---
 
@@ -680,16 +680,16 @@ All operations log structured events via `createLogger("dev-server")`:
 
 ## Overview
 
-**Purpose**: This extension delivers a preset installation system that automates dev server configuration for common frameworks (Next.js, Storybook), eliminating the need for manual `ClaudeSessionManager.json` editing and shell script authorship.
+**Purpose**: This extension delivers a preset installation system that automates dev server configuration for common frameworks (Next.js, Storybook), eliminating the need for manual `CommandCenter.json` editing and shell script authorship.
 
-**Users**: CSM users setting up new projects will select a preset from the sessions list page to install port-aware startup scripts and configuration into their project.
+**Users**: CC users setting up new projects will select a preset from the sessions list page to install port-aware startup scripts and configuration into their project.
 
 **Impact**: Adds a preset registry module, port detection helper scripts, a project-level installation API, and wires the existing `PresetInstallDialog` UI component to the backend.
 
 ### Goals
 - One-click dev server setup for Next.js and Storybook projects
 - Reusable, committed-to-repo helper scripts that handle port detection and worktree-aware port allocation
-- Extend the existing `ClaudeSessionManager.json` config without breaking existing setups
+- Extend the existing `CommandCenter.json` config without breaking existing setups
 
 ### Non-Goals
 - Auto-detecting frameworks on project scan (manual preset selection only)
@@ -720,8 +720,8 @@ graph TB
     end
 
     subgraph FileSystem[Project Filesystem]
-        ConfigFile[ClaudeSessionManager.json]
-        ScriptDir[.csm/dev-servers/]
+        ConfigFile[CommandCenter.json]
+        ScriptDir[.cc/dev-servers/]
         HelperScript[_helpers.sh]
         PresetScript[nextjs.sh / storybook.sh]
     end
@@ -757,7 +757,7 @@ graph TB
 | Backend | Next.js 16 API Routes | GET presets, POST install | `withTracing` wrapper |
 | Filesystem | Node.js `fs/promises` | Write scripts, update config | `mkdir`, `writeFile`, `chmod` |
 | Validation | Zod v4 | Request/response schemas | Extends existing schemas |
-| Scripts | POSIX shell (bash-compatible) | Port detection, dev server startup | Installed into project `.csm/dev-servers/` |
+| Scripts | POSIX shell (bash-compatible) | Port detection, dev server startup | Installed into project `.cc/dev-servers/` |
 
 ## System Flows
 
@@ -774,14 +774,14 @@ sequenceDiagram
     API->>API: Resolve project path
     API->>Reg: getPreset(presetId)
     Reg-->>API: Preset definition
-    API->>FS: Read ClaudeSessionManager.json (or default)
+    API->>FS: Read CommandCenter.json (or default)
     API->>API: Check for duplicate server name
     API->>Reg: generateHelperScript()
     API->>Reg: generatePresetScript(presetId)
-    API->>FS: mkdir -p .csm/dev-servers/
+    API->>FS: mkdir -p .cc/dev-servers/
     API->>FS: Write _helpers.sh (chmod 755)
     API->>FS: Write preset.sh (chmod 755)
-    API->>FS: Update ClaudeSessionManager.json
+    API->>FS: Update CommandCenter.json
     API-->>UI: 200 OK {installed files}
 ```
 
@@ -789,12 +789,12 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant CSM as CSM Registry
+    participant CC as CC Registry
     participant Script as preset.sh
     participant Helper as _helpers.sh
     participant Server as Dev Server Process
 
-    CSM->>Script: spawn(.csm/dev-servers/nextjs.sh)
+    CC->>Script: spawn(.cc/dev-servers/nextjs.sh)
     Script->>Helper: source _helpers.sh
     Script->>Helper: check_port(BASE_PORT)
     alt Port available
@@ -802,7 +802,7 @@ sequenceDiagram
         Script->>Server: npx next dev --port BASE_PORT
     else Port owned by this worktree
         Helper-->>Script: exit 1 (owned)
-        Script->>Script: echo CSM_PORT=BASE_PORT
+        Script->>Script: echo CC_PORT=BASE_PORT
         Note right of Script: Reuse existing server
     else Port conflict
         Helper-->>Script: exit 2 (conflict)
@@ -811,7 +811,7 @@ sequenceDiagram
         Script->>Server: npx next dev --port AVAILABLE_PORT
     end
     Server->>Script: Server ready on port
-    Script->>CSM: echo CSM_PORT=PORT
+    Script->>CC: echo CC_PORT=PORT
 ```
 
 ## Requirements Traceability — Phase 2
@@ -831,8 +831,8 @@ sequenceDiagram
 | 12.4 | Preset scripts use port helpers | Generated preset scripts | — | Startup flow |
 | 12.5 | Reuse owned server without respawn | Generated preset scripts | — | Startup flow |
 | 13.1 | POST install endpoint | Preset API Routes | API contract | Install flow |
-| 13.2 | Create .csm/dev-servers/ if missing | PresetInstaller | — | Install flow |
-| 13.3 | Create ClaudeSessionManager.json if missing | PresetInstaller | — | Install flow |
+| 13.2 | Create .cc/dev-servers/ if missing | PresetInstaller | — | Install flow |
+| 13.3 | Create CommandCenter.json if missing | PresetInstaller | — | Install flow |
 | 13.4 | Append to existing devServers | PresetInstaller | — | Install flow |
 | 13.5 | Reject duplicate preset | PresetInstaller | API contract | Install flow |
 | 13.6 | GET available presets endpoint | Preset API Routes | API contract | — |
@@ -912,7 +912,7 @@ interface PresetRegistryService {
 **Implementation Notes**
 - Located at `src/lib/dev-server-presets.ts`
 - Preset scripts source `_helpers.sh` relative to their own directory (`$(dirname "$0")/_helpers.sh`)
-- Each preset script follows the pattern: check port → start or reuse → emit `CSM_PORT`
+- Each preset script follows the pattern: check port → start or reuse → emit `CC_PORT`
 
 ---
 
@@ -924,9 +924,9 @@ interface PresetRegistryService {
 | Requirements | 13.1, 13.2, 13.3, 13.4, 13.5, 13.7 |
 
 **Responsibilities & Constraints**
-- Creates `.csm/dev-servers/` directory if missing
+- Creates `.cc/dev-servers/` directory if missing
 - Writes helper and preset scripts with executable permissions
-- Reads, merges, and writes `ClaudeSessionManager.json` atomically
+- Reads, merges, and writes `CommandCenter.json` atomically
 - Validates no duplicate server name exists before installation
 
 **Dependencies**
@@ -942,7 +942,7 @@ interface PresetRegistryService {
 ```typescript
 interface InstallPresetResult {
   installedFiles: string[];      // Relative paths of files written
-  configUpdated: boolean;        // Whether ClaudeSessionManager.json was modified
+  configUpdated: boolean;        // Whether CommandCenter.json was modified
 }
 
 interface PresetInstallerService {
@@ -958,12 +958,12 @@ interface PresetInstallerService {
 ```
 
 - Preconditions: `installPreset` — `projectPath` must be a valid directory; preset must not already be installed (matching server name in `devServers`)
-- Postconditions: `.csm/dev-servers/` exists with helper + preset scripts (mode 0755); `ClaudeSessionManager.json` contains the preset's `devServers` entry
+- Postconditions: `.cc/dev-servers/` exists with helper + preset scripts (mode 0755); `CommandCenter.json` contains the preset's `devServers` entry
 - Invariants: Existing `devServers` entries are never removed or modified
 
 **Implementation Notes**
 - Located at `src/lib/dev-server-presets.ts` (alongside the registry)
-- `getInstalledPresets` reads `ClaudeSessionManager.json` and matches server names against known preset server names
+- `getInstalledPresets` reads `CommandCenter.json` and matches server names against known preset server names
 - Write order: scripts first, then config (if script write fails, config is untouched)
 - Uses `writeFile` with mode `0o755` for scripts; standard JSON write for config
 
@@ -1086,18 +1086,18 @@ WORKTREE_DIR="$(pwd)"
 check_port "$BASE_PORT" "$WORKTREE_DIR"
 case $? in
   0) PORT="$BASE_PORT" ;;                           # Available
-  1) echo "CSM_PORT=$BASE_PORT"; exit 0 ;;          # Already running for this worktree
+  1) echo "CC_PORT=$BASE_PORT"; exit 0 ;;          # Already running for this worktree
   2) PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR") ;;  # Conflict, find another
 esac
 
-echo "CSM_PORT=$PORT"
+echo "CC_PORT=$PORT"
 exec npx <framework-command> --port "$PORT"
 ```
 
 **Implementation Notes**
 - Next.js: `BASE_PORT=3000`, command `npx next dev --port "$PORT"`
 - Storybook: `BASE_PORT=6006`, command `npx storybook dev --port "$PORT"`
-- `CSM_PORT` is emitted before `exec` so CSM detects the port immediately
+- `CC_PORT` is emitted before `exec` so CC detects the port immediately
 - `exec` replaces the shell process with the dev server (clean signal handling)
 
 ---
@@ -1140,8 +1140,8 @@ type DevServerPresetDefinition = z.infer<typeof devServerPresetDefinitionSchema>
 ```
 
 **Installation modifies existing data models**:
-- `ClaudeSessionManager.json` — appends to `devServers` array (existing `perRepoConfigSchema`)
-- `.csm/dev-servers/` — new directory with shell scripts (not schema-managed)
+- `CommandCenter.json` — appends to `devServers` array (existing `perRepoConfigSchema`)
+- `.cc/dev-servers/` — new directory with shell scripts (not schema-managed)
 
 ### Data Contracts & Integration
 
@@ -1172,7 +1172,7 @@ export const presetKeys = {
 
 **Script Errors (runtime, not HTTP)**:
 - `ss` / `lsof` not available → helper script falls back or prints diagnostic to stderr
-- Port scan exhausted → script exits with error; CSM detects exit before `CSM_PORT` and transitions to error status
+- Port scan exhausted → script exits with error; CC detects exit before `CC_PORT` and transitions to error status
 
 ## Testing Strategy — Phase 2
 

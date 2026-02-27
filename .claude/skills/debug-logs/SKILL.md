@@ -1,9 +1,9 @@
 ---
-description: This skill should be used when diagnosing CSM issues, analyzing failures, tracing user actions through logs, investigating hook problems, state corruption, prompt execution errors, or understanding what happened in recent runs. Use when asked to "check logs", "debug", "what went wrong", "trace request", "find errors", or "analyze recent activity".
+description: This skill should be used when diagnosing CC issues, analyzing failures, tracing user actions through logs, investigating hook problems, state corruption, prompt execution errors, or understanding what happened in recent runs. Use when asked to "check logs", "debug", "what went wrong", "trace request", "find errors", or "analyze recent activity".
 name: debug-logs
 ---
 
-# CSM Debug Log Analysis
+# CC Debug Log Analysis
 
 Structured NDJSON logs trace every user action from UI through API routes to Claude CLI execution. Each log line is a self-contained JSON object. All entries from one user action share a `traceId` UUID.
 
@@ -11,9 +11,9 @@ Structured NDJSON logs trace every user action from UI through API routes to Cla
 
 ```bash
 # Linux (default)
-LOG="${CSM_LOG_FILE:-$HOME/.config/csm/csm-debug.log}"
+LOG="${CC_LOG_FILE:-$HOME/.config/cc/cc-debug.log}"
 # macOS (default)
-LOG="${CSM_LOG_FILE:-$HOME/Library/Application Support/csm/csm-debug.log}"
+LOG="${CC_LOG_FILE:-$HOME/Library/Application Support/cc/cc-debug.log}"
 ```
 
 Verify: `wc -l "$LOG"` to confirm file exists and check size before querying.
@@ -103,7 +103,7 @@ grep -E '"message":"session\.(create|delete)"' "$LOG" | jq '{message,sessionName
 ### Hook Problems
 
 ```bash
-# Events from sessions CSM doesn't know about
+# Events from sessions CC doesn't know about
 grep '"message":"hook.unknown_session"' "$LOG" | jq '{cwd,eventType}'
 
 # Malformed hook payloads
@@ -165,10 +165,10 @@ grep "\"timestamp\":\"$(date -u +%Y-%m-%dT%H)" "$LOG" | jq .
 
 | Variable        | Default                      | Effect                           |
 | --------------- | ---------------------------- | -------------------------------- |
-| `CSM_LOG_LEVEL` | `info`                       | Filter: debug, info, warn, error |
-| `CSM_LOG_FILE`  | `<config-dir>/csm-debug.log` | Log file path                    |
+| `CC_LOG_LEVEL` | `info`                       | Filter: debug, info, warn, error |
+| `CC_LOG_FILE`  | `<config-dir>/cc-debug.log` | Log file path                    |
 
-Set `CSM_LOG_LEVEL=debug` to include state writes (`state.write`, `state.atomic_write`) and lock events (`lock.acquired`, `lock.released`).
+Set `CC_LOG_LEVEL=debug` to include state writes (`state.write`, `state.atomic_write`) and lock events (`lock.acquired`, `lock.released`).
 
 Warn/error entries also go to stderr for immediate visibility.
 

@@ -8,7 +8,7 @@ Replace the Claude Code CLI subprocess spawning (`child_process.spawn` + NDJSON 
 - `prompt.ts`: `spawn("claude", ...)` → `query({ prompt, options })` async generator
 - `stream-events.ts`: Deleted — SDK provides typed `SDKMessage` objects
 - `hooks.ts` + `install-hooks.ts` + `/api/hooks/`: Deleted entirely
-- `transcript.ts`: Rewritten — own JSONL storage in CSM config dir instead of reading Claude Code's files
+- `transcript.ts`: Rewritten — own JSONL storage in CC config dir instead of reading Claude Code's files
 - `conversations.ts`: Simplified — remove all discovery/import/sync functions
 - New cost tracking fields on `ConversationState`
 
@@ -118,11 +118,11 @@ Keep: `messageContentBlockSchema` (used by UI and new transcript module).
 
 ## New Transcript Module (`src/lib/transcript.ts`)
 
-Replaces the old module that read Claude Code JSONL files. Now manages CSM's own transcript storage.
+Replaces the old module that read Claude Code JSONL files. Now manages CC's own transcript storage.
 
 **Storage location**: `<configDir>/transcripts/<conversationId>.jsonl`
-- Where `configDir` is the OS-appropriate CSM config directory (same as `state.json` location)
-- Example: `~/.config/csm/transcripts/550e8400-e29b-41d4-a716-446655440000.jsonl`
+- Where `configDir` is the OS-appropriate CC config directory (same as `state.json` location)
+- Example: `~/.config/cc/transcripts/550e8400-e29b-41d4-a716-446655440000.jsonl`
 
 **Transcript entry format** (one JSON line per entry):
 ```typescript
@@ -186,7 +186,7 @@ const q = query({
 - `persistSession: true` — ensures the SDK persists session state for future resume
 - `env: { CLAUDECODE: "" }` — prevents nested session detection error
 
-**CLAUDECODE env var**: At the top of `prompt.ts`, add `delete process.env.CLAUDECODE;` as a module-level side effect. This handles the case where CSM itself runs inside a Claude Code session during development.
+**CLAUDECODE env var**: At the top of `prompt.ts`, add `delete process.env.CLAUDECODE;` as a module-level side effect. This handles the case where CC itself runs inside a Claude Code session during development.
 
 **Message processing loop**:
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
-const TEST_DIR = path.join("/tmp", "csm-state-test-" + Date.now());
+const TEST_DIR = path.join("/tmp", "cc-state-test-" + Date.now());
 const STATE_FILE = path.join(TEST_DIR, "state.json");
 
 // Mock config to return our test state file path
@@ -76,7 +76,7 @@ describe("state", () => {
               archived: false,
               finished: false,
               conversations: [],
-              source: "csm" as const,
+              source: "cc" as const,
               objective: null,
               creationMode: "fast" as const,
               workflow: null,
@@ -103,7 +103,7 @@ describe("state", () => {
       archived: false,
       finished: false,
       conversations: [],
-      source: "csm" as const,
+      source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
       workflow: null,
@@ -132,7 +132,7 @@ describe("state", () => {
       archived: false,
       finished: false,
       conversations: [],
-      source: "csm" as const,
+      source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
       workflow: null,
@@ -160,7 +160,7 @@ describe("state", () => {
       archived: false,
       finished: false,
       conversations: [],
-      source: "csm" as const,
+      source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
       workflow: null,
@@ -248,7 +248,7 @@ describe("archive helpers", () => {
       archived: false,
       finished: false,
       conversations: [],
-      source: "csm" as const,
+      source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
       workflow: null,
@@ -333,7 +333,7 @@ describe("pin helpers", () => {
       archived: false,
       finished: false,
       conversations: [],
-      source: "csm" as const,
+      source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
       workflow: null,

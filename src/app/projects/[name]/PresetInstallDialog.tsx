@@ -16,14 +16,14 @@ export const PRESETS: DevServerPreset[] = [
     name: "Next.js",
     description: "Dev server with automatic port detection and HMR support",
     badge: "N",
-    files: [".csm/dev-servers/nextjs.sh", "ClaudeSessionManager.json"],
+    files: [".cc/dev-servers/nextjs.sh", "CommandCenter.json"],
   },
   {
     id: "storybook",
     name: "Storybook",
     description: "Component workshop with auto port allocation",
     badge: "S",
-    files: [".csm/dev-servers/storybook.sh", "ClaudeSessionManager.json"],
+    files: [".cc/dev-servers/storybook.sh", "CommandCenter.json"],
   },
 ];
 

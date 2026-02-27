@@ -7,7 +7,7 @@ import type { DevServerStatus, DevServerStatusEvent } from "@/types";
 
 const logger = createLogger("dev-server");
 
-const GLOBAL_KEY = "__csm_dev_servers" as const;
+const GLOBAL_KEY = "__cc_dev_servers" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
 const OUTPUT_BUFFER_SIZE = 50;
 const KILL_GRACE_MS = 5_000;
@@ -25,6 +25,8 @@ export interface DevServerEntry {
   startedAt: string;
   errorMessage: string | null;
   recentOutput: string[];
+  /** Whether this server was adopted (discovered running externally, not spawned by CC) */
+  adopted: boolean;
   /** Internal: child process handle (not exposed via API) */
   _process: ChildProcess | null;
   /** Internal: startup timeout timer */
@@ -59,6 +61,7 @@ function broadcastStatus(entry: DevServerEntry): void {
     port: entry.port,
     remoteUrl: entry.remoteUrl,
     errorMessage: entry.errorMessage,
+    adopted: entry.adopted,
   };
   broadcast(event);
 }
@@ -92,7 +95,7 @@ function cleanupTimer(entry: DevServerEntry): void {
 
 /**
  * Start a dev server for a session.
- * Spawns the command, monitors stdout for CSM_PORT=<port>, and manages status transitions.
+ * Spawns the command, monitors stdout for CC_PORT=<port>, and manages status transitions.
  */
 export async function startServer(params: {
   projectPath: string;
@@ -132,6 +135,7 @@ export async function startServer(params: {
     startedAt: new Date().toISOString(),
     errorMessage: null,
     recentOutput: [],
+    adopted: false,
     _process: child,
     _startupTimer: null,
   };
@@ -150,9 +154,11 @@ export async function startServer(params: {
 
   broadcastStatus(entry);
 
-  // Line-buffer stdout for CSM_PORT detection
+  // Line-buffer stdout for CC_PORT detection and adoption markers
   let stdoutBuffer = "";
   let portFound = false;
+  let adoptedFlag = false;
+  let adoptedPid: number | null = null;
 
   child.stdout?.on("data", (chunk: Buffer) => {
     stdoutBuffer += chunk.toString();
@@ -161,11 +167,34 @@ export async function startServer(params: {
 
     for (const line of lines) {
       appendOutput(entry, line);
-      const match = /^CSM_PORT=(\d+)$/.exec(line.trim());
+
+      // Parse adoption markers (emitted before CC_PORT)
+      if (/^CC_ADOPTED=1$/.test(line.trim())) {
+        adoptedFlag = true;
+      }
+      const adoptedPidMatch = /^CC_ADOPTED_PID=(\d+)$/.exec(line.trim());
+      if (adoptedPidMatch) {
+        adoptedPid = parseInt(adoptedPidMatch[1]!, 10);
+      }
+
+      const match = /^CC_PORT=(\d+)$/.exec(line.trim());
       if (match && !portFound) {
         portFound = true;
         const port = parseInt(match[1]!, 10);
         cleanupTimer(entry);
+
+        // Apply adoption state
+        if (adoptedFlag) {
+          entry.adopted = true;
+          if (adoptedPid && adoptedPid > 0) {
+            entry.pid = adoptedPid;
+          }
+          logger.info("dev-server.adopted", {
+            serverName,
+            port,
+            adoptedPid: entry.pid,
+          });
+        }
 
         logger.info("dev-server.port_discovered", { serverName, port });
 
@@ -200,11 +229,22 @@ export async function startServer(params: {
       signal,
     });
 
+    // Adopted server: the detection script exited, not the real server.
+    // Liveness polling will monitor the real PID going forward.
+    // Note: status may still be "starting" if tailscale.register() hasn't resolved yet.
+    if (entry.adopted) {
+      logger.info("dev-server.adopted_script_exit", {
+        serverName,
+        adoptedPid: entry.pid,
+      });
+      return;
+    }
+
     if (entry.status === "starting") {
-      // Exited before CSM_PORT was detected
+      // Exited before CC_PORT was detected
       const output = entry.recentOutput.slice(-10).join("\n");
       transitionTo(entry, "error", {
-        errorMessage: `Process exited (code=${code}, signal=${signal}) before reporting CSM_PORT.\n${output}`,
+        errorMessage: `Process exited (code=${code}, signal=${signal}) before reporting CC_PORT.\n${output}`,
       });
       logger.error("dev-server.error", {
         serverName,
@@ -245,7 +285,7 @@ export async function startServer(params: {
 
       const output = entry.recentOutput.slice(-10).join("\n");
       transitionTo(entry, "error", {
-        errorMessage: `Startup timeout (${STARTUP_TIMEOUT_MS / 1000}s): CSM_PORT not detected.\n${output}`,
+        errorMessage: `Startup timeout (${STARTUP_TIMEOUT_MS / 1000}s): CC_PORT not detected.\n${output}`,
       });
 
       // Kill the process
@@ -270,9 +310,18 @@ export async function stopServer(params: {
   const key = makeKey(projectPath, sessionName, serverName);
   const entry = registry.get(key);
 
-  if (!entry || !entry._process) {
+  if (!entry) return;
+
+  // Adopted servers cannot be stopped — CC doesn't own the process
+  if (entry.adopted) {
+    logger.warn("dev-server.stop_adopted_noop", {
+      serverName,
+      pid: entry.pid,
+    });
     return;
   }
+
+  if (!entry._process) return;
 
   cleanupTimer(entry);
 
@@ -338,7 +387,7 @@ export async function stopAllForSession(params: {
   );
 }
 
-/** Stop all dev servers across all sessions (CSM shutdown). */
+/** Stop all dev servers across all sessions (CC shutdown). */
 export async function stopAll(): Promise<void> {
   const registry = getRegistry();
   const entries = Array.from(registry.values()).filter(
@@ -410,7 +459,7 @@ export function _resetForTesting(): void {
 // SIGTERM Shutdown Handler
 // ============================================================
 
-const SHUTDOWN_KEY = "__csm_dev_server_shutdown_registered" as const;
+const SHUTDOWN_KEY = "__cc_dev_server_shutdown_registered" as const;
 
 function registerShutdownHandler(): void {
   const g = globalThis as unknown as Record<string, unknown>;

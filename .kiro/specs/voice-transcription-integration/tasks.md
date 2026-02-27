@@ -50,7 +50,7 @@
   - Manually verify: start the server and confirm the health endpoint responds correctly
   - _Requirements: 1.1_
 
-- [x] 3. CSM voice API proxy routes
+- [x] 3. CC voice API proxy routes
 - [x] 3.1 (P) Implement the voice health check proxy route
   - Create a GET route at `/api/voice/health` that proxies to the Voice2Text server's health endpoint
   - Read the Voice2Text server URL from the `VOICE_SERVER_URL` environment variable (default: `http://localhost:7880`)
@@ -70,7 +70,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 9.3, 9.4, 9.5_
   - _Contracts: TranscribeRoute API_
 
-- [x] 4. CSM browser audio recording and styles
+- [x] 4. CC browser audio recording and styles
 - [x] 4.1 (P) Create the voice recording React hook
   - Implement a custom hook that manages the full audio recording lifecycle: idle → recording → processing → idle
   - **Availability**: On mount, check the voice health API; re-check every 30 seconds. Also verify `navigator.mediaDevices` exists. Report unavailable if either check fails
@@ -89,7 +89,7 @@
   - Place the keyframe near the existing `pulse-border` animation; place the button styles near the existing `.send-btn` rules
   - _Requirements: 7.3, 7.4_
 
-- [x] 5. CSM voice button and page integration
+- [x] 5. CC voice button and page integration
 - [x] 5.1 Create the voice record button component
   - Build a component that uses the recording hook internally and renders three visual states:
     - **Hidden**: Return null when the voice server is unavailable
@@ -119,7 +119,7 @@
   - _Requirements: 10.4, 10.5_
   - _Contracts: V2TServer API_
 
-- [x] 6.2 (P) Forward the context field through the CSM transcription proxy route
+- [x] 6.2 (P) Forward the context field through the CC transcription proxy route
   - In the voice transcription proxy route, extract an optional `context` string field from the incoming FormData
   - When building the upstream FormData to forward to the Voice2Text server, include the `context` field if it was present and non-empty in the original request
   - The field is optional — omitting it preserves existing behavior with no validation errors

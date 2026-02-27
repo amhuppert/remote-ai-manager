@@ -29,8 +29,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CSM — Ground Control",
-  description: "Claude Session Manager — Remote coding session control",
+  title: "CC — Ground Control",
+  description: "Command Center — Remote coding session control",
 };
 
 export default function RootLayout({

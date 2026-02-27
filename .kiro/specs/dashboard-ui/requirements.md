@@ -4,7 +4,7 @@
 
 ## Introduction
 
-The Dashboard UI is the primary user interface for the Claude Session Manager (CSM). It provides a three-level navigation hierarchy: project list, sessions list, and session detail. The dashboard enables developers to discover git repositories, create and manage coding sessions, send prompts, view transcripts and diffs, and monitor session status. The UI follows a dark-themed design system with responsive layouts supporting desktop, tablet, and mobile viewports.
+The Dashboard UI is the primary user interface for the Command Center (CC). It provides a three-level navigation hierarchy: project list, sessions list, and session detail. The dashboard enables developers to discover git repositories, create and manage coding sessions, send prompts, view transcripts and diffs, and monitor session status. The UI follows a dark-themed design system with responsive layouts supporting desktop, tablet, and mobile viewports.
 
 ## Requirements
 
@@ -67,7 +67,7 @@ The Dashboard UI is the primary user interface for the Claude Session Manager (C
 
 #### Acceptance Criteria
 
-1. The Topbar shall display the "CSM" logo linking to the projects page.
+1. The Topbar shall display the "CC" logo linking to the projects page.
 2. The Topbar shall display breadcrumb segments showing the current navigation path.
 3. Each breadcrumb segment shall be a clickable link to the corresponding page.
 4. On the session detail page, the Topbar shall display session-specific controls (status, layout switcher, refresh, delete).

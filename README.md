@@ -1,4 +1,4 @@
-# Claude Session Manager (CSM)
+# Command Center (CC)
 
 A web-based control plane for managing remote Claude Code coding sessions. Create, monitor, and interact with multiple isolated Claude Code instances — each running in its own git worktree — through a centralized dashboard.
 
@@ -34,7 +34,7 @@ bun run dev
 tailscale serve --bg 3000
 ```
 
-CSM is now available at `https://<hostname>.tail<id>.ts.net` from any device on your tailnet. Tailscale provisions HTTPS certificates automatically.
+CC is now available at `https://<hostname>.tail<id>.ts.net` from any device on your tailnet. Tailscale provisions HTTPS certificates automatically.
 
 To check the current serve config:
 

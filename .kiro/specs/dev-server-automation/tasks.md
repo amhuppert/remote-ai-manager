@@ -29,21 +29,21 @@
 
 - [x] 3. Dev server process registry
 - [x] 3.1 Implement in-memory registry singleton
-  - Create a `globalThis`-backed Map registry using the established `__csm_*` singleton pattern for HMR safety
+  - Create a `globalThis`-backed Map registry using the established `__cc_*` singleton pattern for HMR safety
   - Key entries by `${projectPath}::${sessionName}::${serverName}` to guarantee uniqueness across worktrees
   - Store per-server runtime state: server name, project path, session name, command, PID, status, discovered port, remote URL, started-at timestamp, error message, and recent output buffer
   - Provide query methods to retrieve all servers for a session and a specific server by key
-  - Ensure a clean slate on CSM restart (empty registry on first access)
+  - Ensure a clean slate on CC restart (empty registry on first access)
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
   - _Contracts: DevServerRegistry State Management_
 
 - [x] 3.2 Implement process spawning with port detection
   - Spawn the configured command as a child process using `spawn` with `shell: true` and the session's worktree path as the working directory
   - Set the initial server status to `starting` and broadcast an SSE event immediately
-  - Line-buffer stdout and match `^CSM_PORT=(\d+)$` to discover the listening port
+  - Line-buffer stdout and match `^CC_PORT=(\d+)$` to discover the listening port
   - On port detection, transition status to `running`, record the port, invoke the Tailscale service to register it, store the remote URL, and broadcast a `running` SSE event
-  - If the process exits before emitting `CSM_PORT`, transition to `error` with a descriptive message including captured output
-  - Enforce a 60-second startup timeout — if `CSM_PORT` is not detected within the timeout, transition to `error`
+  - If the process exits before emitting `CC_PORT`, transition to `error` with a descriptive message including captured output
+  - Enforce a 60-second startup timeout — if `CC_PORT` is not detected within the timeout, transition to `error`
   - Capture the last 50 lines of combined stdout/stderr in a circular buffer for diagnostic display
   - Prevent duplicate starts: reject if a server with the same name is already in `starting` or `running` status for the session
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 7.2_
@@ -53,7 +53,7 @@
   - Stop a specific server: remove its Tailscale Serve registration first, then send SIGTERM to the child process with a 5-second grace period before escalating to SIGKILL
   - Transition the server status to `stopped` and broadcast an SSE event
   - Implement session-level stop: stop all running/starting servers for a given project+session in parallel
-  - Implement global stop: stop all registered servers across all sessions (for CSM shutdown)
+  - Implement global stop: stop all registered servers across all sessions (for CC shutdown)
   - Broadcast SSE events for every status transition (`starting`, `running`, `stopped`, `error`)
   - _Requirements: 3.1, 3.2, 3.3, 7.2_
   - _Contracts: DevServerRegistry Service Interface (stopServer, stopAllForSession, stopAll)_
@@ -70,7 +70,7 @@
 - [x] 5. (P) API routes for dev server operations
 - [x] 5.1 (P) GET status endpoint
   - Create a GET route that returns the current status of all dev servers for a session
-  - Merge configured servers from the project's `ClaudeSessionManager.json` with runtime state from the registry — a configured-but-not-started server appears with status `stopped`
+  - Merge configured servers from the project's `CommandCenter.json` with runtime state from the registry — a configured-but-not-started server appears with status `stopped`
   - Return 404 if the project or session is not found
   - Return an appropriate error if the project has no `devServers` configuration
   - Follow existing API route patterns: `withTracing` wrapper, `force-dynamic` export, decoded path params
@@ -117,7 +117,7 @@
   - Ensure cleanup is best-effort and does not block or fail the parent operation
   - _Requirements: 10.1, 10.2_
 
-- [x] 7.2 (P) CSM process shutdown handler
+- [x] 7.2 (P) CC process shutdown handler
   - Register a `process.on('SIGTERM')` handler at module initialization that stops all running dev servers and removes their Tailscale registrations
   - Ensure the handler is registered once (idempotent via globalThis guard)
   - Log the shutdown cleanup for diagnostics
@@ -131,14 +131,14 @@
   - Define Next.js and Storybook preset definitions with complete metadata: ID, display name, description, badge character, base port, config server name, command string, and script filename
   - Implement the shared helper script generator producing POSIX-compatible shell functions for: checking whether a TCP port is in use (via `ss` with `lsof` fallback), finding the PID listening on a port, resolving a process's working directory via `/proc/<pid>/cwd`, comparing it against the current worktree path, and scanning upward from a base port to find the next available port
   - Use exit codes to communicate port status: 0 for available, 1 for owned by the current worktree, 2 for conflict with a different process
-  - Implement per-preset startup script generators that source the shared helpers, check the default port, reuse an owned server without spawning a duplicate (reporting `CSM_PORT` and exiting), or find an available port before starting the framework command
+  - Implement per-preset startup script generators that source the shared helpers, check the default port, reuse an owned server without spawning a duplicate (reporting `CC_PORT` and exiting), or find an available port before starting the framework command
   - Next.js preset: base port 3000, `npx next dev --port`; Storybook preset: base port 6006, `npx storybook dev --port`
-  - Each generated script emits `CSM_PORT=<port>` before `exec`-ing the dev server for immediate port detection by CSM
+  - Each generated script emits `CC_PORT=<port>` before `exec`-ing the dev server for immediate port detection by CC
   - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 12.1, 12.2, 12.3, 12.4, 12.5_
   - _Contracts: PresetRegistry Service Interface_
 
 - [x] 9. Preset installation service
-  - Implement installation logic that creates the `.csm/dev-servers/` directory if missing, writes the shared helper script and the preset-specific startup script with executable permissions (mode 0755), and reads or creates `ClaudeSessionManager.json` to append the preset's `devServers` entry
+  - Implement installation logic that creates the `.cc/dev-servers/` directory if missing, writes the shared helper script and the preset-specific startup script with executable permissions (mode 0755), and reads or creates `CommandCenter.json` to append the preset's `devServers` entry
   - When the config file already exists with a `devServers` array, append the new entry without removing or modifying existing entries
   - When a matching server name already exists in the config, reject the installation with a descriptive error
   - Implement installed-preset detection by reading the project's config and matching server names against known preset definitions

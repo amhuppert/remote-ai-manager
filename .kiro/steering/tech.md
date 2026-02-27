@@ -84,9 +84,9 @@ bun run lint
 - **Git worktrees for isolation** — Each session creates a worktree + branch, avoiding workspace conflicts between parallel sessions
 - **Single-flight locking** — In-memory promise map prevents concurrent prompt execution on the same session
 - **Claude Agent SDK** — Prompts executed via `@anthropic-ai/claude-agent-sdk` `query()` API (typed async generator), replacing direct CLI subprocess spawning. SDK options include `systemPrompt: { type: "preset", preset: "claude_code" }`, `permissionMode: "bypassPermissions"`, and `settingSources: ["user", "project", "local"]` for CLI parity
-- **Own transcript storage** — CSM writes its own JSONL transcript files from SDK stream data (no dependency on Claude Code's `~/.claude/projects/` filesystem)
+- **Own transcript storage** — CC writes its own JSONL transcript files from SDK stream data (no dependency on Claude Code's `~/.claude/projects/` filesystem)
 - **SSE-based real-time updates** — Conversation status changes broadcast via SSE to drive UI updates and browser notifications (replaced hook-based event ingestion)
-- **OS-aware config** — Config directory follows platform conventions (macOS: `~/Library/Application Support/csm`, Linux: `$XDG_CONFIG_HOME/csm` or `~/.config/csm`)
+- **OS-aware config** — Config directory follows platform conventions (macOS: `~/Library/Application Support/cc`, Linux: `$XDG_CONFIG_HOME/cc` or `~/.config/cc`)
 
 ---
 

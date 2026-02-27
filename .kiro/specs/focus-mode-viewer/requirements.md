@@ -1,19 +1,19 @@
 # Requirements Document
 
 ## Introduction
-CSM currently provides a split-pane session detail view with a conversation panel and a diff panel for reviewing code changes. Focus mode sessions produce a `memory-bank/focus.md` file that captures the agent's understanding of the session objective, but users have no way to view this file from within the CSM interface. This feature adds a generic markdown file viewer component that shares the diff panel's pane, UI controls for switching between the diff and markdown views, focus.md-specific integration for focus mode sessions, and visual indicators to distinguish focus mode sessions from fast mode sessions.
+CC currently provides a split-pane session detail view with a conversation panel and a diff panel for reviewing code changes. Focus mode sessions produce a `memory-bank/focus.md` file that captures the agent's understanding of the session objective, but users have no way to view this file from within the CC interface. This feature adds a generic markdown file viewer component that shares the diff panel's pane, UI controls for switching between the diff and markdown views, focus.md-specific integration for focus mode sessions, and visual indicators to distinguish focus mode sessions from fast mode sessions.
 
 ## Requirements
 
 ### Requirement 1: Generic Markdown Viewer Component
-**Objective:** As a developer, I want a reusable markdown viewer component that can render any markdown file content, so that CSM can support viewing various markdown files in the future without building new components each time.
+**Objective:** As a developer, I want a reusable markdown viewer component that can render any markdown file content, so that CC can support viewing various markdown files in the future without building new components each time.
 
 #### Acceptance Criteria
 1. The Markdown Viewer shall render markdown content with proper formatting including headings, lists, code blocks, links, bold, italic, and blockquotes.
 2. The Markdown Viewer shall accept a markdown content string as input and render it as formatted HTML.
 3. The Markdown Viewer shall display within the same pane area currently occupied by the diff panel.
 4. The Markdown Viewer shall be scrollable when content exceeds the visible area.
-5. The Markdown Viewer shall use typography and styling consistent with the existing CSM design system.
+5. The Markdown Viewer shall use typography and styling consistent with the existing CC design system.
 
 ### Requirement 2: Panel Layout and Switching
 **Objective:** As a developer, I want to switch between viewing the diff panel and the markdown viewer in the same pane, so that I can view code changes or the focus document without leaving the session detail page.
@@ -27,11 +27,11 @@ CSM currently provides a split-pane session detail view with a conversation pane
 6. The Session Detail Page shall default to showing the diff panel when the session detail page is first loaded.
 
 ### Requirement 3: Focus.md File Viewing
-**Objective:** As a developer, I want to view the `focus.md` file for a focus mode session directly within the CSM interface, so that I can read the agent's understanding of the session objective alongside the conversation.
+**Objective:** As a developer, I want to view the `focus.md` file for a focus mode session directly within the CC interface, so that I can read the agent's understanding of the session objective alongside the conversation.
 
 #### Acceptance Criteria
 1. When a focus mode session is selected, the Session Detail Page shall provide the option to view the session's `memory-bank/focus.md` file in the markdown viewer panel.
-2. The CSM API shall expose an endpoint to retrieve the content of the `focus.md` file from the session's worktree directory.
+2. The CC API shall expose an endpoint to retrieve the content of the `focus.md` file from the session's worktree directory.
 3. If the `focus.md` file does not exist in the session's worktree, the Markdown Viewer shall display an informational message indicating the file is not yet available.
 4. When the `focus.md` file content is being loaded, the Markdown Viewer shall display a loading state.
 

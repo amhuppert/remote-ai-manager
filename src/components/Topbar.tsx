@@ -42,7 +42,7 @@ export default function Topbar({
     <header className="topbar">
       <div className="topbar-brand">
         <Link href="/projects" className="topbar-logo">
-          CSM
+          CC
         </Link>
         <div className="topbar-divider" />
         <nav className="topbar-breadcrumb">

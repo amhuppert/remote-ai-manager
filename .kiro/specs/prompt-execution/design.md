@@ -13,11 +13,11 @@
 
 ## Overview
 
-**Purpose**: The Prompt Execution feature delivers the core interaction mechanism between CSM and Claude Code. It enables developers to send prompts to Claude Code CLI processes running within session worktrees, with concurrency control and lifecycle management.
+**Purpose**: The Prompt Execution feature delivers the core interaction mechanism between CC and Claude Code. It enables developers to send prompts to Claude Code CLI processes running within session worktrees, with concurrency control and lifecycle management.
 
 **Users**: Developers managing Claude Code sessions will use this to submit prompts via the API (triggered by the dashboard UI or external tools).
 
-**Impact**: This is the primary execution engine of CSM. It depends on the session lifecycle feature for worktree context and is consumed by the dashboard UI for prompt submission.
+**Impact**: This is the primary execution engine of CC. It depends on the session lifecycle feature for worktree context and is consumed by the dashboard UI for prompt submission.
 
 ### Goals
 
@@ -463,6 +463,6 @@ This ordering prevents deadlocks: even if status reset fails, the lock is releas
 ## Security Considerations
 
 - **No shell injection**: Uses `spawn` (not `exec`) — prompt text is passed as an argument, not interpolated into a shell command
-- **Permission bypass**: `--dangerously-skip-permissions` is required for headless execution but means Claude Code operates without interactive safety checks. This is acceptable because CSM runs in a controlled, local environment where the developer has already authorized the session's work
+- **Permission bypass**: `--dangerously-skip-permissions` is required for headless execution but means Claude Code operates without interactive safety checks. This is acceptable because CC runs in a controlled, local environment where the developer has already authorized the session's work
 - **Environment isolation**: `CLAUDE`-prefixed environment variables are filtered to prevent the child process from inheriting the parent Claude Code session context; parent env otherwise inherited for PATH access
 - **Resource limits**: Configurable timeout (manual `setTimeout` + `SIGTERM`) and `--max-turns 50` prevent resource exhaustion and runaway execution

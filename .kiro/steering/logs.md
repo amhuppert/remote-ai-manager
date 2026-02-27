@@ -1,12 +1,12 @@
 # Logging & Diagnostics
 
-CSM produces four kinds of persistent data. All live under the platform config directory (`~/.config/csm` on Linux, `~/Library/Application Support/csm` on macOS).
+CC produces four kinds of persistent data. All live under the platform config directory (`~/.config/cc` on Linux, `~/Library/Application Support/cc` on macOS).
 
 ## File Layout
 
 ```
 <config-dir>/
-├── csm-debug.log                              # Structured debug log (NDJSON)
+├── cc-debug.log                               # Structured debug log (NDJSON)
 ├── state.json                                  # Manager state (projects/sessions/conversations)
 ├── config.json                                 # Global configuration
 └── transcripts/
@@ -14,7 +14,7 @@ CSM produces four kinds of persistent data. All live under the platform config d
     └── images/{conversationId}/{idx}-{hash}.{ext}  # Externalized images
 ```
 
-## Debug Log (`csm-debug.log`)
+## Debug Log (`cc-debug.log`)
 
 NDJSON — one JSON object per line. Every API request gets a trace context that auto-enriches log entries.
 
@@ -52,22 +52,22 @@ NDJSON — one JSON object per line. Every API request gets a trace context that
 
 ```bash
 # Errors only
-jq 'select(.level == "error")' csm-debug.log
+jq 'select(.level == "error")' cc-debug.log
 
 # All logs for one request
-jq 'select(.traceId == "UUID")' csm-debug.log
+jq 'select(.traceId == "UUID")' cc-debug.log
 
 # Prompt lifecycle for a session
-jq 'select(.sessionName == "NAME" and (.message | startswith("prompt.")))' csm-debug.log
+jq 'select(.sessionName == "NAME" and (.message | startswith("prompt.")))' cc-debug.log
 
 # Slow API requests (>1s)
-jq 'select(.message == "request.complete" and .durationMs > 1000)' csm-debug.log
+jq 'select(.message == "request.complete" and .durationMs > 1000)' cc-debug.log
 ```
 
 ### Configuration
 
-- **CSM_LOG_LEVEL** env var: `debug`, `info` (default), `warn`, `error`
-- **CSM_LOG_FILE** env var: override log file path
+- **CC_LOG_LEVEL** env var: `debug`, `info` (default), `warn`, `error`
+- **CC_LOG_FILE** env var: override log file path
 - `warn`/`error` entries also go to stderr
 
 ## Transcript Files (`transcripts/{id}.jsonl`)
@@ -150,7 +150,7 @@ HTTP Request (X-Trace-Id header)
     → withTracing() middleware
         → AsyncLocalStorage trace context (traceId, action, projectName, sessionName)
             → All createLogger() calls auto-enriched
-            → csm-debug.log (NDJSON)
+            → cc-debug.log (NDJSON)
     → prompt.ts
         → transcript.ts → {conversationId}.jsonl
         → transcript-images.ts → images/{conversationId}/

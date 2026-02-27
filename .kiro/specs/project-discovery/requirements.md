@@ -2,13 +2,13 @@
 
 ## Introduction
 
-Project Discovery is the foundational feature of CSM (Claude Session Manager) that scans a configurable base directory for git repositories and surfaces them as manageable projects. It provides both a discovery engine (scanning the filesystem for repos) and a resolution layer (mapping project names from URLs to validated filesystem paths). The feature enriches discovered projects with session metadata from the manager state, enabling the dashboard to show active session counts and running status at a glance.
+Project Discovery is the foundational feature of CC (Command Center) that scans a configurable base directory for git repositories and surfaces them as manageable projects. It provides both a discovery engine (scanning the filesystem for repos) and a resolution layer (mapping project names from URLs to validated filesystem paths). The feature enriches discovered projects with session metadata from the manager state, enabling the dashboard to show active session counts and running status at a glance.
 
 ## Requirements
 
 ### Requirement 1: Directory Scanning
 
-**Objective:** As a developer, I want CSM to automatically find all git repositories in my projects directory, so that I don't have to manually register each project.
+**Objective:** As a developer, I want CC to automatically find all git repositories in my projects directory, so that I don't have to manually register each project.
 
 #### Acceptance Criteria
 
@@ -50,11 +50,11 @@ Project Discovery is the foundational feature of CSM (Claude Session Manager) th
 
 ### Requirement 5: Configuration
 
-**Objective:** As a developer, I want the base directory and ignore patterns to be configurable, so that CSM works with my filesystem layout.
+**Objective:** As a developer, I want the base directory and ignore patterns to be configurable, so that CC works with my filesystem layout.
 
 #### Acceptance Criteria
 
-1. The Configuration Service shall store settings in an OS-appropriate config directory (macOS: `~/Library/Application Support/csm`, Linux: `$XDG_CONFIG_HOME/csm` or `~/.config/csm`).
+1. The Configuration Service shall store settings in an OS-appropriate config directory (macOS: `~/Library/Application Support/cc`, Linux: `$XDG_CONFIG_HOME/cc` or `~/.config/cc`).
 2. If no config file exists, the Configuration Service shall create one with default values: `baseDir` as `~/projects`, and a standard set of ignore patterns (`node_modules`, `.next`, `dist`, `build`, `target`, `.cache`, `.turbo`, `.venv`).
 3. When the config file exists but has missing fields, the Configuration Service shall merge the file contents with defaults so that missing fields fall back to default values.
 4. The Configuration Service shall validate the config file contents against the `globalConfigSchema` using safe parsing.

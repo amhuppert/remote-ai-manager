@@ -13,7 +13,7 @@ const logger = createLogger("state-mutex");
 // HMR-safe Singleton
 // ============================================================
 
-const MUTEX_KEY = "__csm_state_mutex" as const;
+const MUTEX_KEY = "__cc_state_mutex" as const;
 
 interface MutexState {
   /** The tail of the promise chain. New operations chain onto this. */

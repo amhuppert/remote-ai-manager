@@ -2,9 +2,9 @@
 
 ## Overview
 
-**Purpose**: This feature adds image attachment support to CSM prompts, enabling developers to share screenshots, diagrams, and visual context with Claude Code sessions.
+**Purpose**: This feature adds image attachment support to CC prompts, enabling developers to share screenshots, diagrams, and visual context with Claude Code sessions.
 
-**Users**: Developers using CSM's session detail page will attach images via clipboard paste (Ctrl+V) or a file picker button. Images are sent alongside text prompts to the Claude Agent SDK and displayed in conversation history.
+**Users**: Developers using CC's session detail page will attach images via clipboard paste (Ctrl+V) or a file picker button. Images are sent alongside text prompts to the Claude Agent SDK and displayed in conversation history.
 
 **Impact**: Extends the existing text-only prompt flow (schema → API → SDK → transcript → rendering) with multi-modal content support. No new services or infrastructure; all changes extend existing components.
 

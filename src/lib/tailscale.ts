@@ -42,7 +42,11 @@ export async function getHostname(): Promise<string | null> {
 }
 
 /**
- * Register a local port with Tailscale Serve.
+ * Register a local port with Tailscale Serve over HTTP.
+ * Uses `--http=<port>` so each server gets its own origin without path prefixes,
+ * which avoids breaking apps that assume they're served from root (e.g. Storybook).
+ * HTTPS per-port only works on specific ports (443, 8443, 10000), so HTTP is the
+ * only reliable option for arbitrary dev server ports.
  * Returns the constructed remote URL or null on failure.
  */
 export async function register(port: number): Promise<string | null> {
@@ -52,11 +56,11 @@ export async function register(port: number): Promise<string | null> {
   try {
     await execFileAsync("tailscale", [
       "serve",
-      `--https=${port}`,
+      `--http=${port}`,
       "--bg",
       `localhost:${port}`,
     ]);
-    const remoteUrl = `https://${hostname}:${port}`;
+    const remoteUrl = `http://${hostname}:${port}`;
     logger.info("tailscale.registered", { port, remoteUrl });
     return remoteUrl;
   } catch (err) {
@@ -74,7 +78,7 @@ export async function register(port: number): Promise<string | null> {
  */
 export async function unregister(port: number): Promise<void> {
   try {
-    await execFileAsync("tailscale", ["serve", `--https=${port}`, "off"]);
+    await execFileAsync("tailscale", ["serve", `--http=${port}`, "off"]);
     logger.info("tailscale.unregistered", { port });
   } catch (err) {
     logger.warn("tailscale.unregister_failure", {

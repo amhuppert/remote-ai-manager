@@ -33,7 +33,7 @@ import { registerQuery, unregisterQuery } from "./query-registry";
 import { createInitToolServer } from "./ralph-loop/init-tool";
 import { randomUUID } from "node:crypto";
 
-// Prevent nested session detection when CSM runs inside Claude Code
+// Prevent nested session detection when CC runs inside Claude Code
 delete process.env.CLAUDECODE;
 
 const logger = createLogger("prompt");

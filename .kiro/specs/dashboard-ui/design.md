@@ -2,9 +2,9 @@
 
 ## Overview
 
-**Purpose**: The Dashboard UI provides the complete user interface for the Claude Session Manager, enabling developers to discover projects, manage sessions, send prompts, and view transcripts and diffs through a three-level navigation hierarchy.
+**Purpose**: The Dashboard UI provides the complete user interface for the Command Center, enabling developers to discover projects, manage sessions, send prompts, and view transcripts and diffs through a three-level navigation hierarchy.
 
-**Users**: Developers using CSM to manage remote Claude Code coding sessions across multiple git repositories.
+**Users**: Developers using CC to manage remote Claude Code coding sessions across multiple git repositories.
 
 **Impact**: This is the primary user-facing feature. All other features (session lifecycle, prompt execution, transcript viewer, diff viewer, hook integration) surface their functionality through the dashboard.
 
@@ -155,7 +155,7 @@ graph TB
 | UI        | React 19                     | Client-side interactivity                | `use client` directive     |
 | Styling   | CSS Custom Properties        | Design system tokens, responsive layouts | No component library       |
 | Fonts     | Anybody, Manrope, Geist Mono | Display, body, monospace typography      | Loaded via `next/font`     |
-| State     | localStorage                 | Layout mode persistence per session      | `csm-layout-*` keys        |
+| State     | localStorage                 | Layout mode persistence per session      | `cc-layout-*` keys        |
 | Types     | TypeScript 5.7 strict        | Component props, domain types            | `noUncheckedIndexedAccess` |
 
 ## System Flows
@@ -297,7 +297,7 @@ sequenceDiagram
 | 4.2         | Persist to localStorage               | SessionDetailPage  | localStorage   | Layout     |
 | 4.3         | Restore persisted mode                | SessionDetailPage  | localStorage   | Layout     |
 | 4.4         | Visual layout icons                   | LayoutSwitcher     | SVG            | Layout     |
-| 5.1         | CSM logo link                         | Topbar             | Next.js Link   | Navigation |
+| 5.1         | CC logo link                         | Topbar             | Next.js Link   | Navigation |
 | 5.2         | Breadcrumb segments                   | Topbar             | React          | Navigation |
 | 5.3         | Clickable breadcrumb links            | Topbar             | Next.js Link   | Navigation |
 | 5.4         | Session-specific controls             | Topbar             | React          | Detail     |

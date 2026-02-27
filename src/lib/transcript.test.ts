@@ -9,7 +9,7 @@ import {
   type TranscriptEntry,
 } from "./transcript";
 
-const TEST_DIR = path.join("/tmp", "csm-transcript-test-" + Date.now());
+const TEST_DIR = path.join("/tmp", "cc-transcript-test-" + Date.now());
 
 // Mock getConfigDirPath to use our test directory
 vi.mock("./config", () => ({
