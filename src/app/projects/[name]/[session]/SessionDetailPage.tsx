@@ -194,7 +194,10 @@ export default function SessionDetailPage({
   const workflowActive =
     session?.workflow?.status === "running" ||
     session?.workflow?.status === "paused";
-  const isReadOnly = isFinished || workflowActive;
+  const isIterationConversation =
+    session?.conversations.find((c) => c.id === conversationId)?.role ===
+    "iteration";
+  const isReadOnly = isFinished || workflowActive || isIterationConversation;
   const isBusy =
     sending ||
     sessionStatus === "running" ||
@@ -1233,8 +1236,13 @@ export default function SessionDetailPage({
                   />
                 )}
 
-              {/* Prompt input OR question panel */}
-              {pendingQuestions && pendingQuestionId ? (
+              {/* Prompt input OR question panel OR read-only indicator */}
+              {isIterationConversation ? (
+                <div className="iteration-readonly-banner">
+                  {"\u27F3"} This conversation is part of a Ralph Loop iteration
+                  and is read-only.
+                </div>
+              ) : pendingQuestions && pendingQuestionId ? (
                 <AskQuestionPanel
                   questions={pendingQuestions}
                   questionId={pendingQuestionId}

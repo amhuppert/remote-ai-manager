@@ -2867,6 +2867,20 @@ textarea {
   font-family: var(--font-mono);
 }
 
+.iteration-readonly-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  text-align: center;
+  justify-content: center;
+}
+
 /* Content area for panels */
 .session-content-area {
   display: grid;
@@ -8025,12 +8039,28 @@ textarea {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: var(--space-md);
-  min-height: 120px;
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: var(--text-secondary);
   line-height: 1.5;
+}
+
+.live-output-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.live-output-toggle:hover {
+  background: var(--bg-hover);
+  border-radius: var(--radius-md);
 }
 
 .workflow-live-output .live-indicator {
@@ -8040,7 +8070,6 @@ textarea {
   color: var(--cyan);
   font-size: 0.68rem;
   font-weight: 600;
-  margin-bottom: var(--space-sm);
 }
 
 .workflow-live-output .live-dot {
@@ -8051,12 +8080,37 @@ textarea {
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
+.live-output-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+}
+
+.live-output-counts {
+  color: var(--text-tertiary);
+}
+
+.live-output-arrow {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+}
+
+.live-output-arrow.expanded {
+  transform: rotate(90deg);
+}
+
 .live-stream-content {
-  max-height: 400px;
+  max-height: 360px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding: 0 var(--space-md) var(--space-md);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .stream-text {

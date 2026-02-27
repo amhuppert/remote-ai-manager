@@ -84,6 +84,7 @@ export function useSessionsQuery(projectName: string) {
       );
       return data.sessions;
     },
+    refetchInterval: 10_000,
   });
 }
 
@@ -94,6 +95,7 @@ export function useSessionQuery(projectName: string, sessionName: string) {
       apiFetch<SessionState>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}`,
       ),
+    refetchInterval: 10_000,
   });
 }
 
@@ -184,6 +186,7 @@ export function useActiveConversationsQuery() {
       );
       return data.conversations;
     },
+    refetchInterval: 10_000,
   });
 }
 
@@ -245,6 +248,7 @@ export function useWorkflowQuery(projectName: string, sessionName: string) {
       apiFetch<{ workflow: RalphLoopWorkflow | null }>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow`,
       ).then((r) => r.workflow),
+    refetchInterval: 5_000,
   });
 }
 

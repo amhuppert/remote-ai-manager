@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, fireEvent } from "@testing-library/react";
 import LiveIterationStream from "./LiveIterationStream";
 import type { WorkflowStreamFrame } from "@/lib/ralph-loop/workflow-stream-registry";
 
@@ -73,6 +73,10 @@ describe("LiveIterationStream", () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
+    // Expand the collapsible output section
+    const toggle = container!.querySelector(".live-output-toggle")!;
+    fireEvent.click(toggle);
+
     const textBlocks = container!.querySelectorAll(".stream-text");
     expect(textBlocks.length).toBe(2);
     expect(textBlocks[0]!.textContent).toBe("Analyzing the codebase...");
@@ -108,6 +112,10 @@ describe("LiveIterationStream", () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
+
+    // Expand the collapsible output section
+    const toggle = container!.querySelector(".live-output-toggle")!;
+    fireEvent.click(toggle);
 
     const toolBlocks = container!.querySelectorAll(".stream-tool");
     expect(toolBlocks.length).toBe(1);
@@ -152,6 +160,10 @@ describe("LiveIterationStream", () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
+
+    // Expand to see the done message
+    const toggle = container!.querySelector(".live-output-toggle")!;
+    fireEvent.click(toggle);
 
     expect(container!.querySelector(".stream-done")).not.toBeNull();
   });

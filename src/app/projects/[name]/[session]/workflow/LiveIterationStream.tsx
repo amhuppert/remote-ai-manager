@@ -49,6 +49,7 @@ export default function LiveIterationStream({
 }: LiveIterationStreamProps) {
   const [entries, setEntries] = useState<StreamEntry[]>([]);
   const [isDone, setIsDone] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const entryIdRef = useRef(0);
@@ -66,6 +67,7 @@ export default function LiveIterationStream({
     if (isRunning) {
       setEntries([]);
       setIsDone(false);
+      setExpanded(false);
     }
   }
 
@@ -128,31 +130,55 @@ export default function LiveIterationStream({
     };
   }, [isRunning, iterationNumber, processStream]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom when expanded
   useEffect(() => {
-    if (scrollRef.current) {
+    if (expanded && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [entries]);
+  }, [entries, expanded]);
+
+  const entryCount = entries.length;
+  const toolCount = entries.filter(
+    (e) => e.frame.type === "content" && e.frame.content.type === "tool_use",
+  ).length;
 
   return (
     <div className="workflow-live-output">
-      <div className="live-indicator">
-        <span className="live-dot" />
-        Iteration {iterationNumber} {isDone ? "complete" : "in progress"}
-      </div>
-      <div className="live-stream-content" ref={scrollRef}>
-        {entries.map((entry) => {
-          if (entry.frame.type === "content") {
-            return renderContentBlock(entry.frame.content, entry.id);
-          }
-          return null;
-        })}
-        {isDone && <div className="stream-done">Iteration complete</div>}
-        {entries.length === 0 && !isDone && (
-          <div className="stream-waiting">Waiting for Claude output...</div>
-        )}
-      </div>
+      <button
+        className="live-output-toggle"
+        onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
+      >
+        <span className="live-indicator">
+          {!isDone && <span className="live-dot" />}
+          Iteration {iterationNumber} {isDone ? "complete" : "in progress"}
+        </span>
+        <span className="live-output-summary">
+          {entryCount > 0 && (
+            <span className="live-output-counts">
+              {entryCount} events
+              {toolCount > 0 ? ` \u00B7 ${toolCount} tools` : ""}
+            </span>
+          )}
+          <span className={`live-output-arrow${expanded ? " expanded" : ""}`}>
+            {"\u25B8"}
+          </span>
+        </span>
+      </button>
+      {expanded && (
+        <div className="live-stream-content" ref={scrollRef}>
+          {entries.map((entry) => {
+            if (entry.frame.type === "content") {
+              return renderContentBlock(entry.frame.content, entry.id);
+            }
+            return null;
+          })}
+          {isDone && <div className="stream-done">Iteration complete</div>}
+          {entries.length === 0 && !isDone && (
+            <div className="stream-waiting">Waiting for Claude output...</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -422,7 +422,11 @@ function MonitoringView({
 }) {
   const { config, circuitBreaker, iterations, fixPlan, status } = workflow;
   const isPaused = status === "paused";
-  const currentIteration = iterations.length;
+  const isRunning = status === "running";
+  // When running, an iteration is in progress — show iterations.length + 1
+  const currentIteration = isRunning
+    ? iterations.length + 1
+    : iterations.length;
 
   const completedTasks = fixPlan.filter((t) => t.status === "completed").length;
   const skippedTasks = fixPlan.filter((t) => t.status === "skipped").length;
@@ -487,11 +491,11 @@ function MonitoringView({
       </div>
 
       {/* Live iteration stream */}
-      {status === "running" && (
+      {isRunning && (
         <LiveIterationStream
           projectName={projectName}
           sessionName={sessionName}
-          iterationNumber={currentIteration + 1}
+          iterationNumber={currentIteration}
           isRunning
         />
       )}
