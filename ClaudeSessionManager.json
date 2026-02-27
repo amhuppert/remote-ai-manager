@@ -1,4 +1,14 @@
 {
   "initScriptPath": "scripts/worktree-init.sh",
-  "preMergeCommand": "scripts/pre-merge-validate.sh"
+  "preMergeCommand": "scripts/pre-merge-validate.sh",
+  "devServers": [
+    {
+      "name": "nextjs",
+      "command": ".csm/dev-servers/nextjs.sh"
+    },
+    {
+      "name": "storybook",
+      "command": ".csm/dev-servers/storybook.sh"
+    }
+  ]
 }
