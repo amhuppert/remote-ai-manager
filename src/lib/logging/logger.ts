@@ -6,8 +6,8 @@
  * automatically read from AsyncLocalStorage when available.
  *
  * Configuration:
- * - CSM_LOG_LEVEL: "debug" | "info" | "warn" | "error" (default: "info")
- * - CSM_LOG_FILE: absolute path to log file (default: <config-dir>/csm-debug.log)
+ * - CC_LOG_LEVEL: "debug" | "info" | "warn" | "error" (default: "info")
+ * - CC_LOG_FILE: absolute path to log file (default: <config-dir>/cc-debug.log)
  *
  * The logger never throws — failed writes are silently dropped.
  */
@@ -29,14 +29,14 @@ const VALID_LEVELS = new Set<string>(Object.keys(LOG_LEVELS));
 
 /** Resolve the configured log level, falling back to "info" on invalid values */
 function resolveLogLevel(): LogLevel {
-  const env = process.env["CSM_LOG_LEVEL"];
+  const env = process.env["CC_LOG_LEVEL"];
   if (env && VALID_LEVELS.has(env)) {
     return env as LogLevel;
   }
   if (env) {
     // Invalid value — warn on stderr and fall back
     process.stderr.write(
-      `[csm] Invalid CSM_LOG_LEVEL="${env}", falling back to "info"\n`,
+      `[cc] Invalid CC_LOG_LEVEL="${env}", falling back to "info"\n`,
     );
   }
   return "info";
@@ -44,13 +44,13 @@ function resolveLogLevel(): LogLevel {
 
 /**
  * Resolve the log file path.
- * Uses CSM_LOG_FILE env var if set, otherwise derives from config directory.
+ * Uses CC_LOG_FILE env var if set, otherwise derives from config directory.
  *
  * Since readConfig() is async and we need sync file writes,
  * we resolve the config directory path directly (same logic as config.ts).
  */
 function resolveLogFilePath(): string {
-  const envPath = process.env["CSM_LOG_FILE"];
+  const envPath = process.env["CC_LOG_FILE"];
   if (envPath) {
     return envPath;
   }
@@ -63,16 +63,16 @@ function resolveLogFilePath(): string {
       process.env["HOME"] ?? "/tmp",
       "Library",
       "Application Support",
-      "csm",
+      "cc",
     );
   } else {
     const xdg = process.env["XDG_CONFIG_HOME"];
     configDir = xdg
-      ? path.join(xdg, "csm")
-      : path.join(process.env["HOME"] ?? "/tmp", ".config", "csm");
+      ? path.join(xdg, "cc")
+      : path.join(process.env["HOME"] ?? "/tmp", ".config", "cc");
   }
 
-  return path.join(configDir, "csm-debug.log");
+  return path.join(configDir, "cc-debug.log");
 }
 
 // Lazy-initialized state (resolved on first log call)

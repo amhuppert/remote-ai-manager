@@ -227,7 +227,7 @@ async function provisionSession(
     promptCount: 0,
     createdAt: now,
     lastActivityAt: now,
-    source: "csm",
+    source: "cc",
     summary: null,
     archived: false,
     totalCostUsd: null,
@@ -247,7 +247,7 @@ async function provisionSession(
     archived: false,
     finished: false,
     conversations: [initialConversation],
-    source: "csm",
+    source: "cc",
     objective: opts.objective,
     creationMode: opts.mode,
     workflow: null,
@@ -344,7 +344,7 @@ export async function deleteSession(
     // best-effort: don't block deletion
   }
 
-  const source = session.source ?? "csm";
+  const source = session.source ?? "cc";
   let worktreeRemoved = false;
   let worktreeCleanup = "skipped";
 

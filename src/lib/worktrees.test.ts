@@ -403,7 +403,7 @@ describe("discoverAndImportWorktrees", () => {
     archived: false,
     finished: false,
     conversations: [],
-    source: "csm",
+    source: "cc",
     objective: null,
     creationMode: "fast" as const,
     workflow: null,
@@ -463,7 +463,7 @@ describe("discoverAndImportWorktrees", () => {
     const savedState = writeStateMock.mock.calls[0]![0];
     const savedExisting =
       savedState.projects[projectPath].sessions["existing-feature"];
-    expect(savedExisting.source).toBe("csm");
+    expect(savedExisting.source).toBe("cc");
     expect(savedExisting.worktreePath).toBe(
       "/home/user/repo/.worktrees/existing-feature",
     );
@@ -479,7 +479,7 @@ describe("discoverAndImportWorktrees", () => {
       archived: false,
       finished: false,
       conversations: [],
-      source: "csm",
+      source: "cc",
       objective: null,
       creationMode: "fast" as const,
       workflow: null,
@@ -531,7 +531,7 @@ describe("discoverAndImportWorktrees", () => {
       archived: true,
       finished: true,
       conversations: [],
-      source: "csm",
+      source: "cc",
       objective: null,
       creationMode: "fast" as const,
       workflow: null,

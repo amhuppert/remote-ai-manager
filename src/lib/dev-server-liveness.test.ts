@@ -40,10 +40,10 @@ function createMockEntry(
 
 function getRegistryMap(): Map<string, DevServerEntry> {
   const g = globalThis as unknown as Record<string, unknown>;
-  if (!g["__csm_dev_servers"]) {
-    g["__csm_dev_servers"] = new Map<string, DevServerEntry>();
+  if (!g["__cc_dev_servers"]) {
+    g["__cc_dev_servers"] = new Map<string, DevServerEntry>();
   }
-  return g["__csm_dev_servers"] as Map<string, DevServerEntry>;
+  return g["__cc_dev_servers"] as Map<string, DevServerEntry>;
 }
 
 describe("LivenessPoller", () => {
