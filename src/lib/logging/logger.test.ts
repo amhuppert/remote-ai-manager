@@ -6,7 +6,7 @@ import { runWithTrace } from "./context";
 import { createLogger, _resetLoggerForTesting } from "./logger";
 
 // Use a temp directory for test log files
-const tmpDir = path.join(os.tmpdir(), "csm-logger-test");
+const tmpDir = path.join(os.tmpdir(), "cc-logger-test");
 const testLogFile = path.join(tmpDir, "test.log");
 
 function readLogLines(): Record<string, unknown>[] {
@@ -30,8 +30,8 @@ describe("Logger", () => {
     cleanup();
     _resetLoggerForTesting();
     // Point log file to our temp location
-    process.env["CSM_LOG_FILE"] = testLogFile;
-    process.env["CSM_LOG_LEVEL"] = "debug";
+    process.env["CC_LOG_FILE"] = testLogFile;
+    process.env["CC_LOG_LEVEL"] = "debug";
     if (!existsSync(tmpDir)) {
       mkdirSync(tmpDir, { recursive: true });
     }
@@ -40,8 +40,8 @@ describe("Logger", () => {
   afterEach(() => {
     cleanup();
     _resetLoggerForTesting();
-    delete process.env["CSM_LOG_FILE"];
-    delete process.env["CSM_LOG_LEVEL"];
+    delete process.env["CC_LOG_FILE"];
+    delete process.env["CC_LOG_LEVEL"];
   });
 
   it("emits valid NDJSON with required fields", () => {
@@ -69,7 +69,7 @@ describe("Logger", () => {
 
   it("filters entries below configured log level", () => {
     _resetLoggerForTesting();
-    process.env["CSM_LOG_LEVEL"] = "warn";
+    process.env["CC_LOG_LEVEL"] = "warn";
 
     const logger = createLogger("test");
     logger.debug("should be filtered");
@@ -83,9 +83,9 @@ describe("Logger", () => {
     expect(lines[1]!["level"]).toBe("error");
   });
 
-  it("defaults to info level when CSM_LOG_LEVEL is not set", () => {
+  it("defaults to info level when CC_LOG_LEVEL is not set", () => {
     _resetLoggerForTesting();
-    delete process.env["CSM_LOG_LEVEL"];
+    delete process.env["CC_LOG_LEVEL"];
 
     const logger = createLogger("test");
     logger.debug("should be filtered");
@@ -96,9 +96,9 @@ describe("Logger", () => {
     expect(lines[0]!["level"]).toBe("info");
   });
 
-  it("falls back to info on invalid CSM_LOG_LEVEL and warns on stderr", () => {
+  it("falls back to info on invalid CC_LOG_LEVEL and warns on stderr", () => {
     _resetLoggerForTesting();
-    process.env["CSM_LOG_LEVEL"] = "banana";
+    process.env["CC_LOG_LEVEL"] = "banana";
 
     const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
 
@@ -112,7 +112,7 @@ describe("Logger", () => {
 
     // Check stderr warning about invalid level
     expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Invalid CSM_LOG_LEVEL="banana"'),
+      expect.stringContaining('Invalid CC_LOG_LEVEL="banana"'),
     );
 
     stderrSpy.mockRestore();
@@ -181,7 +181,7 @@ describe("Logger", () => {
 
   it("never throws on invalid file path", () => {
     _resetLoggerForTesting();
-    process.env["CSM_LOG_FILE"] = "/nonexistent/deeply/nested/path/log.ndjson";
+    process.env["CC_LOG_FILE"] = "/nonexistent/deeply/nested/path/log.ndjson";
 
     const logger = createLogger("test");
     // Should not throw

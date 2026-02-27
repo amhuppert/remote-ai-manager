@@ -5,18 +5,18 @@ import os from "node:os";
 import { globalConfigSchema } from "./schemas";
 import type { GlobalConfig } from "@/types";
 
-/** Returns the OS-appropriate config directory for CSM */
+/** Returns the OS-appropriate config directory for Command Center */
 function getConfigDir(): string {
   const platform = os.platform();
   if (platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "csm");
+    return path.join(os.homedir(), "Library", "Application Support", "cc");
   }
   // Linux / other: use XDG_CONFIG_HOME or ~/.config
   const xdg = process.env["XDG_CONFIG_HOME"];
   if (xdg) {
-    return path.join(xdg, "csm");
+    return path.join(xdg, "cc");
   }
-  return path.join(os.homedir(), ".config", "csm");
+  return path.join(os.homedir(), ".config", "cc");
 }
 
 const CONFIG_DIR = getConfigDir();

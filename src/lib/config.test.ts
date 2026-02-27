@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
-const TEST_DIR = path.join("/tmp", "csm-config-test-" + Date.now());
+const TEST_DIR = path.join("/tmp", "cc-config-test-" + Date.now());
 
 // Mock the config dir to use our test directory
 vi.mock("node:os", async () => {
@@ -90,7 +90,7 @@ describe("config", () => {
     // OS mock is set to linux, no XDG_CONFIG_HOME set
     const { getConfigDirPath } = await import("./config");
     const dir = getConfigDirPath();
-    expect(dir).toBe(path.join(TEST_DIR, ".config", "csm"));
+    expect(dir).toBe(path.join(TEST_DIR, ".config", "cc"));
   });
 
   it("readConfig handles malformed config by merging valid fields with defaults", async () => {

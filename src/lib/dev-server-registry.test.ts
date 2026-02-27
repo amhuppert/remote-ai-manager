@@ -96,12 +96,12 @@ describe("DevServerRegistry", () => {
       ).rejects.toThrow('Server "web" is already starting');
     });
 
-    it("detects CSM_PORT and transitions to running", async () => {
+    it("detects CC_PORT and transitions to running", async () => {
       await registry.startServer({
         projectPath: "/proj",
         sessionName: "s1",
         serverName: "port-test",
-        command: "echo CSM_PORT=3000 && sleep 60",
+        command: "echo CC_PORT=3000 && sleep 60",
         worktreePath: "/tmp",
       });
 
@@ -120,7 +120,7 @@ describe("DevServerRegistry", () => {
       expect(tailscale.register).toHaveBeenCalledWith(3000);
     });
 
-    it("transitions to error when process exits before CSM_PORT", async () => {
+    it("transitions to error when process exits before CC_PORT", async () => {
       await registry.startServer({
         projectPath: "/proj",
         sessionName: "s1",
@@ -139,7 +139,7 @@ describe("DevServerRegistry", () => {
       });
 
       expect(server!.status).toBe("error");
-      expect(server!.errorMessage).toContain("before reporting CSM_PORT");
+      expect(server!.errorMessage).toContain("before reporting CC_PORT");
     });
 
     it("captures recent output in buffer", async () => {
@@ -170,7 +170,7 @@ describe("DevServerRegistry", () => {
         sessionName: "s1",
         serverName: "adopted-test",
         command:
-          "echo CSM_ADOPTED=1 && echo CSM_ADOPTED_PID=99999 && echo CSM_PORT=3000 && exit 0",
+          "echo CSM_ADOPTED=1 && echo CSM_ADOPTED_PID=99999 && echo CC_PORT=3000 && exit 0",
         worktreePath: "/tmp",
       });
 
@@ -195,7 +195,7 @@ describe("DevServerRegistry", () => {
         sessionName: "s1",
         serverName: "adopted-exit",
         command:
-          "echo CSM_ADOPTED=1 && echo CSM_ADOPTED_PID=99999 && echo CSM_PORT=3000 && exit 0",
+          "echo CSM_ADOPTED=1 && echo CSM_ADOPTED_PID=99999 && echo CC_PORT=3000 && exit 0",
         worktreePath: "/tmp",
       });
 
@@ -219,7 +219,7 @@ describe("DevServerRegistry", () => {
         sessionName: "s1",
         serverName: "adopted-stop",
         command:
-          "echo CSM_ADOPTED=1 && echo CSM_ADOPTED_PID=99999 && echo CSM_PORT=5000 && exit 0",
+          "echo CSM_ADOPTED=1 && echo CSM_ADOPTED_PID=99999 && echo CC_PORT=5000 && exit 0",
         worktreePath: "/tmp",
       });
 
@@ -247,7 +247,7 @@ describe("DevServerRegistry", () => {
         projectPath: "/proj",
         sessionName: "s1",
         serverName: "normal-server",
-        command: "echo CSM_PORT=3000 && sleep 60",
+        command: "echo CC_PORT=3000 && sleep 60",
         worktreePath: "/tmp",
       });
 
@@ -270,7 +270,7 @@ describe("DevServerRegistry", () => {
         projectPath: "/proj",
         sessionName: "s1",
         serverName: "stop-test",
-        command: "echo CSM_PORT=4000 && sleep 60",
+        command: "echo CC_PORT=4000 && sleep 60",
         worktreePath: "/tmp",
       });
 

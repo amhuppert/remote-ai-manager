@@ -5,7 +5,7 @@ import os from "node:os";
 import { withTracing } from "./tracing";
 import { _resetLoggerForTesting } from "./logger";
 
-const tmpDir = path.join(os.tmpdir(), "csm-tracing-test");
+const tmpDir = path.join(os.tmpdir(), "cc-tracing-test");
 const testLogFile = path.join(tmpDir, "test.log");
 
 function readLogLines(): Record<string, unknown>[] {
@@ -47,8 +47,8 @@ describe("withTracing", () => {
   beforeEach(() => {
     cleanup();
     _resetLoggerForTesting();
-    process.env["CSM_LOG_FILE"] = testLogFile;
-    process.env["CSM_LOG_LEVEL"] = "debug";
+    process.env["CC_LOG_FILE"] = testLogFile;
+    process.env["CC_LOG_LEVEL"] = "debug";
     if (!existsSync(tmpDir)) {
       mkdirSync(tmpDir, { recursive: true });
     }
@@ -57,8 +57,8 @@ describe("withTracing", () => {
   afterEach(() => {
     cleanup();
     _resetLoggerForTesting();
-    delete process.env["CSM_LOG_FILE"];
-    delete process.env["CSM_LOG_LEVEL"];
+    delete process.env["CC_LOG_FILE"];
+    delete process.env["CC_LOG_LEVEL"];
     vi.restoreAllMocks();
   });
 

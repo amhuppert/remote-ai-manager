@@ -40,7 +40,7 @@ async function seedSession(sessionOverrides: Record<string, unknown> = {}) {
             archived: false,
             finished: false,
             conversations: [],
-            source: "csm" as const,
+            source: "cc" as const,
             objective: null,
             creationMode: "fast" as const,
             workflow: null,
@@ -67,7 +67,7 @@ describe("createConversation", () => {
     expect(convo.transcriptPath).toBeNull();
     expect(convo.status).toBe("new");
     expect(convo.promptCount).toBe(0);
-    expect(convo.source).toBe("csm");
+    expect(convo.source).toBe("cc");
     expect(convo.summary).toBeNull();
     expect(convo.pendingQuestionId).toBeNull();
     expect(convo.pendingQuestions).toBeNull();
@@ -185,7 +185,7 @@ describe("setConversationArchived", () => {
     const convoId = crypto.randomUUID();
     await seedSession({
       conversations: [makeConvo({ id: convoId })],
-      source: "csm" as const,
+      source: "cc" as const,
     });
     const { setConversationArchived } = await import("./conversations");
     const { getSession } = await import("./state");
@@ -200,7 +200,7 @@ describe("setConversationArchived", () => {
     const convoId = crypto.randomUUID();
     await seedSession({
       conversations: [makeConvo({ id: convoId, archived: true })],
-      source: "csm" as const,
+      source: "cc" as const,
     });
     const { setConversationArchived } = await import("./conversations");
     const { getSession } = await import("./state");
@@ -214,7 +214,7 @@ describe("setConversationArchived", () => {
   it("throws for non-existent conversation ID", async () => {
     await seedSession({
       conversations: [makeConvo()],
-      source: "csm" as const,
+      source: "cc" as const,
     });
     const { setConversationArchived } = await import("./conversations");
 
@@ -699,7 +699,7 @@ function makeConvo(
     promptCount: 0,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
-    source: "csm",
+    source: "cc",
     summary: null,
     archived: false,
     totalCostUsd: null,
@@ -726,7 +726,7 @@ function makeSessionWith(
     archived: false,
     finished: false,
     conversations,
-    source: "csm" as const,
+    source: "cc" as const,
     objective: null,
     creationMode: "fast" as const,
     workflow: null,

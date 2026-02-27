@@ -14,7 +14,7 @@ import { withTracing } from "./tracing";
 import { createLogger, _resetLoggerForTesting } from "./logger";
 import { getTraceContext, type TraceContext } from "./context";
 
-const tmpDir = path.join(os.tmpdir(), "csm-integration-test");
+const tmpDir = path.join(os.tmpdir(), "cc-integration-test");
 const testLogFile = path.join(tmpDir, "test.log");
 
 function readLogLines(): Record<string, unknown>[] {
@@ -54,8 +54,8 @@ describe("End-to-end trace flow", () => {
   beforeEach(() => {
     cleanup();
     _resetLoggerForTesting();
-    process.env["CSM_LOG_FILE"] = testLogFile;
-    process.env["CSM_LOG_LEVEL"] = "debug";
+    process.env["CC_LOG_FILE"] = testLogFile;
+    process.env["CC_LOG_LEVEL"] = "debug";
     if (!existsSync(tmpDir)) {
       mkdirSync(tmpDir, { recursive: true });
     }
@@ -64,8 +64,8 @@ describe("End-to-end trace flow", () => {
   afterEach(() => {
     cleanup();
     _resetLoggerForTesting();
-    delete process.env["CSM_LOG_FILE"];
-    delete process.env["CSM_LOG_LEVEL"];
+    delete process.env["CC_LOG_FILE"];
+    delete process.env["CC_LOG_LEVEL"];
     vi.restoreAllMocks();
   });
 

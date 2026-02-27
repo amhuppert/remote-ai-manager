@@ -35,7 +35,7 @@ function poll(): void {
   // Access the registry's internal state by querying known sessions
   // We need all registered servers — use the globalThis registry directly
   const g = globalThis as unknown as Record<string, unknown>;
-  const registryMap = g["__csm_dev_servers"] as
+  const registryMap = g["__cc_dev_servers"] as
     | Map<string, registryModule.DevServerEntry>
     | undefined;
 

@@ -9,7 +9,7 @@ describe("PresetInstaller", () => {
   let projectDir: string;
 
   beforeEach(async () => {
-    projectDir = await mkdtemp(path.join(tmpdir(), "csm-preset-test-"));
+    projectDir = await mkdtemp(path.join(tmpdir(), "cc-preset-test-"));
   });
 
   afterEach(async () => {
@@ -17,9 +17,9 @@ describe("PresetInstaller", () => {
   });
 
   describe("installPreset", () => {
-    it("creates .csm/dev-servers/ directory when missing", async () => {
+    it("creates .cc/dev-servers/ directory when missing", async () => {
       await installPreset({ projectPath: projectDir, presetId: "nextjs" });
-      expect(existsSync(path.join(projectDir, ".csm", "dev-servers"))).toBe(
+      expect(existsSync(path.join(projectDir, ".cc", "dev-servers"))).toBe(
         true,
       );
     });
@@ -28,7 +28,7 @@ describe("PresetInstaller", () => {
       await installPreset({ projectPath: projectDir, presetId: "nextjs" });
       const helpersPath = path.join(
         projectDir,
-        ".csm",
+        ".cc",
         "dev-servers",
         "_helpers.sh",
       );
@@ -42,7 +42,7 @@ describe("PresetInstaller", () => {
       await installPreset({ projectPath: projectDir, presetId: "nextjs" });
       const scriptPath = path.join(
         projectDir,
-        ".csm",
+        ".cc",
         "dev-servers",
         "nextjs.sh",
       );
@@ -58,7 +58,7 @@ describe("PresetInstaller", () => {
       const config = JSON.parse(readFileSync(configPath, "utf-8"));
       expect(config.devServers).toHaveLength(1);
       expect(config.devServers[0].name).toBe("nextjs");
-      expect(config.devServers[0].command).toBe(".csm/dev-servers/nextjs.sh");
+      expect(config.devServers[0].command).toBe(".cc/dev-servers/nextjs.sh");
     });
 
     it("appends to existing devServers array without removing entries", async () => {
@@ -125,8 +125,8 @@ describe("PresetInstaller", () => {
         projectPath: projectDir,
         presetId: "nextjs",
       });
-      expect(result.installedFiles).toContain(".csm/dev-servers/_helpers.sh");
-      expect(result.installedFiles).toContain(".csm/dev-servers/nextjs.sh");
+      expect(result.installedFiles).toContain(".cc/dev-servers/_helpers.sh");
+      expect(result.installedFiles).toContain(".cc/dev-servers/nextjs.sh");
       expect(result.installedFiles).toContain("ClaudeSessionManager.json");
       expect(result.configUpdated).toBe(true);
     });
@@ -143,13 +143,13 @@ describe("PresetInstaller", () => {
       expect(config.devServers).toHaveLength(2);
 
       const helpersExists = existsSync(
-        path.join(projectDir, ".csm", "dev-servers", "_helpers.sh"),
+        path.join(projectDir, ".cc", "dev-servers", "_helpers.sh"),
       );
       const nextjsExists = existsSync(
-        path.join(projectDir, ".csm", "dev-servers", "nextjs.sh"),
+        path.join(projectDir, ".cc", "dev-servers", "nextjs.sh"),
       );
       const storybookExists = existsSync(
-        path.join(projectDir, ".csm", "dev-servers", "storybook.sh"),
+        path.join(projectDir, ".cc", "dev-servers", "storybook.sh"),
       );
       expect(helpersExists).toBe(true);
       expect(nextjsExists).toBe(true);
@@ -178,7 +178,7 @@ describe("PresetInstaller", () => {
         JSON.stringify({
           initScriptPath: null,
           devServers: [
-            { name: "nextjs", command: ".csm/dev-servers/nextjs.sh" },
+            { name: "nextjs", command: ".cc/dev-servers/nextjs.sh" },
           ],
         }),
       );
@@ -192,8 +192,8 @@ describe("PresetInstaller", () => {
         JSON.stringify({
           initScriptPath: null,
           devServers: [
-            { name: "nextjs", command: ".csm/dev-servers/nextjs.sh" },
-            { name: "storybook", command: ".csm/dev-servers/storybook.sh" },
+            { name: "nextjs", command: ".cc/dev-servers/nextjs.sh" },
+            { name: "storybook", command: ".cc/dev-servers/storybook.sh" },
           ],
         }),
       );

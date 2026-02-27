@@ -26,7 +26,7 @@ const PRESETS: DevServerPresetDefinition[] = [
     badge: "N",
     basePort: 3000,
     serverName: "nextjs",
-    command: ".csm/dev-servers/nextjs.sh",
+    command: ".cc/dev-servers/nextjs.sh",
     scriptFileName: "nextjs.sh",
   },
   {
@@ -36,7 +36,7 @@ const PRESETS: DevServerPresetDefinition[] = [
     badge: "S",
     basePort: 6006,
     serverName: "storybook",
-    command: ".csm/dev-servers/storybook.sh",
+    command: ".cc/dev-servers/storybook.sh",
     scriptFileName: "storybook.sh",
   },
 ];
@@ -59,8 +59,8 @@ export function getPreset(id: string): DevServerPresetDefinition | undefined {
 
 export function generateHelperScript(): string {
   return `#!/bin/sh
-# CSM Dev Server Helpers — shared port detection and worktree ownership functions
-# Installed by CSM (Claude Session Manager). Intended to be committed to the repo.
+# CC Dev Server Helpers — shared port detection and worktree ownership functions
+# Installed by CC (Claude Code). Intended to be committed to the repo.
 
 # Get the PID listening on a TCP port. Prints PID or empty string.
 # Args: $1 = port
@@ -164,8 +164,8 @@ export function generatePresetScript(presetId: string): string {
       : 'npx storybook dev --port "$PORT"';
 
   return `#!/bin/sh
-# CSM Dev Server — ${preset.name}
-# Installed by CSM (Claude Session Manager). Intended to be committed to the repo.
+# CC Dev Server — ${preset.name}
+# Installed by CC (Claude Code). Intended to be committed to the repo.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_helpers.sh"
@@ -195,7 +195,7 @@ case $? in
     ;;
 esac
 
-echo "CSM_PORT=$PORT"
+echo "CC_PORT=$PORT"
 exec ${frameworkCommand}
 `;
 }
@@ -228,8 +228,8 @@ export async function installPreset(params: {
     );
   }
 
-  // Create .csm/dev-servers/ directory
-  const scriptsDir = path.join(projectPath, ".csm", "dev-servers");
+  // Create .cc/dev-servers/ directory
+  const scriptsDir = path.join(projectPath, ".cc", "dev-servers");
   await mkdir(scriptsDir, { recursive: true });
 
   const installedFiles: string[] = [];
@@ -237,14 +237,14 @@ export async function installPreset(params: {
   // Write _helpers.sh (always overwrite to keep up-to-date)
   const helpersPath = path.join(scriptsDir, "_helpers.sh");
   await writeFile(helpersPath, generateHelperScript(), { mode: 0o755 });
-  installedFiles.push(".csm/dev-servers/_helpers.sh");
+  installedFiles.push(".cc/dev-servers/_helpers.sh");
 
   // Write preset-specific script
   const presetScriptPath = path.join(scriptsDir, preset.scriptFileName);
   await writeFile(presetScriptPath, generatePresetScript(presetId), {
     mode: 0o755,
   });
-  installedFiles.push(`.csm/dev-servers/${preset.scriptFileName}`);
+  installedFiles.push(`.cc/dev-servers/${preset.scriptFileName}`);
 
   // Update ClaudeSessionManager.json
   const configPath = path.join(projectPath, "ClaudeSessionManager.json");
