@@ -32,6 +32,7 @@ function createMockEntry(
     startedAt: new Date().toISOString(),
     errorMessage: null,
     recentOutput: [],
+    adopted: false,
     _process: null,
     _startupTimer: null,
     ...overrides,

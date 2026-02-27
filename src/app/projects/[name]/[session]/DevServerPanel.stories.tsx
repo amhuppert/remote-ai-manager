@@ -46,8 +46,8 @@ function DevServerPanelStory({
   onStartAll?: () => void;
   onStopAll?: () => void;
 }) {
-  const hasRunning = servers.some(
-    (s) => s.status === "running" || s.status === "starting",
+  const hasStoppable = servers.some(
+    (s) => (s.status === "running" || s.status === "starting") && !s.adopted,
   );
   const hasStopped = servers.some(
     (s) => s.status === "stopped" || s.status === "error",
@@ -69,7 +69,7 @@ function DevServerPanelStory({
               Start All
             </button>
           )}
-          {hasRunning && (
+          {hasStoppable && (
             <button className="btn btn-sm" onClick={onStopAll} type="button">
               Stop All
             </button>
@@ -80,25 +80,34 @@ function DevServerPanelStory({
         {servers.map((server) => {
           const isActive =
             server.status === "running" || server.status === "starting";
+          const nameElement =
+            server.remoteUrl && server.status === "running" ? (
+              <a
+                href={server.remoteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="dev-server-name dev-server-name-link"
+              >
+                {server.serverName}
+              </a>
+            ) : (
+              <span className="dev-server-name">{server.serverName}</span>
+            );
           return (
             <div className="dev-server-row" key={server.serverName}>
               <div className="dev-server-info">
                 <StatusDot status={server.status} />
-                <span className="dev-server-name">{server.serverName}</span>
+                {nameElement}
                 <span className="dev-server-status">{server.status}</span>
-                {server.remoteUrl && server.status === "running" && (
-                  <a
-                    href={server.remoteUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="dev-server-url"
-                  >
-                    {server.remoteUrl}
-                  </a>
+                {server.port != null && (
+                  <span className="dev-server-port">:{server.port}</span>
+                )}
+                {server.adopted && (
+                  <span className="dev-server-adopted-badge">adopted</span>
                 )}
               </div>
               <div className="dev-server-actions">
-                {isActive ? (
+                {isActive && !server.adopted ? (
                   <button
                     className="btn btn-sm"
                     onClick={() => onStop(server.serverName)}
@@ -106,7 +115,7 @@ function DevServerPanelStory({
                   >
                     Stop
                   </button>
-                ) : (
+                ) : !isActive ? (
                   <button
                     className="btn btn-sm btn-primary"
                     onClick={() => onStart(server.serverName)}
@@ -114,7 +123,7 @@ function DevServerPanelStory({
                   >
                     Start
                   </button>
-                )}
+                ) : null}
               </div>
               {server.status === "error" && server.errorMessage && (
                 <div className="dev-server-error">
@@ -158,6 +167,7 @@ export const AllStopped = {
         startedAt: null,
         errorMessage: null,
         recentOutput: [],
+        adopted: false,
       },
       {
         serverName: "storybook",
@@ -169,6 +179,7 @@ export const AllStopped = {
         startedAt: null,
         errorMessage: null,
         recentOutput: [],
+        adopted: false,
       },
     ],
   },
@@ -183,10 +194,11 @@ export const OneRunning = {
         status: "running",
         pid: 12345,
         port: 3000,
-        remoteUrl: "https://my-machine.tailnet.ts.net:3000",
+        remoteUrl: "http://my-machine.tailnet.ts.net:3000",
         startedAt: new Date().toISOString(),
         errorMessage: null,
         recentOutput: [],
+        adopted: false,
       },
       {
         serverName: "storybook",
@@ -198,6 +210,7 @@ export const OneRunning = {
         startedAt: null,
         errorMessage: null,
         recentOutput: [],
+        adopted: false,
       },
     ],
   },
@@ -212,10 +225,11 @@ export const AllRunning = {
         status: "running",
         pid: 12345,
         port: 3000,
-        remoteUrl: "https://my-machine.tailnet.ts.net:3000",
+        remoteUrl: "http://my-machine.tailnet.ts.net:3000",
         startedAt: new Date().toISOString(),
         errorMessage: null,
         recentOutput: [],
+        adopted: false,
       },
       {
         serverName: "storybook",
@@ -223,10 +237,11 @@ export const AllRunning = {
         status: "running",
         pid: 12346,
         port: 6006,
-        remoteUrl: "https://my-machine.tailnet.ts.net:6006",
+        remoteUrl: "http://my-machine.tailnet.ts.net:6006",
         startedAt: new Date().toISOString(),
         errorMessage: null,
         recentOutput: [],
+        adopted: false,
       },
     ],
   },
@@ -245,6 +260,7 @@ export const Starting = {
         startedAt: new Date().toISOString(),
         errorMessage: null,
         recentOutput: ["Compiling...", "Optimizing modules..."],
+        adopted: false,
       },
     ],
   },
@@ -264,6 +280,7 @@ export const WithError = {
         errorMessage:
           "Process exited (code=1) before reporting CSM_PORT.\nError: Cannot find module 'next'",
         recentOutput: [],
+        adopted: false,
       },
       {
         serverName: "storybook",
@@ -275,6 +292,39 @@ export const WithError = {
         startedAt: null,
         errorMessage: null,
         recentOutput: [],
+        adopted: false,
+      },
+    ],
+  },
+} satisfies Story;
+
+/** Adopted server: running externally, CSM monitors but cannot stop it */
+export const AdoptedServer = {
+  args: {
+    servers: [
+      {
+        serverName: "nextjs",
+        command: ".csm/dev-servers/nextjs.sh",
+        status: "running",
+        pid: 54321,
+        port: 3000,
+        remoteUrl: "http://my-machine.tailnet.ts.net:3000",
+        startedAt: new Date().toISOString(),
+        errorMessage: null,
+        recentOutput: [],
+        adopted: true,
+      },
+      {
+        serverName: "storybook",
+        command: ".csm/dev-servers/storybook.sh",
+        status: "stopped",
+        pid: null,
+        port: null,
+        remoteUrl: null,
+        startedAt: null,
+        errorMessage: null,
+        recentOutput: [],
+        adopted: false,
       },
     ],
   },

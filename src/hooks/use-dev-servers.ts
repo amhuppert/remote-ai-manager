@@ -59,6 +59,9 @@ export function useDevServers(projectName: string, sessionName: string) {
   const hasRunning = servers.some(
     (s) => s.status === "running" || s.status === "starting",
   );
+  const hasStoppable = servers.some(
+    (s) => (s.status === "running" || s.status === "starting") && !s.adopted,
+  );
   const hasStopped = servers.some(
     (s) => s.status === "stopped" || s.status === "error",
   );
@@ -68,6 +71,7 @@ export function useDevServers(projectName: string, sessionName: string) {
     isLoading: query.isPending,
     isError: query.isError,
     hasRunning,
+    hasStoppable,
     hasStopped,
     startServer: startServerMutation.mutate,
     stopServer: stopServerMutation.mutate,

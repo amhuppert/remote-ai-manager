@@ -49,6 +49,7 @@ export const GET = withTracing(async (_request, { params }) => {
         startedAt: runtime.startedAt,
         errorMessage: runtime.errorMessage,
         recentOutput: runtime.recentOutput,
+        adopted: runtime.adopted,
       };
     }
     // Configured but not started
@@ -62,6 +63,7 @@ export const GET = withTracing(async (_request, { params }) => {
       startedAt: null,
       errorMessage: null,
       recentOutput: [],
+      adopted: false,
     };
   });
 

@@ -8506,18 +8506,30 @@ textarea {
   letter-spacing: 0.04em;
 }
 
-.dev-server-url {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
+.dev-server-name-link {
   color: var(--cyan);
   text-decoration: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.dev-server-url:hover {
+.dev-server-name-link:hover {
   text-decoration: underline;
+}
+
+.dev-server-port {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-tertiary);
+}
+
+.dev-server-adopted-badge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--text-tertiary);
+  background: var(--surface-hover);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .dev-server-actions {

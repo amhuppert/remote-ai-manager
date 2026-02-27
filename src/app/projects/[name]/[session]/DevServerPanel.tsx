@@ -52,30 +52,40 @@ function ServerRow({
 }) {
   const isActive = server.status === "running" || server.status === "starting";
 
+  const nameElement =
+    server.remoteUrl && server.status === "running" ? (
+      <a
+        href={server.remoteUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="dev-server-name dev-server-name-link"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {server.serverName}
+      </a>
+    ) : (
+      <span className="dev-server-name">{server.serverName}</span>
+    );
+
   return (
     <div className="dev-server-row">
       <div className="dev-server-info">
         <StatusDot status={server.status} />
-        <span className="dev-server-name">{server.serverName}</span>
+        {nameElement}
         <span className="dev-server-status">{server.status}</span>
-        {server.remoteUrl && server.status === "running" && (
-          <a
-            href={server.remoteUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="dev-server-url"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {server.remoteUrl}
-          </a>
+        {server.port != null && (
+          <span className="dev-server-port">:{server.port}</span>
+        )}
+        {server.adopted && (
+          <span className="dev-server-adopted-badge">adopted</span>
         )}
       </div>
       <div className="dev-server-actions">
-        {isActive ? (
+        {isActive && !server.adopted ? (
           <button className="btn btn-sm" onClick={onStop} type="button">
             Stop
           </button>
-        ) : (
+        ) : !isActive ? (
           <button
             className="btn btn-sm btn-primary"
             onClick={onStart}
@@ -83,7 +93,7 @@ function ServerRow({
           >
             Start
           </button>
-        )}
+        ) : null}
       </div>
       {server.status === "error" && server.errorMessage && (
         <div className="dev-server-error">
@@ -103,7 +113,7 @@ export default function DevServerPanel({
   const {
     servers,
     isLoading,
-    hasRunning,
+    hasStoppable,
     hasStopped,
     startServer,
     stopServer,
@@ -128,7 +138,7 @@ export default function DevServerPanel({
               Start All
             </button>
           )}
-          {hasRunning && (
+          {hasStoppable && (
             <button className="btn btn-sm" onClick={stopAll} type="button">
               Stop All
             </button>

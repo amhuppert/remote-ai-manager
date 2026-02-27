@@ -126,9 +126,10 @@ check_port() {
   return 2
 }
 
-# Scan from a base port upward to find the first available port.
+# Scan from a base port upward to find the first available or owned port.
 # Args: $1 = base port, $2 = expected worktree path
-# Prints the available port number.
+# Prints the port number.
+# Exit codes: 0 = found available port, 1 = found owned port (adopt), 2 = no port found
 find_available_port() {
   local base_port="\$1"
   local expected_cwd="\$2"
@@ -140,13 +141,13 @@ find_available_port() {
     check_port "\$port" "\$expected_cwd"
     case \$? in
       0) echo "\$port"; return 0 ;;
-      1) echo "\$port"; return 0 ;;
+      1) echo "\$port"; return 1 ;;
     esac
     max_attempts=$((max_attempts - 1))
   done
 
   echo "ERROR: Could not find an available port after scanning from \$base_port" >&2
-  return 1
+  return 2
 }
 `;
 }
@@ -172,11 +173,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_PORT=${preset.basePort}
 WORKTREE_DIR="$(pwd)"
 
+# Helper: emit adoption markers and exit
+adopt_port() {
+  local port="\$1"
+  ADOPTED_PID=$(get_pid_on_port "\$port")
+  echo "CSM_ADOPTED=1"
+  echo "CSM_ADOPTED_PID=\$ADOPTED_PID"
+  echo "CSM_PORT=\$port"
+  exit 0
+}
+
 check_port "$BASE_PORT" "$WORKTREE_DIR"
 case $? in
   0) PORT="$BASE_PORT" ;;
-  1) echo "CSM_PORT=$BASE_PORT"; exit 0 ;;
-  2) PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR") ;;
+  1) adopt_port "$BASE_PORT" ;;
+  2)
+    PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR")
+    if [ $? -eq 1 ]; then
+      adopt_port "$PORT"
+    fi
+    ;;
 esac
 
 echo "CSM_PORT=$PORT"

@@ -25,6 +25,8 @@ export interface DevServerEntry {
   startedAt: string;
   errorMessage: string | null;
   recentOutput: string[];
+  /** Whether this server was adopted (discovered running externally, not spawned by CSM) */
+  adopted: boolean;
   /** Internal: child process handle (not exposed via API) */
   _process: ChildProcess | null;
   /** Internal: startup timeout timer */
@@ -59,6 +61,7 @@ function broadcastStatus(entry: DevServerEntry): void {
     port: entry.port,
     remoteUrl: entry.remoteUrl,
     errorMessage: entry.errorMessage,
+    adopted: entry.adopted,
   };
   broadcast(event);
 }
@@ -132,6 +135,7 @@ export async function startServer(params: {
     startedAt: new Date().toISOString(),
     errorMessage: null,
     recentOutput: [],
+    adopted: false,
     _process: child,
     _startupTimer: null,
   };
@@ -150,9 +154,11 @@ export async function startServer(params: {
 
   broadcastStatus(entry);
 
-  // Line-buffer stdout for CSM_PORT detection
+  // Line-buffer stdout for CSM_PORT detection and adoption markers
   let stdoutBuffer = "";
   let portFound = false;
+  let adoptedFlag = false;
+  let adoptedPid: number | null = null;
 
   child.stdout?.on("data", (chunk: Buffer) => {
     stdoutBuffer += chunk.toString();
@@ -161,11 +167,34 @@ export async function startServer(params: {
 
     for (const line of lines) {
       appendOutput(entry, line);
+
+      // Parse adoption markers (emitted before CSM_PORT)
+      if (/^CSM_ADOPTED=1$/.test(line.trim())) {
+        adoptedFlag = true;
+      }
+      const adoptedPidMatch = /^CSM_ADOPTED_PID=(\d+)$/.exec(line.trim());
+      if (adoptedPidMatch) {
+        adoptedPid = parseInt(adoptedPidMatch[1]!, 10);
+      }
+
       const match = /^CSM_PORT=(\d+)$/.exec(line.trim());
       if (match && !portFound) {
         portFound = true;
         const port = parseInt(match[1]!, 10);
         cleanupTimer(entry);
+
+        // Apply adoption state
+        if (adoptedFlag) {
+          entry.adopted = true;
+          if (adoptedPid && adoptedPid > 0) {
+            entry.pid = adoptedPid;
+          }
+          logger.info("dev-server.adopted", {
+            serverName,
+            port,
+            adoptedPid: entry.pid,
+          });
+        }
 
         logger.info("dev-server.port_discovered", { serverName, port });
 
@@ -199,6 +228,17 @@ export async function startServer(params: {
       code,
       signal,
     });
+
+    // Adopted server: the detection script exited, not the real server.
+    // Liveness polling will monitor the real PID going forward.
+    // Note: status may still be "starting" if tailscale.register() hasn't resolved yet.
+    if (entry.adopted) {
+      logger.info("dev-server.adopted_script_exit", {
+        serverName,
+        adoptedPid: entry.pid,
+      });
+      return;
+    }
 
     if (entry.status === "starting") {
       // Exited before CSM_PORT was detected
@@ -270,9 +310,18 @@ export async function stopServer(params: {
   const key = makeKey(projectPath, sessionName, serverName);
   const entry = registry.get(key);
 
-  if (!entry || !entry._process) {
+  if (!entry) return;
+
+  // Adopted servers cannot be stopped — CSM doesn't own the process
+  if (entry.adopted) {
+    logger.warn("dev-server.stop_adopted_noop", {
+      serverName,
+      pid: entry.pid,
+    });
     return;
   }
+
+  if (!entry._process) return;
 
   cleanupTimer(entry);
 

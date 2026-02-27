@@ -73,6 +73,7 @@ function poll(): void {
           port: entry.port,
           remoteUrl: null,
           errorMessage: null,
+          adopted: entry.adopted,
         };
         broadcast(event);
       }
