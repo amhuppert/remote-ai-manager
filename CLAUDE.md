@@ -44,6 +44,15 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 - Keep steering current and verify alignment with `/kiro:spec-status`
 - Follow the user's instructions precisely, and within that scope act autonomously: gather the necessary context and complete the requested work end-to-end in this run, asking questions only when essential information is missing or the instructions are critically ambiguous.
 
+## Worktree Isolation
+
+Sessions run in git worktrees under `.worktrees/`. **All file operations and git commands MUST stay within the assigned session worktree.** Never `cd` to, read from, or write to the main worktree or another session's worktree unless the user explicitly directs you to.
+
+- Use the worktree path provided in `session.worktreePath` for every command — never substitute the repository root.
+- Do not run `git stash`, `git checkout`, `git reset`, or any state-altering git command on the main worktree from a session context.
+- If you need to compare behavior against the main branch (e.g., verifying a build error is pre-existing), use `git diff`, `git log`, or `git show` to inspect main **without modifying its working tree**.
+- If a task genuinely requires operating outside the session worktree, stop and ask the user for explicit permission first.
+
 ## Steering Configuration
 
 Project steering files are loaded automatically below. Custom files are supported (managed via `/kiro:steering-custom`).
