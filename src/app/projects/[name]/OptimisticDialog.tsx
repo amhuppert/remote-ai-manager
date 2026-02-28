@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useCreateSessionMutation } from "@/lib/mutations";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 
 interface OptimisticDialogProps {
@@ -20,6 +21,8 @@ export default function OptimisticDialog({
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const instructionsRef = useRef(instructions);
+  const fireAndForgetRef = useRef(false);
+  const autoSubmitPendingRef = useRef(false);
   useEffect(() => {
     instructionsRef.current = instructions;
   });
@@ -41,9 +44,16 @@ export default function OptimisticDialog({
         : text;
       setInstructions(newInstructions);
       instructionsRef.current = newInstructions;
+
+      if (fireAndForgetRef.current) {
+        fireAndForgetRef.current = false;
+        autoSubmitPendingRef.current = true;
+      }
     },
     onError: (err) => {
       setError(err);
+      fireAndForgetRef.current = false;
+      autoSubmitPendingRef.current = false;
     },
   });
 
@@ -54,6 +64,8 @@ export default function OptimisticDialog({
     if (open) {
       setInstructions("");
       setError(null);
+      fireAndForgetRef.current = false;
+      autoSubmitPendingRef.current = false;
     }
   }
 
@@ -96,6 +108,43 @@ export default function OptimisticDialog({
       },
     );
   };
+
+  // Alt+V hotkey to toggle voice recording while dialog is open
+  useAppHotkey(
+    "voiceToggle",
+    () => {
+      if (!isRecording && !isProcessing) {
+        fireAndForgetRef.current = false;
+      }
+      void toggleRecording();
+    },
+    {
+      enabled: open && voiceAvailable && !isProcessing,
+    },
+  );
+
+  // Ctrl+Alt+V hotkey for fire-and-forget voice (auto-submit on completion)
+  useAppHotkey(
+    "voiceFireAndForget",
+    () => {
+      if (!isRecording && !isProcessing) {
+        fireAndForgetRef.current = true;
+      }
+      void toggleRecording();
+    },
+    {
+      enabled: open && voiceAvailable && !isProcessing,
+    },
+  );
+
+  // Auto-submit after fire-and-forget voice result
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally runs every render; ref guard prevents repeated calls
+  useEffect(() => {
+    if (autoSubmitPendingRef.current && canSubmit) {
+      autoSubmitPendingRef.current = false;
+      handleSubmit();
+    }
+  });
 
   if (!open) return null;
 
