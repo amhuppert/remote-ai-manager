@@ -213,7 +213,7 @@ describe("confirm and start", () => {
         {
           id: "t1",
           description: "First task",
-          priority: "high",
+          group: 1,
           status: "pending",
           createdAt: "2025-01-01T00:00:00Z",
           completedAt: null,
@@ -247,7 +247,7 @@ describe("confirm and start", () => {
         {
           id: "t1",
           description: "Task",
-          priority: "medium",
+          group: 1,
           status: "pending",
           createdAt: "2025-01-01T00:00:00Z",
           completedAt: null,
@@ -509,7 +509,7 @@ describe("fix plan update", () => {
       {
         id: "t1",
         description: "New task",
-        priority: "high",
+        group: 1,
         status: "pending",
         createdAt: "2025-01-01T00:00:00Z",
         completedAt: null,

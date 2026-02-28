@@ -208,8 +208,8 @@ describe("RalphLoopMCPTools", () => {
 
       const input = {
         newTasks: [
-          { description: "Fix CORS", priority: "high" },
-          { description: "Add logging", priority: "low" },
+          { description: "Fix CORS", group: 1 },
+          { description: "Add logging", group: 2 },
         ],
       };
       const result = (await handler(input)) as {

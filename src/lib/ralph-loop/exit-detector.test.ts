@@ -24,7 +24,7 @@ function makeTask(overrides: Partial<FixPlanTask> = {}): FixPlanTask {
   return {
     id: "task-1",
     description: "Test task",
-    priority: "medium",
+    group: 1,
     status: "pending",
     createdAt: "2024-01-01T00:00:00Z",
     completedAt: null,

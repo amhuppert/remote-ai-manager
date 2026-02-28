@@ -219,7 +219,7 @@ function makeWorkflow(
       {
         id: "t1",
         description: "Implement JWT",
-        priority: "high" as const,
+        group: 1,
         status: "pending" as const,
         createdAt: "2026-02-25T10:00:00Z",
         completedAt: null,

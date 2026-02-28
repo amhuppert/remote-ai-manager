@@ -4,13 +4,13 @@ import type { FixPlanTask, UpdateFixPlanInput } from "@/types";
 /** Create a new task with generated ID. */
 export function createTask(params: {
   description: string;
-  priority: "high" | "medium" | "low";
+  group: number;
   addedByIteration?: number | null;
 }): FixPlanTask {
   return {
     id: randomUUID(),
     description: params.description,
-    priority: params.priority,
+    group: params.group,
     status: "pending",
     createdAt: new Date().toISOString(),
     completedAt: null,
@@ -80,13 +80,13 @@ export function skipTasks(
 /** Add newly discovered tasks to the plan. Returns the mutated plan and added task IDs. */
 export function addTasks(
   plan: FixPlanTask[],
-  newTasks: Array<{ description: string; priority: "high" | "medium" | "low" }>,
+  newTasks: Array<{ description: string; group: number }>,
   iterationNumber: number,
 ): { plan: FixPlanTask[]; addedIds: string[] } {
   const added = newTasks.map((t) =>
     createTask({
       description: t.description,
-      priority: t.priority,
+      group: t.group,
       addedByIteration: iterationNumber,
     }),
   );
@@ -155,14 +155,26 @@ export function isAllResolved(plan: FixPlanTask[]): boolean {
   );
 }
 
-/** Get pending and in-progress tasks sorted by priority (high → medium → low). */
-export function getActiveTasksSorted(plan: FixPlanTask[]): FixPlanTask[] {
-  const priorityOrder = { high: 0, medium: 1, low: 2 };
-  return plan
-    .filter(
-      (task) => task.status === "pending" || task.status === "in_progress",
-    )
-    .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+/** Get pending and in-progress tasks organized by group number (ascending). */
+export function getActiveTasksByGroup(
+  plan: FixPlanTask[],
+): Map<number, FixPlanTask[]> {
+  const grouped = new Map<number, FixPlanTask[]>();
+  for (const task of plan) {
+    if (task.status === "pending" || task.status === "in_progress") {
+      const list = grouped.get(task.group) ?? [];
+      list.push(task);
+      grouped.set(task.group, list);
+    }
+  }
+  return new Map([...grouped.entries()].sort(([a], [b]) => a - b));
+}
+
+/** Get the current (lowest-numbered) active group, or null if all resolved. */
+export function getCurrentGroup(plan: FixPlanTask[]): number | null {
+  const groups = getActiveTasksByGroup(plan);
+  const first = groups.keys().next();
+  return first.done ? null : first.value;
 }
 
 /** Compute task progress summary. */

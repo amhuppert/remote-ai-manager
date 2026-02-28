@@ -12,7 +12,6 @@ import type {
   RalphLoopConfig,
   WorkflowStatus,
   HaltReason,
-  TaskPriority,
   CircuitBreakerStateEnum,
 } from "./types";
 
@@ -30,7 +29,7 @@ interface WorkflowPanelProps {
   onPause?: () => void;
   onResume?: () => void;
   onAbort?: () => void;
-  onTaskAdd?: (description: string, priority: TaskPriority) => void;
+  onTaskAdd?: (description: string) => void;
   onTaskRemove?: (taskId: string) => void;
   onTaskEdit?: (taskId: string, description: string) => void;
   onTaskReorder?: (taskIds: string[]) => void;
@@ -323,7 +322,7 @@ function PlanningView({
 }: {
   workflow: RalphLoopWorkflow;
   onObjectiveChange?: (v: string) => void;
-  onTaskAdd?: (desc: string, priority: TaskPriority) => void;
+  onTaskAdd?: (description: string) => void;
   onTaskRemove?: (id: string) => void;
   onTaskEdit?: (id: string, description: string) => void;
   onTaskReorder?: (taskIds: string[]) => void;
@@ -418,7 +417,7 @@ function MonitoringView({
   onTaskEdit?: (id: string, description: string) => void;
   onTaskReorder?: (taskIds: string[]) => void;
   onTaskRemove?: (id: string) => void;
-  onTaskAdd?: (desc: string, priority: TaskPriority) => void;
+  onTaskAdd?: (description: string) => void;
 }) {
   const { config, circuitBreaker, iterations, fixPlan, status } = workflow;
   const isPaused = status === "paused";

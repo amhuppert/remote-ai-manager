@@ -98,7 +98,13 @@ export function createToolServer(
             .array(
               z.object({
                 description: z.string(),
-                priority: z.enum(["high", "medium", "low"]),
+                group: z
+                  .number()
+                  .int()
+                  .min(1)
+                  .describe(
+                    "Group number. Tasks in the same group are independent. Lower groups execute first.",
+                  ),
               }),
             )
             .optional()

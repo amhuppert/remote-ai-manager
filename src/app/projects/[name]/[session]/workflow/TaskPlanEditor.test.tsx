@@ -8,7 +8,7 @@ const baseTasks: FixPlanTask[] = [
   {
     id: "t1",
     description: "Implement auth",
-    priority: "high",
+    group: 1,
     status: "pending",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -18,7 +18,7 @@ const baseTasks: FixPlanTask[] = [
   {
     id: "t2",
     description: "Create schema",
-    priority: "medium",
+    group: 1,
     status: "pending",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -28,7 +28,7 @@ const baseTasks: FixPlanTask[] = [
   {
     id: "t3",
     description: "Add validation",
-    priority: "low",
+    group: 2,
     status: "completed",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: "2026-02-25T11:00:00Z",
@@ -66,7 +66,7 @@ describe("TaskPlanEditor", () => {
     ) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "New task" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(onTaskAdd).toHaveBeenCalledWith("New task", "medium");
+    expect(onTaskAdd).toHaveBeenCalledWith("New task");
   });
 
   it("calls onTaskRemove when remove button is clicked", () => {
@@ -81,7 +81,22 @@ describe("TaskPlanEditor", () => {
     expect(onTaskRemove).toHaveBeenCalledWith("t1");
   });
 
-  // --- Drag-to-reorder (Task 10.2) ---
+  // --- Group headers ---
+
+  it("shows group headers when tasks span multiple groups", () => {
+    const { container } = render(<TaskPlanEditor tasks={baseTasks} />);
+    const groupHeaders = container.querySelectorAll(".task-plan-group-header");
+    expect(groupHeaders.length).toBe(2);
+  });
+
+  it("omits group headers when all tasks are in one group", () => {
+    const singleGroupTasks = baseTasks.map((t) => ({ ...t, group: 1 }));
+    const { container } = render(<TaskPlanEditor tasks={singleGroupTasks} />);
+    const groupHeaders = container.querySelectorAll(".task-plan-group-header");
+    expect(groupHeaders.length).toBe(0);
+  });
+
+  // --- Drag-to-reorder ---
 
   it("shows drag handle on pending tasks when not readOnly", () => {
     const { container } = render(
@@ -112,7 +127,7 @@ describe("TaskPlanEditor", () => {
     expect(items[2]!.getAttribute("draggable")).toBe("false");
   });
 
-  // --- Inline editing (Task 10.2) ---
+  // --- Inline editing ---
 
   it("enters edit mode on double-click for pending tasks when not readOnly", () => {
     const { container } = render(

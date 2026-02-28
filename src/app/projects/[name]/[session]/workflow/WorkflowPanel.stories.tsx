@@ -41,7 +41,7 @@ function task(
   return {
     id,
     description,
-    priority: "medium",
+    group: 1,
     status: "pending",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -125,21 +125,21 @@ const planningWithTasks = workflow({
     "Implement a complete user authentication system with JWT tokens, email verification, password reset, and role-based access control.",
   fixPlan: [
     task("t1", "Implement JWT token generation and validation", {
-      priority: "high",
+      group: 1,
     }),
     task("t2", "Create user profile database schema and migrations", {
-      priority: "high",
+      group: 1,
     }),
     task("t3", "Add registration form with Zod validation", {
-      priority: "medium",
+      group: 2,
     }),
-    task("t4", "Implement email verification flow", { priority: "medium" }),
-    task("t5", "Add password reset via email link", { priority: "medium" }),
+    task("t4", "Implement email verification flow", { group: 2 }),
+    task("t5", "Add password reset via email link", { group: 2 }),
     task("t6", "Implement role-based access control middleware", {
-      priority: "low",
+      group: 3,
     }),
     task("t7", "Write integration tests for auth endpoints", {
-      priority: "low",
+      group: 3,
     }),
   ],
 });
@@ -149,24 +149,24 @@ const runningEarly = workflow({
   objective: planningWithTasks.objective,
   fixPlan: [
     task("t1", "Implement JWT token generation and validation", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:30:00Z",
     }),
     task("t2", "Create user profile database schema and migrations", {
-      priority: "high",
+      group: 1,
       status: "in_progress",
     }),
     task("t3", "Add registration form with Zod validation", {
-      priority: "medium",
+      group: 2,
     }),
-    task("t4", "Implement email verification flow", { priority: "medium" }),
-    task("t5", "Add password reset via email link", { priority: "medium" }),
+    task("t4", "Implement email verification flow", { group: 2 }),
+    task("t5", "Add password reset via email link", { group: 2 }),
     task("t6", "Implement role-based access control middleware", {
-      priority: "low",
+      group: 3,
     }),
     task("t7", "Write integration tests for auth endpoints", {
-      priority: "low",
+      group: 3,
     }),
   ],
   iterations: [
@@ -203,37 +203,37 @@ const runningMidProgress = workflow({
   objective: planningWithTasks.objective,
   fixPlan: [
     task("t1", "Implement JWT token generation and validation", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:30:00Z",
     }),
     task("t2", "Create user profile database schema and migrations", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:50:00Z",
     }),
     task("t3", "Add registration form with Zod validation", {
-      priority: "medium",
+      group: 2,
       status: "completed",
       completedAt: "2026-02-25T11:15:00Z",
     }),
     task("t4", "Implement email verification flow", {
-      priority: "medium",
+      group: 2,
       status: "completed",
       completedAt: "2026-02-25T11:40:00Z",
     }),
     task("t5", "Add password reset via email link", {
-      priority: "medium",
+      group: 2,
       status: "in_progress",
     }),
     task("t6", "Implement role-based access control middleware", {
-      priority: "low",
+      group: 3,
     }),
     task("t7", "Write integration tests for auth endpoints", {
-      priority: "low",
+      group: 3,
     }),
     task("t8", "Fix CORS configuration for OAuth callbacks", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T11:50:00Z",
       addedByIteration: 3,
@@ -312,21 +312,21 @@ const haltedCircuitBreaker = workflow({
   objective: planningWithTasks.objective,
   fixPlan: [
     task("t1", "Implement JWT token generation", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:30:00Z",
     }),
     task("t2", "Create database schema", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:50:00Z",
     }),
     task("t3", "Fix flaky E2E test for login flow", {
-      priority: "medium",
+      group: 2,
       status: "in_progress",
     }),
-    task("t4", "Write integration tests", { priority: "medium" }),
-    task("t5", "Add rate limiting", { priority: "low" }),
+    task("t4", "Write integration tests", { group: 2 }),
+    task("t5", "Add rate limiting", { group: 3 }),
   ],
   iterations: [
     iteration(1, { durationMs: 247_000, costUsd: 0.42 }),
@@ -404,27 +404,27 @@ const haltedStalledExitSignal = workflow({
   objective: planningWithTasks.objective,
   fixPlan: [
     task("t1", "Implement JWT tokens", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:30:00Z",
     }),
     task("t2", "Create database schema", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:50:00Z",
     }),
     task("t3", "Add form validation", {
-      priority: "medium",
+      group: 2,
       status: "completed",
       completedAt: "2026-02-25T11:15:00Z",
     }),
     task("t4", "Implement email verification", {
-      priority: "medium",
+      group: 2,
       status: "completed",
       completedAt: "2026-02-25T11:40:00Z",
     }),
-    task("t5", "Add password reset flow", { priority: "medium" }),
-    task("t6", "Add role-based access control", { priority: "low" }),
+    task("t5", "Add password reset flow", { group: 2 }),
+    task("t6", "Add role-based access control", { group: 3 }),
   ],
   iterations: [
     iteration(1, { durationMs: 247_000, costUsd: 0.42 }),
@@ -471,37 +471,37 @@ const completedSuccess = workflow({
   objective: planningWithTasks.objective,
   fixPlan: [
     task("t1", "Implement JWT token generation and validation", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:30:00Z",
     }),
     task("t2", "Create user profile database schema", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:50:00Z",
     }),
     task("t3", "Add registration form validation", {
-      priority: "medium",
+      group: 2,
       status: "completed",
       completedAt: "2026-02-25T11:15:00Z",
     }),
     task("t4", "Implement email verification flow", {
-      priority: "medium",
+      group: 2,
       status: "completed",
       completedAt: "2026-02-25T11:40:00Z",
     }),
     task("t5", "Add password reset via email", {
-      priority: "medium",
+      group: 2,
       status: "completed",
       completedAt: "2026-02-25T12:10:00Z",
     }),
     task("t6", "Implement role-based access control", {
-      priority: "low",
+      group: 3,
       status: "completed",
       completedAt: "2026-02-25T12:45:00Z",
     }),
     task("t7", "Write integration tests", {
-      priority: "low",
+      group: 3,
       status: "skipped",
       skipReason: "Covered by existing E2E test suite",
     }),
@@ -543,12 +543,12 @@ const aborted = workflow({
   objective: planningWithTasks.objective,
   fixPlan: [
     task("t1", "Implement JWT tokens", {
-      priority: "high",
+      group: 1,
       status: "completed",
       completedAt: "2026-02-25T10:30:00Z",
     }),
-    task("t2", "Create database schema", { priority: "high" }),
-    task("t3", "Add form validation", { priority: "medium" }),
+    task("t2", "Create database schema", { group: 1 }),
+    task("t3", "Add form validation", { group: 2 }),
   ],
   iterations: [
     iteration(1, { durationMs: 247_000, costUsd: 0.42 }),

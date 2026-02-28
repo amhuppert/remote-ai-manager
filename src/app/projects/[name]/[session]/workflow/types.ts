@@ -18,7 +18,6 @@ export type {
 } from "@/types";
 
 // Convenience re-exports for common sub-types
-export type TaskPriority = "high" | "medium" | "low";
 export type WorkType =
   | "implementation"
   | "testing"

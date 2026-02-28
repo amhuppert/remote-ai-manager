@@ -11,7 +11,7 @@ const pendingTasks: FixPlanTask[] = [
   {
     id: "t1",
     description: "Implement user authentication with JWT tokens",
-    priority: "high",
+    group: 1,
     status: "pending",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -21,7 +21,7 @@ const pendingTasks: FixPlanTask[] = [
   {
     id: "t2",
     description: "Create database schema for user profiles",
-    priority: "high",
+    group: 1,
     status: "pending",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -31,7 +31,7 @@ const pendingTasks: FixPlanTask[] = [
   {
     id: "t3",
     description: "Add input validation for registration form",
-    priority: "medium",
+    group: 2,
     status: "pending",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -41,7 +41,7 @@ const pendingTasks: FixPlanTask[] = [
   {
     id: "t4",
     description: "Write integration tests for auth endpoints",
-    priority: "medium",
+    group: 2,
     status: "pending",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -51,7 +51,7 @@ const pendingTasks: FixPlanTask[] = [
   {
     id: "t5",
     description: "Add rate limiting to login endpoint",
-    priority: "low",
+    group: 3,
     status: "pending",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -64,7 +64,7 @@ const mixedTasks: FixPlanTask[] = [
   {
     id: "t1",
     description: "Implement user authentication with JWT tokens",
-    priority: "high",
+    group: 1,
     status: "completed",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: "2026-02-25T10:30:00Z",
@@ -74,7 +74,7 @@ const mixedTasks: FixPlanTask[] = [
   {
     id: "t2",
     description: "Create database schema for user profiles",
-    priority: "high",
+    group: 1,
     status: "completed",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: "2026-02-25T10:45:00Z",
@@ -84,7 +84,7 @@ const mixedTasks: FixPlanTask[] = [
   {
     id: "t3",
     description: "Add input validation for registration form",
-    priority: "medium",
+    group: 2,
     status: "in_progress",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -94,7 +94,7 @@ const mixedTasks: FixPlanTask[] = [
   {
     id: "t4",
     description: "Write integration tests for auth endpoints",
-    priority: "medium",
+    group: 2,
     status: "pending",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -104,7 +104,7 @@ const mixedTasks: FixPlanTask[] = [
   {
     id: "t5",
     description: "Add rate limiting to login endpoint",
-    priority: "low",
+    group: 3,
     status: "skipped",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,
@@ -114,7 +114,7 @@ const mixedTasks: FixPlanTask[] = [
   {
     id: "t6",
     description: "Fix CORS configuration for auth callbacks",
-    priority: "high",
+    group: 2,
     status: "completed",
     createdAt: "2026-02-25T11:00:00Z",
     completedAt: "2026-02-25T11:15:00Z",
@@ -127,7 +127,7 @@ const allCompleteTasks: FixPlanTask[] = [
   {
     id: "t1",
     description: "Implement user authentication",
-    priority: "high",
+    group: 1,
     status: "completed",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: "2026-02-25T10:30:00Z",
@@ -137,7 +137,7 @@ const allCompleteTasks: FixPlanTask[] = [
   {
     id: "t2",
     description: "Create database schema",
-    priority: "high",
+    group: 1,
     status: "completed",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: "2026-02-25T11:00:00Z",
@@ -147,7 +147,7 @@ const allCompleteTasks: FixPlanTask[] = [
   {
     id: "t3",
     description: "Add input validation",
-    priority: "medium",
+    group: 2,
     status: "completed",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: "2026-02-25T11:30:00Z",
@@ -157,7 +157,7 @@ const allCompleteTasks: FixPlanTask[] = [
   {
     id: "t4",
     description: "Legacy migration helper",
-    priority: "low",
+    group: 3,
     status: "skipped",
     createdAt: "2026-02-25T10:00:00Z",
     completedAt: null,

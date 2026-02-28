@@ -89,7 +89,7 @@ async function generatePlan(
   // Capture plan via MCP tool
   let generatedTasks: Array<{
     description: string;
-    priority: "high" | "medium" | "low";
+    group: number;
   }> = [];
 
   const planToolServer = createSdkMcpServer({
@@ -106,9 +106,13 @@ async function generatePlan(
                 description: z
                   .string()
                   .describe("Clear, actionable task description"),
-                priority: z
-                  .enum(["high", "medium", "low"])
-                  .describe("Task priority"),
+                group: z
+                  .number()
+                  .int()
+                  .min(1)
+                  .describe(
+                    "Execution group (1-based). Tasks in the same group are independent and can run in parallel. Lower groups execute first.",
+                  ),
               }),
             )
             .describe("Array of tasks for the fix plan"),
@@ -186,7 +190,7 @@ async function generatePlan(
     const newTasks: FixPlanTask[] = generatedTasks.map((t) =>
       createTask({
         description: t.description,
-        priority: t.priority,
+        group: t.group,
       }),
     );
 
@@ -297,14 +301,16 @@ Analyze the objective and any available context to create a structured task plan
 Break the work into discrete, actionable tasks. Each task should be:
 - Specific and self-contained
 - Achievable in a single iteration (roughly 10-30 minutes of work)
-- Ordered by dependency and priority
+- Assigned to an execution group based on dependencies
 
 Use the \`submit_plan\` tool to submit your task plan. Call it exactly once with all tasks.
 
-Priority guidelines:
-- **high**: Core functionality, blocking other tasks, critical path items
-- **medium**: Important but not blocking, supporting functionality
-- **low**: Nice-to-have, cleanup, documentation, polish
+Group guidelines:
+- **Group 1**: Foundation tasks with no dependencies — core setup, schema definitions, initial implementations
+- **Group 2**: Tasks that depend on group 1 — features built on the foundation
+- **Group 3+**: Tasks that depend on previous groups — integration, polish, documentation
+- Tasks within the same group MUST be independent of each other (they could theoretically run in parallel)
+- Minimize the number of groups while respecting real dependencies
 
 Do not include tasks for "review" or "testing as a whole" — each implementation task should include its own testing.`;
 }

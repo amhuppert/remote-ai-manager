@@ -6,7 +6,7 @@ function makeTask(overrides: Partial<FixPlanTask> = {}): FixPlanTask {
   return {
     id: "task-1",
     description: "Implement feature X",
-    priority: "medium",
+    group: 1,
     status: "pending",
     createdAt: "2024-01-01T00:00:00Z",
     completedAt: null,
@@ -37,23 +37,32 @@ describe("PromptBuilder", () => {
     expect(prompt).toContain("Refactor the authentication module");
   });
 
-  it("includes task plan with priority ordering", () => {
+  it("organizes tasks by group with group headers", () => {
     const prompt = buildIterationPrompt({
       objective: "Test objective",
       fixPlan: [
-        makeTask({ id: "t-low", description: "Low task", priority: "low" }),
-        makeTask({ id: "t-high", description: "High task", priority: "high" }),
-        makeTask({ id: "t-med", description: "Med task", priority: "medium" }),
+        makeTask({ id: "t-g2", description: "Group 2 task", group: 2 }),
+        makeTask({ id: "t-g1a", description: "Group 1 task A", group: 1 }),
+        makeTask({ id: "t-g1b", description: "Group 1 task B", group: 1 }),
+        makeTask({ id: "t-g3", description: "Group 3 task", group: 3 }),
       ],
       iterationNumber: 1,
       maxIterations: 10,
     });
 
-    const highIdx = prompt.indexOf("[HIGH]");
-    const medIdx = prompt.indexOf("[MED]");
-    const lowIdx = prompt.indexOf("[LOW]");
-    expect(highIdx).toBeLessThan(medIdx);
-    expect(medIdx).toBeLessThan(lowIdx);
+    // Groups should appear in order
+    const g1Idx = prompt.indexOf("### Group 1");
+    const g2Idx = prompt.indexOf("### Group 2");
+    const g3Idx = prompt.indexOf("### Group 3");
+    expect(g1Idx).toBeGreaterThan(-1);
+    expect(g2Idx).toBeGreaterThan(g1Idx);
+    expect(g3Idx).toBeGreaterThan(g2Idx);
+
+    // Tasks should appear under their groups
+    expect(prompt).toContain("Group 1 task A");
+    expect(prompt).toContain("Group 1 task B");
+    expect(prompt).toContain("Group 2 task");
+    expect(prompt).toContain("Group 3 task");
   });
 
   it("shows progress count for completed and skipped tasks", () => {

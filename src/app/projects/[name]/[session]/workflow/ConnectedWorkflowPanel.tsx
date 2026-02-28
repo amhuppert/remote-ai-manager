@@ -99,12 +99,16 @@ export default function ConnectedWorkflowPanel({
   }, [abortMutation]);
 
   const handleTaskAdd = useCallback(
-    (description: string, priority: "high" | "medium" | "low") => {
+    (description: string) => {
       if (!workflow) return;
+      const maxGroup =
+        workflow.fixPlan.length > 0
+          ? Math.max(...workflow.fixPlan.map((t) => t.group))
+          : 1;
       const newTask: FixPlanTask = {
         id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         description,
-        priority,
+        group: maxGroup,
         status: "pending",
         createdAt: new Date().toISOString(),
         completedAt: null,

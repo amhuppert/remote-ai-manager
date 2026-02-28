@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
-import type { FixPlanTask, TaskPriority } from "./types";
+import { useState, useRef, useCallback, useMemo } from "react";
+import type { FixPlanTask } from "./types";
 
 interface TaskPlanEditorProps {
   tasks: FixPlanTask[];
@@ -9,7 +9,7 @@ interface TaskPlanEditorProps {
   showProgress?: boolean;
   showGenerateButton?: boolean;
   isGenerating?: boolean;
-  onTaskAdd?: (description: string, priority: TaskPriority) => void;
+  onTaskAdd?: (description: string) => void;
   onTaskRemove?: (taskId: string) => void;
   onTaskEdit?: (taskId: string, description: string) => void;
   onTaskReorder?: (taskIds: string[]) => void;
@@ -46,8 +46,6 @@ export default function TaskPlanEditor({
   onGeneratePlan,
 }: TaskPlanEditorProps) {
   const [newTaskText, setNewTaskText] = useState("");
-  const [newTaskPriority, setNewTaskPriority] =
-    useState<TaskPriority>("medium");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -60,10 +58,21 @@ export default function TaskPlanEditor({
   const pct = total > 0 ? Math.round((resolved / total) * 100) : 0;
   const allResolved = total > 0 && resolved === total;
 
+  // Organize tasks by group
+  const tasksByGroup = useMemo(() => {
+    const grouped = new Map<number, FixPlanTask[]>();
+    for (const task of tasks) {
+      const list = grouped.get(task.group) ?? [];
+      list.push(task);
+      grouped.set(task.group, list);
+    }
+    return new Map([...grouped.entries()].sort(([a], [b]) => a - b));
+  }, [tasks]);
+
   function handleAddTask() {
     const text = newTaskText.trim();
     if (text) {
-      onTaskAdd?.(text, newTaskPriority);
+      onTaskAdd?.(text);
       setNewTaskText("");
     }
   }
@@ -140,6 +149,76 @@ export default function TaskPlanEditor({
 
   const canDrag = !readOnly && !!onTaskReorder;
 
+  function renderTask(task: FixPlanTask) {
+    const icon = getStatusDisplay(task.status);
+    const isDraggable = canDrag && isEditable(task);
+    const isBeingEdited = editingTaskId === task.id;
+    const isDragOver = dragOverId === task.id;
+    return (
+      <div
+        key={task.id}
+        className={`task-plan-item ${task.status}${isDragOver ? " drag-over" : ""}`}
+        draggable={isDraggable}
+        onDragStart={
+          isDraggable ? (e) => handleDragStart(e, task.id) : undefined
+        }
+        onDragOver={canDrag ? (e) => handleDragOver(e, task.id) : undefined}
+        onDragLeave={canDrag ? handleDragLeave : undefined}
+        onDrop={canDrag ? (e) => handleDrop(e, task.id) : undefined}
+        onDragEnd={canDrag ? handleDragEnd : undefined}
+      >
+        {isDraggable && (
+          <span className="task-plan-drag-handle">{"\u2261"}</span>
+        )}
+        <div className="task-plan-item-status">
+          <span className={`task-check ${icon.className}`}>{icon.symbol}</span>
+        </div>
+        <div className="task-plan-item-body">
+          {isBeingEdited ? (
+            <input
+              className="task-plan-edit-input"
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitEdit();
+                if (e.key === "Escape") cancelEdit();
+              }}
+              onBlur={commitEdit}
+              autoFocus
+            />
+          ) : (
+            <>
+              <span
+                className={`task-plan-item-description${task.status === "skipped" ? " skipped" : ""}`}
+                onDoubleClick={() => startEdit(task)}
+              >
+                {task.description}
+              </span>
+              {task.skipReason && (
+                <span className="task-plan-skip-reason">
+                  Skipped: {task.skipReason}
+                </span>
+              )}
+              {task.addedByIteration !== null && (
+                <span className="task-plan-added-by">
+                  Added by iteration #{task.addedByIteration}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+        {!readOnly && task.status === "pending" && (
+          <button
+            className="btn-icon-only task-plan-remove"
+            onClick={() => onTaskRemove?.(task.id)}
+          >
+            {"\u00D7"}
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="task-plan">
       <div className="task-plan-header">
@@ -172,82 +251,16 @@ export default function TaskPlanEditor({
 
       {tasks.length > 0 ? (
         <div className="task-plan-list">
-          {tasks.map((task) => {
-            const icon = getStatusDisplay(task.status);
-            const isDraggable = canDrag && isEditable(task);
-            const isBeingEdited = editingTaskId === task.id;
-            const isDragOver = dragOverId === task.id;
-            return (
-              <div
-                key={task.id}
-                className={`task-plan-item ${task.status}${isDragOver ? " drag-over" : ""}`}
-                draggable={isDraggable}
-                onDragStart={
-                  isDraggable ? (e) => handleDragStart(e, task.id) : undefined
-                }
-                onDragOver={
-                  canDrag ? (e) => handleDragOver(e, task.id) : undefined
-                }
-                onDragLeave={canDrag ? handleDragLeave : undefined}
-                onDrop={canDrag ? (e) => handleDrop(e, task.id) : undefined}
-                onDragEnd={canDrag ? handleDragEnd : undefined}
-              >
-                {isDraggable && (
-                  <span className="task-plan-drag-handle">{"\u2261"}</span>
-                )}
-                <div className="task-plan-item-status">
-                  <span className={`task-check ${icon.className}`}>
-                    {icon.symbol}
-                  </span>
+          {tasksByGroup.size > 1
+            ? [...tasksByGroup.entries()].map(([group, groupTasks]) => (
+                <div key={group} className="task-plan-group-section">
+                  <div className="task-plan-group-header">
+                    <span className="task-plan-group-label">Group {group}</span>
+                  </div>
+                  {groupTasks.map((task) => renderTask(task))}
                 </div>
-                <div className="task-plan-item-body">
-                  {isBeingEdited ? (
-                    <input
-                      className="task-plan-edit-input"
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitEdit();
-                        if (e.key === "Escape") cancelEdit();
-                      }}
-                      onBlur={commitEdit}
-                      autoFocus
-                    />
-                  ) : (
-                    <>
-                      <span
-                        className={`task-plan-item-description${task.status === "skipped" ? " skipped" : ""}`}
-                        onDoubleClick={() => startEdit(task)}
-                      >
-                        {task.description}
-                      </span>
-                      {task.skipReason && (
-                        <span className="task-plan-skip-reason">
-                          Skipped: {task.skipReason}
-                        </span>
-                      )}
-                      {task.addedByIteration !== null && (
-                        <span className="task-plan-added-by">
-                          Added by iteration #{task.addedByIteration}
-                        </span>
-                      )}
-                    </>
-                  )}
-                </div>
-                <span className={`task-plan-priority ${task.priority}`}>
-                  {task.priority}
-                </span>
-                {!readOnly && task.status === "pending" && (
-                  <button
-                    className="btn-icon-only task-plan-remove"
-                    onClick={() => onTaskRemove?.(task.id)}
-                  >
-                    {"\u00D7"}
-                  </button>
-                )}
-              </div>
-            );
-          })}
+              ))
+            : tasks.map((task) => renderTask(task))}
         </div>
       ) : (
         <div className="task-plan-empty">
@@ -268,15 +281,6 @@ export default function TaskPlanEditor({
               if (e.key === "Enter") handleAddTask();
             }}
           />
-          <select
-            className="task-plan-add-priority"
-            value={newTaskPriority}
-            onChange={(e) => setNewTaskPriority(e.target.value as TaskPriority)}
-          >
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
         </div>
       )}
     </div>

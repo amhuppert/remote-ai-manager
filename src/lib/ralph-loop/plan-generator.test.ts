@@ -27,9 +27,9 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
             if (capturedToolHandler) {
               await capturedToolHandler({
                 tasks: [
-                  { description: "Implement JWT tokens", priority: "high" },
-                  { description: "Add user registration", priority: "medium" },
-                  { description: "Write integration tests", priority: "low" },
+                  { description: "Implement JWT tokens", group: 1 },
+                  { description: "Add user registration", group: 1 },
+                  { description: "Write integration tests", group: 2 },
                 ],
               });
             }
@@ -254,7 +254,7 @@ describe("PlanGenerator", () => {
     expect(plan).toBeDefined();
     expect(plan!.length).toBe(3);
     expect(plan![0]!.description).toBe("Implement JWT tokens");
-    expect(plan![0]!.priority).toBe("high");
+    expect(plan![0]!.group).toBe(1);
     expect(plan![0]!.status).toBe("pending");
     expect(plan![1]!.description).toBe("Add user registration");
     expect(plan![2]!.description).toBe("Write integration tests");
@@ -289,7 +289,7 @@ describe("PlanGenerator", () => {
       {
         id: "existing-1",
         description: "Already planned task",
-        priority: "high" as const,
+        group: 1,
         status: "pending" as const,
         createdAt: "2026-02-25T09:00:00Z",
         completedAt: null,

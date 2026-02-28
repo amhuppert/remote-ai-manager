@@ -148,17 +148,37 @@ export const fixPlanTaskStatusSchema = z.enum([
 ]);
 export type FixPlanTaskStatus = z.infer<typeof fixPlanTaskStatusSchema>;
 
-export const fixPlanTaskSchema = z.object({
+const fixPlanTaskObjectSchema = z.object({
   id: z.string(),
   description: z.string(),
-  priority: z.enum(["high", "medium", "low"]),
+  group: z.number().int().min(1),
   status: fixPlanTaskStatusSchema,
   createdAt: z.string(),
   completedAt: z.string().nullable().default(null),
   skipReason: z.string().nullable().default(null),
   addedByIteration: z.number().nullable().default(null),
 });
-export type FixPlanTask = z.infer<typeof fixPlanTaskSchema>;
+
+/** Backward-compatible schema: migrates legacy `priority` field to `group`. */
+export const fixPlanTaskSchema: z.ZodType<
+  z.infer<typeof fixPlanTaskObjectSchema>
+> = z.preprocess((val: unknown) => {
+  if (
+    val &&
+    typeof val === "object" &&
+    "priority" in val &&
+    !("group" in val)
+  ) {
+    const v = val as Record<string, unknown>;
+    const groupMap: Record<string, number> = { high: 1, medium: 2, low: 3 };
+    const { priority: _priority, ...rest } = v;
+    return { ...rest, group: groupMap[v.priority as string] ?? 2 };
+  }
+  return val;
+}, fixPlanTaskObjectSchema) as unknown as z.ZodType<
+  z.infer<typeof fixPlanTaskObjectSchema>
+>;
+export type FixPlanTask = z.infer<typeof fixPlanTaskObjectSchema>;
 
 // --- Circuit Breaker ---
 export const circuitBreakerStateEnumSchema = z.enum([
@@ -241,7 +261,7 @@ export const updateFixPlanInputSchema = z.object({
     .array(
       z.object({
         description: z.string(),
-        priority: z.enum(["high", "medium", "low"]),
+        group: z.number().int().min(1),
       }),
     )
     .optional(),

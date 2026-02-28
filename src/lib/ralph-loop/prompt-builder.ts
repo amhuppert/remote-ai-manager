@@ -3,7 +3,7 @@ import type {
   ReportStatusInput,
   GitIterationMetrics,
 } from "@/types";
-import { getActiveTasksSorted } from "./fix-plan-manager";
+import { getActiveTasksByGroup } from "./fix-plan-manager";
 
 export interface BuildPromptParams {
   objective: string;
@@ -70,7 +70,7 @@ function buildTaskPlanSection(fixPlan: FixPlanTask[]): string {
     return "No tasks defined.";
   }
 
-  const activeTasks = getActiveTasksSorted(fixPlan);
+  const activeByGroup = getActiveTasksByGroup(fixPlan);
   const completedCount = fixPlan.filter((t) => t.status === "completed").length;
   const skippedCount = fixPlan.filter((t) => t.status === "skipped").length;
   const totalCount = fixPlan.length;
@@ -81,23 +81,21 @@ function buildTaskPlanSection(fixPlan: FixPlanTask[]): string {
   );
   lines.push("");
 
-  if (activeTasks.length === 0) {
+  if (activeByGroup.size === 0) {
     lines.push("All tasks have been resolved.");
     return lines.join("\n");
   }
 
-  lines.push("**Remaining tasks (ordered by priority):**");
-  for (const task of activeTasks) {
-    const priorityLabel =
-      task.priority === "high"
-        ? "[HIGH]"
-        : task.priority === "medium"
-          ? "[MED]"
-          : "[LOW]";
-    const statusLabel = task.status === "in_progress" ? " (in progress)" : "";
-    lines.push(
-      `- ${priorityLabel} [${task.id}] ${task.description}${statusLabel}`,
-    );
+  lines.push(
+    "**Remaining tasks by group (groups execute sequentially; tasks within a group are independent):**",
+  );
+  for (const [group, tasks] of activeByGroup) {
+    lines.push("");
+    lines.push(`### Group ${group}`);
+    for (const task of tasks) {
+      const statusLabel = task.status === "in_progress" ? " (in progress)" : "";
+      lines.push(`- [${task.id}] ${task.description}${statusLabel}`);
+    }
   }
 
   return lines.join("\n");
@@ -151,10 +149,11 @@ Call this tool **whenever** you complete a task, discover a new task, or determi
 Input:
 - \`completedTaskIds\`: Array of task IDs you completed (from the task plan above)
 - \`skippedTasks\`: Array of { taskId, reason } for tasks that became unnecessary
-- \`newTasks\`: Array of { description, priority } for newly discovered tasks
+- \`newTasks\`: Array of { description, group } for newly discovered tasks
 
 **Important guidelines:**
-- Focus on the highest-priority pending tasks first.
+- Focus on tasks in the current group (lowest group number with unresolved tasks). Do not start tasks from a later group until all current-group tasks are resolved.
+- When adding new tasks, assign the current group number if the task is independent, or a higher group number if it depends on other unfinished tasks.
 - Call \`update_fix_plan\` as soon as you complete or skip a task — don't wait until the end.
 - Call \`report_status\` once at the end of your work with an honest assessment.
 - If you encounter permission errors or are blocked, report status as "blocked".

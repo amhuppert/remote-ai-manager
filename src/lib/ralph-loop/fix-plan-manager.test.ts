@@ -6,7 +6,8 @@ import {
   addTasks,
   applyFixPlanUpdate,
   isAllResolved,
-  getActiveTasksSorted,
+  getActiveTasksByGroup,
+  getCurrentGroup,
   getTaskProgress,
 } from "./fix-plan-manager";
 import type { FixPlanTask } from "@/types";
@@ -15,7 +16,7 @@ function makeTask(overrides: Partial<FixPlanTask> = {}): FixPlanTask {
   return {
     id: "task-1",
     description: "Test task",
-    priority: "medium",
+    group: 1,
     status: "pending",
     createdAt: "2024-01-01T00:00:00Z",
     completedAt: null,
@@ -28,10 +29,10 @@ function makeTask(overrides: Partial<FixPlanTask> = {}): FixPlanTask {
 describe("FixPlanManager", () => {
   describe("createTask", () => {
     it("creates a task with generated ID and pending status", () => {
-      const task = createTask({ description: "Fix bug", priority: "high" });
+      const task = createTask({ description: "Fix bug", group: 1 });
       expect(task.id).toBeTruthy();
       expect(task.description).toBe("Fix bug");
-      expect(task.priority).toBe("high");
+      expect(task.group).toBe(1);
       expect(task.status).toBe("pending");
       expect(task.completedAt).toBeNull();
       expect(task.skipReason).toBeNull();
@@ -40,7 +41,7 @@ describe("FixPlanManager", () => {
     it("sets addedByIteration when provided", () => {
       const task = createTask({
         description: "New task",
-        priority: "low",
+        group: 3,
         addedByIteration: 5,
       });
       expect(task.addedByIteration).toBe(5);
@@ -104,15 +105,15 @@ describe("FixPlanManager", () => {
       const result = addTasks(
         plan,
         [
-          { description: "New task A", priority: "high" },
-          { description: "New task B", priority: "low" },
+          { description: "New task A", group: 1 },
+          { description: "New task B", group: 2 },
         ],
         3,
       );
       expect(result.plan).toHaveLength(3);
       expect(result.addedIds).toHaveLength(2);
       expect(result.plan[1]!.description).toBe("New task A");
-      expect(result.plan[1]!.priority).toBe("high");
+      expect(result.plan[1]!.group).toBe(1);
       expect(result.plan[1]!.addedByIteration).toBe(3);
       expect(result.plan[2]!.description).toBe("New task B");
     });
@@ -130,7 +131,7 @@ describe("FixPlanManager", () => {
         {
           completedTaskIds: ["t1"],
           skippedTasks: [{ taskId: "t2", reason: "Not needed" }],
-          newTasks: [{ description: "Discovered task", priority: "high" }],
+          newTasks: [{ description: "Discovered task", group: 1 }],
         },
         5,
       );
@@ -212,25 +213,48 @@ describe("FixPlanManager", () => {
     });
   });
 
-  describe("getActiveTasksSorted", () => {
-    it("returns pending and in_progress tasks sorted by priority", () => {
+  describe("getActiveTasksByGroup", () => {
+    it("groups pending and in_progress tasks by group number", () => {
       const plan = [
-        makeTask({ id: "low-1", priority: "low", status: "pending" }),
-        makeTask({ id: "high-1", priority: "high", status: "pending" }),
-        makeTask({ id: "med-1", priority: "medium", status: "in_progress" }),
-        makeTask({ id: "done", priority: "high", status: "completed" }),
-        makeTask({ id: "skip", priority: "high", status: "skipped" }),
+        makeTask({ id: "g2-1", group: 2, status: "pending" }),
+        makeTask({ id: "g1-1", group: 1, status: "pending" }),
+        makeTask({ id: "g1-2", group: 1, status: "in_progress" }),
+        makeTask({ id: "done", group: 1, status: "completed" }),
+        makeTask({ id: "skip", group: 1, status: "skipped" }),
+        makeTask({ id: "g3-1", group: 3, status: "pending" }),
       ];
-      const sorted = getActiveTasksSorted(plan);
-      expect(sorted.map((t) => t.id)).toEqual(["high-1", "med-1", "low-1"]);
+      const grouped = getActiveTasksByGroup(plan);
+      expect([...grouped.keys()]).toEqual([1, 2, 3]);
+      expect(grouped.get(1)!.map((t) => t.id)).toEqual(["g1-1", "g1-2"]);
+      expect(grouped.get(2)!.map((t) => t.id)).toEqual(["g2-1"]);
+      expect(grouped.get(3)!.map((t) => t.id)).toEqual(["g3-1"]);
     });
 
-    it("returns empty for fully resolved plan", () => {
+    it("returns empty map for fully resolved plan", () => {
       const plan = [
         makeTask({ status: "completed" }),
         makeTask({ status: "skipped" }),
       ];
-      expect(getActiveTasksSorted(plan)).toEqual([]);
+      expect(getActiveTasksByGroup(plan).size).toBe(0);
+    });
+  });
+
+  describe("getCurrentGroup", () => {
+    it("returns lowest active group number", () => {
+      const plan = [
+        makeTask({ group: 1, status: "completed" }),
+        makeTask({ group: 2, status: "pending" }),
+        makeTask({ group: 3, status: "pending" }),
+      ];
+      expect(getCurrentGroup(plan)).toBe(2);
+    });
+
+    it("returns null when all resolved", () => {
+      const plan = [
+        makeTask({ status: "completed" }),
+        makeTask({ status: "skipped" }),
+      ];
+      expect(getCurrentGroup(plan)).toBeNull();
     });
   });
 

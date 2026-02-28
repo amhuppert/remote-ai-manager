@@ -7674,29 +7674,22 @@ textarea {
   color: var(--cyan-dim);
 }
 
-.task-plan-priority {
+.task-plan-group-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.task-plan-group-header {
+  padding: var(--space-xs) 0;
+}
+
+.task-plan-group-label {
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.62rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  flex-shrink: 0;
-}
-
-.task-plan-priority.high {
-  background: var(--red-glow);
-  color: var(--red);
-}
-
-.task-plan-priority.medium {
-  background: var(--amber-glow);
-  color: var(--amber);
-}
-
-.task-plan-priority.low {
-  background: rgba(77, 90, 114, 0.15);
   color: var(--text-tertiary);
 }
 
@@ -7802,17 +7795,6 @@ textarea {
 
 .task-plan-add-input::placeholder {
   color: var(--text-tertiary);
-}
-
-.task-plan-add-priority {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  color: var(--text-secondary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  padding: var(--space-xs) var(--space-sm);
-  cursor: pointer;
 }
 
 /* ---- Workflow Config ---- */

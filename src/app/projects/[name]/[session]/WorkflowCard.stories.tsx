@@ -6,7 +6,7 @@ function makeTask(overrides: Partial<FixPlanTask> = {}): FixPlanTask {
   return {
     id: `task-${Math.random().toString(36).slice(2, 8)}`,
     description: "Implement feature",
-    priority: "medium",
+    group: 1,
     status: "pending",
     createdAt: new Date().toISOString(),
     completedAt: null,
@@ -85,9 +85,9 @@ export const PlanningWithTasks: Story = {
     workflow: makeWorkflow({
       status: "planning",
       fixPlan: [
-        makeTask({ description: "Set up OAuth2 provider", priority: "high" }),
-        makeTask({ description: "Create login form", priority: "high" }),
-        makeTask({ description: "Add session management", priority: "medium" }),
+        makeTask({ description: "Set up OAuth2 provider", group: 1 }),
+        makeTask({ description: "Create login form", group: 1 }),
+        makeTask({ description: "Add session management", group: 2 }),
       ],
     }),
   },
@@ -112,9 +112,9 @@ export const Running: Story = {
         }),
         makeTask({
           description: "Write integration tests",
-          priority: "medium",
+          group: 2,
         }),
-        makeTask({ description: "Add error handling", priority: "low" }),
+        makeTask({ description: "Add error handling", group: 3 }),
       ],
       iterations: [
         { iterationNumber: 1 } as RalphLoopWorkflow["iterations"][number],
