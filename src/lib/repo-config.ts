@@ -61,6 +61,7 @@ export async function runPreMergeValidation(params: {
       env: {
         ...process.env,
         PROJECT_ROOT: projectPath,
+        CLAUDE_PROJECT_DIR: projectPath,
         WORKTREE_PATH: worktreePath,
         SESSION_NAME: sessionName,
         BRANCH_NAME: branchName,
