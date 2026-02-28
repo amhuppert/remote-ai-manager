@@ -24,6 +24,7 @@ import {
   useToggleArchivedSessions,
 } from "@/stores/sessions.store";
 import CreateSessionModal from "./CreateSessionModal";
+import OptimisticDialog from "./OptimisticDialog";
 import PresetInstallDialog from "./PresetInstallDialog";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Topbar from "@/components/Topbar";
@@ -106,6 +107,9 @@ export default function SessionsList({
   // --- Mutations ---
   const deleteMutation = useDeleteSessionMutation(projectName);
   const installPresetMutation = useInstallPresetMutation(projectName);
+
+  // --- Optimistic dialog ---
+  const [optimisticDialogOpen, setOptimisticDialogOpen] = useState(false);
 
   // --- Preset install dialog ---
   const [presetDialogOpen, setPresetDialogOpen] = useState(false);
@@ -203,6 +207,12 @@ export default function SessionsList({
                     Install Preset
                   </button>
                   <button
+                    className="btn btn-sm"
+                    onClick={() => setOptimisticDialogOpen(true)}
+                  >
+                    Quick Task
+                  </button>
+                  <button
                     className="btn btn-primary btn-sm"
                     onClick={openCreateModal}
                   >
@@ -244,6 +254,11 @@ export default function SessionsList({
                             )}
                             {session.creationMode === "focus" && (
                               <span className="session-badge focus">focus</span>
+                            )}
+                            {session.creationMode === "optimistic" && (
+                              <span className="session-badge optimistic">
+                                optimistic
+                              </span>
                             )}
                             {session.creationMode === "fast" && (
                               <span className="session-badge fast">fast</span>
@@ -308,6 +323,12 @@ export default function SessionsList({
                 </div>
               )}
             </div>
+
+            <OptimisticDialog
+              projectName={projectName}
+              open={optimisticDialogOpen}
+              onClose={() => setOptimisticDialogOpen(false)}
+            />
 
             <CreateSessionModal
               projectName={projectName}

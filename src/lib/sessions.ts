@@ -16,6 +16,7 @@ import { createLogger } from "./logging";
 import { ensureUniqueName } from "./worktrees";
 import { readRepoConfig } from "./repo-config";
 import { stopAllForSession } from "./dev-server-registry";
+import { executeOptimisticWorkflow } from "./optimistic";
 
 const logger = createLogger("sessions");
 
@@ -107,9 +108,9 @@ export async function generateSessionName(
 
 /**
  * Provision the worktree, run init script, and persist session state.
- * Shared by both fast and focus creation flows.
+ * Shared by fast, focus, and optimistic creation flows.
  */
-async function provisionSession(
+export async function provisionSession(
   projectPath: string,
   sessionName: string,
   opts: {
@@ -147,7 +148,8 @@ async function provisionSession(
     // Write memory-bank/focus.md
     const memoryBankDir = path.join(worktreePath, "memory-bank");
     await mkdir(memoryBankDir, { recursive: true });
-    if (opts.mode === "fast") {
+    if (opts.mode !== "focus") {
+      // Fast and optimistic modes: direct objective content
       await writeFile(
         path.join(memoryBankDir, "focus.md"),
         `# Session Focus\n\n## Objective\n\n${opts.objective ?? sessionName}\n`,
@@ -314,6 +316,41 @@ export async function createSessionFocus(
     mode: "focus",
     objective,
   });
+}
+
+/**
+ * Create a session in optimistic mode.
+ * AI generates the session name from the instructions.
+ * Launches the optimistic workflow orchestrator as fire-and-forget.
+ */
+export async function createSessionOptimistic(
+  projectPath: string,
+  instructions: string,
+): Promise<SessionState> {
+  const baseName = await generateSessionName(instructions, projectPath);
+
+  // Ensure uniqueness within project
+  const state = await readState();
+  const project = state.projects[projectPath];
+  const existingNames = new Set(Object.keys(project?.sessions ?? {}));
+  const sessionName = ensureUniqueName(baseName, existingNames);
+
+  const session = await provisionSession(projectPath, sessionName, {
+    mode: "optimistic",
+    objective: instructions,
+  });
+
+  const projectName = projectPath.split("/").pop() ?? projectPath;
+
+  // Launch orchestrator as fire-and-forget (not awaited)
+  void executeOptimisticWorkflow({
+    projectPath,
+    projectName,
+    session,
+    instructions,
+  });
+
+  return session;
 }
 
 /**

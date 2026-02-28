@@ -4868,6 +4868,11 @@ textarea {
   color: var(--text-tertiary);
 }
 
+.session-badge.optimistic {
+  background: rgba(255, 171, 0, 0.1);
+  color: var(--amber);
+}
+
 /* ============================================================
    Commit History — Timeline View
    ============================================================ */

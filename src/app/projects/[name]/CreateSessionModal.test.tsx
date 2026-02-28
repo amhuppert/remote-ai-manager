@@ -66,6 +66,11 @@ function switchToFocusMode() {
   fireEvent.click(screen.getByText("Focus"));
 }
 
+/** Switch modal to Optimistic mode by clicking the Optimistic button */
+function switchToOptimisticMode() {
+  fireEvent.click(screen.getByText("Optimistic"));
+}
+
 describe("CreateSessionModal", () => {
   it("renders modal with fast mode by default", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
@@ -279,6 +284,99 @@ describe("CreateSessionModal", () => {
       });
 
       expect(mutateMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("optimistic mode", () => {
+    it("shows Optimistic button in mode toggle", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      expect(screen.getByText("Optimistic")).toBeDefined();
+    });
+
+    it("switches to optimistic mode and shows instructions textarea", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      switchToOptimisticMode();
+      expect(screen.getByText("What should Claude do?")).toBeDefined();
+      expect(
+        screen.getByPlaceholderText(
+          "e.g. Fix the typo in the login page header",
+        ),
+      ).toBeDefined();
+    });
+
+    it("shows optimistic-specific form hint", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      switchToOptimisticMode();
+      expect(
+        screen.getByText(
+          "Claude will complete this task and merge the result into main",
+        ),
+      ).toBeDefined();
+    });
+
+    it("auto-focuses textarea in optimistic mode", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      switchToOptimisticMode();
+      vi.advanceTimersByTime(150);
+      const textarea = screen.getByPlaceholderText(
+        "e.g. Fix the typo in the login page header",
+      );
+      expect(document.activeElement).toBe(textarea);
+    });
+
+    it("enables create button when instructions have content", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      switchToOptimisticMode();
+      const textarea = screen.getByPlaceholderText(
+        "e.g. Fix the typo in the login page header",
+      );
+      fireEvent.change(textarea, { target: { value: "Fix the bug" } });
+      const createBtn = screen.getByText("Create Session");
+      expect(createBtn.hasAttribute("disabled")).toBe(false);
+    });
+
+    it("disables create button when instructions are empty", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      switchToOptimisticMode();
+      const createBtn = screen.getByText("Create Session");
+      expect(createBtn.hasAttribute("disabled")).toBe(true);
+    });
+
+    it("submits instructions on Enter key", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      switchToOptimisticMode();
+      const textarea = screen.getByPlaceholderText(
+        "e.g. Fix the typo in the login page header",
+      );
+      fireEvent.change(textarea, { target: { value: "Fix the login bug" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      expect(mutateMock).toHaveBeenCalledWith(
+        { mode: "optimistic", instructions: "Fix the login bug" },
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+
+    it("closes dialog without navigation after successful optimistic creation", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      switchToOptimisticMode();
+      const textarea = screen.getByPlaceholderText(
+        "e.g. Fix the typo in the login page header",
+      );
+      fireEvent.change(textarea, { target: { value: "Fix the bug" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      // Simulate successful creation
+      const onSuccess = mutateMock.mock.calls[0]?.[1]?.onSuccess;
+      act(() => {
+        onSuccess?.({
+          sessionName: "fix-bug",
+          conversations: [{ id: "conv-1" }],
+        });
+      });
+
+      // onClose should be called (fire-and-forget — no navigation)
+      expect(defaultProps.onClose).toHaveBeenCalled();
     });
   });
 });

@@ -60,6 +60,7 @@ export async function executePromptStream(
   conversationId?: string,
   modelId?: ClaudeModel,
   images?: ImagePayload[],
+  options?: { autonomous?: boolean },
 ): Promise<{ conversationId: string }> {
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
@@ -217,6 +218,15 @@ export async function executePromptStream(
           input: Record<string, unknown>,
         ) => {
           if (toolName === "AskUserQuestion") {
+            // Autonomous mode: deny AskUserQuestion to prevent blocking
+            if (options?.autonomous) {
+              return {
+                behavior: "deny" as const,
+                message:
+                  "Autonomous optimistic mode — make your best judgment and proceed without asking questions.",
+              };
+            }
+
             const questions = input.questions;
             if (!questions || !Array.isArray(questions)) {
               return { behavior: "allow" as const, updatedInput: input };

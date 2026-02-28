@@ -127,7 +127,11 @@ export type ConversationState = z.infer<typeof conversationStateSchema>;
 export const sessionSourceSchema = z.enum(["cc", "imported"]);
 export type SessionSource = z.infer<typeof sessionSourceSchema>;
 
-export const sessionCreationModeSchema = z.enum(["fast", "focus"]);
+export const sessionCreationModeSchema = z.enum([
+  "fast",
+  "focus",
+  "optimistic",
+]);
 export type SessionCreationMode = z.infer<typeof sessionCreationModeSchema>;
 
 // ============================================================
@@ -431,6 +435,10 @@ export const createSessionRequestSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("focus"),
     objective: z.string().trim().min(1),
+  }),
+  z.object({
+    mode: z.literal("optimistic"),
+    instructions: z.string().trim().min(1),
   }),
 ]);
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;

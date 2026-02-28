@@ -48,6 +48,26 @@ vi.mock("@/stores/unified-panel.store", () => ({
   useToggleUnifiedPanel: () => vi.fn(),
 }));
 
+// Mock voice recorder and app hotkey (used by OptimisticDialog and CreateSessionModal)
+vi.mock("@/hooks/useVoiceRecorder", () => ({
+  useVoiceRecorder: vi.fn(() => ({
+    isRecording: false,
+    isProcessing: false,
+    elapsedTime: 0,
+    isAvailable: false,
+    toggleRecording: vi.fn(),
+    stopRecording: vi.fn(),
+  })),
+}));
+
+vi.mock("@/hooks/useAppHotkey", () => ({
+  useAppHotkey: vi.fn(),
+}));
+
+vi.mock("@/components/VoiceRecordButton", () => ({
+  VoiceRecordButton: () => null,
+}));
+
 // Mock mutations
 const deleteMutateMock = vi.fn();
 vi.mock("@/lib/mutations", () => ({
@@ -220,5 +240,26 @@ describe("SessionsList", () => {
     mockSessionsData.isPending = true;
     renderWithQuery(<SessionsList projectName="my-project" />);
     expect(screen.getByText("Loading sessions...")).toBeDefined();
+  });
+
+  it("renders optimistic badge for optimistic mode sessions", () => {
+    mockSessionsData.data = [
+      {
+        ...makeSessions(1)[0]!,
+        creationMode: "optimistic",
+      },
+    ];
+    const { container } = renderWithQuery(
+      <SessionsList projectName="my-project" />,
+    );
+    const badge = container.querySelector(".session-badge.optimistic");
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent?.trim()).toBe("optimistic");
+  });
+
+  it("renders Quick Task button for standalone optimistic dialog", () => {
+    mockSessionsData.data = [];
+    renderWithQuery(<SessionsList projectName="my-project" />);
+    expect(screen.getByText("Quick Task")).toBeDefined();
   });
 });

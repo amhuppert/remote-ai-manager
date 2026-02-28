@@ -63,7 +63,8 @@ export function useCreateSessionMutation(projectName: string) {
     mutationFn: (
       params:
         | { mode: "fast"; sessionName: string }
-        | { mode: "focus"; objective: string },
+        | { mode: "focus"; objective: string }
+        | { mode: "optimistic"; instructions: string },
     ) =>
       mutationFetch<SessionState>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions`,

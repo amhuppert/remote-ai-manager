@@ -23,17 +23,29 @@ export default function CreateSessionModal({
   const [mode, setMode] = useState<SessionCreationMode>("fast");
   const [sessionName, setSessionName] = useState("");
   const [objective, setObjective] = useState("");
+  const [instructions, setInstructions] = useState("");
   const [error, setError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const objectiveRef = useRef(objective);
+  const instructionsRef = useRef(instructions);
   const fireAndForgetRef = useRef(false);
   const autoSubmitPendingRef = useRef(false);
   useEffect(() => {
     objectiveRef.current = objective;
   });
+  useEffect(() => {
+    instructionsRef.current = instructions;
+  });
 
   const createMutation = useCreateSessionMutation(projectName);
+
+  // Voice context returns the relevant text based on mode
+  const getVoiceContext = useCallback(
+    () =>
+      mode === "optimistic" ? instructionsRef.current : objectiveRef.current,
+    [mode],
+  );
 
   const {
     isRecording,
@@ -43,13 +55,21 @@ export default function CreateSessionModal({
     toggleRecording,
   } = useVoiceRecorder({
     projectName,
-    getContext: useCallback(() => objectiveRef.current, []),
+    getContext: getVoiceContext,
     onResult: (text) => {
-      const newObjective = objectiveRef.current
-        ? objectiveRef.current + "\n" + text
-        : text;
-      setObjective(newObjective);
-      objectiveRef.current = newObjective;
+      if (mode === "optimistic") {
+        const newInstructions = instructionsRef.current
+          ? instructionsRef.current + "\n" + text
+          : text;
+        setInstructions(newInstructions);
+        instructionsRef.current = newInstructions;
+      } else {
+        const newObjective = objectiveRef.current
+          ? objectiveRef.current + "\n" + text
+          : text;
+        setObjective(newObjective);
+        objectiveRef.current = newObjective;
+      }
 
       if (fireAndForgetRef.current) {
         fireAndForgetRef.current = false;
@@ -63,7 +83,10 @@ export default function CreateSessionModal({
     },
   });
 
-  // Alt+V hotkey to toggle voice recording while modal is open (focus mode only)
+  // Voice mode is available for focus and optimistic modes
+  const voiceEnabled = mode === "focus" || mode === "optimistic";
+
+  // Alt+V hotkey to toggle voice recording while modal is open (focus/optimistic mode)
   useAppHotkey(
     "voiceToggle",
     () => {
@@ -73,7 +96,7 @@ export default function CreateSessionModal({
       void toggleRecording();
     },
     {
-      enabled: open && mode === "focus" && voiceAvailable && !isProcessing,
+      enabled: open && voiceEnabled && voiceAvailable && !isProcessing,
     },
   );
 
@@ -87,7 +110,7 @@ export default function CreateSessionModal({
       void toggleRecording();
     },
     {
-      enabled: open && mode === "focus" && voiceAvailable && !isProcessing,
+      enabled: open && voiceEnabled && voiceAvailable && !isProcessing,
     },
   );
 
@@ -98,6 +121,7 @@ export default function CreateSessionModal({
     if (open) {
       setSessionName("");
       setObjective("");
+      setInstructions("");
       setMode("fast");
       setError(null);
       fireAndForgetRef.current = false;
@@ -134,7 +158,9 @@ export default function CreateSessionModal({
     !isRecording &&
     (mode === "fast"
       ? sessionName.trim().length > 0
-      : objective.trim().length > 0);
+      : mode === "optimistic"
+        ? instructions.trim().length > 0
+        : objective.trim().length > 0);
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -143,11 +169,17 @@ export default function CreateSessionModal({
     const params =
       mode === "fast"
         ? ({ mode: "fast", sessionName: sessionName.trim() } as const)
-        : ({ mode: "focus", objective: objective.trim() } as const);
+        : mode === "optimistic"
+          ? ({ mode: "optimistic", instructions: instructions.trim() } as const)
+          : ({ mode: "focus", objective: objective.trim() } as const);
 
     createMutation.mutate(params, {
       onSuccess: (session) => {
         onClose();
+
+        // Optimistic mode: fire-and-forget — close dialog without navigation
+        if (mode === "optimistic") return;
+
         const conversationId = session.conversations[0]?.id;
         const basePath = conversationId
           ? `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}/${encodeURIComponent(conversationId)}`
@@ -178,6 +210,22 @@ export default function CreateSessionModal({
 
   if (!open) return null;
 
+  const textareaValue = mode === "optimistic" ? instructions : objective;
+  const setTextareaValue =
+    mode === "optimistic" ? setInstructions : setObjective;
+  const textareaLabel =
+    mode === "optimistic"
+      ? "What should Claude do?"
+      : "What do you want to work on?";
+  const textareaPlaceholder =
+    mode === "optimistic"
+      ? "e.g. Fix the typo in the login page header"
+      : "e.g. Add user authentication with JWT tokens";
+  const textareaHint =
+    mode === "optimistic"
+      ? "Claude will complete this task and merge the result into main"
+      : "Agent will research the codebase and clarify the objective first";
+
   return (
     <div
       className="modal-overlay"
@@ -196,6 +244,14 @@ export default function CreateSessionModal({
               disabled={createMutation.isPending}
             >
               Fast
+            </button>
+            <button
+              type="button"
+              className={`mode-btn${mode === "optimistic" ? " active" : ""}`}
+              onClick={() => setMode("optimistic")}
+              disabled={createMutation.isPending}
+            >
+              Optimistic
             </button>
             <button
               type="button"
@@ -245,7 +301,7 @@ export default function CreateSessionModal({
                 htmlFor="session-objective-input"
                 style={{ marginTop: "var(--space-sm)" }}
               >
-                What do you want to work on?
+                {textareaLabel}
               </label>
               <div style={{ position: "relative" }}>
                 <textarea
@@ -253,10 +309,10 @@ export default function CreateSessionModal({
                   id="session-objective-input"
                   className="form-input"
                   rows={6}
-                  placeholder="e.g. Add user authentication with JWT tokens"
-                  value={objective}
+                  placeholder={textareaPlaceholder}
+                  value={textareaValue}
                   onChange={(e) => {
-                    setObjective(e.target.value);
+                    setTextareaValue(e.target.value);
                     setError(null);
                   }}
                   onKeyDown={(e) => {
@@ -287,9 +343,7 @@ export default function CreateSessionModal({
                   />
                 </div>
               </div>
-              <div className="form-hint">
-                Agent will research the codebase and clarify the objective first
-              </div>
+              <div className="form-hint">{textareaHint}</div>
             </>
           )}
           {error && <div className="form-error">{error}</div>}

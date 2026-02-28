@@ -17,6 +17,7 @@ const {
   ensureUniqueNameMock,
   queryMock,
   readRepoConfigMock,
+  executeOptimisticWorkflowMock,
 } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
   existsSyncMock: vi.fn<(p: string) => boolean>(),
@@ -30,6 +31,7 @@ const {
   ensureUniqueNameMock: vi.fn(),
   queryMock: vi.fn(),
   readRepoConfigMock: vi.fn(),
+  executeOptimisticWorkflowMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -65,6 +67,10 @@ vi.mock("./repo-config", () => ({
   readRepoConfig: readRepoConfigMock,
 }));
 
+vi.mock("./optimistic", () => ({
+  executeOptimisticWorkflow: executeOptimisticWorkflowMock,
+}));
+
 // ---------------------------------------------------------------------------
 // Import module under test (after mocks)
 // ---------------------------------------------------------------------------
@@ -73,8 +79,10 @@ import {
   sanitizeBranchName,
   createSessionFast,
   createSessionFocus,
+  createSessionOptimistic,
   deleteSession,
   generateSessionName,
+  provisionSession,
 } from "./sessions";
 
 // ---------------------------------------------------------------------------
@@ -926,5 +934,167 @@ describe("deleteSession", () => {
     await expect(deleteSession("/projects/repo", "ghost")).rejects.toThrow(
       'Session "ghost" not found in project',
     );
+  });
+});
+
+// ===========================================================================
+// 1.7 – Optimistic mode provisioning (Task 1.2)
+// ===========================================================================
+
+describe("provisionSession — optimistic mode gets fast-mode treatment", () => {
+  it("writes fast-mode focus.md content for optimistic sessions", async () => {
+    mockExecFileSuccess();
+    await provisionSession("/projects/repo", "opt-task", {
+      mode: "optimistic",
+      objective: "Fix the bug in login",
+    });
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/projects/repo/.worktrees/opt-task/memory-bank/focus.md",
+      "# Session Focus\n\n## Objective\n\nFix the bug in login\n",
+      "utf-8",
+    );
+  });
+
+  it("sets conversation role to null for optimistic sessions (no initialization)", async () => {
+    mockExecFileSuccess();
+    const session = await provisionSession("/projects/repo", "opt-null-role", {
+      mode: "optimistic",
+      objective: "Add a feature",
+    });
+
+    expect(session.conversations[0]!.role).toBeNull();
+  });
+
+  it("still writes focus-mode content for focus sessions", async () => {
+    mockExecFileSuccess();
+    await provisionSession("/projects/repo", "focus-check", {
+      mode: "focus",
+      objective: "Research the auth system",
+    });
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/projects/repo/.worktrees/focus-check/memory-bank/focus.md",
+      "# Session Focus\n\n## Objective\n\nResearch the auth system\n\n> This focus document will be enriched after objective analysis.\n",
+      "utf-8",
+    );
+  });
+
+  it("still sets conversation role to initialization for focus sessions", async () => {
+    mockExecFileSuccess();
+    const session = await provisionSession("/projects/repo", "focus-role", {
+      mode: "focus",
+      objective: "Research something",
+    });
+
+    expect(session.conversations[0]!.role).toBe("initialization");
+  });
+
+  it("records creationMode as optimistic in session state", async () => {
+    mockExecFileSuccess();
+    const session = await provisionSession("/projects/repo", "opt-mode", {
+      mode: "optimistic",
+      objective: "Do the thing",
+    });
+
+    expect(session.creationMode).toBe("optimistic");
+  });
+});
+
+// ===========================================================================
+// 1.8 – Optimistic session creation (Task 3.1)
+// ===========================================================================
+
+describe("createSessionOptimistic", () => {
+  it("generates a session name from instructions via Agent SDK", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("Fix Login"));
+    mockExecFileSuccess();
+
+    const session = await createSessionOptimistic(
+      "/projects/repo",
+      "Fix the login page bug",
+    );
+
+    expect(session.sessionName).toBe("Fix Login");
+    expect(queryMock).toHaveBeenCalled();
+  });
+
+  it("provisions session with optimistic mode and instructions as objective", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("Auth Fix"));
+    mockExecFileSuccess();
+
+    const session = await createSessionOptimistic(
+      "/projects/repo",
+      "Fix authentication flow",
+    );
+
+    expect(session.creationMode).toBe("optimistic");
+    expect(session.objective).toBe("Fix authentication flow");
+    expect(session.conversations).toHaveLength(1);
+    expect(session.conversations[0]!.role).toBeNull();
+  });
+
+  it("ensures generated name is unique within project", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "Duplicate"),
+    );
+    ensureUniqueNameMock.mockReturnValue("Duplicate 2");
+    queryMock.mockReturnValue(mockQueryResponse("Duplicate"));
+    mockExecFileSuccess();
+
+    const session = await createSessionOptimistic(
+      "/projects/repo",
+      "Something duplicated",
+    );
+
+    expect(ensureUniqueNameMock).toHaveBeenCalledWith(
+      "Duplicate",
+      new Set(["Duplicate"]),
+    );
+    expect(session.sessionName).toBe("Duplicate 2");
+  });
+
+  it("launches orchestrator as fire-and-forget and returns session immediately", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("Quick Task"));
+    mockExecFileSuccess();
+
+    const session = await createSessionOptimistic(
+      "/projects/repo",
+      "Do something quick",
+    );
+
+    // Session returned immediately
+    expect(session.sessionName).toBe("Quick Task");
+
+    // Orchestrator was launched with correct params
+    expect(executeOptimisticWorkflowMock).toHaveBeenCalledTimes(1);
+    expect(executeOptimisticWorkflowMock).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      projectName: "repo",
+      session: expect.objectContaining({
+        sessionName: "Quick Task",
+        creationMode: "optimistic",
+      }),
+      instructions: "Do something quick",
+    });
+  });
+
+  it("returns SessionState before orchestrator completes", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("Fast Return"));
+    mockExecFileSuccess();
+
+    // Make orchestrator take a long time (simulating prompt execution)
+    executeOptimisticWorkflowMock.mockReturnValue(
+      new Promise(() => {}), // never resolves
+    );
+
+    const session = await createSessionOptimistic(
+      "/projects/repo",
+      "Long running task",
+    );
+
+    // Session returned even though orchestrator hasn't finished
+    expect(session.sessionName).toBe("Fast Return");
+    expect(session.creationMode).toBe("optimistic");
   });
 });

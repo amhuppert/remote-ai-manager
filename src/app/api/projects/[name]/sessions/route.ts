@@ -4,6 +4,7 @@ import { getProjectSessions } from "@/lib/state";
 import {
   createSessionFast,
   createSessionFocus,
+  createSessionOptimistic,
   deleteSession,
 } from "@/lib/sessions";
 import { discoverAndImportWorktrees } from "@/lib/worktrees";
@@ -65,17 +66,21 @@ export const POST = withTracing(async (request, { params }) => {
     return NextResponse.json(
       {
         error:
-          "Invalid request: fast mode requires sessionName, focus mode requires objective",
+          "Invalid request: fast mode requires sessionName, focus mode requires objective, optimistic mode requires instructions",
       } satisfies ApiError,
       { status: 400 },
     );
   }
 
   try {
-    const session =
-      body.mode === "fast"
-        ? await createSessionFast(projectPath, body.sessionName)
-        : await createSessionFocus(projectPath, body.objective);
+    let session;
+    if (body.mode === "fast") {
+      session = await createSessionFast(projectPath, body.sessionName);
+    } else if (body.mode === "optimistic") {
+      session = await createSessionOptimistic(projectPath, body.instructions);
+    } else {
+      session = await createSessionFocus(projectPath, body.objective);
+    }
     return NextResponse.json(session, { status: 201 });
   } catch (err) {
     const message =
