@@ -30,7 +30,7 @@ export const PRESETS: DevServerPreset[] = [
 interface PresetInstallDialogProps {
   open: boolean;
   projectName: string;
-  onInstall: (presetId: string) => void;
+  onInstall: (presetId: string, subdir?: string) => void;
   onClose: () => void;
   isInstalling?: boolean;
   installedPresets?: string[];
@@ -45,6 +45,7 @@ export default function PresetInstallDialog({
   installedPresets = [],
 }: PresetInstallDialogProps): React.JSX.Element | null {
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+  const [subdir, setSubdir] = useState("");
 
   // Reset selection when modal opens
   const [prevOpen, setPrevOpen] = useState(false);
@@ -52,6 +53,7 @@ export default function PresetInstallDialog({
     setPrevOpen(open);
     if (open) {
       setSelectedPreset(null);
+      setSubdir("");
     }
   }
 
@@ -72,6 +74,7 @@ export default function PresetInstallDialog({
   if (!open) return null;
 
   const canInstall = selectedPreset !== null && !isInstalling;
+  const trimmedSubdir = subdir.trim().replace(/\/+$/, "");
 
   return (
     <div
@@ -129,6 +132,30 @@ export default function PresetInstallDialog({
           })}
         </div>
 
+        {selectedPreset && (
+          <div className="preset-subdir-field">
+            <label
+              className="preset-subdir-label"
+              htmlFor="preset-subdir-input"
+            >
+              Subdirectory{" "}
+              <span className="preset-subdir-optional">(optional)</span>
+            </label>
+            <input
+              id="preset-subdir-input"
+              type="text"
+              className="preset-subdir-input"
+              placeholder="e.g. dashboard-ui"
+              value={subdir}
+              onChange={(e) => setSubdir(e.target.value)}
+              disabled={isInstalling}
+            />
+            <div className="preset-subdir-hint">
+              For monorepos where the app lives in a subdirectory
+            </div>
+          </div>
+        )}
+
         <div className="modal-actions">
           <button
             className="btn btn-sm"
@@ -139,7 +166,10 @@ export default function PresetInstallDialog({
           </button>
           <button
             className="btn btn-primary btn-sm"
-            onClick={() => selectedPreset && onInstall(selectedPreset)}
+            onClick={() =>
+              selectedPreset &&
+              onInstall(selectedPreset, trimmedSubdir || undefined)
+            }
             disabled={!canInstall}
           >
             {isInstalling ? "Installing..." : "Install Preset"}

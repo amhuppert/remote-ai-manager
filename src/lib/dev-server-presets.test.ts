@@ -150,5 +150,40 @@ describe("PresetRegistry", () => {
     it("throws for unknown preset ID", () => {
       expect(() => generatePresetScript("unknown")).toThrow();
     });
+
+    describe("with subdir", () => {
+      it("generates a script that cd's into the subdirectory", () => {
+        const script = generatePresetScript("nextjs", "dashboard-ui");
+        expect(script).toContain('APP_DIR="$WORKTREE_DIR/dashboard-ui"');
+        expect(script).toContain('cd "$APP_DIR"');
+        expect(script).toContain("next dev");
+      });
+
+      it("includes directory existence check", () => {
+        const script = generatePresetScript("nextjs", "dashboard-ui");
+        expect(script).toContain('if [ ! -d "$APP_DIR" ]');
+        expect(script).toContain("dashboard-ui/ directory not found");
+      });
+
+      it("uses APP_DIR for port ownership checks", () => {
+        const script = generatePresetScript("nextjs", "dashboard-ui");
+        expect(script).toContain('check_port "$BASE_PORT" "$APP_DIR"');
+        expect(script).toContain('find_available_port "$BASE_PORT" "$APP_DIR"');
+      });
+
+      it("includes subdir in script comment", () => {
+        const script = generatePresetScript("storybook", "packages/ui");
+        expect(script).toContain("(subdir: packages/ui/)");
+      });
+
+      it("without subdir uses WORKTREE_DIR for port checks", () => {
+        const script = generatePresetScript("nextjs");
+        expect(script).toContain('check_port "$BASE_PORT" "$WORKTREE_DIR"');
+        expect(script).toContain(
+          'find_available_port "$BASE_PORT" "$WORKTREE_DIR"',
+        );
+        expect(script).not.toContain("APP_DIR");
+      });
+    });
   });
 });

@@ -341,10 +341,11 @@ export default function SessionsList({
               projectName={projectName}
               installedPresets={installedPresets}
               isInstalling={installPresetMutation.isPending}
-              onInstall={(presetId) => {
-                installPresetMutation.mutate(presetId, {
-                  onSuccess: () => setPresetDialogOpen(false),
-                });
+              onInstall={(presetId, subdir) => {
+                installPresetMutation.mutate(
+                  { presetId, subdir },
+                  { onSuccess: () => setPresetDialogOpen(false) },
+                );
               }}
               onClose={() => {
                 if (!installPresetMutation.isPending) {

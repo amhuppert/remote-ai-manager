@@ -707,14 +707,14 @@ export function useInstallPresetMutation(projectName: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (presetId: string) =>
+    mutationFn: (params: { presetId: string; subdir?: string }) =>
       mutationFetch<{ installedFiles: string[]; configUpdated: boolean }>(
         `/api/projects/${encodeURIComponent(projectName)}/dev-servers/presets/install`,
         "install-preset",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ presetId }),
+          body: JSON.stringify(params),
         },
       ),
     onSuccess: () => {

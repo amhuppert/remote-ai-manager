@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 const installPresetRequestSchema = z.object({
   presetId: z.string().min(1),
+  subdir: z.string().min(1).optional(),
 });
 
 /** POST /api/projects/[name]/dev-servers/presets/install — install a preset into a project */
@@ -30,7 +31,7 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  const { presetId } = body.data;
+  const { presetId, subdir } = body.data;
 
   if (!getPreset(presetId)) {
     return NextResponse.json(
@@ -40,7 +41,7 @@ export const POST = withTracing(async (request, { params }) => {
   }
 
   try {
-    const result = await installPreset({ projectPath, presetId });
+    const result = await installPreset({ projectPath, presetId, subdir });
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Installation failed";

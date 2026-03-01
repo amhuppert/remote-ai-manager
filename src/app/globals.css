@@ -9150,3 +9150,50 @@ textarea {
   position: absolute;
   left: 0;
 }
+
+.preset-subdir-field {
+  margin-bottom: var(--space-lg);
+}
+
+.preset-subdir-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-xs);
+}
+
+.preset-subdir-optional {
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
+.preset-subdir-input {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.preset-subdir-input:focus {
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 0 3px var(--cyan-glow);
+}
+
+.preset-subdir-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.preset-subdir-hint {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}

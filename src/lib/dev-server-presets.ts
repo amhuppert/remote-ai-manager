@@ -152,7 +152,10 @@ find_available_port() {
 `;
 }
 
-export function generatePresetScript(presetId: string): string {
+export function generatePresetScript(
+  presetId: string,
+  subdir?: string,
+): string {
   const preset = getPreset(presetId);
   if (!preset) {
     throw new Error(`Unknown preset: ${presetId}`);
@@ -163,8 +166,33 @@ export function generatePresetScript(presetId: string): string {
       ? 'npx next dev --port "$PORT"'
       : 'npx storybook dev --port "$PORT"';
 
+  // When subdir is provided, the script cd's into the subdirectory and uses
+  // it for port ownership checks (the process cwd will be the subdir).
+  const hasSubdir = !!subdir;
+  const cwdVar = hasSubdir ? "APP_DIR" : "WORKTREE_DIR";
+
+  const subdirBlock = hasSubdir
+    ? `APP_DIR="$WORKTREE_DIR/${subdir}"
+
+# Verify the subdirectory exists
+if [ ! -d "$APP_DIR" ]; then
+  echo "ERROR: ${subdir}/ directory not found at $APP_DIR" >&2
+  exit 1
+fi
+
+`
+    : "";
+
+  const execLine = hasSubdir
+    ? `cd "$APP_DIR" && exec ${frameworkCommand}`
+    : `exec ${frameworkCommand}`;
+
+  const comment = hasSubdir
+    ? `# CC Dev Server — ${preset.name} (subdir: ${subdir}/)`
+    : `# CC Dev Server — ${preset.name}`;
+
   return `#!/bin/sh
-# CC Dev Server — ${preset.name}
+${comment}
 # Installed by CC (Claude Code). Intended to be committed to the repo.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -172,7 +200,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 BASE_PORT=${preset.basePort}
 WORKTREE_DIR="$(pwd)"
-
+${subdirBlock}
 # Helper: emit adoption markers and exit
 adopt_port() {
   local port="\$1"
@@ -183,12 +211,12 @@ adopt_port() {
   exit 0
 }
 
-check_port "$BASE_PORT" "$WORKTREE_DIR"
+check_port "$BASE_PORT" "$${cwdVar}"
 case $? in
   0) PORT="$BASE_PORT" ;;
   1) adopt_port "$BASE_PORT" ;;
   2)
-    PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR")
+    PORT=$(find_available_port "$BASE_PORT" "$${cwdVar}")
     if [ $? -eq 1 ]; then
       adopt_port "$PORT"
     fi
@@ -196,7 +224,7 @@ case $? in
 esac
 
 echo "CC_PORT=$PORT"
-exec ${frameworkCommand}
+${execLine}
 `;
 }
 
@@ -212,8 +240,9 @@ export interface InstallPresetResult {
 export async function installPreset(params: {
   projectPath: string;
   presetId: string;
+  subdir?: string;
 }): Promise<InstallPresetResult> {
-  const { projectPath, presetId } = params;
+  const { projectPath, presetId, subdir } = params;
 
   const preset = getPreset(presetId);
   if (!preset) {
@@ -241,7 +270,7 @@ export async function installPreset(params: {
 
   // Write preset-specific script
   const presetScriptPath = path.join(scriptsDir, preset.scriptFileName);
-  await writeFile(presetScriptPath, generatePresetScript(presetId), {
+  await writeFile(presetScriptPath, generatePresetScript(presetId, subdir), {
     mode: 0o755,
   });
   installedFiles.push(`.cc/dev-servers/${preset.scriptFileName}`);

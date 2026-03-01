@@ -131,6 +131,44 @@ describe("PresetInstaller", () => {
       expect(result.configUpdated).toBe(true);
     });
 
+    it("generates subdir-aware script when subdir is provided", async () => {
+      await installPreset({
+        projectPath: projectDir,
+        presetId: "nextjs",
+        subdir: "dashboard-ui",
+      });
+      const scriptPath = path.join(
+        projectDir,
+        ".cc",
+        "dev-servers",
+        "nextjs.sh",
+      );
+      const script = readFileSync(scriptPath, "utf-8");
+      expect(script).toContain('APP_DIR="$WORKTREE_DIR/dashboard-ui"');
+      expect(script).toContain('cd "$APP_DIR"');
+
+      // CommandCenter.json should be the same regardless of subdir
+      const configPath = path.join(projectDir, "CommandCenter.json");
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      expect(config.devServers[0].command).toBe(".cc/dev-servers/nextjs.sh");
+    });
+
+    it("generates standard script when subdir is not provided", async () => {
+      await installPreset({
+        projectPath: projectDir,
+        presetId: "nextjs",
+      });
+      const scriptPath = path.join(
+        projectDir,
+        ".cc",
+        "dev-servers",
+        "nextjs.sh",
+      );
+      const script = readFileSync(scriptPath, "utf-8");
+      expect(script).not.toContain("APP_DIR");
+      expect(script).toContain('check_port "$BASE_PORT" "$WORKTREE_DIR"');
+    });
+
     it("can install multiple presets sequentially", async () => {
       await installPreset({ projectPath: projectDir, presetId: "nextjs" });
       await installPreset({
