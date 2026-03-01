@@ -83,13 +83,27 @@ export default function ProjectsGrid(): React.JSX.Element {
   );
 
   const visiblePinnedProjects = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
     return projects.filter((p) => {
       if (!pinnedSet.has(p.path)) return false;
       const isArchived = archivedSet.has(p.path);
       if (isArchived && !showArchived) return false;
+      if (query && !p.name.toLowerCase().includes(query)) return false;
+      if (!isArchived && statusFilter !== "all") {
+        if (statusFilter === "active" && p.activeSessions === 0) return false;
+        if (statusFilter === "running" && !p.hasRunningSession) return false;
+        if (statusFilter === "idle" && p.activeSessions > 0) return false;
+      }
       return true;
     });
-  }, [projects, pinnedSet, archivedSet, showArchived]);
+  }, [
+    projects,
+    pinnedSet,
+    archivedSet,
+    showArchived,
+    searchQuery,
+    statusFilter,
+  ]);
 
   const filteredProjects = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
