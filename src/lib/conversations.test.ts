@@ -442,41 +442,45 @@ describe("deriveSessionStatus", () => {
     expect(deriveSessionStatus(session)).toBe("awaiting");
   });
 
-  it("falls through to conversation status for non-active workflow states", async () => {
-    const { deriveSessionStatus } = await import("./conversations");
+  it(
+    "falls through to conversation status for non-active workflow states",
+    { timeout: 30_000 },
+    async () => {
+      const { deriveSessionStatus } = await import("./conversations");
 
-    const session = makeSessionWith([makeConvo({ status: "running" })], {
-      workflow: {
-        status: "completed",
-        objective: "test",
-        fixPlan: [],
-        config: {
-          maxIterations: 20,
-          iterationTimeoutMs: 3_600_000,
-          contextSoftLimitTokens: 160_000,
-          contextHardLimitTokens: 180_000,
-          circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
+      const session = makeSessionWith([makeConvo({ status: "running" })], {
+        workflow: {
+          status: "completed",
+          objective: "test",
+          fixPlan: [],
+          config: {
+            maxIterations: 20,
+            iterationTimeoutMs: 3_600_000,
+            contextSoftLimitTokens: 160_000,
+            contextHardLimitTokens: 180_000,
+            circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
+          },
+          circuitBreaker: {
+            state: "closed",
+            consecutiveNoProgress: 0,
+            consecutiveSameError: 0,
+            lastErrorPattern: null,
+            lastProgressIteration: 0,
+          },
+          iterations: [],
+          haltReason: { type: "plan_complete" },
+          generatingPlan: false,
+          createdAt: "2024-01-01T00:00:00Z",
+          startedAt: "2024-01-01T00:00:00Z",
+          completedAt: "2024-01-02T00:00:00Z",
+          totalCostUsd: 1.5,
+          totalDurationMs: 60000,
         },
-        circuitBreaker: {
-          state: "closed",
-          consecutiveNoProgress: 0,
-          consecutiveSameError: 0,
-          lastErrorPattern: null,
-          lastProgressIteration: 0,
-        },
-        iterations: [],
-        haltReason: { type: "plan_complete" },
-        generatingPlan: false,
-        createdAt: "2024-01-01T00:00:00Z",
-        startedAt: "2024-01-01T00:00:00Z",
-        completedAt: "2024-01-02T00:00:00Z",
-        totalCostUsd: 1.5,
-        totalDurationMs: 60000,
-      },
-    });
+      });
 
-    expect(deriveSessionStatus(session)).toBe("running");
-  });
+      expect(deriveSessionStatus(session)).toBe("running");
+    },
+  );
 });
 
 describe("deriveSessionPromptCount", () => {

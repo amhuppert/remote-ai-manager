@@ -187,12 +187,26 @@ export async function discoverAndImportWorktrees(
     (wt) => !wt.isMainWorktree,
   );
 
-  // Build lookup of existing sessions by worktreePath
+  // Build lookups of existing sessions by worktreePath and branchName
   const existingByPath = new Set(existingSessions.map((s) => s.worktreePath));
   const existingNames = new Set(existingSessions.map((s) => s.sessionName));
+  const existingByBranch = new Set(
+    existingSessions.map((s) => s.branchName).filter(Boolean),
+  );
 
-  // Identify untracked worktrees
-  const untracked = discovered.filter((wt) => !existingByPath.has(wt.path));
+  // Identify untracked worktrees (defense-in-depth: also match by branch name
+  // to prevent importing a worktree that was just created but whose path in
+  // state differs slightly from the discovered path)
+  const untracked = discovered.filter((wt) => {
+    if (existingByPath.has(wt.path)) return false;
+    if (wt.branch) {
+      let branch = wt.branch;
+      if (branch.startsWith("refs/heads/"))
+        branch = branch.slice("refs/heads/".length);
+      if (existingByBranch.has(branch)) return false;
+    }
+    return true;
+  });
 
   // Identify orphaned sessions
   const discoveredPaths = new Set(discovered.map((wt) => wt.path));

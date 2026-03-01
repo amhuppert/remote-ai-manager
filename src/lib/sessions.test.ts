@@ -698,7 +698,7 @@ describe("createSessionFocus", () => {
     );
   });
 
-  it("does not persist state when creation fails", async () => {
+  it("rolls back state when creation fails after early persist", async () => {
     queryMock.mockReturnValue(mockQueryResponse("Should Not Persist"));
     mockExecFileFailure(new Error("git worktree add failed"));
 
@@ -706,7 +706,15 @@ describe("createSessionFocus", () => {
       createSessionFocus("/projects/repo", "Should not persist"),
     ).rejects.toThrow("git worktree add failed");
 
-    expect(writeStateMock).not.toHaveBeenCalled();
+    // State is persisted first (createSession) then rolled back (rollbackSession)
+    expect(writeStateMock).toHaveBeenCalledTimes(2);
+    expect(writeStateMock.mock.calls[0]![1]).toBe("createSession");
+    expect(writeStateMock.mock.calls[1]![1]).toBe("rollbackSession");
+
+    // After rollback, the session should not exist in state
+    const finalState = writeStateMock.mock.calls[1]![0];
+    const project = finalState.projects["/projects/repo"];
+    expect(project?.sessions["Should Not Persist"]).toBeUndefined();
   });
 });
 

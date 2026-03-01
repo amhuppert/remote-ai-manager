@@ -127,6 +127,58 @@ export async function provisionSession(
     throw new Error(`Worktree directory already exists: ${worktreePath}`);
   }
 
+  // Build session state with an initial conversation BEFORE creating the
+  // worktree on disk. This prevents a race where worktree reconciliation
+  // (GET /sessions) sees the new directory before the session is in state
+  // and imports it as a duplicate with conversations: [].
+  const now = new Date().toISOString();
+  const initialConversation: ConversationState = {
+    id: crypto.randomUUID(),
+    name: `${sessionName} 1`,
+    claudeSessionId: null,
+    transcriptPath: null,
+    status: "new",
+    promptCount: 0,
+    createdAt: now,
+    lastActivityAt: now,
+    source: "cc",
+    summary: null,
+    archived: false,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    forkedFrom: null,
+    role: opts.mode === "focus" ? "initialization" : null,
+  };
+  const session: SessionState = {
+    sessionName,
+    worktreePath,
+    branchName,
+    createdAt: now,
+    lastActivityAt: now,
+    archived: false,
+    finished: false,
+    conversations: [initialConversation],
+    source: "cc",
+    objective: opts.objective,
+    creationMode: opts.mode,
+    workflow: null,
+  };
+
+  // Persist to state first — reconciliation will see this session and skip
+  // the worktree directory when it appears on disk moments later.
+  await mutateState("createSession", (state) => {
+    if (!state.projects[projectPath]) {
+      state.projects[projectPath] = {
+        rootPath: projectPath,
+        sessions: {},
+      };
+    }
+    state.projects[projectPath]!.sessions[sessionName] = session;
+  });
+
   try {
     logger.info("session.create", {
       projectName: projectPath,
@@ -197,6 +249,18 @@ export async function provisionSession(
       stack: err instanceof Error ? err.stack : undefined,
     });
 
+    // Rollback: remove the session from state since creation failed
+    try {
+      await mutateState("rollbackSession", (state) => {
+        const project = state.projects[projectPath];
+        if (project) {
+          delete project.sessions[sessionName];
+        }
+      });
+    } catch {
+      // ignore rollback errors
+    }
+
     // Rollback: remove the worktree if it was created
     try {
       if (existsSync(worktreePath)) {
@@ -219,54 +283,6 @@ export async function provisionSession(
 
     throw err;
   }
-
-  // Build session state with an initial conversation
-  const now = new Date().toISOString();
-  const initialConversation: ConversationState = {
-    id: crypto.randomUUID(),
-    name: `${sessionName} 1`,
-    claudeSessionId: null,
-    transcriptPath: null,
-    status: "new",
-    promptCount: 0,
-    createdAt: now,
-    lastActivityAt: now,
-    source: "cc",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    forkedFrom: null,
-    role: opts.mode === "focus" ? "initialization" : null,
-  };
-  const session: SessionState = {
-    sessionName,
-    worktreePath,
-    branchName,
-    createdAt: now,
-    lastActivityAt: now,
-    archived: false,
-    finished: false,
-    conversations: [initialConversation],
-    source: "cc",
-    objective: opts.objective,
-    creationMode: opts.mode,
-    workflow: null,
-  };
-
-  // Persist to state
-  await mutateState("createSession", (state) => {
-    if (!state.projects[projectPath]) {
-      state.projects[projectPath] = {
-        rootPath: projectPath,
-        sessions: {},
-      };
-    }
-    state.projects[projectPath]!.sessions[sessionName] = session;
-  });
 
   return session;
 }

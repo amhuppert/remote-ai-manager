@@ -600,8 +600,8 @@ describe("discoverAndImportWorktrees", () => {
     expect(importedPaths).not.toContain(existingSession.worktreePath);
   });
 
-  it("resolves name collisions with numeric suffix", async () => {
-    // Worktree with branch that derives to same name as existing session
+  it("skips worktree with matching branch even at different path (no duplicate import)", async () => {
+    // Worktree at a different path but with same branch as existing session
     const conflictOutput = [
       "worktree /home/user/repo",
       "HEAD aaa111",
@@ -631,8 +631,46 @@ describe("discoverAndImportWorktrees", () => {
       existingSession,
     ]);
 
+    // Branch-name dedup prevents import — this is the same session
+    expect(result.imported).toHaveLength(0);
+    expect(writeStateMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves name collisions with numeric suffix for genuinely different branches", async () => {
+    // Worktree with a DIFFERENT branch that derives to a name colliding
+    // with an existing session name
+    const conflictOutput = [
+      "worktree /home/user/repo",
+      "HEAD aaa111",
+      "branch refs/heads/main",
+      "",
+      "worktree /tmp/new-wt",
+      "HEAD bbb222",
+      "branch refs/heads/feature/existing-feature",
+      "",
+    ].join("\n");
+
+    mockExecFileSuccess(conflictOutput);
+    readStateMock.mockResolvedValue({
+      projects: {
+        [projectPath]: {
+          rootPath: projectPath,
+          sessions: {
+            "existing-feature": existingSession,
+          },
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    });
+
+    const result = await discoverAndImportWorktrees(projectPath, [
+      existingSession,
+    ]);
+
+    // Different branch, so it IS imported — name deduplication applies
     expect(result.imported).toHaveLength(1);
-    expect(result.imported[0]!.sessionName).toBe("existing-feature-2");
+    expect(result.imported[0]!.sessionName).toBe("feature/existing-feature");
   });
 
   it("persists imported sessions atomically via writeState", async () => {
@@ -684,6 +722,58 @@ describe("discoverAndImportWorktrees", () => {
 
     await discoverAndImportWorktrees(projectPath, []);
 
+    expect(writeStateMock).not.toHaveBeenCalled();
+  });
+
+  it("skips worktrees whose branch matches an existing session (branch-name dedup)", async () => {
+    // Session in state with Title Case name — its branch differs from path
+    const sessionWithBranch: SessionState = {
+      sessionName: "Activity Panel Polish",
+      worktreePath: "/home/user/repo/.worktrees/activity-panel-polish",
+      branchName: "csm/activity-panel-polish",
+      createdAt: "2024-01-01T00:00:00Z",
+      lastActivityAt: "2024-01-01T00:00:00Z",
+      archived: false,
+      finished: false,
+      conversations: [] as SessionState["conversations"],
+      source: "cc",
+      objective: "Polish the activity panel",
+      creationMode: "optimistic" as const,
+      workflow: null,
+    };
+
+    // Git discovers a worktree at a DIFFERENT path but with the SAME branch
+    const porcelainWithMatchingBranch = [
+      "worktree /home/user/repo",
+      "HEAD aaa111",
+      "branch refs/heads/main",
+      "",
+      "worktree /tmp/different-path",
+      "HEAD bbb222",
+      "branch refs/heads/csm/activity-panel-polish",
+      "",
+    ].join("\n");
+
+    mockExecFileSuccess(porcelainWithMatchingBranch);
+    readStateMock.mockResolvedValue({
+      projects: {
+        [projectPath]: {
+          rootPath: projectPath,
+          sessions: {
+            "Activity Panel Polish": sessionWithBranch,
+          },
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    });
+
+    const result = await discoverAndImportWorktrees(projectPath, [
+      sessionWithBranch,
+    ]);
+
+    // Should NOT import — branch matches existing session
+    expect(result.imported).toHaveLength(0);
     expect(writeStateMock).not.toHaveBeenCalled();
   });
 
