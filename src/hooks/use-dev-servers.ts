@@ -60,7 +60,7 @@ export function useDevServers(projectName: string, sessionName: string) {
     (s) => s.status === "running" || s.status === "starting",
   );
   const hasStoppable = servers.some(
-    (s) => (s.status === "running" || s.status === "starting") && !s.adopted,
+    (s) => s.status === "running" || s.status === "starting",
   );
   const hasStopped = servers.some(
     (s) => s.status === "stopped" || s.status === "error",

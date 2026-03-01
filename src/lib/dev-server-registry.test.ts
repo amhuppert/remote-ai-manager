@@ -63,7 +63,6 @@ describe("DevServerRegistry", () => {
 
       expect(server).toBeDefined();
       expect(server!.status).toBe("starting");
-      expect(server!.pid).toBeGreaterThan(0);
       expect(server!.serverName).toBe("web");
 
       // SSE broadcast should have been called with 'starting'
@@ -203,107 +202,6 @@ describe("DevServerRegistry", () => {
       });
 
       expect(server!.recentOutput.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  describe("adopted servers", () => {
-    it("detects CC_ADOPTED markers and sets entry.adopted", async () => {
-      await registry.startServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        serverName: "adopted-test",
-        command:
-          "echo CC_ADOPTED=1 && echo CC_ADOPTED_PID=99999 && echo CC_PORT=3000 && exit 0",
-        worktreePath: "/tmp",
-      });
-
-      // Wait for stdout processing + tailscale
-      await new Promise((r) => setTimeout(r, 300));
-
-      const server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        serverName: "adopted-test",
-      });
-
-      expect(server!.adopted).toBe(true);
-      expect(server!.pid).toBe(99999);
-      expect(server!.port).toBe(3000);
-      expect(server!.status).toBe("running");
-    });
-
-    it("does not transition adopted server to stopped when script exits", async () => {
-      await registry.startServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        serverName: "adopted-exit",
-        command:
-          "echo CC_ADOPTED=1 && echo CC_ADOPTED_PID=99999 && echo CC_PORT=3000 && exit 0",
-        worktreePath: "/tmp",
-      });
-
-      // Wait for stdout processing, tailscale, and exit handler
-      await new Promise((r) => setTimeout(r, 500));
-
-      const server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        serverName: "adopted-exit",
-      });
-
-      // Should still be running despite the script exiting
-      expect(server!.status).toBe("running");
-      expect(server!.adopted).toBe(true);
-    });
-
-    it("stopServer is a no-op for adopted servers", async () => {
-      await registry.startServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        serverName: "adopted-stop",
-        command:
-          "echo CC_ADOPTED=1 && echo CC_ADOPTED_PID=99999 && echo CC_PORT=5000 && exit 0",
-        worktreePath: "/tmp",
-      });
-
-      await new Promise((r) => setTimeout(r, 300));
-
-      await registry.stopServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        serverName: "adopted-stop",
-      });
-
-      const server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        serverName: "adopted-stop",
-      });
-
-      // Should still be running — stopServer is a no-op for adopted servers
-      expect(server!.status).toBe("running");
-      expect(server!.adopted).toBe(true);
-    });
-
-    it("non-adopted servers are not marked as adopted", async () => {
-      await registry.startServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        serverName: "normal-server",
-        command: "echo CC_PORT=3000 && sleep 60",
-        worktreePath: "/tmp",
-      });
-
-      await new Promise((r) => setTimeout(r, 200));
-
-      const server = registry.getServer({
-        projectPath: "/proj",
-        sessionName: "s1",
-        serverName: "normal-server",
-      });
-
-      expect(server!.adopted).toBe(false);
-      expect(server!.status).toBe("running");
     });
   });
 

@@ -168,6 +168,31 @@
   - On failure, display the error message within the dialog
   - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7_
 
+---
+
+## Phase 3: Simplification — Remove Adoption, Port-Based Lifecycle
+
+- [x] 12. Remove adoption concept and switch to port-based lifecycle
+- [x] 12.1 Remove `adopted` and `pid` fields from schemas
+  - Remove `adopted` from `devServerStatusEventSchema` and `devServerRuntimeStateSchema`
+  - Remove `pid` from `devServerRuntimeStateSchema`
+- [x] 12.2 Rewrite dev server registry
+  - Add `isPortAlive()` — TCP connect test for liveness checking
+  - Add `killByPort()` — finds PIDs via `lsof`, SIGTERM, wait 5s, SIGKILL
+  - Remove adoption marker parsing (`CC_ADOPTED`, `CC_ADOPTED_PID`)
+  - On script exit with `running` status, check port liveness before transitioning to stopped
+  - Stop uses `killByPort()` instead of only `_process.kill()`
+- [x] 12.3 Rewrite liveness poller
+  - Switch from PID-based (`process.kill(pid, 0)`) to port-based (`isPortAlive()`)
+  - Use `setTimeout` chain instead of `setInterval` for async-safe scheduling
+- [x] 12.4 Update shell script generation
+  - Remove `adopt_port()` function from generated scripts
+  - When `check_port` returns 1 (owned), emit `CC_PORT` and exit without adoption markers
+- [x] 12.5 Regenerate installed shell scripts
+- [x] 12.6 Update API route — remove `adopted` and `pid` from response
+- [x] 12.7 Update UI components — remove adopted badge, always show stop button for active servers
+- [x] 12.8 Update tests — remove adopted test block, update liveness tests for port-based checking
+
 ## Requirements Coverage
 
 | Requirement | Task(s) |

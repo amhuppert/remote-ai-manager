@@ -408,7 +408,6 @@ export const devServerStatusEventSchema = z.object({
   port: z.number().nullable(),
   remoteUrl: z.string().nullable(),
   errorMessage: z.string().nullable(),
-  adopted: z.boolean().default(false),
 });
 export type DevServerStatusEvent = z.infer<typeof devServerStatusEventSchema>;
 
@@ -416,13 +415,11 @@ export const devServerRuntimeStateSchema = z.object({
   serverName: z.string(),
   command: z.string(),
   status: devServerStatusSchema,
-  pid: z.number().nullable(),
   port: z.number().nullable(),
   remoteUrl: z.string().nullable(),
   startedAt: z.string().nullable(),
   errorMessage: z.string().nullable(),
   recentOutput: z.array(z.string()),
-  adopted: z.boolean().default(false),
 });
 export type DevServerRuntimeState = z.infer<typeof devServerRuntimeStateSchema>;
 

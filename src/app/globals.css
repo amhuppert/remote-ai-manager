@@ -8863,17 +8863,6 @@ textarea {
   color: var(--text-tertiary);
 }
 
-.dev-server-adopted-badge {
-  font-family: var(--font-mono);
-  font-size: 0.6rem;
-  color: var(--text-tertiary);
-  background: var(--surface-hover);
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
 .dev-server-actions {
   flex-shrink: 0;
 }
@@ -9149,17 +9138,6 @@ textarea {
   font-family: var(--font-mono);
   font-size: 0.65rem;
   color: var(--text-tertiary);
-}
-
-.ds-adopted-badge {
-  font-family: var(--font-mono);
-  font-size: 0.58rem;
-  color: var(--text-tertiary);
-  background: var(--bg-hover);
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
 }
 
 .ds-row-actions {

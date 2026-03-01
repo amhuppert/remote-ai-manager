@@ -1,42 +1,28 @@
 import { createLogger } from "./logging";
 import { broadcast } from "./sse-broadcaster";
 import * as tailscale from "./tailscale";
-import * as registryModule from "./dev-server-registry";
+import { isPortAlive } from "./dev-server-registry";
+import type { DevServerEntry } from "./dev-server-registry";
 import type { DevServerStatusEvent } from "@/types";
 
 const logger = createLogger("dev-server");
 const GLOBAL_KEY = "__cc_dev_server_liveness" as const;
 const POLL_INTERVAL_MS = 5_000;
 
-function getIntervalId(): ReturnType<typeof setInterval> | null {
+function getTimerId(): ReturnType<typeof setTimeout> | null {
   const g = globalThis as unknown as Record<string, unknown>;
-  return (g[GLOBAL_KEY] as ReturnType<typeof setInterval> | null) ?? null;
+  return (g[GLOBAL_KEY] as ReturnType<typeof setTimeout> | null) ?? null;
 }
 
-function setIntervalId(id: ReturnType<typeof setInterval> | null): void {
+function setTimerId(id: ReturnType<typeof setTimeout> | null): void {
   const g = globalThis as unknown as Record<string, unknown>;
   g[GLOBAL_KEY] = id;
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ESRCH") {
-      return false;
-    }
-    // EPERM means process exists but we can't signal it — still alive
-    return true;
-  }
-}
-
-function poll(): void {
-  // Access the registry's internal state by querying known sessions
-  // We need all registered servers — use the globalThis registry directly
+async function poll(): Promise<void> {
   const g = globalThis as unknown as Record<string, unknown>;
   const registryMap = g["__cc_dev_servers"] as
-    | Map<string, registryModule.DevServerEntry>
+    | Map<string, DevServerEntry>
     | undefined;
 
   if (!registryMap || registryMap.size === 0) {
@@ -45,20 +31,16 @@ function poll(): void {
   }
 
   for (const [, entry] of registryMap) {
-    if (
-      (entry.status === "running" || entry.status === "starting") &&
-      entry.pid > 0
-    ) {
-      if (!isProcessAlive(entry.pid)) {
+    if (entry.status === "running" && entry.port) {
+      const alive = await isPortAlive(entry.port);
+      if (!alive) {
         logger.warn("dev-server.liveness_dead", {
           serverName: entry.serverName,
-          pid: entry.pid,
+          port: entry.port,
         });
 
         // Clean up Tailscale registration
-        if (entry.port) {
-          tailscale.unregister(entry.port).catch(() => {});
-        }
+        tailscale.unregister(entry.port).catch(() => {});
 
         // Transition to stopped
         entry.status = "stopped";
@@ -73,7 +55,6 @@ function poll(): void {
           port: entry.port,
           remoteUrl: null,
           errorMessage: null,
-          adopted: entry.adopted,
         };
         broadcast(event);
       }
@@ -86,22 +67,25 @@ function poll(): void {
   );
   if (!hasActive) {
     stop();
+    return;
   }
+
+  // Schedule next poll (setTimeout chain for async safety)
+  setTimerId(setTimeout(() => void poll(), POLL_INTERVAL_MS));
 }
 
 /** Start the polling loop. Idempotent — calling when already running is a no-op. */
 export function start(): void {
-  if (getIntervalId() !== null) return;
-  const id = setInterval(poll, POLL_INTERVAL_MS);
-  setIntervalId(id);
+  if (getTimerId() !== null) return;
+  setTimerId(setTimeout(() => void poll(), POLL_INTERVAL_MS));
 }
 
 /** Stop the polling loop. */
 export function stop(): void {
-  const id = getIntervalId();
+  const id = getTimerId();
   if (id !== null) {
-    clearInterval(id);
-    setIntervalId(null);
+    clearTimeout(id);
+    setTimerId(null);
   }
 }
 

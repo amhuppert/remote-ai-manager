@@ -1,5 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
+import net from "node:net";
 import { createLogger } from "./logging";
 import { broadcast } from "./sse-broadcaster";
 import * as tailscale from "./tailscale";
@@ -41,15 +42,12 @@ export interface DevServerEntry {
   projectPath: string;
   sessionName: string;
   command: string;
-  pid: number;
   status: DevServerStatus;
   port: number | null;
   remoteUrl: string | null;
   startedAt: string;
   errorMessage: string | null;
   recentOutput: string[];
-  /** Whether this server was adopted (discovered running externally, not spawned by CC) */
-  adopted: boolean;
   /** Internal: child process handle (not exposed via API) */
   _process: ChildProcess | null;
   /** Internal: startup timeout timer */
@@ -84,7 +82,6 @@ function broadcastStatus(entry: DevServerEntry): void {
     port: entry.port,
     remoteUrl: entry.remoteUrl,
     errorMessage: entry.errorMessage,
-    adopted: entry.adopted,
   };
   broadcast(event);
 }
@@ -118,8 +115,8 @@ function cleanupTimer(entry: DevServerEntry): void {
 
 /**
  * Check if a port is actually in use (something is listening on localhost).
- * Attempts a TCP connection to 127.0.0.1:port.
- * Returns true if the port is occupied, false if available.
+ * Attempts to bind to 127.0.0.1:port — EADDRINUSE means something is there.
+ * Used by deferredTailscaleRegister to wait for the server to start listening.
  */
 function isPortListening(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -135,6 +132,85 @@ function isPortListening(port: number): Promise<boolean> {
     });
     socket.listen(port, "127.0.0.1");
   });
+}
+
+/**
+ * Check if a port is alive by attempting a TCP connection.
+ * More reliable than bind test for detecting running servers.
+ * Used by liveness poller and exit handler.
+ */
+export function isPortAlive(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(2000);
+    socket.on("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.on("error", () => {
+      resolve(false);
+    });
+    socket.connect(port, "127.0.0.1");
+  });
+}
+
+/**
+ * Kill all processes listening on a given port.
+ * Sends SIGTERM first, waits up to 5s for graceful shutdown, then SIGKILL.
+ */
+async function killByPort(port: number): Promise<void> {
+  let pidsRaw: string;
+  try {
+    pidsRaw = execSync(`lsof -ti :${port}`, { encoding: "utf-8" }).trim();
+  } catch {
+    return; // No processes found or lsof not available
+  }
+
+  if (!pidsRaw) return;
+
+  const pids = pidsRaw
+    .split("\n")
+    .map((p) => parseInt(p.trim(), 10))
+    .filter((p) => !isNaN(p) && p > 0);
+
+  if (pids.length === 0) return;
+
+  // Send SIGTERM to all PIDs
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Process may have already exited
+    }
+  }
+
+  // Wait up to 5 seconds for processes to exit
+  const deadline = Date.now() + KILL_GRACE_MS;
+  while (Date.now() < deadline) {
+    const alive = pids.filter((pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (alive.length === 0) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  // SIGKILL remaining
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Process may have already exited
+    }
+  }
 }
 
 /**
@@ -221,14 +297,12 @@ export async function startServer(params: {
     projectPath,
     sessionName,
     command,
-    pid: child.pid ?? 0,
     status: "starting",
     port: null,
     remoteUrl: null,
     startedAt: new Date().toISOString(),
     errorMessage: null,
     recentOutput: [],
-    adopted: false,
     _process: child,
     _startupTimer: null,
   };
@@ -247,11 +321,9 @@ export async function startServer(params: {
 
   broadcastStatus(entry);
 
-  // Line-buffer stdout for CC_PORT detection and adoption markers
+  // Line-buffer stdout for CC_PORT detection
   let stdoutBuffer = "";
   let portFound = false;
-  let adoptedFlag = false;
-  let adoptedPid: number | null = null;
 
   child.stdout?.on("data", (chunk: Buffer) => {
     stdoutBuffer += chunk.toString();
@@ -261,33 +333,11 @@ export async function startServer(params: {
     for (const line of lines) {
       appendOutput(entry, line);
 
-      // Parse adoption markers (emitted before CC_PORT)
-      if (/^CC_ADOPTED=1$/.test(line.trim())) {
-        adoptedFlag = true;
-      }
-      const adoptedPidMatch = /^CC_ADOPTED_PID=(\d+)$/.exec(line.trim());
-      if (adoptedPidMatch) {
-        adoptedPid = parseInt(adoptedPidMatch[1]!, 10);
-      }
-
       const match = /^CC_PORT=(\d+)$/.exec(line.trim());
       if (match && !portFound) {
         portFound = true;
         const port = parseInt(match[1]!, 10);
         cleanupTimer(entry);
-
-        // Apply adoption state
-        if (adoptedFlag) {
-          entry.adopted = true;
-          if (adoptedPid && adoptedPid > 0) {
-            entry.pid = adoptedPid;
-          }
-          logger.info("dev-server.adopted", {
-            serverName,
-            port,
-            adoptedPid: entry.pid,
-          });
-        }
 
         logger.info("dev-server.port_discovered", { serverName, port });
 
@@ -319,27 +369,15 @@ export async function startServer(params: {
   });
 
   // Handle process exit
-  child.on("exit", (code, signal) => {
+  child.on("exit", async (code, signal) => {
     cleanupTimer(entry);
     entry._process = null;
 
     logger.info("dev-server.exit", {
       serverName,
-      pid: entry.pid,
       code,
       signal,
     });
-
-    // Adopted server: the detection script exited, not the real server.
-    // Liveness polling will monitor the real PID going forward.
-    // Note: status may still be "starting" if tailscale.register() hasn't resolved yet.
-    if (entry.adopted) {
-      logger.info("dev-server.adopted_script_exit", {
-        serverName,
-        adoptedPid: entry.pid,
-      });
-      return;
-    }
 
     if (entry.status === "starting") {
       // Exited before CC_PORT was detected
@@ -352,19 +390,23 @@ export async function startServer(params: {
         error: entry.errorMessage,
         recentOutput: entry.recentOutput.slice(-10),
       });
-    } else if (entry.status === "running") {
-      // Unexpected exit while running — liveness poller may also detect this
-      logger.warn("dev-server.unexpected_exit", {
-        serverName,
-        pid: entry.pid,
-        code,
-        signal,
-        recentOutput: entry.recentOutput.slice(-10),
-      });
-      if (entry.port) {
-        tailscale.unregister(entry.port).catch(() => {});
+    } else if (entry.status === "running" && entry.port) {
+      // Check if port is still alive — script may have exited but server
+      // continues running (e.g., found existing server and reported its port)
+      const alive = await isPortAlive(entry.port);
+      if (!alive) {
+        logger.warn("dev-server.unexpected_exit", {
+          serverName,
+          port: entry.port,
+          code,
+          signal,
+        });
+        if (entry.port) {
+          tailscale.unregister(entry.port).catch(() => {});
+        }
+        transitionTo(entry, "stopped");
       }
-      transitionTo(entry, "stopped");
+      // If alive, server is still running — liveness poller monitors from here
     }
     // If status is already 'stopped' or 'error', we're in a controlled teardown
   });
@@ -406,7 +448,7 @@ export async function startServer(params: {
 
 /**
  * Stop a specific dev server.
- * Removes Tailscale registration, sends SIGTERM with grace period, then SIGKILL.
+ * Removes Tailscale registration, kills processes on the port.
  */
 export async function stopServer(params: {
   projectPath: string;
@@ -419,23 +461,13 @@ export async function stopServer(params: {
   const entry = registry.get(key);
 
   if (!entry) return;
-
-  // Adopted servers cannot be stopped — CC doesn't own the process
-  if (entry.adopted) {
-    logger.warn("dev-server.stop_adopted_noop", {
-      serverName,
-      pid: entry.pid,
-    });
-    return;
-  }
-
-  if (!entry._process) return;
+  if (entry.status !== "running" && entry.status !== "starting") return;
 
   cleanupTimer(entry);
 
   logger.info("dev-server.stop", {
     serverName,
-    pid: entry.pid,
+    port: entry.port,
   });
 
   // Unregister from Tailscale first
@@ -443,34 +475,20 @@ export async function stopServer(params: {
     await tailscale.unregister(entry.port);
   }
 
-  const child = entry._process;
-  entry._process = null;
+  // Kill the startup script if still running
+  if (entry._process) {
+    try {
+      entry._process.kill("SIGTERM");
+    } catch {
+      // Process may have already exited
+    }
+    entry._process = null;
+  }
 
-  await new Promise<void>((resolve) => {
-    let resolved = false;
-
-    const onExit = () => {
-      if (!resolved) {
-        resolved = true;
-        resolve();
-      }
-    };
-
-    child.once("exit", onExit);
-    child.kill("SIGTERM");
-
-    // Grace period: SIGKILL after 5s
-    setTimeout(() => {
-      if (!resolved) {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // process may have already exited
-        }
-        onExit();
-      }
-    }, KILL_GRACE_MS);
-  });
+  // Kill whatever is on the port
+  if (entry.port) {
+    await killByPort(entry.port);
+  }
 
   transitionTo(entry, "stopped");
 }

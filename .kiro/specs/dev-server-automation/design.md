@@ -153,13 +153,8 @@ sequenceDiagram
     UI->>API: POST /dev-servers/{name}/stop
     API->>Reg: stopServer(project, session, serverName)
     Reg->>TS: tailscale serve --https=port off
-    Reg->>Proc: kill SIGTERM
-    Reg->>Reg: Wait for exit (5s timeout)
-    alt Process exits gracefully
-        Proc->>Reg: exit event
-    else Timeout
-        Reg->>Proc: kill SIGKILL
-    end
+    Reg->>Proc: kill child process (if still running)
+    Reg->>Reg: killByPort(port) — SIGTERM, wait 5s, SIGKILL
     Reg->>Reg: Set status = stopped
     Reg->>SSE: broadcast(stopped)
     API-->>UI: 200 OK
@@ -316,7 +311,6 @@ interface DevServerEntry {
   projectPath: string;
   sessionName: string;
   command: string;
-  pid: number;
   status: "starting" | "running" | "stopped" | "error";
   port: number | null;
   remoteUrl: string | null;
@@ -334,7 +328,7 @@ interface DevServerEntry {
 - Use `spawn(command, { shell: true, cwd: worktreePath, stdio: 'pipe' })` for arbitrary shell commands — `shell: true` lets Node.js manage shell invocation and provides a direct `ChildProcess` handle where `child.kill()` targets the shell process directly, avoiding the signal-forwarding problem of explicit `spawn('sh', ['-c', ...])` where SIGTERM may not reach the actual dev server
 - Stdout scanning: line-buffer stdout, match `^CC_PORT=(\d+)$`, transition to `running`
 - Startup timeout: 60s default; if `CC_PORT` not detected, transition to `error` with captured output
-- Graceful kill: `child.kill('SIGTERM')` → 5s wait → `child.kill('SIGKILL')`
+- Stop uses `killByPort(port)`: finds PIDs via `lsof -ti :<port>`, sends SIGTERM, waits up to 5s, then SIGKILL remaining
 - Output buffer: Circular buffer of last 50 lines (combined stdout + stderr)
 - Shutdown handler: `process.on('SIGTERM', () => registry.stopAll())` registered once at module init
 
@@ -395,8 +389,8 @@ interface TailscaleService {
 
 **Responsibilities & Constraints**
 - Runs a `setInterval` loop checking all registered dev servers
-- Detects exited processes via `process.kill(pid, 0)` (signal 0 = existence check)
-- On dead process detection: transitions status to `stopped`, triggers Tailscale unregistration, broadcasts SSE event
+- Detects dead servers via TCP connect test (`isPortAlive()` from the registry module)
+- On dead server detection: transitions status to `stopped`, triggers Tailscale unregistration, broadcasts SSE event
 
 **Dependencies**
 - Inbound: DevServerRegistry — reads process entries (P0)
@@ -420,9 +414,10 @@ interface LivenessPoller {
 - Invariants: Exactly one interval timer active at a time (guarded by globalThis key)
 
 **Implementation Notes**
-- Use `globalThis.__cc_dev_server_liveness` to store the interval ID (HMR-safe)
+- Use `globalThis.__cc_dev_server_liveness` to store the timer ID (HMR-safe)
 - Auto-start when the first dev server is registered; auto-stop when the registry empties
-- `process.kill(pid, 0)` throws if the process does not exist — catch `ESRCH` to detect dead processes
+- Uses `isPortAlive()` (TCP connect test) from the registry module to check if a server's port is still responsive
+- Uses `setTimeout` chain (not `setInterval`) for async-safe scheduling
 - Polling interval: 5 seconds
 
 ---
@@ -523,7 +518,6 @@ erDiagram
         string projectPath
         string sessionName
         string command
-        int pid
         string status
         int port
         string remoteUrl
@@ -592,7 +586,6 @@ const devServerRuntimeStateSchema = z.object({
   serverName: z.string(),
   command: z.string(),
   status: devServerStatusSchema,
-  pid: z.number().nullable(),
   port: z.number().nullable(),
   remoteUrl: z.string().nullable(),
   startedAt: z.string().nullable(),
@@ -641,11 +634,11 @@ All operations log structured events via `createLogger("dev-server")`:
 | `dev-server.start` | info | serverName, command, worktreePath, pid |
 | `dev-server.port_discovered` | info | serverName, port |
 | `dev-server.running` | info | serverName, port, remoteUrl |
-| `dev-server.stop` | info | serverName, pid |
-| `dev-server.exit` | info | serverName, pid, code, signal |
+| `dev-server.stop` | info | serverName, port |
+| `dev-server.exit` | info | serverName, code, signal |
 | `dev-server.error` | error | serverName, error, recentOutput |
 | `dev-server.tailscale_failure` | warn | serverName, port, error |
-| `dev-server.liveness_dead` | warn | serverName, pid |
+| `dev-server.liveness_dead` | warn | serverName, port |
 | `dev-server.startup_timeout` | warn | serverName, timeoutMs |
 
 ## Testing Strategy
@@ -1085,9 +1078,14 @@ WORKTREE_DIR="$(pwd)"
 
 check_port "$BASE_PORT" "$WORKTREE_DIR"
 case $? in
-  0) PORT="$BASE_PORT" ;;                           # Available
-  1) echo "CC_PORT=$BASE_PORT"; exit 0 ;;          # Already running for this worktree
-  2) PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR") ;;  # Conflict, find another
+  0) PORT="$BASE_PORT" ;;                                 # Available
+  1) echo "CC_PORT=$BASE_PORT"; exit 0 ;;                 # Already running for this worktree — report port and exit
+  2)
+    PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR")
+    if [ $? -eq 1 ]; then
+      echo "CC_PORT=$PORT"; exit 0                         # Already running on alternate port
+    fi
+    ;;
 esac
 
 echo "CC_PORT=$PORT"

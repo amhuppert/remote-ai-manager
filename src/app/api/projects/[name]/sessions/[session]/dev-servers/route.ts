@@ -43,13 +43,11 @@ export const GET = withTracing(async (_request, { params }) => {
         serverName: runtime.serverName,
         command: runtime.command,
         status: runtime.status,
-        pid: runtime.pid,
         port: runtime.port,
         remoteUrl: runtime.remoteUrl,
         startedAt: runtime.startedAt,
         errorMessage: runtime.errorMessage,
         recentOutput: runtime.recentOutput,
-        adopted: runtime.adopted,
       };
     }
     // Configured but not started
@@ -57,13 +55,11 @@ export const GET = withTracing(async (_request, { params }) => {
       serverName: cfg.name,
       command: cfg.command,
       status: "stopped" as const,
-      pid: null,
       port: null,
       remoteUrl: null,
       startedAt: null,
       errorMessage: null,
       recentOutput: [],
-      adopted: false,
     };
   });
 

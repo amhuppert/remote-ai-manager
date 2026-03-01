@@ -87,14 +87,13 @@ function ServerRow({
         )}
         <span className="ds-status-text">{server.status}</span>
         {server.port != null && <span className="ds-port">:{server.port}</span>}
-        {server.adopted && <span className="ds-adopted-badge">adopted</span>}
       </div>
       <div className="ds-row-actions">
-        {isActive && !server.adopted ? (
+        {isActive ? (
           <button className="btn btn-sm" onClick={onStop} type="button">
             Stop
           </button>
-        ) : !isActive ? (
+        ) : (
           <button
             className="btn btn-sm btn-primary"
             onClick={onStart}
@@ -102,7 +101,7 @@ function ServerRow({
           >
             Start
           </button>
-        ) : null}
+        )}
       </div>
       {server.status === "error" && server.errorMessage && (
         <div className="ds-error">
@@ -141,7 +140,7 @@ export default function DevServerDrawer({
     (s) => s.status === "running" || s.status === "starting",
   ).length;
   const hasStoppable = servers.some(
-    (s) => (s.status === "running" || s.status === "starting") && !s.adopted,
+    (s) => s.status === "running" || s.status === "starting",
   );
   const hasStopped = servers.some(
     (s) => s.status === "stopped" || s.status === "error",

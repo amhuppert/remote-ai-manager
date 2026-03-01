@@ -8,24 +8,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_PORT=6006
 WORKTREE_DIR="$(pwd)"
 
-# Helper: emit adoption markers and exit
-adopt_port() {
-  local port="$1"
-  ADOPTED_PID=$(get_pid_on_port "$port")
-  echo "CC_ADOPTED=1"
-  echo "CC_ADOPTED_PID=$ADOPTED_PID"
-  echo "CC_PORT=$port"
-  exit 0
-}
-
 check_port "$BASE_PORT" "$WORKTREE_DIR"
 case $? in
   0) PORT="$BASE_PORT" ;;
-  1) adopt_port "$BASE_PORT" ;;
+  1)
+    # Server already running for this worktree — report port and exit
+    echo "CC_PORT=$BASE_PORT"
+    exit 0
+    ;;
   2)
     PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR")
     if [ $? -eq 1 ]; then
-      adopt_port "$PORT"
+      # Server already running for this worktree on a different port
+      echo "CC_PORT=$PORT"
+      exit 0
     fi
     ;;
 esac

@@ -11,8 +11,11 @@ vi.mock("./sse-broadcaster", () => ({
   broadcast: vi.fn(),
 }));
 
-// Mock dev-server-registry (only imported for type)
-vi.mock("./dev-server-registry", () => ({}));
+// Mock dev-server-registry — provide isPortAlive mock
+const mockIsPortAlive = vi.fn<(port: number) => Promise<boolean>>();
+vi.mock("./dev-server-registry", () => ({
+  isPortAlive: (...args: [number]) => mockIsPortAlive(...args),
+}));
 
 import { broadcast } from "./sse-broadcaster";
 import * as liveness from "./dev-server-liveness";
@@ -25,14 +28,12 @@ function createMockEntry(
     projectPath: "/proj",
     sessionName: "s1",
     command: "sleep 60",
-    pid: 99999,
     status: "running",
     port: 3000,
     remoteUrl: "https://host:3000",
     startedAt: new Date().toISOString(),
     errorMessage: null,
     recentOutput: [],
-    adopted: false,
     _process: null,
     _startupTimer: null,
     ...overrides,
@@ -75,26 +76,15 @@ describe("LivenessPoller", () => {
     // No error
   });
 
-  it("detects dead process and transitions to stopped", () => {
+  it("detects dead port and transitions to stopped", async () => {
     const reg = getRegistryMap();
-    // PID 1 always exists, but a very high PID likely doesn't
-    // Use a mock approach: we mock process.kill to throw ESRCH
-    const killSpy = vi
-      .spyOn(process, "kill")
-      .mockImplementation((_pid, signal) => {
-        if (signal === 0) {
-          const err = new Error("no such process") as NodeJS.ErrnoException;
-          err.code = "ESRCH";
-          throw err;
-        }
-        return true;
-      });
+    mockIsPortAlive.mockResolvedValue(false);
 
-    const entry = createMockEntry({ pid: 12345, status: "running" });
+    const entry = createMockEntry({ port: 3000, status: "running" });
     reg.set("/proj::s1::web", entry);
 
     liveness.start();
-    vi.advanceTimersByTime(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
     expect(entry.status).toBe("stopped");
     expect(broadcast).toHaveBeenCalledWith(
@@ -104,35 +94,31 @@ describe("LivenessPoller", () => {
         status: "stopped",
       }),
     );
-
-    killSpy.mockRestore();
   });
 
-  it("does not transition alive processes", () => {
+  it("does not transition alive servers", async () => {
     const reg = getRegistryMap();
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    mockIsPortAlive.mockResolvedValue(true);
 
-    const entry = createMockEntry({ pid: 12345, status: "running" });
+    const entry = createMockEntry({ port: 3000, status: "running" });
     reg.set("/proj::s1::web", entry);
 
     liveness.start();
-    vi.advanceTimersByTime(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
     expect(entry.status).toBe("running");
-
-    killSpy.mockRestore();
   });
 
-  it("auto-stops when registry empties", () => {
+  it("auto-stops when registry empties", async () => {
     const reg = getRegistryMap();
-    const entry = createMockEntry({ pid: 12345, status: "stopped" });
+    const entry = createMockEntry({ port: 3000, status: "stopped" });
     reg.set("/proj::s1::web", entry);
 
     liveness.start();
-    vi.advanceTimersByTime(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
     // The poller should have auto-stopped since no active servers
     // Verify by checking that further ticks don't cause errors
-    vi.advanceTimersByTime(10_000);
+    await vi.advanceTimersByTimeAsync(10_000);
   });
 });
