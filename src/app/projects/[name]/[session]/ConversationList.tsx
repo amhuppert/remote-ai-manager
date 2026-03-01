@@ -21,6 +21,7 @@ import {
 } from "@/stores/conversations.store";
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import CopyableId from "@/components/CopyableId";
 import WorkflowCard from "./WorkflowCard";
 
 interface Props {
@@ -89,6 +90,7 @@ export default function ConversationList({
 
   // --- Local UI state ---
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [contextCopied, setContextCopied] = useState(false);
 
   // --- Derived data ---
   const session = sessionQuery.data;
@@ -113,6 +115,35 @@ export default function ConversationList({
   }, [conversations, showArchived]);
 
   const activeCount = conversations.length - archivedCount;
+
+  // --- Copy session context for debugging ---
+  const handleCopyContext = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const lines = [
+        "```xml",
+        "<session-context>",
+        `  <project>${projectName}</project>`,
+        `  <session>${sessionName}</session>`,
+        `  <branch>${session?.branchName ?? ""}</branch>`,
+        `  <worktree>${session?.worktreePath ?? ""}</worktree>`,
+        `  <created>${session?.createdAt ?? ""}</created>`,
+        `  <status>${session ? deriveSessionStatus(session) : ""}</status>`,
+        `  <conversation-count>${session?.conversations.length ?? 0}</conversation-count>`,
+        `  <total-prompts>${session ? deriveSessionPromptCount(session) : 0}</total-prompts>`,
+        `  <source>${session?.source ?? ""}</source>`,
+        `  <creation-mode>${session?.creationMode ?? ""}</creation-mode>`,
+        `  <finished>${session?.finished ?? false}</finished>`,
+        "</session-context>",
+        "```",
+      ];
+      void navigator.clipboard.writeText(lines.join("\n")).then(() => {
+        setContextCopied(true);
+        setTimeout(() => setContextCopied(false), 1500);
+      });
+    },
+    [session, projectName, sessionName],
+  );
 
   const handleNewConversation = useCallback(() => {
     if (createConvoMutation.isPending || isFinished) return;
@@ -230,10 +261,17 @@ export default function ConversationList({
             {session && (
               <div className="convo-list-header">
                 <div className="convo-list-meta">
-                  <div className="si-item">
-                    <span className="si-label">Branch</span>
-                    <span className="si-val">{session.branchName}</span>
-                  </div>
+                  <CopyableId
+                    label="Branch"
+                    value={session.branchName}
+                    truncateAt={999}
+                  />
+                  <div className="si-sep" />
+                  <CopyableId
+                    label="Worktree"
+                    value={session.worktreePath}
+                    truncateAt={999}
+                  />
                   <div className="si-sep" />
                   <div className="si-item">
                     <span className="si-label">Created</span>
@@ -253,6 +291,16 @@ export default function ConversationList({
                       {deriveSessionPromptCount(session)}
                     </span>
                   </div>
+                  <div className="si-sep" />
+                  <button
+                    className="si-copy-context-btn"
+                    onClick={handleCopyContext}
+                    data-tooltip={
+                      contextCopied ? "Copied!" : "Copy context to clipboard"
+                    }
+                  >
+                    {contextCopied ? "\u2713" : "\u2398"} Context
+                  </button>
                 </div>
                 <div
                   style={{

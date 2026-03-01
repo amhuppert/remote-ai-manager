@@ -795,6 +795,7 @@ export default function SessionDetailPage({
       e.stopPropagation();
       const conv = session?.conversations.find((c) => c.id === conversationId);
       const lines = [
+        "```xml",
         "<conversation-context>",
         `  <project>${projectName}</project>`,
         `  <session>${sessionName}</session>`,
@@ -814,6 +815,7 @@ export default function SessionDetailPage({
         `  <session-source>${session?.source ?? ""}</session-source>`,
         `  <creation-mode>${session?.creationMode ?? ""}</creation-mode>`,
         "</conversation-context>",
+        "```",
       ];
       void navigator.clipboard.writeText(lines.join("\n")).then(() => {
         setContextCopied(true);
