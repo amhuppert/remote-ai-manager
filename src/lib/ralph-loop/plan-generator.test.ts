@@ -14,29 +14,27 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
   let capturedToolHandler: ((args: unknown) => Promise<unknown>) | null = null;
 
   return {
-    query: vi.fn(
-      (_args: { options?: { mcpServers?: Record<string, unknown> } }) => {
-        // Access the MCP server to get the submit_plan handler
-        // (In real flow, the SDK invokes the tool — here we simulate it)
-        return {
-          async *[Symbol.asyncIterator]() {
-            for (const msg of mockStreamMessages) {
-              yield msg;
-            }
-            // Simulate the tool call if a handler was captured
-            if (capturedToolHandler) {
-              await capturedToolHandler({
-                tasks: [
-                  { description: "Implement JWT tokens", group: 1 },
-                  { description: "Add user registration", group: 1 },
-                  { description: "Write integration tests", group: 2 },
-                ],
-              });
-            }
-          },
-        };
-      },
-    ),
+    query: vi.fn(() => {
+      // Access the MCP server to get the submit_plan handler
+      // (In real flow, the SDK invokes the tool — here we simulate it)
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const msg of mockStreamMessages) {
+            yield msg;
+          }
+          // Simulate the tool call if a handler was captured
+          if (capturedToolHandler) {
+            await capturedToolHandler({
+              tasks: [
+                { description: "Implement JWT tokens", group: 1 },
+                { description: "Add user registration", group: 1 },
+                { description: "Write integration tests", group: 2 },
+              ],
+            });
+          }
+        },
+      };
+    }),
     createSdkMcpServer: vi.fn(
       (config: {
         tools: Array<{

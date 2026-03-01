@@ -46,6 +46,8 @@ export type {
   CommandType,
   CommandItem,
   CommandsResponse,
+  FileItem,
+  ProjectFilesResponse,
   ConversationStatusEvent,
   SSEEvent,
   AskQuestionOption,

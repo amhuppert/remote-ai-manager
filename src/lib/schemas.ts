@@ -171,7 +171,8 @@ export const fixPlanTaskSchema: z.ZodType<
   ) {
     const v = val as Record<string, unknown>;
     const groupMap: Record<string, number> = { high: 1, medium: 2, low: 3 };
-    const { priority: _priority, ...rest } = v;
+    const { priority: _, ...rest } = v;
+    void _;
     return { ...rest, group: groupMap[v.priority as string] ?? 2 };
   }
   return val;
@@ -795,3 +796,17 @@ export const commandsResponseSchema = z.object({
   items: z.array(commandItemSchema),
 });
 export type CommandsResponse = z.infer<typeof commandsResponseSchema>;
+
+// ============================================================
+// File Autocomplete Schemas
+// ============================================================
+
+export const fileItemSchema = z.object({
+  path: z.string(),
+});
+export type FileItem = z.infer<typeof fileItemSchema>;
+
+export const projectFilesResponseSchema = z.object({
+  items: z.array(fileItemSchema),
+});
+export type ProjectFilesResponse = z.infer<typeof projectFilesResponseSchema>;

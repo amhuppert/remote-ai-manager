@@ -152,6 +152,11 @@ vi.mock("@/lib/queries", () => ({
   useFocusDocQuery: () => ({ data: undefined, isPending: false }),
   useKiroDocTreeQuery: () => ({ data: undefined, isPending: false }),
   useKiroDocFileQuery: () => ({ data: undefined, isPending: false }),
+  useProjectFilesQuery: () => ({
+    data: undefined,
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 // Mock unified panel store

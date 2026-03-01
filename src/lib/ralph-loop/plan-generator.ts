@@ -168,8 +168,8 @@ async function generatePlan(
     });
 
     // Consume the stream
-    for await (const _ of q) {
-      // Just consume — we only care about the tool call result
+    for await (const msg of q) {
+      void msg; // Just consume — we only care about the tool call result
     }
   } catch (err) {
     if (abortController.signal.aborted) {

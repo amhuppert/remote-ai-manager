@@ -84,6 +84,8 @@ import {
   CommandAutocomplete,
   type CommandAutocompleteHandle,
 } from "@/components/CommandAutocomplete";
+import { FileAutocomplete } from "@/components/FileAutocomplete";
+import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import ModelSelector, { type ModelId } from "@/components/ModelSelector";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import FocusConfirmationBar from "@/components/FocusConfirmationBar";
@@ -256,8 +258,17 @@ export default function SessionDetailPage({
   const [selectedModel, setSelectedModel] = useState<ModelId>(defaultModel);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
+  const [cursorPosition, setCursorPosition] = useState(0);
   const promptTextRef = useRef(promptText);
   promptTextRef.current = promptText;
+
+  const fileAutocomplete = useFileAutocomplete({
+    projectName,
+    text: promptText,
+    cursorPosition,
+    disabled: isBusy || isReadOnly,
+    onTextChange: setPromptText,
+  });
   const fireAndForgetRef = useRef(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1269,6 +1280,16 @@ export default function SessionDetailPage({
                       sessionName={session.sessionName}
                       disabled={isBusy || isReadOnly}
                     />
+                    <FileAutocomplete
+                      ref={fileAutocomplete.autocompleteRef}
+                      items={fileAutocomplete.items}
+                      visible={fileAutocomplete.visible}
+                      loading={fileAutocomplete.loading}
+                      error={fileAutocomplete.error}
+                      totalCount={fileAutocomplete.totalCount}
+                      onSelect={fileAutocomplete.onSelect}
+                      onClose={fileAutocomplete.onClose}
+                    />
                     <textarea
                       ref={textareaRef}
                       className="prompt-textarea"
@@ -1282,7 +1303,15 @@ export default function SessionDetailPage({
                       }
                       rows={1}
                       value={promptText}
-                      onChange={(e) => setPromptText(e.target.value)}
+                      onChange={(e) => {
+                        setPromptText(e.target.value);
+                        setCursorPosition(e.target.selectionStart);
+                      }}
+                      onSelect={(e) => {
+                        setCursorPosition(
+                          (e.target as HTMLTextAreaElement).selectionStart,
+                        );
+                      }}
                       onPaste={(e) => {
                         const items = e.clipboardData.items;
                         for (const item of items) {
@@ -1300,6 +1329,13 @@ export default function SessionDetailPage({
                         // Text paste — let default behavior proceed
                       }}
                       onKeyDown={(e) => {
+                        if (
+                          fileAutocomplete.autocompleteRef.current?.handleKeyDown(
+                            e,
+                          )
+                        ) {
+                          return;
+                        }
                         if (autocompleteRef.current?.handleKeyDown(e)) {
                           return;
                         }

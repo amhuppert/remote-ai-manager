@@ -40,6 +40,11 @@ vi.mock("@/lib/queries", () => ({
   usePresetsQuery: () => ({ data: undefined }),
   useActiveConversationsQuery: () => ({ data: undefined }),
   useNotificationsQuery: () => ({ data: undefined }),
+  useProjectFilesQuery: () => ({
+    data: undefined,
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 // Mock unified panel store

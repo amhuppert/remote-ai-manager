@@ -6,6 +6,8 @@ import { useCreateSessionMutation } from "@/lib/mutations";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
+import { FileAutocomplete } from "@/components/FileAutocomplete";
+import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import type { SessionCreationMode } from "@/types";
 
 interface CreateSessionModalProps {
@@ -24,6 +26,7 @@ export default function CreateSessionModal({
   const [sessionName, setSessionName] = useState("");
   const [objective, setObjective] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [cursorPosition, setCursorPosition] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -39,6 +42,18 @@ export default function CreateSessionModal({
   });
 
   const createMutation = useCreateSessionMutation(projectName);
+
+  // File autocomplete for focus/optimistic textarea
+  const currentTextareaValue = mode === "optimistic" ? instructions : objective;
+  const setCurrentTextareaValue =
+    mode === "optimistic" ? setInstructions : setObjective;
+  const fileAutocomplete = useFileAutocomplete({
+    projectName,
+    text: currentTextareaValue,
+    cursorPosition,
+    disabled: mode === "fast" || createMutation.isPending,
+    onTextChange: setCurrentTextareaValue,
+  });
 
   // Voice context returns the relevant text based on mode
   const getVoiceContext = useCallback(
@@ -304,6 +319,16 @@ export default function CreateSessionModal({
                 {textareaLabel}
               </label>
               <div style={{ position: "relative" }}>
+                <FileAutocomplete
+                  ref={fileAutocomplete.autocompleteRef}
+                  items={fileAutocomplete.items}
+                  visible={fileAutocomplete.visible}
+                  loading={fileAutocomplete.loading}
+                  error={fileAutocomplete.error}
+                  totalCount={fileAutocomplete.totalCount}
+                  onSelect={fileAutocomplete.onSelect}
+                  onClose={fileAutocomplete.onClose}
+                />
                 <textarea
                   ref={textareaRef}
                   id="session-objective-input"
@@ -313,9 +338,20 @@ export default function CreateSessionModal({
                   value={textareaValue}
                   onChange={(e) => {
                     setTextareaValue(e.target.value);
+                    setCursorPosition(e.target.selectionStart);
                     setError(null);
                   }}
+                  onSelect={(e) => {
+                    setCursorPosition(
+                      (e.target as HTMLTextAreaElement).selectionStart,
+                    );
+                  }}
                   onKeyDown={(e) => {
+                    if (
+                      fileAutocomplete.autocompleteRef.current?.handleKeyDown(e)
+                    ) {
+                      return;
+                    }
                     if (e.key === "Enter" && !e.shiftKey) {
                       if (isRecording) {
                         toggleRecording();

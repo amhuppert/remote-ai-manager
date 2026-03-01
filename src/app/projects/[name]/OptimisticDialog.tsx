@@ -11,6 +11,8 @@ import {
   CommandAutocomplete,
   type CommandAutocompleteHandle,
 } from "@/components/CommandAutocomplete";
+import { FileAutocomplete } from "@/components/FileAutocomplete";
+import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import type { ImagePayload } from "@/types";
 
 interface OptimisticDialogProps {
@@ -25,6 +27,7 @@ export default function OptimisticDialog({
   onClose,
 }: OptimisticDialogProps): React.JSX.Element | null {
   const [instructions, setInstructions] = useState("");
+  const [cursorPosition, setCursorPosition] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [promptPlaceholder, setPromptPlaceholder] = useState<string | null>(
     null,
@@ -40,6 +43,14 @@ export default function OptimisticDialog({
   });
 
   const createMutation = useCreateSessionMutation(projectName);
+
+  const fileAutocomplete = useFileAutocomplete({
+    projectName,
+    text: instructions,
+    cursorPosition,
+    disabled: createMutation.isPending,
+    onTextChange: setInstructions,
+  });
 
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
     useImageAttachments();
@@ -214,6 +225,16 @@ export default function OptimisticDialog({
               projectName={projectName}
               disabled={createMutation.isPending}
             />
+            <FileAutocomplete
+              ref={fileAutocomplete.autocompleteRef}
+              items={fileAutocomplete.items}
+              visible={fileAutocomplete.visible}
+              loading={fileAutocomplete.loading}
+              error={fileAutocomplete.error}
+              totalCount={fileAutocomplete.totalCount}
+              onSelect={fileAutocomplete.onSelect}
+              onClose={fileAutocomplete.onClose}
+            />
             <textarea
               ref={textareaRef}
               id="optimistic-instructions-input"
@@ -226,7 +247,13 @@ export default function OptimisticDialog({
               value={instructions}
               onChange={(e) => {
                 setInstructions(e.target.value);
+                setCursorPosition(e.target.selectionStart);
                 setError(null);
+              }}
+              onSelect={(e) => {
+                setCursorPosition(
+                  (e.target as HTMLTextAreaElement).selectionStart,
+                );
               }}
               onPaste={(e) => {
                 const items = e.clipboardData.items;
@@ -245,6 +272,11 @@ export default function OptimisticDialog({
                 // Text paste — let default behavior proceed
               }}
               onKeyDown={(e) => {
+                if (
+                  fileAutocomplete.autocompleteRef.current?.handleKeyDown(e)
+                ) {
+                  return;
+                }
                 if (autocompleteRef.current?.handleKeyDown(e)) {
                   return;
                 }

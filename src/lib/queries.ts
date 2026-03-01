@@ -5,6 +5,7 @@ import {
   sessionKeys,
   conversationKeys,
   commandKeys,
+  fileKeys,
   workflowKeys,
   kiroDocKeys,
   notificationKeys,
@@ -18,6 +19,7 @@ import type {
   ConversationState,
   TranscriptMessage,
   CommandsResponse,
+  ProjectFilesResponse,
   RalphLoopWorkflow,
   RalphLoopIterationMeta,
   KiroDocTree,
@@ -251,6 +253,24 @@ export function useProjectCommandsQuery(
     queryFn: () =>
       apiFetch<CommandsResponse>(
         `/api/projects/${encodeURIComponent(projectName)}/commands`,
+      ),
+    enabled: options?.enabled,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// File Queries
+// ---------------------------------------------------------------------------
+
+export function useProjectFilesQuery(
+  projectName: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: fileKeys.list(projectName),
+    queryFn: () =>
+      apiFetch<ProjectFilesResponse>(
+        `/api/projects/${encodeURIComponent(projectName)}/files`,
       ),
     enabled: options?.enabled,
   });
