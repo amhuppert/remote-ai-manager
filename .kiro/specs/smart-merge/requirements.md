@@ -113,7 +113,48 @@ Currently, merge operations are synchronous (blocking the user), merge directly 
 6. The topbar badge shall reflect the total count of active items (active conversations plus in-progress or actionable jobs).
 7. When a new job-status SSE event is received, CC shall update the notifications panel in real time without requiring a page refresh.
 
-### Requirement 9: Smart Merge Dialog
+### Requirement 9: Pre-Merge Validation Auto-Recovery
+
+**Objective:** As a developer, I want the merge pipeline to automatically fix pre-merge validation failures (lint errors, type errors, formatting issues) when auto-resolve is enabled, so that fixable issues don't block the merge.
+
+#### Acceptance Criteria
+
+1. When the merge pipeline runs pre-merge validation (e.g., ESLint, TypeScript, Prettier) and the validation fails, CC shall attempt auto-recovery if auto-resolve is enabled.
+2. When auto-recovery is triggered, CC shall invoke Claude Code in the session worktree with the validation output, instructing it to fix all reported issues and stage the changes.
+3. If Claude successfully fixes the validation errors, CC shall commit the fixes and re-run the validation script once to verify.
+4. If the re-validation passes, CC shall proceed with the squash merge into main.
+5. If Claude fails to fix the errors or the re-validation fails, CC shall report the original validation error as a merge failure (same behavior as without auto-recovery).
+6. Auto-recovery shall attempt at most one retry to prevent infinite loops.
+7. The validation-fix module shall follow the same patterns as conflict resolution: Claude Agent SDK `query()` with `bypassPermissions`, configurable timeout, and `persistSession: false`.
+
+### Requirement 10: Phase-Aware Job Status
+
+**Objective:** As a developer, I want to see what phase a merge job is currently in (validating, fixing errors, finalizing), so that I have better visibility into long-running merge operations.
+
+#### Acceptance Criteria
+
+1. The `job-status` SSE event shall include an optional `phase` field indicating the current merge pipeline stage.
+2. The `BackgroundJob` type shall include an optional `phase` field that is propagated through the notification store to the UI.
+3. When a merge job enters pre-merge validation, CC shall broadcast `phase: "validating"`.
+4. When a merge job is auto-recovering validation errors, CC shall broadcast `phase: "fixing-validation"`.
+5. When validation is re-running after a fix attempt, CC shall broadcast `phase: "re-validating"`.
+6. When a merge job enters the squash merge phase, CC shall broadcast `phase: "squash-merging"`.
+7. The Activities panel shall display phase-aware labels for running merge jobs: "Validating...", "Fixing errors...", "Finalizing..." instead of the generic "Merging...".
+8. The phase field shall be cleared (undefined) when the job reaches a terminal state.
+
+### Requirement 11: Error Details in Activities Panel
+
+**Objective:** As a developer, I want to see why a merge or commit job failed directly in the Activities panel, so that I don't need to check logs to understand the failure.
+
+#### Acceptance Criteria
+
+1. When a merge, commit, or resolve-conflicts job fails, the Activities panel shall display a concise error summary below the notification metadata.
+2. The error summary shall intelligently extract the most meaningful line from the raw error output (e.g., ESLint problem count, TypeScript error messages, test failure counts).
+3. If no structured error pattern is matched, the summary shall fall back to the first meaningful line of the error, truncated to 100 characters.
+4. The full raw error message shall be available as a native browser tooltip on hover over the error summary.
+5. The error summary shall be styled in monospace font with the error color, matching the design system.
+
+### Requirement 12: Smart Merge Dialog
 
 **Objective:** As a developer, I want a merge dialog that submits the merge as a background job and immediately confirms submission, so that I can continue working without waiting.
 

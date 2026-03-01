@@ -159,3 +159,54 @@
   - Display the badge count reflecting active conversations plus in-progress or actionable jobs
   - Ensure real-time badge updates when job-status SSE events arrive
   - _Requirements: 8.1, 8.6, 8.7_
+
+- [x] 8. Pre-merge validation auto-recovery
+- [x] 8.1 Create the validation-fix module for Claude SDK integration
+  - Implement `fixValidationErrors()` function using the Claude Agent SDK `query()` API with `bypassPermissions` mode and `persistSession: false`
+  - Use `systemPrompt: { type: "preset", preset: "claude_code", append: INSTRUCTIONS }` with instructions tailored for fixing ESLint, TypeScript, and Prettier errors
+  - Accept `worktreePath` and `validationOutput` parameters; return `{ status: "fixed" }` or `{ status: "failed"; error: string }`
+  - Use AbortController timeout from config (same as conflict resolution)
+  - No JSON output parsing needed — Claude edits files and stages them directly
+  - _Requirements: 9.1, 9.2, 9.7_
+
+- [x] 8.2 Implement `runValidationWithRecovery()` helper in background-jobs
+  - Add helper that orchestrates: run validation → on failure with `autoResolve` → invoke Claude to fix → commit fixes → re-validate (one retry only)
+  - Broadcast `phase` transitions at each stage: `validating`, `fixing-validation`, `re-validating`
+  - On re-validation failure or Claude fix failure, throw the original validation error (same behavior as without recovery)
+  - Replace both direct `runPreMergeValidation()` call sites (clean merge path and post-conflict-resolution path) with `runValidationWithRecovery()`
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6_
+
+- [x] 9. Phase-aware job status
+- [x] 9.1 Add `phase` field to schemas and types
+  - Add `phase: z.string().optional()` to `jobStatusEventSchema` in `schemas.ts`
+  - Add `phase?: string` to `BackgroundJob` interface in `types/index.ts`
+  - _Requirements: 10.1, 10.2_
+
+- [x] 9.2 Broadcast phase transitions in background-jobs
+  - Include `phase` in `broadcastJobStatus()` when present on the job
+  - Set `job.phase = "validating"` before pre-merge validation
+  - Set `job.phase = "fixing-validation"` before Claude auto-recovery
+  - Set `job.phase = "re-validating"` before re-validation after fix
+  - Set `job.phase = "squash-merging"` before squash merge
+  - Clear `job.phase = undefined` on terminal states
+  - _Requirements: 10.3, 10.4, 10.5, 10.6, 10.8_
+
+- [x] 9.3 Propagate phase through notification store and container
+  - Add `phase: event.phase` to job mapping in `notification.store.ts` `addOrUpdateJob`
+  - Pass `phase: job.phase` when mapping running merge jobs in `NotificationsPanelContainer.tsx`
+  - _Requirements: 10.2_
+
+- [x] 9.4 Display phase-aware labels in NotificationsPanel
+  - Add `phase?: string` to `MergeNotification` interface
+  - Update `getItemLabel()` to return phase-specific labels: "Validating..." for `validating`/`re-validating`, "Fixing errors..." for `fixing-validation`, "Finalizing..." for `squash-merging`, "Merging..." as default
+  - Add Storybook story `MergeFixingValidation` showing all phase labels
+  - _Requirements: 10.7_
+
+- [x] 10. Error details in Activities panel
+- [x] 10.1 Add error summary display to NotificationsPanel
+  - Implement `summarizeError()` helper that extracts a concise one-liner from raw error output: matches ESLint summary lines (`N problems`), TypeScript errors (`error TS\d+`, `Found N errors`), test failure lines; falls back to first meaningful line truncated at 100 chars
+  - Implement `getErrorMessage()` type guard that returns `errorMessage` only for error-status job notifications
+  - Render error summary below notification metadata with `title` attribute for full error tooltip on hover
+  - Add `.np-item-error` CSS class: monospace font, red color, text-overflow: ellipsis
+  - Add Storybook story `MergeFailedWithError` showing ESLint, TypeScript, and commit failure error details
+  - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5_

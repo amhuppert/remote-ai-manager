@@ -122,6 +122,7 @@ export default function NotificationsPanelContainer() {
           branchName: job.branchName,
           status: "running",
           read: true,
+          phase: job.phase,
         } satisfies MergeNotification);
       } else if (job.jobType === "commit") {
         result.push({

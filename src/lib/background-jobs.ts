@@ -19,6 +19,7 @@ import {
   hasUncommittedChanges,
 } from "./git-operations";
 import { resolveConflicts } from "./conflict-resolution";
+import { fixValidationErrors } from "./validation-fix";
 import { runPreMergeValidation } from "./repo-config";
 import { readConfig } from "./config";
 import { broadcast } from "./sse-broadcaster";
@@ -125,6 +126,7 @@ function broadcastJobStatus(job: BackgroundJob): void {
     ...(job.conflictCount != null && { conflictCount: job.conflictCount }),
     ...(job.conflictFiles && { conflictFiles: job.conflictFiles }),
     ...(job.errorMessage && { errorMessage: job.errorMessage }),
+    ...(job.phase && { phase: job.phase }),
   };
   broadcast(event);
 
@@ -347,6 +349,111 @@ async function executePhase2(
 }
 
 // ============================================================
+// Validation with Auto-Recovery
+// ============================================================
+
+/**
+ * Run pre-merge validation with optional auto-recovery.
+ *
+ * If validation fails and autoResolve is true, invokes Claude to fix
+ * the issues and re-runs validation once. If the retry also fails,
+ * the original error is thrown.
+ */
+async function runValidationWithRecovery(params: {
+  job: BackgroundJob;
+  projectPath: string;
+  worktreePath: string;
+  sessionName: string;
+  branchName: string;
+  timeoutMs: number;
+  autoResolve: boolean;
+}): Promise<void> {
+  const {
+    job,
+    projectPath,
+    worktreePath,
+    sessionName,
+    branchName,
+    timeoutMs,
+    autoResolve,
+  } = params;
+
+  job.phase = "validating";
+  broadcastJobStatus(job);
+
+  try {
+    await runPreMergeValidation({
+      projectPath,
+      worktreePath,
+      sessionName,
+      branchName,
+      timeoutMs,
+    });
+    return; // Validation passed on first try
+  } catch (err) {
+    if (!autoResolve) throw err; // No recovery — re-throw
+
+    const errObj = err as Error & { gitOutput?: string };
+    const validationOutput = [errObj.message, errObj.gitOutput]
+      .filter(Boolean)
+      .join("\n");
+
+    logger.info("merge.validation_failed_attempting_fix", {
+      jobId: job.jobId,
+      sessionName,
+    });
+
+    // Broadcast that we're fixing validation errors
+    job.phase = "fixing-validation";
+    broadcastJobStatus(job);
+
+    // Invoke Claude to fix the issues
+    const fixResult = await fixValidationErrors({
+      worktreePath,
+      validationOutput,
+    });
+
+    if (fixResult.status === "failed") {
+      logger.warn("merge.validation_fix_failed", {
+        jobId: job.jobId,
+        error: fixResult.error,
+      });
+      // Claude couldn't fix it — throw the original error
+      throw err;
+    }
+
+    // Commit Claude's fixes
+    if (await hasUncommittedChanges(worktreePath)) {
+      await commitChanges(worktreePath, "auto-fix: validation errors", {
+        skipHooks: true,
+      });
+    }
+
+    // Re-run validation (one retry only — if this fails, it fails for real)
+    job.phase = "re-validating";
+    broadcastJobStatus(job);
+
+    logger.info("merge.re_validating", {
+      jobId: job.jobId,
+      sessionName,
+    });
+
+    await runPreMergeValidation({
+      projectPath,
+      worktreePath,
+      sessionName,
+      branchName,
+      timeoutMs,
+    });
+
+    logger.info("merge.validation_fix_succeeded", {
+      jobId: job.jobId,
+      sessionName,
+    });
+  }
+}
+
+// ============================================================
 // Public API — Dispatch
 // ============================================================
 
@@ -414,20 +521,25 @@ export function dispatchMergeJob(params: {
       const mergeResult = await mergeMainIntoFeature(worktreePath);
 
       if (mergeResult.status === "clean") {
-        // Phase 2: Pre-merge validation
+        // Phase 2: Pre-merge validation (with auto-recovery if enabled)
         const config = await readConfig();
-        await runPreMergeValidation({
+        await runValidationWithRecovery({
+          job,
           projectPath,
           worktreePath,
           sessionName,
           branchName,
           timeoutMs: config.preMergeTimeoutMs ?? 300_000,
+          autoResolve,
         });
 
         // Phase 3: Squash merge into main
+        job.phase = "squash-merging";
+        broadcastJobStatus(job);
         logger.info("merge.phase2_squash", { jobId: job.jobId });
         await executePhase2(job, projectPath, branchName, message, sessionName);
 
+        job.phase = undefined;
         job.status = "completed";
         logger.info("merge.completed", {
           jobId: job.jobId,
@@ -460,17 +572,21 @@ export function dispatchMergeJob(params: {
               skipHooks: true,
             });
 
-            // Pre-merge validation
+            // Pre-merge validation (with auto-recovery)
             const resolveConfig = await readConfig();
-            await runPreMergeValidation({
+            await runValidationWithRecovery({
+              job,
               projectPath,
               worktreePath,
               sessionName,
               branchName,
               timeoutMs: resolveConfig.preMergeTimeoutMs ?? 300_000,
+              autoResolve: true,
             });
 
             // Squash merge into main
+            job.phase = "squash-merging";
+            broadcastJobStatus(job);
             logger.info("merge.phase2_squash_after_resolve", {
               jobId: job.jobId,
             });
@@ -482,6 +598,7 @@ export function dispatchMergeJob(params: {
               sessionName,
             );
 
+            job.phase = undefined;
             job.status = "completed";
             logger.info("merge.completed", {
               jobId: job.jobId,
@@ -515,6 +632,7 @@ export function dispatchMergeJob(params: {
         }
       }
     } catch (err) {
+      job.phase = undefined;
       job.status = "failed";
       const errObj = err as Error & { gitOutput?: string };
       const parts: string[] = [errObj.message ?? "Unknown error"];

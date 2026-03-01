@@ -108,6 +108,7 @@ sequenceDiagram
     participant Jobs as background-jobs
     participant Git as git-operations
     participant Claude as conflict-resolution
+    participant ValFix as validation-fix
     participant SSE as sse-broadcaster
 
     User->>Dialog: Click Start Merge
@@ -123,7 +124,19 @@ sequenceDiagram
     Jobs->>Git: mergeMainIntoFeature worktreePath
 
     alt No conflicts
-        Note over Jobs,Git: Phase 2 - Squash merge into main
+        Note over Jobs,SSE: Phase 2 - Pre-merge validation (with recovery)
+        Jobs->>SSE: broadcast phase=validating
+        Jobs->>Jobs: runPreMergeValidation
+        alt Validation fails + autoResolve
+            Jobs->>SSE: broadcast phase=fixing-validation
+            Jobs->>ValFix: fixValidationErrors(output)
+            Jobs->>Git: commitChanges (fix)
+            Jobs->>SSE: broadcast phase=re-validating
+            Jobs->>Jobs: runPreMergeValidation (retry)
+        end
+
+        Note over Jobs,Git: Phase 3 - Squash merge into main
+        Jobs->>SSE: broadcast phase=squash-merging
         Jobs->>Jobs: Acquire project lock (projectPath)
         Jobs->>Git: squashMerge projectPath branchName message
         Jobs->>Jobs: Release project lock
@@ -135,6 +148,8 @@ sequenceDiagram
             Jobs->>Claude: resolveConflicts worktreePath
             alt Claude succeeds
                 Jobs->>Git: commitChanges worktreePath resolution message
+                Note over Jobs,SSE: Validation with recovery (same as above)
+                Jobs->>SSE: broadcast phase=squash-merging
                 Jobs->>Jobs: Acquire project lock (projectPath)
                 Jobs->>Git: squashMerge projectPath branchName message
                 Jobs->>Jobs: Release project lock
@@ -255,22 +270,43 @@ sequenceDiagram
 | 8.5 | Click-to-navigate | NotificationsPanel | — | — |
 | 8.6 | Topbar badge with active count | Topbar, NotificationsPanel | — | — |
 | 8.7 | Real-time SSE updates | NotificationListener, NotificationsPanel | Event | — |
-| 9.1 | Merge dialog with branch info and toggle | SmartMergeDialog | — | — |
-| 9.2 | Uncommitted changes warning | SmartMergeDialog | — | — |
-| 9.3 | Submitted confirmation state | SmartMergeDialog | — | — |
-| 9.4 | Contextual messaging by auto-resolve setting | SmartMergeDialog | — | — |
-| 9.5 | Dismissible at any time | SmartMergeDialog | — | — |
-| 9.6 | Cmd/Ctrl+Enter submit | SmartMergeDialog | — | — |
+| 9.1 | Auto-recovery on validation failure | validation-fix, background-jobs | Service | Two-Phase Merge Pipeline |
+| 9.2 | Claude fixes validation errors | validation-fix | Service | Two-Phase Merge Pipeline |
+| 9.3 | Commit fixes and re-validate | background-jobs, git-operations | Service | Two-Phase Merge Pipeline |
+| 9.4 | Proceed to squash on re-validation pass | background-jobs | Service | Two-Phase Merge Pipeline |
+| 9.5 | Report original error on recovery failure | background-jobs | Event | Two-Phase Merge Pipeline |
+| 9.6 | Single retry limit | background-jobs | Service | — |
+| 9.7 | Same SDK patterns as conflict-resolution | validation-fix | Service | — |
+| 10.1 | Phase field in job-status SSE event | schemas.ts | Event | — |
+| 10.2 | Phase field in BackgroundJob type | types | State | — |
+| 10.3 | Broadcast phase=validating | background-jobs | Event | Two-Phase Merge Pipeline |
+| 10.4 | Broadcast phase=fixing-validation | background-jobs | Event | Two-Phase Merge Pipeline |
+| 10.5 | Broadcast phase=re-validating | background-jobs | Event | Two-Phase Merge Pipeline |
+| 10.6 | Broadcast phase=squash-merging | background-jobs | Event | Two-Phase Merge Pipeline |
+| 10.7 | Phase-aware labels in Activities panel | NotificationsPanel | — | — |
+| 10.8 | Phase cleared on terminal state | background-jobs | Event | — |
+| 11.1 | Error summary in Activities panel | NotificationsPanel | — | — |
+| 11.2 | Intelligent error extraction | NotificationsPanel (summarizeError) | — | — |
+| 11.3 | Fallback truncation | NotificationsPanel (summarizeError) | — | — |
+| 11.4 | Full error tooltip on hover | NotificationsPanel | — | — |
+| 11.5 | Monospace error styling | globals.css (.np-item-error) | — | — |
+| 12.1 | Merge dialog with branch info and toggle | SmartMergeDialog | — | — |
+| 12.2 | Uncommitted changes warning | SmartMergeDialog | — | — |
+| 12.3 | Submitted confirmation state | SmartMergeDialog | — | — |
+| 12.4 | Contextual messaging by auto-resolve setting | SmartMergeDialog | — | — |
+| 12.5 | Dismissible at any time | SmartMergeDialog | — | — |
+| 12.6 | Cmd/Ctrl+Enter submit | SmartMergeDialog | — | — |
 
 ## Components and Interfaces
 
 | Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|-------------|--------|-------------|-----------------|-----------|
-| background-jobs | Backend/Infrastructure | Manage job lifecycle, dispatch, state tracking, SSE broadcast | 2.1-2.3, 3.1-3.3, 4.1-4.8, 5.2-5.5 | lock (P0), git-operations (P0), conflict-resolution (P0), sse-broadcaster (P0) | Service, Event, State |
+| background-jobs | Backend/Infrastructure | Manage job lifecycle, dispatch, state tracking, SSE broadcast, validation recovery | 2.1-2.3, 3.1-3.3, 4.1-4.8, 5.2-5.5, 9.1-9.6, 10.3-10.6, 10.8 | lock (P0), git-operations (P0), conflict-resolution (P0), validation-fix (P0), sse-broadcaster (P0) | Service, Event, State |
+| validation-fix | Backend/Domain | Claude SDK auto-fix for pre-merge validation errors | 9.1-9.7 | claude-agent-sdk (P0) | Service |
 | lock (extension) | Backend/Infrastructure | Project-level lock to serialize squash merges across sessions | 1.2, 2.2 | — | Service |
 | git-operations (extension) | Backend/Domain | Two-phase merge, conflict detection | 1.1-1.5 | — | Service |
 | conflict-resolution | Backend/Domain | Claude SDK conflict analysis and resolution | 6.1-6.4 | claude-agent-sdk (P0), git-operations (P1) | Service |
-| merge route (extension) | Backend/API | Async merge dispatch | 2.1, 9.3 | background-jobs (P0) | API |
+| merge route (extension) | Backend/API | Async merge dispatch | 2.1, 12.3 | background-jobs (P0) | API |
 | commit route (extension) | Backend/API | Async commit dispatch | 3.1 | background-jobs (P0) | API |
 | conflicts route (new) | Backend/API | Conflict data retrieval | 6.3, 7.8 | background-jobs (P0) | API |
 | resolve-conflicts route (new) | Backend/API | Conflict resolution dispatch | 7.6, 7.7 | background-jobs (P0) | API |
@@ -371,6 +407,7 @@ Published events:
   conflictFiles?: string[];// conflicts status
   errorMessage?: string;   // failed status
   branchName: string;
+  phase?: string;          // current pipeline stage (validating, fixing-validation, re-validating, squash-merging)
 }
 ```
 
@@ -388,6 +425,7 @@ interface BackgroundJob {
   branchName: string;
   startedAt: string;       // ISO timestamp
   completedAt?: string;    // ISO timestamp
+  phase?: string;          // current pipeline stage (validating, fixing-validation, re-validating, squash-merging)
   // Result data
   mergeHash?: string;
   commitHash?: string;
@@ -544,6 +582,52 @@ type ConflictResolutionResult =
 
 ---
 
+#### validation-fix
+
+| Field | Detail |
+|-------|--------|
+| Intent | Invoke Claude Agent SDK to fix pre-merge validation errors in a session worktree |
+| Requirements | 9.1-9.7 |
+
+**Responsibilities & Constraints**
+- Receives the raw validation script output (ESLint, TypeScript, Prettier errors)
+- Invokes `query()` with full tool access in the session worktree
+- Claude reads files, makes targeted fixes, and stages changes with `git add`
+- No structured JSON output needed — the validation script re-runs to verify
+
+**Dependencies**
+- Outbound: `@anthropic-ai/claude-agent-sdk` `query()` — AI execution (P0)
+- Inbound: background-jobs — called during merge pipeline validation recovery (P0)
+
+**Contracts**: Service [x]
+
+##### Service Interface
+
+```typescript
+async function fixValidationErrors(params: {
+  worktreePath: string;
+  validationOutput: string;
+}): Promise<ValidationFixResult>;
+
+type ValidationFixResult =
+  | { status: "fixed" }
+  | { status: "failed"; error: string };
+```
+
+- Preconditions: Worktree has code that fails a validation script; `validationOutput` contains the script's stderr/stdout
+- Postconditions:
+  - `fixed`: Claude has edited and staged files to address the validation errors. The caller must re-run validation to confirm.
+  - `failed`: Claude encountered an error (SDK timeout, config error). The worktree may have partial changes.
+- Invariants: The function does not commit — the caller (background-jobs) handles committing fixes
+
+**Implementation Notes**
+- System prompt instructs Claude to: (1) analyze the validation output, (2) read and fix each flagged file, (3) stage all fixes with `git add`, (4) NOT run the validation script itself
+- Uses `query()` with: `permissionMode: "bypassPermissions"`, `allowDangerouslySkipPermissions: true`, `systemPrompt` with preset `claude_code` and appended validation-fix instructions, `persistSession: false`
+- Simpler than conflict-resolution: no JSON extraction needed — just consume the stream and let Claude make edits
+- Abort timeout: uses the existing `claudeTimeoutMs` from global config
+
+---
+
 ### Backend / API
 
 #### POST /api/projects/[name]/sessions/[session]/merge (extension)
@@ -664,6 +748,7 @@ const jobStatusEventSchema = z.object({
   conflictCount: z.number().optional(),
   conflictFiles: z.array(z.string()).optional(),
   errorMessage: z.string().optional(),
+  phase: z.string().optional(),      // current pipeline stage
 });
 
 // Extended SSE event union

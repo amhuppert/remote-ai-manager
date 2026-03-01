@@ -2404,6 +2404,17 @@ textarea {
   margin-top: 1px;
 }
 
+.np-item-error {
+  font-size: 0.63rem;
+  font-family: var(--font-mono);
+  color: var(--red);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+  opacity: 0.85;
+}
+
 /* Item right column */
 .np-item-right {
   display: flex;

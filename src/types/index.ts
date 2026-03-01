@@ -166,6 +166,7 @@ export interface BackgroundJob {
   conflictCount?: number;
   conflictFiles?: string[];
   errorMessage?: string;
+  phase?: string;
 }
 
 /** Conflict analysis result stored in memory */

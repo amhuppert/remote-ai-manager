@@ -161,6 +161,84 @@ export const SingleMergeConflict = {
   },
 } satisfies Story;
 
+/** Merge failed with error details shown */
+export const MergeFailedWithError = {
+  args: {
+    items: [
+      {
+        type: "merge",
+        id: "merge-fail-eslint",
+        branchName: "csm/fix-auth",
+        status: "error",
+        errorMessage:
+          "Pre-merge validation failed\n/home/user/project/src/lib/auth.ts\n  42:15  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any\n\n1 problem (1 error, 0 warnings)",
+        timestamp: minutesAgo(5),
+        projectName: "my-app",
+        sessionName: "fix-auth",
+      } satisfies NotificationItem,
+      {
+        type: "merge",
+        id: "merge-fail-ts",
+        branchName: "csm/add-feature",
+        status: "error",
+        errorMessage:
+          "Pre-merge validation failed\nsrc/lib/feature.ts(12,5): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.\nFound 1 error.",
+        timestamp: minutesAgo(15),
+        projectName: "my-app",
+        sessionName: "add-feature",
+      } satisfies NotificationItem,
+      {
+        type: "commit",
+        id: "commit-fail",
+        branchName: "csm/update-deps",
+        status: "error",
+        errorMessage: "Pre-commit hook failed: test suite has 2 failures",
+        timestamp: minutesAgo(45),
+        projectName: "my-app",
+        sessionName: "update-deps",
+      } satisfies NotificationItem,
+    ],
+  },
+} satisfies Story;
+
+/** Merge in progress — fixing validation errors */
+export const MergeFixingValidation = {
+  args: {
+    items: [
+      {
+        type: "merge",
+        id: "merge-fixing",
+        branchName: "csm/implement-auth",
+        status: "running",
+        phase: "fixing-validation",
+        timestamp: minutesAgo(1),
+        projectName: "my-app",
+        sessionName: "implement-auth",
+      } satisfies NotificationItem,
+      {
+        type: "merge",
+        id: "merge-validating",
+        branchName: "csm/add-api",
+        status: "running",
+        phase: "validating",
+        timestamp: minutesAgo(2),
+        projectName: "api-server",
+        sessionName: "add-api",
+      } satisfies NotificationItem,
+      {
+        type: "merge",
+        id: "merge-squashing",
+        branchName: "csm/fix-bug",
+        status: "running",
+        phase: "squash-merging",
+        timestamp: minutesAgo(3),
+        projectName: "my-app",
+        sessionName: "fix-bug",
+      } satisfies NotificationItem,
+    ],
+  },
+} satisfies Story;
+
 /** Panel closed */
 export const Closed = {
   args: {

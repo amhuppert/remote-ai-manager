@@ -579,6 +579,7 @@ export const jobStatusEventSchema = z.object({
   conflictCount: z.number().optional(),
   conflictFiles: z.array(z.string()).optional(),
   errorMessage: z.string().optional(),
+  phase: z.string().optional(),
 });
 export type JobStatusEvent = z.infer<typeof jobStatusEventSchema>;
 

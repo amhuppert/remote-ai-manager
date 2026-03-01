@@ -29,6 +29,7 @@ export interface MergeNotification extends ServerNotificationBase {
   mergeHash?: string;
   conflictCount?: number;
   errorMessage?: string;
+  phase?: string;
 }
 
 export interface CommitNotification extends ServerNotificationBase {
@@ -79,6 +80,47 @@ interface NotificationsPanelProps {
 
 // ── Helpers ─────────────────────────────────────────────────────
 
+/** Extract a concise one-line summary from a raw validation error message. */
+function summarizeError(errorMessage: string): string {
+  const lines = errorMessage
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  // ESLint summary: "N problems (N errors, N warnings)"
+  const eslintSummary = lines.find((l) => /\d+ problems?\s*\(/.test(l));
+  if (eslintSummary) return eslintSummary;
+
+  // TypeScript error count: "Found N errors"
+  const tsErrors = lines.find((l) => /Found \d+ errors?/.test(l));
+  if (tsErrors) return tsErrors;
+
+  // TypeScript specific error: "error TS1234: ..."
+  const tsError = lines.find((l) => /error TS\d+/.test(l));
+  if (tsError)
+    return tsError.length > 120 ? tsError.slice(0, 117) + "..." : tsError;
+
+  // Test failures: "Tests: N failed" or "FAIL"
+  const testFail = lines.find((l) => /Tests?:.*failed|FAIL\s/.test(l));
+  if (testFail)
+    return testFail.length > 120 ? testFail.slice(0, 117) + "..." : testFail;
+
+  // Fallback: first meaningful line (skip "Pre-merge validation failed")
+  const meaningful =
+    lines.find((l) => l !== "Pre-merge validation failed") ??
+    lines[0] ??
+    errorMessage;
+  return meaningful.length > 100 ? meaningful.slice(0, 97) + "..." : meaningful;
+}
+
+/** Check if a notification item has an error message to display. */
+function getErrorMessage(item: NotificationItem): string | undefined {
+  if (item.type === "conversation" || item.type === "workflow")
+    return undefined;
+  if (item.status !== "error") return undefined;
+  return item.errorMessage;
+}
+
 function formatRelativeTime(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
   const minutes = Math.floor(diff / 60_000);
@@ -116,13 +158,18 @@ function getItemLabel(item: NotificationItem): string {
           ? "Awaiting"
           : "Needs input";
     case "merge":
-      return item.status === "running"
-        ? "Merging..."
-        : item.status === "success"
-          ? "Merged"
-          : item.status === "conflicts"
-            ? `${item.conflictCount ?? 0} conflict${(item.conflictCount ?? 0) !== 1 ? "s" : ""}`
-            : "Merge failed";
+      if (item.status === "running") {
+        if (item.phase === "validating" || item.phase === "re-validating")
+          return "Validating...";
+        if (item.phase === "fixing-validation") return "Fixing errors...";
+        if (item.phase === "squash-merging") return "Finalizing...";
+        return "Merging...";
+      }
+      return item.status === "success"
+        ? "Merged"
+        : item.status === "conflicts"
+          ? `${item.conflictCount ?? 0} conflict${(item.conflictCount ?? 0) !== 1 ? "s" : ""}`
+          : "Merge failed";
     case "commit":
       return item.status === "running"
         ? "Committing..."
@@ -380,6 +427,11 @@ function NotificationRow({
           <div className="np-item-meta">
             {item.projectName} / {item.sessionName}
           </div>
+          {getErrorMessage(item) && (
+            <div className="np-item-error" title={getErrorMessage(item)}>
+              {summarizeError(getErrorMessage(item)!)}
+            </div>
+          )}
         </div>
         <div className="np-item-right">
           <span className={`np-item-status np-status-${statusClass}`}>

@@ -57,6 +57,7 @@ export const useNotificationStore = create<NotificationStore>()(
           sessionName: event.sessionName,
           branchName: event.branchName,
           startedAt: existing?.startedAt ?? now,
+          phase: event.phase,
         };
 
         state.jobs.set(event.jobId, job);
