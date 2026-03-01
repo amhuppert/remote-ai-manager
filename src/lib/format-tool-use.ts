@@ -83,6 +83,11 @@ export function formatToolUse(
         name,
         context: input["url"] ? truncate(String(input["url"]), 60) : null,
       };
+    case "Skill":
+      return {
+        name,
+        context: input["skill"] ? String(input["skill"]) : null,
+      };
     case "NotebookEdit":
       return {
         name,
