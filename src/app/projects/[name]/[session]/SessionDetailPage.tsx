@@ -361,12 +361,9 @@ export default function SessionDetailPage({
       );
     } else if (
       pendingQuestionId &&
-      activeConvo.status !== "waiting_for_input" &&
-      activeConvo.status !== "running"
+      activeConvo.status !== "waiting_for_input"
     ) {
-      // Another tab answered or prompt finished — clear stale question state.
-      // Skip while "running": the prompt SSE stream may have just set questions
-      // before the session cache has refreshed to "waiting_for_input".
+      // Another tab answered — clear stale question state
       clearQuestions();
     }
   }, [

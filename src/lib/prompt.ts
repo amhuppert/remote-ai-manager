@@ -24,10 +24,7 @@ import { appendTranscriptEntry, getTranscriptPath } from "./transcript";
 import { externalizeImageBlocks } from "./transcript-images";
 import type { TranscriptEntry } from "./transcript";
 import { broadcast } from "./sse-broadcaster";
-import {
-  registerQuestion,
-  rejectQuestionsForConversation,
-} from "./question-registry";
+import { registerQuestion } from "./question-registry";
 import {
   registerAbortController,
   unregisterAbortController,
@@ -266,21 +263,6 @@ export async function executePromptStream(
             // Emit question data on the prompt SSE stream
             emit("ask-question", { questionId, questions });
 
-            // Also broadcast on global SSE so the question reaches the UI
-            // even if the prompt SSE stream is disconnected (e.g. user navigated away)
-            try {
-              broadcast({
-                type: "ask-question",
-                projectName,
-                sessionName: session.sessionName,
-                conversationId: conversationId!,
-                questionId,
-                questions,
-              });
-            } catch {
-              /* fire-and-forget */
-            }
-
             // Block until user answers via the answer API
             const answers = await registerQuestion(questionId, conversationId!);
 
@@ -429,10 +411,9 @@ export async function executePromptStream(
     // Clear safety-net timeout
     clearTimeout(timeoutHandle);
 
-    // Clean up abort controller, query registrations, and pending questions
+    // Clean up abort controller and query registrations
     unregisterAbortController(conversationId);
     unregisterQuery(conversationId);
-    rejectQuestionsForConversation(conversationId, "Prompt execution ended");
 
     // Always mark conversation as awaiting when done (even on error)
     await mutateConversation(
