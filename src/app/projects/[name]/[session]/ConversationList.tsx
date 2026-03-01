@@ -8,7 +8,12 @@ import {
   deriveSessionStatus,
   deriveSessionPromptCount,
 } from "@/lib/session-derived";
-import { useSessionQuery, useConversationsQuery } from "@/lib/queries";
+import {
+  useSessionQuery,
+  useConversationsQuery,
+  useSessionDiffQuery,
+  useCommitsQuery,
+} from "@/lib/queries";
 import {
   useDeleteSessionMutation,
   useCreateConversationMutation,
@@ -23,6 +28,9 @@ import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import CopyableId from "@/components/CopyableId";
 import WorkflowCard from "./WorkflowCard";
+import SessionGitPanel from "./SessionGitPanel";
+import CommitDialog from "./CommitDialog";
+import SmartMergeDialog from "./SmartMergeDialog";
 
 interface Props {
   projectName: string;
@@ -68,6 +76,8 @@ export default function ConversationList({
   // --- TanStack Query ---
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const conversationsQuery = useConversationsQuery(projectName, sessionName);
+  const diffQuery = useSessionDiffQuery(projectName, sessionName);
+  const commitsQuery = useCommitsQuery(projectName, sessionName);
 
   // --- Zustand ---
   const showArchived = useShowArchivedConversations();
@@ -90,6 +100,8 @@ export default function ConversationList({
 
   // --- Local UI state ---
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCommitDialog, setShowCommitDialog] = useState(false);
+  const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [contextCopied, setContextCopied] = useState(false);
 
   // --- Derived data ---
@@ -98,11 +110,22 @@ export default function ConversationList({
     () => conversationsQuery.data ?? [],
     [conversationsQuery.data],
   );
+  const diff = diffQuery.data ?? {
+    files: [],
+    totalAdditions: 0,
+    totalDeletions: 0,
+  };
+  const commits = commitsQuery.data ?? [];
   const decodedProjectName = decodeURIComponent(projectName);
   const isFinished = session?.finished ?? false;
   const hasWorkflow = session?.workflow != null;
 
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
+  const isBusy =
+    sessionStatus === "running" || sessionStatus === "waiting_for_input";
+
+  const commitDisabled = isFinished || diff.files.length === 0;
+  const mergeDisabled = isFinished;
 
   const archivedCount = useMemo(
     () => conversations.filter((c) => c.archived).length,
@@ -239,6 +262,27 @@ export default function ConversationList({
               {displayStatus}
             </div>
             <div className="topbar-sep" />
+            {!isFinished && (
+              <>
+                <button
+                  className="btn btn-sm"
+                  data-tooltip="Commit changes"
+                  disabled={commitDisabled}
+                  onClick={() => setShowCommitDialog(true)}
+                >
+                  Commit
+                </button>
+                <button
+                  className="btn btn-sm btn-primary"
+                  data-tooltip="Merge into main"
+                  disabled={mergeDisabled}
+                  onClick={() => setShowMergeDialog(true)}
+                >
+                  Merge
+                </button>
+                <div className="topbar-sep" />
+              </>
+            )}
             <button
               className="btn-icon-only danger"
               data-tooltip="Delete session"
@@ -347,6 +391,17 @@ export default function ConversationList({
                 This session has been merged into main and is read-only.
               </div>
             )}
+
+            {/* Git Panel */}
+            <SessionGitPanel
+              diff={diff}
+              commits={commits}
+              isFinished={isFinished}
+              commitDisabled={commitDisabled || isBusy}
+              mergeDisabled={mergeDisabled || isBusy}
+              onCommit={() => setShowCommitDialog(true)}
+              onMerge={() => setShowMergeDialog(true)}
+            />
 
             {/* Conversation cards */}
             {filteredConversations.length > 0 ? (
@@ -463,6 +518,26 @@ export default function ConversationList({
         onConfirm={handleDelete}
         onCancel={() => setShowDeleteConfirm(false)}
       />
+
+      <CommitDialog
+        open={showCommitDialog}
+        onClose={() => setShowCommitDialog(false)}
+        onSuccess={() => setShowCommitDialog(false)}
+        projectName={projectName}
+        sessionName={sessionName}
+      />
+
+      {session && (
+        <SmartMergeDialog
+          open={showMergeDialog}
+          onClose={() => setShowMergeDialog(false)}
+          projectName={projectName}
+          sessionName={sessionName}
+          branchName={session.branchName}
+          commitCount={commits.length}
+          hasUncommittedChanges={diff.files.length > 0}
+        />
+      )}
     </div>
   );
 }

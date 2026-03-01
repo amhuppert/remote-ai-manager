@@ -6288,6 +6288,243 @@ textarea {
 }
 
 /* ============================================================
+   Session Git Panel (session overview)
+   ============================================================ */
+
+.git-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.git-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+  gap: var(--space-md);
+}
+
+.git-panel-header:hover {
+  background: var(--bg-hover);
+}
+
+.git-panel-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.git-panel-chevron {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  line-height: 1;
+  width: 12px;
+  text-align: center;
+}
+
+.git-panel-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.git-panel-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-tertiary);
+}
+
+.git-panel-file-count {
+  color: var(--text-secondary);
+}
+
+.git-panel-stat-add {
+  color: var(--green);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.git-panel-stat-rm {
+  color: var(--red);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.git-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.git-panel-body {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.git-panel-tabs {
+  display: flex;
+  padding: 0 var(--space-md);
+  gap: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(17, 24, 37, 0.3);
+}
+
+.git-panel-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+  margin-bottom: -1px;
+}
+
+.git-panel-tab:hover {
+  color: var(--text-secondary);
+}
+
+.git-panel-tab.active {
+  color: var(--cyan);
+  border-bottom-color: var(--cyan);
+}
+
+.git-panel-tab-count {
+  font-size: 0.58rem;
+  padding: 0 5px;
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  line-height: 1.6;
+}
+
+.git-panel-tab.active .git-panel-tab-count {
+  background: var(--cyan-glow);
+}
+
+.git-panel-content {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* File list */
+.git-panel-file-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-panel-file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  transition: background 0.1s ease;
+}
+
+.git-panel-file-row:hover {
+  background: var(--bg-hover);
+}
+
+.git-panel-file-icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.git-panel-file-path {
+  flex: 1;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.git-panel-file-stat {
+  display: flex;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  font-size: 0.62rem;
+}
+
+/* Commit list */
+.git-panel-commit-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-panel-commit-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  transition: background 0.1s ease;
+}
+
+.git-panel-commit-row:hover {
+  background: var(--bg-hover);
+}
+
+.git-panel-commit-row svg {
+  color: var(--cyan-dim);
+  flex-shrink: 0;
+}
+
+.git-panel-commit-hash {
+  color: var(--cyan-dim);
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
+
+.git-panel-commit-msg {
+  flex: 1;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.git-panel-commit-meta {
+  color: var(--text-tertiary);
+  font-size: 0.62rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Empty state */
+.git-panel-empty {
+  padding: var(--space-lg) var(--space-md);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+/* ============================================================
    Conversation sidebar (task 14.2)
    ============================================================ */
 
