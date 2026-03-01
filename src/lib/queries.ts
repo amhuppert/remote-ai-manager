@@ -227,13 +227,32 @@ export function useConversationMessagesQuery(
 // Command Queries
 // ---------------------------------------------------------------------------
 
-export function useCommandsQuery(projectName: string, sessionName: string) {
+export function useCommandsQuery(
+  projectName: string,
+  sessionName: string,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: commandKeys.list(projectName, sessionName),
     queryFn: () =>
       apiFetch<CommandsResponse>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commands`,
       ),
+    enabled: options?.enabled,
+  });
+}
+
+export function useProjectCommandsQuery(
+  projectName: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: commandKeys.projectList(projectName),
+    queryFn: () =>
+      apiFetch<CommandsResponse>(
+        `/api/projects/${encodeURIComponent(projectName)}/commands`,
+      ),
+    enabled: options?.enabled,
   });
 }
 

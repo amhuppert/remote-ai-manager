@@ -4,7 +4,14 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useCreateSessionMutation } from "@/lib/mutations";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
+import ImageAttachmentPreview from "@/app/projects/[name]/[session]/ImageAttachmentPreview";
+import {
+  CommandAutocomplete,
+  type CommandAutocompleteHandle,
+} from "@/components/CommandAutocomplete";
+import type { ImagePayload } from "@/types";
 
 interface OptimisticDialogProps {
   projectName: string;
@@ -19,7 +26,12 @@ export default function OptimisticDialog({
 }: OptimisticDialogProps): React.JSX.Element | null {
   const [instructions, setInstructions] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [promptPlaceholder, setPromptPlaceholder] = useState<string | null>(
+    null,
+  );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const instructionsRef = useRef(instructions);
   const fireAndForgetRef = useRef(false);
   const autoSubmitPendingRef = useRef(false);
@@ -28,6 +40,9 @@ export default function OptimisticDialog({
   });
 
   const createMutation = useCreateSessionMutation(projectName);
+
+  const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
+    useImageAttachments();
 
   const {
     isRecording,
@@ -64,6 +79,8 @@ export default function OptimisticDialog({
     if (open) {
       setInstructions("");
       setError(null);
+      setPromptPlaceholder(null);
+      clearImages();
       fireAndForgetRef.current = false;
       autoSubmitPendingRef.current = false;
     }
@@ -89,15 +106,29 @@ export default function OptimisticDialog({
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
+  const hasImages = pendingImages.length > 0;
   const canSubmit =
-    !createMutation.isPending && !isRecording && instructions.trim().length > 0;
+    !createMutation.isPending &&
+    !isRecording &&
+    (instructions.trim().length > 0 || hasImages);
 
   const handleSubmit = () => {
     if (!canSubmit) return;
     setError(null);
 
+    const imagePayloads: ImagePayload[] = hasImages
+      ? pendingImages.map((img) => ({
+          mediaType: img.mediaType as ImagePayload["mediaType"],
+          base64Data: img.base64Data,
+        }))
+      : [];
+
     createMutation.mutate(
-      { mode: "optimistic", instructions: instructions.trim() },
+      {
+        mode: "optimistic",
+        instructions: instructions.trim(),
+        images: imagePayloads.length > 0 ? imagePayloads : undefined,
+      },
       {
         onSuccess: () => {
           onClose();
@@ -146,6 +177,14 @@ export default function OptimisticDialog({
     }
   });
 
+  // Placeholder management for command autocomplete
+  const showPlaceholder = useCallback((text: string) => {
+    setPromptPlaceholder(text);
+  }, []);
+  const clearPlaceholder = useCallback(() => {
+    setPromptPlaceholder(null);
+  }, []);
+
   if (!open) return null;
 
   return (
@@ -162,18 +201,53 @@ export default function OptimisticDialog({
             What should Claude do?
           </label>
           <div style={{ position: "relative" }}>
+            <CommandAutocomplete
+              ref={autocompleteRef}
+              promptText={instructions}
+              onPromptChange={(text) => {
+                setInstructions(text);
+                if (!text.startsWith("/")) {
+                  clearPlaceholder();
+                }
+              }}
+              onPlaceholderChange={showPlaceholder}
+              projectName={projectName}
+              disabled={createMutation.isPending}
+            />
             <textarea
               ref={textareaRef}
               id="optimistic-instructions-input"
               className="form-input"
               rows={4}
-              placeholder="e.g. Fix the typo in the login page header"
+              placeholder={
+                promptPlaceholder ??
+                "e.g. Fix the typo in the login page header"
+              }
               value={instructions}
               onChange={(e) => {
                 setInstructions(e.target.value);
                 setError(null);
               }}
+              onPaste={(e) => {
+                const items = e.clipboardData.items;
+                for (const item of items) {
+                  if (item.type.startsWith("image/")) {
+                    e.preventDefault();
+                    const file = item.getAsFile();
+                    if (file) {
+                      void addImage(file).then((err) => {
+                        if (err) setError(err);
+                      });
+                    }
+                    return;
+                  }
+                }
+                // Text paste — let default behavior proceed
+              }}
               onKeyDown={(e) => {
+                if (autocompleteRef.current?.handleKeyDown(e)) {
+                  return;
+                }
                 if (e.key === "Enter" && !e.shiftKey) {
                   if (isRecording) {
                     toggleRecording();
@@ -184,13 +258,58 @@ export default function OptimisticDialog({
                 }
               }}
             />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const files = e.target.files;
+                if (!files) return;
+                for (const file of files) {
+                  void addImage(file).then((err) => {
+                    if (err) setError(err);
+                  });
+                }
+                // Reset so re-selecting the same file works
+                e.target.value = "";
+              }}
+            />
+            <ImageAttachmentPreview
+              images={pendingImages}
+              onRemove={removeImage}
+            />
             <div
               style={{
                 position: "absolute",
                 right: "0.5rem",
                 bottom: "0.5rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.25rem",
               }}
             >
+              <button
+                className="attachment-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isAtLimit || createMutation.isPending}
+                title="Attach image"
+                type="button"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+              </button>
               <VoiceRecordButton
                 isRecording={isRecording}
                 isProcessing={isProcessing}

@@ -10,7 +10,7 @@ import {
   forwardRef,
 } from "react";
 import { fuzzyMatch } from "@/lib/fuzzy";
-import { useCommandsQuery } from "@/lib/queries";
+import { useCommandsQuery, useProjectCommandsQuery } from "@/lib/queries";
 import type { CommandItem } from "@/types";
 
 interface ScoredItem {
@@ -24,7 +24,8 @@ export interface CommandAutocompleteProps {
   onPromptChange: (text: string) => void;
   onPlaceholderChange: (placeholder: string) => void;
   projectName: string;
-  sessionName: string;
+  /** When omitted, uses the project-level commands query instead of session-level */
+  sessionName?: string;
   disabled: boolean;
 }
 
@@ -53,8 +54,15 @@ export const CommandAutocomplete = forwardRef<
     !disabled && promptText.startsWith("/") && !promptText.includes(" ");
   const query = visible ? promptText.slice(1) : "";
 
-  // Fetch commands via TanStack Query — only enabled when visible
-  const commandsQuery = useCommandsQuery(projectName, sessionName);
+  // Fetch commands via TanStack Query — session-level when sessionName is provided,
+  // otherwise project-level (e.g. in OptimisticDialog before a session exists)
+  const sessionQuery = useCommandsQuery(projectName, sessionName ?? "", {
+    enabled: !!sessionName,
+  });
+  const projectQuery = useProjectCommandsQuery(projectName, {
+    enabled: !sessionName,
+  });
+  const commandsQuery = sessionName ? sessionQuery : projectQuery;
   const items = useMemo(
     () => commandsQuery.data?.items ?? [],
     [commandsQuery.data?.items],

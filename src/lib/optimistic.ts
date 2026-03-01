@@ -1,4 +1,4 @@
-import type { SessionState } from "@/types";
+import type { ImagePayload, SessionState } from "@/types";
 import { executePromptStream } from "./prompt";
 import { dispatchMergeJob } from "./background-jobs";
 import { createNotification } from "./notification-db";
@@ -23,8 +23,9 @@ export async function executeOptimisticWorkflow(params: {
   projectName: string;
   session: SessionState;
   instructions: string;
+  images?: ImagePayload[];
 }): Promise<void> {
-  const { projectPath, projectName, session, instructions } = params;
+  const { projectPath, projectName, session, instructions, images } = params;
   const conversationId = session.conversations[0]?.id;
 
   logger.info("optimistic.workflow_start", {
@@ -47,7 +48,7 @@ export async function executeOptimisticWorkflow(params: {
       noopEmit,
       conversationId,
       undefined,
-      undefined,
+      images,
       { autonomous: true },
     );
 

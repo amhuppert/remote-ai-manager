@@ -11,6 +11,7 @@ import { useAddOrUpdateJob } from "@/stores/notification.store";
 import type {
   SessionState,
   ConversationState,
+  ImagePayload,
   RalphLoopWorkflow,
   FixPlanTask,
   RalphLoopConfig,
@@ -64,7 +65,11 @@ export function useCreateSessionMutation(projectName: string) {
       params:
         | { mode: "fast"; sessionName: string }
         | { mode: "focus"; objective: string }
-        | { mode: "optimistic"; instructions: string },
+        | {
+            mode: "optimistic";
+            instructions: string;
+            images?: ImagePayload[];
+          },
     ) =>
       mutationFetch<SessionState>(
         `/api/projects/${encodeURIComponent(projectName)}/sessions`,

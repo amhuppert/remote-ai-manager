@@ -77,7 +77,11 @@ export const POST = withTracing(async (request, { params }) => {
     if (body.mode === "fast") {
       session = await createSessionFast(projectPath, body.sessionName);
     } else if (body.mode === "optimistic") {
-      session = await createSessionOptimistic(projectPath, body.instructions);
+      session = await createSessionOptimistic(
+        projectPath,
+        body.instructions,
+        body.images,
+      );
     } else {
       session = await createSessionFocus(projectPath, body.objective);
     }

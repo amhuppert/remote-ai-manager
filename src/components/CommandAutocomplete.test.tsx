@@ -41,6 +41,12 @@ vi.mock("@/lib/queries", () => ({
     isError: false,
     error: null,
   }),
+  useProjectCommandsQuery: () => ({
+    data: { items: mockCommands },
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
 }));
 
 // ---------------------------------------------------------------------------

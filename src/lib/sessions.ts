@@ -8,6 +8,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import type {
   ConversationState,
+  ImagePayload,
   SessionCreationMode,
   SessionState,
 } from "@/types";
@@ -327,6 +328,7 @@ export async function createSessionFocus(
 export async function createSessionOptimistic(
   projectPath: string,
   instructions: string,
+  images?: ImagePayload[],
 ): Promise<SessionState> {
   const baseName = await generateSessionName(instructions, projectPath);
 
@@ -349,6 +351,7 @@ export async function createSessionOptimistic(
     projectName,
     session,
     instructions,
+    images,
   });
 
   return session;

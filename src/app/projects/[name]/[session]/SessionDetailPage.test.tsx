@@ -142,6 +142,11 @@ vi.mock("@/lib/queries", () => ({
     isPending: false,
     isError: false,
   }),
+  useProjectCommandsQuery: () => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+  }),
   useActiveConversationsQuery: () => ({ data: undefined }),
   useNotificationsQuery: () => ({ data: undefined }),
   useFocusDocQuery: () => ({ data: undefined, isPending: false }),

@@ -447,6 +447,12 @@ export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 // API Request Schemas
 // ============================================================
 
+export const imagePayloadSchema = z.object({
+  mediaType: z.enum(["image/jpeg", "image/png", "image/gif", "image/webp"]),
+  base64Data: z.string().min(1),
+});
+export type ImagePayload = z.infer<typeof imagePayloadSchema>;
+
 export const createSessionRequestSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("fast"),
@@ -459,15 +465,10 @@ export const createSessionRequestSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("optimistic"),
     instructions: z.string().trim().min(1),
+    images: z.array(imagePayloadSchema).max(5).optional(),
   }),
 ]);
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
-
-export const imagePayloadSchema = z.object({
-  mediaType: z.enum(["image/jpeg", "image/png", "image/gif", "image/webp"]),
-  base64Data: z.string().min(1),
-});
-export type ImagePayload = z.infer<typeof imagePayloadSchema>;
 
 export const runPromptRequestSchema = z
   .object({
