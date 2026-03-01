@@ -311,7 +311,7 @@ export default function ConversationList({
                 >
                   {archivedCount > 0 && (
                     <button
-                      className={`archive-toggle${showArchived ? " active" : ""}`}
+                      className={`btn btn-sm btn-toggle${showArchived ? " active" : ""}`}
                       onClick={toggleArchived}
                       type="button"
                     >

@@ -26,6 +26,7 @@ import {
 import CreateSessionModal from "./CreateSessionModal";
 import OptimisticDialog from "./OptimisticDialog";
 import PresetInstallDialog from "./PresetInstallDialog";
+import ProjectActionsBar from "./ProjectActionsBar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Topbar from "@/components/Topbar";
 
@@ -175,51 +176,14 @@ export default function SessionsList({
         ) : (
           <>
             <div className="stagger-in">
-              <div className="session-actions-bar">
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "var(--space-sm)",
-                    alignItems: "center",
-                  }}
-                >
-                  {archivedCount > 0 && (
-                    <button
-                      className={`archive-toggle${showArchived ? " active" : ""}`}
-                      onClick={toggleArchived}
-                      type="button"
-                    >
-                      Archived ({archivedCount})
-                    </button>
-                  )}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "var(--space-sm)",
-                    alignItems: "center",
-                  }}
-                >
-                  <button
-                    className="btn btn-sm"
-                    onClick={() => setPresetDialogOpen(true)}
-                  >
-                    Install Preset
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    onClick={() => setOptimisticDialogOpen(true)}
-                  >
-                    Quick Task
-                  </button>
-                  <button
-                    className="btn btn-primary btn-sm"
-                    onClick={openCreateModal}
-                  >
-                    <span className="btn-icon">+</span> New Session
-                  </button>
-                </div>
-              </div>
+              <ProjectActionsBar
+                archivedCount={archivedCount}
+                showArchived={showArchived}
+                onToggleArchived={toggleArchived}
+                onInstallPreset={() => setPresetDialogOpen(true)}
+                onQuickTask={() => setOptimisticDialogOpen(true)}
+                onNewSession={openCreateModal}
+              />
 
               {filteredSessions.length > 0 ? (
                 <table className="sessions-table">
