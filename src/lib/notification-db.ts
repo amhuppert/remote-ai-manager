@@ -286,6 +286,12 @@ export function markAllAsRead(): number {
   return result.changes;
 }
 
+export function deleteAllNotifications(): number {
+  const db = getDb();
+  const result = db.prepare("DELETE FROM notifications").run();
+  return result.changes;
+}
+
 export function getUnreadCount(): number {
   const db = getDb();
   const row = db

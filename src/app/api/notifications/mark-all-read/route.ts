@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { markAllAsRead } from "@/lib/notification-db";
+import { markAllAsRead, deleteAllNotifications } from "@/lib/notification-db";
 import { withTracing } from "@/lib/logging";
 
 export const dynamic = "force-dynamic";
 
-/** POST /api/notifications/mark-all-read — mark all notifications as read */
+/** POST /api/notifications/mark-all-read — mark all as read then clear all notifications */
 export const POST = withTracing(async () => {
-  const count = markAllAsRead();
-  return NextResponse.json({ success: true, count });
+  const readCount = markAllAsRead();
+  const deletedCount = deleteAllNotifications();
+  return NextResponse.json({ success: true, readCount, deletedCount });
 });
