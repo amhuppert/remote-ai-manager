@@ -30,6 +30,7 @@ import {
   unregisterAbortController,
 } from "./abort-registry";
 import { registerQuery, unregisterQuery } from "./query-registry";
+import { acquireQuerySlot } from "./query-semaphore";
 import { createInitToolServer } from "./ralph-loop/init-tool";
 import { randomUUID } from "node:crypto";
 
@@ -104,8 +105,11 @@ export async function executePromptStream(
 
   // Declared here so `finally` can clear it
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let releaseQuerySlot: (() => void) | undefined;
 
   try {
+    // Acquire concurrency slot (waits if at capacity)
+    releaseQuerySlot = await acquireQuerySlot(`prompt:${session.sessionName}`);
     // Mark conversation as running
     await mutateConversation(
       projectPath,
@@ -410,6 +414,9 @@ export async function executePromptStream(
   } finally {
     // Clear safety-net timeout
     clearTimeout(timeoutHandle);
+
+    // Release concurrency slot
+    releaseQuerySlot?.();
 
     // Clean up abort controller and query registrations
     unregisterAbortController(conversationId);

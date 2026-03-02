@@ -16,6 +16,7 @@ export const globalConfigSchema = z.object({
   maxTurns: z.number().int().positive().optional(),
   mergeCheckIntervalMs: z.number().int().positive().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
+  maxConcurrentQueries: z.number().int().positive().optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 

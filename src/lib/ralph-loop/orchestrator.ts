@@ -49,6 +49,7 @@ import {
   remove as removeOrchestrator,
 } from "./orchestrator-registry";
 import * as workflowStream from "./workflow-stream-registry";
+import { acquireQuerySlot } from "../query-semaphore";
 
 const logger = createLogger("ralph-loop");
 
@@ -343,8 +344,14 @@ async function runIteration(
   abortController.signal.addEventListener("abort", onParentAbort);
 
   let release: (() => void) | null = null;
+  let releaseQuerySlot: (() => void) | null = null;
 
   try {
+    // Acquire concurrency slot (waits if at capacity)
+    releaseQuerySlot = await acquireQuerySlot(
+      `ralph:${sessionName}:iter${iterationNumber}`,
+    );
+
     // Acquire session lock
     release = acquireSessionLock(projectPath, sessionName);
 
@@ -485,6 +492,7 @@ async function runIteration(
   } finally {
     clearTimeout(timeoutHandle);
     abortController.signal.removeEventListener("abort", onParentAbort);
+    if (releaseQuerySlot) releaseQuerySlot();
     if (release) release();
 
     // Mark conversation as awaiting

@@ -41,6 +41,7 @@ function defaultConfig(): GlobalConfig {
     defaultModel: "opus",
     mergeCheckIntervalMs: 5 * 60 * 1000,
     preMergeTimeoutMs: 300_000,
+    maxConcurrentQueries: 3,
   };
 }
 
