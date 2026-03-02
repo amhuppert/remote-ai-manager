@@ -10,7 +10,7 @@ import { useActiveJobs } from "@/stores/notification.store";
 
 export interface BreadcrumbSegment {
   label: string;
-  href: string;
+  href?: string;
   isSession?: boolean;
 }
 
@@ -50,7 +50,7 @@ export default function Topbar({
             <Link
               href={
                 breadcrumbs.length > 1
-                  ? breadcrumbs[breadcrumbs.length - 2]!.href
+                  ? (breadcrumbs[breadcrumbs.length - 2]!.href ?? "/projects")
                   : "/projects"
               }
               className="topbar-mobile-back"
@@ -68,11 +68,15 @@ export default function Topbar({
               .filter(Boolean)
               .join(" ");
             return (
-              <span key={seg.href} style={{ display: "contents" }}>
+              <span key={seg.href ?? seg.label} style={{ display: "contents" }}>
                 {i > 0 && <span className="bc-sep">/</span>}
-                <Link href={seg.href} className={cls || undefined}>
-                  {seg.label}
-                </Link>
+                {seg.href ? (
+                  <Link href={seg.href} className={cls || undefined}>
+                    {seg.label}
+                  </Link>
+                ) : (
+                  <span className={cls || undefined}>{seg.label}</span>
+                )}
               </span>
             );
           })}

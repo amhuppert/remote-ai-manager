@@ -396,6 +396,8 @@ export default function ConversationList({
             <SessionGitPanel
               diff={diff}
               commits={commits}
+              projectName={projectName}
+              sessionName={sessionName}
               isFinished={isFinished}
               commitDisabled={commitDisabled || isBusy}
               mergeDisabled={mergeDisabled || isBusy}

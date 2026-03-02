@@ -113,6 +113,8 @@ const meta = {
   args: {
     diff: multiFileDiff,
     commits: sampleCommits,
+    projectName: "my-project",
+    sessionName: "my-session",
     isFinished: false,
     commitDisabled: false,
     mergeDisabled: false,

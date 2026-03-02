@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import Link from "next/link";
 import type { SessionDiff, CommitLogEntry } from "@/types";
 
 type GitTab = "changes" | "commits";
@@ -8,6 +9,8 @@ type GitTab = "changes" | "commits";
 interface SessionGitPanelProps {
   diff: SessionDiff;
   commits: CommitLogEntry[];
+  projectName: string;
+  sessionName: string;
   isFinished?: boolean;
   commitDisabled?: boolean;
   mergeDisabled?: boolean;
@@ -61,12 +64,15 @@ function CommitIcon() {
 export default function SessionGitPanel({
   diff,
   commits,
+  projectName,
+  sessionName,
   isFinished = false,
   commitDisabled = false,
   mergeDisabled = false,
   onCommit,
   onMerge,
 }: SessionGitPanelProps): React.JSX.Element {
+  const diffHref = `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/diff`;
   const hasChanges = diff.files.length > 0;
   const hasCommits = commits.length > 0;
   const defaultTab: GitTab = hasChanges ? "changes" : "commits";
@@ -108,27 +114,34 @@ export default function SessionGitPanel({
             </span>
           )}
         </div>
-        {!isFinished && (
-          <div
-            className="git-panel-header-actions"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className="btn btn-sm"
-              disabled={commitDisabled || !hasChanges}
-              onClick={onCommit}
-            >
-              Commit
-            </button>
-            <button
-              className="btn btn-sm btn-primary"
-              disabled={mergeDisabled}
-              onClick={onMerge}
-            >
-              Merge
-            </button>
-          </div>
-        )}
+        <div
+          className="git-panel-header-actions"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(hasChanges || hasCommits) && (
+            <Link href={diffHref} className="btn btn-sm btn-ghost">
+              View Diff
+            </Link>
+          )}
+          {!isFinished && (
+            <>
+              <button
+                className="btn btn-sm"
+                disabled={commitDisabled || !hasChanges}
+                onClick={onCommit}
+              >
+                Commit
+              </button>
+              <button
+                className="btn btn-sm btn-primary"
+                disabled={mergeDisabled}
+                onClick={onMerge}
+              >
+                Merge
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Content */}
