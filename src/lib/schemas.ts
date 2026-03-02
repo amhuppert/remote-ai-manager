@@ -17,6 +17,7 @@ export const globalConfigSchema = z.object({
   mergeCheckIntervalMs: z.number().int().positive().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
+  tailscaleEnabled: z.boolean().optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 

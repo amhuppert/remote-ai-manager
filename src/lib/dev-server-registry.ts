@@ -5,6 +5,8 @@ import { createLogger } from "./logging";
 import { broadcast } from "./sse-broadcaster";
 import * as tailscale from "./tailscale";
 import * as liveness from "./dev-server-liveness";
+import { readConfig } from "./config";
+import { getLanUrl } from "./network";
 import type { DevServerStatus, DevServerStatusEvent } from "@/types";
 
 const logger = createLogger("dev-server");
@@ -214,13 +216,32 @@ async function killByPort(port: number): Promise<void> {
 }
 
 /**
- * Wait for a port to become occupied on localhost, then register with Tailscale.
- * This prevents Tailscale from binding the port before the dev server can.
+ * Wait for a port to become occupied on localhost, then resolve a remote URL.
+ * When Tailscale is enabled, registers with Tailscale Serve.
+ * When Tailscale is disabled, uses the machine's LAN IP.
  */
-async function deferredTailscaleRegister(
+async function deferredRemoteUrlRegister(
   entry: DevServerEntry,
   port: number,
 ): Promise<void> {
+  const config = await readConfig();
+
+  if (!config.tailscaleEnabled) {
+    // LAN mode: set remote URL immediately using LAN IP
+    if (entry.status === "running") {
+      const remoteUrl = getLanUrl(port);
+      entry.remoteUrl = remoteUrl;
+      broadcastStatus(entry);
+      logger.info("dev-server.lan_url_set", {
+        serverName: entry.serverName,
+        port,
+        remoteUrl,
+      });
+    }
+    return;
+  }
+
+  // Tailscale mode: wait for port to accept connections before registering
   const deadline = Date.now() + TAILSCALE_POLL_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
@@ -349,9 +370,9 @@ export async function startServer(params: {
         transitionTo(entry, "running", { port, remoteUrl: null });
         logger.info("dev-server.running", { serverName, port });
 
-        // Deferred: wait for the server to bind the port, then register Tailscale
-        deferredTailscaleRegister(entry, port).catch((err) => {
-          logger.warn("dev-server.tailscale_deferred_error", {
+        // Deferred: wait for the server to bind the port, then resolve remote URL
+        deferredRemoteUrlRegister(entry, port).catch((err) => {
+          logger.warn("dev-server.remote_url_deferred_error", {
             serverName,
             port,
             error: err instanceof Error ? err.message : String(err),
@@ -402,7 +423,13 @@ export async function startServer(params: {
           signal,
         });
         if (entry.port) {
-          tailscale.unregister(entry.port).catch(() => {});
+          readConfig()
+            .then((cfg) => {
+              if (cfg.tailscaleEnabled) {
+                tailscale.unregister(entry.port!).catch(() => {});
+              }
+            })
+            .catch(() => {});
         }
         transitionTo(entry, "stopped");
       }
@@ -470,9 +497,12 @@ export async function stopServer(params: {
     port: entry.port,
   });
 
-  // Unregister from Tailscale first
+  // Unregister from Tailscale if enabled
   if (entry.port) {
-    await tailscale.unregister(entry.port);
+    const config = await readConfig();
+    if (config.tailscaleEnabled) {
+      await tailscale.unregister(entry.port);
+    }
   }
 
   // Kill the startup script if still running

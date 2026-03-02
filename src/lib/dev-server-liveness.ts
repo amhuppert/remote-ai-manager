@@ -1,6 +1,7 @@
 import { createLogger } from "./logging";
 import { broadcast } from "./sse-broadcaster";
 import * as tailscale from "./tailscale";
+import { readConfig } from "./config";
 import { isPortAlive } from "./dev-server-registry";
 import type { DevServerEntry } from "./dev-server-registry";
 import type { DevServerStatusEvent } from "@/types";
@@ -39,8 +40,14 @@ async function poll(): Promise<void> {
           port: entry.port,
         });
 
-        // Clean up Tailscale registration
-        tailscale.unregister(entry.port).catch(() => {});
+        // Clean up Tailscale registration if enabled
+        readConfig()
+          .then((config) => {
+            if (config.tailscaleEnabled) {
+              tailscale.unregister(entry.port!).catch(() => {});
+            }
+          })
+          .catch(() => {});
 
         // Transition to stopped
         entry.status = "stopped";

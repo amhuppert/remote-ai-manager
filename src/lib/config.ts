@@ -42,6 +42,7 @@ function defaultConfig(): GlobalConfig {
     mergeCheckIntervalMs: 5 * 60 * 1000,
     preMergeTimeoutMs: 300_000,
     maxConcurrentQueries: 3,
+    tailscaleEnabled: true,
   };
 }
 
