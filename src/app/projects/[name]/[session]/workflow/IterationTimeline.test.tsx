@@ -41,13 +41,25 @@ describe("IterationTimeline", () => {
       makeIteration(),
       makeIteration({ iterationNumber: 2, conversationId: "conv-002" }),
     ];
-    const { container } = render(<IterationTimeline iterations={iterations} />);
+    const { container } = render(
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={iterations}
+      />,
+    );
     const cards = container.querySelectorAll(".iteration-card");
     expect(cards.length).toBe(2);
   });
 
   it("returns null for empty iterations", () => {
-    const { container } = render(<IterationTimeline iterations={[]} />);
+    const { container } = render(
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={[]}
+      />,
+    );
     expect(container.querySelector(".iteration-timeline")).toBeNull();
   });
 
@@ -55,7 +67,11 @@ describe("IterationTimeline", () => {
 
   it("shows expand toggle on each iteration card", () => {
     const { container } = render(
-      <IterationTimeline iterations={[makeIteration()]} />,
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={[makeIteration()]}
+      />,
     );
     const toggle = container.querySelector(".iteration-card-expand");
     expect(toggle).not.toBeNull();
@@ -63,14 +79,22 @@ describe("IterationTimeline", () => {
 
   it("does not show detail panel when collapsed", () => {
     const { container } = render(
-      <IterationTimeline iterations={[makeIteration()]} />,
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={[makeIteration()]}
+      />,
     );
     expect(container.querySelector(".iteration-card-detail")).toBeNull();
   });
 
   it("shows detail panel with changed files when expanded", () => {
     const { container } = render(
-      <IterationTimeline iterations={[makeIteration()]} />,
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={[makeIteration()]}
+      />,
     );
     const toggle = container.querySelector(".iteration-card-expand")!;
     fireEvent.click(toggle);
@@ -86,7 +110,11 @@ describe("IterationTimeline", () => {
 
   it("collapses detail panel on second click", () => {
     const { container } = render(
-      <IterationTimeline iterations={[makeIteration()]} />,
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={[makeIteration()]}
+      />,
     );
     const toggle = container.querySelector(".iteration-card-expand")!;
     fireEvent.click(toggle);
@@ -95,9 +123,13 @@ describe("IterationTimeline", () => {
     expect(container.querySelector(".iteration-card-detail")).toBeNull();
   });
 
-  it("shows transcript link in expanded detail", () => {
+  it("shows transcript link in expanded detail with correct href", () => {
     const { container } = render(
-      <IterationTimeline iterations={[makeIteration()]} />,
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={[makeIteration()]}
+      />,
     );
     const toggle = container.querySelector(".iteration-card-expand")!;
     fireEvent.click(toggle);
@@ -106,11 +138,18 @@ describe("IterationTimeline", () => {
     );
     expect(transcriptLink).not.toBeNull();
     expect(transcriptLink!.textContent).toContain("View transcript");
+    expect(transcriptLink!.getAttribute("href")).toBe(
+      "/projects/my-project/my-session/conv-001",
+    );
   });
 
   it("shows diff summary in expanded detail", () => {
     const { container } = render(
-      <IterationTimeline iterations={[makeIteration()]} />,
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={[makeIteration()]}
+      />,
     );
     const toggle = container.querySelector(".iteration-card-expand")!;
     fireEvent.click(toggle);
@@ -130,7 +169,13 @@ describe("IterationTimeline", () => {
         changedFiles: [],
       },
     });
-    const { container } = render(<IterationTimeline iterations={[iter]} />);
+    const { container } = render(
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={[iter]}
+      />,
+    );
     const toggle = container.querySelector(".iteration-card-expand")!;
     fireEvent.click(toggle);
     const noFiles = container.querySelector(".iteration-diff-empty");
@@ -142,7 +187,13 @@ describe("IterationTimeline", () => {
       makeIteration(),
       makeIteration({ iterationNumber: 2, conversationId: "conv-002" }),
     ];
-    const { container } = render(<IterationTimeline iterations={iterations} />);
+    const { container } = render(
+      <IterationTimeline
+        projectName="my-project"
+        sessionName="my-session"
+        iterations={iterations}
+      />,
+    );
     const toggles = container.querySelectorAll(".iteration-card-expand");
     expect(toggles.length).toBe(2);
     fireEvent.click(toggles[0]!);

@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { IterationMeta } from "./types";
 
 interface IterationTimelineProps {
   iterations: IterationMeta[];
+  projectName: string;
+  sessionName: string;
 }
 
 function formatDuration(ms: number): string {
@@ -30,6 +33,8 @@ function getDotVariant(
 
 export default function IterationTimeline({
   iterations,
+  projectName,
+  sessionName,
 }: IterationTimelineProps) {
   const [expandedIteration, setExpandedIteration] = useState<number | null>(
     null,
@@ -156,9 +161,12 @@ export default function IterationTimeline({
                     )}
 
                     {/* Transcript link */}
-                    <div className="iteration-transcript-link">
+                    <Link
+                      href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${encodeURIComponent(iter.conversationId)}`}
+                      className="iteration-transcript-link"
+                    >
                       View transcript ({iter.turns} turns)
-                    </div>
+                    </Link>
                   </div>
                 )}
               </div>

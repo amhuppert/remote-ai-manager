@@ -265,6 +265,8 @@ export default function WorkflowPanel({
           status === "aborted") && (
           <CompletionView
             workflow={workflow}
+            projectName={projectName}
+            sessionName={sessionName}
             onResetCircuitBreaker={onResetCircuitBreaker}
             onResume={onResume}
           />
@@ -529,7 +531,11 @@ function MonitoringView({
       )}
 
       {/* Iteration History */}
-      <IterationTimeline iterations={iterations} />
+      <IterationTimeline
+        iterations={iterations}
+        projectName={projectName}
+        sessionName={sessionName}
+      />
     </>
   );
 }
@@ -540,10 +546,14 @@ function MonitoringView({
 
 function CompletionView({
   workflow,
+  projectName,
+  sessionName,
   onResetCircuitBreaker,
   onResume,
 }: {
   workflow: RalphLoopWorkflow;
+  projectName: string;
+  sessionName: string;
   onResetCircuitBreaker?: () => void;
   onResume?: () => void;
 }) {
@@ -653,7 +663,11 @@ function CompletionView({
       <TaskPlanEditor tasks={workflow.fixPlan} readOnly showProgress />
 
       {/* Iteration History */}
-      <IterationTimeline iterations={workflow.iterations} />
+      <IterationTimeline
+        iterations={workflow.iterations}
+        projectName={projectName}
+        sessionName={sessionName}
+      />
     </>
   );
 }

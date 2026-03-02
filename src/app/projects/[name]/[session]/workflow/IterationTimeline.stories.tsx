@@ -151,14 +151,16 @@ type Story = StoryObj<typeof meta>;
 // Stories
 // ---------------------------------------------------------------------------
 
+const baseArgs = { projectName: "my-project", sessionName: "my-session" };
+
 export const FewIterations: Story = {
-  args: { iterations: fewIterations },
+  args: { ...baseArgs, iterations: fewIterations },
 };
 
 export const ManyIterations: Story = {
-  args: { iterations: manyIterations },
+  args: { ...baseArgs, iterations: manyIterations },
 };
 
 export const WithErrors: Story = {
-  args: { iterations: withErrors },
+  args: { ...baseArgs, iterations: withErrors },
 };
