@@ -5,6 +5,7 @@ import {
   conversationKeys,
   workflowKeys,
   presetKeys,
+  roadmapItemKeys,
 } from "@/lib/query-keys";
 import { tracedFetch } from "@/lib/traced-fetch";
 import { useAddOrUpdateJob } from "@/stores/notification.store";
@@ -16,6 +17,9 @@ import type {
   FixPlanTask,
   RalphLoopConfig,
   JobDispatchResponse,
+  RoadmapItem,
+  RoadmapItemType,
+  RoadmapItemStatus,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -725,6 +729,108 @@ export function useInstallPresetMutation(projectName: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: presetKeys.list(projectName),
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Roadmap Item Mutations
+// ---------------------------------------------------------------------------
+
+function roadmapUrl(projectName: string, path = "") {
+  return `/api/projects/${encodeURIComponent(projectName)}/roadmap-items${path}`;
+}
+
+export function useCreateRoadmapItemMutation(projectName: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: {
+      title: string;
+      description?: string | null;
+      type: RoadmapItemType;
+    }) =>
+      mutationFetch<{ item: RoadmapItem }>(
+        roadmapUrl(projectName),
+        "create-roadmap-item",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(params),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: roadmapItemKeys.list(projectName),
+      });
+    },
+  });
+}
+
+export function useUpdateRoadmapItemMutation(projectName: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      itemId,
+      ...data
+    }: {
+      itemId: string;
+      status?: RoadmapItemStatus;
+      archived?: boolean;
+    }) =>
+      mutationFetch(
+        roadmapUrl(projectName, `/${encodeURIComponent(itemId)}`),
+        "update-roadmap-item",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: roadmapItemKeys.list(projectName),
+      });
+    },
+  });
+}
+
+export function useDeleteRoadmapItemMutation(projectName: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (itemId: string) =>
+      mutationFetch(
+        roadmapUrl(projectName, `/${encodeURIComponent(itemId)}`),
+        "delete-roadmap-item",
+        { method: "DELETE" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: roadmapItemKeys.list(projectName),
+      });
+    },
+  });
+}
+
+export function useStartRoadmapFocusMutation(projectName: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (itemId: string) =>
+      mutationFetch<{ session: SessionState }>(
+        roadmapUrl(projectName, `/${encodeURIComponent(itemId)}/focus`),
+        "start-roadmap-focus",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: roadmapItemKeys.list(projectName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.list(projectName),
       });
     },
   });

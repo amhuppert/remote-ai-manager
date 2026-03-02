@@ -1,4 +1,5 @@
 import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type {
@@ -6,6 +7,9 @@ import type {
   ProjectState,
   SessionState,
   ConversationState,
+  RoadmapItem,
+  RoadmapItemType,
+  RoadmapItemStatus,
 } from "@/types";
 import { managerStateSchema } from "./schemas";
 import { readConfig } from "./config";
@@ -142,6 +146,7 @@ export async function mutateSession<T = void>(
       state.projects[projectPath] = {
         rootPath: projectPath,
         sessions: {},
+        roadmapItems: [],
       };
     }
 
@@ -244,6 +249,7 @@ export async function getOrCreateProject(
     const project: ProjectState = {
       rootPath: projectPath,
       sessions: {},
+      roadmapItems: [],
     };
 
     state.projects[projectPath] = project;
@@ -266,6 +272,7 @@ export async function updateSession(
       state.projects[projectPath] = {
         rootPath: projectPath,
         sessions: {},
+        roadmapItems: [],
       };
     }
 
@@ -418,5 +425,92 @@ export async function recoverStaleWorkflows(): Promise<number> {
     }
 
     return recovered;
+  });
+}
+
+// ============================================================
+// Roadmap Item Mutations
+// ============================================================
+
+/** Get all roadmap items for a project (read-only, no mutex) */
+export async function getRoadmapItems(
+  projectPath: string,
+): Promise<RoadmapItem[]> {
+  const state = await readState();
+  const project = state.projects[projectPath];
+  return project?.roadmapItems ?? [];
+}
+
+/** Create a new roadmap item in a project */
+export async function createRoadmapItem(
+  projectPath: string,
+  data: { title: string; description?: string | null; type: RoadmapItemType },
+): Promise<RoadmapItem> {
+  const now = new Date().toISOString();
+  const item: RoadmapItem = {
+    id: randomUUID(),
+    title: data.title,
+    description: data.description ?? null,
+    type: data.type,
+    status: "incomplete",
+    archived: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await mutateState("createRoadmapItem", (state) => {
+    if (!state.projects[projectPath]) {
+      state.projects[projectPath] = {
+        rootPath: projectPath,
+        sessions: {},
+        roadmapItems: [],
+      };
+    }
+    state.projects[projectPath]!.roadmapItems.push(item);
+  });
+
+  return item;
+}
+
+/** Update a roadmap item's status and/or archived flag */
+export async function updateRoadmapItem(
+  projectPath: string,
+  itemId: string,
+  data: { status?: RoadmapItemStatus; archived?: boolean },
+): Promise<void> {
+  await mutateState("updateRoadmapItem", (state) => {
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project "${projectPath}" not found`);
+    }
+
+    const item = project.roadmapItems.find((i) => i.id === itemId);
+    if (!item) {
+      throw new Error(`Roadmap item "${itemId}" not found`);
+    }
+
+    if (data.status !== undefined) item.status = data.status;
+    if (data.archived !== undefined) item.archived = data.archived;
+    item.updatedAt = new Date().toISOString();
+  });
+}
+
+/** Permanently delete a roadmap item */
+export async function deleteRoadmapItem(
+  projectPath: string,
+  itemId: string,
+): Promise<void> {
+  await mutateState("deleteRoadmapItem", (state) => {
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project "${projectPath}" not found`);
+    }
+
+    const index = project.roadmapItems.findIndex((i) => i.id === itemId);
+    if (index === -1) {
+      throw new Error(`Roadmap item "${itemId}" not found`);
+    }
+
+    project.roadmapItems.splice(index, 1);
   });
 }

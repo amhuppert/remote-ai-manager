@@ -10,6 +10,7 @@ import {
   kiroDocKeys,
   notificationKeys,
   presetKeys,
+  roadmapItemKeys,
 } from "@/lib/query-keys";
 import type {
   DiscoveredProject,
@@ -24,6 +25,7 @@ import type {
   RalphLoopIterationMeta,
   KiroDocTree,
   NotificationsResponse,
+  RoadmapItem,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -388,5 +390,20 @@ export function usePresetsQuery(projectName: string) {
       apiFetch<{ presets: PresetInfo[] }>(
         `/api/projects/${encodeURIComponent(projectName)}/dev-servers/presets`,
       ).then((r) => r.presets),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Roadmap Item Queries
+// ---------------------------------------------------------------------------
+
+export function useRoadmapItemsQuery(projectName: string) {
+  return useQuery({
+    queryKey: roadmapItemKeys.list(projectName),
+    queryFn: () =>
+      apiFetch<{ items: RoadmapItem[] }>(
+        `/api/projects/${encodeURIComponent(projectName)}/roadmap-items`,
+      ).then((r) => r.items),
+    refetchInterval: 30_000,
   });
 }

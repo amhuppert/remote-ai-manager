@@ -269,6 +269,7 @@ export async function discoverAndImportWorktrees(
       state.projects[projectPath] = {
         rootPath: projectPath,
         sessions: {},
+        roadmapItems: [],
       };
     }
 

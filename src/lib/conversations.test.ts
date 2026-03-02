@@ -30,6 +30,7 @@ async function seedSession(sessionOverrides: Record<string, unknown> = {}) {
     projects: {
       "/proj": {
         rootPath: "/proj",
+        roadmapItems: [],
         sessions: {
           test: {
             sessionName: "test",

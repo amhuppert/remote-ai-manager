@@ -138,7 +138,7 @@ describe("workflow lifecycle", () => {
     const session = makeSession(null);
     vi.mocked(getSession).mockResolvedValue(session);
     vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
-      mutate(session, { rootPath: _p, sessions: {} }),
+      mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
     );
 
     const { POST } =
@@ -454,7 +454,7 @@ describe("abort", () => {
     vi.mocked(getSession).mockResolvedValue(session);
     vi.mocked(requestAbort).mockReturnValue(false); // not in registry
     vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
-      mutate(session, { rootPath: _p, sessions: {} }),
+      mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
     );
 
     const { POST } =
@@ -499,7 +499,7 @@ describe("fix plan update", () => {
     const session = makeSession(makeWorkflow({ status: "planning" }));
     vi.mocked(getSession).mockResolvedValue(session);
     vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
-      mutate(session, { rootPath: _p, sessions: {} }),
+      mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
     );
 
     const { PUT } =

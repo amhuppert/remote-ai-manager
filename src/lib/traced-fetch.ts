@@ -19,7 +19,10 @@ export function tracedFetch(
   action: string,
   options?: RequestInit,
 ): Promise<Response> {
-  const traceId = crypto.randomUUID();
+  const traceId =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const headers = new Headers(options?.headers);
   headers.set("x-trace-id", traceId);
   headers.set("x-action", action);

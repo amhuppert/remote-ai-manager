@@ -105,6 +105,7 @@ describe("mutateState", () => {
       projects: {
         "/proj": {
           rootPath: "/proj",
+          roadmapItems: [],
           sessions: {
             counter: {
               sessionName: "counter",
@@ -156,6 +157,7 @@ describe("mutateSession", () => {
       projects: {
         "/proj": {
           rootPath: "/proj",
+          roadmapItems: [],
           sessions: {
             test: {
               sessionName: "test",
@@ -192,7 +194,9 @@ describe("mutateSession", () => {
     _resetForTesting();
 
     await writeState({
-      projects: { "/proj": { rootPath: "/proj", sessions: {} } },
+      projects: {
+        "/proj": { rootPath: "/proj", roadmapItems: [], sessions: {} },
+      },
       archivedProjects: [],
       pinnedProjects: [],
     });
@@ -211,6 +215,7 @@ describe("mutateSession", () => {
       projects: {
         "/proj": {
           rootPath: "/proj",
+          roadmapItems: [],
           sessions: {
             test: {
               sessionName: "test",
@@ -255,6 +260,7 @@ describe("the specific merge detection bug", () => {
       projects: {
         "/proj": {
           rootPath: "/proj",
+          roadmapItems: [],
           sessions: {
             target: {
               sessionName: "target",

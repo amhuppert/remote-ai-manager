@@ -37,6 +37,11 @@ export interface DiscoveredProject {
 }
 
 export type {
+  RoadmapItemType,
+  RoadmapItemStatus,
+  RoadmapItem,
+  CreateRoadmapItemRequest,
+  UpdateRoadmapItemRequest,
   CreateSessionRequest,
   SessionCreationMode,
   CommitRequest,

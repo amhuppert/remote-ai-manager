@@ -45,6 +45,13 @@ vi.mock("@/lib/queries", () => ({
     isLoading: false,
     error: null,
   }),
+  useRoadmapItemsQuery: () => ({ data: [] }),
+}));
+
+// Mock roadmap items store
+vi.mock("@/stores/roadmap-items.store", () => ({
+  useShowArchivedRoadmapItems: () => false,
+  useToggleArchivedRoadmapItems: () => vi.fn(),
 }));
 
 // Mock unified panel store
@@ -83,6 +90,10 @@ vi.mock("@/lib/mutations", () => ({
   }),
   useArchiveSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useInstallPresetMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateRoadmapItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateRoadmapItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteRoadmapItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useStartRoadmapFocusMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 // Mock sessions store

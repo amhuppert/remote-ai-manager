@@ -37,6 +37,7 @@ describe("state", () => {
       projects: {
         "/some/project": {
           rootPath: "/some/project",
+          roadmapItems: [],
           sessions: {},
         },
       },
@@ -66,6 +67,7 @@ describe("state", () => {
       projects: {
         "/existing": {
           rootPath: "/existing",
+          roadmapItems: [],
           sessions: {
             test: {
               sessionName: "test",
@@ -258,6 +260,7 @@ describe("archive helpers", () => {
       projects: {
         "/proj": {
           rootPath: "/proj",
+          roadmapItems: [],
           sessions: { test: session },
         },
       },
@@ -343,6 +346,7 @@ describe("pin helpers", () => {
       projects: {
         "/proj": {
           rootPath: "/proj",
+          roadmapItems: [],
           sessions: { test: session },
         },
       },
