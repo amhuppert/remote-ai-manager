@@ -7,8 +7,10 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import { FileAutocomplete } from "@/components/FileAutocomplete";
+import { useImageAttachments } from "@/hooks/use-image-attachments";
+import ImageAttachmentPreview from "@/app/projects/[name]/[session]/ImageAttachmentPreview";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
-import type { SessionCreationMode } from "@/types";
+import type { SessionCreationMode, ImagePayload } from "@/types";
 
 interface CreateSessionModalProps {
   projectName: string;
@@ -30,6 +32,7 @@ export default function CreateSessionModal({
   const [error, setError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const objectiveRef = useRef(objective);
   const instructionsRef = useRef(instructions);
   const fireAndForgetRef = useRef(false);
@@ -54,6 +57,9 @@ export default function CreateSessionModal({
     disabled: mode === "fast" || createMutation.isPending,
     onTextChange: setCurrentTextareaValue,
   });
+
+  const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
+    useImageAttachments();
 
   // Voice context returns the relevant text based on mode
   const getVoiceContext = useCallback(
@@ -139,6 +145,7 @@ export default function CreateSessionModal({
       setInstructions("");
       setMode("fast");
       setError(null);
+      clearImages();
       fireAndForgetRef.current = false;
       autoSubmitPendingRef.current = false;
     }
@@ -168,24 +175,36 @@ export default function CreateSessionModal({
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
+  const hasImages = pendingImages.length > 0;
   const canSubmit =
     !createMutation.isPending &&
     !isRecording &&
     (mode === "fast"
       ? sessionName.trim().length > 0
       : mode === "optimistic"
-        ? instructions.trim().length > 0
+        ? instructions.trim().length > 0 || hasImages
         : objective.trim().length > 0);
 
   const handleSubmit = () => {
     if (!canSubmit) return;
     setError(null);
 
+    const imagePayloads: ImagePayload[] = hasImages
+      ? pendingImages.map((img) => ({
+          mediaType: img.mediaType as ImagePayload["mediaType"],
+          base64Data: img.base64Data,
+        }))
+      : [];
+
     const params =
       mode === "fast"
         ? ({ mode: "fast", sessionName: sessionName.trim() } as const)
         : mode === "optimistic"
-          ? ({ mode: "optimistic", instructions: instructions.trim() } as const)
+          ? ({
+              mode: "optimistic",
+              instructions: instructions.trim(),
+              images: imagePayloads.length > 0 ? imagePayloads : undefined,
+            } as const)
           : ({ mode: "focus", objective: objective.trim() } as const);
 
     createMutation.mutate(params, {
@@ -346,6 +365,25 @@ export default function CreateSessionModal({
                       (e.target as HTMLTextAreaElement).selectionStart,
                     );
                   }}
+                  onPaste={
+                    mode === "optimistic"
+                      ? (e) => {
+                          const items = e.clipboardData.items;
+                          for (const item of items) {
+                            if (item.type.startsWith("image/")) {
+                              e.preventDefault();
+                              const file = item.getAsFile();
+                              if (file) {
+                                void addImage(file).then((err) => {
+                                  if (err) setError(err);
+                                });
+                              }
+                              return;
+                            }
+                          }
+                        }
+                      : undefined
+                  }
                   onKeyDown={(e) => {
                     if (
                       fileAutocomplete.autocompleteRef.current?.handleKeyDown(e)
@@ -362,13 +400,63 @@ export default function CreateSessionModal({
                     }
                   }}
                 />
+                {mode === "optimistic" && (
+                  <>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif,image/webp"
+                      multiple
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const files = e.target.files;
+                        if (!files) return;
+                        for (const file of files) {
+                          void addImage(file).then((err) => {
+                            if (err) setError(err);
+                          });
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                    <ImageAttachmentPreview
+                      images={pendingImages}
+                      onRemove={removeImage}
+                    />
+                  </>
+                )}
                 <div
                   style={{
                     position: "absolute",
                     right: "0.5rem",
                     bottom: "0.5rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.25rem",
                   }}
                 >
+                  {mode === "optimistic" && (
+                    <button
+                      className="attachment-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isAtLimit || createMutation.isPending}
+                      title="Attach image"
+                      type="button"
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                      </svg>
+                    </button>
+                  )}
                   <VoiceRecordButton
                     isRecording={isRecording}
                     isProcessing={isProcessing}

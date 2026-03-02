@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import CreateSessionModal from "./CreateSessionModal";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { useImageAttachments } from "@/hooks/use-image-attachments";
 
 const mutateMock = vi.fn();
 
@@ -35,6 +36,39 @@ vi.mock("@/hooks/useAppHotkey", () => ({
 
 vi.mock("@/components/VoiceRecordButton", () => ({
   VoiceRecordButton: () => null,
+}));
+
+const addImageMock = vi.fn().mockResolvedValue(null);
+const removeImageMock = vi.fn();
+const clearImagesMock = vi.fn();
+
+vi.mock("@/hooks/use-image-attachments", () => ({
+  useImageAttachments: vi.fn(() => ({
+    pendingImages: [],
+    addImage: addImageMock,
+    removeImage: removeImageMock,
+    clearImages: clearImagesMock,
+    isAtLimit: false,
+  })),
+}));
+
+vi.mock("@/app/projects/[name]/[session]/ImageAttachmentPreview", () => ({
+  default: ({
+    images,
+    onRemove,
+  }: {
+    images: { id: string; fileName: string }[];
+    onRemove: (id: string) => void;
+  }) =>
+    images.length > 0 ? (
+      <div data-testid="image-preview">
+        {images.map((img) => (
+          <button key={img.id} onClick={() => onRemove(img.id)}>
+            Remove {img.fileName}
+          </button>
+        ))}
+      </div>
+    ) : null,
 }));
 
 function renderWithQuery(ui: React.ReactElement) {
@@ -377,6 +411,174 @@ describe("CreateSessionModal", () => {
 
       // onClose should be called (fire-and-forget — no navigation)
       expect(defaultProps.onClose).toHaveBeenCalled();
+    });
+
+    describe("image support", () => {
+      it("renders attach image button in optimistic mode", () => {
+        renderWithQuery(<CreateSessionModal {...defaultProps} />);
+        switchToOptimisticMode();
+        expect(screen.getByTitle("Attach image")).toBeDefined();
+      });
+
+      it("does NOT render attach image button in fast mode", () => {
+        renderWithQuery(<CreateSessionModal {...defaultProps} />);
+        expect(screen.queryByTitle("Attach image")).toBeNull();
+      });
+
+      it("does NOT render attach image button in focus mode", () => {
+        renderWithQuery(<CreateSessionModal {...defaultProps} />);
+        switchToFocusMode();
+        expect(screen.queryByTitle("Attach image")).toBeNull();
+      });
+
+      it("calls addImage when an image is pasted in optimistic mode", async () => {
+        renderWithQuery(<CreateSessionModal {...defaultProps} />);
+        switchToOptimisticMode();
+        const textarea = screen.getByPlaceholderText(
+          "e.g. Fix the typo in the login page header",
+        );
+
+        const file = new File(["fake-image"], "screenshot.png", {
+          type: "image/png",
+        });
+        const pasteEvent = new Event("paste", { bubbles: true });
+        Object.defineProperty(pasteEvent, "clipboardData", {
+          value: {
+            items: [
+              {
+                type: "image/png",
+                getAsFile: () => file,
+              },
+            ],
+          },
+        });
+
+        fireEvent(textarea, pasteEvent);
+
+        expect(addImageMock).toHaveBeenCalledWith(file);
+      });
+
+      it("enables submit with images even when text is empty", () => {
+        vi.mocked(useImageAttachments).mockReturnValue({
+          pendingImages: [
+            {
+              id: "img-1",
+              fileName: "test.png",
+              mediaType: "image/png",
+              base64Data: "abc123",
+              previewUrl: "blob:test",
+              sizeBytes: 1000,
+            },
+          ],
+          addImage: addImageMock,
+          removeImage: removeImageMock,
+          clearImages: clearImagesMock,
+          isAtLimit: false,
+        });
+
+        renderWithQuery(<CreateSessionModal {...defaultProps} />);
+        switchToOptimisticMode();
+        const createBtn = screen.getByText("Create Session");
+        expect(createBtn.hasAttribute("disabled")).toBe(false);
+      });
+
+      it("includes images in mutation payload when submitting", () => {
+        vi.mocked(useImageAttachments).mockReturnValue({
+          pendingImages: [
+            {
+              id: "img-1",
+              fileName: "test.png",
+              mediaType: "image/png",
+              base64Data: "abc123",
+              previewUrl: "blob:test",
+              sizeBytes: 1000,
+            },
+          ],
+          addImage: addImageMock,
+          removeImage: removeImageMock,
+          clearImages: clearImagesMock,
+          isAtLimit: false,
+        });
+
+        renderWithQuery(<CreateSessionModal {...defaultProps} />);
+        switchToOptimisticMode();
+        const textarea = screen.getByPlaceholderText(
+          "e.g. Fix the typo in the login page header",
+        );
+        fireEvent.change(textarea, {
+          target: { value: "Fix with this screenshot" },
+        });
+        fireEvent.keyDown(textarea, { key: "Enter" });
+
+        expect(mutateMock).toHaveBeenCalledWith(
+          {
+            mode: "optimistic",
+            instructions: "Fix with this screenshot",
+            images: [{ mediaType: "image/png", base64Data: "abc123" }],
+          },
+          expect.objectContaining({ onSuccess: expect.any(Function) }),
+        );
+      });
+
+      it("renders ImageAttachmentPreview when images are pending", () => {
+        vi.mocked(useImageAttachments).mockReturnValue({
+          pendingImages: [
+            {
+              id: "img-1",
+              fileName: "test.png",
+              mediaType: "image/png",
+              base64Data: "abc123",
+              previewUrl: "blob:test",
+              sizeBytes: 1000,
+            },
+          ],
+          addImage: addImageMock,
+          removeImage: removeImageMock,
+          clearImages: clearImagesMock,
+          isAtLimit: false,
+        });
+
+        renderWithQuery(<CreateSessionModal {...defaultProps} />);
+        switchToOptimisticMode();
+        expect(screen.getByTestId("image-preview")).toBeDefined();
+      });
+
+      it("clears images when dialog reopens", () => {
+        const { rerender } = renderWithQuery(
+          <CreateSessionModal {...defaultProps} open={true} />,
+        );
+        switchToOptimisticMode();
+
+        // Close
+        rerender(
+          <QueryClientProvider
+            client={
+              new QueryClient({
+                defaultOptions: { queries: { retry: false } },
+              })
+            }
+          >
+            <CreateSessionModal {...defaultProps} open={false} />
+          </QueryClientProvider>,
+        );
+
+        clearImagesMock.mockClear();
+
+        // Reopen
+        rerender(
+          <QueryClientProvider
+            client={
+              new QueryClient({
+                defaultOptions: { queries: { retry: false } },
+              })
+            }
+          >
+            <CreateSessionModal {...defaultProps} open={true} />
+          </QueryClientProvider>,
+        );
+
+        expect(clearImagesMock).toHaveBeenCalled();
+      });
     });
   });
 });
