@@ -40,3 +40,4 @@ storybook-static
 xnotes/
 
 memory-bank/
+next-env.d.ts
