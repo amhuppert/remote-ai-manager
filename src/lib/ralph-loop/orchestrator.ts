@@ -495,7 +495,8 @@ async function runIteration(
     if (releaseQuerySlot) releaseQuerySlot();
     if (release) release();
 
-    // Mark conversation as awaiting
+    // Mark conversation as awaiting and archive it so iteration
+    // conversations don't clutter the active conversations panel.
     await mutateConversation(
       projectPath,
       sessionName,
@@ -503,6 +504,7 @@ async function runIteration(
       "workflow.conversationCleanup",
       (c) => {
         c.status = "awaiting";
+        c.archived = true;
       },
     ).catch(() => {});
   }
