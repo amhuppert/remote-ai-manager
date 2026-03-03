@@ -86,14 +86,28 @@ describe("PresetRegistry", () => {
       expect(script).toContain("return 2");
     });
 
-    it("uses /proc for process cwd resolution", () => {
+    it("detects platform with uname", () => {
+      const script = generateHelperScript();
+      expect(script).toContain('CC_OS="$(uname -s)"');
+    });
+
+    it("uses /proc for process cwd resolution on Linux", () => {
       const script = generateHelperScript();
       expect(script).toContain("/proc/");
     });
 
-    it("uses ss for port checking", () => {
+    it("uses lsof for process cwd resolution on macOS", () => {
       const script = generateHelperScript();
+      expect(script).toContain("lsof -a -p");
+      expect(script).toContain("-d cwd");
+    });
+
+    it("branches get_pid_on_port by platform", () => {
+      const script = generateHelperScript();
+      // Linux path uses ss
       expect(script).toContain("ss ");
+      // macOS path uses lsof directly
+      expect(script).toContain('if [ "$CC_OS" = "Darwin" ]');
     });
   });
 

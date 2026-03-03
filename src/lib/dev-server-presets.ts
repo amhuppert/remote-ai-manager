@@ -62,20 +62,26 @@ export function generateHelperScript(): string {
 # CC Dev Server Helpers — shared port detection and worktree ownership functions
 # Installed by CC (Claude Code). Intended to be committed to the repo.
 
+# Detect platform: "Darwin" = macOS, "Linux" = Linux
+CC_OS="$(uname -s)"
+
 # Get the PID listening on a TCP port. Prints PID or empty string.
 # Args: $1 = port
 get_pid_on_port() {
   local port="\$1"
   local pid=""
 
-  # Try ss first (most Linux systems)
-  if command -v ss >/dev/null 2>&1; then
-    pid=$(ss -tlnp sport = :"\$port" 2>/dev/null | grep -oP 'pid=\\K[0-9]+' | head -1)
-  fi
-
-  # Fallback to lsof
-  if [ -z "\$pid" ] && command -v lsof >/dev/null 2>&1; then
+  if [ "\$CC_OS" = "Darwin" ]; then
+    # macOS — lsof is the standard tool
     pid=$(lsof -ti tcp:"\$port" -sTCP:LISTEN 2>/dev/null | head -1)
+  else
+    # Linux — try ss first (grep -oP requires GNU grep), fallback to lsof
+    if command -v ss >/dev/null 2>&1; then
+      pid=$(ss -tlnp sport = :"\$port" 2>/dev/null | grep -oP 'pid=\\K[0-9]+' | head -1)
+    fi
+    if [ -z "\$pid" ] && command -v lsof >/dev/null 2>&1; then
+      pid=$(lsof -ti tcp:"\$port" -sTCP:LISTEN 2>/dev/null | head -1)
+    fi
   fi
 
   echo "\$pid"
@@ -85,8 +91,15 @@ get_pid_on_port() {
 # Args: $1 = pid
 get_process_cwd() {
   local pid="\$1"
-  if [ -d "/proc/\$pid" ]; then
-    readlink "/proc/\$pid/cwd" 2>/dev/null
+
+  if [ "\$CC_OS" = "Darwin" ]; then
+    # macOS — use lsof to resolve process working directory
+    lsof -a -p "\$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2-
+  else
+    # Linux — use /proc filesystem
+    if [ -d "/proc/\$pid" ]; then
+      readlink "/proc/\$pid/cwd" 2>/dev/null
+    fi
   fi
 }
 
