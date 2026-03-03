@@ -1,5 +1,6 @@
 import type { Preview } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import TooltipProvider from "../src/components/TooltipProvider";
 import "../src/app/globals.css";
 
 const queryClient = new QueryClient({
@@ -13,6 +14,7 @@ const preview: Preview = {
     (Story) => (
       <QueryClientProvider client={queryClient}>
         <Story />
+        <TooltipProvider />
       </QueryClientProvider>
     ),
   ],

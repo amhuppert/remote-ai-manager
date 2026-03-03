@@ -3,6 +3,7 @@ import { Anybody, Manrope, Geist_Mono } from "next/font/google";
 import Providers from "@/components/Providers";
 import NotificationListener from "@/components/NotificationListener";
 import GlobalHotkeyHelp from "@/components/GlobalHotkeyHelp";
+import TooltipProvider from "@/components/TooltipProvider";
 import NotificationsPanelContainer from "@/components/NotificationsPanelContainer";
 import MergeToastContainer from "@/components/MergeToastContainer";
 import DevServerDrawerContainer from "@/components/DevServerDrawerContainer";
@@ -72,6 +73,7 @@ export default function RootLayout({
           <MergeToastContainer />
           <DevServerDrawerContainer />
           <GlobalHotkeyHelp />
+          <TooltipProvider />
         </Providers>
       </body>
     </html>

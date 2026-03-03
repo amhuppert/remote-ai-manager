@@ -127,6 +127,22 @@ body::after {
 }
 
 /* ============================================================
+   Tooltip Portal
+   ============================================================ */
+
+.tooltip-portal {
+  padding: 4px 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ============================================================
    Scrollbar Styling
    ============================================================ */
 
@@ -554,31 +570,7 @@ textarea {
   border-color: var(--red-dim);
 }
 
-/* Tooltip for icon-only buttons */
-.btn-icon-only::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 4px 8px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-  z-index: 10;
-}
-
-.btn-icon-only:hover::after {
-  opacity: 1;
-}
+/* Tooltips rendered via TooltipProvider portal — see .tooltip-portal */
 
 /* ============================================================
    Page Header
@@ -1509,30 +1501,7 @@ textarea {
   box-shadow: 0 0 12px var(--cyan-glow);
 }
 
-.roadmap-btn-focus::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 4px 8px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-  z-index: 10;
-}
-
-.roadmap-btn-focus:hover::after {
-  opacity: 1;
-}
+/* Roadmap button tooltips rendered via TooltipProvider portal */
 
 /* Inline add form */
 .roadmap-add-form {
@@ -3151,30 +3120,7 @@ textarea {
   opacity: 1;
 }
 
-.copyable-id::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 4px 8px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.58rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-  z-index: 10;
-}
-
-.copyable-id:hover::after {
-  opacity: 1;
-}
+/* Copyable ID tooltips rendered via TooltipProvider portal */
 
 /* Conversation sidebar inline ID */
 .convo-sidebar-id {
@@ -3230,30 +3176,7 @@ textarea {
   border-color: var(--border-default);
 }
 
-.si-copy-context-btn::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 4px 8px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.58rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-  z-index: 10;
-}
-
-.si-copy-context-btn:hover::after {
-  opacity: 1;
-}
+/* Copy context button tooltips rendered via TooltipProvider portal */
 
 .finished-banner {
   background: rgba(0, 229, 255, 0.08);
@@ -3353,30 +3276,7 @@ textarea {
   height: 12px;
 }
 
-/* Tooltip for layout buttons */
-.layout-btn::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 4px 8px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-}
-
-.layout-btn:hover::after {
-  opacity: 1;
-}
+/* Layout button tooltips rendered via TooltipProvider portal */
 
 /* ============================================================
    Conversation Panel
@@ -3744,30 +3644,7 @@ textarea {
   border-color: var(--green-dim);
 }
 
-/* Action button tooltips */
-.msg-action-btn::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 2px 6px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.58rem;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.1s ease;
-  z-index: 3;
-}
-
-.msg-action-btn:hover::after {
-  opacity: 1;
-}
+/* Message action button tooltips rendered via TooltipProvider portal */
 
 .msg-actions-confirm {
   display: flex;
