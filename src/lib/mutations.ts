@@ -777,6 +777,8 @@ export function useUpdateRoadmapItemMutation(projectName: string) {
       ...data
     }: {
       itemId: string;
+      title?: string;
+      description?: string | null;
       status?: RoadmapItemStatus;
       archived?: boolean;
     }) =>

@@ -25,7 +25,7 @@ export const PATCH = withTracing(async (request, { params }) => {
     return NextResponse.json(
       {
         error:
-          "Invalid request: at least one of status or archived is required",
+          "Invalid request: at least one of title, description, status, or archived is required",
       } satisfies ApiError,
       { status: 400 },
     );

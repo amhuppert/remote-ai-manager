@@ -12,7 +12,7 @@ const sampleItems: RoadmapItem[] = [
     id: "1",
     title: "Fix authentication timeout on long-running sessions",
     description:
-      "Sessions expire after 30 minutes of inactivity even when Claude is still processing.",
+      "Sessions expire after 30 minutes of inactivity even when Claude is still processing. We need to implement a heartbeat mechanism that keeps the session alive during active SDK queries.",
     type: "bug",
     status: "incomplete",
     archived: false,
@@ -152,6 +152,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+/** Default view — items with descriptions have an expand chevron, click title to edit inline */
 export const Default = {} satisfies Story;
 
 export const Empty = {
@@ -173,6 +174,27 @@ export const AllDone = {
         items={sampleItems
           .filter((i) => !i.archived)
           .map((i) => ({ ...i, status: "done" as const }))}
+      >
+        <div style={{ maxWidth: 800, padding: 24 }}>
+          <Story />
+        </div>
+      </WithMockData>
+    ),
+  ],
+} satisfies Story;
+
+/** All items have descriptions — expand chevron visible on every row */
+export const AllWithDescriptions = {
+  decorators: [
+    (Story) => (
+      <WithMockData
+        items={sampleItems
+          .filter((i) => !i.archived)
+          .map((i) => ({
+            ...i,
+            description:
+              i.description ?? "This is a sample description for testing.",
+          }))}
       >
         <div style={{ maxWidth: 800, padding: 24 }}>
           <Story />

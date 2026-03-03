@@ -472,11 +472,16 @@ export async function createRoadmapItem(
   return item;
 }
 
-/** Update a roadmap item's status and/or archived flag */
+/** Update a roadmap item's fields */
 export async function updateRoadmapItem(
   projectPath: string,
   itemId: string,
-  data: { status?: RoadmapItemStatus; archived?: boolean },
+  data: {
+    title?: string;
+    description?: string | null;
+    status?: RoadmapItemStatus;
+    archived?: boolean;
+  },
 ): Promise<void> {
   await mutateState("updateRoadmapItem", (state) => {
     const project = state.projects[projectPath];
@@ -489,6 +494,8 @@ export async function updateRoadmapItem(
       throw new Error(`Roadmap item "${itemId}" not found`);
     }
 
+    if (data.title !== undefined) item.title = data.title;
+    if (data.description !== undefined) item.description = data.description;
     if (data.status !== undefined) item.status = data.status;
     if (data.archived !== undefined) item.archived = data.archived;
     item.updatedAt = new Date().toISOString();

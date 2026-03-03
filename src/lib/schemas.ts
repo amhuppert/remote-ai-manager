@@ -481,12 +481,22 @@ export type CreateRoadmapItemRequest = z.infer<
 
 export const updateRoadmapItemRequestSchema = z
   .object({
+    title: z.string().min(1).optional(),
+    description: z.string().nullable().optional(),
     status: roadmapItemStatusSchema.optional(),
     archived: z.boolean().optional(),
   })
-  .refine((d) => d.status !== undefined || d.archived !== undefined, {
-    message: "At least one of status or archived is required",
-  });
+  .refine(
+    (d) =>
+      d.title !== undefined ||
+      d.description !== undefined ||
+      d.status !== undefined ||
+      d.archived !== undefined,
+    {
+      message:
+        "At least one of title, description, status, or archived is required",
+    },
+  );
 export type UpdateRoadmapItemRequest = z.infer<
   typeof updateRoadmapItemRequestSchema
 >;

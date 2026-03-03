@@ -16,7 +16,7 @@
     "check:ai": "npx eslint . --quiet --no-color --no-warn-ignored && tsc --noEmit --pretty false && vitest run --project unit --no-color",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "storybook": "storybook dev -p 6006",
+    "storybook": "NODE_ENV=development storybook dev -p 6006",
     "build-storybook": "storybook build",
     "prepare": "husky"
   },

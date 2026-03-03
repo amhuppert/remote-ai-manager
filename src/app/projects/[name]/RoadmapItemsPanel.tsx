@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import type { RoadmapItem, RoadmapItemType } from "@/types";
 import { useRoadmapItemsQuery } from "@/lib/queries";
@@ -48,6 +48,20 @@ export default function RoadmapItemsPanel({
   const [newType, setNewType] = useState<RoadmapItemType>("feature");
   const [newDescription, setNewDescription] = useState("");
 
+  // Expand/collapse state for item descriptions
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+
+  // Inline editing state
+  const [editingTitle, setEditingTitle] = useState<string | null>(null);
+  const [editingDescription, setEditingDescription] = useState<string | null>(
+    null,
+  );
+  const [editTitleValue, setEditTitleValue] = useState("");
+  const [editDescriptionValue, setEditDescriptionValue] = useState("");
+
+  const editTitleRef = useRef<HTMLInputElement>(null);
+  const editDescriptionRef = useRef<HTMLTextAreaElement>(null);
+
   const archivedCount = useMemo(
     () => items.filter((i) => i.archived).length,
     [items],
@@ -59,6 +73,20 @@ export default function RoadmapItemsPanel({
   }, [items, showArchived]);
 
   const activeCount = items.filter((i) => !i.archived).length;
+
+  // Focus input when entering edit mode
+  useEffect(() => {
+    if (editingTitle && editTitleRef.current) {
+      editTitleRef.current.focus();
+      editTitleRef.current.select();
+    }
+  }, [editingTitle]);
+
+  useEffect(() => {
+    if (editingDescription && editDescriptionRef.current) {
+      editDescriptionRef.current.focus();
+    }
+  }, [editingDescription]);
 
   function handleSubmit() {
     const title = newTitle.trim();
@@ -118,6 +146,66 @@ export default function RoadmapItemsPanel({
         );
       },
     });
+  }
+
+  function toggleExpanded(itemId: string) {
+    setExpandedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  }
+
+  // --- Inline editing handlers ---
+
+  function startEditTitle(item: RoadmapItem) {
+    setEditingTitle(item.id);
+    setEditTitleValue(item.title);
+  }
+
+  const saveTitle = useCallback(
+    (itemId: string) => {
+      const trimmed = editTitleValue.trim();
+      if (trimmed && trimmed !== items.find((i) => i.id === itemId)?.title) {
+        updateMutation.mutate({ itemId, title: trimmed });
+      }
+      setEditingTitle(null);
+    },
+    [editTitleValue, items, updateMutation],
+  );
+
+  function cancelEditTitle() {
+    setEditingTitle(null);
+  }
+
+  function startEditDescription(item: RoadmapItem) {
+    setEditingDescription(item.id);
+    setEditDescriptionValue(item.description ?? "");
+    // Ensure item is expanded
+    setExpandedItems((prev) => new Set(prev).add(item.id));
+  }
+
+  const saveDescription = useCallback(
+    (itemId: string) => {
+      const trimmed = editDescriptionValue.trim();
+      const original = items.find((i) => i.id === itemId)?.description ?? "";
+      if (trimmed !== original) {
+        updateMutation.mutate({
+          itemId,
+          description: trimmed || null,
+        });
+      }
+      setEditingDescription(null);
+    },
+    [editDescriptionValue, items, updateMutation],
+  );
+
+  function cancelEditDescription() {
+    setEditingDescription(null);
   }
 
   return (
@@ -212,55 +300,135 @@ export default function RoadmapItemsPanel({
           {/* Item list */}
           {visibleItems.length > 0 ? (
             <div className="roadmap-list">
-              {visibleItems.map((item) => (
-                <div
-                  key={item.id}
-                  className={`roadmap-item ${item.status === "done" ? "done" : ""} ${item.archived ? "archived" : ""}`}
-                >
-                  <button
-                    className={`roadmap-checkbox ${item.status === "done" ? "checked" : ""}`}
-                    onClick={() => handleToggleStatus(item)}
-                    aria-label={
-                      item.status === "done" ? "Mark incomplete" : "Mark done"
-                    }
+              {visibleItems.map((item) => {
+                const isExpanded = expandedItems.has(item.id);
+                const isEditingTitle = editingTitle === item.id;
+                const isEditingDesc = editingDescription === item.id;
+                const hasDescription = !!item.description;
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`roadmap-item ${item.status === "done" ? "done" : ""} ${item.archived ? "archived" : ""} ${isExpanded ? "expanded" : ""}`}
                   >
-                    {item.status === "done" && "✓"}
-                  </button>
-
-                  <span className={`roadmap-type ${item.type}`}>
-                    {TYPE_LABELS[item.type]}
-                  </span>
-
-                  <span className="roadmap-item-title">{item.title}</span>
-
-                  <div className="roadmap-item-actions">
-                    {item.status !== "done" && (
+                    <div className="roadmap-item-row">
                       <button
-                        className="roadmap-btn-focus"
-                        data-tooltip="Start Focus Session"
-                        onClick={() => handleStartFocus(item.id)}
-                        disabled={focusMutation.isPending}
+                        className={`roadmap-checkbox ${item.status === "done" ? "checked" : ""}`}
+                        onClick={() => handleToggleStatus(item)}
+                        aria-label={
+                          item.status === "done"
+                            ? "Mark incomplete"
+                            : "Mark done"
+                        }
                       >
-                        ▶
+                        {item.status === "done" && "✓"}
                       </button>
+
+                      <span className={`roadmap-type ${item.type}`}>
+                        {TYPE_LABELS[item.type]}
+                      </span>
+
+                      {isEditingTitle ? (
+                        <input
+                          ref={editTitleRef}
+                          className="roadmap-edit-title"
+                          type="text"
+                          value={editTitleValue}
+                          onChange={(e) => setEditTitleValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveTitle(item.id);
+                            if (e.key === "Escape") cancelEditTitle();
+                          }}
+                          onBlur={() => saveTitle(item.id)}
+                        />
+                      ) : (
+                        <span
+                          className="roadmap-item-title"
+                          onClick={() => startEditTitle(item)}
+                          title="Click to edit"
+                        >
+                          {item.title}
+                        </span>
+                      )}
+
+                      {/* Expand/collapse chevron — visible when item has description or is expanded */}
+                      {(hasDescription || isExpanded) && (
+                        <button
+                          className={`roadmap-expand-btn ${isExpanded ? "expanded" : ""}`}
+                          onClick={() => toggleExpanded(item.id)}
+                          aria-label={
+                            isExpanded
+                              ? "Collapse description"
+                              : "Expand description"
+                          }
+                        >
+                          ▾
+                        </button>
+                      )}
+
+                      <div className="roadmap-item-actions">
+                        {item.status !== "done" && (
+                          <button
+                            className="roadmap-btn-focus"
+                            data-tooltip="Start Focus Session"
+                            onClick={() => handleStartFocus(item.id)}
+                            disabled={focusMutation.isPending}
+                          >
+                            ▶
+                          </button>
+                        )}
+                        <button
+                          className="btn-icon-only"
+                          data-tooltip={item.archived ? "Unarchive" : "Archive"}
+                          onClick={() => handleArchive(item.id, !item.archived)}
+                        >
+                          {item.archived ? "↩" : "↓"}
+                        </button>
+                        <button
+                          className="btn-icon-only danger"
+                          data-tooltip="Delete"
+                          onClick={() => handleDelete(item.id)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Expanded description area */}
+                    {isExpanded && (
+                      <div className="roadmap-item-detail">
+                        {isEditingDesc ? (
+                          <textarea
+                            ref={editDescriptionRef}
+                            className="roadmap-edit-description"
+                            value={editDescriptionValue}
+                            onChange={(e) =>
+                              setEditDescriptionValue(e.target.value)
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") cancelEditDescription();
+                              if (e.key === "Enter" && e.metaKey) {
+                                saveDescription(item.id);
+                              }
+                            }}
+                            onBlur={() => saveDescription(item.id)}
+                            placeholder="Add a description..."
+                          />
+                        ) : (
+                          <div
+                            className={`roadmap-item-description ${!hasDescription ? "empty" : ""}`}
+                            onClick={() => startEditDescription(item)}
+                            title="Click to edit"
+                          >
+                            {item.description ||
+                              "No description — click to add"}
+                          </div>
+                        )}
+                      </div>
                     )}
-                    <button
-                      className="btn-icon-only"
-                      data-tooltip={item.archived ? "Unarchive" : "Archive"}
-                      onClick={() => handleArchive(item.id, !item.archived)}
-                    >
-                      {item.archived ? "↩" : "↓"}
-                    </button>
-                    <button
-                      className="btn-icon-only danger"
-                      data-tooltip="Delete"
-                      onClick={() => handleDelete(item.id)}
-                    >
-                      ×
-                    </button>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="roadmap-empty">
