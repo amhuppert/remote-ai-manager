@@ -109,14 +109,38 @@ function createProvidedMachine() {
 
         // Lazy imports to avoid circular dependencies
         void (async () => {
+          const { getTaskProgress } =
+            await import("@/lib/ralph-loop/fix-plan-manager");
+          const { broadcast } = await import("@/lib/sse-broadcaster");
+          const { mutateSession } = await import("@/lib/state");
+
+          const progress = getTaskProgress(context.fixPlan);
+
+          // Persist to state file — best-effort, errors logged but don't
+          // block the SSE broadcast.
           try {
-            const { getTaskProgress } =
-              await import("@/lib/ralph-loop/fix-plan-manager");
-            const { broadcast } = await import("@/lib/sse-broadcaster");
-            const { mutateSession } = await import("@/lib/state");
+            await mutateSession(
+              context.projectPath,
+              context.sessionName,
+              "workflow.xstateStatusSync",
+              (sess) => {
+                if (!sess.workflow) return;
+                sess.workflow.status = workflowStatus;
+                sess.workflow.haltReason = context.haltReason;
+                sess.workflow.completedAt = context.completedAt;
+              },
+            );
+          } catch (err) {
+            logger.warn("workflow-manager.status_sync_failed", {
+              sessionName: context.sessionName,
+              workflowStatus,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
 
-            const progress = getTaskProgress(context.fixPlan);
-
+          // Always broadcast SSE — even if state persistence failed,
+          // the client needs to know the workflow status changed.
+          try {
             broadcast({
               type: "workflow-status",
               projectName: context.projectName,
@@ -132,21 +156,12 @@ function createProvidedMachine() {
               },
               haltReason: context.haltReason,
             });
-
-            // Sync status to state file so GET /workflow returns correct data
-            await mutateSession(
-              context.projectPath,
-              context.sessionName,
-              "workflow.xstateStatusSync",
-              (sess) => {
-                if (!sess.workflow) return;
-                sess.workflow.status = workflowStatus;
-                sess.workflow.haltReason = context.haltReason;
-                sess.workflow.completedAt = context.completedAt;
-              },
-            );
-          } catch {
-            // fire-and-forget
+          } catch (err) {
+            logger.warn("workflow-manager.broadcast_failed", {
+              sessionName: context.sessionName,
+              workflowStatus,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         })();
       },
@@ -216,11 +231,44 @@ export function startWorkflow(input: RalphLoopInput): void {
   // Clean up on terminal state
   actor.subscribe((snapshot) => {
     if (snapshot.status === "done") {
+      const terminalStatus =
+        snapshot.output?.status === "completed"
+          ? ("completed" as const)
+          : snapshot.output?.status === "aborted"
+            ? ("aborted" as const)
+            : ("halted" as const);
+
       logger.info("workflow-manager.workflow_terminal", {
         sessionName: input.sessionName,
+        terminalStatus,
       });
       cleanupRuntime(key);
       getActorRegistry().delete(key);
+
+      // Safety-net: ensure terminal status is persisted to state.json.
+      // The entry action's broadcastWorkflowStatus may have raced against
+      // this subscriber or failed — this guarantees the state file reflects
+      // the terminal status so the UI doesn't show a stale "running".
+      void import("@/lib/state")
+        .then(({ mutateSession }) =>
+          mutateSession(
+            input.projectPath,
+            input.sessionName,
+            "workflow.terminalCleanup",
+            (sess) => {
+              if (!sess.workflow) return;
+              sess.workflow.status = terminalStatus;
+              sess.workflow.haltReason = snapshot.output?.haltReason ?? null;
+              sess.workflow.completedAt ??= new Date().toISOString();
+            },
+          ),
+        )
+        .catch((err) => {
+          logger.warn("workflow-manager.terminal_cleanup_failed", {
+            sessionName: input.sessionName,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
 
       // Close workflow streams
       void import("@/lib/ralph-loop/workflow-stream-registry").then((ws) => {

@@ -1,7 +1,10 @@
 import { useMemo } from "react";
+import { enableMapSet } from "immer";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { BackgroundJob, JobStatusEvent, Notification } from "@/types";
+
+enableMapSet();
 
 // ---------------------------------------------------------------------------
 // Types
