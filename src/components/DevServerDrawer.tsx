@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { DevServerRuntimeState } from "@/types";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -126,6 +126,8 @@ export default function DevServerDrawer({
   onStartAll,
   onStopAll,
 }: DevServerDrawerProps) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
   // Close on Escape
   useEffect(() => {
     if (!open) return;
@@ -154,6 +156,7 @@ export default function DevServerDrawer({
     "ds-trigger",
     hasRunning && "ds-trigger-active",
     hasError && !hasRunning && "ds-trigger-error",
+    open && "ds-trigger-open",
   ]
     .filter(Boolean)
     .join(" ");
@@ -165,16 +168,16 @@ export default function DevServerDrawer({
       : "ds-trigger-dot";
 
   return (
-    <div className="ds-wrapper">
-      {/* Floating trigger pill */}
+    <div className="ds-wrapper" ref={wrapperRef}>
+      {/* Inline trigger button */}
       <button className={triggerClass} onClick={onToggle} type="button">
         <span className={dotClass} />
         <span className="ds-trigger-label">
           {hasRunning
             ? `${runningCount}/${servers.length}`
             : hasError
-              ? "error"
-              : "servers"}
+              ? "err"
+              : "off"}
         </span>
         <ServerIcon />
       </button>
