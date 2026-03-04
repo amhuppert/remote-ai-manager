@@ -85,15 +85,6 @@ vi.mock("../state", () => ({
   ),
 }));
 
-vi.mock("../logging", () => ({
-  createLogger: vi.fn(() => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  })),
-}));
-
 vi.mock("../transcript", () => ({
   readConversationMessages: vi.fn(async () => [
     {
@@ -107,9 +98,8 @@ vi.mock("../transcript", () => ({
   ]),
 }));
 
-vi.mock("../sse-broadcaster", () => ({
-  broadcast: vi.fn(),
-}));
+// Injected spy for broadcast (no vi.mock needed)
+const mockBroadcast = vi.fn();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -260,18 +250,18 @@ describe("PlanGenerator", () => {
 
   it("broadcasts fix plan update SSE event after generation", async () => {
     const { dispatchPlanGeneration } = await import("./plan-generator");
-    const { broadcast } = await import("../sse-broadcaster");
     const session = sessions.get(`${PROJECT}::${SESSION_NAME}`)!;
 
     dispatchPlanGeneration({
       projectPath: PROJECT,
       session,
       workflow: session.workflow!,
+      broadcast: mockBroadcast,
     });
 
     await new Promise((r) => setTimeout(r, 300));
 
-    expect(broadcast).toHaveBeenCalledWith(
+    expect(mockBroadcast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "workflow-fix-plan-updated",
         sessionName: SESSION_NAME,

@@ -9,17 +9,117 @@ vi.mock("./git-operations");
 vi.mock("./conflict-resolution");
 vi.mock("./repo-config");
 vi.mock("./config");
-vi.mock("./sse-broadcaster");
 vi.mock("./state");
 vi.mock("./notification-db");
-vi.mock("./logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-}));
+
+// The merge machine actors use dynamic imports with `@/lib/...` paths.
+// Vitest treats `./X` and `@/lib/X` as separate mock registrations,
+// so we mock the actors module to call through to the already-mocked
+// `./...` modules (avoiding the path-alias mismatch).
+vi.mock("./workflows/merge/actors", async () => {
+  const { fromPromise } = await import("xstate");
+  const gitOps = await import("./git-operations");
+  const lockMod = await import("./lock");
+  const stateMod = await import("./state");
+  const conflictRes = await import("./conflict-resolution");
+  const repoConfig = await import("./repo-config");
+
+  return {
+    checkUncommitted: fromPromise(
+      async ({ input }: { input: { worktreePath: string } }) => ({
+        hasChanges: await gitOps.hasUncommittedChanges(input.worktreePath),
+      }),
+    ),
+    commitChangesActor: fromPromise(
+      async ({
+        input,
+      }: {
+        input: { worktreePath: string; message: string; skipHooks?: boolean };
+      }) => {
+        const result = await gitOps.commitChanges(
+          input.worktreePath,
+          input.message,
+          { skipHooks: input.skipHooks },
+        );
+        return { hash: result.hash };
+      },
+    ),
+    mergeMain: fromPromise(
+      async ({ input }: { input: { worktreePath: string } }) => {
+        const result = await gitOps.mergeMainIntoFeature(input.worktreePath);
+        return {
+          status: result.status,
+          conflictFiles:
+            result.status === "conflicts" ? result.conflictFiles : [],
+        };
+      },
+    ),
+    resolveConflictsActor: fromPromise(
+      async ({
+        input,
+      }: {
+        input: { worktreePath: string; decisions?: unknown[] };
+      }) => {
+        const result = await conflictRes.resolveConflicts({
+          worktreePath: input.worktreePath,
+          decisions: input.decisions,
+        } as Parameters<typeof conflictRes.resolveConflicts>[0]);
+        return {
+          status: result.status,
+          conflicts: result.status === "resolved" ? result.conflicts : [],
+          partialConflicts:
+            result.status === "failed" ? result.partialConflicts : undefined,
+        };
+      },
+    ),
+    runValidation: fromPromise(
+      async ({
+        input,
+      }: {
+        input: {
+          projectPath: string;
+          worktreePath: string;
+          sessionName: string;
+          branchName: string;
+          timeoutMs: number;
+        };
+      }) => {
+        await repoConfig.runPreMergeValidation(
+          input as Parameters<typeof repoConfig.runPreMergeValidation>[0],
+        );
+      },
+    ),
+    fixValidation: fromPromise(async () => ({ status: "fixed" as const })),
+    squashMergeActor: fromPromise(
+      async ({
+        input,
+      }: {
+        input: {
+          projectPath: string;
+          branchName: string;
+          message: string;
+          sessionName: string;
+        };
+      }) => {
+        const releaseProject = lockMod.acquireProjectLock(input.projectPath);
+        try {
+          const result = await gitOps.squashMerge(
+            input.projectPath,
+            input.branchName,
+            input.message,
+          );
+          await stateMod.setSessionFinished(
+            input.projectPath,
+            input.sessionName,
+          );
+          return { mergeHash: result.mergeHash };
+        } finally {
+          if (typeof releaseProject === "function") releaseProject();
+        }
+      },
+    ),
+  };
+});
 
 import {
   dispatchMergeJob,
@@ -39,7 +139,6 @@ import {
 import { resolveConflicts } from "./conflict-resolution";
 import { runPreMergeValidation } from "./repo-config";
 import { readConfig } from "./config";
-import { broadcast } from "./sse-broadcaster";
 import { setSessionFinished } from "./state";
 import type { JobStatusEvent } from "@/types";
 
@@ -56,8 +155,10 @@ const mockCommitChanges = vi.mocked(commitChanges);
 const mockResolveConflicts = vi.mocked(resolveConflicts);
 const mockRunPreMergeValidation = vi.mocked(runPreMergeValidation);
 const mockReadConfig = vi.mocked(readConfig);
-const mockBroadcast = vi.mocked(broadcast);
 const mockSetSessionFinished = vi.mocked(setSessionFinished);
+
+// Injected spy for broadcast (no vi.mock needed)
+const mockBroadcast = vi.fn();
 
 // ============================================================
 // Helpers
@@ -76,6 +177,7 @@ const BASE_MERGE_PARAMS = {
   branchName: "csm/my-session",
   message: "Merge my-session into main",
   autoResolve: false,
+  broadcast: mockBroadcast,
 };
 
 const BASE_COMMIT_PARAMS = {
@@ -85,6 +187,7 @@ const BASE_COMMIT_PARAMS = {
   worktreePath: "/projects/foo/.worktrees/my-session",
   branchName: "csm/my-session",
   message: "chore: update deps",
+  broadcast: mockBroadcast,
 };
 
 const BASE_RESOLVE_PARAMS = {
@@ -94,6 +197,7 @@ const BASE_RESOLVE_PARAMS = {
   worktreePath: "/projects/foo/.worktrees/my-session",
   branchName: "csm/my-session",
   mergeMessage: "Merge my-session into main",
+  broadcast: mockBroadcast,
 };
 
 /** Extract the most recent broadcast call's event */

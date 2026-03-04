@@ -4,13 +4,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mocks – vi.hoisted ensures variables are available in vi.mock factories
 // ---------------------------------------------------------------------------
 
-const { execFileMock, parseDiffMock } = vi.hoisted(() => ({
-  execFileMock: vi.fn(),
+const { gitMock, parseDiffMock } = vi.hoisted(() => ({
+  gitMock: vi.fn(),
   parseDiffMock: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({
-  execFile: execFileMock,
+vi.mock("./git-client", () => ({
+  defaultGitClient: { git: gitMock },
 }));
 
 vi.mock("./diff", () => ({
@@ -34,72 +34,29 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Make execFileMock resolve via the promisified callback pattern */
-function mockExecFileSuccess(stdout = "", stderr = "") {
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      if (cb) {
-        cb(null, { stdout, stderr });
-      }
-    },
-  );
+/** Make gitMock resolve with { stdout, stderr } */
+function mockGitSuccess(stdout = "", stderr = "") {
+  gitMock.mockResolvedValue({ stdout, stderr });
 }
 
-function mockExecFileFailure(error: Error) {
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      if (cb) {
-        cb(error, { stdout: "", stderr: "" });
-      }
-    },
-  );
+function mockGitFailure(error: Error) {
+  gitMock.mockRejectedValue(error);
 }
 
-/** Make execFileMock resolve in sequence for successive calls */
-function mockExecFileSequence(
+/** Queue sequential resolve/reject results for successive gitMock calls */
+function mockGitSequence(
   results: Array<{ error?: Error; stdout?: string; stderr?: string }>,
 ) {
-  let callIndex = 0;
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      const result = results[callIndex] ?? results[results.length - 1]!;
-      callIndex++;
-      if (cb) {
-        if (result.error) {
-          cb(result.error, { stdout: "", stderr: "" });
-        } else {
-          cb(null, {
-            stdout: result.stdout ?? "",
-            stderr: result.stderr ?? "",
-          });
-        }
-      }
-    },
-  );
+  for (const result of results) {
+    if (result.error) {
+      gitMock.mockRejectedValueOnce(result.error);
+    } else {
+      gitMock.mockResolvedValueOnce({
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      });
+    }
+  }
 }
 
 beforeEach(() => {
@@ -112,25 +69,24 @@ beforeEach(() => {
 
 describe("hasUncommittedChanges", () => {
   it("returns true when git status has output", async () => {
-    mockExecFileSuccess(" M src/index.ts\n?? new-file.ts\n");
+    mockGitSuccess(" M src/index.ts\n?? new-file.ts\n");
     const result = await hasUncommittedChanges("/worktree");
     expect(result).toBe(true);
-    expect(execFileMock).toHaveBeenCalledWith(
-      "git",
+    expect(gitMock).toHaveBeenCalledWith(
       ["status", "--porcelain", "--untracked-files=all"],
-      expect.objectContaining({ cwd: "/worktree" }),
-      expect.any(Function),
+      "/worktree",
+      expect.anything(),
     );
   });
 
   it("returns false when git status is empty", async () => {
-    mockExecFileSuccess("");
+    mockGitSuccess("");
     const result = await hasUncommittedChanges("/worktree");
     expect(result).toBe(false);
   });
 
   it("returns false for whitespace-only output", async () => {
-    mockExecFileSuccess("   \n  ");
+    mockGitSuccess("   \n  ");
     const result = await hasUncommittedChanges("/worktree");
     expect(result).toBe(false);
   });
@@ -142,7 +98,7 @@ describe("hasUncommittedChanges", () => {
 
 describe("commitChanges", () => {
   it("stages all and commits, returning the hash", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // hasUncommittedChanges → git status
       { stdout: " M file.ts\n" },
       // git add -A
@@ -155,13 +111,9 @@ describe("commitChanges", () => {
     expect(result.hash).toBe("abc1234");
 
     // Verify git add -A was called
-    expect(execFileMock.mock.calls[1]![1]).toEqual(["add", "-A"]);
+    expect(gitMock.mock.calls[1]![0]).toEqual(["add", "-A"]);
     // Verify git commit with message
-    expect(execFileMock.mock.calls[2]![1]).toEqual([
-      "commit",
-      "-m",
-      "Add feature",
-    ]);
+    expect(gitMock.mock.calls[2]![0]).toEqual(["commit", "-m", "Add feature"]);
   });
 
   it("throws when commit message is empty", async () => {
@@ -174,14 +126,14 @@ describe("commitChanges", () => {
   });
 
   it("throws when there are no uncommitted changes", async () => {
-    mockExecFileSuccess(""); // git status returns empty
+    mockGitSuccess(""); // git status returns empty
     await expect(commitChanges("/worktree", "msg")).rejects.toThrow(
       "No uncommitted changes to commit",
     );
   });
 
   it("passes --no-verify when skipHooks is true", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       { stdout: " M file.ts\n" },
       { stdout: "" },
       { stdout: "[csm/my-session abc1234] WIP commit\n 1 file changed\n" },
@@ -193,7 +145,7 @@ describe("commitChanges", () => {
     expect(result.hash).toBe("abc1234");
 
     // Verify git commit was called with --no-verify
-    expect(execFileMock.mock.calls[2]![1]).toEqual([
+    expect(gitMock.mock.calls[2]![0]).toEqual([
       "commit",
       "-m",
       "WIP commit",
@@ -202,7 +154,7 @@ describe("commitChanges", () => {
   });
 
   it("does not pass --no-verify by default", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       { stdout: " M file.ts\n" },
       { stdout: "" },
       { stdout: "[csm/my-session abc1234] Add feature\n 1 file changed\n" },
@@ -211,15 +163,11 @@ describe("commitChanges", () => {
     await commitChanges("/worktree", "Add feature");
 
     // Verify git commit was called WITHOUT --no-verify
-    expect(execFileMock.mock.calls[2]![1]).toEqual([
-      "commit",
-      "-m",
-      "Add feature",
-    ]);
+    expect(gitMock.mock.calls[2]![0]).toEqual(["commit", "-m", "Add feature"]);
   });
 
   it("returns empty hash when git output format is unexpected", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       { stdout: " M file.ts\n" },
       { stdout: "" },
       { stdout: "Unexpected output format" },
@@ -253,7 +201,7 @@ describe("getCommitLog", () => {
       "1\t1\tsrc/app.ts",
     ].join("\n");
 
-    mockExecFileSequence([
+    mockGitSequence([
       // git log main..HEAD --format=...
       { stdout: logOutput },
       // git log main..HEAD --format=%H --numstat
@@ -271,19 +219,19 @@ describe("getCommitLog", () => {
   });
 
   it("returns empty array when git log fails (no main branch)", async () => {
-    mockExecFileFailure(new Error("fatal: unknown revision"));
+    mockGitFailure(new Error("fatal: unknown revision"));
     const entries = await getCommitLog("/worktree");
     expect(entries).toEqual([]);
   });
 
   it("returns empty array for empty log output", async () => {
-    mockExecFileSuccess("");
+    mockGitSuccess("");
     const entries = await getCommitLog("/worktree");
     expect(entries).toEqual([]);
   });
 
   it("handles whitespace-only log output", async () => {
-    mockExecFileSuccess("  \n  \n");
+    mockGitSuccess("  \n  \n");
     const entries = await getCommitLog("/worktree");
     expect(entries).toEqual([]);
   });
@@ -295,7 +243,7 @@ describe("getCommitLog", () => {
       "", // empty line
     ].join("\n");
 
-    mockExecFileSequence([
+    mockGitSequence([
       { stdout: logOutput },
       // numstat call
       { stdout: "" },
@@ -310,7 +258,7 @@ describe("getCommitLog", () => {
     const logOutput =
       "abc1234\x00a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\x00Commit\x002024-06-15T10:00:00Z\x00";
 
-    mockExecFileSequence([
+    mockGitSequence([
       { stdout: logOutput },
       { error: new Error("numstat failed") },
     ]);
@@ -324,7 +272,7 @@ describe("getCommitLog", () => {
     const logOutput =
       'abc1234\x00a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\x00Fix "quotes" & <angles>\x002024-06-15T10:00:00Z\x00';
 
-    mockExecFileSequence([{ stdout: logOutput }, { stdout: "" }]);
+    mockGitSequence([{ stdout: logOutput }, { stdout: "" }]);
 
     const entries = await getCommitLog("/worktree");
     expect(entries).toHaveLength(1);
@@ -344,7 +292,7 @@ describe("getCommitDiff", () => {
   };
 
   it("diffs against merge-base for first commit after divergence", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // rev-parse --verify <hash>^ → parent hash
       { stdout: "parenthash123\n" },
       // merge-base --is-ancestor parent main → success means parent IS ancestor of main
@@ -360,12 +308,12 @@ describe("getCommitDiff", () => {
     expect(result).toEqual(mockDiff);
 
     // Verify merge-base was computed
-    const mergeBaseCall = execFileMock.mock.calls[2]!;
-    expect(mergeBaseCall[1]).toEqual(["merge-base", "main", "abc1234"]);
+    const mergeBaseCall = gitMock.mock.calls[2]!;
+    expect(mergeBaseCall[0]).toEqual(["merge-base", "main", "abc1234"]);
 
     // Verify diff was against merge-base
-    const diffCall = execFileMock.mock.calls[3]!;
-    expect(diffCall[1]).toEqual([
+    const diffCall = gitMock.mock.calls[3]!;
+    expect(diffCall[0]).toEqual([
       "diff",
       "mergebase789..abc1234",
       "--unified=3",
@@ -373,7 +321,7 @@ describe("getCommitDiff", () => {
   });
 
   it("diffs against parent for subsequent commits", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // rev-parse → parent hash
       { stdout: "parenthash123\n" },
       // merge-base --is-ancestor → failure means parent is NOT ancestor of main
@@ -386,12 +334,12 @@ describe("getCommitDiff", () => {
     const result = await getCommitDiff("/worktree", "def5678");
     expect(result).toEqual(mockDiff);
 
-    const diffCall = execFileMock.mock.calls[2]!;
-    expect(diffCall[1]).toEqual(["diff", "def5678~1..def5678", "--unified=3"]);
+    const diffCall = gitMock.mock.calls[2]!;
+    expect(diffCall[0]).toEqual(["diff", "def5678~1..def5678", "--unified=3"]);
   });
 
   it("falls back to diff against merge-base when rev-parse fails", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // rev-parse fails (no parent)
       { error: new Error("no parent") },
       // merge-base main <hash> → merge-base hash
@@ -405,12 +353,12 @@ describe("getCommitDiff", () => {
     expect(result).toEqual(mockDiff);
 
     // Verify merge-base was computed
-    const mergeBaseCall = execFileMock.mock.calls[1]!;
-    expect(mergeBaseCall[1]).toEqual(["merge-base", "main", "abc1234"]);
+    const mergeBaseCall = gitMock.mock.calls[1]!;
+    expect(mergeBaseCall[0]).toEqual(["merge-base", "main", "abc1234"]);
 
     // Verify diff was against merge-base
-    const diffCall = execFileMock.mock.calls[2]!;
-    expect(diffCall[1]).toEqual([
+    const diffCall = gitMock.mock.calls[2]!;
+    expect(diffCall[0]).toEqual([
       "diff",
       "mergebase789..abc1234",
       "--unified=3",
@@ -418,7 +366,7 @@ describe("getCommitDiff", () => {
   });
 
   it("returns empty diff when git diff output is empty", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       { stdout: "parenthash\n" },
       { error: new Error("not ancestor") },
       { stdout: "  \n" }, // whitespace only
@@ -440,7 +388,7 @@ describe("getCommitDiff", () => {
 
 describe("squashMerge", () => {
   it("performs squash merge and returns hash", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // git status --porcelain (clean check)
       { stdout: "" },
       // git merge --squash
@@ -457,17 +405,15 @@ describe("squashMerge", () => {
     expect(result.mergeHash).toBe("abc1234");
 
     // Verify commands were called in project root
-    expect(execFileMock.mock.calls[0]![2]).toEqual(
-      expect.objectContaining({ cwd: "/project" }),
-    );
+    expect(gitMock.mock.calls[0]![1]).toBe("/project");
     // Verify squash merge args
-    expect(execFileMock.mock.calls[1]![1]).toEqual([
+    expect(gitMock.mock.calls[1]![0]).toEqual([
       "merge",
       "--squash",
       "csm/my-session",
     ]);
     // Verify commit args (--no-verify skips hooks since validation runs before squash)
-    expect(execFileMock.mock.calls[2]![1]).toEqual([
+    expect(gitMock.mock.calls[2]![0]).toEqual([
       "commit",
       "--no-verify",
       "-m",
@@ -485,14 +431,14 @@ describe("squashMerge", () => {
   });
 
   it("throws when project root has uncommitted changes", async () => {
-    mockExecFileSuccess(" M dirty-file.ts\n");
+    mockGitSuccess(" M dirty-file.ts\n");
     await expect(
       squashMerge("/project", "csm/branch", "Merge"),
     ).rejects.toThrow("Main branch has uncommitted changes");
   });
 
   it("returns empty hash when commit output format is unexpected", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       { stdout: "" },
       { stdout: "" },
       { stdout: "Unexpected output" },
@@ -503,7 +449,7 @@ describe("squashMerge", () => {
   });
 
   it("detects merge conflicts, aborts, and throws descriptive error", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // git status --porcelain (clean)
       { stdout: "" },
       // git merge --squash → conflict
@@ -523,8 +469,8 @@ describe("squashMerge", () => {
     ).rejects.toThrow("Merge conflicts detected");
 
     // Verify cleanup: merge --abort and reset --hard were called
-    expect(execFileMock.mock.calls[2]![1]).toEqual(["merge", "--abort"]);
-    expect(execFileMock.mock.calls[3]![1]).toEqual(["reset", "--hard", "HEAD"]);
+    expect(gitMock.mock.calls[2]![0]).toEqual(["merge", "--abort"]);
+    expect(gitMock.mock.calls[3]![0]).toEqual(["reset", "--hard", "HEAD"]);
   });
 
   it("resets project root when commit fails (e.g. pre-commit hook)", async () => {
@@ -533,7 +479,7 @@ describe("squashMerge", () => {
       stdout: "",
     });
 
-    mockExecFileSequence([
+    mockGitSequence([
       // git status --porcelain (clean)
       { stdout: "" },
       // git merge --squash (succeeds — changes staged)
@@ -549,11 +495,11 @@ describe("squashMerge", () => {
     ).rejects.toThrow("Commit failed");
 
     // Verify cleanup: reset --hard to undo staged squash changes
-    expect(execFileMock.mock.calls[3]![1]).toEqual(["reset", "--hard", "HEAD"]);
+    expect(gitMock.mock.calls[3]![0]).toEqual(["reset", "--hard", "HEAD"]);
   });
 
   it("re-throws non-conflict merge errors without conflict message", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       { stdout: "" },
       // git merge --squash → non-conflict error
       { error: new Error("fatal: not a valid branch name") },
@@ -574,22 +520,21 @@ describe("squashMerge", () => {
 
 describe("mergeMainIntoFeature", () => {
   it("returns clean status when git merge main succeeds", async () => {
-    mockExecFileSuccess("Already up to date.\n");
+    mockGitSuccess("Already up to date.\n");
 
     const result = await mergeMainIntoFeature("/worktree");
     expect(result).toEqual({ status: "clean" });
 
     // Verify git merge main was called in the worktree
-    expect(execFileMock).toHaveBeenCalledWith(
-      "git",
+    expect(gitMock).toHaveBeenCalledWith(
       ["merge", "main"],
-      expect.objectContaining({ cwd: "/worktree" }),
-      expect.any(Function),
+      "/worktree",
+      expect.anything(),
     );
   });
 
   it("returns conflicts with file list when merge has CONFLICT in stderr", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // git merge main → fails with CONFLICT
       {
         error: Object.assign(
@@ -613,7 +558,7 @@ describe("mergeMainIntoFeature", () => {
     });
 
     // Verify git diff was called to list conflicted files
-    expect(execFileMock.mock.calls[1]![1]).toEqual([
+    expect(gitMock.mock.calls[1]![0]).toEqual([
       "diff",
       "--name-only",
       "--diff-filter=U",
@@ -621,7 +566,7 @@ describe("mergeMainIntoFeature", () => {
   });
 
   it("returns conflicts when 'merge conflict' appears in error message", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // git merge main → fails with "merge conflict" in message
       {
         error: Object.assign(new Error("Automatic merge conflict in file.ts"), {
@@ -640,7 +585,7 @@ describe("mergeMainIntoFeature", () => {
   });
 
   it("detects CONFLICT from error message when stderr is absent", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // git merge main → fails with CONFLICT only in message (no stderr property)
       {
         error: new Error(
@@ -659,18 +604,18 @@ describe("mergeMainIntoFeature", () => {
   });
 
   it("rethrows non-conflict errors", async () => {
-    mockExecFileFailure(new Error("fatal: not something we can merge"));
+    mockGitFailure(new Error("fatal: not something we can merge"));
 
     await expect(mergeMainIntoFeature("/worktree")).rejects.toThrow(
       "fatal: not something we can merge",
     );
 
     // Verify only one call was made (no git diff, no merge --abort)
-    expect(execFileMock).toHaveBeenCalledTimes(1);
+    expect(gitMock).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT abort the merge on conflict (leaves worktree in conflict state)", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // git merge main → conflict
       {
         error: Object.assign(
@@ -685,18 +630,18 @@ describe("mergeMainIntoFeature", () => {
     await mergeMainIntoFeature("/worktree");
 
     // Verify exactly 2 calls: git merge main + git diff
-    expect(execFileMock).toHaveBeenCalledTimes(2);
+    expect(gitMock).toHaveBeenCalledTimes(2);
 
     // Verify no merge --abort was called
-    const allArgs = execFileMock.mock.calls.map(
-      (call: unknown[]) => call[1] as string[],
+    const allArgs = gitMock.mock.calls.map(
+      (call: unknown[]) => call[0] as string[],
     );
     const hasAbort = allArgs.some((args: string[]) => args.includes("--abort"));
     expect(hasAbort).toBe(false);
   });
 
   it("filters empty lines from conflicted file list", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       {
         error: Object.assign(new Error("CONFLICT (content): Merge conflict"), {
           stderr: "CONFLICT (content): Merge conflict",
@@ -720,7 +665,7 @@ describe("mergeMainIntoFeature", () => {
 
 describe("isBranchAncestorOfMain", () => {
   it("returns true when branch is ancestor and has diverged from merge base", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // merge-base --is-ancestor → success (exit 0)
       { stdout: "" },
       // rev-parse branchName → branch tip
@@ -734,7 +679,7 @@ describe("isBranchAncestorOfMain", () => {
   });
 
   it("returns false when branch tip equals merge base (never diverged)", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // merge-base --is-ancestor → success (exit 0)
       { stdout: "" },
       // rev-parse branchName → branch tip
@@ -748,7 +693,7 @@ describe("isBranchAncestorOfMain", () => {
   });
 
   it("returns false when branch is not ancestor of main", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // merge-base --is-ancestor → failure (exit 1)
       { error: new Error("not ancestor") },
     ]);
@@ -758,7 +703,7 @@ describe("isBranchAncestorOfMain", () => {
   });
 
   it("returns false when git commands fail", async () => {
-    mockExecFileSequence([
+    mockGitSequence([
       // merge-base --is-ancestor → success
       { stdout: "" },
       // rev-parse fails

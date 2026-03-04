@@ -13,12 +13,16 @@ export function getProjectDisplayName(projectPath: string): string {
 /**
  * Resolve a project name (from URL) to its absolute filesystem path.
  * Returns null if the project directory doesn't exist or has no .git.
+ *
+ * @param projectName - The project directory name
+ * @param baseDir - Optional base directory override (default: from config)
  */
 export async function resolveProjectPath(
   projectName: string,
+  baseDir?: string,
 ): Promise<string | null> {
-  const config = await readConfig();
-  const projectPath = path.join(config.baseDir, projectName);
+  const resolvedBaseDir = baseDir ?? (await readConfig()).baseDir;
+  const projectPath = path.join(resolvedBaseDir, projectName);
 
   if (!existsSync(projectPath)) return null;
 

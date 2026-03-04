@@ -10,15 +10,6 @@ vi.mock("./config", () => ({
   readConfig: vi.fn(),
 }));
 
-vi.mock("./logging", () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
 // Helper: create a mock async generator that yields the given messages
 async function* mockQueryStream(
   messages: SDKMessage[],

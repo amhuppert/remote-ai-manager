@@ -14,7 +14,10 @@
 import { randomUUID } from "node:crypto";
 import { createActor, fromPromise } from "xstate";
 import { acquireSessionLock } from "./lock";
-import { broadcast } from "./sse-broadcaster";
+import {
+  broadcast as defaultBroadcast,
+  type BroadcastFn,
+} from "./sse-broadcaster";
 import { createLogger } from "./logging";
 import {
   createJobRecord,
@@ -102,7 +105,10 @@ export function getConflictAnalysis(
 // Broadcast Helper
 // ============================================================
 
-function broadcastJobStatus(job: BackgroundJob): void {
+function broadcastJobStatus(
+  job: BackgroundJob,
+  broadcast: BroadcastFn = defaultBroadcast,
+): void {
   const event: JobStatusEvent = {
     type: "job-status",
     jobType: job.jobType,
@@ -249,8 +255,16 @@ function prepareDispatch(params: {
   sessionName: string;
   branchName: string;
   jobType: BackgroundJob["jobType"];
+  broadcast?: BroadcastFn;
 }): Result<{ job: BackgroundJob; release: () => void }, JobDispatchError> {
-  const { projectPath, projectName, sessionName, branchName, jobType } = params;
+  const {
+    projectPath,
+    projectName,
+    sessionName,
+    branchName,
+    jobType,
+    broadcast = defaultBroadcast,
+  } = params;
   const key = sessionKey(projectPath, sessionName);
   const registry = getJobRegistry();
 
@@ -283,7 +297,7 @@ function prepareDispatch(params: {
   };
 
   registry.set(key, job);
-  broadcastJobStatus(job);
+  broadcastJobStatus(job, broadcast);
   persistJobRecord(job);
 
   return { ok: true, value: { job, release } };
@@ -301,6 +315,7 @@ function subscribeMergeActor(
   actor: ReturnType<typeof createActor<typeof mergeMachine>>,
   job: BackgroundJob,
   release: () => void,
+  broadcast: BroadcastFn = defaultBroadcast,
 ): void {
   let lastPhase: string | undefined = undefined;
 
@@ -311,7 +326,7 @@ function subscribeMergeActor(
         if (phase !== lastPhase) {
           lastPhase = phase;
           job.phase = phase;
-          broadcastJobStatus(job);
+          broadcastJobStatus(job, broadcast);
         }
       }
     },
@@ -344,7 +359,7 @@ function subscribeMergeActor(
         );
       }
 
-      broadcastJobStatus(job);
+      broadcastJobStatus(job, broadcast);
       release();
     },
     error(err) {
@@ -354,7 +369,7 @@ function subscribeMergeActor(
       job.errorMessage = err instanceof Error ? err.message : "Unknown error";
       job.phase = undefined;
       job.completedAt = new Date().toISOString();
-      broadcastJobStatus(job);
+      broadcastJobStatus(job, broadcast);
       release();
     },
   });
@@ -377,6 +392,7 @@ export function dispatchMergeJob(params: {
   branchName: string;
   message: string;
   autoResolve: boolean;
+  broadcast?: BroadcastFn;
 }): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
@@ -386,6 +402,7 @@ export function dispatchMergeJob(params: {
     branchName,
     message,
     autoResolve,
+    broadcast = defaultBroadcast,
   } = params;
 
   const prepared = prepareDispatch({
@@ -394,6 +411,7 @@ export function dispatchMergeJob(params: {
     sessionName,
     branchName,
     jobType: "merge",
+    broadcast,
   });
   if (!prepared.ok) return prepared;
 
@@ -427,7 +445,7 @@ export function dispatchMergeJob(params: {
     { input },
   );
 
-  subscribeMergeActor(actor, job, release);
+  subscribeMergeActor(actor, job, release, broadcast);
   actor.start();
 
   return { ok: true, value: { jobId: job.jobId } };
@@ -443,6 +461,7 @@ export function dispatchCommitJob(params: {
   worktreePath: string;
   branchName: string;
   message: string;
+  broadcast?: BroadcastFn;
 }): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
@@ -451,6 +470,7 @@ export function dispatchCommitJob(params: {
     worktreePath,
     branchName,
     message,
+    broadcast = defaultBroadcast,
   } = params;
 
   const prepared = prepareDispatch({
@@ -459,6 +479,7 @@ export function dispatchCommitJob(params: {
     sessionName,
     branchName,
     jobType: "commit",
+    broadcast,
   });
   if (!prepared.ok) return prepared;
 
@@ -494,7 +515,7 @@ export function dispatchCommitJob(params: {
       job.commitHash = output.hash;
       job.completedAt = new Date().toISOString();
       logger.info("commit.completed", { jobId: job.jobId, hash: output.hash });
-      broadcastJobStatus(job);
+      broadcastJobStatus(job, broadcast);
       release();
     },
     error(err) {
@@ -510,7 +531,7 @@ export function dispatchCommitJob(params: {
         jobId: job.jobId,
         error: job.errorMessage,
       });
-      broadcastJobStatus(job);
+      broadcastJobStatus(job, broadcast);
       release();
     },
   });
@@ -533,6 +554,7 @@ export function dispatchResolveConflictsJob(params: {
   branchName: string;
   mergeMessage: string;
   decisions?: ConflictDecisionInput[];
+  broadcast?: BroadcastFn;
 }): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
@@ -542,6 +564,7 @@ export function dispatchResolveConflictsJob(params: {
     branchName,
     mergeMessage,
     decisions,
+    broadcast = defaultBroadcast,
   } = params;
 
   const prepared = prepareDispatch({
@@ -550,6 +573,7 @@ export function dispatchResolveConflictsJob(params: {
     sessionName,
     branchName,
     jobType: "resolve-conflicts",
+    broadcast,
   });
   if (!prepared.ok) return prepared;
 
@@ -581,7 +605,7 @@ export function dispatchResolveConflictsJob(params: {
     { input },
   );
 
-  subscribeMergeActor(actor, job, release);
+  subscribeMergeActor(actor, job, release, broadcast);
   actor.start();
 
   return { ok: true, value: { jobId: job.jobId } };

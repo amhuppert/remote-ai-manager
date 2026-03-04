@@ -1,17 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock dependencies before importing the module under test
-vi.mock("./sse-broadcaster");
 vi.mock("./config", () => ({
   getConfigDirPath: () => "/tmp/cc-test",
-}));
-vi.mock("./logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
 }));
 
 import {
@@ -31,26 +22,29 @@ import {
   _createTestDb,
   _resetForTesting,
 } from "./notification-db";
-import { broadcast } from "./sse-broadcaster";
 
-const mockBroadcast = vi.mocked(broadcast);
+// Injected spy for broadcast (no vi.mock needed)
+const mockBroadcast = vi.fn();
 
 // ============================================================
 // Helpers
 // ============================================================
 
 function createTestNotification(overrides: Record<string, unknown> = {}) {
-  return createNotification({
-    type: "merge-completed",
-    title: "Merge completed",
-    message: "Branch csm/feature merged successfully",
-    projectName: "my-project",
-    sessionName: "feature",
-    branchName: "csm/feature",
-    jobId: "job-1",
-    jobType: "merge",
-    ...overrides,
-  });
+  return createNotification(
+    {
+      type: "merge-completed",
+      title: "Merge completed",
+      message: "Branch csm/feature merged successfully",
+      projectName: "my-project",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      jobId: "job-1",
+      jobType: "merge",
+      ...overrides,
+    },
+    mockBroadcast,
+  );
 }
 
 // ============================================================
@@ -150,7 +144,7 @@ describe("getNotifications", () => {
   it("filters by unread=true", () => {
     const n1 = createTestNotification({ jobId: "job-1" });
     createTestNotification({ jobId: "job-2" });
-    markAsRead(n1.id);
+    markAsRead(n1.id, mockBroadcast);
 
     const result = getNotifications({ unread: true });
     expect(result.notifications).toHaveLength(1);
@@ -178,7 +172,7 @@ describe("getNotifications", () => {
     const n1 = createTestNotification({ jobId: "job-1" });
     createTestNotification({ jobId: "job-2" });
     createTestNotification({ jobId: "job-3" });
-    markAsRead(n1.id);
+    markAsRead(n1.id, mockBroadcast);
 
     const all = getNotifications();
     expect(all.unreadCount).toBe(2);
@@ -221,7 +215,7 @@ describe("notificationExists", () => {
 describe("markAsRead", () => {
   it("marks an unread notification as read", () => {
     const notification = createTestNotification();
-    const result = markAsRead(notification.id);
+    const result = markAsRead(notification.id, mockBroadcast);
 
     expect(result).toBe(true);
     const updated = getNotifications();
@@ -231,7 +225,7 @@ describe("markAsRead", () => {
   it("broadcasts notification-updated SSE event", () => {
     const notification = createTestNotification();
     mockBroadcast.mockClear();
-    markAsRead(notification.id);
+    markAsRead(notification.id, mockBroadcast);
 
     expect(mockBroadcast).toHaveBeenCalledWith({
       type: "notification-updated",
@@ -242,17 +236,17 @@ describe("markAsRead", () => {
 
   it("returns true for already-read notification (exists but no change)", () => {
     const notification = createTestNotification();
-    markAsRead(notification.id);
+    markAsRead(notification.id, mockBroadcast);
     mockBroadcast.mockClear();
 
-    const result = markAsRead(notification.id);
+    const result = markAsRead(notification.id, mockBroadcast);
     expect(result).toBe(true);
     // Should NOT broadcast again
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 
   it("returns false for non-existent notification", () => {
-    const result = markAsRead("non-existent-id");
+    const result = markAsRead("non-existent-id", mockBroadcast);
     expect(result).toBe(false);
   });
 });
@@ -263,7 +257,7 @@ describe("markAllAsRead", () => {
     createTestNotification({ jobId: "job-2" });
     createTestNotification({ jobId: "job-3" });
 
-    const count = markAllAsRead();
+    const count = markAllAsRead(mockBroadcast);
     expect(count).toBe(3);
     expect(getUnreadCount()).toBe(0);
   });
@@ -272,7 +266,7 @@ describe("markAllAsRead", () => {
     createTestNotification({ jobId: "job-1" });
     mockBroadcast.mockClear();
 
-    markAllAsRead();
+    markAllAsRead(mockBroadcast);
     expect(mockBroadcast).toHaveBeenCalledWith({
       type: "notification-updated",
       id: "all",
@@ -281,7 +275,7 @@ describe("markAllAsRead", () => {
   });
 
   it("returns 0 when no unread notifications exist", () => {
-    const count = markAllAsRead();
+    const count = markAllAsRead(mockBroadcast);
     expect(count).toBe(0);
     // Should NOT broadcast when nothing changed
     expect(mockBroadcast).not.toHaveBeenCalledWith(
@@ -298,7 +292,7 @@ describe("getUnreadCount", () => {
 
     expect(getUnreadCount()).toBe(3);
 
-    markAsRead(getNotifications().notifications[0]!.id);
+    markAsRead(getNotifications().notifications[0]!.id, mockBroadcast);
     expect(getUnreadCount()).toBe(2);
   });
 

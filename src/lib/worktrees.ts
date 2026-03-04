@@ -1,15 +1,12 @@
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
+import { defaultGitClient } from "./git-client";
 import { getErrorMessage } from "@/lib/errors";
 import type { SessionState } from "@/types";
 import { mutateState } from "./state";
 import { createLogger } from "./logging";
 
 const logger = createLogger("worktrees");
-
-const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -167,12 +164,9 @@ export async function discoverAndImportWorktrees(
   // Run git worktree list
   let porcelainOutput: string;
   try {
-    const { stdout } = await execFileAsync(
-      "git",
+    const { stdout } = await defaultGitClient.git(
       ["worktree", "list", "--porcelain"],
-      {
-        cwd: projectPath,
-      },
+      projectPath,
     );
     porcelainOutput = stdout;
   } catch (err) {

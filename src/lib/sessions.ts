@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import { buildChildEnv } from "./child-env";
+import { defaultGitClient } from "./git-client";
 import type {
   ConversationState,
   ImagePayload,
@@ -54,7 +55,7 @@ async function git(
   cwd: string,
   args: string[],
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync("git", args, { cwd });
+  return defaultGitClient.git(args, cwd);
 }
 
 /** Generate a short readable session name from an objective using the Agent SDK */

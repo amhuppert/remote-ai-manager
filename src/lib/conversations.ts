@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { ConversationState, ConversationRole, ForkedFrom } from "@/types";
-import { mutateSession } from "./state";
+import { mutateSession, readState, getSession } from "./state";
 import { createLogger } from "./logging";
 import { copyTranscriptUpTo, getTranscriptPath } from "./transcript";
 import { readConversationMessages } from "./transcript";
@@ -67,7 +67,6 @@ async function getConversation(
   sessionName: string,
   conversationId: string,
 ): Promise<ConversationState | null> {
-  const { readState } = await import("./state");
   const state = await readState();
   const project = state.projects[projectPath];
   if (!project) return null;
@@ -83,7 +82,6 @@ async function getSessionConversations(
   projectPath: string,
   sessionName: string,
 ): Promise<ConversationState[]> {
-  const { readState } = await import("./state");
   const state = await readState();
   const project = state.projects[projectPath];
   if (!project) return [];
@@ -191,7 +189,6 @@ export async function forkConversation(
   } = input;
 
   // --- Phase 1: Read source data and validate (outside lock) ---
-  const { getSession } = await import("./state");
   const session = await getSession(projectPath, sessionName);
   if (!session) {
     throw new Error(`Session "${sessionName}" not found in project`);

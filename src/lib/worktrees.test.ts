@@ -5,21 +5,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const {
-  execFileMock,
+  gitMock,
   existsSyncMock,
   readStateMock,
   writeStateMock,
   mutateStateMock,
 } = vi.hoisted(() => ({
-  execFileMock: vi.fn(),
+  gitMock: vi.fn(),
   existsSyncMock: vi.fn<(p: string) => boolean>(),
   readStateMock: vi.fn(),
   writeStateMock: vi.fn(),
   mutateStateMock: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({
-  execFile: execFileMock,
+vi.mock("./git-client", () => ({
+  defaultGitClient: { git: gitMock },
 }));
 
 vi.mock("node:fs", () => ({
@@ -55,40 +55,12 @@ function emptyState() {
   };
 }
 
-function mockExecFileSuccess(stdout = "", stderr = "") {
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      if (cb) {
-        cb(null, { stdout, stderr });
-      }
-    },
-  );
+function mockGitSuccess(stdout = "", stderr = "") {
+  gitMock.mockResolvedValue({ stdout, stderr });
 }
 
-function mockExecFileFailure(error: Error) {
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      if (cb) {
-        cb(error, { stdout: "", stderr: "" });
-      }
-    },
-  );
+function mockGitFailure(error: Error) {
+  gitMock.mockRejectedValue(error);
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +382,7 @@ describe("discoverAndImportWorktrees", () => {
   };
 
   it("imports untracked worktrees as sessions with source=imported", async () => {
-    mockExecFileSuccess(porcelainOutput);
+    mockGitSuccess(porcelainOutput);
     readStateMock.mockResolvedValue({
       projects: {
         [projectPath]: {
@@ -443,7 +415,7 @@ describe("discoverAndImportWorktrees", () => {
   });
 
   it("does not modify existing sessions", async () => {
-    mockExecFileSuccess(porcelainOutput);
+    mockGitSuccess(porcelainOutput);
     readStateMock.mockResolvedValue({
       projects: {
         [projectPath]: {
@@ -486,7 +458,7 @@ describe("discoverAndImportWorktrees", () => {
     };
 
     // Git returns only main worktree — orphan's path doesn't exist on disk
-    mockExecFileSuccess(
+    mockGitSuccess(
       [
         "worktree /home/user/repo",
         "HEAD aaa111",
@@ -537,7 +509,7 @@ describe("discoverAndImportWorktrees", () => {
       workflow: null,
     };
 
-    mockExecFileSuccess(
+    mockGitSuccess(
       [
         "worktree /home/user/repo",
         "HEAD aaa111",
@@ -567,7 +539,7 @@ describe("discoverAndImportWorktrees", () => {
   });
 
   it("returns empty result on git failure", async () => {
-    mockExecFileFailure(new Error("git not found"));
+    mockGitFailure(new Error("git not found"));
 
     const result = await discoverAndImportWorktrees(projectPath, []);
 
@@ -577,7 +549,7 @@ describe("discoverAndImportWorktrees", () => {
   });
 
   it("deduplicates by worktreePath — does not re-import already-tracked worktrees", async () => {
-    mockExecFileSuccess(porcelainOutput);
+    mockGitSuccess(porcelainOutput);
     readStateMock.mockResolvedValue({
       projects: {
         [projectPath]: {
@@ -613,7 +585,7 @@ describe("discoverAndImportWorktrees", () => {
       "",
     ].join("\n");
 
-    mockExecFileSuccess(conflictOutput);
+    mockGitSuccess(conflictOutput);
     readStateMock.mockResolvedValue({
       projects: {
         [projectPath]: {
@@ -650,7 +622,7 @@ describe("discoverAndImportWorktrees", () => {
       "",
     ].join("\n");
 
-    mockExecFileSuccess(conflictOutput);
+    mockGitSuccess(conflictOutput);
     readStateMock.mockResolvedValue({
       projects: {
         [projectPath]: {
@@ -674,7 +646,7 @@ describe("discoverAndImportWorktrees", () => {
   });
 
   it("persists imported sessions atomically via writeState", async () => {
-    mockExecFileSuccess(porcelainOutput);
+    mockGitSuccess(porcelainOutput);
     readStateMock.mockResolvedValue({
       projects: {
         [projectPath]: {
@@ -700,7 +672,7 @@ describe("discoverAndImportWorktrees", () => {
 
   it("does not call writeState when there are no imports", async () => {
     // Only main worktree, and no existing sessions that could be orphaned
-    mockExecFileSuccess(
+    mockGitSuccess(
       [
         "worktree /home/user/repo",
         "HEAD aaa111",
@@ -754,7 +726,7 @@ describe("discoverAndImportWorktrees", () => {
       "",
     ].join("\n");
 
-    mockExecFileSuccess(porcelainWithMatchingBranch);
+    mockGitSuccess(porcelainWithMatchingBranch);
     readStateMock.mockResolvedValue({
       projects: {
         [projectPath]: {
@@ -789,7 +761,7 @@ describe("discoverAndImportWorktrees", () => {
       "",
     ].join("\n");
 
-    mockExecFileSuccess(simpleOutput);
+    mockGitSuccess(simpleOutput);
     readStateMock.mockResolvedValue({
       projects: {
         [projectPath]: {

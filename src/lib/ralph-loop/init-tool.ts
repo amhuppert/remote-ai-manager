@@ -2,7 +2,10 @@ import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { getSession, mutateSession } from "@/lib/state";
-import { broadcast } from "@/lib/sse-broadcaster";
+import {
+  broadcast as defaultBroadcast,
+  type BroadcastFn,
+} from "@/lib/sse-broadcaster";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
 import { createInitialCircuitBreakerState } from "./circuit-breaker";
@@ -14,6 +17,8 @@ export interface InitToolContext {
   projectPath: string;
   sessionName: string;
   projectName: string;
+  /** Optional broadcast function for dependency injection (default: SSE broadcaster). */
+  broadcast?: BroadcastFn;
 }
 
 /**
@@ -40,7 +45,12 @@ export function createInitToolServer(
         },
         async (args) => {
           const { objective } = args;
-          const { projectPath, sessionName, projectName } = context;
+          const {
+            projectPath,
+            sessionName,
+            projectName,
+            broadcast = defaultBroadcast,
+          } = context;
 
           try {
             // Read fresh session state to guard against race conditions

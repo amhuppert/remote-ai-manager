@@ -81,22 +81,9 @@ vi.mock("@/lib/state", () => ({
   mutateSession: (...args: unknown[]) => mockMutateSession(...args),
 }));
 
-vi.mock("@/lib/sse-broadcaster", () => ({
-  broadcast: (...args: unknown[]) => mockBroadcast(...args),
-}));
-
 vi.mock("@/lib/ralph-loop/plan-generator", () => ({
   dispatchPlanGeneration: (...args: unknown[]) =>
     mockDispatchPlanGeneration(...args),
-}));
-
-vi.mock("@/lib/logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
 }));
 
 function getHandler(name: string): (args: unknown) => Promise<unknown> {
@@ -132,6 +119,7 @@ describe("init-tool", () => {
       projectPath: "/projects/test",
       sessionName: "test-session",
       projectName: "test",
+      broadcast: mockBroadcast,
     });
 
     expect(server).toBeDefined();
@@ -159,6 +147,7 @@ describe("init-tool", () => {
       projectPath: "/projects/test",
       sessionName: "test-session",
       projectName: "test",
+      broadcast: mockBroadcast,
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -202,6 +191,7 @@ describe("init-tool", () => {
       projectPath: "/projects/test",
       sessionName: "test-session",
       projectName: "test",
+      broadcast: mockBroadcast,
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -238,6 +228,7 @@ describe("init-tool", () => {
       projectPath: "/projects/test",
       sessionName: "test-session",
       projectName: "test",
+      broadcast: mockBroadcast,
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -271,6 +262,7 @@ describe("init-tool", () => {
       projectPath: "/projects/test",
       sessionName: "test-session",
       projectName: "test",
+      broadcast: mockBroadcast,
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -293,6 +285,7 @@ describe("init-tool", () => {
       projectPath: "/projects/test",
       sessionName: "test-session",
       projectName: "test",
+      broadcast: mockBroadcast,
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -328,6 +321,7 @@ describe("init-tool", () => {
       projectPath: "/projects/test",
       sessionName: "test-session",
       projectName: "test",
+      broadcast: mockBroadcast,
     });
 
     const handler = getHandler("initialize_ralph_loop");

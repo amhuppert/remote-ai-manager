@@ -35,15 +35,6 @@ vi.mock("./git-operations", () => ({
   commitChanges: commitChangesMock,
 }));
 
-vi.mock("./logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-}));
-
 // ---------------------------------------------------------------------------
 // Import module under test (after mocks)
 // ---------------------------------------------------------------------------

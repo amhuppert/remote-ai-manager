@@ -27,15 +27,6 @@ vi.mock("./notification-db", () => ({
   createNotification: createNotificationMock,
 }));
 
-vi.mock("./logging", () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
 // ---------------------------------------------------------------------------
 // Import module under test
 // ---------------------------------------------------------------------------

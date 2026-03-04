@@ -8,15 +8,6 @@ vi.mock("./state");
 vi.mock("./config");
 vi.mock("./git-operations");
 vi.mock("./dev-server-registry");
-vi.mock("./sse-broadcaster");
-vi.mock("./logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-}));
 
 import {
   checkAllSessionsForMerge,
@@ -31,7 +22,6 @@ import {
   isBranchMentionedInMainLog,
 } from "./git-operations";
 import { stopAllForSession } from "./dev-server-registry";
-import { broadcast } from "./sse-broadcaster";
 import type { ManagerState, SessionFinishedEvent } from "@/types";
 
 // ============================================================
@@ -44,7 +34,9 @@ const mockReadConfig = vi.mocked(readConfig);
 const mockIsBranchAncestorOfMain = vi.mocked(isBranchAncestorOfMain);
 const mockIsBranchMentionedInMainLog = vi.mocked(isBranchMentionedInMainLog);
 const mockStopAllForSession = vi.mocked(stopAllForSession);
-const mockBroadcast = vi.mocked(broadcast);
+
+// Injected spy for broadcast (no vi.mock needed)
+const mockBroadcast = vi.fn();
 
 // ============================================================
 // Helpers
@@ -140,7 +132,7 @@ describe("checkAllSessionsForMerge", () => {
     );
     mockIsBranchAncestorOfMain.mockResolvedValue(true);
 
-    const count = await checkAllSessionsForMerge();
+    const count = await checkAllSessionsForMerge(mockBroadcast);
 
     expect(count).toBe(1);
     expect(mockStopAllForSession).toHaveBeenCalledWith({
@@ -173,7 +165,7 @@ describe("checkAllSessionsForMerge", () => {
     mockIsBranchAncestorOfMain.mockResolvedValue(false);
     mockIsBranchMentionedInMainLog.mockResolvedValue(true);
 
-    const count = await checkAllSessionsForMerge();
+    const count = await checkAllSessionsForMerge(mockBroadcast);
 
     expect(count).toBe(1);
     expect(mockStopAllForSession).toHaveBeenCalledWith({
@@ -200,7 +192,7 @@ describe("checkAllSessionsForMerge", () => {
       }),
     );
 
-    const count = await checkAllSessionsForMerge();
+    const count = await checkAllSessionsForMerge(mockBroadcast);
 
     expect(count).toBe(0);
     expect(mockIsBranchAncestorOfMain).not.toHaveBeenCalled();
@@ -222,7 +214,7 @@ describe("checkAllSessionsForMerge", () => {
     mockIsBranchAncestorOfMain.mockResolvedValue(true);
     mockStopAllForSession.mockRejectedValue(new Error("kill failed"));
 
-    const count = await checkAllSessionsForMerge();
+    const count = await checkAllSessionsForMerge(mockBroadcast);
 
     expect(count).toBe(1);
     expect(mockStopAllForSession).toHaveBeenCalled();
@@ -243,7 +235,7 @@ describe("checkAllSessionsForMerge", () => {
       }),
     );
 
-    const count = await checkAllSessionsForMerge();
+    const count = await checkAllSessionsForMerge(mockBroadcast);
 
     expect(count).toBe(0);
     expect(mockSetSessionFinished).not.toHaveBeenCalled();
@@ -265,7 +257,7 @@ describe("checkAllSessionsForMerge", () => {
     mockIsBranchAncestorOfMain.mockResolvedValue(false);
     mockIsBranchMentionedInMainLog.mockResolvedValue(false);
 
-    const count = await checkAllSessionsForMerge();
+    const count = await checkAllSessionsForMerge(mockBroadcast);
 
     expect(count).toBe(0);
     expect(mockSetSessionFinished).not.toHaveBeenCalled();
@@ -293,7 +285,7 @@ describe("checkAllSessionsForMerge", () => {
       .mockRejectedValueOnce(new Error("git failed"))
       .mockResolvedValueOnce(true);
 
-    const count = await checkAllSessionsForMerge();
+    const count = await checkAllSessionsForMerge(mockBroadcast);
 
     expect(count).toBe(1);
     expect(mockSetSessionFinished).toHaveBeenCalledTimes(1);
@@ -311,7 +303,7 @@ describe("checkAllSessionsForMerge", () => {
     );
     mockIsBranchAncestorOfMain.mockResolvedValue(true);
 
-    await checkAllSessionsForMerge();
+    await checkAllSessionsForMerge(mockBroadcast);
 
     expect(mockIsBranchMentionedInMainLog).not.toHaveBeenCalled();
   });
@@ -366,7 +358,7 @@ describe("checkAllSessionsForMerge", () => {
     mockReadState.mockResolvedValue(state);
     mockIsBranchAncestorOfMain.mockResolvedValue(true);
 
-    const count = await checkAllSessionsForMerge();
+    const count = await checkAllSessionsForMerge(mockBroadcast);
 
     expect(count).toBe(2);
     expect(mockSetSessionFinished).toHaveBeenCalledTimes(2);

@@ -17,16 +17,6 @@ vi.mock("@/lib/state", () => ({
   mutateSession: vi.fn(),
 }));
 
-vi.mock("@/lib/logging", () => ({
-  withTracing: (fn: (...args: unknown[]) => unknown) => fn,
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-}));
-
 vi.mock("@/lib/workflows/ralph-loop/workflow-manager", () => ({
   startWorkflow: vi.fn(),
   resumeWorkflow: vi.fn(),
@@ -36,10 +26,6 @@ vi.mock("@/lib/workflows/ralph-loop/workflow-manager", () => ({
 
 vi.mock("@/lib/ralph-loop/plan-generator", () => ({
   dispatchPlanGeneration: vi.fn(),
-}));
-
-vi.mock("@/lib/sse-broadcaster", () => ({
-  broadcast: vi.fn(),
 }));
 
 vi.mock("@/lib/conversations", () => ({

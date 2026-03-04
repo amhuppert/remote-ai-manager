@@ -1,5 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { defaultGitClient } from "./git-client";
 import { parseDiff } from "./diff";
 import { createLogger } from "./logging";
 import { getErrorMessage } from "@/lib/errors";
@@ -8,14 +7,14 @@ import type { CommitLogEntry } from "./schemas";
 
 const logger = createLogger("git-operations");
 
-const execFileAsync = promisify(execFile);
+const MAX_BUFFER = 10 * 1024 * 1024;
 
 /** Execute a git command in the given working directory */
 async function git(
   cwd: string,
   args: string[],
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync("git", args, { cwd, maxBuffer: 10 * 1024 * 1024 });
+  return defaultGitClient.git(args, cwd, { maxBuffer: MAX_BUFFER });
 }
 
 // ============================================================

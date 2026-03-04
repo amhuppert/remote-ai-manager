@@ -23,7 +23,7 @@ const CONFIG_DIR = getConfigDir();
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
 /** Default global config values */
-function defaultConfig(): GlobalConfig {
+function defaultConfig(configDir: string = CONFIG_DIR): GlobalConfig {
   return {
     baseDir: path.join(os.homedir(), "projects"),
     ignorePatterns: [
@@ -36,7 +36,7 @@ function defaultConfig(): GlobalConfig {
       ".turbo",
       ".venv",
     ],
-    stateFilePath: path.join(CONFIG_DIR, "state.json"),
+    stateFilePath: path.join(configDir, "state.json"),
     claudeTimeoutMs: 3_600_000,
     defaultModel: "opus",
     mergeCheckIntervalMs: 5 * 60 * 1000,
@@ -45,6 +45,64 @@ function defaultConfig(): GlobalConfig {
     tailscaleEnabled: true,
   };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Config reader factory                                             */
+/* ------------------------------------------------------------------ */
+
+export interface ConfigReader {
+  readConfig(): Promise<GlobalConfig>;
+  writeConfig(config: GlobalConfig): Promise<void>;
+  getConfigDirPath(): string;
+}
+
+/**
+ * Create a config reader that reads/writes from a specific config directory.
+ * Useful for testing with temp directories without mocking fs or os.
+ */
+export function createConfigReader(configDir: string): ConfigReader {
+  const configFile = path.join(configDir, "config.json");
+
+  async function ensureDir(): Promise<void> {
+    if (!existsSync(configDir)) {
+      await mkdir(configDir, { recursive: true });
+    }
+  }
+
+  return {
+    async readConfig(): Promise<GlobalConfig> {
+      await ensureDir();
+
+      if (!existsSync(configFile)) {
+        const config = defaultConfig(configDir);
+        await this.writeConfig(config);
+        return config;
+      }
+
+      const raw = await readFile(configFile, "utf-8");
+      const parsed: unknown = JSON.parse(raw);
+
+      return {
+        ...defaultConfig(configDir),
+        ...globalConfigSchema.partial().parse(parsed),
+      };
+    },
+
+    async writeConfig(config: GlobalConfig): Promise<void> {
+      await ensureDir();
+      const json = JSON.stringify(config, null, 2);
+      await writeFile(configFile, json, "utf-8");
+    },
+
+    getConfigDirPath(): string {
+      return configDir;
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Default singleton (backward-compatible module-level exports)      */
+/* ------------------------------------------------------------------ */
 
 /** Ensure the config directory exists */
 async function ensureConfigDir(): Promise<void> {

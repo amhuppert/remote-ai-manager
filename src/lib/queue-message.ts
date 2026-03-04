@@ -9,7 +9,10 @@
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { getQuery } from "./query-registry";
 import { appendTranscriptEntry } from "./transcript";
-import { broadcast } from "./sse-broadcaster";
+import {
+  broadcast as defaultBroadcast,
+  type BroadcastFn,
+} from "./sse-broadcaster";
 import { createLogger } from "./logging";
 
 const logger = createLogger("queue-message");
@@ -19,10 +22,18 @@ interface QueueMessageParams {
   projectName: string;
   sessionName: string;
   text: string;
+  /** Optional broadcast function for dependency injection (default: SSE broadcaster). */
+  broadcast?: BroadcastFn;
 }
 
 export async function queueMessage(params: QueueMessageParams): Promise<void> {
-  const { conversationId, projectName, sessionName, text } = params;
+  const {
+    conversationId,
+    projectName,
+    sessionName,
+    text,
+    broadcast = defaultBroadcast,
+  } = params;
 
   const q = getQuery(conversationId);
   if (!q) {

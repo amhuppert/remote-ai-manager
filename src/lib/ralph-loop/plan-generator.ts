@@ -15,7 +15,10 @@ import { buildChildEnv } from "../child-env";
 import { mutateSession } from "../state";
 import { createLogger } from "../logging";
 import { readConversationMessages } from "../transcript";
-import { broadcast } from "../sse-broadcaster";
+import {
+  broadcast as defaultBroadcast,
+  type BroadcastFn,
+} from "../sse-broadcaster";
 import { getProjectDisplayName } from "../project-resolver";
 import { createTask } from "./fix-plan-manager";
 
@@ -29,6 +32,8 @@ export interface GeneratePlanParams {
   projectPath: string;
   session: SessionState;
   workflow: RalphLoopWorkflow;
+  /** Optional broadcast function for dependency injection (default: SSE broadcaster). */
+  broadcast?: BroadcastFn;
 }
 
 /**
@@ -37,32 +42,36 @@ export interface GeneratePlanParams {
  * Does NOT acquire the session lock (read-only context operation).
  */
 export function dispatchPlanGeneration(params: GeneratePlanParams): void {
-  const { projectPath, session } = params;
+  const { projectPath, session, broadcast = defaultBroadcast } = params;
   const sessionName = session.sessionName;
   const projectName = getProjectDisplayName(projectPath);
 
-  void generatePlan(projectPath, sessionName, projectName, session).catch(
-    async (err) => {
-      logger.error("plan_generator.fatal", {
+  void generatePlan(
+    projectPath,
+    sessionName,
+    projectName,
+    session,
+    broadcast,
+  ).catch(async (err) => {
+    logger.error("plan_generator.fatal", {
+      sessionName,
+      error: getErrorMessage(err),
+    });
+    // Ensure the generating flag is cleared even on unexpected errors
+    try {
+      await mutateSession(
+        projectPath,
         sessionName,
-        error: getErrorMessage(err),
-      });
-      // Ensure the generating flag is cleared even on unexpected errors
-      try {
-        await mutateSession(
-          projectPath,
-          sessionName,
-          "planGenerator.clearGenerating",
-          (sess) => {
-            if (sess.workflow) sess.workflow.generatingPlan = false;
-            return null;
-          },
-        );
-      } catch {
-        // best-effort
-      }
-    },
-  );
+        "planGenerator.clearGenerating",
+        (sess) => {
+          if (sess.workflow) sess.workflow.generatingPlan = false;
+          return null;
+        },
+      );
+    } catch {
+      // best-effort
+    }
+  });
 }
 
 /**
@@ -188,6 +197,7 @@ async function generatePlan(
   sessionName: string,
   projectName: string,
   session: SessionState,
+  broadcast: BroadcastFn = defaultBroadcast,
 ): Promise<void> {
   const workflow = session.workflow;
   if (!workflow) return;

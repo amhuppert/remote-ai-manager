@@ -9,37 +9,121 @@
  * an immediate rejection rather than queuing.
  */
 
-import { createLogger } from "./logging";
+import { createLogger, type Logger } from "./logging";
 import { getGlobalSingleton } from "./global-singleton";
 
-const logger = createLogger("lock");
-
 /* ------------------------------------------------------------------ */
-/*  Session-level lock (HMR-safe via globalThis singleton)            */
+/*  LockManager interface and factory                                 */
 /* ------------------------------------------------------------------ */
 
-const SESSION_LOCK_KEY = "__cc_session_locks" as const;
+export interface LockManager {
+  isProjectLocked(projectPath: string): boolean;
+  acquireProjectLock(projectPath: string): () => void;
+  isSessionBusy(projectPath: string, sessionName: string): boolean;
+  acquireSessionLock(projectPath: string, sessionName: string): () => void;
+  forceReleaseSessionLock(projectPath: string, sessionName: string): boolean;
+  getHeldSessionLocks(): Array<{
+    projectPath: string;
+    sessionName: string;
+  }>;
+}
 
-function getSessionLocks(): Map<string, Promise<void>> {
-  return getGlobalSingleton(
-    SESSION_LOCK_KEY,
-    () => new Map<string, Promise<void>>(),
-  );
+/** Create an isolated LockManager instance with its own lock state. */
+export function createLockManager(
+  log: Logger = createLogger("lock"),
+): LockManager {
+  const sessionLocks = new Map<string, Promise<void>>();
+  const projectLocks = new Map<string, true>();
+
+  function lockKey(projectPath: string, sessionName: string): string {
+    return `${projectPath}::${sessionName}`;
+  }
+
+  return {
+    isProjectLocked(projectPath: string): boolean {
+      return projectLocks.has(projectPath);
+    },
+
+    acquireProjectLock(projectPath: string): () => void {
+      if (projectLocks.has(projectPath)) {
+        log.warn("project-lock.rejected", { projectPath });
+        throw new Error(
+          "Project is locked — a squash merge is already in progress",
+        );
+      }
+
+      projectLocks.set(projectPath, true);
+      log.debug("project-lock.acquired", { projectPath });
+
+      return () => {
+        projectLocks.delete(projectPath);
+        log.debug("project-lock.released", { projectPath });
+      };
+    },
+
+    isSessionBusy(projectPath: string, sessionName: string): boolean {
+      return sessionLocks.has(lockKey(projectPath, sessionName));
+    },
+
+    acquireSessionLock(projectPath: string, sessionName: string): () => void {
+      const key = lockKey(projectPath, sessionName);
+
+      if (sessionLocks.has(key)) {
+        log.warn("lock.rejected", { projectPath, sessionName });
+        throw new Error("Session is busy — a prompt is already running");
+      }
+
+      let releaseFn: (() => void) | undefined;
+      const promise = new Promise<void>((resolve) => {
+        releaseFn = resolve;
+      });
+
+      sessionLocks.set(key, promise);
+      log.debug("lock.acquired", { projectPath, sessionName });
+
+      return () => {
+        sessionLocks.delete(key);
+        releaseFn?.();
+        log.debug("lock.released", { projectPath, sessionName });
+      };
+    },
+
+    forceReleaseSessionLock(projectPath: string, sessionName: string): boolean {
+      const key = lockKey(projectPath, sessionName);
+      if (!sessionLocks.has(key)) return false;
+      sessionLocks.delete(key);
+      log.warn("lock.force_released", { projectPath, sessionName });
+      return true;
+    },
+
+    getHeldSessionLocks(): Array<{
+      projectPath: string;
+      sessionName: string;
+    }> {
+      return Array.from(sessionLocks.keys()).map((key) => {
+        const sep = key.indexOf("::");
+        return {
+          projectPath: key.slice(0, sep),
+          sessionName: key.slice(sep + 2),
+        };
+      });
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ */
-/*  Project-level lock (HMR-safe via globalThis singleton)            */
+/*  Global singleton instance (HMR-safe, backward-compatible)         */
 /* ------------------------------------------------------------------ */
 
-const PROJECT_LOCK_KEY = "__cc_project_locks" as const;
+const LOCK_MANAGER_KEY = "__cc_lock_manager" as const;
 
-function getProjectLocks(): Map<string, true> {
-  return getGlobalSingleton(PROJECT_LOCK_KEY, () => new Map<string, true>());
+function getDefaultLockManager(): LockManager {
+  return getGlobalSingleton(LOCK_MANAGER_KEY, () => createLockManager());
 }
 
 /** Check whether a project-level merge lock is currently held */
 export function isProjectLocked(projectPath: string): boolean {
-  return getProjectLocks().has(projectPath);
+  return getDefaultLockManager().isProjectLocked(projectPath);
 }
 
 /**
@@ -48,30 +132,7 @@ export function isProjectLocked(projectPath: string): boolean {
  * Throws immediately if a lock is already held for this project.
  */
 export function acquireProjectLock(projectPath: string): () => void {
-  const locks = getProjectLocks();
-
-  if (locks.has(projectPath)) {
-    logger.warn("project-lock.rejected", { projectPath });
-    throw new Error(
-      "Project is locked — a squash merge is already in progress",
-    );
-  }
-
-  locks.set(projectPath, true);
-  logger.debug("project-lock.acquired", { projectPath });
-
-  return () => {
-    locks.delete(projectPath);
-    logger.debug("project-lock.released", { projectPath });
-  };
-}
-
-/**
- * Build a canonical lock key for a session.
- * Uses projectPath + sessionName to guarantee uniqueness.
- */
-function lockKey(projectPath: string, sessionName: string): string {
-  return `${projectPath}::${sessionName}`;
+  return getDefaultLockManager().acquireProjectLock(projectPath);
 }
 
 /** Check whether a session currently has a running prompt */
@@ -79,7 +140,7 @@ export function isSessionBusy(
   projectPath: string,
   sessionName: string,
 ): boolean {
-  return getSessionLocks().has(lockKey(projectPath, sessionName));
+  return getDefaultLockManager().isSessionBusy(projectPath, sessionName);
 }
 
 /**
@@ -91,30 +152,7 @@ export function acquireSessionLock(
   projectPath: string,
   sessionName: string,
 ): () => void {
-  const key = lockKey(projectPath, sessionName);
-  const locks = getSessionLocks();
-
-  if (locks.has(key)) {
-    logger.warn("lock.rejected", {
-      projectPath,
-      sessionName,
-    });
-    throw new Error("Session is busy — a prompt is already running");
-  }
-
-  let releaseFn: (() => void) | undefined;
-  const promise = new Promise<void>((resolve) => {
-    releaseFn = resolve;
-  });
-
-  locks.set(key, promise);
-  logger.debug("lock.acquired", { projectPath, sessionName });
-
-  return () => {
-    locks.delete(key);
-    releaseFn?.();
-    logger.debug("lock.released", { projectPath, sessionName });
-  };
+  return getDefaultLockManager().acquireSessionLock(projectPath, sessionName);
 }
 
 /**
@@ -125,12 +163,10 @@ export function forceReleaseSessionLock(
   projectPath: string,
   sessionName: string,
 ): boolean {
-  const key = lockKey(projectPath, sessionName);
-  const locks = getSessionLocks();
-  if (!locks.has(key)) return false;
-  locks.delete(key);
-  logger.warn("lock.force_released", { projectPath, sessionName });
-  return true;
+  return getDefaultLockManager().forceReleaseSessionLock(
+    projectPath,
+    sessionName,
+  );
 }
 
 /** List all currently held session locks (for diagnostics). */
@@ -138,12 +174,5 @@ export function getHeldSessionLocks(): Array<{
   projectPath: string;
   sessionName: string;
 }> {
-  const locks = getSessionLocks();
-  return Array.from(locks.keys()).map((key) => {
-    const sep = key.indexOf("::");
-    return {
-      projectPath: key.slice(0, sep),
-      sessionName: key.slice(sep + 2),
-    };
-  });
+  return getDefaultLockManager().getHeldSessionLocks();
 }

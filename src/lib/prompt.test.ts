@@ -59,15 +59,6 @@ vi.mock("./lock", () => ({
   acquireSessionLock: acquireSessionLockMock,
 }));
 
-vi.mock("./logging", () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
 vi.mock("./conversations", () => ({
   getConversation: getConversationMock,
   createConversation: createConversationMock,

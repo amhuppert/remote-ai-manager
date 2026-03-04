@@ -25,16 +25,6 @@ vi.mock("@/lib/commands", () => ({
   discoverCommands: discoverCommandsMock,
 }));
 
-vi.mock("@/lib/logging", () => ({
-  withTracing: (handler: (...args: unknown[]) => unknown) => handler,
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

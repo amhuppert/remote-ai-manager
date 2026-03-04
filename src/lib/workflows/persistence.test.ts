@@ -6,15 +6,6 @@ vi.mock("@/lib/state", () => ({
   readState: vi.fn(),
 }));
 
-vi.mock("@/lib/logging", () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
 import { mutateSession, readState } from "@/lib/state";
 import {
   persistWorkflowSnapshot,

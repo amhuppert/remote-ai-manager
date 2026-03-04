@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { getConfigDirPath } from "./config";
-import { broadcast } from "./sse-broadcaster";
+import {
+  broadcast as defaultBroadcast,
+  type BroadcastFn,
+} from "./sse-broadcaster";
 import { createLogger } from "./logging";
 import {
   getGlobalSingleton,
@@ -159,6 +162,7 @@ export interface CreateNotificationInput {
 
 export function createNotification(
   input: CreateNotificationInput,
+  broadcast: BroadcastFn = defaultBroadcast,
 ): Notification {
   const db = getDb();
   const id = randomUUID();
@@ -263,7 +267,10 @@ export function deleteNotification(id: string): boolean {
 // Read/Unread operations (Task 2.3)
 // ============================================================
 
-export function markAsRead(id: string): boolean {
+export function markAsRead(
+  id: string,
+  broadcast: BroadcastFn = defaultBroadcast,
+): boolean {
   const db = getDb();
   const result = db
     .prepare("UPDATE notifications SET read = 1 WHERE id = ? AND read = 0")
@@ -279,7 +286,9 @@ export function markAsRead(id: string): boolean {
   return exists != null;
 }
 
-export function markAllAsRead(): number {
+export function markAllAsRead(
+  broadcast: BroadcastFn = defaultBroadcast,
+): number {
   const db = getDb();
   const result = db
     .prepare("UPDATE notifications SET read = 1 WHERE read = 0")

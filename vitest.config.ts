@@ -63,6 +63,7 @@ export default defineConfig({
           environment: "node",
           include: ["src/**/*.test.{ts,tsx}"],
           testTimeout: 15000,
+          setupFiles: ["./vitest.setup.ts"],
         },
       },
       // Storybook tests — runs *.stories.* in a headless browser

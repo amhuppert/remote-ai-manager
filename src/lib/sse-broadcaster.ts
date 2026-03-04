@@ -2,6 +2,9 @@ import type { SSEEvent } from "@/types";
 import { createLogger } from "./logging";
 import { getGlobalSingleton } from "./global-singleton";
 
+/** Function signature for broadcasting SSE events. */
+export type BroadcastFn = (event: SSEEvent) => void;
+
 const logger = createLogger("sse");
 const encoder = new TextEncoder();
 

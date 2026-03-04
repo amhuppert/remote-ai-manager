@@ -13,7 +13,10 @@ import {
   isBranchMentionedInMainLog,
 } from "./git-operations";
 import { stopAllForSession } from "./dev-server-registry";
-import { broadcast } from "./sse-broadcaster";
+import {
+  broadcast as defaultBroadcast,
+  type BroadcastFn,
+} from "./sse-broadcaster";
 import { createLogger } from "./logging";
 import { getErrorMessage } from "@/lib/errors";
 import type { SessionFinishedEvent } from "@/types";
@@ -48,7 +51,9 @@ function setIntervalRef(ref: ReturnType<typeof setInterval> | null): void {
  *
  * Returns the number of sessions newly detected as merged.
  */
-export async function checkAllSessionsForMerge(): Promise<number> {
+export async function checkAllSessionsForMerge(
+  broadcast: BroadcastFn = defaultBroadcast,
+): Promise<number> {
   const state = await readState();
   let detectedCount = 0;
 
@@ -91,6 +96,7 @@ export async function checkAllSessionsForMerge(): Promise<number> {
             sessionName,
             branchName,
             "ancestor",
+            broadcast,
           );
           detectedCount++;
           continue;
@@ -128,6 +134,7 @@ export async function checkAllSessionsForMerge(): Promise<number> {
             sessionName,
             branchName,
             "commit-message",
+            broadcast,
           );
           detectedCount++;
         }
@@ -158,6 +165,7 @@ function broadcastSessionFinished(
   sessionName: string,
   branchName: string,
   detectionMethod: "ancestor" | "commit-message",
+  broadcast: BroadcastFn,
 ): void {
   const projectName = path.basename(projectPath);
 

@@ -33,17 +33,6 @@ vi.mock("@/lib/prompt", () => ({
   executePromptStream: executePromptStreamMock,
 }));
 
-// Mock logging to avoid file I/O during tests
-vi.mock("@/lib/logging", () => ({
-  withTracing: (handler: (...args: unknown[]) => unknown) => handler,
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
