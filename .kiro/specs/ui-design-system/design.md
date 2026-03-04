@@ -150,6 +150,7 @@ These rules cannot be expressed in CSS and must be enforced through code review:
 5. **Layout state via data attributes**: Use `data-page`, `data-layout`, `data-mobile-panel` attributes on parent elements for CSS-driven state switching. Do not use inline styles or conditional class concatenation for layout mode changes.
 6. **Diff collapse state**: Scoped per-session. When file/change navigation buttons target a collapsed section, auto-expand it before scrolling.
 7. **Layout persistence**: Layout switcher selection persists per-session (localStorage or URL param).
+8. **No hover-only controls**: All interactive controls (buttons, actions, toggles) must be visible at all times. Never hide controls behind hover states using `opacity: 0`, `visibility: hidden`, or `display: none` with hover-triggered reveal. Hover-gated controls are inaccessible on touch devices, undiscoverable for new users, and fail keyboard-only navigation. Hover effects should be limited to visual feedback (background color change, border highlight) on already-visible elements.
 
 ## Architecture
 
