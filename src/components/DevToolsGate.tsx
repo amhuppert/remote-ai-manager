@@ -10,14 +10,11 @@ import {
 
 /**
  * Hydrates the dev-tools-visibility store from localStorage,
- * registers the Shift+D hotkey, and conditionally renders children
- * (dev tool panels) only when enabled.
+ * registers the Shift+D hotkey, and syncs a data attribute on
+ * <html> so CSS can show/hide the Next.js dev indicator.
+ * TanStack Query DevTools are toggled via the store in Providers.
  */
-export default function DevToolsGate({
-  children,
-}: {
-  children: React.ReactNode;
-}): React.JSX.Element | null {
+export default function DevToolsGate(): React.JSX.Element | null {
   const enabled = useDevToolsEnabled();
   const toggle = useToggleDevTools();
   const hydrate = useHydrateDevTools();
@@ -25,6 +22,13 @@ export default function DevToolsGate({
   useEffect(hydrate, [hydrate]);
   useAppHotkey("toggleDevTools", toggle);
 
-  if (!enabled) return null;
-  return <>{children}</>;
+  useEffect(() => {
+    if (enabled) {
+      document.documentElement.setAttribute("data-dev-tools-enabled", "");
+    } else {
+      document.documentElement.removeAttribute("data-dev-tools-enabled");
+    }
+  }, [enabled]);
+
+  return null;
 }

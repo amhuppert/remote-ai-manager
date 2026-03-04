@@ -72,9 +72,8 @@ export default function RootLayout({
           <NotificationListener />
           <NotificationsPanelContainer />
           <MergeToastContainer />
-          <DevToolsGate>
-            <DevServerDrawerContainer />
-          </DevToolsGate>
+          <DevServerDrawerContainer />
+          <DevToolsGate />
           <GlobalHotkeyHelp />
           <TooltipProvider />
         </Providers>

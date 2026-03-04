@@ -10373,3 +10373,12 @@ textarea {
 .roadmap-edit-description::placeholder {
   color: var(--text-tertiary);
 }
+
+/* ---- Dev tools visibility (Shift+D toggle) ---- */
+nextjs-portal {
+  display: none !important;
+}
+
+html[data-dev-tools-enabled] nextjs-portal {
+  display: block !important;
+}
