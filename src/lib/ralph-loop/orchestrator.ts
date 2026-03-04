@@ -1,10 +1,10 @@
 /**
- * Core orchestrator engine for the Ralph Loop workflow.
+ * Core iteration engine for the Ralph Loop workflow.
  *
- * Runs as a fire-and-forget async function dispatched from the workflow API.
- * For each iteration: create conversation → build prompt → acquire lock →
- * execute SDK query with MCP tools → release lock → capture git diff →
- * record results → evaluate exit conditions → continue or stop.
+ * Provides `runIteration()` (single iteration) and `persistIterationResults()`
+ * (state persistence + SSE broadcasts). The XState machine in
+ * `src/lib/workflows/ralph-loop/machine.ts` orchestrates the loop lifecycle,
+ * invoking these functions via actor-implementations.ts.
  */
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -26,7 +26,7 @@ import type {
   MessageContentBlock,
   GitIterationMetrics,
 } from "@/types";
-import { getSession, mutateSession, mutateConversation } from "../state";
+import { mutateSession, mutateConversation } from "../state";
 import { acquireSessionLock } from "../lock";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "../logging";
@@ -36,22 +36,15 @@ import { broadcast } from "../sse-broadcaster";
 
 import { buildIterationPrompt } from "./prompt-builder";
 import { createToolServer } from "./mcp-tools";
-import { evaluate as evaluateExit, isSuccessfulHalt } from "./exit-detector";
 import { processIteration as processCircuitBreaker } from "./circuit-breaker";
 import {
   captureSnapshot,
   computeDiff,
   classifyProgress,
 } from "./progress-detector";
-import { applyFixPlanUpdate, getTaskProgress } from "./fix-plan-manager";
-import {
-  register as registerOrchestrator,
-  get as getOrchestrator,
-  remove as removeOrchestrator,
-} from "./orchestrator-registry";
+import { applyFixPlanUpdate } from "./fix-plan-manager";
 import * as workflowStream from "./workflow-stream-registry";
 import { acquireQuerySlot } from "../query-semaphore";
-import { getProjectDisplayName } from "../project-resolver";
 import { safeAppendTranscriptEntry } from "../transcript";
 
 const logger = createLogger("ralph-loop");
@@ -60,153 +53,10 @@ const logger = createLogger("ralph-loop");
 import "@/lib/sdk-env";
 
 // ============================================================
-// Public API
-// ============================================================
-
-export interface StartOrchestratorParams {
-  projectPath: string;
-  session: SessionState;
-  workflow: RalphLoopWorkflow;
-}
-
-/**
- * Dispatch the orchestrator loop as a fire-and-forget async function.
- * Returns immediately after registering in the orchestrator registry.
- */
-export function startOrchestrator(params: StartOrchestratorParams): void {
-  const { projectPath, session } = params;
-  const sessionName = session.sessionName;
-  const projectName = getProjectDisplayName(projectPath);
-
-  // Register in the orchestrator registry with a fresh AbortController
-  const abortController = new AbortController();
-  registerOrchestrator(projectPath, sessionName, {
-    projectPath,
-    sessionName,
-    abortController,
-    pauseRequested: false,
-  });
-
-  // Fire and forget
-  void runLoop(projectPath, sessionName, projectName, abortController).catch(
-    (err) => {
-      logger.error("orchestrator.fatal", {
-        sessionName,
-        error: getErrorMessage(err),
-      });
-    },
-  );
-}
-
-// ============================================================
-// Core Loop
-// ============================================================
-
-async function runLoop(
-  projectPath: string,
-  sessionName: string,
-  projectName: string,
-  abortController: AbortController,
-): Promise<void> {
-  try {
-    // Mark workflow as running
-    await updateWorkflowStatus(projectPath, sessionName, "running");
-    broadcastWorkflowStatus(projectPath, projectName, sessionName);
-
-    // Main iteration loop
-
-    while (true) {
-      // Check for pause between iterations
-      const entry = getOrchestrator(projectPath, sessionName);
-      if (!entry || entry.pauseRequested) {
-        await updateWorkflowStatus(projectPath, sessionName, "paused");
-        broadcastWorkflowStatus(projectPath, projectName, sessionName);
-        break;
-      }
-
-      // Check for abort
-      if (abortController.signal.aborted) {
-        await handleAbort(projectPath, sessionName, projectName);
-        break;
-      }
-
-      // Read fresh workflow state for this iteration
-      const session = await getSession(projectPath, sessionName);
-      if (!session?.workflow) {
-        logger.error("orchestrator.no_workflow", { sessionName });
-        break;
-      }
-
-      const workflow = session.workflow;
-      const iterationNumber = workflow.iterations.length + 1;
-
-      logger.info("orchestrator.iteration_start", {
-        sessionName,
-        iterationNumber,
-        maxIterations: workflow.config.maxIterations,
-      });
-
-      // Run one iteration
-      const iterationMeta = await runIteration({
-        projectPath,
-        sessionName,
-        projectName,
-        session,
-        workflow,
-        iterationNumber,
-        abortController,
-      });
-
-      // Persist iteration results
-      await persistIterationResults(
-        projectPath,
-        sessionName,
-        projectName,
-        iterationMeta,
-      );
-
-      // Evaluate exit conditions
-      const freshSession = await getSession(projectPath, sessionName);
-      if (!freshSession?.workflow) break;
-
-      const freshWorkflow = freshSession.workflow;
-      const exitDecision = evaluateExit({
-        fixPlan: freshWorkflow.fixPlan,
-        iterations: freshWorkflow.iterations,
-        currentIteration: iterationMeta,
-        circuitBreakerState: freshWorkflow.circuitBreaker.state,
-        config: freshWorkflow.config,
-      });
-
-      if (exitDecision.action === "halt") {
-        const terminalStatus = isSuccessfulHalt(exitDecision.reason)
-          ? "completed"
-          : "halted";
-        await updateWorkflowHalt(
-          projectPath,
-          sessionName,
-          terminalStatus,
-          exitDecision.reason,
-        );
-        broadcastWorkflowStatus(projectPath, projectName, sessionName);
-        workflowStream.emit(projectPath, sessionName, {
-          type: "done",
-          reason: exitDecision.reason.type,
-        });
-        workflowStream.closeAll(projectPath, sessionName);
-        break;
-      }
-    }
-  } finally {
-    removeOrchestrator(projectPath, sessionName);
-  }
-}
-
-// ============================================================
 // Single Iteration
 // ============================================================
 
-interface RunIterationParams {
+export interface RunIterationParams {
   projectPath: string;
   sessionName: string;
   projectName: string;
@@ -216,7 +66,7 @@ interface RunIterationParams {
   abortController: AbortController;
 }
 
-async function runIteration(
+export async function runIteration(
   params: RunIterationParams,
 ): Promise<RalphLoopIterationMeta> {
   const {
@@ -557,7 +407,7 @@ async function runIteration(
 // State Persistence
 // ============================================================
 
-async function persistIterationResults(
+export async function persistIterationResults(
   projectPath: string,
   sessionName: string,
   projectName: string,
@@ -621,55 +471,6 @@ async function persistIterationResults(
       // fire-and-forget
     }
   }
-}
-
-async function updateWorkflowStatus(
-  projectPath: string,
-  sessionName: string,
-  status: RalphLoopWorkflow["status"],
-): Promise<void> {
-  await mutateSession(
-    projectPath,
-    sessionName,
-    "workflow.statusUpdate",
-    (sess) => {
-      if (!sess.workflow) return;
-      sess.workflow.status = status;
-      if (status === "running" && !sess.workflow.startedAt) {
-        sess.workflow.startedAt = new Date().toISOString();
-      }
-    },
-  );
-}
-
-async function updateWorkflowHalt(
-  projectPath: string,
-  sessionName: string,
-  status: "completed" | "halted" | "aborted",
-  haltReason: RalphLoopWorkflow["haltReason"],
-): Promise<void> {
-  await mutateSession(projectPath, sessionName, "workflow.halt", (sess) => {
-    if (!sess.workflow) return;
-    sess.workflow.status = status;
-    sess.workflow.haltReason = haltReason;
-    sess.workflow.completedAt = new Date().toISOString();
-  });
-}
-
-async function handleAbort(
-  projectPath: string,
-  sessionName: string,
-  projectName: string,
-): Promise<void> {
-  await updateWorkflowHalt(projectPath, sessionName, "aborted", {
-    type: "aborted",
-  });
-  broadcastWorkflowStatus(projectPath, projectName, sessionName);
-  workflowStream.emit(projectPath, sessionName, {
-    type: "done",
-    reason: "aborted",
-  });
-  workflowStream.closeAll(projectPath, sessionName);
 }
 
 // ============================================================
@@ -821,38 +622,4 @@ function buildPreviousContext(workflow: RalphLoopWorkflow):
   }
 
   return Object.keys(context).length > 0 ? context : undefined;
-}
-
-function broadcastWorkflowStatus(
-  projectPath: string,
-  projectName: string,
-  sessionName: string,
-): void {
-  void (async () => {
-    try {
-      const session = await getSession(projectPath, sessionName);
-      if (!session?.workflow) return;
-
-      const workflow = session.workflow;
-      const progress = getTaskProgress(workflow.fixPlan);
-
-      broadcast({
-        type: "workflow-status",
-        projectName,
-        sessionName,
-        workflowStatus: workflow.status,
-        iterationCount: workflow.iterations.length,
-        maxIterations: workflow.config.maxIterations,
-        taskProgress: {
-          total: progress.total,
-          completed: progress.completed,
-          skipped: progress.skipped,
-          pending: progress.pending,
-        },
-        haltReason: workflow.haltReason,
-      });
-    } catch {
-      // fire-and-forget
-    }
-  })();
 }

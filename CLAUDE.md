@@ -66,6 +66,7 @@ Additional steering (read on demand, not auto-loaded):
 
 - `.kiro/steering/notifications.md` — Notifications & background jobs architecture
 - `.kiro/steering/ralph-loop.md` — Ralph Loop autonomous workflow engine
+- `.kiro/steering/workflows.md` — XState workflow orchestration patterns and conventions
 
 ## Next.js MCP Tools
 

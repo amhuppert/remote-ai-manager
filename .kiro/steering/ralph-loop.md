@@ -4,44 +4,53 @@ Autonomous multi-iteration development engine. Runs Claude Code in a supervised 
 
 ## Architecture
 
+State management uses XState v5 state machines. The Ralph Loop machine (`src/lib/workflows/ralph-loop/machine.ts`) orchestrates the full lifecycle:
+
 ```
 POST /workflow (create, status: planning)
-  → generate-plan (optional, fire-and-forget)
-  → confirm → startOrchestrator() [fire-and-forget]
+  → generate-plan (optional, XState generatePlan actor)
+  → confirm → startWorkflow() [creates XState actor]
        ↓
-    runLoop() [while(true)]
-       → check pause/abort signals
-       → runIteration()
-            → fresh ConversationState (role: "iteration")
-            → git snapshot (pre)
-            → buildIterationPrompt()
-            → in-process MCP tools (report_status, update_fix_plan)
-            → SDK query() [persistSession: false, bypassPermissions]
-            → git diff (post) → classifyProgress()
-       → persist iteration results + broadcast SSE
-       → evaluateExit() → continue or halt
+    ralphLoopMachine [XState compound states]
+       planning → generatingPlan → awaitingConfirmation → running → completed/halted/aborted
+       running (compound):
+         executingIteration → evaluatingExit → executingIteration (continue)
+                                             → #completed (plan complete)
+                                             → #halted (cap/circuit/perm/test/stalled)
        ↓
-    removeOrchestrator()
+    Actor cleanup on terminal state
 ```
 
-**Key principle**: Fire-and-forget dispatch. `startOrchestrator()` returns immediately; the loop runs as a background promise. Errors are logged, never surfaced to HTTP responses.
+**Key principle**: XState actors manage workflow lifecycle. `startWorkflow()` creates an actor and sends `CONFIRM_PLAN`. Events (PAUSE, RESUME, ABORT) are sent to the actor via `sendEvent()`. Guard-based exit evaluation replaces imperative `evaluateExit()` calls.
 
-## Module Organization (`src/lib/ralph-loop/`)
+## Module Organization
+
+### XState Machines (`src/lib/workflows/ralph-loop/`)
 
 | Module | Role | Design |
 |--------|------|--------|
-| `orchestrator.ts` | Main loop + iteration execution | Only public entry point; fire-and-forget |
-| `orchestrator-registry.ts` | Control registry (pause/abort) | HMR-safe `globalThis` singleton |
+| `machine.ts` | Main XState machine definition | Guards encode exit conditions, actors invoke async operations |
+| `types.ts` | Machine context, events, input/output types | Extends `BaseWorkflowContext` from shared workflow types |
+| `actors.ts` | `fromPromise` actor stubs | Default implementations delegate to `actor-implementations.ts`; overridden via `.provide()` in tests |
+| `actor-implementations.ts` | Production actor logic | Wraps existing orchestrator/plan-generator modules |
+| `workflow-manager.ts` | Actor lifecycle management | Creates/starts/resumes actors, globalThis registry, production `.provide()` |
+| `circuit-breaker-machine.ts` | Circuit breaker sub-machine | Standalone XState machine with closed→halfOpen→open states |
+
+### Pure Function Modules (`src/lib/ralph-loop/`)
+
+| Module | Role | Design |
+|--------|------|--------|
+| `orchestrator.ts` | Iteration execution (`runIteration`) + state persistence | Used by XState actors via `actor-implementations.ts` |
 | `circuit-breaker.ts` | Progress-based safety valve | **Pure function** — no side effects |
-| `exit-detector.ts` | Ordered exit condition evaluation | **Pure function** — priority-ordered checks |
+| `exit-detector.ts` | Ordered exit condition evaluation | **Pure function** — guards in machine.ts replicate this logic |
 | `fix-plan-manager.ts` | Task plan CRUD | **Pure function** — returns new arrays |
 | `progress-detector.ts` | Git-based progress classification | **Pure function** — compares snapshots |
 | `prompt-builder.ts` | Per-iteration prompt construction | Builds Markdown with plan, history, instructions |
 | `mcp-tools.ts` | Claude's per-iteration MCP tools | Recreated per iteration with fresh closures |
-| `plan-generator.ts` | AI-powered initial plan generation | Fire-and-forget SDK query with `submit_plan` tool |
+| `plan-generator.ts` | AI-powered initial plan generation | `generatePlanTasks()` used by XState actor; `dispatchPlanGeneration()` for legacy API |
 | `workflow-stream-registry.ts` | Live NDJSON streaming to UI | HMR-safe `globalThis`, separate from SSE broadcaster |
 
-**Convention**: Pure function modules (`circuit-breaker`, `exit-detector`, `fix-plan-manager`, `progress-detector`) have zero imports of state/broadcast modules. Testable in isolation.
+**Convention**: Pure function modules have zero imports of state/broadcast modules. Testable in isolation. XState guards replicate exit-detector logic for type safety.
 
 ## Iteration Isolation
 

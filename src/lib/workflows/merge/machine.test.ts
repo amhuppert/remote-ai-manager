@@ -1,0 +1,467 @@
+import { describe, it, expect, vi } from "vitest";
+import { createActor, fromPromise, toPromise } from "xstate";
+import { mergeMachine } from "./machine";
+import type { MergeInput } from "./types";
+import type {
+  CheckUncommittedInput,
+  CheckUncommittedOutput,
+  CommitChangesInput,
+  CommitChangesOutput,
+  MergeMainInput,
+  MergeMainOutput,
+  ResolveConflictsInput,
+  ResolveConflictsOutput,
+  RunValidationInput,
+  RunValidationOutput,
+  FixValidationInput,
+  FixValidationOutput,
+  SquashMergeInput,
+  SquashMergeOutput,
+} from "./actors";
+
+// ============================================================
+// Typed Actor Helpers
+// ============================================================
+
+function mockCheckUncommitted(
+  fn: (input: CheckUncommittedInput) => Promise<CheckUncommittedOutput>,
+) {
+  return fromPromise<CheckUncommittedOutput, CheckUncommittedInput>(
+    async ({ input }) => fn(input),
+  );
+}
+
+function mockCommitChanges(
+  fn: (input: CommitChangesInput) => Promise<CommitChangesOutput>,
+) {
+  return fromPromise<CommitChangesOutput, CommitChangesInput>(
+    async ({ input }) => fn(input),
+  );
+}
+
+function mockMergeMain(
+  fn: (input: MergeMainInput) => Promise<MergeMainOutput>,
+) {
+  return fromPromise<MergeMainOutput, MergeMainInput>(async ({ input }) =>
+    fn(input),
+  );
+}
+
+function mockResolveConflicts(
+  fn: (input: ResolveConflictsInput) => Promise<ResolveConflictsOutput>,
+) {
+  return fromPromise<ResolveConflictsOutput, ResolveConflictsInput>(
+    async ({ input }) => fn(input),
+  );
+}
+
+function mockRunValidation(
+  fn: (input: RunValidationInput) => Promise<RunValidationOutput>,
+) {
+  return fromPromise<RunValidationOutput, RunValidationInput>(
+    async ({ input }) => fn(input),
+  );
+}
+
+function mockFixValidation(
+  fn: (input: FixValidationInput) => Promise<FixValidationOutput>,
+) {
+  return fromPromise<FixValidationOutput, FixValidationInput>(
+    async ({ input }) => fn(input),
+  );
+}
+
+function mockSquashMerge(
+  fn: (input: SquashMergeInput) => Promise<SquashMergeOutput>,
+) {
+  return fromPromise<SquashMergeOutput, SquashMergeInput>(async ({ input }) =>
+    fn(input),
+  );
+}
+
+// ============================================================
+// Default Test Machine
+// ============================================================
+
+const defaultInput: MergeInput = {
+  jobId: "test-job-001",
+  projectPath: "/projects/app",
+  projectName: "app",
+  sessionName: "test-session",
+  worktreePath: "/projects/app/.worktrees/test-session",
+  branchName: "csm/test-session",
+  message: "Merge: feature work",
+  autoResolve: true,
+};
+
+type ActorOverrides = {
+  checkUncommitted?: ReturnType<typeof mockCheckUncommitted>;
+  commitChanges?: ReturnType<typeof mockCommitChanges>;
+  mergeMain?: ReturnType<typeof mockMergeMain>;
+  resolveConflicts?: ReturnType<typeof mockResolveConflicts>;
+  runValidation?: ReturnType<typeof mockRunValidation>;
+  fixValidation?: ReturnType<typeof mockFixValidation>;
+  squashMerge?: ReturnType<typeof mockSquashMerge>;
+  onTerminal?: () => void;
+};
+
+function createTestMachine(overrides: ActorOverrides = {}) {
+  return mergeMachine.provide({
+    actors: {
+      checkUncommitted:
+        overrides.checkUncommitted ??
+        mockCheckUncommitted(async () => ({ hasChanges: false })),
+      commitChanges:
+        overrides.commitChanges ??
+        mockCommitChanges(async () => ({ hash: "abc123" })),
+      mergeMain:
+        overrides.mergeMain ??
+        mockMergeMain(async () => ({ status: "clean", conflictFiles: [] })),
+      resolveConflicts:
+        overrides.resolveConflicts ??
+        mockResolveConflicts(async () => ({
+          status: "resolved",
+          conflicts: [],
+        })),
+      runValidation:
+        overrides.runValidation ?? mockRunValidation(async () => undefined),
+      fixValidation:
+        overrides.fixValidation ??
+        mockFixValidation(async () => ({ status: "fixed" })),
+      squashMerge:
+        overrides.squashMerge ??
+        mockSquashMerge(async () => ({ mergeHash: "merge-abc" })),
+    },
+    actions: {
+      onTerminal: overrides.onTerminal ?? vi.fn(),
+    },
+  });
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+describe("mergeMachine", () => {
+  describe("happy path without conflicts", () => {
+    it("transitions: checkingUncommitted → mergingMain → validating → squashMerging → completed", async () => {
+      const states: string[] = [];
+      const machine = createTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("completed");
+      expect(output.mergeHash).toBe("merge-abc");
+      expect(output.error).toBeNull();
+      expect(states).toContain("checkingUncommitted");
+      expect(states).toContain("mergingMain");
+      expect(states).toContain("validating");
+      expect(states).toContain("squashMerging");
+      expect(states).toContain("completed");
+    });
+  });
+
+  describe("happy path with uncommitted changes", () => {
+    it("commits uncommitted changes before merging", async () => {
+      const states: string[] = [];
+      const machine = createTestMachine({
+        checkUncommitted: mockCheckUncommitted(async () => ({
+          hasChanges: true,
+        })),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("completed");
+      expect(states).toContain("committingUncommitted");
+    });
+  });
+
+  describe("merge with conflicts and autoResolve", () => {
+    it("resolves conflicts, commits, validates, and squash-merges", async () => {
+      const states: string[] = [];
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["src/index.ts", "src/utils.ts"],
+        })),
+        resolveConflicts: mockResolveConflicts(async () => ({
+          status: "resolved",
+          conflicts: [
+            {
+              file: "src/index.ts",
+              description: "Import conflict",
+              resolution: "Kept both imports",
+              rationale: "Both needed",
+            },
+          ],
+        })),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("completed");
+      expect(output.conflictAnalysis).toHaveLength(1);
+      expect(states).toContain("resolvingConflicts");
+      expect(states).toContain("committingResolution");
+    });
+  });
+
+  describe("merge with conflicts without autoResolve", () => {
+    it("goes to conflicts terminal state", async () => {
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["README.md"],
+        })),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, autoResolve: false },
+      });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("conflicts");
+      expect(output.conflictFiles).toEqual(["README.md"]);
+    });
+  });
+
+  describe("auto-resolve failure falls back to conflicts", () => {
+    it("goes to conflicts when resolution fails", async () => {
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["a.ts"],
+        })),
+        resolveConflicts: mockResolveConflicts(async () => ({
+          status: "failed",
+          conflicts: [],
+          partialConflicts: [
+            {
+              file: "a.ts",
+              description: "Conflict",
+              resolution: "",
+              rationale: "Unable to resolve",
+            },
+          ],
+        })),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("conflicts");
+      expect(output.conflictAnalysis).toHaveLength(1);
+    });
+  });
+
+  describe("validation failure with auto-fix", () => {
+    it("fixes validation errors and revalidates", async () => {
+      let validationCallCount = 0;
+      const states: string[] = [];
+
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          validationCallCount++;
+          if (validationCallCount === 1) {
+            throw new Error("typecheck failed: TS2345");
+          }
+          // Second call succeeds
+        }),
+        fixValidation: mockFixValidation(async () => ({
+          status: "fixed",
+        })),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("completed");
+      expect(states).toContain("fixingValidation");
+      expect(states).toContain("committingFix");
+      expect(states).toContain("revalidating");
+    });
+  });
+
+  describe("validation failure without autoResolve", () => {
+    it("goes directly to failed", async () => {
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          throw new Error("Tests failed");
+        }),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, autoResolve: false },
+      });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toBe("Tests failed");
+    });
+  });
+
+  describe("fix validation failure propagates to failed", () => {
+    it("fails when fix returns failed status", async () => {
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          throw new Error("TS2345: type error");
+        }),
+        fixValidation: mockFixValidation(async () => ({
+          status: "failed",
+          error: "Could not fix",
+        })),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+    });
+  });
+
+  describe("revalidation failure", () => {
+    it("fails when revalidation fails after fix", async () => {
+      let validationCallCount = 0;
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          validationCallCount++;
+          throw new Error(`Validation error #${validationCallCount}`);
+        }),
+        fixValidation: mockFixValidation(async () => ({
+          status: "fixed",
+        })),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toContain("Validation error #2");
+    });
+  });
+
+  describe("squash merge failure", () => {
+    it("goes to failed when squash merge throws", async () => {
+      const machine = createTestMachine({
+        squashMerge: mockSquashMerge(async () => {
+          throw new Error("Project lock timeout");
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toBe("Project lock timeout");
+    });
+  });
+
+  describe("onTerminal action", () => {
+    it("calls onTerminal on completed", async () => {
+      const onTerminal = vi.fn();
+      const machine = createTestMachine({ onTerminal });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(onTerminal).toHaveBeenCalled();
+    });
+
+    it("calls onTerminal on failed", async () => {
+      const onTerminal = vi.fn();
+      const machine = createTestMachine({
+        onTerminal,
+        mergeMain: mockMergeMain(async () => {
+          throw new Error("git error");
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(onTerminal).toHaveBeenCalled();
+    });
+
+    it("calls onTerminal on conflicts", async () => {
+      const onTerminal = vi.fn();
+      const machine = createTestMachine({
+        onTerminal,
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["a.ts"],
+        })),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, autoResolve: false },
+      });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(onTerminal).toHaveBeenCalled();
+    });
+  });
+
+  describe("context initialization", () => {
+    it("initializes all context fields from input", () => {
+      const machine = createTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.projectPath).toBe("/projects/app");
+      expect(ctx.projectName).toBe("app");
+      expect(ctx.sessionName).toBe("test-session");
+      expect(ctx.branchName).toBe("csm/test-session");
+      expect(ctx.message).toBe("Merge: feature work");
+      expect(ctx.autoResolve).toBe(true);
+      expect(ctx._schemaVersion).toBe(1);
+      expect(ctx.error).toBeNull();
+      expect(ctx.mergeHash).toBeNull();
+      expect(ctx.conflictFiles).toEqual([]);
+    });
+  });
+
+  describe("phase tracking", () => {
+    it("updates phase through merge lifecycle", async () => {
+      const phases: (string | null)[] = [];
+      const machine = createTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+
+      actor.subscribe((s) => phases.push(s.context.phase));
+      actor.start();
+
+      await toPromise(actor);
+
+      // Should see committing-uncommitted, merging-main, validating, squash-merging, null
+      expect(phases).toContain("committing-uncommitted");
+      expect(phases).toContain("merging-main");
+      expect(phases).toContain("validating");
+      expect(phases).toContain("squash-merging");
+    });
+  });
+});

@@ -65,6 +65,120 @@ export function dispatchPlanGeneration(params: GeneratePlanParams): void {
   );
 }
 
+/**
+ * Generate tasks and return them without mutating state.
+ * Used by the XState actor implementation.
+ */
+export async function generatePlanTasks(params: {
+  projectPath: string;
+  sessionName: string;
+  worktreePath: string;
+  objective: string;
+}): Promise<FixPlanTask[]> {
+  const { projectPath, sessionName, worktreePath, objective } = params;
+  const { getSession } = await import("@/lib/state");
+
+  const session = await getSession(projectPath, sessionName);
+  if (!session) return [];
+
+  const context = await gatherSessionContext(session);
+  const prompt = buildPlanningPrompt(objective, context);
+
+  let generatedTasks: Array<{ description: string; group: number }> = [];
+
+  const planToolServer = createSdkMcpServer({
+    name: "ralph-plan-generator",
+    version: "1.0.0",
+    tools: [
+      tool(
+        "submit_plan",
+        "Submit the generated task plan. Call this exactly once with the list of tasks.",
+        {
+          tasks: z
+            .array(
+              z.object({
+                description: z
+                  .string()
+                  .describe("Clear, actionable task description"),
+                group: z
+                  .number()
+                  .int()
+                  .min(1)
+                  .describe(
+                    "Execution group (1-based). Tasks in the same group are independent and can run in parallel. Lower groups execute first.",
+                  ),
+              }),
+            )
+            .describe("Array of tasks for the fix plan"),
+        },
+        async (args) => {
+          generatedTasks = args.tasks;
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Plan submitted with ${args.tasks.length} tasks.`,
+              },
+            ],
+          };
+        },
+      ),
+    ],
+  });
+
+  const abortController = new AbortController();
+  const timeoutHandle = setTimeout(() => abortController.abort(), 600_000);
+
+  try {
+    const q = query({
+      prompt,
+      options: {
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: `<objective>${objective}</objective>`,
+        },
+        settingSources: ["user", "project", "local"],
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        cwd: worktreePath,
+        maxTurns: undefined,
+        persistSession: false,
+        abortController,
+        env: { ...buildChildEnv(), CLAUDECODE: "" },
+        mcpServers: { "ralph-plan-generator": planToolServer },
+        canUseTool: async (toolName: string) => {
+          if (toolName === "AskUserQuestion") {
+            return {
+              behavior: "deny" as const,
+              message:
+                "Plan generation is automated. Submit the plan directly.",
+            };
+          }
+          return { behavior: "allow" as const, updatedInput: {} };
+        },
+      },
+    });
+
+    for await (const msg of q) {
+      void msg;
+    }
+  } catch (err) {
+    if (!abortController.signal.aborted) {
+      logger.error("plan_generator.tasks_error", {
+        sessionName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+
+  return generatedTasks.map((t) =>
+    createTask({ description: t.description, group: t.group }),
+  );
+}
+
 // ============================================================
 // Implementation
 // ============================================================

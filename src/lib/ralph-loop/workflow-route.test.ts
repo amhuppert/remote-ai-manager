@@ -27,13 +27,11 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-vi.mock("@/lib/ralph-loop/orchestrator", () => ({
-  startOrchestrator: vi.fn(),
-}));
-
-vi.mock("@/lib/ralph-loop/orchestrator-registry", () => ({
-  requestPause: vi.fn(),
-  requestAbort: vi.fn(),
+vi.mock("@/lib/workflows/ralph-loop/workflow-manager", () => ({
+  startWorkflow: vi.fn(),
+  resumeWorkflow: vi.fn(),
+  sendEvent: vi.fn(),
+  hasActiveWorkflow: vi.fn(),
 }));
 
 vi.mock("@/lib/ralph-loop/plan-generator", () => ({
@@ -202,10 +200,11 @@ describe("workflow lifecycle", () => {
 // ---------------------------------------------------------------------------
 
 describe("confirm and start", () => {
-  it("dispatches orchestrator for valid plan", async () => {
+  it("starts XState workflow for valid plan", async () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
     const { getSession } = await import("@/lib/state");
-    const { startOrchestrator } = await import("./orchestrator");
+    const { startWorkflow } =
+      await import("@/lib/workflows/ralph-loop/workflow-manager");
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const workflow = makeWorkflow({
       objective: "Do the thing",
@@ -232,7 +231,7 @@ describe("confirm and start", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(startOrchestrator).toHaveBeenCalledWith(
+    expect(startWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({ projectPath: "/tmp/projects/test" }),
     );
   });
@@ -312,15 +311,16 @@ describe("confirm and start", () => {
 // ---------------------------------------------------------------------------
 
 describe("pause", () => {
-  it("requests pause for running workflow", async () => {
+  it("sends PAUSE event for running workflow with active actor", async () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
     const { getSession } = await import("@/lib/state");
-    const { requestPause } = await import("./orchestrator-registry");
+    const { sendEvent, hasActiveWorkflow } =
+      await import("@/lib/workflows/ralph-loop/workflow-manager");
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     vi.mocked(getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "running" })),
     );
-    vi.mocked(requestPause).mockReturnValue(true);
+    vi.mocked(hasActiveWorkflow).mockReturnValue(true);
 
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/workflow/pause/route");
@@ -330,9 +330,10 @@ describe("pause", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(requestPause).toHaveBeenCalledWith(
+    expect(sendEvent).toHaveBeenCalledWith(
       "/tmp/projects/test",
       "test-session",
+      { type: "PAUSE" },
     );
   });
 
@@ -356,10 +357,11 @@ describe("pause", () => {
 });
 
 describe("resume", () => {
-  it("resumes a paused workflow", async () => {
+  it("resumes a paused workflow via XState workflow manager", async () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
     const { getSession } = await import("@/lib/state");
-    const { startOrchestrator } = await import("./orchestrator");
+    const { resumeWorkflow } =
+      await import("@/lib/workflows/ralph-loop/workflow-manager");
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     vi.mocked(getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "paused" })),
@@ -373,21 +375,24 @@ describe("resume", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(startOrchestrator).toHaveBeenCalled();
+    expect(resumeWorkflow).toHaveBeenCalled();
   });
 
   it("resumes a halted workflow, clearing halt reason", async () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    const { startOrchestrator } = await import("./orchestrator");
+    const { getSession, mutateSession } = await import("@/lib/state");
+    const { resumeWorkflow } =
+      await import("@/lib/workflows/ralph-loop/workflow-manager");
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
-      makeSession(
-        makeWorkflow({
-          status: "halted",
-          haltReason: { type: "circuit_breaker", reason: "no_progress" },
-        }),
-      ),
+    const session = makeSession(
+      makeWorkflow({
+        status: "halted",
+        haltReason: { type: "circuit_breaker", reason: "no_progress" },
+      }),
+    );
+    vi.mocked(getSession).mockResolvedValue(session);
+    vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
+      mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
     );
 
     const { POST } =
@@ -398,7 +403,8 @@ describe("resume", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(startOrchestrator).toHaveBeenCalled();
+    expect(resumeWorkflow).toHaveBeenCalled();
+    expect(mutateSession).toHaveBeenCalled();
   });
 
   it("rejects resume for running workflow", async () => {
@@ -421,15 +427,16 @@ describe("resume", () => {
 });
 
 describe("abort", () => {
-  it("aborts a running workflow via registry", async () => {
+  it("sends ABORT event for running workflow with active actor", async () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
     const { getSession } = await import("@/lib/state");
-    const { requestAbort } = await import("./orchestrator-registry");
+    const { sendEvent, hasActiveWorkflow } =
+      await import("@/lib/workflows/ralph-loop/workflow-manager");
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     vi.mocked(getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "running" })),
     );
-    vi.mocked(requestAbort).mockReturnValue(true);
+    vi.mocked(hasActiveWorkflow).mockReturnValue(true);
 
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/workflow/abort/route");
@@ -439,20 +446,22 @@ describe("abort", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(requestAbort).toHaveBeenCalledWith(
+    expect(sendEvent).toHaveBeenCalledWith(
       "/tmp/projects/test",
       "test-session",
+      { type: "ABORT" },
     );
   });
 
-  it("aborts a paused workflow directly (not in registry)", async () => {
+  it("aborts a paused workflow directly when no active actor", async () => {
     const { resolveProjectPath } = await import("@/lib/project-resolver");
     const { getSession, mutateSession } = await import("@/lib/state");
-    const { requestAbort } = await import("./orchestrator-registry");
+    const { hasActiveWorkflow } =
+      await import("@/lib/workflows/ralph-loop/workflow-manager");
     vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const session = makeSession(makeWorkflow({ status: "paused" }));
     vi.mocked(getSession).mockResolvedValue(session);
-    vi.mocked(requestAbort).mockReturnValue(false); // not in registry
+    vi.mocked(hasActiveWorkflow).mockReturnValue(false);
     vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
       mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
     );

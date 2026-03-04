@@ -2,29 +2,19 @@
  * Background job lifecycle management for async merge, commit,
  * and conflict resolution operations.
  *
- * Jobs are dispatched synchronously (fire-and-forget) and run in
- * un-awaited Promises. Status changes are broadcast via SSE so the
- * UI can track progress in real time.
+ * Jobs are dispatched synchronously (fire-and-forget) using XState actors.
+ * Merge and resolve-conflicts jobs use the mergeMachine (Smart Merge pipeline).
+ * Commit jobs use a simple fromPromise actor.
  *
- * Storage uses globalThis Maps (HMR-safe singleton pattern) keyed by
+ * Status changes are broadcast via SSE so the UI can track progress in real
+ * time. Storage uses globalThis Maps (HMR-safe singleton pattern) keyed by
  * "projectPath::sessionName".
  */
 
 import { randomUUID } from "node:crypto";
-import { acquireSessionLock, acquireProjectLock } from "./lock";
-import {
-  mergeMainIntoFeature,
-  squashMerge,
-  commitChanges,
-  hasUncommittedChanges,
-} from "./git-operations";
-import { resolveConflicts } from "./conflict-resolution";
-import { fixValidationErrors } from "./validation-fix";
-import { runPreMergeValidation } from "./repo-config";
-import { readConfig } from "./config";
+import { createActor, fromPromise } from "xstate";
+import { acquireSessionLock } from "./lock";
 import { broadcast } from "./sse-broadcaster";
-import { setSessionFinished } from "./state";
-import { stopAllForSession } from "./dev-server-registry";
 import { createLogger } from "./logging";
 import {
   createJobRecord,
@@ -33,6 +23,12 @@ import {
   deriveNotificationType,
   deriveNotificationTitle,
 } from "./notification-db";
+import { mergeMachine } from "./workflows/merge/machine";
+import type {
+  MergeInput,
+  MergeContext,
+  MergeOutput,
+} from "./workflows/merge/types";
 import { getErrorMessage } from "@/lib/errors";
 import type { BackgroundJob, ConflictAnalysis, JobStatusEvent } from "@/types";
 import type { ConflictDecisionInput } from "@/lib/schemas";
@@ -46,12 +42,6 @@ const logger = createLogger("background-jobs");
 
 /** Jobs running longer than this are considered stale (10 minutes) */
 const JOB_TIMEOUT_MS = 10 * 60 * 1000;
-
-/** Max wait time for project lock retry (30 seconds) */
-const PROJECT_LOCK_MAX_WAIT_MS = 30_000;
-
-/** Retry interval for project lock acquisition */
-const PROJECT_LOCK_RETRY_INTERVAL_MS = 100;
 
 // ============================================================
 // Result Type
@@ -245,26 +235,6 @@ function recoverStaleJob(key: string, existing: BackgroundJob): boolean {
 }
 
 // ============================================================
-// Project Lock with Retry
-// ============================================================
-
-async function acquireProjectLockWithRetry(
-  projectPath: string,
-): Promise<() => void> {
-  const start = Date.now();
-  while (Date.now() - start < PROJECT_LOCK_MAX_WAIT_MS) {
-    try {
-      return acquireProjectLock(projectPath);
-    } catch {
-      await new Promise((r) => setTimeout(r, PROJECT_LOCK_RETRY_INTERVAL_MS));
-    }
-  }
-  throw new Error(
-    "Another merge is in progress for this project. Please retry.",
-  );
-}
-
-// ============================================================
 // Dispatch Guard
 // ============================================================
 
@@ -320,137 +290,74 @@ function prepareDispatch(params: {
 }
 
 // ============================================================
-// Phase 2: Squash Merge (shared by merge and resolve-conflicts)
-// ============================================================
-
-async function executePhase2(
-  job: BackgroundJob,
-  projectPath: string,
-  branchName: string,
-  message: string,
-  sessionName: string,
-): Promise<void> {
-  const releaseProject = await acquireProjectLockWithRetry(projectPath);
-  try {
-    const { mergeHash } = await squashMerge(projectPath, branchName, message);
-    job.mergeHash = mergeHash;
-  } finally {
-    releaseProject();
-  }
-
-  // Stop all dev servers before marking session as finished (best-effort)
-  try {
-    await stopAllForSession({ projectPath, sessionName });
-  } catch {
-    // best-effort: don't block merge
-  }
-
-  await setSessionFinished(projectPath, sessionName);
-}
-
-// ============================================================
-// Validation with Auto-Recovery
+// XState Actor Helpers
 // ============================================================
 
 /**
- * Run pre-merge validation with optional auto-recovery.
- *
- * If validation fails and autoResolve is true, invokes Claude to fix
- * the issues and re-runs validation once. If the retry also fails,
- * the original error is thrown.
+ * Subscribe to a merge machine actor and update the BackgroundJob registry
+ * on state changes and completion. Releases the session lock on terminal state.
  */
-async function runValidationWithRecovery(params: {
-  job: BackgroundJob;
-  projectPath: string;
-  worktreePath: string;
-  sessionName: string;
-  branchName: string;
-  timeoutMs: number;
-  autoResolve: boolean;
-}): Promise<void> {
-  const {
-    job,
-    projectPath,
-    worktreePath,
-    sessionName,
-    branchName,
-    timeoutMs,
-    autoResolve,
-  } = params;
+function subscribeMergeActor(
+  actor: ReturnType<typeof createActor<typeof mergeMachine>>,
+  job: BackgroundJob,
+  release: () => void,
+): void {
+  let lastPhase: string | undefined = undefined;
 
-  job.phase = "validating";
-  broadcastJobStatus(job);
+  actor.subscribe({
+    next(snapshot) {
+      if (snapshot.status === "active") {
+        const phase = (snapshot.context as MergeContext).phase ?? undefined;
+        if (phase !== lastPhase) {
+          lastPhase = phase;
+          job.phase = phase;
+          broadcastJobStatus(job);
+        }
+      }
+    },
+    complete() {
+      const snapshot = actor.getSnapshot();
+      const output = snapshot.output as MergeOutput;
+      const ctx = snapshot.context as MergeContext;
 
-  try {
-    await runPreMergeValidation({
-      projectPath,
-      worktreePath,
-      sessionName,
-      branchName,
-      timeoutMs,
-    });
-    return; // Validation passed on first try
-  } catch (err) {
-    if (!autoResolve) throw err; // No recovery — re-throw
+      // Map output → BackgroundJob
+      job.status = output.status;
+      job.mergeHash = output.mergeHash ?? undefined;
+      job.commitHash = output.commitHash ?? undefined;
+      job.errorMessage = output.error ?? undefined;
+      job.phase = undefined;
+      job.completedAt = new Date().toISOString();
 
-    const errObj = err as Error & { gitOutput?: string };
-    const validationOutput = [errObj.message, errObj.gitOutput]
-      .filter(Boolean)
-      .join("\n");
+      if (output.conflictFiles.length > 0) {
+        job.conflictFiles = output.conflictFiles;
+        job.conflictCount = output.conflictFiles.length;
+      }
 
-    logger.info("merge.validation_failed_attempting_fix", {
-      jobId: job.jobId,
-      sessionName,
-    });
+      // Store conflict analysis if available
+      if (output.conflictAnalysis) {
+        storeConflictAnalysis(
+          ctx.projectPath,
+          ctx.sessionName,
+          job.jobId,
+          ctx.projectName,
+          output.conflictAnalysis,
+        );
+      }
 
-    // Broadcast that we're fixing validation errors
-    job.phase = "fixing-validation";
-    broadcastJobStatus(job);
-
-    // Invoke Claude to fix the issues
-    const fixResult = await fixValidationErrors({
-      worktreePath,
-      validationOutput,
-    });
-
-    if (fixResult.status === "failed") {
-      logger.warn("merge.validation_fix_failed", {
-        jobId: job.jobId,
-        error: fixResult.error,
-      });
-      // Claude couldn't fix it — throw the original error
-      throw err;
-    }
-
-    // Commit Claude's fixes
-    if (await hasUncommittedChanges(worktreePath)) {
-      await commitChanges(worktreePath, "auto-fix: validation errors", {
-        skipHooks: true,
-      });
-    }
-
-    // Re-run validation (one retry only — if this fails, it fails for real)
-    job.phase = "re-validating";
-    broadcastJobStatus(job);
-
-    logger.info("merge.re_validating", {
-      jobId: job.jobId,
-      sessionName,
-    });
-
-    await runPreMergeValidation({
-      projectPath,
-      worktreePath,
-      sessionName,
-      branchName,
-      timeoutMs,
-    });
-
-    logger.info("merge.validation_fix_succeeded", {
-      jobId: job.jobId,
-      sessionName,
-    });
-  }
+      broadcastJobStatus(job);
+      release();
+    },
+    error(err) {
+      // Shouldn't happen — machine handles errors internally as "failed" state.
+      // But handle defensively.
+      job.status = "failed";
+      job.errorMessage = err instanceof Error ? err.message : "Unknown error";
+      job.phase = undefined;
+      job.completedAt = new Date().toISOString();
+      broadcastJobStatus(job);
+      release();
+    },
+  });
 }
 
 // ============================================================
@@ -458,8 +365,9 @@ async function runValidationWithRecovery(params: {
 // ============================================================
 
 /**
- * Dispatch a merge job (merge main into feature, optionally auto-resolve,
- * then squash merge into main).
+ * Dispatch a merge job using the Smart Merge XState machine.
+ * The machine handles: commit uncommitted → merge main → detect/resolve
+ * conflicts → validate → fix validation → squash merge.
  */
 export function dispatchMergeJob(params: {
   projectPath: string;
@@ -491,171 +399,42 @@ export function dispatchMergeJob(params: {
 
   const { job, release } = prepared.value;
 
-  // Fire-and-forget background pipeline
-  void (async () => {
-    try {
-      logger.info("merge.start", {
-        jobId: job.jobId,
-        sessionName,
-        worktreePath,
-        branchName,
-        autoResolve,
-      });
+  logger.info("merge.start", {
+    jobId: job.jobId,
+    sessionName,
+    worktreePath,
+    branchName,
+    autoResolve,
+  });
 
-      // Phase 0: Commit uncommitted changes in the worktree.
-      // Skip pre-commit hooks — this is a WIP commit that will be
-      // squash-merged; running lint/test here blocks the pipeline
-      // and leaves the worktree in a half-staged state on failure.
-      if (await hasUncommittedChanges(worktreePath)) {
-        logger.info("merge.commit_uncommitted", {
-          jobId: job.jobId,
-          worktreePath,
-        });
-        await commitChanges(worktreePath, "WIP: uncommitted changes", {
-          skipHooks: true,
-        });
-      }
+  // Create and start the merge machine actor
+  const input: MergeInput = {
+    jobId: job.jobId,
+    projectPath,
+    projectName,
+    sessionName,
+    worktreePath,
+    branchName,
+    message,
+    autoResolve,
+    jobType: "merge",
+  };
 
-      // Phase 1: Merge main into feature branch
-      logger.info("merge.phase1_merge_main", { jobId: job.jobId });
-      const mergeResult = await mergeMainIntoFeature(worktreePath);
+  const actor = createActor(
+    mergeMachine.provide({
+      actions: { onTerminal: () => {} },
+    }),
+    { input },
+  );
 
-      if (mergeResult.status === "clean") {
-        // Phase 2: Pre-merge validation (with auto-recovery if enabled)
-        const config = await readConfig();
-        await runValidationWithRecovery({
-          job,
-          projectPath,
-          worktreePath,
-          sessionName,
-          branchName,
-          timeoutMs: config.preMergeTimeoutMs ?? 300_000,
-          autoResolve,
-        });
-
-        // Phase 3: Squash merge into main
-        job.phase = "squash-merging";
-        broadcastJobStatus(job);
-        logger.info("merge.phase2_squash", { jobId: job.jobId });
-        await executePhase2(job, projectPath, branchName, message, sessionName);
-
-        job.phase = undefined;
-        job.status = "completed";
-        logger.info("merge.completed", {
-          jobId: job.jobId,
-          mergeHash: job.mergeHash,
-        });
-        broadcastJobStatus(job);
-      } else {
-        // Conflicts detected
-        logger.info("merge.conflicts_detected", {
-          jobId: job.jobId,
-          conflictFiles: mergeResult.conflictFiles,
-          autoResolve,
-        });
-
-        if (autoResolve) {
-          const result = await resolveConflicts({ worktreePath });
-
-          if (result.status === "resolved") {
-            // Store conflict analysis
-            storeConflictAnalysis(
-              projectPath,
-              sessionName,
-              job.jobId,
-              projectName,
-              result.conflicts,
-            );
-
-            // Commit the resolution
-            await commitChanges(worktreePath, "resolve merge conflicts", {
-              skipHooks: true,
-            });
-
-            // Pre-merge validation (with auto-recovery)
-            const resolveConfig = await readConfig();
-            await runValidationWithRecovery({
-              job,
-              projectPath,
-              worktreePath,
-              sessionName,
-              branchName,
-              timeoutMs: resolveConfig.preMergeTimeoutMs ?? 300_000,
-              autoResolve: true,
-            });
-
-            // Squash merge into main
-            job.phase = "squash-merging";
-            broadcastJobStatus(job);
-            logger.info("merge.phase2_squash_after_resolve", {
-              jobId: job.jobId,
-            });
-            await executePhase2(
-              job,
-              projectPath,
-              branchName,
-              message,
-              sessionName,
-            );
-
-            job.phase = undefined;
-            job.status = "completed";
-            logger.info("merge.completed", {
-              jobId: job.jobId,
-              mergeHash: job.mergeHash,
-            });
-            broadcastJobStatus(job);
-          } else {
-            // Auto-resolve failed — store partial results if available
-            if (result.partialConflicts) {
-              storeConflictAnalysis(
-                projectPath,
-                sessionName,
-                job.jobId,
-                projectName,
-                result.partialConflicts,
-              );
-            }
-
-            // Fall back to conflicts status
-            job.status = "conflicts";
-            job.conflictFiles = mergeResult.conflictFiles;
-            job.conflictCount = mergeResult.conflictFiles.length;
-            broadcastJobStatus(job);
-          }
-        } else {
-          // No auto-resolve — report conflicts
-          job.status = "conflicts";
-          job.conflictFiles = mergeResult.conflictFiles;
-          job.conflictCount = mergeResult.conflictFiles.length;
-          broadcastJobStatus(job);
-        }
-      }
-    } catch (err) {
-      job.phase = undefined;
-      job.status = "failed";
-      const errObj = err as Error & { gitOutput?: string };
-      const parts: string[] = [errObj.message ?? "Unknown error"];
-      if (errObj.gitOutput) {
-        parts.push(errObj.gitOutput);
-      }
-      job.errorMessage = parts.join("\n");
-      logger.error("merge.failed", {
-        jobId: job.jobId,
-        error: job.errorMessage,
-      });
-      broadcastJobStatus(job);
-    } finally {
-      job.completedAt = new Date().toISOString();
-      release();
-    }
-  })();
+  subscribeMergeActor(actor, job, release);
+  actor.start();
 
   return { ok: true, value: { jobId: job.jobId } };
 }
 
 /**
- * Dispatch a commit job (stage + commit changes in worktree).
+ * Dispatch a commit job using a fromPromise XState actor.
  */
 export function dispatchCommitJob(params: {
   projectPath: string;
@@ -685,20 +464,40 @@ export function dispatchCommitJob(params: {
 
   const { job, release } = prepared.value;
 
-  // Fire-and-forget background pipeline
-  void (async () => {
-    try {
-      logger.info("commit.start", {
-        jobId: job.jobId,
-        sessionName,
-        worktreePath,
-      });
-      const { hash } = await commitChanges(worktreePath, message);
+  logger.info("commit.start", {
+    jobId: job.jobId,
+    sessionName,
+    worktreePath,
+  });
+
+  // Create a simple fromPromise actor for the commit operation
+  const commitLogic = fromPromise<
+    { hash: string },
+    { worktreePath: string; message: string }
+  >(async ({ input: commitInput }) => {
+    const { commitChanges } = await import("@/lib/git-operations");
+    return commitChanges(commitInput.worktreePath, commitInput.message);
+  });
+
+  const actor = createActor(commitLogic, {
+    input: { worktreePath, message },
+  });
+
+  actor.subscribe({
+    next() {
+      // No intermediate states for commit
+    },
+    complete() {
+      const snapshot = actor.getSnapshot();
+      const output = snapshot.output as { hash: string };
       job.status = "completed";
-      job.commitHash = hash;
-      logger.info("commit.completed", { jobId: job.jobId, hash });
+      job.commitHash = output.hash;
+      job.completedAt = new Date().toISOString();
+      logger.info("commit.completed", { jobId: job.jobId, hash: output.hash });
       broadcastJobStatus(job);
-    } catch (err) {
+      release();
+    },
+    error(err) {
       job.status = "failed";
       const errObj = err as Error & { gitOutput?: string };
       const parts: string[] = [errObj.message ?? "Unknown error"];
@@ -706,23 +505,25 @@ export function dispatchCommitJob(params: {
         parts.push(errObj.gitOutput);
       }
       job.errorMessage = parts.join("\n");
+      job.completedAt = new Date().toISOString();
       logger.error("commit.failed", {
         jobId: job.jobId,
         error: job.errorMessage,
       });
       broadcastJobStatus(job);
-    } finally {
-      job.completedAt = new Date().toISOString();
       release();
-    }
-  })();
+    },
+  });
+
+  actor.start();
 
   return { ok: true, value: { jobId: job.jobId } };
 }
 
 /**
- * Dispatch a resolve-conflicts job (invoke Claude to resolve conflicts,
- * commit the resolution, then squash merge into main).
+ * Dispatch a resolve-conflicts job using the Smart Merge XState machine
+ * with jobType "resolve-conflicts". The routing state skips directly to
+ * conflict resolution, then proceeds through validation and squash merge.
  */
 export function dispatchResolveConflictsJob(params: {
   projectPath: string;
@@ -754,86 +555,34 @@ export function dispatchResolveConflictsJob(params: {
 
   const { job, release } = prepared.value;
 
-  // Fire-and-forget background pipeline
-  void (async () => {
-    try {
-      logger.info("resolve-conflicts.start", {
-        jobId: job.jobId,
-        sessionName,
-      });
-      const result = await resolveConflicts({ worktreePath, decisions });
+  logger.info("resolve-conflicts.start", {
+    jobId: job.jobId,
+    sessionName,
+  });
 
-      if (result.status === "resolved") {
-        // Store conflict analysis
-        storeConflictAnalysis(
-          projectPath,
-          sessionName,
-          job.jobId,
-          projectName,
-          result.conflicts,
-        );
+  // Create the merge machine with resolve-conflicts routing
+  const input: MergeInput = {
+    jobId: job.jobId,
+    projectPath,
+    projectName,
+    sessionName,
+    worktreePath,
+    branchName,
+    message: mergeMessage,
+    autoResolve: false,
+    jobType: "resolve-conflicts",
+    decisions,
+  };
 
-        // Commit the resolution
-        await commitChanges(worktreePath, "resolve merge conflicts", {
-          skipHooks: true,
-        });
+  const actor = createActor(
+    mergeMachine.provide({
+      actions: { onTerminal: () => {} },
+    }),
+    { input },
+  );
 
-        // Pre-merge validation
-        const rcConfig = await readConfig();
-        await runPreMergeValidation({
-          projectPath,
-          worktreePath,
-          sessionName,
-          branchName,
-          timeoutMs: rcConfig.preMergeTimeoutMs ?? 300_000,
-        });
-
-        // Squash merge into main
-        logger.info("resolve-conflicts.phase2_squash", {
-          jobId: job.jobId,
-        });
-        await executePhase2(
-          job,
-          projectPath,
-          branchName,
-          mergeMessage,
-          sessionName,
-        );
-
-        job.status = "completed";
-        logger.info("resolve-conflicts.completed", {
-          jobId: job.jobId,
-          mergeHash: job.mergeHash,
-        });
-        broadcastJobStatus(job);
-      } else {
-        // Resolution failed — store partial results if available
-        if (result.partialConflicts) {
-          storeConflictAnalysis(
-            projectPath,
-            sessionName,
-            job.jobId,
-            projectName,
-            result.partialConflicts,
-          );
-        }
-
-        job.status = "conflicts";
-        broadcastJobStatus(job);
-      }
-    } catch (err) {
-      job.status = "failed";
-      job.errorMessage = err instanceof Error ? err.message : "Unknown error";
-      logger.error("resolve-conflicts.failed", {
-        jobId: job.jobId,
-        error: job.errorMessage,
-      });
-      broadcastJobStatus(job);
-    } finally {
-      job.completedAt = new Date().toISOString();
-      release();
-    }
-  })();
+  subscribeMergeActor(actor, job, release);
+  actor.start();
 
   return { ok: true, value: { jobId: job.jobId } };
 }

@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
 import { withTracing } from "@/lib/logging";
-import { startOrchestrator } from "@/lib/ralph-loop/orchestrator";
+import { startWorkflow } from "@/lib/workflows/ralph-loop/workflow-manager";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-/** POST — Confirm plan and start the orchestrator loop */
+/** POST — Confirm plan and start the XState workflow actor */
 export const POST = withTracing(async (_request, { params }) => {
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
@@ -61,11 +61,19 @@ export const POST = withTracing(async (_request, { params }) => {
     );
   }
 
-  // Dispatch the orchestrator
-  startOrchestrator({
+  // Start the XState workflow actor
+  startWorkflow({
     projectPath,
-    session,
-    workflow: session.workflow,
+    projectName: projectPath.split("/").pop() ?? projectPath,
+    sessionName,
+    objective: session.workflow.objective,
+    config: session.workflow.config,
+    fixPlan: session.workflow.fixPlan,
+    worktreePath: session.worktreePath,
+    iterations: session.workflow.iterations,
+    circuitBreaker: session.workflow.circuitBreaker,
+    totalCostUsd: session.workflow.totalCostUsd,
+    totalDurationMs: session.workflow.totalDurationMs,
   });
 
   return NextResponse.json({ workflow: session.workflow }, { status: 202 });

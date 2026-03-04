@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
-import { getSession } from "@/lib/state";
+import { getSession, mutateSession } from "@/lib/state";
 import { withTracing } from "@/lib/logging";
-import { startOrchestrator } from "@/lib/ralph-loop/orchestrator";
+import { resumeWorkflow } from "@/lib/workflows/ralph-loop/workflow-manager";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -51,13 +51,31 @@ export const POST = withTracing(async (_request, { params }) => {
 
   // Clear halt reason when resuming from halted
   if (session.workflow.status === "halted") {
-    session.workflow.haltReason = null;
+    await mutateSession(
+      projectPath,
+      sessionName,
+      "workflow.clearHaltForResume",
+      (sess) => {
+        if (sess.workflow) {
+          sess.workflow.haltReason = null;
+        }
+      },
+    );
   }
 
-  startOrchestrator({
+  // Resume or create new actor with existing state
+  resumeWorkflow({
     projectPath,
-    session,
-    workflow: session.workflow,
+    projectName: projectPath.split("/").pop() ?? projectPath,
+    sessionName,
+    objective: session.workflow.objective,
+    config: session.workflow.config,
+    fixPlan: session.workflow.fixPlan,
+    worktreePath: session.worktreePath,
+    iterations: session.workflow.iterations,
+    circuitBreaker: session.workflow.circuitBreaker,
+    totalCostUsd: session.workflow.totalCostUsd,
+    totalDurationMs: session.workflow.totalDurationMs,
   });
 
   return NextResponse.json({ workflow: session.workflow }, { status: 202 });

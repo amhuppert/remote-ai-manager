@@ -114,6 +114,7 @@ export async function fixValidationErrors(params: {
 
       // Consume the stream — we don't need to parse output,
       // just let Claude make its edits
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for await (const _message of stream) {
         // no-op: stream must be consumed for SDK to complete
       }

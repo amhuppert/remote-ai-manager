@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession, mutateSession } from "@/lib/state";
 import { withTracing } from "@/lib/logging";
-import { requestAbort } from "@/lib/ralph-loop/orchestrator-registry";
+import {
+  sendEvent,
+  hasActiveWorkflow,
+} from "@/lib/workflows/ralph-loop/workflow-manager";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -43,9 +46,11 @@ export const POST = withTracing(async (_request, { params }) => {
     );
   }
 
-  const aborted = requestAbort(projectPath, sessionName);
-  if (!aborted) {
-    // Workflow is paused (not in registry) — mark as aborted directly
+  if (hasActiveWorkflow(projectPath, sessionName)) {
+    // Actor exists — send ABORT event (transitions to aborted final state)
+    sendEvent(projectPath, sessionName, { type: "ABORT" });
+  } else {
+    // No actor (paused after server restart) — mark as aborted directly
     await mutateSession(projectPath, sessionName, "workflow.abort", (sess) => {
       if (!sess.workflow) return;
       sess.workflow.status = "aborted";

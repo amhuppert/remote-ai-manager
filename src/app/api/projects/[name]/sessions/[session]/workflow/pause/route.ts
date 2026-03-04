@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
 import { withTracing } from "@/lib/logging";
-import { requestPause } from "@/lib/ralph-loop/orchestrator-registry";
+import {
+  sendEvent,
+  hasActiveWorkflow,
+} from "@/lib/workflows/ralph-loop/workflow-manager";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -37,15 +40,16 @@ export const POST = withTracing(async (_request, { params }) => {
     );
   }
 
-  const paused = requestPause(projectPath, sessionName);
-  if (!paused) {
+  if (!hasActiveWorkflow(projectPath, sessionName)) {
     return NextResponse.json(
       {
-        error: "Workflow not found in orchestrator registry",
+        error: "Workflow not found in actor registry",
       } satisfies ApiError,
       { status: 409 },
     );
   }
+
+  sendEvent(projectPath, sessionName, { type: "PAUSE" });
 
   return NextResponse.json({ status: "pause_requested" });
 });
