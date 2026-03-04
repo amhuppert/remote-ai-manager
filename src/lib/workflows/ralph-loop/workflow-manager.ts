@@ -117,6 +117,20 @@ function createProvidedMachine() {
 
             const progress = getTaskProgress(context.fixPlan);
 
+            // Persist to state file BEFORE broadcasting SSE so that
+            // SSE-triggered query refetches read the updated status.
+            await mutateSession(
+              context.projectPath,
+              context.sessionName,
+              "workflow.xstateStatusSync",
+              (sess) => {
+                if (!sess.workflow) return;
+                sess.workflow.status = workflowStatus;
+                sess.workflow.haltReason = context.haltReason;
+                sess.workflow.completedAt = context.completedAt;
+              },
+            );
+
             broadcast({
               type: "workflow-status",
               projectName: context.projectName,
@@ -132,19 +146,6 @@ function createProvidedMachine() {
               },
               haltReason: context.haltReason,
             });
-
-            // Sync status to state file so GET /workflow returns correct data
-            await mutateSession(
-              context.projectPath,
-              context.sessionName,
-              "workflow.xstateStatusSync",
-              (sess) => {
-                if (!sess.workflow) return;
-                sess.workflow.status = workflowStatus;
-                sess.workflow.haltReason = context.haltReason;
-                sess.workflow.completedAt = context.completedAt;
-              },
-            );
           } catch {
             // fire-and-forget
           }
