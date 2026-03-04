@@ -1,5 +1,6 @@
 import type { SSEEvent } from "@/types";
 import { createLogger } from "./logging";
+import { getGlobalSingleton } from "./global-singleton";
 
 const logger = createLogger("sse");
 const encoder = new TextEncoder();
@@ -13,11 +14,10 @@ const encoder = new TextEncoder();
 const GLOBAL_KEY = "__cc_sse_clients" as const;
 
 function getClients(): Set<ReadableStreamDefaultController> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[GLOBAL_KEY]) {
-    g[GLOBAL_KEY] = new Set<ReadableStreamDefaultController>();
-  }
-  return g[GLOBAL_KEY] as Set<ReadableStreamDefaultController>;
+  return getGlobalSingleton(
+    GLOBAL_KEY,
+    () => new Set<ReadableStreamDefaultController>(),
+  );
 }
 
 export function addClient(controller: ReadableStreamDefaultController): void {

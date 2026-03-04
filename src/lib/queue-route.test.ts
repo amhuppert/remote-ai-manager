@@ -19,6 +19,7 @@ const {
 
 vi.mock("@/lib/project-resolver", () => ({
   resolveProjectPath: resolveProjectPathMock,
+  getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
 }));
 
 vi.mock("@/lib/state", () => ({

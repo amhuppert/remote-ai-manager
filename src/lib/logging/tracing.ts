@@ -8,6 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import { runWithTrace, type TraceContext } from "./context";
+import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "./logger";
 
 const logger = createLogger("tracing");
@@ -83,7 +84,7 @@ export function withTracing(handler: RouteHandler): RouteHandler {
           method: request.method,
           path: url.pathname,
           durationMs,
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
         throw err;

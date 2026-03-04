@@ -3,6 +3,14 @@ import { existsSync } from "node:fs";
 import { readConfig } from "./config";
 
 /**
+ * Extract a human-readable project name from an absolute project path.
+ * Returns the last path segment, or the full path as fallback.
+ */
+export function getProjectDisplayName(projectPath: string): string {
+  return path.basename(projectPath) || projectPath;
+}
+
+/**
  * Resolve a project name (from URL) to its absolute filesystem path.
  * Returns null if the project directory doesn't exist or has no .git.
  */

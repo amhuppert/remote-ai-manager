@@ -3,6 +3,7 @@ import { broadcast } from "./sse-broadcaster";
 import * as tailscale from "./tailscale";
 import { readConfig } from "./config";
 import { isPortAlive } from "./dev-server-registry";
+import { getGlobalValue, setGlobalValue } from "./global-singleton";
 import type { DevServerEntry } from "./dev-server-registry";
 import type { DevServerStatusEvent } from "@/types";
 
@@ -11,20 +12,16 @@ const GLOBAL_KEY = "__cc_dev_server_liveness" as const;
 const POLL_INTERVAL_MS = 5_000;
 
 function getTimerId(): ReturnType<typeof setTimeout> | null {
-  const g = globalThis as unknown as Record<string, unknown>;
-  return (g[GLOBAL_KEY] as ReturnType<typeof setTimeout> | null) ?? null;
+  return getGlobalValue<ReturnType<typeof setTimeout>>(GLOBAL_KEY) ?? null;
 }
 
 function setTimerId(id: ReturnType<typeof setTimeout> | null): void {
-  const g = globalThis as unknown as Record<string, unknown>;
-  g[GLOBAL_KEY] = id;
+  setGlobalValue(GLOBAL_KEY, id);
 }
 
 async function poll(): Promise<void> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  const registryMap = g["__cc_dev_servers"] as
-    | Map<string, DevServerEntry>
-    | undefined;
+  const registryMap =
+    getGlobalValue<Map<string, DevServerEntry>>("__cc_dev_servers");
 
   if (!registryMap || registryMap.size === 0) {
     stop();

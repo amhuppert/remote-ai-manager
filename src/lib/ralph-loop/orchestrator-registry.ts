@@ -3,6 +3,8 @@
  * Uses globalThis singleton for HMR safety (same pattern as session locks).
  */
 
+import { getGlobalSingleton } from "../global-singleton";
+
 const GLOBAL_KEY = "__cc_running_workflows" as const;
 
 export interface RunningWorkflow {
@@ -13,11 +15,10 @@ export interface RunningWorkflow {
 }
 
 function getRegistry(): Map<string, RunningWorkflow> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[GLOBAL_KEY]) {
-    g[GLOBAL_KEY] = new Map<string, RunningWorkflow>();
-  }
-  return g[GLOBAL_KEY] as Map<string, RunningWorkflow>;
+  return getGlobalSingleton(
+    GLOBAL_KEY,
+    () => new Map<string, RunningWorkflow>(),
+  );
 }
 
 function makeKey(projectPath: string, sessionName: string): string {

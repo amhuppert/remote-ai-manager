@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import NotificationsPanel, {
   type NotificationItem,
   type ConversationNotification,
@@ -14,18 +13,21 @@ import {
   useActiveConversationsQuery,
   useNotificationsQuery,
 } from "@/lib/queries";
+import {
+  useMarkNotificationAsReadMutation,
+  useMarkAllNotificationsAsReadMutation,
+  useDismissNotificationMutation,
+} from "@/lib/mutations";
 import { useNotificationJobs } from "@/stores/notification.store";
 import { useActiveWorkflows } from "@/stores/workflow.store";
 import {
   useUnifiedPanelOpen,
   useCloseUnifiedPanel,
 } from "@/stores/unified-panel.store";
-import { notificationKeys } from "@/lib/query-keys";
 
 export default function NotificationsPanelContainer() {
   const panelOpen = useUnifiedPanelOpen();
   const closePanel = useCloseUnifiedPanel();
-  const queryClient = useQueryClient();
   const { data: activeConversations, isPending: convLoading } =
     useActiveConversationsQuery();
   const { data: notificationsData, isPending: notifLoading } =
@@ -33,49 +35,24 @@ export default function NotificationsPanelContainer() {
   const jobs = useNotificationJobs();
   const activeWorkflows = useActiveWorkflows();
 
+  const markAsRead = useMarkNotificationAsReadMutation();
+  const markAllAsRead = useMarkAllNotificationsAsReadMutation();
+  const dismiss = useDismissNotificationMutation();
+
   const handleMarkAsRead = useCallback(
-    async (id: string) => {
-      try {
-        await fetch(`/api/notifications/${encodeURIComponent(id)}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ read: true }),
-        });
-        void queryClient.invalidateQueries({
-          queryKey: notificationKeys.all,
-        });
-      } catch {
-        // best-effort
-      }
+    (id: string) => {
+      markAsRead.mutate(id);
     },
-    [queryClient],
+    [markAsRead],
   );
-
-  const handleMarkAllAsRead = useCallback(async () => {
-    try {
-      await fetch("/api/notifications/mark-all-read", { method: "POST" });
-      void queryClient.invalidateQueries({
-        queryKey: notificationKeys.all,
-      });
-    } catch {
-      // best-effort
-    }
-  }, [queryClient]);
-
+  const handleMarkAllAsRead = useCallback(() => {
+    markAllAsRead.mutate();
+  }, [markAllAsRead]);
   const handleDismiss = useCallback(
-    async (id: string) => {
-      try {
-        await fetch(`/api/notifications/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-        });
-        void queryClient.invalidateQueries({
-          queryKey: notificationKeys.all,
-        });
-      } catch {
-        // best-effort
-      }
+    (id: string) => {
+      dismiss.mutate(id);
     },
-    [queryClient],
+    [dismiss],
   );
 
   const items: NotificationItem[] = useMemo(() => {

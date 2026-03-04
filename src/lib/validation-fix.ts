@@ -14,7 +14,7 @@ import { createLogger } from "./logging";
 const logger = createLogger("validation-fix");
 
 // Prevent nested session detection when CC runs inside Claude Code
-delete process.env.CLAUDECODE;
+import "@/lib/sdk-env";
 
 // ============================================================
 // Public Types

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { conversationKeys, sessionKeys } from "@/lib/query-keys";
+import { parseCommandContent } from "@/lib/command-parsing";
 import {
   useSubmitPrompt,
   useReceiveStreamContent,
@@ -87,42 +88,14 @@ export function useSendPrompt(
       ];
 
       // Parse command tags or plain slash commands so optimistic messages
-      // display formatted commands (matches transcript.ts parseCommandContent)
+      // display formatted commands (uses shared parseCommandContent)
       const displayContent: MessageContentBlock[] =
         userContent.length === 1 && userContent[0]?.type === "text"
           ? (() => {
               const text = (userContent[0] as { type: "text"; text: string })
                 .text;
-              // XML-tagged commands (from prompt templates like focus mode)
-              const nameMatch = text.match(
-                /<command-name>\/?(.+?)<\/command-name>/,
-              );
-              if (nameMatch) {
-                const argsMatch = text.match(
-                  /<command-args>([\s\S]*?)<\/command-args>/,
-                );
-                return [
-                  {
-                    type: "command" as const,
-                    name: `/${nameMatch[1]!}`,
-                    args: argsMatch?.[1]?.trim() || null,
-                  },
-                ];
-              }
-              // Plain text slash commands (e.g., "/commit", "/kiro:spec-init feature")
-              const plainMatch = text
-                .trim()
-                .match(/^\/([a-zA-Z][\w:-]*)(?:\s+([\s\S]*))?$/);
-              if (plainMatch) {
-                return [
-                  {
-                    type: "command" as const,
-                    name: `/${plainMatch[1]!}`,
-                    args: plainMatch[2]?.trim() || null,
-                  },
-                ];
-              }
-              return userContent;
+              const parsed = parseCommandContent(text);
+              return parsed ? [parsed] : userContent;
             })()
           : userContent;
 

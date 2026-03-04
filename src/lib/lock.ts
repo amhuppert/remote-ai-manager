@@ -10,6 +10,7 @@
  */
 
 import { createLogger } from "./logging";
+import { getGlobalSingleton } from "./global-singleton";
 
 const logger = createLogger("lock");
 
@@ -20,11 +21,10 @@ const logger = createLogger("lock");
 const SESSION_LOCK_KEY = "__cc_session_locks" as const;
 
 function getSessionLocks(): Map<string, Promise<void>> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[SESSION_LOCK_KEY]) {
-    g[SESSION_LOCK_KEY] = new Map<string, Promise<void>>();
-  }
-  return g[SESSION_LOCK_KEY] as Map<string, Promise<void>>;
+  return getGlobalSingleton(
+    SESSION_LOCK_KEY,
+    () => new Map<string, Promise<void>>(),
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -34,11 +34,7 @@ function getSessionLocks(): Map<string, Promise<void>> {
 const PROJECT_LOCK_KEY = "__cc_project_locks" as const;
 
 function getProjectLocks(): Map<string, true> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[PROJECT_LOCK_KEY]) {
-    g[PROJECT_LOCK_KEY] = new Map<string, true>();
-  }
-  return g[PROJECT_LOCK_KEY] as Map<string, true>;
+  return getGlobalSingleton(PROJECT_LOCK_KEY, () => new Map<string, true>());
 }
 
 /** Check whether a project-level merge lock is currently held */

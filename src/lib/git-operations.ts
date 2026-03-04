@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parseDiff } from "./diff";
 import { createLogger } from "./logging";
+import { getErrorMessage } from "@/lib/errors";
 import type { SessionDiff } from "@/types";
 import type { CommitLogEntry } from "./schemas";
 
@@ -370,7 +371,7 @@ export async function squashMerge(
   try {
     await git(projectPath, ["merge", "--squash", branchName]);
   } catch (err) {
-    const stderr = err instanceof Error ? err.message : String(err);
+    const stderr = getErrorMessage(err);
     const isConflict =
       stderr.includes("CONFLICT") || stderr.includes("merge conflict");
 

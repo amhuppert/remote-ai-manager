@@ -10,6 +10,7 @@
 
 import { readConfig } from "./config";
 import { createLogger } from "./logging";
+import { getGlobalSingleton } from "./global-singleton";
 
 const logger = createLogger("query-semaphore");
 
@@ -32,15 +33,15 @@ interface SemaphoreState {
 const GLOBAL_KEY = "__cc_query_semaphore" as const;
 
 function getState(): SemaphoreState {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[GLOBAL_KEY]) {
-    g[GLOBAL_KEY] = {
-      active: 0,
-      queue: [] as Waiter[],
-      limit: DEFAULT_MAX_CONCURRENT,
-    } satisfies SemaphoreState;
-  }
-  return g[GLOBAL_KEY] as SemaphoreState;
+  return getGlobalSingleton(
+    GLOBAL_KEY,
+    () =>
+      ({
+        active: 0,
+        queue: [] as Waiter[],
+        limit: DEFAULT_MAX_CONCURRENT,
+      }) satisfies SemaphoreState,
+  );
 }
 
 /**
@@ -141,9 +142,7 @@ async function refreshLimit(): Promise<void> {
   try {
     const config = await readConfig();
     const state = getState();
-    state.limit =
-      ((config as Record<string, unknown>).maxConcurrentQueries as number) ??
-      DEFAULT_MAX_CONCURRENT;
+    state.limit = config.maxConcurrentQueries ?? DEFAULT_MAX_CONCURRENT;
   } catch {
     // Keep existing limit on config read failure
   }

@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import MergeConflictsPage from "../MergeConflictsPage";
-import { useAddOrUpdateJob } from "@/stores/notification.store";
-import type { ConflictEntry, JobDispatchResponse, SessionState } from "@/types";
+import { useResolveConflictsMutation } from "@/lib/mutations";
+import type { ConflictEntry, SessionState } from "@/types";
 
 export default function ConflictsPage() {
   const params = useParams<{ name: string; session: string }>();
@@ -12,7 +12,10 @@ export default function ConflictsPage() {
   const projectName = params.name;
   const sessionName = decodeURIComponent(params.session);
 
-  const addOrUpdateJob = useAddOrUpdateJob();
+  const resolveConflicts = useResolveConflictsMutation(
+    projectName,
+    sessionName,
+  );
 
   const [conflicts, setConflicts] = useState<ConflictEntry[]>([]);
   const [branchName, setBranchName] = useState("");
@@ -61,80 +64,45 @@ export default function ConflictsPage() {
     void fetchData();
   }, [projectName, sessionName]);
 
-  const handleAcceptAll = useCallback(async () => {
-    try {
-      const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/resolve-conflicts`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          decisions: conflicts.map((c) => ({
-            file: c.file,
-            decision: "approved" as const,
-          })),
-        }),
-      });
-      if (res.status === 202) {
-        const data = (await res.json()) as JobDispatchResponse;
-        addOrUpdateJob({
-          type: "job-status",
-          jobType: data.jobType,
-          status: "running",
-          projectName,
-          sessionName,
-          jobId: data.jobId,
-          branchName: data.branchName,
-        });
-        router.push(
-          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`,
-        );
-      }
-    } catch {
-      setError("Failed to submit conflict resolution");
-    }
-  }, [projectName, sessionName, conflicts, router, addOrUpdateJob]);
+  const handleAcceptAll = useCallback(() => {
+    resolveConflicts.mutate(
+      conflicts.map((c) => ({ file: c.file, decision: "approved" as const })),
+      {
+        onSuccess: () => {
+          router.push(
+            `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`,
+          );
+        },
+        onError: () => setError("Failed to submit conflict resolution"),
+      },
+    );
+  }, [conflicts, resolveConflicts, router, projectName, sessionName]);
 
   const handleFixApproved = useCallback(
-    async (
+    (
       decisions: Array<{
         file: string;
         decision: string;
         feedback: string;
       }>,
     ) => {
-      try {
-        const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/resolve-conflicts`;
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            decisions: decisions.map((d) => ({
-              file: d.file,
-              decision: d.decision,
-              ...(d.feedback ? { feedback: d.feedback } : {}),
-            })),
-          }),
-        });
-        if (res.status === 202) {
-          const data = (await res.json()) as JobDispatchResponse;
-          addOrUpdateJob({
-            type: "job-status",
-            jobType: data.jobType,
-            status: "running",
-            projectName,
-            sessionName,
-            jobId: data.jobId,
-            branchName: data.branchName,
-          });
-          router.push(
-            `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`,
-          );
-        }
-      } catch {
-        setError("Failed to submit conflict resolution");
-      }
+      resolveConflicts.mutate(
+        decisions.map((d) => ({
+          file: d.file,
+          decision: d.decision,
+          ...(d.feedback ? { feedback: d.feedback } : {}),
+        })),
+        {
+          onSuccess: () => {
+            router.push(
+              `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`,
+            );
+          },
+          onError: () => setError("Failed to submit conflict resolution"),
+        },
+      );
     },
-    [projectName, sessionName, router, addOrUpdateJob],
+    [resolveConflicts, router, projectName, sessionName],
   );
 
   const handleBack = useCallback(() => {

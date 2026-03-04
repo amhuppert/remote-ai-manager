@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { getErrorMessage } from "@/lib/errors";
 import type { SessionState } from "@/types";
 import { mutateState } from "./state";
 import { createLogger } from "./logging";
@@ -177,7 +178,7 @@ export async function discoverAndImportWorktrees(
   } catch (err) {
     logger.error("worktrees.discovery_failure", {
       projectPath,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
     return { imported: [], orphanedSessionNames: [] };
   }

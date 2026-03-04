@@ -6,6 +6,7 @@ import {
   workflowKeys,
   presetKeys,
   roadmapItemKeys,
+  notificationKeys,
 } from "@/lib/query-keys";
 import { tracedFetch } from "@/lib/traced-fetch";
 import { useAddOrUpdateJob } from "@/stores/notification.store";
@@ -833,6 +834,151 @@ export function useStartRoadmapFocusMutation(projectName: string) {
       });
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.list(projectName),
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Notification Mutations
+// ---------------------------------------------------------------------------
+
+export function useMarkNotificationAsReadMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (notificationId: string) =>
+      mutationFetch(
+        `/api/notifications/${encodeURIComponent(notificationId)}`,
+        "mark-notification-read",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ read: true }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: notificationKeys.all,
+      });
+    },
+  });
+}
+
+export function useMarkAllNotificationsAsReadMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch(
+        "/api/notifications/mark-all-read",
+        "mark-all-notifications-read",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: notificationKeys.all,
+      });
+    },
+  });
+}
+
+export function useDismissNotificationMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (notificationId: string) =>
+      mutationFetch(
+        `/api/notifications/${encodeURIComponent(notificationId)}`,
+        "dismiss-notification",
+        { method: "DELETE" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: notificationKeys.all,
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Smart Merge (with autoResolve option)
+// ---------------------------------------------------------------------------
+
+export function useSmartMergeMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+  const addOrUpdateJob = useAddOrUpdateJob();
+
+  return useMutation({
+    mutationFn: (params: { autoResolve: boolean }) =>
+      mutationFetch<JobDispatchResponse>(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge`,
+        "smart-merge-session",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ autoResolve: params.autoResolve }),
+        },
+      ),
+    onSuccess: (data) => {
+      addOrUpdateJob({
+        type: "job-status",
+        jobType: data.jobType,
+        status: "running",
+        projectName,
+        sessionName,
+        jobId: data.jobId,
+        branchName: data.branchName,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.list(projectName),
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Conflict Resolution
+// ---------------------------------------------------------------------------
+
+export function useResolveConflictsMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const addOrUpdateJob = useAddOrUpdateJob();
+
+  return useMutation({
+    mutationFn: (
+      decisions: Array<{
+        file: string;
+        decision: string;
+        feedback?: string;
+      }>,
+    ) =>
+      mutationFetch<JobDispatchResponse>(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/resolve-conflicts`,
+        "resolve-conflicts",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ decisions }),
+        },
+      ),
+    onSuccess: (data) => {
+      addOrUpdateJob({
+        type: "job-status",
+        jobType: data.jobType,
+        status: "running",
+        projectName,
+        sessionName,
+        jobId: data.jobId,
+        branchName: data.branchName,
       });
     },
   });

@@ -6,6 +6,7 @@
  */
 
 import { createLogger } from "./logging";
+import { getGlobalSingleton, setGlobalValue } from "./global-singleton";
 
 const logger = createLogger("state-mutex");
 
@@ -23,14 +24,14 @@ interface MutexState {
 }
 
 function getMutexState(): MutexState {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[MUTEX_KEY]) {
-    g[MUTEX_KEY] = {
-      tail: Promise.resolve(),
-      operationCount: 0,
-    } satisfies MutexState;
-  }
-  return g[MUTEX_KEY] as MutexState;
+  return getGlobalSingleton(
+    MUTEX_KEY,
+    () =>
+      ({
+        tail: Promise.resolve(),
+        operationCount: 0,
+      }) satisfies MutexState,
+  );
 }
 
 // ============================================================
@@ -81,9 +82,8 @@ export async function withStateLock<T>(
 
 /** Reset state for testing — clears the promise chain */
 export function _resetForTesting(): void {
-  const g = globalThis as unknown as Record<string, unknown>;
-  g[MUTEX_KEY] = {
+  setGlobalValue(MUTEX_KEY, {
     tail: Promise.resolve(),
     operationCount: 0,
-  } satisfies MutexState;
+  } satisfies MutexState);
 }

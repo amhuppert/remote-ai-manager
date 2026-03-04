@@ -1,4 +1,5 @@
 import { createLogger } from "./logging";
+import { getGlobalSingleton } from "./global-singleton";
 
 const logger = createLogger("abort-registry");
 
@@ -6,11 +7,10 @@ const logger = createLogger("abort-registry");
 const GLOBAL_KEY = "__cc_abort_controllers" as const;
 
 function getRegistry(): Map<string, AbortController> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[GLOBAL_KEY]) {
-    g[GLOBAL_KEY] = new Map<string, AbortController>();
-  }
-  return g[GLOBAL_KEY] as Map<string, AbortController>;
+  return getGlobalSingleton(
+    GLOBAL_KEY,
+    () => new Map<string, AbortController>(),
+  );
 }
 
 /**

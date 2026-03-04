@@ -2,6 +2,7 @@ import type { ImagePayload, SessionState } from "@/types";
 import { executePromptStream } from "./prompt";
 import { dispatchMergeJob } from "./background-jobs";
 import { createNotification } from "./notification-db";
+import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "./logging";
 
 const logger = createLogger("optimistic");
@@ -79,7 +80,7 @@ export async function executeOptimisticWorkflow(params: {
     logger.error("optimistic.failed", {
       projectName,
       sessionName: session.sessionName,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
 
@@ -87,7 +88,7 @@ export async function executeOptimisticWorkflow(params: {
       createNotification({
         type: "merge-failed",
         title: "Optimistic task failed",
-        message: `Optimistic task "${instructions}" failed: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Optimistic task "${instructions}" failed: ${getErrorMessage(err)}`,
         projectName,
         sessionName: session.sessionName,
         branchName: session.branchName,

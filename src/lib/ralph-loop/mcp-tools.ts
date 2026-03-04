@@ -5,6 +5,7 @@ import {
   reportStatusInputSchema,
   updateFixPlanInputSchema,
 } from "@/lib/schemas";
+import { getErrorMessage } from "@/lib/errors";
 import type { ReportStatusInput, UpdateFixPlanInput } from "@/types";
 
 export interface ToolContext {
@@ -156,7 +157,7 @@ export function createToolServer(
               content: [
                 {
                   type: "text" as const,
-                  text: `Error updating plan: ${error instanceof Error ? error.message : String(error)}`,
+                  text: `Error updating plan: ${getErrorMessage(error)}`,
                 },
               ],
               isError: true,

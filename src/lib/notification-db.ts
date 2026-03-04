@@ -5,6 +5,12 @@ import path from "node:path";
 import { getConfigDirPath } from "./config";
 import { broadcast } from "./sse-broadcaster";
 import { createLogger } from "./logging";
+import {
+  getGlobalSingleton,
+  getGlobalValue,
+  setGlobalValue,
+  deleteGlobalValue,
+} from "./global-singleton";
 import type {
   Notification,
   NotificationType,
@@ -22,8 +28,7 @@ const logger = createLogger("notification-db");
 const GLOBAL_KEY = "__cc_notification_db" as const;
 
 function getDb(): InstanceType<typeof Database> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[GLOBAL_KEY]) {
+  return getGlobalSingleton(GLOBAL_KEY, () => {
     const configDir = getConfigDirPath();
     if (!existsSync(configDir)) {
       mkdirSync(configDir, { recursive: true });
@@ -33,9 +38,8 @@ function getDb(): InstanceType<typeof Database> {
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
     initializeSchema(db);
-    g[GLOBAL_KEY] = db;
-  }
-  return g[GLOBAL_KEY] as InstanceType<typeof Database>;
+    return db;
+  });
 }
 
 // ============================================================
@@ -500,19 +504,17 @@ export function notificationExists(id: string): boolean {
 
 /** Reset database for testing — do not use in production */
 export function _resetForTesting(): void {
-  const g = globalThis as unknown as Record<string, unknown>;
-  const db = g[GLOBAL_KEY] as InstanceType<typeof Database> | undefined;
+  const db = getGlobalValue<InstanceType<typeof Database>>(GLOBAL_KEY);
   if (db) {
     db.close();
-    delete g[GLOBAL_KEY];
+    deleteGlobalValue(GLOBAL_KEY);
   }
 }
 
 /** Create an in-memory database for testing */
 export function _createTestDb(): void {
-  const g = globalThis as unknown as Record<string, unknown>;
   // Close existing if any
-  const existing = g[GLOBAL_KEY] as InstanceType<typeof Database> | undefined;
+  const existing = getGlobalValue<InstanceType<typeof Database>>(GLOBAL_KEY);
   if (existing) {
     existing.close();
   }
@@ -520,5 +522,5 @@ export function _createTestDb(): void {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   initializeSchema(db);
-  g[GLOBAL_KEY] = db;
+  setGlobalValue(GLOBAL_KEY, db);
 }

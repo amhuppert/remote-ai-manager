@@ -4,6 +4,7 @@
  */
 
 import type { MessageContentBlock } from "@/types";
+import { getGlobalSingleton } from "../global-singleton";
 
 const GLOBAL_KEY = "__cc_workflow_streams" as const;
 
@@ -19,11 +20,10 @@ export type WorkflowStreamFrame =
 const encoder = new TextEncoder();
 
 function getStreams(): Map<string, Set<ReadableStreamDefaultController>> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[GLOBAL_KEY]) {
-    g[GLOBAL_KEY] = new Map<string, Set<ReadableStreamDefaultController>>();
-  }
-  return g[GLOBAL_KEY] as Map<string, Set<ReadableStreamDefaultController>>;
+  return getGlobalSingleton(
+    GLOBAL_KEY,
+    () => new Map<string, Set<ReadableStreamDefaultController>>(),
+  );
 }
 
 function makeKey(projectPath: string, sessionName: string): string {

@@ -28,10 +28,10 @@ import type {
 } from "@/types";
 import { getSession, mutateSession, mutateConversation } from "../state";
 import { acquireSessionLock } from "../lock";
+import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "../logging";
 import { createConversation } from "../conversations";
-import { appendTranscriptEntry, getTranscriptPath } from "../transcript";
-import type { TranscriptEntry } from "../transcript";
+import { getTranscriptPath } from "../transcript";
 import { broadcast } from "../sse-broadcaster";
 
 import { buildIterationPrompt } from "./prompt-builder";
@@ -51,11 +51,13 @@ import {
 } from "./orchestrator-registry";
 import * as workflowStream from "./workflow-stream-registry";
 import { acquireQuerySlot } from "../query-semaphore";
+import { getProjectDisplayName } from "../project-resolver";
+import { safeAppendTranscriptEntry } from "../transcript";
 
 const logger = createLogger("ralph-loop");
 
 // Prevent nested session detection when CC runs inside Claude Code
-delete process.env.CLAUDECODE;
+import "@/lib/sdk-env";
 
 // ============================================================
 // Public API
@@ -74,7 +76,7 @@ export interface StartOrchestratorParams {
 export function startOrchestrator(params: StartOrchestratorParams): void {
   const { projectPath, session } = params;
   const sessionName = session.sessionName;
-  const projectName = projectPath.split("/").pop() ?? projectPath;
+  const projectName = getProjectDisplayName(projectPath);
 
   // Register in the orchestrator registry with a fresh AbortController
   const abortController = new AbortController();
@@ -90,7 +92,7 @@ export function startOrchestrator(params: StartOrchestratorParams): void {
     (err) => {
       logger.error("orchestrator.fatal", {
         sessionName,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     },
   );
@@ -357,7 +359,7 @@ async function runIteration(
     release = acquireSessionLock(projectPath, sessionName);
 
     // Persist the user prompt in transcript
-    await appendEntry(conversationId, {
+    await safeAppendTranscriptEntry(conversationId, {
       timestamp: new Date().toISOString(),
       type: "user",
       role: "user",
@@ -471,7 +473,7 @@ async function runIteration(
       } else {
         // SDK error
         iterationStatus = "error";
-        const errorMsg = err instanceof Error ? err.message : String(err);
+        const errorMsg = getErrorMessage(err);
         errors.push(errorMsg);
         logger.error("orchestrator.iteration_error", {
           sessionName,
@@ -483,7 +485,7 @@ async function runIteration(
   } catch (err) {
     // Lock acquisition or other pre-query failure
     iterationStatus = "error";
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = getErrorMessage(err);
     errors.push(errorMsg);
     logger.error("orchestrator.iteration_setup_error", {
       sessionName,
@@ -688,7 +690,7 @@ async function processSDKMessage(
   switch (message.type) {
     case "system": {
       const sysMsg = message as SDKSystemMessage;
-      await appendEntry(conversationId, {
+      await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "system",
         raw: { subtype: sysMsg.subtype, session_id: sysMsg.session_id },
@@ -728,7 +730,7 @@ async function processSDKMessage(
         });
       }
 
-      await appendEntry(conversationId, {
+      await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "assistant",
         role: "assistant",
@@ -745,7 +747,7 @@ async function processSDKMessage(
     }
 
     case "user": {
-      await appendEntry(conversationId, {
+      await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "tool_result",
         raw: message,
@@ -761,7 +763,7 @@ async function processSDKMessage(
         resultMsg.num_turns,
       );
 
-      await appendEntry(conversationId, {
+      await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "result",
         raw: resultMsg,
@@ -770,7 +772,7 @@ async function processSDKMessage(
     }
 
     default: {
-      await appendEntry(conversationId, {
+      await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: message.type,
         raw: message,
@@ -853,19 +855,4 @@ function broadcastWorkflowStatus(
       // fire-and-forget
     }
   })();
-}
-
-/** Append a transcript entry, logging failures but not throwing */
-async function appendEntry(
-  conversationId: string,
-  entry: TranscriptEntry,
-): Promise<void> {
-  try {
-    await appendTranscriptEntry(conversationId, entry);
-  } catch (err) {
-    logger.warn("orchestrator.transcript_write_failed", {
-      conversationId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
 }

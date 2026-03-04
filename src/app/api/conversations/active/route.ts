@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { readState } from "@/lib/state";
+import { getProjectDisplayName } from "@/lib/project-resolver";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ export async function GET() {
       // Skip archived projects
       if (state.archivedProjects.includes(projectPath)) continue;
 
-      const projectName = projectPath.split("/").pop() ?? projectPath;
+      const projectName = getProjectDisplayName(projectPath);
 
       for (const session of Object.values(project.sessions)) {
         // Skip archived sessions

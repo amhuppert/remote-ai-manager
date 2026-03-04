@@ -170,12 +170,21 @@ vi.mock("@/lib/mutations", () => ({
   useDeleteSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useCommitMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useMergeMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useSmartMergeMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useResolveConflictsMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useCreateConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useArchiveConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useFinalizeInitializationMutation: () => ({
     mutate: vi.fn(),
     isPending: false,
   }),
+  ApiCallError: class ApiCallError extends Error {
+    code?: string;
+    constructor(message: string, code?: string) {
+      super(message);
+      this.code = code;
+    }
+  },
 }));
 
 // Mock useSendPrompt

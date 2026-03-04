@@ -75,6 +75,7 @@ vi.mock("./conversations", () => ({
 
 vi.mock("./transcript", () => ({
   appendTranscriptEntry: appendTranscriptEntryMock,
+  safeAppendTranscriptEntry: appendTranscriptEntryMock,
   getTranscriptPath: getTranscriptPathMock,
 }));
 
@@ -90,6 +91,12 @@ vi.mock("./query-registry", () => ({
 vi.mock("./ralph-loop/init-tool", () => ({
   createInitToolServer: vi.fn(() => ({ __mock: true })),
 }));
+
+vi.mock("./project-resolver", () => ({
+  getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
+}));
+
+vi.mock("@/lib/sdk-env", () => ({}));
 
 // ---------------------------------------------------------------------------
 // Import module under test

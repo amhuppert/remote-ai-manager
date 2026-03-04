@@ -9,12 +9,14 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { getErrorMessage } from "@/lib/errors";
 import type { SessionState, RalphLoopWorkflow, FixPlanTask } from "@/types";
 import { buildChildEnv } from "../child-env";
 import { mutateSession } from "../state";
 import { createLogger } from "../logging";
 import { readConversationMessages } from "../transcript";
 import { broadcast } from "../sse-broadcaster";
+import { getProjectDisplayName } from "../project-resolver";
 import { createTask } from "./fix-plan-manager";
 
 const logger = createLogger("ralph-loop");
@@ -37,13 +39,13 @@ export interface GeneratePlanParams {
 export function dispatchPlanGeneration(params: GeneratePlanParams): void {
   const { projectPath, session } = params;
   const sessionName = session.sessionName;
-  const projectName = projectPath.split("/").pop() ?? projectPath;
+  const projectName = getProjectDisplayName(projectPath);
 
   void generatePlan(projectPath, sessionName, projectName, session).catch(
     async (err) => {
       logger.error("plan_generator.fatal", {
         sessionName,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       // Ensure the generating flag is cleared even on unexpected errors
       try {
@@ -178,7 +180,7 @@ async function generatePlan(
     } else {
       logger.error("plan_generator.error", {
         sessionName,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
   } finally {

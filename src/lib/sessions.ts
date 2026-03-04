@@ -18,6 +18,8 @@ import { createLogger } from "./logging";
 import { ensureUniqueName } from "./worktrees";
 import { readRepoConfig } from "./repo-config";
 import { stopAllForSession } from "./dev-server-registry";
+import { getErrorMessage } from "@/lib/errors";
+import { getProjectDisplayName } from "./project-resolver";
 import { executeOptimisticWorkflow } from "./optimistic";
 
 const logger = createLogger("sessions");
@@ -247,7 +249,7 @@ export async function provisionSession(
     logger.error("session.create_failure", {
       projectName: projectPath,
       sessionName,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
 
@@ -361,7 +363,7 @@ export async function createSessionOptimistic(
     objective: instructions,
   });
 
-  const projectName = projectPath.split("/").pop() ?? projectPath;
+  const projectName = getProjectDisplayName(projectPath);
 
   // Launch orchestrator as fire-and-forget (not awaited)
   void executeOptimisticWorkflow({
@@ -421,7 +423,7 @@ export async function deleteSession(
       logger.error("session.worktree_remove_failure", {
         sessionName,
         worktreePath: session.worktreePath,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       // Fallback: manual removal
       await rm(session.worktreePath, { recursive: true, force: true });

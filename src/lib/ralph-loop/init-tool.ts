@@ -3,6 +3,7 @@ import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-
 import { z } from "zod";
 import { getSession, mutateSession } from "@/lib/state";
 import { broadcast } from "@/lib/sse-broadcaster";
+import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
 import { createInitialCircuitBreakerState } from "./circuit-breaker";
 import { dispatchPlanGeneration } from "./plan-generator";
@@ -153,13 +154,13 @@ export function createInitToolServer(
           } catch (error) {
             logger.error("init_tool.error", {
               sessionName,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
             return {
               content: [
                 {
                   type: "text" as const,
-                  text: `Failed to create workflow: ${error instanceof Error ? error.message : String(error)}`,
+                  text: `Failed to create workflow: ${getErrorMessage(error)}`,
                 },
               ],
               isError: true,

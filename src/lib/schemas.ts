@@ -48,7 +48,7 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("tool_use"),
     name: z.string(),
-    input: z.any().optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
   }),
   z.object({
     type: z.literal("tool_result"),

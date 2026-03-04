@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { resolveProjectPath } from "@/lib/project-resolver";
+import {
+  resolveProjectPath,
+  getProjectDisplayName,
+} from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
 import { getConversation } from "@/lib/conversations";
 import { queueMessage } from "@/lib/queue-message";
@@ -72,7 +75,7 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  const projectName = projectPath.split("/").pop() ?? projectPath;
+  const projectName = getProjectDisplayName(projectPath);
 
   await queueMessage({
     conversationId,

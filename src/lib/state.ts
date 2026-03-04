@@ -11,6 +11,7 @@ import type {
   RoadmapItemType,
   RoadmapItemStatus,
 } from "@/types";
+import { getErrorMessage } from "@/lib/errors";
 import { managerStateSchema } from "./schemas";
 import { readConfig } from "./config";
 import { createLogger } from "./logging";
@@ -45,7 +46,7 @@ export async function readState(): Promise<ManagerState> {
     logger.error("state.read_failure", {
       errorType: err instanceof Error ? err.constructor.name : typeof err,
       filePath: statePath,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
     return emptyState();
@@ -97,7 +98,7 @@ export async function writeState(
     logger.error("state.rename_failure", {
       tmpPath,
       finalPath: statePath,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
     throw err;

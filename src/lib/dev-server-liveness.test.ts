@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { getGlobalSingleton } from "./global-singleton";
 import type { DevServerEntry } from "./dev-server-registry";
 
 // Mock tailscale
@@ -41,11 +42,10 @@ function createMockEntry(
 }
 
 function getRegistryMap(): Map<string, DevServerEntry> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g["__cc_dev_servers"]) {
-    g["__cc_dev_servers"] = new Map<string, DevServerEntry>();
-  }
-  return g["__cc_dev_servers"] as Map<string, DevServerEntry>;
+  return getGlobalSingleton(
+    "__cc_dev_servers",
+    () => new Map<string, DevServerEntry>(),
+  );
 }
 
 describe("LivenessPoller", () => {

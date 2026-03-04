@@ -1,4 +1,5 @@
 import { createLogger } from "./logging";
+import { getGlobalSingleton } from "./global-singleton";
 
 const logger = createLogger("question-registry");
 
@@ -13,11 +14,10 @@ interface PendingQuestion {
 const GLOBAL_KEY = "__cc_pending_questions" as const;
 
 function getRegistry(): Map<string, PendingQuestion> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[GLOBAL_KEY]) {
-    g[GLOBAL_KEY] = new Map<string, PendingQuestion>();
-  }
-  return g[GLOBAL_KEY] as Map<string, PendingQuestion>;
+  return getGlobalSingleton(
+    GLOBAL_KEY,
+    () => new Map<string, PendingQuestion>(),
+  );
 }
 
 /**

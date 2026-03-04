@@ -19,11 +19,11 @@ import type {
 import { readConfig } from "./config";
 import { mutateConversation } from "./state";
 import { acquireSessionLock } from "./lock";
+import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "./logging";
 import { getConversation, createConversation } from "./conversations";
-import { appendTranscriptEntry, getTranscriptPath } from "./transcript";
+import { getTranscriptPath } from "./transcript";
 import { externalizeImageBlocks } from "./transcript-images";
-import type { TranscriptEntry } from "./transcript";
 import { broadcast } from "./sse-broadcaster";
 import { registerQuestion } from "./question-registry";
 import {
@@ -33,10 +33,12 @@ import {
 import { registerQuery, unregisterQuery } from "./query-registry";
 import { acquireQuerySlot } from "./query-semaphore";
 import { createInitToolServer } from "./ralph-loop/init-tool";
+import { getProjectDisplayName } from "./project-resolver";
+import { safeAppendTranscriptEntry } from "./transcript";
 import { randomUUID } from "node:crypto";
 
 // Prevent nested session detection when CC runs inside Claude Code
-delete process.env.CLAUDECODE;
+import "@/lib/sdk-env";
 
 const logger = createLogger("prompt");
 
@@ -102,7 +104,7 @@ export async function executePromptStream(
   // Resolve model: explicit parameter > config default
   const effectiveModel = modelId ?? config.defaultModel;
 
-  const projectName = projectPath.split("/").pop() ?? projectPath;
+  const projectName = getProjectDisplayName(projectPath);
 
   // Declared here so `finally` can clear it
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -158,7 +160,7 @@ export async function executePromptStream(
       : userContentBlocks;
 
     // Persist the user's prompt in the transcript
-    await appendEntry(conversationId, {
+    await safeAppendTranscriptEntry(conversationId, {
       timestamp: new Date().toISOString(),
       type: "user",
       role: "user",
@@ -396,8 +398,7 @@ export async function executePromptStream(
       ).catch((storeErr) => {
         logger.error("prompt.store_response_failed", {
           sessionName: session.sessionName,
-          error:
-            storeErr instanceof Error ? storeErr.message : String(storeErr),
+          error: getErrorMessage(storeErr),
         });
       });
     } else {
@@ -505,7 +506,7 @@ async function processMessage(
       if (sysMsg.subtype === "init") {
         setSessionId(sysMsg.session_id);
         emit("init", { sessionId: sysMsg.session_id });
-        await appendEntry(conversationId, {
+        await safeAppendTranscriptEntry(conversationId, {
           timestamp,
           type: "system",
           raw: { subtype: "init", session_id: sysMsg.session_id },
@@ -513,7 +514,7 @@ async function processMessage(
       }
       // Other system subtypes (status, compact_boundary, task_*) — log to transcript only
       else {
-        await appendEntry(conversationId, {
+        await safeAppendTranscriptEntry(conversationId, {
           timestamp,
           type: "system",
           raw: message,
@@ -548,7 +549,7 @@ async function processMessage(
         }
       }
 
-      await appendEntry(conversationId, {
+      await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "assistant",
         role: "assistant",
@@ -560,7 +561,7 @@ async function processMessage(
     case "user": {
       // Internal tool_result messages — log to transcript for debugging only.
       // No role field so readConversationMessages filters these out.
-      await appendEntry(conversationId, {
+      await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "tool_result",
         raw: message,
@@ -591,7 +592,7 @@ async function processMessage(
         emit("error", { message: errorMessage });
       }
 
-      await appendEntry(conversationId, {
+      await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "result",
         raw: resultMsg,
@@ -602,7 +603,7 @@ async function processMessage(
     default: {
       // stream_event, tool_progress, hook_*, auth_status, etc.
       // Append to transcript for debugging; no SSE emission
-      await appendEntry(conversationId, {
+      await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: message.type,
         raw: message,
@@ -627,20 +628,5 @@ function mapErrorSubtype(error: SDKResultError): string {
         : "Error during execution";
     default:
       return "Unknown error";
-  }
-}
-
-/** Append a transcript entry, logging failures but not throwing */
-async function appendEntry(
-  conversationId: string,
-  entry: TranscriptEntry,
-): Promise<void> {
-  try {
-    await appendTranscriptEntry(conversationId, entry);
-  } catch (err) {
-    logger.warn("prompt.transcript_write_failed", {
-      conversationId,
-      error: err instanceof Error ? err.message : String(err),
-    });
   }
 }

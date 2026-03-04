@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useSmartMergeMutation, ApiCallError } from "@/lib/mutations";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -84,37 +85,31 @@ export default function SmartMergeDialog({
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
-  const handleSubmit = useCallback(async () => {
+  const merge = useSmartMergeMutation(projectName, sessionName);
+
+  const handleSubmit = useCallback(() => {
     if (submitted) return;
-    try {
-      const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autoResolve }),
-      });
-      if (res.status === 202) {
-        setSubmitted(true);
-      } else {
-        const body = await res
-          .json()
-          .catch(() => ({ error: "Request failed" }));
-        const apiBody = body as { error?: string; code?: string };
-        if (
-          apiBody.code === "SESSION_BUSY" ||
-          apiBody.code === "JOB_ALREADY_RUNNING"
-        ) {
-          setError(
-            "Session is busy — please wait for the current operation to finish.",
-          );
-        } else {
-          setError(apiBody.error ?? "Failed to start merge");
-        }
-      }
-    } catch {
-      setError("Failed to start merge");
-    }
-  }, [submitted, projectName, sessionName, autoResolve]);
+    merge.mutate(
+      { autoResolve },
+      {
+        onSuccess: () => setSubmitted(true),
+        onError: (err) => {
+          if (
+            err instanceof ApiCallError &&
+            (err.code === "SESSION_BUSY" || err.code === "JOB_ALREADY_RUNNING")
+          ) {
+            setError(
+              "Session is busy — please wait for the current operation to finish.",
+            );
+          } else {
+            setError(
+              err instanceof Error ? err.message : "Failed to start merge",
+            );
+          }
+        },
+      },
+    );
+  }, [submitted, autoResolve, merge]);
 
   if (!open) return null;
 

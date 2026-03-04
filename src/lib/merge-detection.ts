@@ -15,7 +15,10 @@ import {
 import { stopAllForSession } from "./dev-server-registry";
 import { broadcast } from "./sse-broadcaster";
 import { createLogger } from "./logging";
+import { getErrorMessage } from "@/lib/errors";
 import type { SessionFinishedEvent } from "@/types";
+
+import { getGlobalValue, setGlobalValue } from "./global-singleton";
 
 const logger = createLogger("merge-detection");
 
@@ -26,13 +29,11 @@ const logger = createLogger("merge-detection");
 const INTERVAL_KEY = "__cc_merge_detection_interval" as const;
 
 function getInterval(): ReturnType<typeof setInterval> | null {
-  const g = globalThis as unknown as Record<string, unknown>;
-  return (g[INTERVAL_KEY] as ReturnType<typeof setInterval> | null) ?? null;
+  return getGlobalValue<ReturnType<typeof setInterval>>(INTERVAL_KEY) ?? null;
 }
 
 function setIntervalRef(ref: ReturnType<typeof setInterval> | null): void {
-  const g = globalThis as unknown as Record<string, unknown>;
-  g[INTERVAL_KEY] = ref;
+  setGlobalValue(INTERVAL_KEY, ref);
 }
 
 // ============================================================
@@ -135,7 +136,7 @@ export async function checkAllSessionsForMerge(): Promise<number> {
           projectPath,
           sessionName,
           branchName,
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
       }
     }
@@ -189,7 +190,7 @@ export async function startMergeDetection(): Promise<void> {
   // Fire initial check immediately (fire-and-forget)
   void checkAllSessionsForMerge().catch((err) => {
     logger.error("merge-detection.initial_check_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   });
 
@@ -197,7 +198,7 @@ export async function startMergeDetection(): Promise<void> {
   const ref = setInterval(() => {
     void checkAllSessionsForMerge().catch((err) => {
       logger.error("merge-detection.cycle_failed", {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     });
   }, intervalMs);

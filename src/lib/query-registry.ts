@@ -9,17 +9,14 @@
 
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { createLogger } from "./logging";
+import { getGlobalSingleton } from "./global-singleton";
 
 const logger = createLogger("query-registry");
 
 const GLOBAL_KEY = "__cc_active_queries" as const;
 
 function getRegistry(): Map<string, Query> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[GLOBAL_KEY]) {
-    g[GLOBAL_KEY] = new Map<string, Query>();
-  }
-  return g[GLOBAL_KEY] as Map<string, Query>;
+  return getGlobalSingleton(GLOBAL_KEY, () => new Map<string, Query>());
 }
 
 /**

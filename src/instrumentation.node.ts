@@ -1,6 +1,7 @@
 import { recoverStaleConversations, recoverStaleWorkflows } from "./lib/state";
 import { startMergeDetection } from "./lib/merge-detection";
 import { initialize as initNotificationDb } from "./lib/notification-db";
+import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "./lib/logging";
 
 const logger = createLogger("startup");
@@ -20,7 +21,7 @@ export async function register() {
     }
   } catch (err) {
     logger.error("startup.recovery_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 
@@ -29,7 +30,7 @@ export async function register() {
     logger.info("startup.notification_db_initialized");
   } catch (err) {
     logger.error("startup.notification_db_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 
@@ -37,7 +38,7 @@ export async function register() {
     await startMergeDetection();
   } catch (err) {
     logger.error("startup.merge_detection_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 }

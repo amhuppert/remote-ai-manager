@@ -4,6 +4,9 @@ import path from "node:path";
 import type { TranscriptMessage, MessageContentBlock } from "@/types";
 import { getConfigDirPath } from "./config";
 import { resolveImageRefs } from "./transcript-images";
+import { createLogger } from "./logging";
+import { getErrorMessage } from "./errors";
+import { parseCommandContent } from "./command-parsing";
 
 // ============================================================
 // Transcript Entry Types
@@ -189,48 +192,8 @@ export async function copyTranscriptUpTo(
 // Read Operations
 // ============================================================
 
-/**
- * Pattern that matches user messages containing slash command invocation tags.
- * Example: "<command-name>/kiro:spec-init</command-name>\n<command-args>notifications</command-args>"
- */
-const COMMAND_NAME_RE = /<command-name>\/?(.+?)<\/command-name>/;
-const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
-
-/**
- * Pattern that matches plain text slash commands typed by users.
- * Example: "/kiro:spec-requirements voice-transcription-integration"
- * Requires the message to start with "/" followed by a command name (letters, digits, colons, hyphens).
- */
-const PLAIN_COMMAND_RE = /^\/([a-zA-Z][\w:-]*)(?:\s+([\s\S]*))?$/;
-
-/**
- * Try to parse a command invocation from a user message's string content.
- * Detects both XML-tagged commands (from prompt templates) and plain text
- * slash commands typed directly by users.
- * Returns a command content block if the message is a slash command, null otherwise.
- */
-export function parseCommandContent(
-  content: string,
-): MessageContentBlock | null {
-  // First try XML-tagged commands (from prompt templates like focus mode)
-  const nameMatch = content.match(COMMAND_NAME_RE);
-  if (nameMatch) {
-    const name = nameMatch[1]!;
-    const argsMatch = content.match(COMMAND_ARGS_RE);
-    const args = argsMatch?.[1]?.trim() || null;
-    return { type: "command" as const, name: `/${name}`, args };
-  }
-
-  // Then try plain text slash commands (e.g., "/commit", "/kiro:spec-init feature")
-  const plainMatch = content.trim().match(PLAIN_COMMAND_RE);
-  if (plainMatch) {
-    const name = plainMatch[1]!;
-    const args = plainMatch[2]?.trim() || null;
-    return { type: "command" as const, name: `/${name}`, args };
-  }
-
-  return null;
-}
+// Re-export from shared module (also used by client-side use-send-prompt.ts)
+export { parseCommandContent } from "./command-parsing";
 
 /**
  * Read conversation messages from a transcript file.
@@ -296,4 +259,31 @@ export async function readConversationMessages(
   }
 
   return messages;
+}
+
+// ============================================================
+// Safe Transcript Write
+// ============================================================
+
+/**
+ * Append a transcript entry, logging failures but not throwing.
+ * Used by prompt.ts and orchestrator.ts for fire-and-forget transcript writes.
+ */
+const transcriptLogger = createLogger("transcript");
+
+export async function safeAppendTranscriptEntry(
+  conversationId: string,
+  entry: TranscriptEntry,
+  logger: {
+    warn: (message: string, meta?: Record<string, unknown>) => void;
+  } = transcriptLogger,
+): Promise<void> {
+  try {
+    await appendTranscriptEntry(conversationId, entry);
+  } catch (err) {
+    logger.warn("transcript_write_failed", {
+      conversationId,
+      error: getErrorMessage(err),
+    });
+  }
 }

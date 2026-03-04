@@ -8,6 +8,12 @@ import * as tailscale from "./tailscale";
 import * as liveness from "./dev-server-liveness";
 import { readConfig } from "./config";
 import { getLanUrl } from "./network";
+import {
+  getGlobalSingleton,
+  getGlobalValue,
+  setGlobalValue,
+} from "./global-singleton";
+import { getErrorMessage } from "@/lib/errors";
 import type { DevServerStatus, DevServerStatusEvent } from "@/types";
 
 const logger = createLogger("dev-server");
@@ -40,11 +46,10 @@ export interface DevServerEntry {
 type RegistryMap = Map<string, DevServerEntry>;
 
 function getRegistry(): RegistryMap {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[GLOBAL_KEY]) {
-    g[GLOBAL_KEY] = new Map<string, DevServerEntry>();
-  }
-  return g[GLOBAL_KEY] as RegistryMap;
+  return getGlobalSingleton(
+    GLOBAL_KEY,
+    () => new Map<string, DevServerEntry>(),
+  );
 }
 
 function makeKey(
@@ -356,7 +361,7 @@ export async function startServer(params: {
           logger.warn("dev-server.remote_url_deferred_error", {
             serverName,
             port,
-            error: err instanceof Error ? err.message : String(err),
+            error: getErrorMessage(err),
           });
         });
       }
@@ -574,8 +579,7 @@ export function getServer(params: {
 
 /** Reset state for testing — do not use in production */
 export function _resetForTesting(): void {
-  const g = globalThis as unknown as Record<string, unknown>;
-  const registry = g[GLOBAL_KEY] as RegistryMap | undefined;
+  const registry = getGlobalValue<RegistryMap>(GLOBAL_KEY);
   if (registry) {
     // Kill all processes
     for (const entry of registry.values()) {
@@ -599,9 +603,8 @@ export function _resetForTesting(): void {
 const SHUTDOWN_KEY = "__cc_dev_server_shutdown_registered" as const;
 
 function registerShutdownHandler(): void {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (g[SHUTDOWN_KEY]) return;
-  g[SHUTDOWN_KEY] = true;
+  if (getGlobalValue<boolean>(SHUTDOWN_KEY)) return;
+  setGlobalValue(SHUTDOWN_KEY, true);
 
   process.on("SIGTERM", () => {
     logger.info("dev-server.shutdown", {

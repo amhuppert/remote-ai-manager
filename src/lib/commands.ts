@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/errors";
 import type { CommandItem } from "@/types";
 
 const logger = createLogger("commands");
@@ -113,7 +114,7 @@ async function scanCommandDir(
         } catch (err) {
           logger.warn("commands.parse_error", {
             file: fullPath,
-            error: err instanceof Error ? err.message : String(err),
+            error: getErrorMessage(err),
           });
         }
       }
@@ -121,7 +122,7 @@ async function scanCommandDir(
   } catch (err) {
     logger.warn("commands.scan_error", {
       dir: dirPath,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 
@@ -186,7 +187,7 @@ async function scanSkillsDir(
   } catch (err) {
     logger.warn("commands.skills_scan_error", {
       dir: dirPath,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 
@@ -276,7 +277,7 @@ async function resolvePluginPaths(): Promise<
     }
   } catch (err) {
     logger.warn("commands.plugin_resolution_error", {
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 

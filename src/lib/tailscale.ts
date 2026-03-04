@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "./logging";
 
 const logger = createLogger("tailscale");
@@ -34,7 +35,7 @@ export async function getHostname(): Promise<string | null> {
     return cachedHostname;
   } catch (err) {
     logger.warn("tailscale.hostname_failure", {
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
     cachedHostname = false;
     return null;
@@ -66,7 +67,7 @@ export async function register(port: number): Promise<string | null> {
   } catch (err) {
     logger.warn("tailscale.register_failure", {
       port,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
     return null;
   }
@@ -83,7 +84,7 @@ export async function unregister(port: number): Promise<void> {
   } catch (err) {
     logger.warn("tailscale.unregister_failure", {
       port,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 }

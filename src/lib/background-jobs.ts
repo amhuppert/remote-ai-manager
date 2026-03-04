@@ -33,8 +33,10 @@ import {
   deriveNotificationType,
   deriveNotificationTitle,
 } from "./notification-db";
+import { getErrorMessage } from "@/lib/errors";
 import type { BackgroundJob, ConflictAnalysis, JobStatusEvent } from "@/types";
 import type { ConflictDecisionInput } from "@/lib/schemas";
+import { getGlobalSingleton } from "./global-singleton";
 
 const logger = createLogger("background-jobs");
 
@@ -66,19 +68,17 @@ const JOB_REGISTRY_KEY = "__cc_background_jobs" as const;
 const ANALYSIS_REGISTRY_KEY = "__cc_conflict_analysis" as const;
 
 function getJobRegistry(): Map<string, BackgroundJob> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[JOB_REGISTRY_KEY]) {
-    g[JOB_REGISTRY_KEY] = new Map<string, BackgroundJob>();
-  }
-  return g[JOB_REGISTRY_KEY] as Map<string, BackgroundJob>;
+  return getGlobalSingleton(
+    JOB_REGISTRY_KEY,
+    () => new Map<string, BackgroundJob>(),
+  );
 }
 
 function getConflictAnalysisRegistry(): Map<string, ConflictAnalysis> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[ANALYSIS_REGISTRY_KEY]) {
-    g[ANALYSIS_REGISTRY_KEY] = new Map<string, ConflictAnalysis>();
-  }
-  return g[ANALYSIS_REGISTRY_KEY] as Map<string, ConflictAnalysis>;
+  return getGlobalSingleton(
+    ANALYSIS_REGISTRY_KEY,
+    () => new Map<string, ConflictAnalysis>(),
+  );
 }
 
 /** Build the canonical key for a session */
@@ -151,7 +151,7 @@ function persistJobRecord(job: BackgroundJob): void {
   } catch (err) {
     logger.error("background-jobs.persist_job_record_failed", {
       jobId: job.jobId,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 }
@@ -190,7 +190,7 @@ function persistTerminalState(job: BackgroundJob): void {
   } catch (err) {
     logger.error("background-jobs.persist_terminal_failed", {
       jobId: job.jobId,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
   }
 }
