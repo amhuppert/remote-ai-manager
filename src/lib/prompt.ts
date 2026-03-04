@@ -69,41 +69,6 @@ export async function executePromptStream(
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
 
-  // Get or create conversation
-  let conversation: ConversationState;
-  if (conversationId) {
-    const existingConv = await getConversation(
-      projectPath,
-      session.sessionName,
-      conversationId,
-    );
-    if (!existingConv) {
-      throw new Error(`Conversation not found: ${conversationId}`);
-    }
-    conversation = existingConv;
-  } else {
-    conversation = await createConversation(projectPath, session.sessionName);
-    conversationId = conversation.id;
-  }
-
-  // Set transcript path eagerly so messages are readable immediately
-  const transcriptPath = await getTranscriptPath(conversationId);
-  if (!conversation.transcriptPath) {
-    await mutateConversation(
-      projectPath,
-      session.sessionName,
-      conversationId,
-      "prompt.setTranscriptPath",
-      (c) => {
-        c.transcriptPath = transcriptPath;
-      },
-    );
-    conversation.transcriptPath = transcriptPath;
-  }
-
-  // Resolve model: explicit parameter > config default
-  const effectiveModel = modelId ?? config.defaultModel;
-
   const projectName = getProjectDisplayName(projectPath);
 
   // Declared here so `finally` can clear it
@@ -111,6 +76,41 @@ export async function executePromptStream(
   let releaseQuerySlot: (() => void) | undefined;
 
   try {
+    // Get or create conversation
+    let conversation: ConversationState;
+    if (conversationId) {
+      const existingConv = await getConversation(
+        projectPath,
+        session.sessionName,
+        conversationId,
+      );
+      if (!existingConv) {
+        throw new Error(`Conversation not found: ${conversationId}`);
+      }
+      conversation = existingConv;
+    } else {
+      conversation = await createConversation(projectPath, session.sessionName);
+      conversationId = conversation.id;
+    }
+
+    // Set transcript path eagerly so messages are readable immediately
+    const transcriptPath = await getTranscriptPath(conversationId);
+    if (!conversation.transcriptPath) {
+      await mutateConversation(
+        projectPath,
+        session.sessionName,
+        conversationId,
+        "prompt.setTranscriptPath",
+        (c) => {
+          c.transcriptPath = transcriptPath;
+        },
+      );
+      conversation.transcriptPath = transcriptPath;
+    }
+
+    // Resolve model: explicit parameter > config default
+    const effectiveModel = modelId ?? config.defaultModel;
+
     // Acquire concurrency slot (waits if at capacity)
     releaseQuerySlot = await acquireQuerySlot(`prompt:${session.sessionName}`);
     // Mark conversation as running
@@ -420,36 +420,39 @@ export async function executePromptStream(
     // Release concurrency slot
     releaseQuerySlot?.();
 
-    // Clean up abort controller and query registrations
-    unregisterAbortController(conversationId);
-    unregisterQuery(conversationId);
+    // Clean up abort controller and query registrations (guard for early failures
+    // before conversationId is assigned — e.g. createConversation() throws)
+    if (conversationId) {
+      unregisterAbortController(conversationId);
+      unregisterQuery(conversationId);
 
-    // Always mark conversation as awaiting when done (even on error)
-    await mutateConversation(
-      projectPath,
-      session.sessionName,
-      conversationId,
-      "prompt.setAwaiting",
-      (c) => {
-        c.status = "awaiting";
-        c.pendingQuestionId = null;
-        c.pendingQuestions = null;
-      },
-    ).catch(() => {
-      // best-effort status reset
-    });
-
-    // Broadcast awaiting status
-    try {
-      broadcast({
-        type: "conversation-status",
-        projectName,
-        sessionName: session.sessionName,
+      // Always mark conversation as awaiting when done (even on error)
+      await mutateConversation(
+        projectPath,
+        session.sessionName,
         conversationId,
-        status: "awaiting",
+        "prompt.setAwaiting",
+        (c) => {
+          c.status = "awaiting";
+          c.pendingQuestionId = null;
+          c.pendingQuestions = null;
+        },
+      ).catch(() => {
+        // best-effort status reset
       });
-    } catch {
-      // fire-and-forget
+
+      // Broadcast awaiting status
+      try {
+        broadcast({
+          type: "conversation-status",
+          projectName,
+          sessionName: session.sessionName,
+          conversationId,
+          status: "awaiting",
+        });
+      } catch {
+        // fire-and-forget
+      }
     }
 
     release();

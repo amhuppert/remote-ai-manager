@@ -116,3 +116,34 @@ export function acquireSessionLock(
     logger.debug("lock.released", { projectPath, sessionName });
   };
 }
+
+/**
+ * Force-release a session lock (for recovery of orphaned locks).
+ * Returns true if a lock was released, false if none was held.
+ */
+export function forceReleaseSessionLock(
+  projectPath: string,
+  sessionName: string,
+): boolean {
+  const key = lockKey(projectPath, sessionName);
+  const locks = getSessionLocks();
+  if (!locks.has(key)) return false;
+  locks.delete(key);
+  logger.warn("lock.force_released", { projectPath, sessionName });
+  return true;
+}
+
+/** List all currently held session locks (for diagnostics). */
+export function getHeldSessionLocks(): Array<{
+  projectPath: string;
+  sessionName: string;
+}> {
+  const locks = getSessionLocks();
+  return Array.from(locks.keys()).map((key) => {
+    const sep = key.indexOf("::");
+    return {
+      projectPath: key.slice(0, sep),
+      sessionName: key.slice(sep + 2),
+    };
+  });
+}
