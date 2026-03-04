@@ -7,6 +7,7 @@ import TooltipProvider from "@/components/TooltipProvider";
 import NotificationsPanelContainer from "@/components/NotificationsPanelContainer";
 import MergeToastContainer from "@/components/MergeToastContainer";
 import DevServerDrawerContainer from "@/components/DevServerDrawerContainer";
+import DevToolsGate from "@/components/DevToolsGate";
 import "./globals.css";
 
 const anybody = Anybody({
@@ -71,7 +72,9 @@ export default function RootLayout({
           <NotificationListener />
           <NotificationsPanelContainer />
           <MergeToastContainer />
-          <DevServerDrawerContainer />
+          <DevToolsGate>
+            <DevServerDrawerContainer />
+          </DevToolsGate>
           <GlobalHotkeyHelp />
           <TooltipProvider />
         </Providers>

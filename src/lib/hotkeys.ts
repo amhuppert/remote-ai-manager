@@ -21,6 +21,7 @@ export type HotkeyId =
   | "lastMessage"
   | "toggleSidebar"
   | "toggleActivePanel"
+  | "toggleDevTools"
   | "nextFile"
   | "prevFile"
   | "nextChange"
@@ -73,6 +74,14 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     keys: "shift+b",
     label: "Toggle active conversations",
     description: "Open or close the active conversations panel",
+    category: "general",
+  },
+  toggleDevTools: {
+    id: "toggleDevTools",
+    keys: "shift+d",
+    label: "Toggle dev tools",
+    description:
+      "Show or hide dev tool buttons (Next.js panel, TanStack Query)",
     category: "general",
   },
   nextMessage: {

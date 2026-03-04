@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+import { useDevToolsEnabled } from "@/stores/dev-tools-visibility.store";
 
 function makeQueryClient(): QueryClient {
   return new QueryClient({
@@ -23,11 +24,12 @@ export default function Providers({
   children: React.ReactNode;
 }): React.JSX.Element {
   const [queryClient] = useState(makeQueryClient);
+  const devToolsEnabled = useDevToolsEnabled();
 
   return (
     <QueryClientProvider client={queryClient}>
       {children}
-      <ReactQueryDevtools initialIsOpen={false} />
+      {devToolsEnabled && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   );
 }
