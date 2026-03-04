@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { buildChildEnv } from "./child-env";
 import { perRepoConfigSchema, type PerRepoConfig } from "./schemas";
 import { hasUncommittedChanges, commitChanges } from "./git-operations";
 import { createLogger } from "./logging";
@@ -59,7 +60,7 @@ export async function runPreMergeValidation(params: {
     await execFileAsync(scriptPath, [], {
       cwd: worktreePath,
       env: {
-        ...process.env,
+        ...buildChildEnv(),
         PROJECT_ROOT: projectPath,
         CLAUDE_PROJECT_DIR: projectPath,
         WORKTREE_PATH: worktreePath,

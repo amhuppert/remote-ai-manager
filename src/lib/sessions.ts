@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
+import { buildChildEnv } from "./child-env";
 import type {
   ConversationState,
   ImagePayload,
@@ -232,7 +233,7 @@ export async function provisionSession(
       await execFileAsync(scriptPath, [], {
         cwd: worktreePath,
         env: {
-          ...process.env,
+          ...buildChildEnv(),
           PROJECT_ROOT: projectPath,
           CLAUDE_PROJECT_DIR: projectPath,
           WORKTREE_PATH: worktreePath,

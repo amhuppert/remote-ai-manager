@@ -10,6 +10,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { SessionState, RalphLoopWorkflow, FixPlanTask } from "@/types";
+import { buildChildEnv } from "../child-env";
 import { mutateSession } from "../state";
 import { createLogger } from "../logging";
 import { readConversationMessages } from "../transcript";
@@ -152,7 +153,7 @@ async function generatePlan(
         maxTurns: undefined,
         persistSession: false,
         abortController,
-        env: { ...process.env, CLAUDECODE: "" },
+        env: { ...buildChildEnv(), CLAUDECODE: "" },
         mcpServers: { "ralph-plan-generator": planToolServer },
         canUseTool: async (toolName: string) => {
           if (toolName === "AskUserQuestion") {

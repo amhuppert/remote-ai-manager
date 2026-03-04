@@ -16,6 +16,7 @@ import type {
   SDKSystemMessage,
   Query,
 } from "@anthropic-ai/claude-agent-sdk";
+import { buildChildEnv } from "../child-env";
 import type {
   SessionState,
   RalphLoopWorkflow,
@@ -378,7 +379,7 @@ async function runIteration(
         cwd: session.worktreePath,
         persistSession: false,
         abortController: iterationAbort,
-        env: { ...process.env, CLAUDECODE: "" },
+        env: { ...buildChildEnv(), CLAUDECODE: "" },
         mcpServers: { "ralph-loop": toolServer },
         canUseTool: async (toolName: string) => {
           if (toolName === "AskUserQuestion") {

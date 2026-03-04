@@ -1,6 +1,7 @@
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import net from "node:net";
+import { buildChildEnv } from "./child-env";
 import { createLogger } from "./logging";
 import { broadcast } from "./sse-broadcaster";
 import * as tailscale from "./tailscale";
@@ -17,26 +18,6 @@ const OUTPUT_BUFFER_SIZE = 50;
 const KILL_GRACE_MS = 5_000;
 const TAILSCALE_POLL_INTERVAL_MS = 500;
 const TAILSCALE_POLL_TIMEOUT_MS = 30_000;
-
-/**
- * Build a sanitized copy of process.env for child dev servers.
- * CC itself is a Next.js server, so its process.env contains internal
- * `__NEXT_PRIVATE_*`, `NODE_CHANNEL_*`, and other vars that confuse or crash
- * a child Next.js (or other Node) process.
- */
-function buildChildEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (
-      key.startsWith("__NEXT_") ||
-      key.startsWith("NODE_CHANNEL_") ||
-      key.startsWith("__TURBOPACK_")
-    ) {
-      delete env[key];
-    }
-  }
-  return env;
-}
 
 /** In-memory state for a single dev server */
 export interface DevServerEntry {

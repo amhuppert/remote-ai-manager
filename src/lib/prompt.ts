@@ -8,6 +8,7 @@ import type {
   SDKUserMessage,
   Query,
 } from "@anthropic-ai/claude-agent-sdk";
+import { buildChildEnv } from "./child-env";
 import type {
   ClaudeModel,
   SessionState,
@@ -213,7 +214,7 @@ export async function executePromptStream(
             : undefined,
         persistSession: true,
         abortController,
-        env: { ...process.env, CLAUDECODE: "" },
+        env: { ...buildChildEnv(), CLAUDECODE: "" },
         ...(initToolServer
           ? { mcpServers: { "ralph-loop-init": initToolServer } }
           : {}),
