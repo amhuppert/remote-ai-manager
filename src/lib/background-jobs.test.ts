@@ -115,7 +115,9 @@ describe("background-jobs", () => {
   let releaseSession: ReturnType<typeof vi.fn>;
   let releaseProject: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Let any background XState actors from previous tests complete
+    await settle();
     vi.clearAllMocks();
     _resetForTesting();
 
