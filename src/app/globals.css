@@ -9439,7 +9439,9 @@ textarea {
 /* ---- Dev Server Drawer (inline toolbar button + dropdown) ---- */
 
 .ds-wrapper {
-  position: relative;
+  position: fixed;
+  bottom: var(--space-md);
+  right: var(--space-md);
   display: inline-flex;
   align-items: center;
   z-index: 81;
@@ -9528,11 +9530,11 @@ textarea {
   z-index: 80;
 }
 
-/* Panel card — dropdown from trigger */
+/* Panel card — popover from trigger (opens upward) */
 .ds-panel {
   position: absolute;
   z-index: 81;
-  top: calc(100% + var(--space-xs));
+  bottom: calc(100% + var(--space-xs));
   right: 0;
   width: 320px;
   max-height: calc(100vh - var(--topbar-height) - 80px);
@@ -9552,7 +9554,7 @@ textarea {
 @keyframes ds-panel-in {
   from {
     opacity: 0;
-    transform: translateY(-4px) scale(0.97);
+    transform: translateY(4px) scale(0.97);
   }
   to {
     opacity: 1;
