@@ -3949,6 +3949,75 @@ textarea {
   color: var(--text-tertiary);
 }
 
+/* Ultrathink rainbow effects */
+@keyframes ultrathink-rainbow-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+@keyframes ultrathink-border-shift {
+  0% {
+    background-position:
+      0 0,
+      0% 50%;
+  }
+  100% {
+    background-position:
+      0 0,
+      200% 50%;
+  }
+}
+
+.ultrathink-rainbow {
+  background: linear-gradient(
+    90deg,
+    #ff6b6b,
+    #ffa500,
+    #ffd93d,
+    #6bcb77,
+    #4d96ff,
+    #9b59b6,
+    #ff6b6b
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: ultrathink-rainbow-shift 3s linear infinite;
+  font-weight: 700;
+}
+
+.prompt-textarea.ultrathink-active {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--bg-surface), var(--bg-surface)) padding-box,
+    linear-gradient(
+        90deg,
+        #ff6b6b,
+        #ffa500,
+        #ffd93d,
+        #6bcb77,
+        #4d96ff,
+        #9b59b6,
+        #ff6b6b
+      )
+      border-box;
+  background-size:
+    100% 100%,
+    200% auto;
+  animation: ultrathink-border-shift 3s linear infinite;
+}
+
+.prompt-textarea.ultrathink-active:focus {
+  box-shadow:
+    0 0 12px rgba(147, 51, 234, 0.25),
+    0 0 12px rgba(59, 130, 246, 0.2);
+}
+
 .send-btn {
   display: flex;
   align-items: center;

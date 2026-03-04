@@ -11,6 +11,54 @@ interface Props {
   content: string;
 }
 
+/**
+ * Rehype plugin that wraps occurrences of "ultrathink" in text nodes
+ * with <span class="ultrathink-rainbow"> for rainbow gradient styling.
+ */
+type HastNode = {
+  type: string;
+  value?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+};
+
+function rehypeUltrathink() {
+  return (tree: HastNode) => {
+    function visit(node: HastNode) {
+      if (!node.children) return;
+      const newChildren: HastNode[] = [];
+      for (const child of node.children) {
+        if (
+          child.type === "text" &&
+          child.value &&
+          /ultrathink/i.test(child.value)
+        ) {
+          const parts = child.value.split(/(ultrathink)/i);
+          for (const part of parts) {
+            if (!part) continue;
+            if (/^ultrathink$/i.test(part)) {
+              newChildren.push({
+                type: "element",
+                tagName: "span",
+                properties: { className: ["ultrathink-rainbow"] },
+                children: [{ type: "text", value: part }],
+              });
+            } else {
+              newChildren.push({ type: "text", value: part });
+            }
+          }
+        } else {
+          visit(child);
+          newChildren.push(child);
+        }
+      }
+      node.children = newChildren;
+    }
+    visit(tree);
+  };
+}
+
 const customStyle: Record<string, React.CSSProperties> = {
   ...atomDark,
   'pre[class*="language-"]': {
@@ -101,6 +149,7 @@ export default memo(function MarkdownContent({
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeUltrathink]}
       components={{
         code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || "");

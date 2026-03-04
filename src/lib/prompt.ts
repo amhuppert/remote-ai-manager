@@ -186,6 +186,14 @@ export async function executePromptStream(
           })
         : null;
 
+    // Detect ultrathink keyword for max reasoning effort
+    const ultrathinkDetected = /\bultrathink\b/i.test(promptText);
+    if (ultrathinkDetected) {
+      logger.info("prompt.ultrathink", {
+        sessionName: session.sessionName,
+      });
+    }
+
     // Create SDK query
     const abortController = new AbortController();
     registerAbortController(conversationId, abortController);
@@ -193,6 +201,7 @@ export async function executePromptStream(
       prompt: sdkPrompt,
       options: {
         model: effectiveModel ?? undefined,
+        ...(ultrathinkDetected ? { effort: "max" as const } : {}),
         systemPrompt: {
           type: "preset",
           preset: "claude_code",

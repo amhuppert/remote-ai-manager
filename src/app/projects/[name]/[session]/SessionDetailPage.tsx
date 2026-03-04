@@ -1292,7 +1292,7 @@ export default function SessionDetailPage({
                     />
                     <textarea
                       ref={textareaRef}
-                      className="prompt-textarea"
+                      className={`prompt-textarea${/\bultrathink\b/i.test(promptText) ? " ultrathink-active" : ""}`}
                       placeholder={
                         isFinished
                           ? "Session is merged and read-only"
