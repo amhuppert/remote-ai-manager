@@ -214,20 +214,12 @@ describe("validateSessionName", () => {
     );
   });
 
-  it("returns error for name starting with special character", () => {
-    const result = validateSessionName("-starts-with-hyphen");
-    expect(result).toContain("must start with a letter or number");
-  });
-
-  it("returns error for name with invalid characters (@, #, .)", () => {
-    expect(validateSessionName("test@name")).toContain(
-      "must start with a letter or number",
+  it("returns error for name with only special characters (no alphanumeric)", () => {
+    expect(validateSessionName("---")).toBe(
+      "Session name must contain at least one letter or number",
     );
-    expect(validateSessionName("test#name")).toContain(
-      "must start with a letter or number",
-    );
-    expect(validateSessionName("test.name")).toContain(
-      "must start with a letter or number",
+    expect(validateSessionName("!@#$%")).toBe(
+      "Session name must contain at least one letter or number",
     );
   });
 
@@ -248,6 +240,16 @@ describe("validateSessionName", () => {
 
   it("returns null for exactly 100 character name", () => {
     expect(validateSessionName("a".repeat(100))).toBeNull();
+  });
+
+  it("returns null for names with special characters (commas, dots, etc.)", () => {
+    expect(validateSessionName("test, with special chars!")).toBeNull();
+    expect(validateSessionName("test@name")).toBeNull();
+    expect(validateSessionName("test#name")).toBeNull();
+    expect(validateSessionName("test.name")).toBeNull();
+    expect(validateSessionName("-starts-with-hyphen")).toBeNull();
+    expect(validateSessionName("feat: add auth")).toBeNull();
+    expect(validateSessionName("fix(login): handle edge case")).toBeNull();
   });
 });
 
@@ -284,6 +286,22 @@ describe("sanitizeBranchName", () => {
 
   it("handles complex mixed input", () => {
     expect(sanitizeBranchName("  Hello World!! ")).toBe("hello-world");
+  });
+
+  it("handles names with commas and special characters", () => {
+    expect(sanitizeBranchName("test, with special chars!")).toBe(
+      "test-with-special-chars",
+    );
+    expect(sanitizeBranchName("feat: add auth")).toBe("feat-add-auth");
+    expect(sanitizeBranchName("fix(login): handle edge case")).toBe(
+      "fix-login-handle-edge-case",
+    );
+    expect(sanitizeBranchName("test@name#value")).toBe("test-name-value");
+  });
+
+  it("returns empty string for names with no alphanumeric characters", () => {
+    expect(sanitizeBranchName("---")).toBe("");
+    expect(sanitizeBranchName("!@#$%")).toBe("");
   });
 
   it("caller adds csm/ prefix (branch name pattern)", () => {
@@ -335,8 +353,8 @@ describe("generateSessionName", () => {
     ).rejects.toThrow("Session name generation returned empty result");
   });
 
-  it("throws when Claude returns invalid name", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("-invalid-name"));
+  it("throws when Claude returns name with no alphanumeric characters", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("---!!!"));
     await expect(
       service.generateSessionName("Bad name", "/projects/repo"),
     ).rejects.toThrow("Generated session name is invalid");
@@ -713,10 +731,24 @@ describe("createSessionFast", () => {
     );
   });
 
-  it("throws for invalid session name", async () => {
+  it("throws for empty session name", async () => {
     await expect(
       service.createSessionFast("/projects/repo", ""),
     ).rejects.toThrow("Session name cannot be empty");
+  });
+
+  it("accepts session names with special characters", async () => {
+    mockGitSuccess();
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "test, with special chars!",
+    );
+
+    expect(session.sessionName).toBe("test, with special chars!");
+    expect(session.branchName).toBe("csm/test-with-special-chars");
+    expect(session.worktreePath).toBe(
+      "/projects/repo/.worktrees/test-with-special-chars",
+    );
   });
 
   it("throws for duplicate session name in same project", async () => {

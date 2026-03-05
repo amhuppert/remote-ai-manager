@@ -12,6 +12,15 @@ import ImageAttachmentPreview from "@/app/projects/[name]/[session]/ImageAttachm
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import type { SessionCreationMode, ImagePayload } from "@/types";
 
+/** Derive a git-safe branch suffix from an arbitrary session name */
+function sanitizeBranchName(sessionName: string): string {
+  return sessionName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 interface CreateSessionModalProps {
   projectName: string;
   open: boolean;
@@ -325,7 +334,13 @@ export default function CreateSessionModal({
                 }}
               />
               <div className="form-hint">
-                Branch name will be derived from the session name
+                {sessionName.trim() && sanitizeBranchName(sessionName) ? (
+                  <>
+                    Branch: <code>csm/{sanitizeBranchName(sessionName)}</code>
+                  </>
+                ) : (
+                  "Branch name will be derived from the session name"
+                )}
               </div>
             </>
           ) : (

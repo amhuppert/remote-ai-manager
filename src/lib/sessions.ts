@@ -36,7 +36,7 @@ export function sanitizeBranchName(sessionName: string): string {
     .replace(/^-|-$/g, "");
 }
 
-/** Validate session name: non-empty, reasonable length, no weird chars */
+/** Validate session name: non-empty, reasonable length, must produce a valid branch suffix */
 export function validateSessionName(name: string): string | null {
   if (!name || name.trim().length === 0) {
     return "Session name cannot be empty";
@@ -44,8 +44,10 @@ export function validateSessionName(name: string): string | null {
   if (name.length > 100) {
     return "Session name must be 100 characters or less";
   }
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/.test(name)) {
-    return "Session name must start with a letter or number and contain only letters, numbers, spaces, hyphens, or underscores";
+  // The display name is stored as-is; we only require that sanitizing it
+  // produces at least one alphanumeric character for a valid branch name.
+  if (sanitizeBranchName(name).length === 0) {
+    return "Session name must contain at least one letter or number";
   }
   return null;
 }
@@ -172,10 +174,9 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       if (!name) {
         throw new Error("Session name generation returned empty result");
       }
-      const validationError = validateSessionName(name);
-      if (validationError) {
+      if (sanitizeBranchName(name).length === 0) {
         throw new Error(
-          `Generated session name is invalid: ${validationError}`,
+          "Generated session name is invalid: must contain at least one letter or number",
         );
       }
       return name;
