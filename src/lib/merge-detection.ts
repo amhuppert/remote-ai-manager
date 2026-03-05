@@ -6,20 +6,23 @@
  */
 
 import path from "node:path";
-import { readState, setSessionFinished } from "./state";
-import { readConfig } from "./config";
 import {
-  isBranchAncestorOfMain,
-  isBranchMentionedInMainLog,
+  readState as defaultReadState,
+  setSessionFinished as defaultSetSessionFinished,
+} from "./state";
+import { readConfig as defaultReadConfig } from "./config";
+import {
+  isBranchAncestorOfMain as defaultIsBranchAncestorOfMain,
+  isBranchMentionedInMainLog as defaultIsBranchMentionedInMainLog,
 } from "./git-operations";
-import { stopAllForSession } from "./dev-server-registry";
+import { stopAllForSession as defaultStopAllForSession } from "./dev-server-registry";
 import {
   broadcast as defaultBroadcast,
   type BroadcastFn,
 } from "./sse-broadcaster";
 import { createLogger } from "./logging";
 import { getErrorMessage } from "@/lib/errors";
-import type { SessionFinishedEvent } from "@/types";
+import type { ManagerState, SessionFinishedEvent } from "@/types";
 
 import { getGlobalValue, setGlobalValue } from "./global-singleton";
 
@@ -40,6 +43,42 @@ function setIntervalRef(ref: ReturnType<typeof setInterval> | null): void {
 }
 
 // ============================================================
+// Dependency Injection
+// ============================================================
+
+export interface MergeDetectionDeps {
+  readState: () => Promise<ManagerState>;
+  readConfig: typeof defaultReadConfig;
+  isBranchAncestorOfMain: (
+    projectPath: string,
+    branchName: string,
+  ) => Promise<boolean>;
+  isBranchMentionedInMainLog: (
+    projectPath: string,
+    branchName: string,
+  ) => Promise<boolean>;
+  setSessionFinished: (
+    projectPath: string,
+    sessionName: string,
+  ) => Promise<void>;
+  stopAllForSession: (params: {
+    projectPath: string;
+    sessionName: string;
+  }) => Promise<void>;
+  broadcast: BroadcastFn;
+}
+
+const defaultDeps: MergeDetectionDeps = {
+  readState: defaultReadState,
+  readConfig: defaultReadConfig,
+  isBranchAncestorOfMain: defaultIsBranchAncestorOfMain,
+  isBranchMentionedInMainLog: defaultIsBranchMentionedInMainLog,
+  setSessionFinished: defaultSetSessionFinished,
+  stopAllForSession: defaultStopAllForSession,
+  broadcast: defaultBroadcast,
+};
+
+// ============================================================
 // Core Detection Logic
 // ============================================================
 
@@ -52,9 +91,10 @@ function setIntervalRef(ref: ReturnType<typeof setInterval> | null): void {
  * Returns the number of sessions newly detected as merged.
  */
 export async function checkAllSessionsForMerge(
-  broadcast: BroadcastFn = defaultBroadcast,
+  deps: Partial<MergeDetectionDeps> = {},
 ): Promise<number> {
-  const state = await readState();
+  const d = { ...defaultDeps, ...deps };
+  const state = await d.readState();
   let detectedCount = 0;
 
   for (const [projectPath, project] of Object.entries(state.projects)) {
@@ -65,7 +105,7 @@ export async function checkAllSessionsForMerge(
 
       try {
         // Strategy 1: ancestor check (regular merge)
-        const isAncestor = await isBranchAncestorOfMain(
+        const isAncestor = await d.isBranchAncestorOfMain(
           projectPath,
           branchName,
         );
@@ -80,12 +120,12 @@ export async function checkAllSessionsForMerge(
 
           // Stop all dev servers before marking session as finished (best-effort)
           try {
-            await stopAllForSession({ projectPath, sessionName });
+            await d.stopAllForSession({ projectPath, sessionName });
           } catch {
             // best-effort: don't block merge detection
           }
 
-          await setSessionFinished(projectPath, sessionName);
+          await d.setSessionFinished(projectPath, sessionName);
           logger.info("merge-detection.persisted", {
             sessionName,
             branchName,
@@ -96,14 +136,14 @@ export async function checkAllSessionsForMerge(
             sessionName,
             branchName,
             "ancestor",
-            broadcast,
+            d.broadcast,
           );
           detectedCount++;
           continue;
         }
 
         // Strategy 2: commit message search (squash/rebase merge)
-        const isMentioned = await isBranchMentionedInMainLog(
+        const isMentioned = await d.isBranchMentionedInMainLog(
           projectPath,
           branchName,
         );
@@ -118,12 +158,12 @@ export async function checkAllSessionsForMerge(
 
           // Stop all dev servers before marking session as finished (best-effort)
           try {
-            await stopAllForSession({ projectPath, sessionName });
+            await d.stopAllForSession({ projectPath, sessionName });
           } catch {
             // best-effort: don't block merge detection
           }
 
-          await setSessionFinished(projectPath, sessionName);
+          await d.setSessionFinished(projectPath, sessionName);
           logger.info("merge-detection.persisted", {
             sessionName,
             branchName,
@@ -134,7 +174,7 @@ export async function checkAllSessionsForMerge(
             sessionName,
             branchName,
             "commit-message",
-            broadcast,
+            d.broadcast,
           );
           detectedCount++;
         }
@@ -187,10 +227,13 @@ function broadcastSessionFinished(
  * Start the background merge detection interval.
  * Safe to call multiple times — clears any existing interval first.
  */
-export async function startMergeDetection(): Promise<void> {
+export async function startMergeDetection(
+  deps: Partial<MergeDetectionDeps> = {},
+): Promise<void> {
   stopMergeDetection();
 
-  const config = await readConfig();
+  const d = { ...defaultDeps, ...deps };
+  const config = await d.readConfig();
   const intervalMs = config.mergeCheckIntervalMs ?? 5 * 60 * 1000;
 
   logger.info("merge-detection.start", { intervalMs });

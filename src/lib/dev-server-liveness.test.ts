@@ -1,25 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { getGlobalSingleton } from "./global-singleton";
 import type { DevServerEntry } from "./dev-server-registry";
-
-// Mock tailscale
-vi.mock("./tailscale", () => ({
-  unregister: vi.fn().mockResolvedValue(undefined),
-}));
-
-// Mock sse-broadcaster
-vi.mock("./sse-broadcaster", () => ({
-  broadcast: vi.fn(),
-}));
-
-// Mock dev-server-registry — provide isPortAlive mock
-const mockIsPortAlive = vi.fn<(port: number) => Promise<boolean>>();
-vi.mock("./dev-server-registry", () => ({
-  isPortAlive: (...args: [number]) => mockIsPortAlive(...args),
-}));
-
-import { broadcast } from "./sse-broadcaster";
 import * as liveness from "./dev-server-liveness";
+import { setLivenessDeps, type LivenessDeps } from "./dev-server-liveness";
+
+// No vi.mock — use setLivenessDeps for DI
+
+const mockBroadcast = vi.fn();
+const mockUnregister = vi.fn().mockResolvedValue(undefined);
+const mockIsPortAlive = vi.fn<(port: number) => Promise<boolean>>();
+
+const mockDeps: LivenessDeps = {
+  broadcast: mockBroadcast,
+  unregister: mockUnregister,
+  isPortAlive: mockIsPortAlive,
+};
 
 function createMockEntry(
   overrides: Partial<DevServerEntry> = {},
@@ -51,6 +46,7 @@ function getRegistryMap(): Map<string, DevServerEntry> {
 describe("LivenessPoller", () => {
   beforeEach(() => {
     liveness._resetForTesting();
+    setLivenessDeps(mockDeps);
     const reg = getRegistryMap();
     reg.clear();
     vi.clearAllMocks();
@@ -87,7 +83,7 @@ describe("LivenessPoller", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(entry.status).toBe("stopped");
-    expect(broadcast).toHaveBeenCalledWith(
+    expect(mockBroadcast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "dev-server-status",
         serverName: "web",

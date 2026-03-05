@@ -1,8 +1,11 @@
 import { createLogger } from "./logging";
-import { broadcast } from "./sse-broadcaster";
+import {
+  broadcast as defaultBroadcast,
+  type BroadcastFn,
+} from "./sse-broadcaster";
 import * as tailscale from "./tailscale";
 import { readConfig } from "./config";
-import { isPortAlive } from "./dev-server-registry";
+import { isPortAlive as defaultIsPortAlive } from "./dev-server-registry";
 import { getGlobalValue, setGlobalValue } from "./global-singleton";
 import type { DevServerEntry } from "./dev-server-registry";
 import type { DevServerStatusEvent } from "@/types";
@@ -10,6 +13,41 @@ import type { DevServerStatusEvent } from "@/types";
 const logger = createLogger("dev-server");
 const GLOBAL_KEY = "__cc_dev_server_liveness" as const;
 const POLL_INTERVAL_MS = 5_000;
+
+// ============================================================
+// Dependency Injection (setDeps pattern)
+// ============================================================
+
+export interface LivenessDeps {
+  broadcast: BroadcastFn;
+  unregister: (port: number) => Promise<void>;
+  isPortAlive: (port: number) => Promise<boolean>;
+}
+
+let _deps: LivenessDeps | null = null;
+
+function getDeps(): LivenessDeps {
+  if (!_deps) {
+    _deps = {
+      broadcast: defaultBroadcast,
+      unregister: tailscale.unregister,
+      isPortAlive: defaultIsPortAlive,
+    };
+  }
+  return _deps;
+}
+
+export function setLivenessDeps(deps: LivenessDeps): void {
+  _deps = deps;
+}
+
+export function _resetLivenessDepsForTesting(): void {
+  _deps = null;
+}
+
+// ============================================================
+// Timer management
+// ============================================================
 
 function getTimerId(): ReturnType<typeof setTimeout> | null {
   return getGlobalValue<ReturnType<typeof setTimeout>>(GLOBAL_KEY) ?? null;
@@ -20,6 +58,7 @@ function setTimerId(id: ReturnType<typeof setTimeout> | null): void {
 }
 
 async function poll(): Promise<void> {
+  const d = getDeps();
   const registryMap =
     getGlobalValue<Map<string, DevServerEntry>>("__cc_dev_servers");
 
@@ -30,7 +69,7 @@ async function poll(): Promise<void> {
 
   for (const [, entry] of registryMap) {
     if (entry.status === "running" && entry.port) {
-      const alive = await isPortAlive(entry.port);
+      const alive = await d.isPortAlive(entry.port);
       if (!alive) {
         logger.warn("dev-server.liveness_dead", {
           serverName: entry.serverName,
@@ -41,7 +80,7 @@ async function poll(): Promise<void> {
         readConfig()
           .then((config) => {
             if (config.tailscaleEnabled) {
-              tailscale.unregister(entry.port!).catch(() => {});
+              d.unregister(entry.port!).catch(() => {});
             }
           })
           .catch(() => {});
@@ -60,7 +99,7 @@ async function poll(): Promise<void> {
           remoteUrl: null,
           errorMessage: null,
         };
-        broadcast(event);
+        d.broadcast(event);
       }
     }
   }
@@ -96,4 +135,5 @@ export function stop(): void {
 /** Reset state for testing */
 export function _resetForTesting(): void {
   stop();
+  _resetLivenessDepsForTesting();
 }

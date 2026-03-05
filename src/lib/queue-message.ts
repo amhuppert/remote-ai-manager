@@ -7,8 +7,8 @@
  */
 
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { getQuery } from "./query-registry";
-import { appendTranscriptEntry } from "./transcript";
+import { getQuery as defaultGetQuery } from "./query-registry";
+import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
 import {
   broadcast as defaultBroadcast,
   type BroadcastFn,
@@ -17,13 +17,27 @@ import { createLogger } from "./logging";
 
 const logger = createLogger("queue-message");
 
+export interface QueueMessageDeps {
+  getQuery: typeof defaultGetQuery;
+  appendTranscriptEntry: typeof defaultAppendTranscriptEntry;
+  broadcast: BroadcastFn;
+}
+
+const defaultDeps: QueueMessageDeps = {
+  getQuery: defaultGetQuery,
+  appendTranscriptEntry: defaultAppendTranscriptEntry,
+  broadcast: defaultBroadcast,
+};
+
 interface QueueMessageParams {
   conversationId: string;
   projectName: string;
   sessionName: string;
   text: string;
-  /** Optional broadcast function for dependency injection (default: SSE broadcaster). */
+  /** @deprecated Use the `deps` parameter instead for DI. */
   broadcast?: BroadcastFn;
+  /** Optional dependency overrides for testing. */
+  deps?: Partial<QueueMessageDeps>;
 }
 
 export async function queueMessage(params: QueueMessageParams): Promise<void> {
@@ -32,10 +46,17 @@ export async function queueMessage(params: QueueMessageParams): Promise<void> {
     projectName,
     sessionName,
     text,
-    broadcast = defaultBroadcast,
+    broadcast: broadcastOverride,
+    deps: depsOverride,
   } = params;
 
-  const q = getQuery(conversationId);
+  const d = {
+    ...defaultDeps,
+    ...depsOverride,
+    ...(broadcastOverride ? { broadcast: broadcastOverride } : {}),
+  };
+
+  const q = d.getQuery(conversationId);
   if (!q) {
     throw new Error(
       `No active query for conversation ${conversationId} — cannot queue message`,
@@ -58,7 +79,7 @@ export async function queueMessage(params: QueueMessageParams): Promise<void> {
   }
 
   // Persist to transcript immediately
-  await appendTranscriptEntry(conversationId, {
+  await d.appendTranscriptEntry(conversationId, {
     timestamp: new Date().toISOString(),
     type: "user",
     role: "user",
@@ -70,7 +91,7 @@ export async function queueMessage(params: QueueMessageParams): Promise<void> {
 
   // Notify connected UI clients
   try {
-    broadcast({
+    d.broadcast({
       type: "message-queued",
       projectName,
       sessionName,

@@ -1,42 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-// ============================================================
-// Mocks — must be declared before any imports from the module
-// ============================================================
-
-vi.mock("./state");
-vi.mock("./config");
-vi.mock("./git-operations");
-vi.mock("./dev-server-registry");
-
 import {
   checkAllSessionsForMerge,
   startMergeDetection,
   stopMergeDetection,
   _resetForTesting,
+  type MergeDetectionDeps,
 } from "./merge-detection";
-import { readState, setSessionFinished } from "./state";
-import { readConfig } from "./config";
-import {
-  isBranchAncestorOfMain,
-  isBranchMentionedInMainLog,
-} from "./git-operations";
-import { stopAllForSession } from "./dev-server-registry";
 import type { ManagerState, SessionFinishedEvent } from "@/types";
-
-// ============================================================
-// Typed mock references
-// ============================================================
-
-const mockReadState = vi.mocked(readState);
-const mockSetSessionFinished = vi.mocked(setSessionFinished);
-const mockReadConfig = vi.mocked(readConfig);
-const mockIsBranchAncestorOfMain = vi.mocked(isBranchAncestorOfMain);
-const mockIsBranchMentionedInMainLog = vi.mocked(isBranchMentionedInMainLog);
-const mockStopAllForSession = vi.mocked(stopAllForSession);
-
-// Injected spy for broadcast (no vi.mock needed)
-const mockBroadcast = vi.fn();
 
 // ============================================================
 // Helpers
@@ -82,6 +52,19 @@ function makeState(
   };
 }
 
+// ============================================================
+// Mock deps
+// ============================================================
+
+let mockBroadcast: ReturnType<typeof vi.fn>;
+let mockReadState: ReturnType<typeof vi.fn>;
+let mockReadConfig: ReturnType<typeof vi.fn>;
+let mockIsBranchAncestorOfMain: ReturnType<typeof vi.fn>;
+let mockIsBranchMentionedInMainLog: ReturnType<typeof vi.fn>;
+let mockSetSessionFinished: ReturnType<typeof vi.fn>;
+let mockStopAllForSession: ReturnType<typeof vi.fn>;
+let deps: MergeDetectionDeps;
+
 function lastBroadcast(): SessionFinishedEvent {
   const calls = mockBroadcast.mock.calls;
   return calls[calls.length - 1]![0] as SessionFinishedEvent;
@@ -95,7 +78,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   _resetForTesting();
 
-  mockReadConfig.mockResolvedValue({
+  mockBroadcast = vi.fn();
+  mockReadState = vi.fn();
+  mockReadConfig = vi.fn().mockResolvedValue({
     baseDir: "/projects",
     ignorePatterns: [],
     stateFilePath: "/config/state.json",
@@ -103,12 +88,20 @@ beforeEach(() => {
     defaultModel: "opus",
     mergeCheckIntervalMs: 5 * 60 * 1000,
   });
+  mockIsBranchAncestorOfMain = vi.fn().mockResolvedValue(false);
+  mockIsBranchMentionedInMainLog = vi.fn().mockResolvedValue(false);
+  mockSetSessionFinished = vi.fn().mockResolvedValue(undefined);
+  mockStopAllForSession = vi.fn().mockResolvedValue(undefined);
 
-  // Default: no merges detected
-  mockIsBranchAncestorOfMain.mockResolvedValue(false);
-  mockIsBranchMentionedInMainLog.mockResolvedValue(false);
-  mockSetSessionFinished.mockResolvedValue(undefined);
-  mockStopAllForSession.mockResolvedValue(undefined);
+  deps = {
+    broadcast: mockBroadcast,
+    readState: mockReadState,
+    readConfig: mockReadConfig,
+    isBranchAncestorOfMain: mockIsBranchAncestorOfMain,
+    isBranchMentionedInMainLog: mockIsBranchMentionedInMainLog,
+    setSessionFinished: mockSetSessionFinished,
+    stopAllForSession: mockStopAllForSession,
+  };
 });
 
 afterEach(() => {
@@ -132,7 +125,7 @@ describe("checkAllSessionsForMerge", () => {
     );
     mockIsBranchAncestorOfMain.mockResolvedValue(true);
 
-    const count = await checkAllSessionsForMerge(mockBroadcast);
+    const count = await checkAllSessionsForMerge(deps);
 
     expect(count).toBe(1);
     expect(mockStopAllForSession).toHaveBeenCalledWith({
@@ -165,7 +158,7 @@ describe("checkAllSessionsForMerge", () => {
     mockIsBranchAncestorOfMain.mockResolvedValue(false);
     mockIsBranchMentionedInMainLog.mockResolvedValue(true);
 
-    const count = await checkAllSessionsForMerge(mockBroadcast);
+    const count = await checkAllSessionsForMerge(deps);
 
     expect(count).toBe(1);
     expect(mockStopAllForSession).toHaveBeenCalledWith({
@@ -192,7 +185,7 @@ describe("checkAllSessionsForMerge", () => {
       }),
     );
 
-    const count = await checkAllSessionsForMerge(mockBroadcast);
+    const count = await checkAllSessionsForMerge(deps);
 
     expect(count).toBe(0);
     expect(mockIsBranchAncestorOfMain).not.toHaveBeenCalled();
@@ -214,7 +207,7 @@ describe("checkAllSessionsForMerge", () => {
     mockIsBranchAncestorOfMain.mockResolvedValue(true);
     mockStopAllForSession.mockRejectedValue(new Error("kill failed"));
 
-    const count = await checkAllSessionsForMerge(mockBroadcast);
+    const count = await checkAllSessionsForMerge(deps);
 
     expect(count).toBe(1);
     expect(mockStopAllForSession).toHaveBeenCalled();
@@ -235,7 +228,7 @@ describe("checkAllSessionsForMerge", () => {
       }),
     );
 
-    const count = await checkAllSessionsForMerge(mockBroadcast);
+    const count = await checkAllSessionsForMerge(deps);
 
     expect(count).toBe(0);
     expect(mockSetSessionFinished).not.toHaveBeenCalled();
@@ -257,7 +250,7 @@ describe("checkAllSessionsForMerge", () => {
     mockIsBranchAncestorOfMain.mockResolvedValue(false);
     mockIsBranchMentionedInMainLog.mockResolvedValue(false);
 
-    const count = await checkAllSessionsForMerge(mockBroadcast);
+    const count = await checkAllSessionsForMerge(deps);
 
     expect(count).toBe(0);
     expect(mockSetSessionFinished).not.toHaveBeenCalled();
@@ -285,7 +278,7 @@ describe("checkAllSessionsForMerge", () => {
       .mockRejectedValueOnce(new Error("git failed"))
       .mockResolvedValueOnce(true);
 
-    const count = await checkAllSessionsForMerge(mockBroadcast);
+    const count = await checkAllSessionsForMerge(deps);
 
     expect(count).toBe(1);
     expect(mockSetSessionFinished).toHaveBeenCalledTimes(1);
@@ -303,7 +296,7 @@ describe("checkAllSessionsForMerge", () => {
     );
     mockIsBranchAncestorOfMain.mockResolvedValue(true);
 
-    await checkAllSessionsForMerge(mockBroadcast);
+    await checkAllSessionsForMerge(deps);
 
     expect(mockIsBranchMentionedInMainLog).not.toHaveBeenCalled();
   });
@@ -358,7 +351,7 @@ describe("checkAllSessionsForMerge", () => {
     mockReadState.mockResolvedValue(state);
     mockIsBranchAncestorOfMain.mockResolvedValue(true);
 
-    const count = await checkAllSessionsForMerge(mockBroadcast);
+    const count = await checkAllSessionsForMerge(deps);
 
     expect(count).toBe(2);
     expect(mockSetSessionFinished).toHaveBeenCalledTimes(2);
@@ -374,7 +367,7 @@ describe("startMergeDetection / stopMergeDetection", () => {
       pinnedProjects: [],
     });
 
-    await startMergeDetection();
+    await startMergeDetection(deps);
 
     // Should not throw
     stopMergeDetection();
@@ -387,8 +380,8 @@ describe("startMergeDetection / stopMergeDetection", () => {
       pinnedProjects: [],
     });
 
-    await startMergeDetection();
-    await startMergeDetection(); // Should clear previous
+    await startMergeDetection(deps);
+    await startMergeDetection(deps); // Should clear previous
 
     // Should not throw
     stopMergeDetection();
@@ -409,7 +402,7 @@ describe("startMergeDetection / stopMergeDetection", () => {
       pinnedProjects: [],
     });
 
-    await startMergeDetection();
+    await startMergeDetection(deps);
 
     // Config was read to get the interval
     expect(mockReadConfig).toHaveBeenCalled();

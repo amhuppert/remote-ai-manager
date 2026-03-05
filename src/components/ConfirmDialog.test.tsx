@@ -18,12 +18,12 @@ describe("ConfirmDialog", () => {
 
   it("renders title, message, and buttons when open=true (Req 7.1)", () => {
     render(<ConfirmDialog {...defaultProps} />);
-    expect(screen.getByText("Delete Item")).toBeDefined();
+    expect(screen.getByText("Delete Item")).toBeInTheDocument();
     expect(
       screen.getByText("Are you sure you want to delete this?"),
-    ).toBeDefined();
-    expect(screen.getByText("Confirm")).toBeDefined();
-    expect(screen.getByText("Cancel")).toBeDefined();
+    ).toBeInTheDocument();
+    expect(screen.getByText("Confirm")).toBeInTheDocument();
+    expect(screen.getByText("Cancel")).toBeInTheDocument();
   });
 
   it("renders nothing when open=false (Req 7.1)", () => {
@@ -56,10 +56,8 @@ describe("ConfirmDialog", () => {
 
   it("calls onCancel when overlay backdrop clicked (Req 7.3)", () => {
     const onCancel = vi.fn();
-    const { container } = render(
-      <ConfirmDialog {...defaultProps} onCancel={onCancel} />,
-    );
-    const overlay = container.querySelector(".modal-overlay")!;
+    render(<ConfirmDialog {...defaultProps} onCancel={onCancel} />);
+    const overlay = screen.getByTestId("modal-overlay");
     fireEvent.click(overlay);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
@@ -84,7 +82,7 @@ describe("ConfirmDialog", () => {
         cancelLabel="No, keep"
       />,
     );
-    expect(screen.getByText("Yes, delete")).toBeDefined();
-    expect(screen.getByText("No, keep")).toBeDefined();
+    expect(screen.getByText("Yes, delete")).toBeInTheDocument();
+    expect(screen.getByText("No, keep")).toBeInTheDocument();
   });
 });

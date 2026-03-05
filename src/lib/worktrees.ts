@@ -1,9 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync as defaultExistsSync } from "node:fs";
 import path from "node:path";
 import { defaultGitClient } from "./git-client";
 import { getErrorMessage } from "@/lib/errors";
-import type { SessionState } from "@/types";
-import { mutateState } from "./state";
+import type { ManagerState, SessionState } from "@/types";
+import { mutateState as defaultMutateState } from "./state";
 import { createLogger } from "./logging";
 
 const logger = createLogger("worktrees");
@@ -142,6 +142,28 @@ export function ensureUniqueName(
 }
 
 // ---------------------------------------------------------------------------
+// Dependency Injection
+// ---------------------------------------------------------------------------
+
+export interface WorktreeDeps {
+  git: (
+    args: string[],
+    cwd: string,
+  ) => Promise<{ stdout: string; stderr: string }>;
+  existsSync: (p: string) => boolean;
+  mutateState: (
+    label: string,
+    mutate: (state: ManagerState) => void | Promise<void>,
+  ) => Promise<void>;
+}
+
+const defaultWorktreeDeps: WorktreeDeps = {
+  git: defaultGitClient.git.bind(defaultGitClient),
+  existsSync: defaultExistsSync,
+  mutateState: defaultMutateState,
+};
+
+// ---------------------------------------------------------------------------
 // Reconciliation
 // ---------------------------------------------------------------------------
 
@@ -160,11 +182,14 @@ export function ensureUniqueName(
 export async function discoverAndImportWorktrees(
   projectPath: string,
   existingSessions: SessionState[],
+  deps: Partial<WorktreeDeps> = {},
 ): Promise<ReconciliationResult> {
+  const d = { ...defaultWorktreeDeps, ...deps };
+
   // Run git worktree list
   let porcelainOutput: string;
   try {
-    const { stdout } = await defaultGitClient.git(
+    const { stdout } = await d.git(
       ["worktree", "list", "--porcelain"],
       projectPath,
     );
@@ -210,7 +235,7 @@ export async function discoverAndImportWorktrees(
       (s) =>
         !s.finished &&
         !discoveredPaths.has(s.worktreePath) &&
-        !existsSync(s.worktreePath),
+        !d.existsSync(s.worktreePath),
     )
     .map((s) => s.sessionName);
 
@@ -259,7 +284,7 @@ export async function discoverAndImportWorktrees(
   }
 
   // Persist atomically
-  await mutateState("reconcileWorktrees", (state) => {
+  await d.mutateState("reconcileWorktrees", (state) => {
     if (!state.projects[projectPath]) {
       state.projects[projectPath] = {
         rootPath: projectPath,

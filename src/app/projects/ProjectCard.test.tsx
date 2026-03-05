@@ -3,22 +3,11 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import ProjectCard from "./ProjectCard";
 
-// Mock next/link
-vi.mock("next/link", () => ({
-  default: ({
-    href,
-    children,
-    className,
-  }: {
-    href: string;
-    children: React.ReactNode;
-    className?: string;
-  }) => (
-    <a href={href} className={className}>
-      {children}
-    </a>
-  ),
-}));
+// Shared mocks
+vi.mock(
+  "next/link",
+  async () => (await import("@/test/component-mocks")).nextLinkMock,
+);
 
 const defaultProps = {
   archived: false,
@@ -26,7 +15,6 @@ const defaultProps = {
   pinned: false,
   menuOpen: false,
   onMenuToggle: vi.fn(),
-
   onArchive: vi.fn(),
   onPin: vi.fn(),
 };
@@ -48,9 +36,11 @@ describe("ProjectCard", () => {
         }}
       />,
     );
-    expect(screen.getByText("my-project")).toBeDefined();
-    expect(screen.getByText("/home/user/projects/my-project")).toBeDefined();
-    expect(screen.getByText("3")).toBeDefined();
+    expect(screen.getByText("my-project")).toBeInTheDocument();
+    expect(
+      screen.getByText("/home/user/projects/my-project"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
   });
 
   it("links to /projects/[name] (Req 1.3)", () => {
@@ -157,7 +147,7 @@ describe("ProjectCard", () => {
   });
 
   it("renders context menu trigger button (Req 12.1)", () => {
-    const { container } = render(
+    render(
       <ProjectCard
         {...defaultProps}
         project={{
@@ -168,7 +158,8 @@ describe("ProjectCard", () => {
         }}
       />,
     );
-    const menuBtn = container.querySelector(".card-menu-btn");
-    expect(menuBtn).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: "Project actions" }),
+    ).toBeInTheDocument();
   });
 });

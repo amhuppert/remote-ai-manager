@@ -1,28 +1,29 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { screen } from "@testing-library/react";
+import { renderWithQuery } from "@/test/component-mocks";
 import SessionsList from "./SessionsList";
 import type { SessionState } from "@/types";
 
-// Mock next/link
-vi.mock("next/link", () => ({
-  default: ({
-    href,
-    children,
-    className,
-  }: {
-    href: string;
-    children: React.ReactNode;
-    className?: string;
-  }) => (
-    <a href={href} className={className}>
-      {children}
-    </a>
-  ),
-}));
+// Shared mocks
+vi.mock(
+  "next/link",
+  async () => (await import("@/test/component-mocks")).nextLinkMock,
+);
+vi.mock(
+  "@/hooks/useVoiceRecorder",
+  async () => (await import("@/test/component-mocks")).voiceRecorderMock,
+);
+vi.mock(
+  "@/hooks/useAppHotkey",
+  async () => (await import("@/test/component-mocks")).appHotkeyMock,
+);
+vi.mock(
+  "@/components/VoiceRecordButton",
+  async () => (await import("@/test/component-mocks")).voiceRecordButtonMock,
+);
 
-// Mock next/navigation
+// File-specific mocks
 const routerPushMock = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -30,7 +31,6 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
-// Mock queries
 const mockSessionsData = {
   data: undefined as SessionState[] | undefined,
   isPending: false,
@@ -48,39 +48,16 @@ vi.mock("@/lib/queries", () => ({
   useRoadmapItemsQuery: () => ({ data: [] }),
 }));
 
-// Mock roadmap items store
 vi.mock("@/stores/roadmap-items.store", () => ({
   useShowArchivedRoadmapItems: () => false,
   useToggleArchivedRoadmapItems: () => vi.fn(),
 }));
 
-// Mock unified panel store
 vi.mock("@/stores/unified-panel.store", () => ({
   useUnifiedPanelOpen: () => false,
   useToggleUnifiedPanel: () => vi.fn(),
 }));
 
-// Mock voice recorder and app hotkey (used by OptimisticDialog and CreateSessionModal)
-vi.mock("@/hooks/useVoiceRecorder", () => ({
-  useVoiceRecorder: vi.fn(() => ({
-    isRecording: false,
-    isProcessing: false,
-    elapsedTime: 0,
-    isAvailable: false,
-    toggleRecording: vi.fn(),
-    stopRecording: vi.fn(),
-  })),
-}));
-
-vi.mock("@/hooks/useAppHotkey", () => ({
-  useAppHotkey: vi.fn(),
-}));
-
-vi.mock("@/components/VoiceRecordButton", () => ({
-  VoiceRecordButton: () => null,
-}));
-
-// Mock mutations
 const deleteMutateMock = vi.fn();
 vi.mock("@/lib/mutations", () => ({
   useCreateSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
@@ -96,7 +73,6 @@ vi.mock("@/lib/mutations", () => ({
   useStartRoadmapFocusMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
-// Mock sessions store
 let storeShowCreateModal = false;
 let storeDeleteTarget: { sessionName: string; projectName: string } | null =
   null;
@@ -170,15 +146,6 @@ const makeSessions = (count: number): SessionState[] =>
     workflow: null,
   }));
 
-function renderWithQuery(ui: React.ReactElement) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
-  );
-}
-
 // ===========================================================================
 // SessionsList Tests
 // ===========================================================================
@@ -187,27 +154,27 @@ describe("SessionsList", () => {
   it("renders table with session rows (Req 2.1, 2.2)", () => {
     mockSessionsData.data = makeSessions(3);
     renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("session-1")).toBeDefined();
-    expect(screen.getByText("session-2")).toBeDefined();
-    expect(screen.getByText("session-3")).toBeDefined();
+    expect(screen.getByText("session-1")).toBeInTheDocument();
+    expect(screen.getByText("session-2")).toBeInTheDocument();
+    expect(screen.getByText("session-3")).toBeInTheDocument();
   });
 
   it("renders empty state when no sessions (Req 2.5)", () => {
     mockSessionsData.data = [];
     renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("No sessions yet")).toBeDefined();
+    expect(screen.getByText("No sessions yet")).toBeInTheDocument();
     expect(
       screen.getByText(
         "Create a session to start working with Claude in this project.",
       ),
-    ).toBeDefined();
+    ).toBeInTheDocument();
   });
 
   it("renders branch names in table (Req 2.2)", () => {
     mockSessionsData.data = makeSessions(2);
     renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("csm/session-1")).toBeDefined();
-    expect(screen.getByText("csm/session-2")).toBeDefined();
+    expect(screen.getByText("csm/session-1")).toBeInTheDocument();
+    expect(screen.getByText("csm/session-2")).toBeInTheDocument();
   });
 
   it("renders status badges (Req 2.3)", () => {
@@ -224,9 +191,9 @@ describe("SessionsList", () => {
   it("renders prompt counts in table (Req 2.2)", () => {
     mockSessionsData.data = makeSessions(3);
     renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("0")).toBeDefined();
-    expect(screen.getByText("3")).toBeDefined();
-    expect(screen.getByText("6")).toBeDefined();
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("6")).toBeInTheDocument();
   });
 
   it("links session name to detail page (Req 2.4)", () => {
@@ -239,23 +206,23 @@ describe("SessionsList", () => {
   it("renders New Session button (Req 3.1)", () => {
     mockSessionsData.data = [];
     renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("New Session")).toBeDefined();
+    expect(screen.getByText("New Session")).toBeInTheDocument();
   });
 
   it("renders table with all column headers (Req 2.1)", () => {
     mockSessionsData.data = makeSessions(1);
     renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("Session")).toBeDefined();
-    expect(screen.getByText("Branch")).toBeDefined();
-    expect(screen.getByText("Status")).toBeDefined();
-    expect(screen.getByText("Last Activity")).toBeDefined();
-    expect(screen.getByText("Prompts")).toBeDefined();
+    expect(screen.getByText("Session")).toBeInTheDocument();
+    expect(screen.getByText("Branch")).toBeInTheDocument();
+    expect(screen.getByText("Status")).toBeInTheDocument();
+    expect(screen.getByText("Last Activity")).toBeInTheDocument();
+    expect(screen.getByText("Prompts")).toBeInTheDocument();
   });
 
   it("shows loading state when pending", () => {
     mockSessionsData.isPending = true;
     renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("Loading sessions...")).toBeDefined();
+    expect(screen.getByText("Loading sessions...")).toBeInTheDocument();
   });
 
   it("renders optimistic badge for optimistic mode sessions", () => {
@@ -276,6 +243,6 @@ describe("SessionsList", () => {
   it("renders Quick Task button for standalone optimistic dialog", () => {
     mockSessionsData.data = [];
     renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("Quick Task")).toBeDefined();
+    expect(screen.getByText("Quick Task")).toBeInTheDocument();
   });
 });

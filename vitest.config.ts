@@ -62,6 +62,7 @@ export default defineConfig({
           name: "unit",
           environment: "node",
           include: ["src/**/*.test.{ts,tsx}"],
+          setupFiles: ["vitest.setup.ts"],
           testTimeout: 15000,
           env: {
             CC_LOG_SILENT: "1",

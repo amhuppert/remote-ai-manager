@@ -91,7 +91,7 @@ describe("CommandAutocomplete", () => {
       renderAutocomplete({ promptText: "/" });
     });
 
-    expect(screen.getByText("Commands")).toBeDefined();
+    expect(screen.getByText("Commands")).toBeInTheDocument();
   });
 
   it("does not show dropdown when promptText does not start with /", () => {
@@ -110,9 +110,9 @@ describe("CommandAutocomplete", () => {
     });
 
     // Items are sorted alphabetically by name (all score 100 for empty query)
-    expect(screen.getByText("/commit")).toBeDefined();
-    expect(screen.getByText("/review")).toBeDefined();
-    expect(screen.getByText("/kiro:spec-init")).toBeDefined();
+    expect(screen.getByText("/commit")).toBeInTheDocument();
+    expect(screen.getByText("/review")).toBeInTheDocument();
+    expect(screen.getByText("/kiro:spec-init")).toBeInTheDocument();
   });
 
   it("filters items by query", async () => {
@@ -133,7 +133,7 @@ describe("CommandAutocomplete", () => {
       renderAutocomplete({ promptText: "/zzznotfound" });
     });
 
-    expect(screen.getByText("No matching commands")).toBeDefined();
+    expect(screen.getByText("No matching commands")).toBeInTheDocument();
   });
 
   it("shows item count in header", async () => {
@@ -141,7 +141,7 @@ describe("CommandAutocomplete", () => {
       renderAutocomplete({ promptText: "/" });
     });
 
-    expect(screen.getByText("3 items")).toBeDefined();
+    expect(screen.getByText("3 items")).toBeInTheDocument();
   });
 
   it("shows keyboard hints in footer", async () => {
@@ -149,9 +149,9 @@ describe("CommandAutocomplete", () => {
       renderAutocomplete({ promptText: "/" });
     });
 
-    expect(screen.getByText("navigate")).toBeDefined();
-    expect(screen.getByText("select")).toBeDefined();
-    expect(screen.getByText("close")).toBeDefined();
+    expect(screen.getByText("navigate")).toBeInTheDocument();
+    expect(screen.getByText("select")).toBeInTheDocument();
+    expect(screen.getByText("close")).toBeInTheDocument();
   });
 
   it("first item is active by default", async () => {

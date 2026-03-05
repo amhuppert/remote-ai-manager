@@ -1,37 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
+import {
+  createPromptRouteHandlers,
+  type PromptRouteDeps,
+} from "./prompt-route-handlers";
 
 // ---------------------------------------------------------------------------
-// Hoisted mocks
+// Mock deps (no vi.mock needed)
 // ---------------------------------------------------------------------------
 
-const {
-  resolveProjectPathMock,
-  getSessionMock,
-  isSessionBusyMock,
-  executePromptStreamMock,
-} = vi.hoisted(() => ({
-  resolveProjectPathMock: vi.fn(),
-  getSessionMock: vi.fn(),
-  isSessionBusyMock: vi.fn(),
-  executePromptStreamMock: vi.fn(),
-}));
-
-vi.mock("@/lib/project-resolver", () => ({
-  resolveProjectPath: resolveProjectPathMock,
-}));
-
-vi.mock("@/lib/state", () => ({
-  getSession: getSessionMock,
-}));
-
-vi.mock("@/lib/lock", () => ({
-  isSessionBusy: isSessionBusyMock,
-}));
-
-vi.mock("@/lib/prompt", () => ({
-  executePromptStream: executePromptStreamMock,
-}));
+function createTestDeps(): PromptRouteDeps {
+  return {
+    resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
+    getSession: vi.fn().mockResolvedValue(testSession),
+    isSessionBusy: vi.fn().mockReturnValue(false),
+    executePromptStream: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -64,16 +49,16 @@ const testSession = {
 };
 
 // ---------------------------------------------------------------------------
-// Reset
+// Setup
 // ---------------------------------------------------------------------------
+
+let deps: PromptRouteDeps;
+let handlers: ReturnType<typeof createPromptRouteHandlers>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.resetModules();
-  resolveProjectPathMock.mockResolvedValue("/projects/my-project");
-  getSessionMock.mockResolvedValue(testSession);
-  isSessionBusyMock.mockReturnValue(false);
-  executePromptStreamMock.mockResolvedValue(undefined);
+  deps = createTestDeps();
+  handlers = createPromptRouteHandlers(deps);
 });
 
 // ===========================================================================
@@ -82,9 +67,7 @@ beforeEach(() => {
 
 describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
   it("returns SSE stream with text/event-stream content type on valid prompt", async () => {
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    const response = await POST(
+    const response = await handlers.POST(
       makeRequest({ prompt: "Hello Claude" }),
       makeParams(),
     );
@@ -95,9 +78,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
   });
 
   it("returns 400 when prompt field is missing", async () => {
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    const response = await POST(makeRequest({}), makeParams());
+    const response = await handlers.POST(makeRequest({}), makeParams());
 
     expect(response.status).toBe(400);
     const body = await response.json();
@@ -107,9 +88,10 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
   });
 
   it("returns 400 when prompt is empty string", async () => {
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    const response = await POST(makeRequest({ prompt: "   " }), makeParams());
+    const response = await handlers.POST(
+      makeRequest({ prompt: "   " }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(400);
     const body = await response.json();
@@ -119,10 +101,8 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
   });
 
   it("returns 404 when project is not found", async () => {
-    resolveProjectPathMock.mockResolvedValue(null);
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    const response = await POST(
+    vi.mocked(deps.resolveProjectPath).mockResolvedValue(null);
+    const response = await handlers.POST(
       makeRequest({ prompt: "test" }),
       makeParams("unknown"),
     );
@@ -133,10 +113,8 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
   });
 
   it("returns 404 when session is not found", async () => {
-    getSessionMock.mockResolvedValue(null);
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    const response = await POST(
+    vi.mocked(deps.getSession).mockResolvedValue(null);
+    const response = await handlers.POST(
       makeRequest({ prompt: "test" }),
       makeParams("my-project", "unknown-session"),
     );
@@ -147,10 +125,11 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
   });
 
   it("returns 409 with SESSION_BUSY code when session is busy", async () => {
-    isSessionBusyMock.mockReturnValue(true);
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    const response = await POST(makeRequest({ prompt: "test" }), makeParams());
+    vi.mocked(deps.isSessionBusy).mockReturnValue(true);
+    const response = await handlers.POST(
+      makeRequest({ prompt: "test" }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(409);
     const body = await response.json();
@@ -159,11 +138,7 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
   });
 
   it("trims prompt text (whitespace-only rejected as empty)", async () => {
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    // Leading/trailing whitespace should be trimmed; a prompt that becomes
-    // non-empty after trimming should succeed.
-    const response = await POST(
+    const response = await handlers.POST(
       makeRequest({ prompt: "  Hello Claude  " }),
       makeParams(),
     );

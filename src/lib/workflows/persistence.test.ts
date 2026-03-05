@@ -1,24 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-// Mock external dependencies (third-party-style side effects)
-vi.mock("@/lib/state", () => ({
-  mutateSession: vi.fn(),
-  readState: vi.fn(),
-}));
-
-import { mutateSession, readState } from "@/lib/state";
 import {
   persistWorkflowSnapshot,
   restoreWorkflowSnapshot,
+  setPersistenceDeps,
   _resetForTesting,
+  type PersistenceDeps,
 } from "./persistence";
 
-const mockMutateSession = vi.mocked(mutateSession);
-const mockReadState = vi.mocked(readState);
+// No vi.mock — use setPersistenceDeps for DI
+const mockMutateSession = vi.fn();
+const mockReadState = vi.fn();
+
+const mockDeps: PersistenceDeps = {
+  mutateSession: mockMutateSession,
+  readState: mockReadState,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   _resetForTesting();
+  setPersistenceDeps(mockDeps);
   vi.useFakeTimers();
 });
 

@@ -1,35 +1,36 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { screen, fireEvent } from "@testing-library/react";
+import { renderWithQuery } from "@/test/component-mocks";
 import SessionDetailPage from "./SessionDetailPage";
 import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 
 // ---------------------------------------------------------------------------
-// Infrastructure mocks — JSDOM limitations only
+// Shared mocks
 // ---------------------------------------------------------------------------
 
-vi.mock("next/link", () => ({
-  default: ({
-    href,
-    children,
-    className,
-  }: {
-    href: string;
-    children: React.ReactNode;
-    className?: string;
-  }) => (
-    <a href={href} className={className}>
-      {children}
-    </a>
-  ),
-}));
+vi.mock(
+  "next/link",
+  async () => (await import("@/test/component-mocks")).nextLinkMock,
+);
+vi.mock(
+  "next/navigation",
+  async () => (await import("@/test/component-mocks")).nextNavigationMock,
+);
+vi.mock(
+  "@/hooks/useVoiceRecorder",
+  async () => (await import("@/test/component-mocks")).voiceRecorderMock,
+);
+vi.mock(
+  "@/hooks/useAppHotkey",
+  async () => (await import("@/test/component-mocks")).appHotkeyMock,
+);
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-}));
+// ---------------------------------------------------------------------------
+// Infrastructure mocks — JSDOM limitations only
+// ---------------------------------------------------------------------------
 
 // ESM-only markdown deps — lightweight stubs
 vi.mock("@/components/MarkdownContent", () => ({
@@ -77,21 +78,6 @@ vi.mock("@/hooks/use-send-prompt", () => ({
 
 vi.mock("@/hooks/use-abort-prompt", () => ({
   useAbortPrompt: () => vi.fn(),
-}));
-
-vi.mock("@/hooks/useVoiceRecorder", () => ({
-  useVoiceRecorder: vi.fn(() => ({
-    isRecording: false,
-    isProcessing: false,
-    elapsedTime: 0,
-    isAvailable: false,
-    toggleRecording: vi.fn(),
-    stopRecording: vi.fn(),
-  })),
-}));
-
-vi.mock("@/hooks/useAppHotkey", () => ({
-  useAppHotkey: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -245,18 +231,13 @@ beforeEach(() => {
 });
 
 function renderPage() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <SessionDetailPage
-        projectName="repo"
-        sessionName="test-session"
-        conversationId="conv-1"
-        defaultModel="sonnet"
-      />
-    </QueryClientProvider>,
+  return renderWithQuery(
+    <SessionDetailPage
+      projectName="repo"
+      sessionName="test-session"
+      conversationId="conv-1"
+      defaultModel="sonnet"
+    />,
   );
 }
 
@@ -273,18 +254,18 @@ describe("SessionDetailPage", () => {
 
   it("renders message content text", () => {
     renderPage();
-    expect(screen.getByText("Hello Claude")).toBeDefined();
-    expect(screen.getByText("Hello! How can I help?")).toBeDefined();
-    expect(screen.getByText("Fix the bug")).toBeDefined();
+    expect(screen.getByText("Hello Claude")).toBeInTheDocument();
+    expect(screen.getByText("Hello! How can I help?")).toBeInTheDocument();
+    expect(screen.getByText("Fix the bug")).toBeInTheDocument();
   });
 
   it("renders empty state when no messages", () => {
     testMessages = [];
     renderPage();
-    expect(screen.getByText("No messages yet")).toBeDefined();
+    expect(screen.getByText("No messages yet")).toBeInTheDocument();
     expect(
       screen.getByText("Send a prompt to start the conversation."),
-    ).toBeDefined();
+    ).toBeInTheDocument();
   });
 
   it("displays session info with branch name and prompt count", () => {
@@ -294,18 +275,18 @@ describe("SessionDetailPage", () => {
       screen.getAllByText("csm/test-session").length,
     ).toBeGreaterThanOrEqual(1);
     // Prompt count rendered as text
-    expect(screen.getByText("5")).toBeDefined();
+    expect(screen.getByText("5")).toBeInTheDocument();
   });
 
   it("shows turn counter with position / total", () => {
     renderPage();
-    expect(screen.getByText("1 / 2")).toBeDefined();
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
   });
 
   it("shows 0 / 0 counter when no messages", () => {
     testMessages = [];
     renderPage();
-    expect(screen.getByText("0 / 0")).toBeDefined();
+    expect(screen.getByText("0 / 0")).toBeInTheDocument();
   });
 
   it("keeps nav buttons always enabled", () => {
@@ -342,7 +323,7 @@ describe("SessionDetailPage", () => {
   it("shows loading state when session query is pending", () => {
     testSessionPending = true;
     renderPage();
-    expect(screen.getByText("Loading session...")).toBeDefined();
+    expect(screen.getByText("Loading session...")).toBeInTheDocument();
   });
 
   describe("fire-and-forget voice mode", () => {

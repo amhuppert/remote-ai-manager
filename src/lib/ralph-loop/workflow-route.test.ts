@@ -2,47 +2,37 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import type { SessionState, RalphLoopWorkflow } from "@/types";
 import { createInitialCircuitBreakerState } from "./circuit-breaker";
+import {
+  createWorkflowRouteHandlers,
+  type WorkflowRouteDeps,
+} from "./workflow-route-handlers";
 
 // ---------------------------------------------------------------------------
-// Mocks
+// Mock deps factory
 // ---------------------------------------------------------------------------
 
-vi.mock("@/lib/project-resolver", () => ({
-  resolveProjectPath: vi.fn(),
-}));
-
-vi.mock("@/lib/state", () => ({
-  getSession: vi.fn(),
-  updateSession: vi.fn(),
-  mutateSession: vi.fn(),
-}));
-
-vi.mock("@/lib/workflows/ralph-loop/workflow-manager", () => ({
-  startWorkflow: vi.fn(),
-  resumeWorkflow: vi.fn(),
-  sendEvent: vi.fn(),
-  hasActiveWorkflow: vi.fn(),
-}));
-
-vi.mock("@/lib/ralph-loop/plan-generator", () => ({
-  dispatchPlanGeneration: vi.fn(),
-}));
-
-vi.mock("@/lib/conversations", () => ({
-  getConversation: vi.fn(),
-}));
-
-vi.mock("@/lib/prompt", () => ({
-  executePromptStream: vi.fn(),
-}));
-
-vi.mock("@/lib/lock", () => ({
-  isSessionBusy: vi.fn().mockReturnValue(false),
-}));
-
-beforeEach(() => {
-  vi.clearAllMocks();
-});
+function makeDeps(
+  overrides: Partial<WorkflowRouteDeps> = {},
+): WorkflowRouteDeps {
+  return {
+    resolveProjectPath: vi.fn().mockResolvedValue("/tmp/projects/test"),
+    getSession: vi.fn().mockResolvedValue(null),
+    mutateSession: vi.fn().mockImplementation(async (_p, _n, _l, mutate) => {
+      const session = makeSession(null);
+      return mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} });
+    }),
+    startWorkflow: vi.fn(),
+    resumeWorkflow: vi.fn(),
+    sendEvent: vi.fn(),
+    hasActiveWorkflow: vi.fn().mockReturnValue(false),
+    dispatchPlanGeneration: vi.fn(),
+    getConversation: vi.fn().mockResolvedValue(null),
+    executePromptStream: vi.fn().mockResolvedValue(undefined),
+    isSessionBusy: vi.fn().mockReturnValue(false),
+    broadcast: vi.fn(),
+    ...overrides,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -115,20 +105,23 @@ const routeParams = Promise.resolve({
 // ---------------------------------------------------------------------------
 
 describe("workflow lifecycle", () => {
+  let deps: WorkflowRouteDeps;
+
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
   it("creates a workflow in planning status", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession, mutateSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const session = makeSession(null);
-    vi.mocked(getSession).mockResolvedValue(session);
-    vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
-      mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
+    vi.mocked(deps.getSession).mockResolvedValue(session);
+    vi.mocked(deps.mutateSession).mockImplementation(
+      async (_p, _n, _l, mutate) =>
+        mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
     );
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/route");
+    const { workflowPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(
+    const response = await workflowPOST(
       makeRequest("/api/workflow", "POST", {
         objective: "Build the feature",
       }),
@@ -139,19 +132,15 @@ describe("workflow lifecycle", () => {
     const body = await response.json();
     expect(body.workflow.status).toBe("planning");
     expect(body.workflow.objective).toBe("Build the feature");
-    expect(mutateSession).toHaveBeenCalled();
+    expect(deps.mutateSession).toHaveBeenCalled();
   });
 
   it("rejects duplicate workflow creation", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(makeSession(makeWorkflow()));
+    vi.mocked(deps.getSession).mockResolvedValue(makeSession(makeWorkflow()));
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/route");
+    const { workflowPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(
+    const response = await workflowPOST(
       makeRequest("/api/workflow", "POST", { objective: "Duplicate" }),
       { params: routeParams },
     );
@@ -162,16 +151,12 @@ describe("workflow lifecycle", () => {
   });
 
   it("returns current workflow state via GET", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const workflow = makeWorkflow({ objective: "Active objective" });
-    vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
+    vi.mocked(deps.getSession).mockResolvedValue(makeSession(workflow));
 
-    const { GET } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/route");
+    const { workflowGET } = createWorkflowRouteHandlers(deps);
 
-    const response = await GET(makeRequest("/api/workflow", "GET"), {
+    const response = await workflowGET(makeRequest("/api/workflow", "GET"), {
       params: routeParams,
     });
 
@@ -186,12 +171,13 @@ describe("workflow lifecycle", () => {
 // ---------------------------------------------------------------------------
 
 describe("confirm and start", () => {
+  let deps: WorkflowRouteDeps;
+
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
   it("starts XState workflow for valid plan", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    const { startWorkflow } =
-      await import("@/lib/workflows/ralph-loop/workflow-manager");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const workflow = makeWorkflow({
       objective: "Do the thing",
       fixPlan: [
@@ -207,25 +193,21 @@ describe("confirm and start", () => {
         },
       ],
     });
-    vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
+    vi.mocked(deps.getSession).mockResolvedValue(makeSession(workflow));
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route");
+    const { confirmPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/confirm", "POST"), {
+    const response = await confirmPOST(makeRequest("/api/confirm", "POST"), {
       params: routeParams,
     });
 
     expect(response.status).toBe(202);
-    expect(startWorkflow).toHaveBeenCalledWith(
+    expect(deps.startWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({ projectPath: "/tmp/projects/test" }),
     );
   });
 
   it("rejects empty objective", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const workflow = makeWorkflow({
       objective: "",
       fixPlan: [
@@ -241,12 +223,11 @@ describe("confirm and start", () => {
         },
       ],
     });
-    vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
+    vi.mocked(deps.getSession).mockResolvedValue(makeSession(workflow));
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route");
+    const { confirmPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/confirm", "POST"), {
+    const response = await confirmPOST(makeRequest("/api/confirm", "POST"), {
       params: routeParams,
     });
 
@@ -256,16 +237,12 @@ describe("confirm and start", () => {
   });
 
   it("rejects empty fix plan", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const workflow = makeWorkflow({ objective: "Good objective", fixPlan: [] });
-    vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
+    vi.mocked(deps.getSession).mockResolvedValue(makeSession(workflow));
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route");
+    const { confirmPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/confirm", "POST"), {
+    const response = await confirmPOST(makeRequest("/api/confirm", "POST"), {
       params: routeParams,
     });
 
@@ -275,16 +252,12 @@ describe("confirm and start", () => {
   });
 
   it("rejects confirm when not in planning phase", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const workflow = makeWorkflow({ status: "running" });
-    vi.mocked(getSession).mockResolvedValue(makeSession(workflow));
+    vi.mocked(deps.getSession).mockResolvedValue(makeSession(workflow));
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/confirm/route");
+    const { confirmPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/confirm", "POST"), {
+    const response = await confirmPOST(makeRequest("/api/confirm", "POST"), {
       params: routeParams,
     });
 
@@ -297,26 +270,26 @@ describe("confirm and start", () => {
 // ---------------------------------------------------------------------------
 
 describe("pause", () => {
+  let deps: WorkflowRouteDeps;
+
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
   it("sends PAUSE event for running workflow with active actor", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    const { sendEvent, hasActiveWorkflow } =
-      await import("@/lib/workflows/ralph-loop/workflow-manager");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
+    vi.mocked(deps.getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "running" })),
     );
-    vi.mocked(hasActiveWorkflow).mockReturnValue(true);
+    vi.mocked(deps.hasActiveWorkflow).mockReturnValue(true);
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/pause/route");
+    const { pausePOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/pause", "POST"), {
+    const response = await pausePOST(makeRequest("/api/pause", "POST"), {
       params: routeParams,
     });
 
     expect(response.status).toBe(200);
-    expect(sendEvent).toHaveBeenCalledWith(
+    expect(deps.sendEvent).toHaveBeenCalledWith(
       "/tmp/projects/test",
       "test-session",
       { type: "PAUSE" },
@@ -324,17 +297,13 @@ describe("pause", () => {
   });
 
   it("rejects pause for non-running workflow", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
+    vi.mocked(deps.getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "paused" })),
     );
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/pause/route");
+    const { pausePOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/pause", "POST"), {
+    const response = await pausePOST(makeRequest("/api/pause", "POST"), {
       params: routeParams,
     });
 
@@ -343,68 +312,59 @@ describe("pause", () => {
 });
 
 describe("resume", () => {
+  let deps: WorkflowRouteDeps;
+
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
   it("resumes a paused workflow via XState workflow manager", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    const { resumeWorkflow } =
-      await import("@/lib/workflows/ralph-loop/workflow-manager");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
+    vi.mocked(deps.getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "paused" })),
     );
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/resume/route");
+    const { resumePOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/resume", "POST"), {
+    const response = await resumePOST(makeRequest("/api/resume", "POST"), {
       params: routeParams,
     });
 
     expect(response.status).toBe(202);
-    expect(resumeWorkflow).toHaveBeenCalled();
+    expect(deps.resumeWorkflow).toHaveBeenCalled();
   });
 
   it("resumes a halted workflow, clearing halt reason", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession, mutateSession } = await import("@/lib/state");
-    const { resumeWorkflow } =
-      await import("@/lib/workflows/ralph-loop/workflow-manager");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const session = makeSession(
       makeWorkflow({
         status: "halted",
         haltReason: { type: "circuit_breaker", reason: "no_progress" },
       }),
     );
-    vi.mocked(getSession).mockResolvedValue(session);
-    vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
-      mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
+    vi.mocked(deps.getSession).mockResolvedValue(session);
+    vi.mocked(deps.mutateSession).mockImplementation(
+      async (_p, _n, _l, mutate) =>
+        mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
     );
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/resume/route");
+    const { resumePOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/resume", "POST"), {
+    const response = await resumePOST(makeRequest("/api/resume", "POST"), {
       params: routeParams,
     });
 
     expect(response.status).toBe(202);
-    expect(resumeWorkflow).toHaveBeenCalled();
-    expect(mutateSession).toHaveBeenCalled();
+    expect(deps.resumeWorkflow).toHaveBeenCalled();
+    expect(deps.mutateSession).toHaveBeenCalled();
   });
 
   it("rejects resume for running workflow", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
+    vi.mocked(deps.getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "running" })),
     );
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/resume/route");
+    const { resumePOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/resume", "POST"), {
+    const response = await resumePOST(makeRequest("/api/resume", "POST"), {
       params: routeParams,
     });
 
@@ -413,26 +373,26 @@ describe("resume", () => {
 });
 
 describe("abort", () => {
+  let deps: WorkflowRouteDeps;
+
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
   it("sends ABORT event for running workflow with active actor", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    const { sendEvent, hasActiveWorkflow } =
-      await import("@/lib/workflows/ralph-loop/workflow-manager");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
+    vi.mocked(deps.getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "running" })),
     );
-    vi.mocked(hasActiveWorkflow).mockReturnValue(true);
+    vi.mocked(deps.hasActiveWorkflow).mockReturnValue(true);
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/abort/route");
+    const { abortPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/abort", "POST"), {
+    const response = await abortPOST(makeRequest("/api/abort", "POST"), {
       params: routeParams,
     });
 
     expect(response.status).toBe(200);
-    expect(sendEvent).toHaveBeenCalledWith(
+    expect(deps.sendEvent).toHaveBeenCalledWith(
       "/tmp/projects/test",
       "test-session",
       { type: "ABORT" },
@@ -440,41 +400,32 @@ describe("abort", () => {
   });
 
   it("aborts a paused workflow directly when no active actor", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession, mutateSession } = await import("@/lib/state");
-    const { hasActiveWorkflow } =
-      await import("@/lib/workflows/ralph-loop/workflow-manager");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const session = makeSession(makeWorkflow({ status: "paused" }));
-    vi.mocked(getSession).mockResolvedValue(session);
-    vi.mocked(hasActiveWorkflow).mockReturnValue(false);
-    vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
-      mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
+    vi.mocked(deps.getSession).mockResolvedValue(session);
+    vi.mocked(deps.hasActiveWorkflow).mockReturnValue(false);
+    vi.mocked(deps.mutateSession).mockImplementation(
+      async (_p, _n, _l, mutate) =>
+        mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
     );
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/abort/route");
+    const { abortPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/abort", "POST"), {
+    const response = await abortPOST(makeRequest("/api/abort", "POST"), {
       params: routeParams,
     });
 
     expect(response.status).toBe(200);
-    expect(mutateSession).toHaveBeenCalled();
+    expect(deps.mutateSession).toHaveBeenCalled();
   });
 
   it("rejects abort for completed workflow", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
+    vi.mocked(deps.getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "completed" })),
     );
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/abort/route");
+    const { abortPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(makeRequest("/api/abort", "POST"), {
+    const response = await abortPOST(makeRequest("/api/abort", "POST"), {
       params: routeParams,
     });
 
@@ -487,18 +438,21 @@ describe("abort", () => {
 // ---------------------------------------------------------------------------
 
 describe("fix plan update", () => {
+  let deps: WorkflowRouteDeps;
+
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
   it("updates fix plan during planning phase", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession, mutateSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const session = makeSession(makeWorkflow({ status: "planning" }));
-    vi.mocked(getSession).mockResolvedValue(session);
-    vi.mocked(mutateSession).mockImplementation(async (_p, _n, _l, mutate) =>
-      mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
+    vi.mocked(deps.getSession).mockResolvedValue(session);
+    vi.mocked(deps.mutateSession).mockImplementation(
+      async (_p, _n, _l, mutate) =>
+        mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
     );
 
-    const { PUT } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/fix-plan/route");
+    const { fixPlanPUT } = createWorkflowRouteHandlers(deps);
 
     const tasks = [
       {
@@ -513,7 +467,7 @@ describe("fix plan update", () => {
       },
     ];
 
-    const response = await PUT(
+    const response = await fixPlanPUT(
       makeRequest("/api/fix-plan", "PUT", { fixPlan: tasks }),
       { params: routeParams },
     );
@@ -522,21 +476,17 @@ describe("fix plan update", () => {
     const body = await response.json();
     expect(body.fixPlan).toHaveLength(1);
     expect(body.fixPlan[0].description).toBe("New task");
-    expect(mutateSession).toHaveBeenCalled();
+    expect(deps.mutateSession).toHaveBeenCalled();
   });
 
   it("rejects fix plan update during running phase", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
-    vi.mocked(getSession).mockResolvedValue(
+    vi.mocked(deps.getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "running" })),
     );
 
-    const { PUT } =
-      await import("@/app/api/projects/[name]/sessions/[session]/workflow/fix-plan/route");
+    const { fixPlanPUT } = createWorkflowRouteHandlers(deps);
 
-    const response = await PUT(
+    const response = await fixPlanPUT(
       makeRequest("/api/fix-plan", "PUT", { fixPlan: [] }),
       { params: routeParams },
     );
@@ -550,14 +500,16 @@ describe("fix plan update", () => {
 // ---------------------------------------------------------------------------
 
 describe("prompt route workflow guards", () => {
+  let deps: WorkflowRouteDeps;
+
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
   it("rejects prompts to iteration conversations", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { getSession } = await import("@/lib/state");
-    const { getConversation } = await import("@/lib/conversations");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/tmp/projects/test");
     const session = makeSession(makeWorkflow({ status: "running" }));
-    vi.mocked(getSession).mockResolvedValue(session);
-    vi.mocked(getConversation).mockResolvedValue({
+    vi.mocked(deps.getSession).mockResolvedValue(session);
+    vi.mocked(deps.getConversation).mockResolvedValue({
       id: "conv-1",
       role: "iteration",
       status: "awaiting",
@@ -584,10 +536,9 @@ describe("prompt route workflow guards", () => {
       conversationId: "conv-1",
     });
 
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/prompt/route");
+    const { conversationPromptPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await POST(
+    const response = await conversationPromptPOST(
       makeRequest("/api/prompt", "POST", { prompt: "Hello" }),
       { params: convRouteParams },
     );

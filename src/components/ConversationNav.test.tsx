@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import "@testing-library/jest-dom/vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import ConversationNav from "./ConversationNav";
 
@@ -62,12 +61,12 @@ describe("ConversationNav", () => {
 
   it("shows '0 / 0' when empty", () => {
     render(<ConversationNav currentTurn={0} totalTurns={0} {...handlers} />);
-    expect(screen.getByText("0 / 0")).toBeDefined();
+    expect(screen.getByText("0 / 0")).toBeInTheDocument();
   });
 
   it("shows 1-indexed counter for current position", () => {
     render(<ConversationNav currentTurn={4} totalTurns={12} {...handlers} />);
-    expect(screen.getByText("5 / 12")).toBeDefined();
+    expect(screen.getByText("5 / 12")).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------

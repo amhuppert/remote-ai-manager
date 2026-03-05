@@ -57,16 +57,16 @@ describe("DiffPanel", () => {
     // With no diff files, DiffPanel defaults to "Commits" tab
     // Click the "Uncommitted" tab to see the empty diff state
     fireEvent.click(screen.getByText("Uncommitted"));
-    expect(screen.getByText("No changes")).toBeDefined();
+    expect(screen.getByText("No changes")).toBeInTheDocument();
     expect(
       screen.getByText("This session has no uncommitted changes."),
-    ).toBeDefined();
+    ).toBeInTheDocument();
   });
 
   it("renders panel header with totals (Req 5.1)", () => {
     const { container } = render(<DiffPanel diff={sampleDiff} />);
-    expect(screen.getByText("Diff vs main")).toBeDefined();
-    expect(screen.getByText("+15")).toBeDefined();
+    expect(screen.getByText("Diff vs main")).toBeInTheDocument();
+    expect(screen.getByText("+15")).toBeInTheDocument();
     // "-3" appears in both header and per-file stat, use container query
     const header = container.querySelector(".panel-header")!;
     expect(header.textContent).toContain("-3");
@@ -75,8 +75,8 @@ describe("DiffPanel", () => {
 
   it("renders file paths and per-file stats (Req 5.2)", () => {
     const { container } = render(<DiffPanel diff={sampleDiff} />);
-    expect(screen.getByText("src/index.ts")).toBeDefined();
-    expect(screen.getByText("README.md")).toBeDefined();
+    expect(screen.getByText("src/index.ts")).toBeInTheDocument();
+    expect(screen.getByText("README.md")).toBeInTheDocument();
     // Per-file stats via container queries (avoid duplicate text matches)
     const stats = container.querySelectorAll(".diff-file-stat");
     expect(stats.length).toBe(2);
@@ -146,8 +146,8 @@ describe("DiffPanel", () => {
 
   it("renders file and hunk navigation buttons (Req 5.5)", () => {
     render(<DiffPanel diff={sampleDiff} />);
-    expect(screen.getByText("Files")).toBeDefined();
-    expect(screen.getByText("Changes")).toBeDefined();
+    expect(screen.getByText("Files")).toBeInTheDocument();
+    expect(screen.getByText("Changes")).toBeInTheDocument();
   });
 
   it("shows '1 file' singular when only one file (Req 5.1)", () => {

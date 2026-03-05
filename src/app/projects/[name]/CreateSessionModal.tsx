@@ -272,6 +272,7 @@ export default function CreateSessionModal({
   return (
     <div
       className="modal-overlay"
+      data-testid="modal-overlay"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

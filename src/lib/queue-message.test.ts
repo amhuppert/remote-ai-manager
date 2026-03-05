@@ -1,34 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { queueMessage, type QueueMessageDeps } from "./queue-message";
 
 // ---------------------------------------------------------------------------
-// Hoisted mocks (only for modules that don't support DI yet)
+// Mock deps (no vi.mock needed)
 // ---------------------------------------------------------------------------
 
-const { getQueryMock, appendTranscriptEntryMock, getTranscriptPathMock } =
-  vi.hoisted(() => ({
-    getQueryMock: vi.fn(),
-    appendTranscriptEntryMock: vi.fn(),
-    getTranscriptPathMock: vi.fn(),
-  }));
-
-vi.mock("./query-registry", () => ({
-  getQuery: getQueryMock,
-}));
-
-vi.mock("./transcript", () => ({
-  appendTranscriptEntry: appendTranscriptEntryMock,
-  getTranscriptPath: getTranscriptPathMock,
-}));
-
-// ---------------------------------------------------------------------------
-// Import module under test
-// ---------------------------------------------------------------------------
-import { queueMessage } from "./queue-message";
-
-// ---------------------------------------------------------------------------
-// Injected spy for broadcast (no vi.mock needed)
-// ---------------------------------------------------------------------------
+const getQueryMock = vi.fn();
+const appendTranscriptEntryMock = vi.fn();
 const broadcastMock = vi.fn();
+
+const deps: QueueMessageDeps = {
+  getQuery: getQueryMock,
+  appendTranscriptEntry: appendTranscriptEntryMock,
+  broadcast: broadcastMock,
+};
 
 // ---------------------------------------------------------------------------
 // Reset
@@ -37,7 +22,6 @@ const broadcastMock = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   appendTranscriptEntryMock.mockResolvedValue(undefined);
-  getTranscriptPathMock.mockResolvedValue("/tmp/cc/transcripts/conv-123.jsonl");
 });
 
 // ===========================================================================
@@ -54,7 +38,7 @@ describe("queueMessage", () => {
         projectName: "my-project",
         sessionName: "my-session",
         text: "follow up message",
-        broadcast: broadcastMock,
+        deps,
       }),
     ).rejects.toThrow("No active query");
   });
@@ -68,7 +52,7 @@ describe("queueMessage", () => {
       projectName: "my-project",
       sessionName: "my-session",
       text: "follow up message",
-      broadcast: broadcastMock,
+      deps,
     });
 
     expect(streamInputMock).toHaveBeenCalledTimes(1);
@@ -101,7 +85,7 @@ describe("queueMessage", () => {
       projectName: "my-project",
       sessionName: "my-session",
       text: "queued prompt",
-      broadcast: broadcastMock,
+      deps,
     });
 
     expect(appendTranscriptEntryMock).toHaveBeenCalledWith(
@@ -123,7 +107,7 @@ describe("queueMessage", () => {
       projectName: "my-project",
       sessionName: "my-session",
       text: "queued prompt",
-      broadcast: broadcastMock,
+      deps,
     });
 
     expect(broadcastMock).toHaveBeenCalledWith({
@@ -145,7 +129,7 @@ describe("queueMessage", () => {
         projectName: "my-project",
         sessionName: "my-session",
         text: "hello",
-        broadcast: broadcastMock,
+        deps,
       }),
     ).resolves.toBeUndefined();
   });

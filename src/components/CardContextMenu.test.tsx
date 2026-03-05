@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import CardContextMenu from "./CardContextMenu";
 
 describe("CardContextMenu", () => {
@@ -10,34 +10,33 @@ describe("CardContextMenu", () => {
   ];
 
   it("renders trigger button", () => {
-    const { container } = render(
+    render(
       <CardContextMenu items={baseItems} open={false} onToggle={vi.fn()} />,
     );
-    const btn = container.querySelector(".card-menu-btn");
-    expect(btn).toBeDefined();
-    expect(btn).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Project actions" }),
+    ).toBeInTheDocument();
   });
 
   it("opens menu on trigger click", () => {
     const onToggle = vi.fn();
-    const { container } = render(
+    render(
       <CardContextMenu items={baseItems} open={false} onToggle={onToggle} />,
     );
-    const btn = container.querySelector(".card-menu-btn")!;
-    fireEvent.click(btn);
+    fireEvent.click(screen.getByRole("button", { name: "Project actions" }));
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
   it("shows dropdown with items when open", () => {
-    const { container } = render(
+    render(
       <CardContextMenu items={baseItems} open={true} onToggle={vi.fn()} />,
     );
-    const dropdown = container.querySelector(".card-dropdown.open");
-    expect(dropdown).not.toBeNull();
-    const items = container.querySelectorAll(".card-dropdown-item");
-    expect(items.length).toBe(2);
-    expect(items[0]!.textContent).toBe("Archive Project");
-    expect(items[1]!.textContent).toBe("Delete Project");
+    expect(
+      screen.getByRole("button", { name: "Archive Project" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete Project" }),
+    ).toBeInTheDocument();
   });
 
   it("applies danger class to danger items", () => {
@@ -51,17 +50,14 @@ describe("CardContextMenu", () => {
   it("calls onAction when item clicked", () => {
     const actionFn = vi.fn();
     const items = [{ label: "Test Action", onAction: actionFn }];
-    const { container } = render(
-      <CardContextMenu items={items} open={true} onToggle={vi.fn()} />,
-    );
-    const item = container.querySelector(".card-dropdown-item")!;
-    fireEvent.click(item);
+    render(<CardContextMenu items={items} open={true} onToggle={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Test Action" }));
     expect(actionFn).toHaveBeenCalledTimes(1);
   });
 
   it("stops propagation on trigger click", () => {
     const onToggle = vi.fn();
-    const { container } = render(
+    render(
       <div
         onClick={() => {
           throw new Error("Should not propagate");
@@ -70,16 +66,15 @@ describe("CardContextMenu", () => {
         <CardContextMenu items={baseItems} open={false} onToggle={onToggle} />
       </div>,
     );
-    const btn = container.querySelector(".card-menu-btn")!;
     // Should not throw — propagation is stopped
-    fireEvent.click(btn);
+    fireEvent.click(screen.getByRole("button", { name: "Project actions" }));
     expect(onToggle).toHaveBeenCalled();
   });
 
   it("stops propagation on item click", () => {
     const actionFn = vi.fn();
     const items = [{ label: "Action", onAction: actionFn }];
-    const { container } = render(
+    render(
       <div
         onClick={() => {
           throw new Error("Should not propagate");
@@ -88,8 +83,7 @@ describe("CardContextMenu", () => {
         <CardContextMenu items={items} open={true} onToggle={vi.fn()} />
       </div>,
     );
-    const item = container.querySelector(".card-dropdown-item")!;
-    fireEvent.click(item);
+    fireEvent.click(screen.getByRole("button", { name: "Action" }));
     expect(actionFn).toHaveBeenCalled();
   });
 

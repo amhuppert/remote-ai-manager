@@ -9,10 +9,43 @@
  */
 
 import type { Snapshot } from "xstate";
-import { mutateSession, readState } from "@/lib/state";
+import {
+  mutateSession as defaultMutateSession,
+  readState as defaultReadState,
+} from "@/lib/state";
 import { createLogger } from "@/lib/logging";
+import type { ManagerState } from "@/types";
 
 const logger = createLogger("workflow-persistence");
+
+// ============================================================
+// Dependency Injection (setDeps pattern, matching actions.ts)
+// ============================================================
+
+export interface PersistenceDeps {
+  mutateSession: typeof defaultMutateSession;
+  readState: () => Promise<ManagerState>;
+}
+
+let _deps: PersistenceDeps | null = null;
+
+function getDeps(): PersistenceDeps {
+  if (!_deps) {
+    _deps = {
+      mutateSession: defaultMutateSession,
+      readState: defaultReadState,
+    };
+  }
+  return _deps;
+}
+
+export function setPersistenceDeps(deps: PersistenceDeps): void {
+  _deps = deps;
+}
+
+export function _resetPersistenceDepsForTesting(): void {
+  _deps = null;
+}
 
 /** Debounce timers keyed by `projectPath::sessionName`. */
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -60,7 +93,7 @@ async function writeSnapshot(
   snapshot: Snapshot<unknown>,
 ): Promise<void> {
   try {
-    await mutateSession(
+    await getDeps().mutateSession(
       projectPath,
       sessionName,
       "persistWorkflowSnapshot",
@@ -94,7 +127,7 @@ export async function restoreWorkflowSnapshot(
   expectedSchemaVersion: number,
 ): Promise<Snapshot<unknown> | null> {
   try {
-    const state = await readState();
+    const state = await getDeps().readState();
     const project = state.projects[projectPath];
     if (!project) return null;
 
@@ -149,4 +182,5 @@ export function _resetForTesting(): void {
     clearTimeout(timer);
   }
   debounceTimers.clear();
+  _resetPersistenceDepsForTesting();
 }

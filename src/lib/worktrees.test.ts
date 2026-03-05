@@ -1,47 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
-
-const {
-  gitMock,
-  existsSyncMock,
-  readStateMock,
-  writeStateMock,
-  mutateStateMock,
-} = vi.hoisted(() => ({
-  gitMock: vi.fn(),
-  existsSyncMock: vi.fn<(p: string) => boolean>(),
-  readStateMock: vi.fn(),
-  writeStateMock: vi.fn(),
-  mutateStateMock: vi.fn(),
-}));
-
-vi.mock("./git-client", () => ({
-  defaultGitClient: { git: gitMock },
-}));
-
-vi.mock("node:fs", () => ({
-  existsSync: existsSyncMock,
-}));
-
-vi.mock("./state", () => ({
-  readState: readStateMock,
-  writeState: writeStateMock,
-  mutateState: mutateStateMock,
-}));
-
-// ---------------------------------------------------------------------------
-// Import module under test (after mocks)
-// ---------------------------------------------------------------------------
 import {
   parseWorktreeList,
   deriveSessionName,
   ensureUniqueName,
   discoverAndImportWorktrees,
+  type WorktreeDeps,
 } from "./worktrees";
 import type { SessionState } from "@/types";
+
+// ---------------------------------------------------------------------------
+// Mock deps (no vi.mock needed)
+// ---------------------------------------------------------------------------
+
+const gitMock = vi.fn();
+const existsSyncMock = vi.fn<(p: string) => boolean>();
+const readStateMock = vi.fn();
+const writeStateMock = vi.fn();
+const mutateStateMock = vi.fn();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,6 +36,14 @@ function mockGitSuccess(stdout = "", stderr = "") {
 
 function mockGitFailure(error: Error) {
   gitMock.mockRejectedValue(error);
+}
+
+function makeDeps(): Partial<WorktreeDeps> {
+  return {
+    git: gitMock,
+    existsSync: existsSyncMock as unknown as WorktreeDeps["existsSync"],
+    mutateState: mutateStateMock,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -396,9 +379,11 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    const result = await discoverAndImportWorktrees(projectPath, [
-      existingSession,
-    ]);
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [existingSession],
+      makeDeps(),
+    );
 
     expect(result.imported).toHaveLength(2);
     expect(result.imported[0]!.source).toBe("imported");
@@ -429,7 +414,11 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    await discoverAndImportWorktrees(projectPath, [existingSession]);
+    await discoverAndImportWorktrees(
+      projectPath,
+      [existingSession],
+      makeDeps(),
+    );
 
     // Verify existing session is unchanged in the written state
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -485,9 +474,11 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    const result = await discoverAndImportWorktrees(projectPath, [
-      orphanedSession,
-    ]);
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [orphanedSession],
+      makeDeps(),
+    );
 
     expect(result.orphanedSessionNames).toContain("orphan");
     expect(result.imported).toHaveLength(0);
@@ -531,9 +522,11 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    const result = await discoverAndImportWorktrees(projectPath, [
-      finishedSession,
-    ]);
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [finishedSession],
+      makeDeps(),
+    );
 
     expect(result.orphanedSessionNames).not.toContain("done");
   });
@@ -541,7 +534,11 @@ describe("discoverAndImportWorktrees", () => {
   it("returns empty result on git failure", async () => {
     mockGitFailure(new Error("git not found"));
 
-    const result = await discoverAndImportWorktrees(projectPath, []);
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [],
+      makeDeps(),
+    );
 
     expect(result.imported).toEqual([]);
     expect(result.orphanedSessionNames).toEqual([]);
@@ -563,9 +560,11 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    const result = await discoverAndImportWorktrees(projectPath, [
-      existingSession,
-    ]);
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [existingSession],
+      makeDeps(),
+    );
 
     // existing-feature should NOT be in imported list
     const importedPaths = result.imported.map((s) => s.worktreePath);
@@ -599,9 +598,11 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    const result = await discoverAndImportWorktrees(projectPath, [
-      existingSession,
-    ]);
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [existingSession],
+      makeDeps(),
+    );
 
     // Branch-name dedup prevents import — this is the same session
     expect(result.imported).toHaveLength(0);
@@ -636,9 +637,11 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    const result = await discoverAndImportWorktrees(projectPath, [
-      existingSession,
-    ]);
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [existingSession],
+      makeDeps(),
+    );
 
     // Different branch, so it IS imported — name deduplication applies
     expect(result.imported).toHaveLength(1);
@@ -660,7 +663,11 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    await discoverAndImportWorktrees(projectPath, [existingSession]);
+    await discoverAndImportWorktrees(
+      projectPath,
+      [existingSession],
+      makeDeps(),
+    );
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -692,7 +699,7 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    await discoverAndImportWorktrees(projectPath, []);
+    await discoverAndImportWorktrees(projectPath, [], makeDeps());
 
     expect(writeStateMock).not.toHaveBeenCalled();
   });
@@ -740,9 +747,11 @@ describe("discoverAndImportWorktrees", () => {
       pinnedProjects: [],
     });
 
-    const result = await discoverAndImportWorktrees(projectPath, [
-      sessionWithBranch,
-    ]);
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [sessionWithBranch],
+      makeDeps(),
+    );
 
     // Should NOT import — branch matches existing session
     expect(result.imported).toHaveLength(0);
@@ -774,7 +783,11 @@ describe("discoverAndImportWorktrees", () => {
     });
 
     const before = new Date().toISOString();
-    const result = await discoverAndImportWorktrees(projectPath, []);
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [],
+      makeDeps(),
+    );
     const after = new Date().toISOString();
 
     const imported = result.imported[0]!;

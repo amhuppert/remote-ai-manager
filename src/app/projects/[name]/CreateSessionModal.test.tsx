@@ -1,41 +1,36 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { screen, fireEvent, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderWithQuery } from "@/test/component-mocks";
 import CreateSessionModal from "./CreateSessionModal";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 
-const mutateMock = vi.fn();
+// Shared mocks
+vi.mock(
+  "next/navigation",
+  async () => (await import("@/test/component-mocks")).nextNavigationMock,
+);
+vi.mock(
+  "@/hooks/useVoiceRecorder",
+  async () => (await import("@/test/component-mocks")).voiceRecorderMock,
+);
+vi.mock(
+  "@/hooks/useAppHotkey",
+  async () => (await import("@/test/component-mocks")).appHotkeyMock,
+);
+vi.mock(
+  "@/components/VoiceRecordButton",
+  async () => (await import("@/test/component-mocks")).voiceRecordButtonMock,
+);
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
-  usePathname: () => "/",
-  useSearchParams: () => new URLSearchParams(),
-}));
+// File-specific mocks
+const mutateMock = vi.fn();
 
 vi.mock("@/lib/mutations", () => ({
   useCreateSessionMutation: () => ({ mutate: mutateMock, isPending: false }),
-}));
-
-vi.mock("@/hooks/useVoiceRecorder", () => ({
-  useVoiceRecorder: vi.fn(() => ({
-    isRecording: false,
-    isProcessing: false,
-    elapsedTime: 0,
-    isAvailable: false,
-    toggleRecording: vi.fn(),
-    stopRecording: vi.fn(),
-  })),
-}));
-
-vi.mock("@/hooks/useAppHotkey", () => ({
-  useAppHotkey: vi.fn(),
-}));
-
-vi.mock("@/components/VoiceRecordButton", () => ({
-  VoiceRecordButton: () => null,
 }));
 
 const addImageMock = vi.fn().mockResolvedValue(null);
@@ -71,15 +66,6 @@ vi.mock("@/app/projects/[name]/[session]/ImageAttachmentPreview", () => ({
     ) : null,
 }));
 
-function renderWithQuery(ui: React.ReactElement) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
-  );
-}
-
 const defaultProps = {
   projectName: "my-project",
   open: true,
@@ -108,16 +94,14 @@ function switchToOptimisticMode() {
 describe("CreateSessionModal", () => {
   it("renders modal with fast mode by default", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    expect(screen.getByText("New Session")).toBeDefined();
-    expect(screen.getByText("Session name")).toBeDefined();
-    expect(screen.getByText("Create Session")).toBeDefined();
+    expect(screen.getByText("New Session")).toBeInTheDocument();
+    expect(screen.getByText("Session name")).toBeInTheDocument();
+    expect(screen.getByText("Create Session")).toBeInTheDocument();
   });
 
   it("returns null when open=false", () => {
-    const { container } = renderWithQuery(
-      <CreateSessionModal {...defaultProps} open={false} />,
-    );
-    expect(container.querySelector(".modal-overlay")).toBeNull();
+    renderWithQuery(<CreateSessionModal {...defaultProps} open={false} />);
+    expect(screen.queryByTestId("modal-overlay")).toBeNull();
   });
 
   it("auto-focuses name input in fast mode", () => {
@@ -131,7 +115,7 @@ describe("CreateSessionModal", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     expect(
       screen.getByText("Branch name will be derived from the session name"),
-    ).toBeDefined();
+    ).toBeInTheDocument();
   });
 
   it("disables create button when name is empty in fast mode", () => {
@@ -163,12 +147,14 @@ describe("CreateSessionModal", () => {
   it("switches to focus mode and shows objective textarea", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     switchToFocusMode();
-    expect(screen.getByText("What do you want to work on?")).toBeDefined();
+    expect(
+      screen.getByText("What do you want to work on?"),
+    ).toBeInTheDocument();
     expect(
       screen.getByPlaceholderText(
         "e.g. Add user authentication with JWT tokens",
       ),
-    ).toBeDefined();
+    ).toBeInTheDocument();
   });
 
   it("auto-focuses textarea in focus mode", () => {
@@ -227,11 +213,8 @@ describe("CreateSessionModal", () => {
   });
 
   it("calls onClose when overlay background clicked", () => {
-    const { container } = renderWithQuery(
-      <CreateSessionModal {...defaultProps} />,
-    );
-    const overlay = container.querySelector(".modal-overlay")!;
-    Object.defineProperty(overlay, "tagName", { value: "DIV" });
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    const overlay = screen.getByTestId("modal-overlay");
     fireEvent.click(overlay);
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
   });
@@ -324,18 +307,18 @@ describe("CreateSessionModal", () => {
   describe("optimistic mode", () => {
     it("shows Optimistic button in mode toggle", () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
-      expect(screen.getByText("Optimistic")).toBeDefined();
+      expect(screen.getByText("Optimistic")).toBeInTheDocument();
     });
 
     it("switches to optimistic mode and shows instructions textarea", () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();
-      expect(screen.getByText("What should Claude do?")).toBeDefined();
+      expect(screen.getByText("What should Claude do?")).toBeInTheDocument();
       expect(
         screen.getByPlaceholderText(
           "e.g. Fix the typo in the login page header",
         ),
-      ).toBeDefined();
+      ).toBeInTheDocument();
     });
 
     it("shows optimistic-specific form hint", () => {
@@ -345,7 +328,7 @@ describe("CreateSessionModal", () => {
         screen.getByText(
           "Claude will complete this task and merge the result into main",
         ),
-      ).toBeDefined();
+      ).toBeInTheDocument();
     });
 
     it("auto-focuses textarea in optimistic mode", () => {
@@ -417,7 +400,7 @@ describe("CreateSessionModal", () => {
       it("renders attach image button in optimistic mode", () => {
         renderWithQuery(<CreateSessionModal {...defaultProps} />);
         switchToOptimisticMode();
-        expect(screen.getByTitle("Attach image")).toBeDefined();
+        expect(screen.getByTitle("Attach image")).toBeInTheDocument();
       });
 
       it("does NOT render attach image button in fast mode", () => {
@@ -540,7 +523,7 @@ describe("CreateSessionModal", () => {
 
         renderWithQuery(<CreateSessionModal {...defaultProps} />);
         switchToOptimisticMode();
-        expect(screen.getByTestId("image-preview")).toBeDefined();
+        expect(screen.getByTestId("image-preview")).toBeInTheDocument();
       });
 
       it("clears images when dialog reopens", () => {
@@ -549,7 +532,8 @@ describe("CreateSessionModal", () => {
         );
         switchToOptimisticMode();
 
-        // Close
+        // Close — rerender needs explicit QueryClientProvider since
+        // renderWithQuery doesn't use testing-library's wrapper option
         rerender(
           <QueryClientProvider
             client={

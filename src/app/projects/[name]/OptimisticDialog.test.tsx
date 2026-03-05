@@ -1,44 +1,29 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { screen, fireEvent, act } from "@testing-library/react";
+import { renderWithQuery } from "@/test/component-mocks";
 import OptimisticDialog from "./OptimisticDialog";
 
-const mutateMock = vi.fn();
+// Shared mocks
+vi.mock(
+  "next/navigation",
+  async () => (await import("@/test/component-mocks")).nextNavigationMock,
+);
+vi.mock(
+  "@/hooks/useVoiceRecorder",
+  async () => (await import("@/test/component-mocks")).voiceRecorderMock,
+);
+vi.mock(
+  "@/components/VoiceRecordButton",
+  async () => (await import("@/test/component-mocks")).voiceRecordButtonMock,
+);
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
-  usePathname: () => "/",
-  useSearchParams: () => new URLSearchParams(),
-}));
+// File-specific mocks
+const mutateMock = vi.fn();
 
 vi.mock("@/lib/mutations", () => ({
   useCreateSessionMutation: () => ({ mutate: mutateMock, isPending: false }),
 }));
-
-vi.mock("@/hooks/useVoiceRecorder", () => ({
-  useVoiceRecorder: vi.fn(() => ({
-    isRecording: false,
-    isProcessing: false,
-    elapsedTime: 0,
-    isAvailable: false,
-    toggleRecording: vi.fn(),
-    stopRecording: vi.fn(),
-  })),
-}));
-
-vi.mock("@/components/VoiceRecordButton", () => ({
-  VoiceRecordButton: () => null,
-}));
-
-function renderWithQuery(ui: React.ReactElement) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
-  );
-}
 
 const defaultProps = {
   projectName: "my-project",
@@ -58,22 +43,20 @@ afterEach(() => {
 describe("OptimisticDialog", () => {
   it("renders with Quick Task title", () => {
     renderWithQuery(<OptimisticDialog {...defaultProps} />);
-    expect(screen.getByText("Quick Task")).toBeDefined();
+    expect(screen.getByText("Quick Task")).toBeInTheDocument();
   });
 
   it("returns null when open=false", () => {
-    const { container } = renderWithQuery(
-      <OptimisticDialog {...defaultProps} open={false} />,
-    );
-    expect(container.querySelector(".modal-overlay")).toBeNull();
+    renderWithQuery(<OptimisticDialog {...defaultProps} open={false} />);
+    expect(screen.queryByTestId("modal-overlay")).toBeNull();
   });
 
   it("shows instructions label and textarea", () => {
     renderWithQuery(<OptimisticDialog {...defaultProps} />);
-    expect(screen.getByText("What should Claude do?")).toBeDefined();
+    expect(screen.getByText("What should Claude do?")).toBeInTheDocument();
     expect(
       screen.getByPlaceholderText("e.g. Fix the typo in the login page header"),
-    ).toBeDefined();
+    ).toBeInTheDocument();
   });
 
   it("shows form hint about merge behavior", () => {
@@ -82,7 +65,7 @@ describe("OptimisticDialog", () => {
       screen.getByText(
         "Claude will complete this task and merge the result into main",
       ),
-    ).toBeDefined();
+    ).toBeInTheDocument();
   });
 
   it("auto-focuses textarea when opened", () => {
@@ -147,10 +130,8 @@ describe("OptimisticDialog", () => {
   });
 
   it("closes when overlay background is clicked", () => {
-    const { container } = renderWithQuery(
-      <OptimisticDialog {...defaultProps} />,
-    );
-    const overlay = container.querySelector(".modal-overlay")!;
+    renderWithQuery(<OptimisticDialog {...defaultProps} />);
+    const overlay = screen.getByTestId("modal-overlay");
     fireEvent.click(overlay);
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
   });

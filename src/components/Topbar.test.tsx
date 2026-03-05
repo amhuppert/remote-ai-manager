@@ -3,30 +3,18 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import Topbar from "./Topbar";
 
-// Mock next/link to render a plain <a> tag
-vi.mock("next/link", () => ({
-  default: ({
-    href,
-    children,
-    className,
-  }: {
-    href: string;
-    children: React.ReactNode;
-    className?: string;
-  }) => (
-    <a href={href} className={className}>
-      {children}
-    </a>
-  ),
-}));
+// Shared mocks
+vi.mock(
+  "next/link",
+  async () => (await import("@/test/component-mocks")).nextLinkMock,
+);
 
-// Mock unified panel store hooks
+// File-specific mocks
 vi.mock("@/stores/unified-panel.store", () => ({
   useUnifiedPanelOpen: () => false,
   useToggleUnifiedPanel: () => vi.fn(),
 }));
 
-// Mock query hooks
 vi.mock("@/lib/queries", () => ({
   useActiveConversationsQuery: () => ({ data: undefined }),
   useNotificationsQuery: () => ({ data: undefined }),
@@ -61,9 +49,9 @@ describe("Topbar", () => {
     const links = screen.getAllByRole("link");
     // CC logo + 3 breadcrumb links
     expect(links.length).toBeGreaterThanOrEqual(4);
-    expect(screen.getByText("projects")).toBeDefined();
-    expect(screen.getByText("my-repo")).toBeDefined();
-    expect(screen.getByText("test-session")).toBeDefined();
+    expect(screen.getByText("projects")).toBeInTheDocument();
+    expect(screen.getByText("my-repo")).toBeInTheDocument();
+    expect(screen.getByText("test-session")).toBeInTheDocument();
   });
 
   it("renders session controls on detail page (Req 5.4)", () => {
@@ -74,7 +62,7 @@ describe("Topbar", () => {
         sessionControls={<button>Delete</button>}
       />,
     );
-    expect(screen.getByText("Delete")).toBeDefined();
+    expect(screen.getByText("Delete")).toBeInTheDocument();
   });
 
   it("renders global status on non-detail pages (Req 5.5)", () => {
@@ -85,7 +73,7 @@ describe("Topbar", () => {
         globalStatus={<span>3 active</span>}
       />,
     );
-    expect(screen.getByText("3 active")).toBeDefined();
+    expect(screen.getByText("3 active")).toBeInTheDocument();
   });
 
   it("does not render global status on detail page", () => {
@@ -96,14 +84,12 @@ describe("Topbar", () => {
         globalStatus={<span>3 active</span>}
       />,
     );
-    // Global status should not be visible (rendered in a hidden section)
     const statusDefault = container.querySelector(".topbar-status-default");
     expect(statusDefault).toBeNull();
   });
 
   it("renders unified panel toggle button", () => {
-    const { container } = render(<Topbar breadcrumbs={[]} page="projects" />);
-    const toggle = container.querySelector(".unified-panel-toggle");
-    expect(toggle).toBeDefined();
+    render(<Topbar breadcrumbs={[]} page="projects" />);
+    expect(screen.getByTitle("Activity & Notifications")).toBeInTheDocument();
   });
 });
