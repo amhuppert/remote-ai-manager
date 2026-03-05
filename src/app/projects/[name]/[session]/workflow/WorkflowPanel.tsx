@@ -37,6 +37,7 @@ interface WorkflowPanelProps {
   onConfigChange?: (config: RalphLoopConfig) => void;
   onResetCircuitBreaker?: () => void;
   isGenerating?: boolean;
+  isConfirming?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +190,7 @@ export default function WorkflowPanel({
   onConfigChange,
   onResetCircuitBreaker,
   isGenerating = false,
+  isConfirming = false,
 }: WorkflowPanelProps) {
   const [showAbortConfirm, setShowAbortConfirm] = useState(false);
   const [configExpanded, setConfigExpanded] = useState(false);
@@ -242,6 +244,7 @@ export default function WorkflowPanel({
             onConfigChange={onConfigChange}
             onConfirmStart={onConfirmStart}
             isGenerating={isGenerating}
+            isConfirming={isConfirming}
             configExpanded={configExpanded}
             onToggleConfig={() => setConfigExpanded(!configExpanded)}
           />
@@ -319,6 +322,7 @@ function PlanningView({
   onConfigChange,
   onConfirmStart,
   isGenerating,
+  isConfirming,
   configExpanded,
   onToggleConfig,
 }: {
@@ -332,6 +336,7 @@ function PlanningView({
   onConfigChange?: (config: RalphLoopConfig) => void;
   onConfirmStart?: () => void;
   isGenerating: boolean;
+  isConfirming: boolean;
   configExpanded: boolean;
   onToggleConfig: () => void;
 }) {
@@ -387,12 +392,13 @@ function PlanningView({
 
       {/* Confirm & Start */}
       <button
+        type="button"
         className="btn btn-primary"
         style={{ alignSelf: "flex-end" }}
-        disabled={!canStart}
+        disabled={!canStart || isConfirming}
         onClick={onConfirmStart}
       >
-        Confirm &amp; Start {"\u25B6"}
+        {isConfirming ? "\u27F3 Starting\u2026" : "Confirm & Start \u25B6"}
       </button>
     </>
   );

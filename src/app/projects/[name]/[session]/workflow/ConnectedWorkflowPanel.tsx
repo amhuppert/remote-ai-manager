@@ -231,6 +231,9 @@ export default function ConnectedWorkflowPanel({
       isGenerating={
         generatePlanMutation.isPending || workflow?.generatingPlan === true
       }
+      isConfirming={
+        confirmMutation.isPending || updateObjectiveMutation.isPending
+      }
     />
   );
 }
