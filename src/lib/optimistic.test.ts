@@ -1,36 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SessionState } from "@/types";
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
-
-const {
-  executePromptStreamMock,
-  dispatchMergeJobMock,
-  createNotificationMock,
-} = vi.hoisted(() => ({
-  executePromptStreamMock: vi.fn(),
-  dispatchMergeJobMock: vi.fn(),
-  createNotificationMock: vi.fn(),
-}));
-
-vi.mock("./prompt", () => ({
-  executePromptStream: executePromptStreamMock,
-}));
-
-vi.mock("./background-jobs", () => ({
-  dispatchMergeJob: dispatchMergeJobMock,
-}));
-
-vi.mock("./notification-db", () => ({
-  createNotification: createNotificationMock,
-}));
-
-// ---------------------------------------------------------------------------
-// Import module under test
-// ---------------------------------------------------------------------------
-import { executeOptimisticWorkflow } from "./optimistic";
+import { executeOptimisticWorkflow, type OptimisticDeps } from "./optimistic";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -75,6 +45,21 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
   };
 }
 
+function createTestDeps(
+  overrides: Partial<OptimisticDeps> = {},
+): OptimisticDeps {
+  return {
+    executePromptStream: vi
+      .fn()
+      .mockResolvedValue({ conversationId: "conv-1" }),
+    dispatchMergeJob: vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-1" } }),
+    createNotification: vi.fn(),
+    ...overrides,
+  };
+}
+
 const baseParams = {
   projectPath: "/projects/repo",
   projectName: "repo",
@@ -83,16 +68,10 @@ const baseParams = {
 };
 
 // ---------------------------------------------------------------------------
-// Reset mocks
+// Reset
 // ---------------------------------------------------------------------------
 beforeEach(() => {
-  vi.clearAllMocks();
   vi.useRealTimers();
-  executePromptStreamMock.mockResolvedValue({ conversationId: "conv-1" });
-  dispatchMergeJobMock.mockReturnValue({
-    ok: true,
-    value: { jobId: "job-1" },
-  });
 });
 
 // ===========================================================================
@@ -101,11 +80,13 @@ beforeEach(() => {
 
 describe("executeOptimisticWorkflow", () => {
   it("calls executePromptStream with the session's first conversation", async () => {
-    await executeOptimisticWorkflow(baseParams);
+    const deps = createTestDeps();
+    await executeOptimisticWorkflow(baseParams, deps);
 
-    expect(executePromptStreamMock).toHaveBeenCalledTimes(1);
-    const [projectPath, session, promptText, emit, conversationId] =
-      executePromptStreamMock.mock.calls[0]!;
+    expect(deps.executePromptStream).toHaveBeenCalledTimes(1);
+    const [projectPath, session, promptText, emit, conversationId] = (
+      deps.executePromptStream as ReturnType<typeof vi.fn>
+    ).mock.calls[0]!;
     expect(projectPath).toBe("/projects/repo");
     expect(promptText).toBe("Fix the login bug");
     expect(conversationId).toBe("conv-1");
@@ -119,28 +100,32 @@ describe("executeOptimisticWorkflow", () => {
   });
 
   it("passes autonomous: true option to executePromptStream", async () => {
-    await executeOptimisticWorkflow(baseParams);
+    const deps = createTestDeps();
+    await executeOptimisticWorkflow(baseParams, deps);
 
-    const args = executePromptStreamMock.mock.calls[0]!;
+    const args = (deps.executePromptStream as ReturnType<typeof vi.fn>).mock
+      .calls[0]!;
     // 8th argument (index 7) should be the options object with autonomous flag
     const options = args[7];
     expect(options).toEqual({ autonomous: true });
   });
 
   it("does not mutate the original session object", async () => {
+    const deps = createTestDeps();
     const session = makeSession();
     const originalObjective = session.objective;
 
-    await executeOptimisticWorkflow({ ...baseParams, session });
+    await executeOptimisticWorkflow({ ...baseParams, session }, deps);
 
     expect(session.objective).toBe(originalObjective);
   });
 
   it("dispatches merge job with autoResolve on successful prompt", async () => {
-    await executeOptimisticWorkflow(baseParams);
+    const deps = createTestDeps();
+    await executeOptimisticWorkflow(baseParams, deps);
 
-    expect(dispatchMergeJobMock).toHaveBeenCalledTimes(1);
-    expect(dispatchMergeJobMock).toHaveBeenCalledWith({
+    expect(deps.dispatchMergeJob).toHaveBeenCalledTimes(1);
+    expect(deps.dispatchMergeJob).toHaveBeenCalledWith({
       projectPath: "/projects/repo",
       projectName: "repo",
       sessionName: "fix-login-bug",
@@ -152,15 +137,17 @@ describe("executeOptimisticWorkflow", () => {
   });
 
   it("creates failure notification when prompt execution fails", async () => {
-    executePromptStreamMock.mockRejectedValue(
-      new Error("SDK connection error"),
-    );
+    const deps = createTestDeps({
+      executePromptStream: vi
+        .fn()
+        .mockRejectedValue(new Error("SDK connection error")),
+    });
 
-    await executeOptimisticWorkflow(baseParams);
+    await executeOptimisticWorkflow(baseParams, deps);
 
-    expect(dispatchMergeJobMock).not.toHaveBeenCalled();
-    expect(createNotificationMock).toHaveBeenCalledTimes(1);
-    expect(createNotificationMock).toHaveBeenCalledWith(
+    expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
+    expect(deps.createNotification).toHaveBeenCalledTimes(1);
+    expect(deps.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "merge-failed",
         title: "Optimistic task failed",
@@ -173,37 +160,47 @@ describe("executeOptimisticWorkflow", () => {
   });
 
   it("never throws even when prompt execution fails", async () => {
-    executePromptStreamMock.mockRejectedValue(new Error("catastrophic error"));
+    const deps = createTestDeps({
+      executePromptStream: vi
+        .fn()
+        .mockRejectedValue(new Error("catastrophic error")),
+    });
 
     // Should not throw
     await expect(
-      executeOptimisticWorkflow(baseParams),
+      executeOptimisticWorkflow(baseParams, deps),
     ).resolves.toBeUndefined();
   });
 
   it("never throws even when notification creation fails", async () => {
-    executePromptStreamMock.mockRejectedValue(new Error("prompt error"));
-    createNotificationMock.mockImplementation(() => {
-      throw new Error("DB error");
+    const deps = createTestDeps({
+      executePromptStream: vi.fn().mockRejectedValue(new Error("prompt error")),
+      createNotification: vi.fn().mockImplementation(() => {
+        throw new Error("DB error");
+      }),
     });
 
     await expect(
-      executeOptimisticWorkflow(baseParams),
+      executeOptimisticWorkflow(baseParams, deps),
     ).resolves.toBeUndefined();
   });
 
   it("does not dispatch merge when prompt fails", async () => {
-    executePromptStreamMock.mockRejectedValue(new Error("timeout"));
+    const deps = createTestDeps({
+      executePromptStream: vi.fn().mockRejectedValue(new Error("timeout")),
+    });
 
-    await executeOptimisticWorkflow(baseParams);
+    await executeOptimisticWorkflow(baseParams, deps);
 
-    expect(dispatchMergeJobMock).not.toHaveBeenCalled();
+    expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
   });
 
   it("prepends autonomous directive to session objective", async () => {
-    await executeOptimisticWorkflow(baseParams);
+    const deps = createTestDeps();
+    await executeOptimisticWorkflow(baseParams, deps);
 
-    const sessionArg = executePromptStreamMock.mock.calls[0]![1];
+    const sessionArg = (deps.executePromptStream as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![1];
     expect(sessionArg.objective).toMatch(
       /^Complete the following task autonomously/,
     );
@@ -212,9 +209,11 @@ describe("executeOptimisticWorkflow", () => {
   });
 
   it("uses no-op emitter that does not throw", async () => {
-    await executeOptimisticWorkflow(baseParams);
+    const deps = createTestDeps();
+    await executeOptimisticWorkflow(baseParams, deps);
 
-    const emit = executePromptStreamMock.mock.calls[0]![3];
+    const emit = (deps.executePromptStream as ReturnType<typeof vi.fn>).mock
+      .calls[0]![3];
     // Calling the emitter should be safe (no-op)
     expect(() => emit("any-event", { data: "test" })).not.toThrow();
   });

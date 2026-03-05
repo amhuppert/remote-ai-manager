@@ -13,7 +13,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createActor, fromPromise } from "xstate";
-import { acquireSessionLock } from "./lock";
+import { acquireSessionLock as defaultAcquireSessionLock } from "./lock";
 import {
   broadcast as defaultBroadcast,
   type BroadcastFn,
@@ -26,7 +26,7 @@ import {
   deriveNotificationType,
   deriveNotificationTitle,
 } from "./notification-db";
-import { mergeMachine } from "./workflows/merge/machine";
+import { mergeMachine, type MergeMachineType } from "./workflows/merge/machine";
 import type {
   MergeInput,
   MergeContext,
@@ -52,6 +52,20 @@ const JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
 type JobDispatchError = "SESSION_BUSY" | "JOB_ALREADY_RUNNING";
 type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+export type AcquireSessionLockFn = (
+  projectPath: string,
+  sessionName: string,
+) => () => void;
+
+/** Default commit function — uses dynamic import for tree-shaking */
+const defaultCommitFn = async (
+  worktreePath: string,
+  message: string,
+): Promise<{ hash: string }> => {
+  const { commitChanges } = await import("@/lib/git-operations");
+  return commitChanges(worktreePath, message);
+};
 
 // ============================================================
 // globalThis Singleton Registries (HMR-safe)
@@ -256,6 +270,7 @@ function prepareDispatch(params: {
   branchName: string;
   jobType: BackgroundJob["jobType"];
   broadcast?: BroadcastFn;
+  acquireSessionLock?: AcquireSessionLockFn;
 }): Result<{ job: BackgroundJob; release: () => void }, JobDispatchError> {
   const {
     projectPath,
@@ -264,6 +279,7 @@ function prepareDispatch(params: {
     branchName,
     jobType,
     broadcast = defaultBroadcast,
+    acquireSessionLock = defaultAcquireSessionLock,
   } = params;
   const key = sessionKey(projectPath, sessionName);
   const registry = getJobRegistry();
@@ -312,7 +328,7 @@ function prepareDispatch(params: {
  * on state changes and completion. Releases the session lock on terminal state.
  */
 function subscribeMergeActor(
-  actor: ReturnType<typeof createActor<typeof mergeMachine>>,
+  actor: ReturnType<typeof createActor<MergeMachineType>>,
   job: BackgroundJob,
   release: () => void,
   broadcast: BroadcastFn = defaultBroadcast,
@@ -393,6 +409,8 @@ export function dispatchMergeJob(params: {
   message: string;
   autoResolve: boolean;
   broadcast?: BroadcastFn;
+  acquireSessionLock?: AcquireSessionLockFn;
+  machine?: MergeMachineType;
 }): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
@@ -403,6 +421,8 @@ export function dispatchMergeJob(params: {
     message,
     autoResolve,
     broadcast = defaultBroadcast,
+    acquireSessionLock,
+    machine = mergeMachine,
   } = params;
 
   const prepared = prepareDispatch({
@@ -412,6 +432,7 @@ export function dispatchMergeJob(params: {
     branchName,
     jobType: "merge",
     broadcast,
+    acquireSessionLock,
   });
   if (!prepared.ok) return prepared;
 
@@ -439,7 +460,7 @@ export function dispatchMergeJob(params: {
   };
 
   const actor = createActor(
-    mergeMachine.provide({
+    machine.provide({
       actions: { onTerminal: () => {} },
     }),
     { input },
@@ -462,6 +483,11 @@ export function dispatchCommitJob(params: {
   branchName: string;
   message: string;
   broadcast?: BroadcastFn;
+  acquireSessionLock?: AcquireSessionLockFn;
+  commitFn?: (
+    worktreePath: string,
+    message: string,
+  ) => Promise<{ hash: string }>;
 }): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
@@ -471,6 +497,8 @@ export function dispatchCommitJob(params: {
     branchName,
     message,
     broadcast = defaultBroadcast,
+    acquireSessionLock,
+    commitFn = defaultCommitFn,
   } = params;
 
   const prepared = prepareDispatch({
@@ -480,6 +508,7 @@ export function dispatchCommitJob(params: {
     branchName,
     jobType: "commit",
     broadcast,
+    acquireSessionLock,
   });
   if (!prepared.ok) return prepared;
 
@@ -496,8 +525,7 @@ export function dispatchCommitJob(params: {
     { hash: string },
     { worktreePath: string; message: string }
   >(async ({ input: commitInput }) => {
-    const { commitChanges } = await import("@/lib/git-operations");
-    return commitChanges(commitInput.worktreePath, commitInput.message);
+    return commitFn(commitInput.worktreePath, commitInput.message);
   });
 
   const actor = createActor(commitLogic, {
@@ -555,6 +583,8 @@ export function dispatchResolveConflictsJob(params: {
   mergeMessage: string;
   decisions?: ConflictDecisionInput[];
   broadcast?: BroadcastFn;
+  acquireSessionLock?: AcquireSessionLockFn;
+  machine?: MergeMachineType;
 }): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
@@ -565,6 +595,8 @@ export function dispatchResolveConflictsJob(params: {
     mergeMessage,
     decisions,
     broadcast = defaultBroadcast,
+    acquireSessionLock,
+    machine = mergeMachine,
   } = params;
 
   const prepared = prepareDispatch({
@@ -574,6 +606,7 @@ export function dispatchResolveConflictsJob(params: {
     branchName,
     jobType: "resolve-conflicts",
     broadcast,
+    acquireSessionLock,
   });
   if (!prepared.ok) return prepared;
 
@@ -599,7 +632,7 @@ export function dispatchResolveConflictsJob(params: {
   };
 
   const actor = createActor(
-    mergeMachine.provide({
+    machine.provide({
       actions: { onTerminal: () => {} },
     }),
     { input },

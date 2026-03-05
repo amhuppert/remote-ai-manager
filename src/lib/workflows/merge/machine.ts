@@ -64,6 +64,9 @@ function extractErrorMessage(error: unknown): string {
   return String(error);
 }
 
+/** Exported type alias so consumers can accept the machine or `.provide()` variants. */
+export type MergeMachineType = typeof mergeMachine;
+
 export const mergeMachine = setup({
   types: {
     context: {} as MergeContext,

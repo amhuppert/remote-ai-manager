@@ -1,96 +1,67 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// ---------------------------------------------------------------------------
-// Mocks – vi.hoisted ensures variables are available in vi.mock factories
-// ---------------------------------------------------------------------------
-
-const {
-  gitMock,
-  execFileMock,
-  existsSyncMock,
-  rmMock,
-  readFileMock,
-  mkdirMock,
-  writeFileMock,
-  readStateMock,
-  writeStateMock,
-  mutateStateMock,
-  ensureUniqueNameMock,
-  queryMock,
-  readRepoConfigMock,
-  executeOptimisticWorkflowMock,
-} = vi.hoisted(() => ({
-  gitMock: vi.fn(),
-  execFileMock: vi.fn(),
-  existsSyncMock: vi.fn<(p: string) => boolean>(),
-  rmMock: vi.fn(),
-  readFileMock: vi.fn(),
-  mkdirMock: vi.fn(),
-  writeFileMock: vi.fn(),
-  readStateMock: vi.fn(),
-  writeStateMock: vi.fn(),
-  mutateStateMock: vi.fn(),
-  ensureUniqueNameMock: vi.fn(),
-  queryMock: vi.fn(),
-  readRepoConfigMock: vi.fn(),
-  executeOptimisticWorkflowMock: vi.fn(),
-}));
-
-vi.mock("./git-client", () => ({
-  defaultGitClient: { git: gitMock },
-}));
-
-// node:child_process is still needed for init script execution (execFileAsync)
-vi.mock("node:child_process", () => ({
-  execFile: execFileMock,
-}));
-
-vi.mock("node:fs", () => ({
-  existsSync: existsSyncMock,
-}));
-
-vi.mock("node:fs/promises", () => ({
-  rm: rmMock,
-  readFile: readFileMock,
-  mkdir: mkdirMock,
-  writeFile: writeFileMock,
-}));
-
-vi.mock("./state", () => ({
-  readState: readStateMock,
-  writeState: writeStateMock,
-  mutateState: mutateStateMock,
-}));
-
-vi.mock("./worktrees", () => ({
-  ensureUniqueName: ensureUniqueNameMock,
-}));
-
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: queryMock,
-}));
-
-vi.mock("./repo-config", () => ({
-  readRepoConfig: readRepoConfigMock,
-}));
-
-vi.mock("./optimistic", () => ({
-  executeOptimisticWorkflow: executeOptimisticWorkflowMock,
-}));
-
-// ---------------------------------------------------------------------------
-// Import module under test (after mocks)
-// ---------------------------------------------------------------------------
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import type { GitClient } from "./git-client";
 import {
   validateSessionName,
   sanitizeBranchName,
-  createSessionFast,
-  createSessionFocus,
-  createSessionOptimistic,
-  deleteSession,
-  generateSessionName,
-  provisionSession,
+  createSessionService,
+  type SessionDeps,
 } from "./sessions";
+
+// ---------------------------------------------------------------------------
+// Test dep factory – replaces all vi.mock() calls
+// ---------------------------------------------------------------------------
+
+function createTestDeps() {
+  const gitMock = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+  const readStateMock = vi.fn().mockResolvedValue(emptyState());
+  const writeStateMock = vi.fn();
+  const existsSyncMock = vi.fn().mockReturnValue(false);
+  const execFileAsyncMock = vi
+    .fn()
+    .mockResolvedValue({ stdout: "", stderr: "" });
+  const queryMock = vi.fn();
+
+  const deps: SessionDeps = {
+    existsSync: existsSyncMock as unknown as SessionDeps["existsSync"],
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    rm: vi.fn().mockResolvedValue(undefined),
+    writeFile: vi.fn().mockResolvedValue(undefined),
+    execFileAsync: execFileAsyncMock as unknown as SessionDeps["execFileAsync"],
+    gitClient: { git: gitMock } as unknown as GitClient,
+    readState: readStateMock,
+    mutateState: vi
+      .fn()
+      .mockImplementation(
+        async (_label: string, mutate: (state: unknown) => unknown) => {
+          const state = await readStateMock();
+          const result = mutate(state);
+          writeStateMock(state, _label);
+          return result;
+        },
+      ),
+    ensureUniqueName: vi.fn().mockImplementation((name: string) => name),
+    readRepoConfig: vi.fn().mockResolvedValue(null),
+    stopAllForSession: vi.fn().mockResolvedValue(undefined),
+    getProjectDisplayName: vi
+      .fn()
+      .mockImplementation((p: string) => p.split("/").pop() ?? p),
+    executeOptimisticWorkflow: vi.fn(),
+    buildChildEnv: vi
+      .fn()
+      .mockReturnValue({}) as unknown as SessionDeps["buildChildEnv"],
+    query: queryMock as unknown as SessionDeps["query"],
+  };
+
+  return {
+    deps,
+    gitMock,
+    readStateMock,
+    writeStateMock,
+    existsSyncMock,
+    execFileAsyncMock,
+    queryMock,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -137,68 +108,6 @@ function stateWithSession(
   };
 }
 
-/** Make gitMock resolve with { stdout, stderr } */
-function mockGitSuccess(stdout = "", stderr = "") {
-  gitMock.mockResolvedValue({ stdout, stderr });
-}
-
-function mockGitFailure(error: Error) {
-  gitMock.mockRejectedValue(error);
-}
-
-/** Queue sequential resolve/reject results for successive gitMock calls */
-function mockGitSequence(
-  results: Array<{ error?: Error; stdout?: string; stderr?: string }>,
-) {
-  for (const result of results) {
-    if (result.error) {
-      gitMock.mockRejectedValueOnce(result.error);
-    } else {
-      gitMock.mockResolvedValueOnce({
-        stdout: result.stdout ?? "",
-        stderr: result.stderr ?? "",
-      });
-    }
-  }
-}
-
-/** Make execFileMock resolve via the promisified callback pattern (for init script) */
-function mockExecFileSuccess(stdout = "", stderr = "") {
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      if (cb) {
-        cb(null, { stdout, stderr });
-      }
-    },
-  );
-}
-
-function mockExecFileFailure(error: Error) {
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      if (cb) {
-        cb(error, { stdout: "", stderr: "" });
-      }
-    },
-  );
-}
-
 /** Create a mock async iterable that yields SDK messages with the given text */
 function mockQueryResponse(text: string) {
   async function* generate() {
@@ -233,27 +142,56 @@ function mockQueryError(error: Error) {
 }
 
 // ---------------------------------------------------------------------------
-// Reset mocks between tests
+// Shared test state
+// ---------------------------------------------------------------------------
+
+let deps: SessionDeps;
+let gitMock: Mock;
+let readStateMock: Mock;
+let writeStateMock: Mock;
+let existsSyncMock: Mock;
+let execFileAsyncMock: Mock;
+let queryMock: Mock;
+let service: ReturnType<typeof createSessionService>;
+
+/** Make gitMock resolve with { stdout, stderr } */
+function mockGitSuccess(stdout = "", stderr = "") {
+  gitMock.mockResolvedValue({ stdout, stderr });
+}
+
+function mockGitFailure(error: Error) {
+  gitMock.mockRejectedValue(error);
+}
+
+/** Queue sequential resolve/reject results for successive gitMock calls */
+function mockGitSequence(
+  results: Array<{ error?: Error; stdout?: string; stderr?: string }>,
+) {
+  for (const result of results) {
+    if (result.error) {
+      gitMock.mockRejectedValueOnce(result.error);
+    } else {
+      gitMock.mockResolvedValueOnce({
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reset between tests
 // ---------------------------------------------------------------------------
 beforeEach(() => {
-  vi.clearAllMocks();
-  readStateMock.mockResolvedValue(emptyState());
-  writeStateMock.mockResolvedValue(undefined);
-  mutateStateMock.mockImplementation(
-    async (_label: string, mutate: (state: unknown) => unknown) => {
-      const state = await readStateMock();
-      const result = await mutate(state);
-      await writeStateMock(state, _label);
-      return result;
-    },
-  );
-  existsSyncMock.mockReturnValue(false);
-  rmMock.mockResolvedValue(undefined);
-  readFileMock.mockRejectedValue(new Error("file not found"));
-  mkdirMock.mockResolvedValue(undefined);
-  writeFileMock.mockResolvedValue(undefined);
-  ensureUniqueNameMock.mockImplementation((name: string) => name);
-  readRepoConfigMock.mockResolvedValue(null);
+  const testSetup = createTestDeps();
+  deps = testSetup.deps;
+  gitMock = testSetup.gitMock;
+  readStateMock = testSetup.readStateMock;
+  writeStateMock = testSetup.writeStateMock;
+  existsSyncMock = testSetup.existsSyncMock;
+  execFileAsyncMock = testSetup.execFileAsyncMock;
+  queryMock = testSetup.queryMock;
+  service = createSessionService(deps);
 });
 
 // ===========================================================================
@@ -361,7 +299,7 @@ describe("sanitizeBranchName", () => {
 describe("generateSessionName", () => {
   it("uses Agent SDK output when valid", async () => {
     queryMock.mockReturnValue(mockQueryResponse("Add Auth"));
-    const name = await generateSessionName(
+    const name = await service.generateSessionName(
       "Add user authentication",
       "/projects/repo",
     );
@@ -386,21 +324,21 @@ describe("generateSessionName", () => {
       mockQueryError(new Error("SDK connection error")),
     );
     await expect(
-      generateSessionName("Add auth feature", "/projects/repo"),
+      service.generateSessionName("Add auth feature", "/projects/repo"),
     ).rejects.toThrow("SDK connection error");
   });
 
   it("throws when Claude returns empty output", async () => {
     queryMock.mockReturnValue(mockQueryResponse(""));
     await expect(
-      generateSessionName("Implement search", "/projects/repo"),
+      service.generateSessionName("Implement search", "/projects/repo"),
     ).rejects.toThrow("Session name generation returned empty result");
   });
 
   it("throws when Claude returns invalid name", async () => {
     queryMock.mockReturnValue(mockQueryResponse("-invalid-name"));
     await expect(
-      generateSessionName("Bad name", "/projects/repo"),
+      service.generateSessionName("Bad name", "/projects/repo"),
     ).rejects.toThrow("Generated session name is invalid");
   });
 });
@@ -413,7 +351,7 @@ describe("createSessionFocus", () => {
   it("creates a session with correct properties", async () => {
     queryMock.mockReturnValue(mockQueryResponse("My Feature"));
     mockGitSuccess(); // git worktree add
-    const session = await createSessionFocus(
+    const session = await service.createSessionFocus(
       "/projects/repo",
       "Implement my feature",
     );
@@ -438,7 +376,7 @@ describe("createSessionFocus", () => {
     queryMock.mockReturnValue(mockQueryResponse("Timestamp Test"));
     mockGitSuccess();
     const before = new Date().toISOString();
-    const session = await createSessionFocus(
+    const session = await service.createSessionFocus(
       "/projects/repo",
       "Test timestamps",
     );
@@ -458,7 +396,7 @@ describe("createSessionFocus", () => {
   it("calls git worktree add with correct arguments", async () => {
     queryMock.mockReturnValue(mockQueryResponse("Build Feature"));
     mockGitSuccess();
-    await createSessionFocus("/projects/repo", "Build feature");
+    await service.createSessionFocus("/projects/repo", "Build feature");
 
     expect(gitMock).toHaveBeenCalledWith(
       [
@@ -476,13 +414,16 @@ describe("createSessionFocus", () => {
   it("writes memory-bank/focus.md with objective", async () => {
     queryMock.mockReturnValue(mockQueryResponse("Auth Feature"));
     mockGitSuccess();
-    await createSessionFocus("/projects/repo", "Add user authentication");
+    await service.createSessionFocus(
+      "/projects/repo",
+      "Add user authentication",
+    );
 
-    expect(mkdirMock).toHaveBeenCalledWith(
+    expect(deps.mkdir).toHaveBeenCalledWith(
       "/projects/repo/.worktrees/auth-feature/memory-bank",
       { recursive: true },
     );
-    expect(writeFileMock).toHaveBeenCalledWith(
+    expect(deps.writeFile).toHaveBeenCalledWith(
       "/projects/repo/.worktrees/auth-feature/memory-bank/focus.md",
       "# Session Focus\n\n## Objective\n\nAdd user authentication\n\n> This focus document will be enriched after objective analysis.\n",
       "utf-8",
@@ -492,7 +433,10 @@ describe("createSessionFocus", () => {
   it("persists session to state via writeState", async () => {
     queryMock.mockReturnValue(mockQueryResponse("Persist Test"));
     mockGitSuccess();
-    await createSessionFocus("/projects/repo", "Persist test objective");
+    await service.createSessionFocus(
+      "/projects/repo",
+      "Persist test objective",
+    );
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -509,7 +453,7 @@ describe("createSessionFocus", () => {
     readStateMock.mockResolvedValue(emptyState());
     queryMock.mockReturnValue(mockQueryResponse("First Session"));
     mockGitSuccess();
-    await createSessionFocus("/new/project", "First session objective");
+    await service.createSessionFocus("/new/project", "First session objective");
 
     const savedState = writeStateMock.mock.calls[0]![0];
     expect(savedState.projects["/new/project"]).toBeDefined();
@@ -524,16 +468,16 @@ describe("createSessionFocus", () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "Existing"),
     );
-    ensureUniqueNameMock.mockReturnValue("Existing 2");
+    (deps.ensureUniqueName as Mock).mockReturnValue("Existing 2");
     queryMock.mockReturnValue(mockQueryResponse("Existing"));
     mockGitSuccess();
 
-    const session = await createSessionFocus(
+    const session = await service.createSessionFocus(
       "/projects/repo",
       "Another feature",
     );
 
-    expect(ensureUniqueNameMock).toHaveBeenCalledWith(
+    expect(deps.ensureUniqueName).toHaveBeenCalledWith(
       "Existing",
       new Set(["Existing"]),
     );
@@ -546,7 +490,7 @@ describe("createSessionFocus", () => {
     );
     queryMock.mockReturnValue(mockQueryResponse("Shared Name"));
     mockGitSuccess();
-    const session = await createSessionFocus(
+    const session = await service.createSessionFocus(
       "/projects/repo-b",
       "Shared name objective",
     );
@@ -560,7 +504,7 @@ describe("createSessionFocus", () => {
       return false;
     });
     await expect(
-      createSessionFocus("/projects/repo", "Conflict objective"),
+      service.createSessionFocus("/projects/repo", "Conflict objective"),
     ).rejects.toThrow("Worktree directory already exists:");
   });
 
@@ -572,23 +516,23 @@ describe("createSessionFocus", () => {
     queryMock.mockReturnValue(mockQueryResponse("With Init"));
     mockGitSuccess(); // git worktree add
 
-    readRepoConfigMock.mockResolvedValue({ initScriptPath: "./setup.sh" });
+    (deps.readRepoConfig as Mock).mockResolvedValue({
+      initScriptPath: "./setup.sh",
+    });
 
     existsSyncMock.mockImplementation((p: string) => {
       if (String(p).includes("setup.sh")) return true;
       return false;
     });
 
-    // Init script via execFileAsync (callback pattern)
-    mockExecFileSuccess();
+    await service.createSessionFocus("/projects/repo", "With init objective");
 
-    await createSessionFocus("/projects/repo", "With init objective");
-
-    // execFileMock should be called for the init script (not git)
-    expect(execFileMock).toHaveBeenCalledTimes(1);
-    const initCall = execFileMock.mock.calls[0];
+    // execFileAsyncMock should be called for the init script
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(1);
+    const initCall = execFileAsyncMock.mock.calls[0];
     expect(initCall).toBeDefined();
     expect(initCall![0]).toBe("/projects/repo/setup.sh");
+    expect(initCall![1]).toEqual([]);
     const opts = initCall![2] as {
       cwd: string;
       env: Record<string, string>;
@@ -606,7 +550,9 @@ describe("createSessionFocus", () => {
     queryMock.mockReturnValue(mockQueryResponse("Missing Script"));
     mockGitSuccess(); // git worktree add
 
-    readRepoConfigMock.mockResolvedValue({ initScriptPath: "./missing.sh" });
+    (deps.readRepoConfig as Mock).mockResolvedValue({
+      initScriptPath: "./missing.sh",
+    });
 
     let worktreeCheckCount = 0;
     existsSyncMock.mockImplementation((p: string) => {
@@ -619,7 +565,7 @@ describe("createSessionFocus", () => {
     });
 
     await expect(
-      createSessionFocus("/projects/repo", "Missing script objective"),
+      service.createSessionFocus("/projects/repo", "Missing script objective"),
     ).rejects.toThrow("Init script not found:");
   });
 
@@ -633,7 +579,9 @@ describe("createSessionFocus", () => {
       { stdout: "" }, // rollback: branch delete
     ]);
 
-    readRepoConfigMock.mockResolvedValue({ initScriptPath: "./fail.sh" });
+    (deps.readRepoConfig as Mock).mockResolvedValue({
+      initScriptPath: "./fail.sh",
+    });
 
     let worktreeCheckCount = 0;
     existsSyncMock.mockImplementation((p: string) => {
@@ -646,10 +594,10 @@ describe("createSessionFocus", () => {
     });
 
     // Init script fails
-    mockExecFileFailure(scriptError);
+    execFileAsyncMock.mockRejectedValue(scriptError);
 
     await expect(
-      createSessionFocus("/projects/repo", "Fail session objective"),
+      service.createSessionFocus("/projects/repo", "Fail session objective"),
     ).rejects.toThrow("script failed");
 
     // Verify rollback: git worktree remove --force was called via gitMock
@@ -675,7 +623,9 @@ describe("createSessionFocus", () => {
       { stdout: "" }, // git branch -D
     ]);
 
-    readRepoConfigMock.mockResolvedValue({ initScriptPath: "./fail.sh" });
+    (deps.readRepoConfig as Mock).mockResolvedValue({
+      initScriptPath: "./fail.sh",
+    });
 
     let worktreeCheckCount = 0;
     existsSyncMock.mockImplementation((p: string) => {
@@ -688,13 +638,13 @@ describe("createSessionFocus", () => {
     });
 
     // Init script fails
-    mockExecFileFailure(scriptError);
+    execFileAsyncMock.mockRejectedValue(scriptError);
 
     await expect(
-      createSessionFocus("/projects/repo", "RM fallback objective"),
+      service.createSessionFocus("/projects/repo", "RM fallback objective"),
     ).rejects.toThrow("script failed");
 
-    expect(rmMock).toHaveBeenCalledWith(
+    expect(deps.rm).toHaveBeenCalledWith(
       expect.stringContaining(".worktrees/rm-fallback"),
       { recursive: true, force: true },
     );
@@ -705,7 +655,7 @@ describe("createSessionFocus", () => {
     mockGitFailure(new Error("git worktree add failed"));
 
     await expect(
-      createSessionFocus("/projects/repo", "Should not persist"),
+      service.createSessionFocus("/projects/repo", "Should not persist"),
     ).rejects.toThrow("git worktree add failed");
 
     // State is persisted first (createSession) then rolled back (rollbackSession)
@@ -727,7 +677,10 @@ describe("createSessionFocus", () => {
 describe("createSessionFast", () => {
   it("creates a session with user-provided name", async () => {
     mockGitSuccess(); // git worktree add
-    const session = await createSessionFast("/projects/repo", "My Feature");
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "My Feature",
+    );
 
     expect(session.sessionName).toBe("My Feature");
     expect(session.worktreePath).toBe("/projects/repo/.worktrees/my-feature");
@@ -739,7 +692,7 @@ describe("createSessionFast", () => {
 
   it("does not call Claude for name generation", async () => {
     mockGitSuccess(); // git worktree add
-    await createSessionFast("/projects/repo", "Direct Name");
+    await service.createSessionFast("/projects/repo", "Direct Name");
 
     // Only one gitMock call (git worktree add), no claude call
     expect(gitMock).toHaveBeenCalledTimes(1);
@@ -751,9 +704,9 @@ describe("createSessionFast", () => {
 
   it("writes focus.md with session name as fallback objective", async () => {
     mockGitSuccess(); // git worktree add
-    await createSessionFast("/projects/repo", "Quick Fix");
+    await service.createSessionFast("/projects/repo", "Quick Fix");
 
-    expect(writeFileMock).toHaveBeenCalledWith(
+    expect(deps.writeFile).toHaveBeenCalledWith(
       "/projects/repo/.worktrees/quick-fix/memory-bank/focus.md",
       "# Session Focus\n\n## Objective\n\nQuick Fix\n",
       "utf-8",
@@ -761,9 +714,9 @@ describe("createSessionFast", () => {
   });
 
   it("throws for invalid session name", async () => {
-    await expect(createSessionFast("/projects/repo", "")).rejects.toThrow(
-      "Session name cannot be empty",
-    );
+    await expect(
+      service.createSessionFast("/projects/repo", ""),
+    ).rejects.toThrow("Session name cannot be empty");
   });
 
   it("throws for duplicate session name in same project", async () => {
@@ -771,13 +724,13 @@ describe("createSessionFast", () => {
       stateWithSession("/projects/repo", "Existing"),
     );
     await expect(
-      createSessionFast("/projects/repo", "Existing"),
+      service.createSessionFast("/projects/repo", "Existing"),
     ).rejects.toThrow('Session "Existing" already exists in this project');
   });
 
   it("persists session to state", async () => {
     mockGitSuccess(); // git worktree add
-    await createSessionFast("/projects/repo", "Persist Test");
+    await service.createSessionFast("/projects/repo", "Persist Test");
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -799,7 +752,7 @@ describe("deleteSession", () => {
     existsSyncMock.mockReturnValue(true); // worktree exists
     mockGitSuccess();
 
-    await deleteSession("/projects/repo", "to-delete");
+    await service.deleteSession("/projects/repo", "to-delete");
 
     // Verify git worktree remove --force was called
     expect(gitMock).toHaveBeenCalledWith(
@@ -821,7 +774,7 @@ describe("deleteSession", () => {
     );
     existsSyncMock.mockReturnValue(false); // worktree missing
 
-    await deleteSession("/projects/repo", "no-worktree");
+    await service.deleteSession("/projects/repo", "no-worktree");
 
     // Git should NOT be called since worktree doesn't exist
     expect(gitMock).not.toHaveBeenCalled();
@@ -841,10 +794,10 @@ describe("deleteSession", () => {
     existsSyncMock.mockReturnValue(true);
     mockGitFailure(new Error("worktree remove failed"));
 
-    await deleteSession("/projects/repo", "rm-fallback");
+    await service.deleteSession("/projects/repo", "rm-fallback");
 
     // Verify rm was called as fallback
-    expect(rmMock).toHaveBeenCalledWith(
+    expect(deps.rm).toHaveBeenCalledWith(
       "/projects/repo/.worktrees/rm-fallback",
       { recursive: true, force: true },
     );
@@ -855,7 +808,7 @@ describe("deleteSession", () => {
 
   it("throws error for non-existent project", async () => {
     readStateMock.mockResolvedValue(emptyState());
-    await expect(deleteSession("/nonexistent", "any")).rejects.toThrow(
+    await expect(service.deleteSession("/nonexistent", "any")).rejects.toThrow(
       "Project not found: /nonexistent",
     );
   });
@@ -867,7 +820,7 @@ describe("deleteSession", () => {
     existsSyncMock.mockReturnValue(true);
     mockGitSuccess();
 
-    const result = await deleteSession("/projects/repo", "cc-session");
+    const result = await service.deleteSession("/projects/repo", "cc-session");
 
     expect(result.worktreeRemoved).toBe(true);
     expect(gitMock).toHaveBeenCalled();
@@ -883,7 +836,10 @@ describe("deleteSession", () => {
     existsSyncMock.mockReturnValue(true);
     mockGitSuccess();
 
-    const result = await deleteSession("/projects/repo", "imported-session");
+    const result = await service.deleteSession(
+      "/projects/repo",
+      "imported-session",
+    );
 
     expect(result.worktreeRemoved).toBe(true);
     expect(gitMock).toHaveBeenCalled();
@@ -921,7 +877,10 @@ describe("deleteSession", () => {
     existsSyncMock.mockReturnValue(true);
     mockGitSuccess();
 
-    const result = await deleteSession("/projects/repo", "legacy-session");
+    const result = await service.deleteSession(
+      "/projects/repo",
+      "legacy-session",
+    );
 
     expect(result.worktreeRemoved).toBe(true);
     expect(gitMock).toHaveBeenCalled();
@@ -937,9 +896,9 @@ describe("deleteSession", () => {
       },
       archivedProjects: [],
     });
-    await expect(deleteSession("/projects/repo", "ghost")).rejects.toThrow(
-      'Session "ghost" not found in project',
-    );
+    await expect(
+      service.deleteSession("/projects/repo", "ghost"),
+    ).rejects.toThrow('Session "ghost" not found in project');
   });
 });
 
@@ -950,12 +909,12 @@ describe("deleteSession", () => {
 describe("provisionSession — optimistic mode gets fast-mode treatment", () => {
   it("writes fast-mode focus.md content for optimistic sessions", async () => {
     mockGitSuccess();
-    await provisionSession("/projects/repo", "opt-task", {
+    await service.provisionSession("/projects/repo", "opt-task", {
       mode: "optimistic",
       objective: "Fix the bug in login",
     });
 
-    expect(writeFileMock).toHaveBeenCalledWith(
+    expect(deps.writeFile).toHaveBeenCalledWith(
       "/projects/repo/.worktrees/opt-task/memory-bank/focus.md",
       "# Session Focus\n\n## Objective\n\nFix the bug in login\n",
       "utf-8",
@@ -964,22 +923,26 @@ describe("provisionSession — optimistic mode gets fast-mode treatment", () => 
 
   it("sets conversation role to null for optimistic sessions (no initialization)", async () => {
     mockGitSuccess();
-    const session = await provisionSession("/projects/repo", "opt-null-role", {
-      mode: "optimistic",
-      objective: "Add a feature",
-    });
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "opt-null-role",
+      {
+        mode: "optimistic",
+        objective: "Add a feature",
+      },
+    );
 
     expect(session.conversations[0]!.role).toBeNull();
   });
 
   it("still writes focus-mode content for focus sessions", async () => {
     mockGitSuccess();
-    await provisionSession("/projects/repo", "focus-check", {
+    await service.provisionSession("/projects/repo", "focus-check", {
       mode: "focus",
       objective: "Research the auth system",
     });
 
-    expect(writeFileMock).toHaveBeenCalledWith(
+    expect(deps.writeFile).toHaveBeenCalledWith(
       "/projects/repo/.worktrees/focus-check/memory-bank/focus.md",
       "# Session Focus\n\n## Objective\n\nResearch the auth system\n\n> This focus document will be enriched after objective analysis.\n",
       "utf-8",
@@ -988,20 +951,28 @@ describe("provisionSession — optimistic mode gets fast-mode treatment", () => 
 
   it("still sets conversation role to initialization for focus sessions", async () => {
     mockGitSuccess();
-    const session = await provisionSession("/projects/repo", "focus-role", {
-      mode: "focus",
-      objective: "Research something",
-    });
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "focus-role",
+      {
+        mode: "focus",
+        objective: "Research something",
+      },
+    );
 
     expect(session.conversations[0]!.role).toBe("initialization");
   });
 
   it("records creationMode as optimistic in session state", async () => {
     mockGitSuccess();
-    const session = await provisionSession("/projects/repo", "opt-mode", {
-      mode: "optimistic",
-      objective: "Do the thing",
-    });
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "opt-mode",
+      {
+        mode: "optimistic",
+        objective: "Do the thing",
+      },
+    );
 
     expect(session.creationMode).toBe("optimistic");
   });
@@ -1016,7 +987,7 @@ describe("createSessionOptimistic", () => {
     queryMock.mockReturnValue(mockQueryResponse("Fix Login"));
     mockGitSuccess();
 
-    const session = await createSessionOptimistic(
+    const session = await service.createSessionOptimistic(
       "/projects/repo",
       "Fix the login page bug",
     );
@@ -1029,7 +1000,7 @@ describe("createSessionOptimistic", () => {
     queryMock.mockReturnValue(mockQueryResponse("Auth Fix"));
     mockGitSuccess();
 
-    const session = await createSessionOptimistic(
+    const session = await service.createSessionOptimistic(
       "/projects/repo",
       "Fix authentication flow",
     );
@@ -1044,16 +1015,16 @@ describe("createSessionOptimistic", () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "Duplicate"),
     );
-    ensureUniqueNameMock.mockReturnValue("Duplicate 2");
+    (deps.ensureUniqueName as Mock).mockReturnValue("Duplicate 2");
     queryMock.mockReturnValue(mockQueryResponse("Duplicate"));
     mockGitSuccess();
 
-    const session = await createSessionOptimistic(
+    const session = await service.createSessionOptimistic(
       "/projects/repo",
       "Something duplicated",
     );
 
-    expect(ensureUniqueNameMock).toHaveBeenCalledWith(
+    expect(deps.ensureUniqueName).toHaveBeenCalledWith(
       "Duplicate",
       new Set(["Duplicate"]),
     );
@@ -1064,7 +1035,7 @@ describe("createSessionOptimistic", () => {
     queryMock.mockReturnValue(mockQueryResponse("Quick Task"));
     mockGitSuccess();
 
-    const session = await createSessionOptimistic(
+    const session = await service.createSessionOptimistic(
       "/projects/repo",
       "Do something quick",
     );
@@ -1073,8 +1044,8 @@ describe("createSessionOptimistic", () => {
     expect(session.sessionName).toBe("Quick Task");
 
     // Orchestrator was launched with correct params
-    expect(executeOptimisticWorkflowMock).toHaveBeenCalledTimes(1);
-    expect(executeOptimisticWorkflowMock).toHaveBeenCalledWith({
+    expect(deps.executeOptimisticWorkflow).toHaveBeenCalledTimes(1);
+    expect(deps.executeOptimisticWorkflow).toHaveBeenCalledWith({
       projectPath: "/projects/repo",
       projectName: "repo",
       session: expect.objectContaining({
@@ -1090,11 +1061,11 @@ describe("createSessionOptimistic", () => {
     mockGitSuccess();
 
     // Make orchestrator take a long time (simulating prompt execution)
-    executeOptimisticWorkflowMock.mockReturnValue(
+    (deps.executeOptimisticWorkflow as Mock).mockReturnValue(
       new Promise(() => {}), // never resolves
     );
 
-    const session = await createSessionOptimistic(
+    const session = await service.createSessionOptimistic(
       "/projects/repo",
       "Long running task",
     );

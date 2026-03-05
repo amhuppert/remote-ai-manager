@@ -42,6 +42,82 @@ import "@/lib/sdk-env";
 
 const logger = createLogger("prompt");
 
+// ============================================================
+// Dependency Injection
+// ============================================================
+
+export interface PromptDeps {
+  readConfig: typeof readConfig;
+  mutateConversation: typeof mutateConversation;
+  acquireSessionLock: typeof acquireSessionLock;
+  getConversation: typeof getConversation;
+  createConversation: typeof createConversation;
+  safeAppendTranscriptEntry: typeof safeAppendTranscriptEntry;
+  getTranscriptPath: typeof getTranscriptPath;
+  externalizeImageBlocks: typeof externalizeImageBlocks;
+  broadcast: typeof broadcast;
+  registerQuestion: typeof registerQuestion;
+  registerAbortController: typeof registerAbortController;
+  unregisterAbortController: typeof unregisterAbortController;
+  registerQuery: typeof registerQuery;
+  unregisterQuery: typeof unregisterQuery;
+  acquireQuerySlot: typeof acquireQuerySlot;
+  createInitToolServer: typeof createInitToolServer;
+  getProjectDisplayName: typeof getProjectDisplayName;
+  buildChildEnv: typeof buildChildEnv;
+}
+
+const defaultPromptDeps: PromptDeps = {
+  readConfig,
+  mutateConversation,
+  acquireSessionLock,
+  getConversation,
+  createConversation,
+  safeAppendTranscriptEntry,
+  getTranscriptPath,
+  externalizeImageBlocks,
+  broadcast,
+  registerQuestion,
+  registerAbortController,
+  unregisterAbortController,
+  registerQuery,
+  unregisterQuery,
+  acquireQuerySlot,
+  createInitToolServer,
+  getProjectDisplayName,
+  buildChildEnv,
+};
+
+/**
+ * Create a prompt executor with injected dependencies.
+ * Tests use this to inject mocks; production uses the default singleton export.
+ */
+export function createPromptExecutor(deps: PromptDeps = defaultPromptDeps) {
+  return {
+    executePromptStream: (
+      projectPath: string,
+      session: SessionState,
+      promptText: string,
+      emit: (event: string, data: unknown) => void,
+      conversationId?: string,
+      modelId?: ClaudeModel,
+      images?: ImagePayload[],
+      options?: { autonomous?: boolean },
+    ) =>
+      executePromptStream(
+        projectPath,
+        session,
+        promptText,
+        emit,
+        conversationId,
+        modelId,
+        images,
+        options,
+        deps,
+      ),
+  };
+}
+
 /**
  * Execute a prompt via the Agents SDK query() API,
  * streaming output via SSE events.
@@ -65,7 +141,30 @@ export async function executePromptStream(
   modelId?: ClaudeModel,
   images?: ImagePayload[],
   options?: { autonomous?: boolean },
+  deps: PromptDeps = defaultPromptDeps,
 ): Promise<{ conversationId: string }> {
+  // Destructure deps — shadows module-level imports within this function scope
+  const {
+    readConfig,
+    mutateConversation,
+    acquireSessionLock,
+    getConversation,
+    createConversation,
+    safeAppendTranscriptEntry,
+    getTranscriptPath,
+    externalizeImageBlocks,
+    broadcast,
+    registerQuestion,
+    registerAbortController,
+    unregisterAbortController,
+    registerQuery,
+    unregisterQuery,
+    acquireQuerySlot,
+    createInitToolServer,
+    getProjectDisplayName,
+    buildChildEnv,
+  } = deps;
+
   const config = await readConfig();
   const release = acquireSessionLock(projectPath, session.sessionName);
 
@@ -353,6 +452,7 @@ export async function executePromptStream(
             resultDurationMs = duration;
             resultNumTurns = turns;
           },
+          safeAppendTranscriptEntry,
         );
       }
     } catch (err) {
@@ -509,6 +609,7 @@ async function processMessage(
     durationMs: number,
     numTurns: number,
   ) => void,
+  safeAppendTranscriptEntry: PromptDeps["safeAppendTranscriptEntry"],
 ): Promise<void> {
   const timestamp = new Date().toISOString();
 

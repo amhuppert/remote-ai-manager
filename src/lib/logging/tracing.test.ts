@@ -47,6 +47,8 @@ describe("withTracing", () => {
   beforeEach(() => {
     cleanup();
     _resetLoggerForTesting();
+    // Override test-wide CC_LOG_SILENT so tracing tests can verify real output
+    delete process.env["CC_LOG_SILENT"];
     process.env["CC_LOG_FILE"] = testLogFile;
     process.env["CC_LOG_LEVEL"] = "debug";
     if (!existsSync(tmpDir)) {
@@ -57,6 +59,8 @@ describe("withTracing", () => {
   afterEach(() => {
     cleanup();
     _resetLoggerForTesting();
+    // Restore CC_LOG_SILENT for other tests
+    process.env["CC_LOG_SILENT"] = "1";
     delete process.env["CC_LOG_FILE"];
     delete process.env["CC_LOG_LEVEL"];
     vi.restoreAllMocks();

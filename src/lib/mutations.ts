@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   projectKeys,
@@ -8,55 +9,32 @@ import {
   roadmapItemKeys,
   notificationKeys,
 } from "@/lib/query-keys";
-import { tracedFetch } from "@/lib/traced-fetch";
 import { useAddOrUpdateJob } from "@/stores/notification.store";
+import {
+  sessionStateSchema,
+  conversationStateSchema,
+  jobDispatchResponseSchema,
+} from "@/lib/schemas";
+import {
+  mutationFetch,
+  workflowMutationResponseSchema,
+  statusResponseSchema,
+  fixPlanMutationResponseSchema,
+  workflowConfigMutationResponseSchema,
+  finalizeInitResponseSchema,
+  installPresetResponseSchema,
+  roadmapItemMutationResponseSchema,
+} from "@/lib/api-client";
 import type {
-  SessionState,
-  ConversationState,
   ImagePayload,
-  RalphLoopWorkflow,
   FixPlanTask,
   RalphLoopConfig,
-  JobDispatchResponse,
-  RoadmapItem,
   RoadmapItemType,
   RoadmapItemStatus,
 } from "@/types";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Error thrown when a mutation API call fails. Carries optional structured fields. */
-export class ApiCallError extends Error {
-  readonly code?: string;
-  readonly output?: string;
-
-  constructor(message: string, code?: string, output?: string) {
-    super(message);
-    this.name = "ApiCallError";
-    this.code = code;
-    this.output = output;
-  }
-}
-
-async function mutationFetch<T = unknown>(
-  url: string,
-  traceLabel: string,
-  options: RequestInit,
-): Promise<T> {
-  const res = await tracedFetch(url, traceLabel, options);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: "Request failed" }));
-    const apiBody = body as { error?: string; code?: string; output?: string };
-    throw new ApiCallError(
-      apiBody.error ?? `API error ${res.status}`,
-      apiBody.code,
-      apiBody.output,
-    );
-  }
-  return res.json() as Promise<T>;
-}
+// Re-export ApiCallError for consumers
+export { ApiCallError } from "@/lib/api-client";
 
 // ---------------------------------------------------------------------------
 // Session Mutations
@@ -76,7 +54,7 @@ export function useCreateSessionMutation(projectName: string) {
             images?: ImagePayload[];
           },
     ) =>
-      mutationFetch<SessionState>(
+      mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions`,
         "create-session",
         {
@@ -84,6 +62,7 @@ export function useCreateSessionMutation(projectName: string) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(params),
         },
+        sessionStateSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -209,7 +188,7 @@ export function useCommitMutation(projectName: string, sessionName: string) {
 
   return useMutation({
     mutationFn: (message: string) =>
-      mutationFetch<JobDispatchResponse>(
+      mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commit`,
         "commit-changes",
         {
@@ -217,6 +196,7 @@ export function useCommitMutation(projectName: string, sessionName: string) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message }),
         },
+        jobDispatchResponseSchema,
       ),
     onSuccess: (data) => {
       addOrUpdateJob({
@@ -244,7 +224,7 @@ export function useMergeMutation(projectName: string, sessionName: string) {
 
   return useMutation({
     mutationFn: () =>
-      mutationFetch<JobDispatchResponse>(
+      mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge`,
         "merge-session",
         {
@@ -252,6 +232,7 @@ export function useMergeMutation(projectName: string, sessionName: string) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ autoResolve: false }),
         },
+        jobDispatchResponseSchema,
       ),
     onSuccess: (data) => {
       addOrUpdateJob({
@@ -285,10 +266,11 @@ export function useCreateConversationMutation(
 
   return useMutation({
     mutationFn: () =>
-      mutationFetch<ConversationState>(
+      mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations`,
         "create-conversation",
         { method: "POST" },
+        conversationStateSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -355,9 +337,14 @@ export function useRenameConversationMutation(
       ),
     onMutate: async ({ conversationId, name }) => {
       await queryClient.cancelQueries({ queryKey: listKey });
-      const previous = queryClient.getQueryData<ConversationState[]>(listKey);
-      queryClient.setQueryData<ConversationState[]>(listKey, (old) =>
-        old?.map((c) => (c.id === conversationId ? { ...c, name } : c)),
+      const previous =
+        queryClient.getQueryData<import("@/types").ConversationState[]>(
+          listKey,
+        );
+      queryClient.setQueryData<import("@/types").ConversationState[]>(
+        listKey,
+        (old) =>
+          old?.map((c) => (c.id === conversationId ? { ...c, name } : c)),
       );
       return { previous };
     },
@@ -384,10 +371,11 @@ export function useFinalizeInitializationMutation(
 
   return useMutation({
     mutationFn: () =>
-      mutationFetch<{ conversationId: string; name: string }>(
+      mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/finalize-initialization`,
         "finalize-initialization",
         { method: "POST" },
+        finalizeInitResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -500,7 +488,7 @@ export function useStartWorkflowMutation(
 
   return useMutation({
     mutationFn: (objective?: string) =>
-      mutationFetch<{ workflow: RalphLoopWorkflow }>(
+      mutationFetch(
         workflowUrl(projectName, sessionName),
         "start-workflow",
         {
@@ -508,6 +496,7 @@ export function useStartWorkflowMutation(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ objective }),
         },
+        workflowMutationResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -528,7 +517,7 @@ export function useUpdateWorkflowObjectiveMutation(
 
   return useMutation({
     mutationFn: (objective: string) =>
-      mutationFetch<{ workflow: RalphLoopWorkflow }>(
+      mutationFetch(
         workflowUrl(projectName, sessionName),
         "update-workflow-objective",
         {
@@ -536,6 +525,7 @@ export function useUpdateWorkflowObjectiveMutation(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ objective }),
         },
+        workflowMutationResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -553,10 +543,11 @@ export function useConfirmWorkflowMutation(
 
   return useMutation({
     mutationFn: () =>
-      mutationFetch<{ workflow: RalphLoopWorkflow }>(
+      mutationFetch(
         workflowUrl(projectName, sessionName, "/confirm"),
         "confirm-workflow",
         { method: "POST" },
+        workflowMutationResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -577,10 +568,11 @@ export function usePauseWorkflowMutation(
 
   return useMutation({
     mutationFn: () =>
-      mutationFetch<{ status: string }>(
+      mutationFetch(
         workflowUrl(projectName, sessionName, "/pause"),
         "pause-workflow",
         { method: "POST" },
+        statusResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -598,10 +590,11 @@ export function useResumeWorkflowMutation(
 
   return useMutation({
     mutationFn: () =>
-      mutationFetch<{ workflow: RalphLoopWorkflow }>(
+      mutationFetch(
         workflowUrl(projectName, sessionName, "/resume"),
         "resume-workflow",
         { method: "POST" },
+        workflowMutationResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -622,10 +615,11 @@ export function useAbortWorkflowMutation(
 
   return useMutation({
     mutationFn: () =>
-      mutationFetch<{ status: string }>(
+      mutationFetch(
         workflowUrl(projectName, sessionName, "/abort"),
         "abort-workflow",
         { method: "POST" },
+        statusResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -646,7 +640,7 @@ export function useUpdateFixPlanMutation(
 
   return useMutation({
     mutationFn: (fixPlan: FixPlanTask[]) =>
-      mutationFetch<{ fixPlan: FixPlanTask[] }>(
+      mutationFetch(
         workflowUrl(projectName, sessionName, "/fix-plan"),
         "update-fix-plan",
         {
@@ -654,6 +648,7 @@ export function useUpdateFixPlanMutation(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ fixPlan }),
         },
+        fixPlanMutationResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -671,7 +666,7 @@ export function useUpdateWorkflowConfigMutation(
 
   return useMutation({
     mutationFn: (config: RalphLoopConfig) =>
-      mutationFetch<{ config: RalphLoopConfig }>(
+      mutationFetch(
         workflowUrl(projectName, sessionName, "/config"),
         "update-workflow-config",
         {
@@ -679,6 +674,7 @@ export function useUpdateWorkflowConfigMutation(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(config),
         },
+        workflowConfigMutationResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -696,10 +692,11 @@ export function useGeneratePlanMutation(
 
   return useMutation({
     mutationFn: () =>
-      mutationFetch<{ status: string }>(
+      mutationFetch(
         workflowUrl(projectName, sessionName, "/generate-plan"),
         "generate-plan",
         { method: "POST" },
+        statusResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -718,7 +715,7 @@ export function useInstallPresetMutation(projectName: string) {
 
   return useMutation({
     mutationFn: (params: { presetId: string; subdir?: string }) =>
-      mutationFetch<{ installedFiles: string[]; configUpdated: boolean }>(
+      mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/dev-servers/presets/install`,
         "install-preset",
         {
@@ -726,6 +723,7 @@ export function useInstallPresetMutation(projectName: string) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(params),
         },
+        installPresetResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -752,7 +750,7 @@ export function useCreateRoadmapItemMutation(projectName: string) {
       description?: string | null;
       type: RoadmapItemType;
     }) =>
-      mutationFetch<{ item: RoadmapItem }>(
+      mutationFetch(
         roadmapUrl(projectName),
         "create-roadmap-item",
         {
@@ -760,6 +758,7 @@ export function useCreateRoadmapItemMutation(projectName: string) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(params),
         },
+        roadmapItemMutationResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -823,10 +822,11 @@ export function useStartRoadmapFocusMutation(projectName: string) {
 
   return useMutation({
     mutationFn: (itemId: string) =>
-      mutationFetch<{ session: SessionState }>(
+      mutationFetch(
         roadmapUrl(projectName, `/${encodeURIComponent(itemId)}/focus`),
         "start-roadmap-focus",
         { method: "POST" },
+        z.object({ session: sessionStateSchema }),
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -914,7 +914,7 @@ export function useSmartMergeMutation(
 
   return useMutation({
     mutationFn: (params: { autoResolve: boolean }) =>
-      mutationFetch<JobDispatchResponse>(
+      mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge`,
         "smart-merge-session",
         {
@@ -922,6 +922,7 @@ export function useSmartMergeMutation(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ autoResolve: params.autoResolve }),
         },
+        jobDispatchResponseSchema,
       ),
     onSuccess: (data) => {
       addOrUpdateJob({
@@ -961,7 +962,7 @@ export function useResolveConflictsMutation(
         feedback?: string;
       }>,
     ) =>
-      mutationFetch<JobDispatchResponse>(
+      mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/resolve-conflicts`,
         "resolve-conflicts",
         {
@@ -969,6 +970,7 @@ export function useResolveConflictsMutation(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ decisions }),
         },
+        jobDispatchResponseSchema,
       ),
     onSuccess: (data) => {
       addOrUpdateJob({

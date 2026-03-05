@@ -1,34 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { GitClient } from "./git-client";
+import { createGitOperations } from "./git-operations";
 
 // ---------------------------------------------------------------------------
-// Mocks – vi.hoisted ensures variables are available in vi.mock factories
+// Test GitClient — replaces vi.mock("./git-client")
 // ---------------------------------------------------------------------------
 
-const { gitMock, parseDiffMock } = vi.hoisted(() => ({
-  gitMock: vi.fn(),
+const gitMock = vi.fn();
+
+const testClient: GitClient = {
+  git: gitMock,
+};
+
+// Create operations backed by the test client
+const ops = createGitOperations(testClient);
+
+// ---------------------------------------------------------------------------
+// parseDiff mock — still needed since parseDiff is an external pure function
+// ---------------------------------------------------------------------------
+
+const { parseDiffMock } = vi.hoisted(() => ({
   parseDiffMock: vi.fn(),
-}));
-
-vi.mock("./git-client", () => ({
-  defaultGitClient: { git: gitMock },
 }));
 
 vi.mock("./diff", () => ({
   parseDiff: parseDiffMock,
 }));
-
-// ---------------------------------------------------------------------------
-// Import module under test (after mocks)
-// ---------------------------------------------------------------------------
-import {
-  hasUncommittedChanges,
-  commitChanges,
-  getCommitLog,
-  getCommitDiff,
-  squashMerge,
-  mergeMainIntoFeature,
-  isBranchAncestorOfMain,
-} from "./git-operations";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -70,7 +67,7 @@ beforeEach(() => {
 describe("hasUncommittedChanges", () => {
   it("returns true when git status has output", async () => {
     mockGitSuccess(" M src/index.ts\n?? new-file.ts\n");
-    const result = await hasUncommittedChanges("/worktree");
+    const result = await ops.hasUncommittedChanges("/worktree");
     expect(result).toBe(true);
     expect(gitMock).toHaveBeenCalledWith(
       ["status", "--porcelain", "--untracked-files=all"],
@@ -81,13 +78,13 @@ describe("hasUncommittedChanges", () => {
 
   it("returns false when git status is empty", async () => {
     mockGitSuccess("");
-    const result = await hasUncommittedChanges("/worktree");
+    const result = await ops.hasUncommittedChanges("/worktree");
     expect(result).toBe(false);
   });
 
   it("returns false for whitespace-only output", async () => {
     mockGitSuccess("   \n  ");
-    const result = await hasUncommittedChanges("/worktree");
+    const result = await ops.hasUncommittedChanges("/worktree");
     expect(result).toBe(false);
   });
 });
@@ -107,7 +104,7 @@ describe("commitChanges", () => {
       { stdout: "[csm/my-session abc1234] Add feature\n 1 file changed\n" },
     ]);
 
-    const result = await commitChanges("/worktree", "Add feature");
+    const result = await ops.commitChanges("/worktree", "Add feature");
     expect(result.hash).toBe("abc1234");
 
     // Verify git add -A was called
@@ -117,17 +114,17 @@ describe("commitChanges", () => {
   });
 
   it("throws when commit message is empty", async () => {
-    await expect(commitChanges("/worktree", "")).rejects.toThrow(
+    await expect(ops.commitChanges("/worktree", "")).rejects.toThrow(
       "Commit message cannot be empty",
     );
-    await expect(commitChanges("/worktree", "   ")).rejects.toThrow(
+    await expect(ops.commitChanges("/worktree", "   ")).rejects.toThrow(
       "Commit message cannot be empty",
     );
   });
 
   it("throws when there are no uncommitted changes", async () => {
     mockGitSuccess(""); // git status returns empty
-    await expect(commitChanges("/worktree", "msg")).rejects.toThrow(
+    await expect(ops.commitChanges("/worktree", "msg")).rejects.toThrow(
       "No uncommitted changes to commit",
     );
   });
@@ -139,7 +136,7 @@ describe("commitChanges", () => {
       { stdout: "[csm/my-session abc1234] WIP commit\n 1 file changed\n" },
     ]);
 
-    const result = await commitChanges("/worktree", "WIP commit", {
+    const result = await ops.commitChanges("/worktree", "WIP commit", {
       skipHooks: true,
     });
     expect(result.hash).toBe("abc1234");
@@ -160,7 +157,7 @@ describe("commitChanges", () => {
       { stdout: "[csm/my-session abc1234] Add feature\n 1 file changed\n" },
     ]);
 
-    await commitChanges("/worktree", "Add feature");
+    await ops.commitChanges("/worktree", "Add feature");
 
     // Verify git commit was called WITHOUT --no-verify
     expect(gitMock.mock.calls[2]![0]).toEqual(["commit", "-m", "Add feature"]);
@@ -173,7 +170,7 @@ describe("commitChanges", () => {
       { stdout: "Unexpected output format" },
     ]);
 
-    const result = await commitChanges("/worktree", "msg");
+    const result = await ops.commitChanges("/worktree", "msg");
     expect(result.hash).toBe("");
   });
 });
@@ -184,7 +181,6 @@ describe("commitChanges", () => {
 
 describe("getCommitLog", () => {
   it("parses git log output into CommitLogEntry array", async () => {
-    // Full hashes must be exactly 40 hex chars to match the regex in git-operations
     const fullHash1 = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
     const fullHash2 = "d1e2f3a4b5c6d1e2f3a4b5c6d1e2f3a4b5c6d1e2";
 
@@ -201,14 +197,9 @@ describe("getCommitLog", () => {
       "1\t1\tsrc/app.ts",
     ].join("\n");
 
-    mockGitSequence([
-      // git log main..HEAD --format=...
-      { stdout: logOutput },
-      // git log main..HEAD --format=%H --numstat
-      { stdout: numstatOutput },
-    ]);
+    mockGitSequence([{ stdout: logOutput }, { stdout: numstatOutput }]);
 
-    const entries = await getCommitLog("/worktree");
+    const entries = await ops.getCommitLog("/worktree");
     expect(entries).toHaveLength(2);
     expect(entries[0]!.hash).toBe("abc1234");
     expect(entries[0]!.message).toBe("First commit");
@@ -220,19 +211,19 @@ describe("getCommitLog", () => {
 
   it("returns empty array when git log fails (no main branch)", async () => {
     mockGitFailure(new Error("fatal: unknown revision"));
-    const entries = await getCommitLog("/worktree");
+    const entries = await ops.getCommitLog("/worktree");
     expect(entries).toEqual([]);
   });
 
   it("returns empty array for empty log output", async () => {
     mockGitSuccess("");
-    const entries = await getCommitLog("/worktree");
+    const entries = await ops.getCommitLog("/worktree");
     expect(entries).toEqual([]);
   });
 
   it("handles whitespace-only log output", async () => {
     mockGitSuccess("  \n  \n");
-    const entries = await getCommitLog("/worktree");
+    const entries = await ops.getCommitLog("/worktree");
     expect(entries).toEqual([]);
   });
 
@@ -240,16 +231,12 @@ describe("getCommitLog", () => {
     const logOutput = [
       "abc1234\x00a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\x00Good commit\x002024-06-15T10:00:00Z\x00",
       "bad line with no delimiters",
-      "", // empty line
+      "",
     ].join("\n");
 
-    mockGitSequence([
-      { stdout: logOutput },
-      // numstat call
-      { stdout: "" },
-    ]);
+    mockGitSequence([{ stdout: logOutput }, { stdout: "" }]);
 
-    const entries = await getCommitLog("/worktree");
+    const entries = await ops.getCommitLog("/worktree");
     expect(entries).toHaveLength(1);
     expect(entries[0]!.message).toBe("Good commit");
   });
@@ -263,7 +250,7 @@ describe("getCommitLog", () => {
       { error: new Error("numstat failed") },
     ]);
 
-    const entries = await getCommitLog("/worktree");
+    const entries = await ops.getCommitLog("/worktree");
     expect(entries).toHaveLength(1);
     expect(entries[0]!.filesChanged).toBe(0);
   });
@@ -274,7 +261,7 @@ describe("getCommitLog", () => {
 
     mockGitSequence([{ stdout: logOutput }, { stdout: "" }]);
 
-    const entries = await getCommitLog("/worktree");
+    const entries = await ops.getCommitLog("/worktree");
     expect(entries).toHaveLength(1);
     expect(entries[0]!.message).toBe('Fix "quotes" & <angles>');
   });
@@ -293,25 +280,19 @@ describe("getCommitDiff", () => {
 
   it("diffs against merge-base for first commit after divergence", async () => {
     mockGitSequence([
-      // rev-parse --verify <hash>^ → parent hash
       { stdout: "parenthash123\n" },
-      // merge-base --is-ancestor parent main → success means parent IS ancestor of main
       { stdout: "" },
-      // merge-base main <hash> → merge-base hash
       { stdout: "mergebase789\n" },
-      // git diff <merge-base>..<hash>
       { stdout: "diff --git a/file.ts b/file.ts\n" },
     ]);
     parseDiffMock.mockReturnValue(mockDiff);
 
-    const result = await getCommitDiff("/worktree", "abc1234");
+    const result = await ops.getCommitDiff("/worktree", "abc1234");
     expect(result).toEqual(mockDiff);
 
-    // Verify merge-base was computed
     const mergeBaseCall = gitMock.mock.calls[2]!;
     expect(mergeBaseCall[0]).toEqual(["merge-base", "main", "abc1234"]);
 
-    // Verify diff was against merge-base
     const diffCall = gitMock.mock.calls[3]!;
     expect(diffCall[0]).toEqual([
       "diff",
@@ -322,16 +303,13 @@ describe("getCommitDiff", () => {
 
   it("diffs against parent for subsequent commits", async () => {
     mockGitSequence([
-      // rev-parse → parent hash
       { stdout: "parenthash123\n" },
-      // merge-base --is-ancestor → failure means parent is NOT ancestor of main
       { error: new Error("not ancestor") },
-      // git diff <hash>~1..<hash>
       { stdout: "diff output" },
     ]);
     parseDiffMock.mockReturnValue(mockDiff);
 
-    const result = await getCommitDiff("/worktree", "def5678");
+    const result = await ops.getCommitDiff("/worktree", "def5678");
     expect(result).toEqual(mockDiff);
 
     const diffCall = gitMock.mock.calls[2]!;
@@ -340,23 +318,18 @@ describe("getCommitDiff", () => {
 
   it("falls back to diff against merge-base when rev-parse fails", async () => {
     mockGitSequence([
-      // rev-parse fails (no parent)
       { error: new Error("no parent") },
-      // merge-base main <hash> → merge-base hash
       { stdout: "mergebase789\n" },
-      // git diff <merge-base>..<hash>
       { stdout: "diff output" },
     ]);
     parseDiffMock.mockReturnValue(mockDiff);
 
-    const result = await getCommitDiff("/worktree", "abc1234");
+    const result = await ops.getCommitDiff("/worktree", "abc1234");
     expect(result).toEqual(mockDiff);
 
-    // Verify merge-base was computed
     const mergeBaseCall = gitMock.mock.calls[1]!;
     expect(mergeBaseCall[0]).toEqual(["merge-base", "main", "abc1234"]);
 
-    // Verify diff was against merge-base
     const diffCall = gitMock.mock.calls[2]!;
     expect(diffCall[0]).toEqual([
       "diff",
@@ -369,10 +342,10 @@ describe("getCommitDiff", () => {
     mockGitSequence([
       { stdout: "parenthash\n" },
       { error: new Error("not ancestor") },
-      { stdout: "  \n" }, // whitespace only
+      { stdout: "  \n" },
     ]);
 
-    const result = await getCommitDiff("/worktree", "abc1234");
+    const result = await ops.getCommitDiff("/worktree", "abc1234");
     expect(result).toEqual({
       files: [],
       totalAdditions: 0,
@@ -389,30 +362,24 @@ describe("getCommitDiff", () => {
 describe("squashMerge", () => {
   it("performs squash merge and returns hash", async () => {
     mockGitSequence([
-      // git status --porcelain (clean check)
       { stdout: "" },
-      // git merge --squash
       { stdout: "" },
-      // git commit
       { stdout: "[main abc1234] Merge session\n" },
     ]);
 
-    const result = await squashMerge(
+    const result = await ops.squashMerge(
       "/project",
       "csm/my-session",
       "Merge session",
     );
     expect(result.mergeHash).toBe("abc1234");
 
-    // Verify commands were called in project root
     expect(gitMock.mock.calls[0]![1]).toBe("/project");
-    // Verify squash merge args
     expect(gitMock.mock.calls[1]![0]).toEqual([
       "merge",
       "--squash",
       "csm/my-session",
     ]);
-    // Verify commit args (--no-verify skips hooks since validation runs before squash)
     expect(gitMock.mock.calls[2]![0]).toEqual([
       "commit",
       "--no-verify",
@@ -422,18 +389,18 @@ describe("squashMerge", () => {
   });
 
   it("throws when merge message is empty", async () => {
-    await expect(squashMerge("/project", "csm/branch", "")).rejects.toThrow(
+    await expect(ops.squashMerge("/project", "csm/branch", "")).rejects.toThrow(
       "Merge message cannot be empty",
     );
-    await expect(squashMerge("/project", "csm/branch", "   ")).rejects.toThrow(
-      "Merge message cannot be empty",
-    );
+    await expect(
+      ops.squashMerge("/project", "csm/branch", "   "),
+    ).rejects.toThrow("Merge message cannot be empty");
   });
 
   it("throws when project root has uncommitted changes", async () => {
     mockGitSuccess(" M dirty-file.ts\n");
     await expect(
-      squashMerge("/project", "csm/branch", "Merge"),
+      ops.squashMerge("/project", "csm/branch", "Merge"),
     ).rejects.toThrow("Main branch has uncommitted changes");
   });
 
@@ -444,31 +411,26 @@ describe("squashMerge", () => {
       { stdout: "Unexpected output" },
     ]);
 
-    const result = await squashMerge("/project", "csm/branch", "Merge");
+    const result = await ops.squashMerge("/project", "csm/branch", "Merge");
     expect(result.mergeHash).toBe("");
   });
 
   it("detects merge conflicts, aborts, and throws descriptive error", async () => {
     mockGitSequence([
-      // git status --porcelain (clean)
       { stdout: "" },
-      // git merge --squash → conflict
       {
         error: new Error(
           "CONFLICT (content): Merge conflict in src/index.ts\nAutomatic merge failed; fix conflicts and then commit the result.",
         ),
       },
-      // git merge --abort (cleanup)
       { stdout: "" },
-      // git reset --hard HEAD (cleanup)
       { stdout: "" },
     ]);
 
     await expect(
-      squashMerge("/project", "csm/branch", "Merge"),
+      ops.squashMerge("/project", "csm/branch", "Merge"),
     ).rejects.toThrow("Merge conflicts detected");
 
-    // Verify cleanup: merge --abort and reset --hard were called
     expect(gitMock.mock.calls[2]![0]).toEqual(["merge", "--abort"]);
     expect(gitMock.mock.calls[3]![0]).toEqual(["reset", "--hard", "HEAD"]);
   });
@@ -480,36 +442,29 @@ describe("squashMerge", () => {
     });
 
     mockGitSequence([
-      // git status --porcelain (clean)
       { stdout: "" },
-      // git merge --squash (succeeds — changes staged)
       { stdout: "" },
-      // git commit → fails (pre-commit hook)
       { error: commitError },
-      // git reset --hard HEAD (cleanup)
       { stdout: "" },
     ]);
 
     await expect(
-      squashMerge("/project", "csm/branch", "Merge"),
+      ops.squashMerge("/project", "csm/branch", "Merge"),
     ).rejects.toThrow("Commit failed");
 
-    // Verify cleanup: reset --hard to undo staged squash changes
     expect(gitMock.mock.calls[3]![0]).toEqual(["reset", "--hard", "HEAD"]);
   });
 
   it("re-throws non-conflict merge errors without conflict message", async () => {
     mockGitSequence([
       { stdout: "" },
-      // git merge --squash → non-conflict error
       { error: new Error("fatal: not a valid branch name") },
-      // cleanup calls
       { stdout: "" },
       { stdout: "" },
     ]);
 
     await expect(
-      squashMerge("/project", "csm/branch", "Merge"),
+      ops.squashMerge("/project", "csm/branch", "Merge"),
     ).rejects.toThrow("fatal: not a valid branch name");
   });
 });
@@ -522,10 +477,9 @@ describe("mergeMainIntoFeature", () => {
   it("returns clean status when git merge main succeeds", async () => {
     mockGitSuccess("Already up to date.\n");
 
-    const result = await mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeMainIntoFeature("/worktree");
     expect(result).toEqual({ status: "clean" });
 
-    // Verify git merge main was called in the worktree
     expect(gitMock).toHaveBeenCalledWith(
       ["merge", "main"],
       "/worktree",
@@ -535,7 +489,6 @@ describe("mergeMainIntoFeature", () => {
 
   it("returns conflicts with file list when merge has CONFLICT in stderr", async () => {
     mockGitSequence([
-      // git merge main → fails with CONFLICT
       {
         error: Object.assign(
           new Error(
@@ -547,17 +500,15 @@ describe("mergeMainIntoFeature", () => {
           },
         ),
       },
-      // git diff --name-only --diff-filter=U → list conflicted files
       { stdout: "src/index.ts\nsrc/utils.ts\n" },
     ]);
 
-    const result = await mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeMainIntoFeature("/worktree");
     expect(result).toEqual({
       status: "conflicts",
       conflictFiles: ["src/index.ts", "src/utils.ts"],
     });
 
-    // Verify git diff was called to list conflicted files
     expect(gitMock.mock.calls[1]![0]).toEqual([
       "diff",
       "--name-only",
@@ -567,17 +518,15 @@ describe("mergeMainIntoFeature", () => {
 
   it("returns conflicts when 'merge conflict' appears in error message", async () => {
     mockGitSequence([
-      // git merge main → fails with "merge conflict" in message
       {
         error: Object.assign(new Error("Automatic merge conflict in file.ts"), {
           stderr: "Automatic merge conflict in file.ts",
         }),
       },
-      // git diff --name-only --diff-filter=U
       { stdout: "file.ts\n" },
     ]);
 
-    const result = await mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeMainIntoFeature("/worktree");
     expect(result).toEqual({
       status: "conflicts",
       conflictFiles: ["file.ts"],
@@ -586,17 +535,15 @@ describe("mergeMainIntoFeature", () => {
 
   it("detects CONFLICT from error message when stderr is absent", async () => {
     mockGitSequence([
-      // git merge main → fails with CONFLICT only in message (no stderr property)
       {
         error: new Error(
           "CONFLICT (content): Merge conflict in src/app.ts\nAutomatic merge failed",
         ),
       },
-      // git diff --name-only --diff-filter=U
       { stdout: "src/app.ts\n" },
     ]);
 
-    const result = await mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeMainIntoFeature("/worktree");
     expect(result).toEqual({
       status: "conflicts",
       conflictFiles: ["src/app.ts"],
@@ -606,33 +553,28 @@ describe("mergeMainIntoFeature", () => {
   it("rethrows non-conflict errors", async () => {
     mockGitFailure(new Error("fatal: not something we can merge"));
 
-    await expect(mergeMainIntoFeature("/worktree")).rejects.toThrow(
+    await expect(ops.mergeMainIntoFeature("/worktree")).rejects.toThrow(
       "fatal: not something we can merge",
     );
 
-    // Verify only one call was made (no git diff, no merge --abort)
     expect(gitMock).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT abort the merge on conflict (leaves worktree in conflict state)", async () => {
     mockGitSequence([
-      // git merge main → conflict
       {
         error: Object.assign(
           new Error("CONFLICT (content): Merge conflict in src/index.ts"),
           { stderr: "CONFLICT (content): Merge conflict in src/index.ts" },
         ),
       },
-      // git diff --name-only --diff-filter=U
       { stdout: "src/index.ts\n" },
     ]);
 
-    await mergeMainIntoFeature("/worktree");
+    await ops.mergeMainIntoFeature("/worktree");
 
-    // Verify exactly 2 calls: git merge main + git diff
     expect(gitMock).toHaveBeenCalledTimes(2);
 
-    // Verify no merge --abort was called
     const allArgs = gitMock.mock.calls.map(
       (call: unknown[]) => call[0] as string[],
     );
@@ -647,11 +589,10 @@ describe("mergeMainIntoFeature", () => {
           stderr: "CONFLICT (content): Merge conflict",
         }),
       },
-      // git diff output with trailing newlines / empty lines
       { stdout: "src/a.ts\n\nsrc/b.ts\n\n" },
     ]);
 
-    const result = await mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeMainIntoFeature("/worktree");
     expect(result).toEqual({
       status: "conflicts",
       conflictFiles: ["src/a.ts", "src/b.ts"],
@@ -666,51 +607,49 @@ describe("mergeMainIntoFeature", () => {
 describe("isBranchAncestorOfMain", () => {
   it("returns true when branch is ancestor and has diverged from merge base", async () => {
     mockGitSequence([
-      // merge-base --is-ancestor → success (exit 0)
       { stdout: "" },
-      // rev-parse branchName → branch tip
       { stdout: "abc1234\n" },
-      // merge-base branchName main → different commit
       { stdout: "def5678\n" },
     ]);
 
-    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    const result = await ops.isBranchAncestorOfMain(
+      "/project",
+      "csm/my-session",
+    );
     expect(result).toBe(true);
   });
 
   it("returns false when branch tip equals merge base (never diverged)", async () => {
     mockGitSequence([
-      // merge-base --is-ancestor → success (exit 0)
       { stdout: "" },
-      // rev-parse branchName → branch tip
       { stdout: "abc1234\n" },
-      // merge-base branchName main → same commit as branch tip
       { stdout: "abc1234\n" },
     ]);
 
-    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    const result = await ops.isBranchAncestorOfMain(
+      "/project",
+      "csm/my-session",
+    );
     expect(result).toBe(false);
   });
 
   it("returns false when branch is not ancestor of main", async () => {
-    mockGitSequence([
-      // merge-base --is-ancestor → failure (exit 1)
-      { error: new Error("not ancestor") },
-    ]);
+    mockGitSequence([{ error: new Error("not ancestor") }]);
 
-    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    const result = await ops.isBranchAncestorOfMain(
+      "/project",
+      "csm/my-session",
+    );
     expect(result).toBe(false);
   });
 
   it("returns false when git commands fail", async () => {
-    mockGitSequence([
-      // merge-base --is-ancestor → success
-      { stdout: "" },
-      // rev-parse fails
-      { error: new Error("fatal: bad ref") },
-    ]);
+    mockGitSequence([{ stdout: "" }, { error: new Error("fatal: bad ref") }]);
 
-    const result = await isBranchAncestorOfMain("/project", "csm/my-session");
+    const result = await ops.isBranchAncestorOfMain(
+      "/project",
+      "csm/my-session",
+    );
     expect(result).toBe(false);
   });
 });

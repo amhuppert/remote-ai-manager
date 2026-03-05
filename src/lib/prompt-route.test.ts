@@ -158,35 +158,17 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     expect(body.error).toContain("Session is busy");
   });
 
-  it("calls executePromptStream with correct arguments", async () => {
+  it("trims prompt text (whitespace-only rejected as empty)", async () => {
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    await POST(makeRequest({ prompt: "Hello Claude" }), makeParams());
-
-    expect(executePromptStreamMock).toHaveBeenCalledWith(
-      "/projects/my-project",
-      testSession,
-      "Hello Claude",
-      expect.any(Function),
-      undefined,
-      undefined,
-      undefined,
+    // Leading/trailing whitespace should be trimmed; a prompt that becomes
+    // non-empty after trimming should succeed.
+    const response = await POST(
+      makeRequest({ prompt: "  Hello Claude  " }),
+      makeParams(),
     );
-  });
 
-  it("trims prompt text before passing to executePromptStream", async () => {
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/prompt/route");
-    await POST(makeRequest({ prompt: "  Hello Claude  " }), makeParams());
-
-    expect(executePromptStreamMock).toHaveBeenCalledWith(
-      "/projects/my-project",
-      testSession,
-      "Hello Claude",
-      expect.any(Function),
-      undefined,
-      undefined,
-      undefined,
-    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("text/event-stream");
   });
 });

@@ -1,38 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { SessionState, ConversationState } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Hoisted mocks
+// Only mock the SDK (legitimate external dependency) and sdk-env (side effect)
 // ---------------------------------------------------------------------------
 
-const {
-  queryMock,
-  getSessionMock,
-  updateSessionMock,
-  mutateConversationMock,
-  readConfigMock,
-  acquireSessionLockMock,
-  getConversationMock,
-  createConversationMock,
-  appendTranscriptEntryMock,
-  getTranscriptPathMock,
-  broadcastMock,
-  registerQueryMock,
-  unregisterQueryMock,
-} = vi.hoisted(() => ({
-  queryMock: vi.fn(),
-  getSessionMock: vi.fn(),
-  updateSessionMock: vi.fn(),
-  mutateConversationMock: vi.fn(),
-  readConfigMock: vi.fn(),
-  acquireSessionLockMock: vi.fn(),
-  getConversationMock: vi.fn(),
-  createConversationMock: vi.fn(),
-  appendTranscriptEntryMock: vi.fn(),
-  getTranscriptPathMock: vi.fn(),
-  broadcastMock: vi.fn(),
-  registerQueryMock: vi.fn(),
-  unregisterQueryMock: vi.fn(),
-}));
+const queryMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
@@ -45,55 +18,12 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   ),
 }));
 
-vi.mock("./state", () => ({
-  getSession: getSessionMock,
-  updateSession: updateSessionMock,
-  mutateConversation: mutateConversationMock,
-}));
-
-vi.mock("./config", () => ({
-  readConfig: readConfigMock,
-}));
-
-vi.mock("./lock", () => ({
-  acquireSessionLock: acquireSessionLockMock,
-}));
-
-vi.mock("./conversations", () => ({
-  getConversation: getConversationMock,
-  createConversation: createConversationMock,
-}));
-
-vi.mock("./transcript", () => ({
-  appendTranscriptEntry: appendTranscriptEntryMock,
-  safeAppendTranscriptEntry: appendTranscriptEntryMock,
-  getTranscriptPath: getTranscriptPathMock,
-}));
-
-vi.mock("./sse-broadcaster", () => ({
-  broadcast: broadcastMock,
-}));
-
-vi.mock("./query-registry", () => ({
-  registerQuery: registerQueryMock,
-  unregisterQuery: unregisterQueryMock,
-}));
-
-vi.mock("./ralph-loop/init-tool", () => ({
-  createInitToolServer: vi.fn(() => ({ __mock: true })),
-}));
-
-vi.mock("./project-resolver", () => ({
-  getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
-}));
-
 vi.mock("@/lib/sdk-env", () => ({}));
 
 // ---------------------------------------------------------------------------
-// Import module under test
+// Import module under test — use factory for DI
 // ---------------------------------------------------------------------------
-import { executePromptStream } from "./prompt";
-import type { SessionState, ConversationState } from "@/types";
+import { createPromptExecutor, type PromptDeps } from "./prompt";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -160,53 +90,83 @@ const defaultConfig = {
 };
 
 // ---------------------------------------------------------------------------
+// Test deps factory — replaces 10 vi.mock() calls with injected deps
+// ---------------------------------------------------------------------------
+
+let updateSnapshots: SessionState[];
+
+function createTestDeps(): PromptDeps {
+  const conversation = makeConversation();
+  const session = makeSession();
+  session.conversations = [conversation];
+
+  const mutateConversationMock = vi
+    .fn()
+    .mockImplementation(
+      async (
+        _path: string,
+        _sessName: string,
+        convId: string,
+        _label: string,
+        mutate: (c: ConversationState) => void,
+      ) => {
+        const c = session.conversations.find(
+          (conv: ConversationState) => conv.id === convId,
+        );
+        if (!c) return;
+        await mutate(c);
+        c.lastActivityAt = new Date().toISOString();
+        session.lastActivityAt = new Date().toISOString();
+        updateSnapshots.push(JSON.parse(JSON.stringify(session)));
+      },
+    );
+
+  return {
+    readConfig: vi.fn().mockResolvedValue(defaultConfig),
+    mutateConversation: mutateConversationMock,
+    acquireSessionLock: vi.fn().mockReturnValue(vi.fn()),
+    getConversation: vi.fn().mockResolvedValue(conversation),
+    createConversation: vi.fn().mockResolvedValue(conversation),
+    safeAppendTranscriptEntry: vi.fn().mockResolvedValue(undefined),
+    getTranscriptPath: vi
+      .fn()
+      .mockResolvedValue("/tmp/cc/transcripts/conv-123.jsonl"),
+    externalizeImageBlocks: vi
+      .fn()
+      .mockImplementation((_id: string, blocks: unknown) =>
+        Promise.resolve(blocks),
+      ),
+    broadcast: vi.fn(),
+    registerQuestion: vi.fn(),
+    registerAbortController: vi.fn(),
+    unregisterAbortController: vi.fn(),
+    registerQuery: vi.fn(),
+    unregisterQuery: vi.fn(),
+    acquireQuerySlot: vi.fn().mockResolvedValue(vi.fn()),
+    createInitToolServer: vi.fn(() => ({
+      __mock: true,
+    })) as unknown as PromptDeps["createInitToolServer"],
+    getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
+    buildChildEnv: vi.fn(() => ({})) as unknown as PromptDeps["buildChildEnv"],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Reset
 // ---------------------------------------------------------------------------
 
-let updateSnapshots: SessionState[] = [];
+let deps: PromptDeps;
+let executePromptStream: ReturnType<
+  typeof createPromptExecutor
+>["executePromptStream"];
 
 beforeEach(() => {
   vi.clearAllMocks();
-  readConfigMock.mockResolvedValue(defaultConfig);
   updateSnapshots = [];
 
-  const releaseMock = vi.fn();
-  acquireSessionLockMock.mockReturnValue(releaseMock);
-
-  const conversation = makeConversation();
-  createConversationMock.mockResolvedValue(conversation);
-  getConversationMock.mockResolvedValue(conversation);
-
-  appendTranscriptEntryMock.mockResolvedValue(undefined);
-  getTranscriptPathMock.mockResolvedValue("/tmp/cc/transcripts/conv-123.jsonl");
-
-  const session = makeSession();
-  session.conversations = [conversation];
-  getSessionMock.mockImplementation(() => Promise.resolve(session));
-  updateSessionMock.mockImplementation((_path: string, s: SessionState) => {
-    updateSnapshots.push(JSON.parse(JSON.stringify(s)));
-    return Promise.resolve();
-  });
-  mutateConversationMock.mockImplementation(
-    async (
-      _path: string,
-      _sessName: string,
-      convId: string,
-      _label: string,
-      mutate: (c: ConversationState) => void,
-    ) => {
-      const s = await getSessionMock();
-      if (!s) return;
-      const c = s.conversations.find(
-        (conv: ConversationState) => conv.id === convId,
-      );
-      if (!c) return;
-      await mutate(c);
-      c.lastActivityAt = new Date().toISOString();
-      s.lastActivityAt = new Date().toISOString();
-      updateSnapshots.push(JSON.parse(JSON.stringify(s)));
-    },
-  );
+  deps = createTestDeps();
+  const executor = createPromptExecutor(deps);
+  executePromptStream = executor.executePromptStream;
 });
 
 // ===========================================================================
@@ -399,13 +359,15 @@ describe("executePromptStream", () => {
 
   it("acquires and releases the session lock", async () => {
     const releaseMock = vi.fn();
-    acquireSessionLockMock.mockReturnValue(releaseMock);
+    (deps.acquireSessionLock as ReturnType<typeof vi.fn>).mockReturnValue(
+      releaseMock,
+    );
     const mockQuery = createMockQuery([]);
     queryMock.mockReturnValue(mockQuery);
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
-    expect(acquireSessionLockMock).toHaveBeenCalledWith(
+    expect(deps.acquireSessionLock).toHaveBeenCalledWith(
       "/projects/repo",
       "test-session",
     );
@@ -468,11 +430,10 @@ describe("executePromptStream", () => {
 
   it("passes resume option for existing conversation with claudeSessionId", async () => {
     const convo = makeConversation({ claudeSessionId: "existing-session-id" });
-    getConversationMock.mockResolvedValue(convo);
+    (deps.getConversation as ReturnType<typeof vi.fn>).mockResolvedValue(convo);
 
     const session = makeSession();
     session.conversations = [convo];
-    getSessionMock.mockImplementation(() => Promise.resolve(session));
 
     const mockQuery = createMockQuery([]);
     queryMock.mockReturnValue(mockQuery);
@@ -564,10 +525,9 @@ describe("executePromptStream", () => {
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
     // Should have appended entries for system and assistant messages
-    expect(appendTranscriptEntryMock).toHaveBeenCalled();
-    const calls = appendTranscriptEntryMock.mock.calls as Array<
-      [string, { type: string }]
-    >;
+    expect(deps.safeAppendTranscriptEntry).toHaveBeenCalled();
+    const calls = (deps.safeAppendTranscriptEntry as ReturnType<typeof vi.fn>)
+      .mock.calls as Array<[string, { type: string }]>;
     const types = calls.map(([, entry]) => entry.type);
     expect(types).toContain("system");
     expect(types).toContain("assistant");
@@ -579,9 +539,8 @@ describe("executePromptStream", () => {
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
-    const statusCalls = broadcastMock.mock.calls as Array<
-      [{ type: string; status: string }]
-    >;
+    const statusCalls = (deps.broadcast as ReturnType<typeof vi.fn>).mock
+      .calls as Array<[{ type: string; status: string }]>;
     const statuses = statusCalls.map(([event]) => event.status);
     expect(statuses).toContain("running");
     expect(statuses).toContain("awaiting");
@@ -614,7 +573,7 @@ describe("executePromptStream", () => {
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
-    expect(registerQueryMock).toHaveBeenCalledWith("conv-123", mockQuery);
+    expect(deps.registerQuery).toHaveBeenCalledWith("conv-123", mockQuery);
   });
 
   it("unregisters query from query-registry in finally block", async () => {
@@ -626,6 +585,6 @@ describe("executePromptStream", () => {
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
     // Should be unregistered even after an error
-    expect(unregisterQueryMock).toHaveBeenCalledWith("conv-123");
+    expect(deps.unregisterQuery).toHaveBeenCalledWith("conv-123");
   });
 });

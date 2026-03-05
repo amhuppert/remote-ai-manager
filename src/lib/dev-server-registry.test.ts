@@ -1,24 +1,38 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as registry from "./dev-server-registry";
+import {
+  createDevServerRegistry,
+  type DevServerRegistryDeps,
+} from "./dev-server-registry";
 
-// Mock tailscale
-vi.mock("./tailscale", () => ({
-  register: vi.fn().mockResolvedValue("https://mock.ts.net:3000"),
-  unregister: vi.fn().mockResolvedValue(undefined),
-}));
-
-// Mock sse-broadcaster
-vi.mock("./sse-broadcaster", () => ({
-  broadcast: vi.fn(),
-}));
-
-import * as tailscale from "./tailscale";
-import { broadcast } from "./sse-broadcaster";
+function createTestDeps(
+  overrides: Partial<DevServerRegistryDeps> = {},
+): DevServerRegistryDeps {
+  return {
+    broadcast: vi.fn(),
+    tailscale: {
+      register: vi.fn().mockResolvedValue("https://mock.ts.net:3000"),
+      unregister: vi.fn().mockResolvedValue(undefined),
+    },
+    readConfig: vi.fn().mockResolvedValue({
+      tailscaleEnabled: true,
+      baseDir: "/tmp",
+      ignorePatterns: [],
+      stateFilePath: "/tmp/state.json",
+      claudeTimeoutMs: 300_000,
+    }),
+    livenessStart: vi.fn(),
+    getLanUrl: vi.fn((port: number) => `http://192.168.1.100:${port}`),
+    ...overrides,
+  };
+}
 
 describe("DevServerRegistry", () => {
+  let registry: ReturnType<typeof createDevServerRegistry>;
+  let deps: DevServerRegistryDeps;
+
   beforeEach(() => {
-    registry._resetForTesting();
-    vi.clearAllMocks();
+    deps = createTestDeps();
+    registry = createDevServerRegistry(deps);
   });
 
   afterEach(() => {
@@ -66,7 +80,7 @@ describe("DevServerRegistry", () => {
       expect(server!.serverName).toBe("web");
 
       // SSE broadcast should have been called with 'starting'
-      expect(broadcast).toHaveBeenCalledWith(
+      expect(deps.broadcast).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "dev-server-status",
           serverName: "web",
@@ -121,7 +135,7 @@ describe("DevServerRegistry", () => {
       // the server is actually listening on the port
       expect(server!.remoteUrl).toBeNull();
       // Tailscale should NOT have been called yet since nothing is listening
-      expect(tailscale.register).not.toHaveBeenCalled();
+      expect(deps.tailscale.register).not.toHaveBeenCalled();
     });
 
     it("registers Tailscale after server starts listening on port", async () => {
@@ -155,7 +169,7 @@ describe("DevServerRegistry", () => {
 
         expect(server!.status).toBe("running");
         expect(server!.port).toBe(port);
-        expect(tailscale.register).toHaveBeenCalledWith(port);
+        expect(deps.tailscale.register).toHaveBeenCalledWith(port);
         expect(server!.remoteUrl).toBe("https://mock.ts.net:3000");
       } finally {
         tcpServer.close();
@@ -230,7 +244,7 @@ describe("DevServerRegistry", () => {
       });
 
       expect(server!.status).toBe("stopped");
-      expect(tailscale.unregister).toHaveBeenCalledWith(4000);
+      expect(deps.tailscale.unregister).toHaveBeenCalledWith(4000);
     });
 
     it("is a no-op for non-existent server", async () => {

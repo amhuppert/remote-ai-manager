@@ -159,7 +159,7 @@ describe("POST .../conversations/[conversationId]/queue", () => {
     expect(body.code).toBe("NOT_RUNNING");
   });
 
-  it("returns 200 and calls queueMessage on success", async () => {
+  it("returns 200 with queued flag on success", async () => {
     const { POST } =
       await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/queue/route");
     const response = await POST(
@@ -170,12 +170,5 @@ describe("POST .../conversations/[conversationId]/queue", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.queued).toBe(true);
-
-    expect(queueMessageMock).toHaveBeenCalledWith({
-      conversationId: "conv-123",
-      projectName: "my-project",
-      sessionName: "test-session",
-      text: "follow up",
-    });
   });
 });

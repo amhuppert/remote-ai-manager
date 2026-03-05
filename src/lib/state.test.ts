@@ -1,23 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { createConfigReader } from "./config";
+import { createStateManager } from "./state";
 
 const TEST_DIR = path.join("/tmp", "cc-state-test-" + Date.now());
-const STATE_FILE = path.join(TEST_DIR, "state.json");
 
-// Mock config to return our test state file path
-vi.mock("./config", () => ({
-  readConfig: vi.fn().mockResolvedValue({
-    baseDir: "/tmp/projects",
-    ignorePatterns: [],
-    stateFilePath: STATE_FILE,
-    claudeTimeoutMs: 300_000,
-  }),
-}));
+// Create a state manager backed by a temp directory — no vi.mock needed
+function createTestStateManager() {
+  const configReader = createConfigReader(TEST_DIR);
+  return createStateManager({
+    readConfig: () => configReader.readConfig(),
+  });
+}
 
 beforeEach(async () => {
   await mkdir(TEST_DIR, { recursive: true });
-  vi.resetModules();
 });
 
 afterEach(async () => {
@@ -26,13 +24,13 @@ afterEach(async () => {
 
 describe("state", () => {
   it("readState returns empty state when file does not exist", async () => {
-    const { readState } = await import("./state");
+    const { readState } = createTestStateManager();
     const state = await readState();
     expect(state.projects).toEqual({});
   });
 
   it("writeState and readState roundtrip", async () => {
-    const { readState, writeState } = await import("./state");
+    const { readState, writeState } = createTestStateManager();
     await writeState({
       projects: {
         "/some/project": {
@@ -51,7 +49,7 @@ describe("state", () => {
   });
 
   it("getOrCreateProject creates new project entry", async () => {
-    const { getOrCreateProject, readState } = await import("./state");
+    const { getOrCreateProject, readState } = createTestStateManager();
     const project = await getOrCreateProject("/new/project");
 
     expect(project.rootPath).toBe("/new/project");
@@ -62,7 +60,7 @@ describe("state", () => {
   });
 
   it("getOrCreateProject returns existing project", async () => {
-    const { getOrCreateProject, writeState } = await import("./state");
+    const { getOrCreateProject, writeState } = createTestStateManager();
     await writeState({
       projects: {
         "/existing": {
@@ -95,7 +93,7 @@ describe("state", () => {
   });
 
   it("updateSession creates project and session if needed", async () => {
-    const { updateSession, getSession } = await import("./state");
+    const { updateSession, getSession } = createTestStateManager();
     const session = {
       sessionName: "new-session",
       worktreePath: "/proj/.worktrees/new-session",
@@ -124,7 +122,7 @@ describe("state", () => {
 
   it("removeSession deletes session from state", async () => {
     const { updateSession, removeSession, getSession } =
-      await import("./state");
+      createTestStateManager();
     const session = {
       sessionName: "to-delete",
       worktreePath: "/proj/.worktrees/to-delete",
@@ -152,7 +150,7 @@ describe("state", () => {
   });
 
   it("getProjectSessions returns all sessions for a project", async () => {
-    const { updateSession, getProjectSessions } = await import("./state");
+    const { updateSession, getProjectSessions } = createTestStateManager();
 
     const baseSession = {
       worktreePath: "",
@@ -190,13 +188,13 @@ describe("state", () => {
   });
 
   it("getSession returns null for non-existent project", async () => {
-    const { getSession } = await import("./state");
+    const { getSession } = createTestStateManager();
     const result = await getSession("/nonexistent", "anything");
     expect(result).toBeNull();
   });
 
   it("getProjectSessions returns empty array for non-existent project", async () => {
-    const { getProjectSessions } = await import("./state");
+    const { getProjectSessions } = createTestStateManager();
     const result = await getProjectSessions("/nonexistent");
     expect(result).toEqual([]);
   });
@@ -204,13 +202,14 @@ describe("state", () => {
 
 describe("archive helpers", () => {
   it("getArchivedProjects returns empty set for fresh state", async () => {
-    const { getArchivedProjects } = await import("./state");
+    const { getArchivedProjects } = createTestStateManager();
     const archived = await getArchivedProjects();
     expect(archived.size).toBe(0);
   });
 
   it("setProjectArchived adds a project path to the archive set", async () => {
-    const { setProjectArchived, getArchivedProjects } = await import("./state");
+    const { setProjectArchived, getArchivedProjects } =
+      createTestStateManager();
 
     await setProjectArchived("/some/project", true);
 
@@ -221,7 +220,7 @@ describe("archive helpers", () => {
 
   it("setProjectArchived removes a project path from the archive set", async () => {
     const { setProjectArchived, getArchivedProjects, writeState } =
-      await import("./state");
+      createTestStateManager();
 
     // Seed state with an archived project
     await writeState({
@@ -239,7 +238,7 @@ describe("archive helpers", () => {
 
   it("archiving does not alter existing project entries or session data", async () => {
     const { setProjectArchived, readState, writeState } =
-      await import("./state");
+      createTestStateManager();
 
     const session = {
       sessionName: "test",
@@ -279,7 +278,7 @@ describe("archive helpers", () => {
   });
 
   it("archiving the same project twice does not create duplicates", async () => {
-    const { setProjectArchived, readState } = await import("./state");
+    const { setProjectArchived, readState } = createTestStateManager();
 
     await setProjectArchived("/proj", true);
     await setProjectArchived("/proj", true);
@@ -291,13 +290,13 @@ describe("archive helpers", () => {
 
 describe("pin helpers", () => {
   it("getPinnedProjects returns empty set for fresh state", async () => {
-    const { getPinnedProjects } = await import("./state");
+    const { getPinnedProjects } = createTestStateManager();
     const pinned = await getPinnedProjects();
     expect(pinned.size).toBe(0);
   });
 
   it("setProjectPinned adds a project path to the pinned set", async () => {
-    const { setProjectPinned, getPinnedProjects } = await import("./state");
+    const { setProjectPinned, getPinnedProjects } = createTestStateManager();
 
     await setProjectPinned("/some/project", true);
 
@@ -308,7 +307,7 @@ describe("pin helpers", () => {
 
   it("setProjectPinned removes a project path from the pinned set", async () => {
     const { setProjectPinned, getPinnedProjects, writeState } =
-      await import("./state");
+      createTestStateManager();
 
     // Seed state with a pinned project
     await writeState({
@@ -325,7 +324,8 @@ describe("pin helpers", () => {
   });
 
   it("pinning does not alter existing project entries or session data", async () => {
-    const { setProjectPinned, readState, writeState } = await import("./state");
+    const { setProjectPinned, readState, writeState } =
+      createTestStateManager();
 
     const session = {
       sessionName: "test",
@@ -365,7 +365,7 @@ describe("pin helpers", () => {
   });
 
   it("pinning the same project twice does not create duplicates", async () => {
-    const { setProjectPinned, readState } = await import("./state");
+    const { setProjectPinned, readState } = createTestStateManager();
 
     await setProjectPinned("/proj", true);
     await setProjectPinned("/proj", true);

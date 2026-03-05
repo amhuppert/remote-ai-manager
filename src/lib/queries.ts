@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { useQuery } from "@tanstack/react-query";
 import {
   projectKeys,
@@ -12,36 +13,30 @@ import {
   presetKeys,
   roadmapItemKeys,
 } from "@/lib/query-keys";
-import type {
-  DiscoveredProject,
-  SessionState,
-  SessionDiff,
-  CommitLogEntry,
-  ConversationState,
-  TranscriptMessage,
-  CommandsResponse,
-  ProjectFilesResponse,
-  RalphLoopWorkflow,
-  RalphLoopIterationMeta,
-  KiroDocTree,
-  NotificationsResponse,
-  RoadmapItem,
-} from "@/types";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function apiFetch<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(
-      (body as { error?: string }).error ?? `API error ${res.status}`,
-    );
-  }
-  return res.json() as Promise<T>;
-}
+import {
+  apiFetch,
+  apiFetchOptional,
+  discoveredProjectSchema,
+  projectPreferencesResponseSchema,
+  configResponseSchema,
+  sessionsResponseSchema,
+  sessionDiffSchema,
+  commitsResponseSchema,
+  activeConversationsResponseSchema,
+  transcriptMessageSchema,
+  contentResponseSchema,
+  kiroDocTreeSchema,
+  presetsResponseSchema,
+  workflowResponseSchema,
+  workflowIterationsResponseSchema,
+  roadmapItemsResponseSchema,
+} from "@/lib/api-client";
+import { sessionStateSchema, conversationStateSchema } from "@/lib/schemas";
+import {
+  commandsResponseSchema,
+  projectFilesResponseSchema,
+  notificationsResponseSchema,
+} from "@/lib/schemas";
 
 // ---------------------------------------------------------------------------
 // Project Queries
@@ -50,7 +45,7 @@ async function apiFetch<T>(url: string): Promise<T> {
 export function useProjectsQuery() {
   return useQuery({
     queryKey: projectKeys.list(),
-    queryFn: () => apiFetch<DiscoveredProject[]>("/api/projects"),
+    queryFn: () => apiFetch("/api/projects", z.array(discoveredProjectSchema)),
   });
 }
 
@@ -58,9 +53,7 @@ export function useProjectPreferencesQuery() {
   return useQuery({
     queryKey: projectKeys.preferences(),
     queryFn: () =>
-      apiFetch<{ archived: string[]; pinned: string[] }>(
-        "/api/projects/preferences",
-      ),
+      apiFetch("/api/projects/preferences", projectPreferencesResponseSchema),
   });
 }
 
@@ -71,7 +64,7 @@ export function useProjectPreferencesQuery() {
 export function useConfigQuery() {
   return useQuery({
     queryKey: configKeys.all,
-    queryFn: () => apiFetch<{ baseDir: string }>("/api/config"),
+    queryFn: () => apiFetch("/api/config", configResponseSchema),
   });
 }
 
@@ -83,8 +76,9 @@ export function useSessionsQuery(projectName: string) {
   return useQuery({
     queryKey: sessionKeys.list(projectName),
     queryFn: async () => {
-      const data = await apiFetch<{ sessions: SessionState[] }>(
+      const data = await apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions`,
+        sessionsResponseSchema,
       );
       return data.sessions;
     },
@@ -96,8 +90,9 @@ export function useSessionQuery(projectName: string, sessionName: string) {
   return useQuery({
     queryKey: sessionKeys.detail(projectName, sessionName),
     queryFn: () =>
-      apiFetch<SessionState>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}`,
+        sessionStateSchema,
       ),
     refetchInterval: 10_000,
   });
@@ -111,8 +106,9 @@ export function useSessionDiffQuery(
   return useQuery({
     queryKey: sessionKeys.diff(projectName, sessionName),
     queryFn: () =>
-      apiFetch<SessionDiff>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/diff`,
+        sessionDiffSchema,
       ),
     refetchInterval: options?.refetchInterval,
   });
@@ -122,8 +118,9 @@ export function useCommitsQuery(projectName: string, sessionName: string) {
   return useQuery({
     queryKey: sessionKeys.commits(projectName, sessionName),
     queryFn: async () => {
-      const data = await apiFetch<{ commits: CommitLogEntry[] }>(
+      const data = await apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commits`,
+        commitsResponseSchema,
       );
       return data.commits;
     },
@@ -138,15 +135,11 @@ export function useFocusDocQuery(
   return useQuery({
     queryKey: sessionKeys.focusDoc(projectName, sessionName),
     queryFn: async () => {
-      const res = await fetch(
+      const data = await apiFetchOptional(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/focus-doc`,
+        contentResponseSchema,
       );
-      if (res.status === 404) return null;
-      if (!res.ok) {
-        throw new Error(`Failed to fetch focus document`);
-      }
-      const data = (await res.json()) as { content: string };
-      return data.content;
+      return data?.content ?? null;
     },
     enabled: options?.enabled ?? true,
   });
@@ -160,8 +153,9 @@ export function useCommitDiffQuery(
   return useQuery({
     queryKey: sessionKeys.commitDiff(projectName, sessionName, hash ?? ""),
     queryFn: () =>
-      apiFetch<SessionDiff>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commits/${encodeURIComponent(hash!)}/diff`,
+        sessionDiffSchema,
       ),
     enabled: !!hash,
   });
@@ -185,8 +179,9 @@ export function useActiveConversationsQuery() {
   return useQuery({
     queryKey: conversationKeys.active,
     queryFn: async () => {
-      const data = await apiFetch<{ conversations: ActiveConversation[] }>(
+      const data = await apiFetch(
         "/api/conversations/active",
+        activeConversationsResponseSchema,
       );
       return data.conversations;
     },
@@ -201,8 +196,9 @@ export function useConversationsQuery(
   return useQuery({
     queryKey: conversationKeys.list(projectName, sessionName),
     queryFn: () =>
-      apiFetch<ConversationState[]>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations`,
+        z.array(conversationStateSchema),
       ),
   });
 }
@@ -220,8 +216,9 @@ export function useConversationMessagesQuery(
       conversationId,
     ),
     queryFn: () =>
-      apiFetch<TranscriptMessage[]>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+        z.array(transcriptMessageSchema),
       ),
     refetchInterval: options?.refetchInterval,
   });
@@ -239,8 +236,9 @@ export function useCommandsQuery(
   return useQuery({
     queryKey: commandKeys.list(projectName, sessionName),
     queryFn: () =>
-      apiFetch<CommandsResponse>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commands`,
+        commandsResponseSchema,
       ),
     enabled: options?.enabled,
   });
@@ -253,8 +251,9 @@ export function useProjectCommandsQuery(
   return useQuery({
     queryKey: commandKeys.projectList(projectName),
     queryFn: () =>
-      apiFetch<CommandsResponse>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/commands`,
+        commandsResponseSchema,
       ),
     enabled: options?.enabled,
   });
@@ -271,8 +270,9 @@ export function useProjectFilesQuery(
   return useQuery({
     queryKey: fileKeys.list(projectName),
     queryFn: () =>
-      apiFetch<ProjectFilesResponse>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/files`,
+        projectFilesResponseSchema,
       ),
     enabled: options?.enabled,
   });
@@ -286,8 +286,9 @@ export function useWorkflowQuery(projectName: string, sessionName: string) {
   return useQuery({
     queryKey: workflowKeys.status(projectName, sessionName),
     queryFn: () =>
-      apiFetch<{ workflow: RalphLoopWorkflow | null }>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow`,
+        workflowResponseSchema,
       ).then((r) => r.workflow),
     refetchInterval: 5_000,
   });
@@ -300,8 +301,9 @@ export function useWorkflowIterationsQuery(
   return useQuery({
     queryKey: workflowKeys.iterations(projectName, sessionName),
     queryFn: () =>
-      apiFetch<{ iterations: RalphLoopIterationMeta[] }>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow/iterations`,
+        workflowIterationsResponseSchema,
       ).then((r) => r.iterations),
     enabled: false, // Only fetch on demand
   });
@@ -322,8 +324,9 @@ export function useKiroDocTreeQuery(
       const params = sessionName
         ? `?session=${encodeURIComponent(sessionName)}`
         : "";
-      return apiFetch<KiroDocTree>(
+      return apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/kiro-docs${params}`,
+        kiroDocTreeSchema,
       );
     },
     staleTime: 30_000,
@@ -343,15 +346,11 @@ export function useKiroDocFileQuery(
       const params = new URLSearchParams();
       params.set("path", filePath!);
       if (sessionName) params.set("session", sessionName);
-      const res = await fetch(
+      const data = await apiFetchOptional(
         `/api/projects/${encodeURIComponent(projectName)}/kiro-docs?${params.toString()}`,
+        contentResponseSchema,
       );
-      if (res.status === 404) return null;
-      if (!res.ok) {
-        throw new Error("Failed to fetch kiro document");
-      }
-      const data = (await res.json()) as { content: string };
-      return data.content;
+      return data?.content ?? null;
     },
     staleTime: 60_000,
     enabled: (options?.enabled ?? true) && !!filePath,
@@ -365,7 +364,7 @@ export function useKiroDocFileQuery(
 export function useNotificationsQuery(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: notificationKeys.list(),
-    queryFn: () => apiFetch<NotificationsResponse>("/api/notifications"),
+    queryFn: () => apiFetch("/api/notifications", notificationsResponseSchema),
     enabled: options?.enabled ?? true,
   });
 }
@@ -387,8 +386,9 @@ export function usePresetsQuery(projectName: string) {
   return useQuery({
     queryKey: presetKeys.list(projectName),
     queryFn: () =>
-      apiFetch<{ presets: PresetInfo[] }>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/dev-servers/presets`,
+        presetsResponseSchema,
       ).then((r) => r.presets),
   });
 }
@@ -401,8 +401,9 @@ export function useRoadmapItemsQuery(projectName: string) {
   return useQuery({
     queryKey: roadmapItemKeys.list(projectName),
     queryFn: () =>
-      apiFetch<{ items: RoadmapItem[] }>(
+      apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/roadmap-items`,
+        roadmapItemsResponseSchema,
       ).then((r) => r.items),
     refetchInterval: 30_000,
   });

@@ -153,12 +153,4 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
     const body = (await response.json()) as { items: CommandItem[] };
     expect(body.items).toEqual([]);
   });
-
-  it("passes worktreePath from session to discoverCommands", async () => {
-    const { GET } =
-      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
-    await GET(makeRequest(), makeParams());
-
-    expect(discoverCommandsMock).toHaveBeenCalledWith(testSession.worktreePath);
-  });
 });

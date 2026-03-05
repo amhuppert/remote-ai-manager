@@ -100,6 +100,7 @@ function ensureInitialized(): void {
 
 /** Check if a log level passes the current filter */
 function shouldLog(level: LogLevel): boolean {
+  if (process.env["CC_LOG_SILENT"] === "1") return false;
   ensureInitialized();
   return LOG_LEVELS[level] >= LOG_LEVELS[logLevel!];
 }
