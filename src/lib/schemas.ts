@@ -333,21 +333,26 @@ export const workflowStatusSchema = z.enum([
 export type WorkflowStatus = z.infer<typeof workflowStatusSchema>;
 
 // --- Workflow Entity ---
-export const ralphLoopWorkflowSchema = z.object({
-  status: workflowStatusSchema,
-  objective: z.string(),
-  fixPlan: z.array(fixPlanTaskSchema),
-  config: ralphLoopConfigSchema,
-  circuitBreaker: circuitBreakerStateSchema,
-  iterations: z.array(ralphLoopIterationMetaSchema).default([]),
-  haltReason: haltReasonSchema.nullable().default(null),
-  generatingPlan: z.boolean().default(false),
-  createdAt: z.string(),
-  startedAt: z.string().nullable().default(null),
-  completedAt: z.string().nullable().default(null),
-  totalCostUsd: z.number().default(0),
-  totalDurationMs: z.number().default(0),
-});
+export const ralphLoopWorkflowSchema = z
+  .object({
+    status: workflowStatusSchema,
+    objective: z.string(),
+    fixPlan: z.array(fixPlanTaskSchema),
+    config: ralphLoopConfigSchema,
+    circuitBreaker: circuitBreakerStateSchema,
+    iterations: z.array(ralphLoopIterationMetaSchema).default([]),
+    haltReason: haltReasonSchema.nullable().default(null),
+    generatingPlan: z.boolean().default(false),
+    createdAt: z.string(),
+    startedAt: z.string().nullable().default(null),
+    completedAt: z.string().nullable().default(null),
+    totalCostUsd: z.number().default(0),
+    totalDurationMs: z.number().default(0),
+  })
+  // Preserve _xstateSnapshot and other opaque fields across read/write cycles.
+  // Without this, Zod's safeParse() in readState() strips unknown keys,
+  // causing XState snapshot data to be lost on round-trip persistence.
+  .passthrough();
 export type RalphLoopWorkflow = z.infer<typeof ralphLoopWorkflowSchema>;
 
 // ============================================================

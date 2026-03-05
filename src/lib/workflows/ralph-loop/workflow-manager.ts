@@ -73,6 +73,32 @@ function mapStateToWorkflowStatus(
   return "running";
 }
 
+/**
+ * Derive workflow status from context for terminal states.
+ *
+ * During `always` transition batches (e.g., evaluatingExit → halted),
+ * `self.getSnapshot().value` may return the pre-transition compound state
+ * instead of the target state. The context's `haltReason` and `completedAt`
+ * fields are set by `assign` actions that run during the transition, so
+ * they reliably indicate the terminal status.
+ */
+function deriveWorkflowStatus(
+  context: { haltReason: { type: string } | null; completedAt: string | null },
+  snapshotValue: string | Record<string, unknown>,
+): WorkflowStatus {
+  if (context.haltReason) {
+    switch (context.haltReason.type) {
+      case "plan_complete":
+        return "completed";
+      case "aborted":
+        return "aborted";
+      default:
+        return "halted";
+    }
+  }
+  return mapStateToWorkflowStatus(snapshotValue);
+}
+
 // ============================================================
 // Machine Provider (injects production actors + actions)
 // ============================================================
@@ -103,7 +129,8 @@ function createProvidedMachine() {
        */
       broadcastWorkflowStatus: ({ context, self }) => {
         const snapshot = self.getSnapshot();
-        const workflowStatus = mapStateToWorkflowStatus(
+        const workflowStatus = deriveWorkflowStatus(
+          context,
           snapshot.value as string | Record<string, unknown>,
         );
 
