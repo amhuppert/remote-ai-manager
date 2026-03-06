@@ -31,6 +31,7 @@ describe("LiveIterationStream", () => {
         sessionName="test-session"
         iterationNumber={3}
         isRunning={true}
+        currentIterationConversationId={null}
       />,
     );
     expect(container.querySelector(".live-indicator")).not.toBeNull();
@@ -63,6 +64,7 @@ describe("LiveIterationStream", () => {
           sessionName="test-session"
           iterationNumber={1}
           isRunning={true}
+          currentIterationConversationId={null}
         />,
       );
       container = result.container;
@@ -104,6 +106,7 @@ describe("LiveIterationStream", () => {
           sessionName="test-session"
           iterationNumber={1}
           isRunning={true}
+          currentIterationConversationId={null}
         />,
       );
       container = result.container;
@@ -130,6 +133,7 @@ describe("LiveIterationStream", () => {
         sessionName="test-session"
         iterationNumber={1}
         isRunning={false}
+        currentIterationConversationId={null}
       />,
     );
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -152,6 +156,7 @@ describe("LiveIterationStream", () => {
           sessionName="test-session"
           iterationNumber={1}
           isRunning={true}
+          currentIterationConversationId={null}
         />,
       );
       container = result.container;

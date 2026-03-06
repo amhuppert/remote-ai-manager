@@ -509,6 +509,7 @@ describe("deriveSessionStatus", () => {
         completedAt: null,
         totalCostUsd: 0,
         totalDurationMs: 0,
+        currentIterationConversationId: null,
       },
     });
 
@@ -543,6 +544,7 @@ describe("deriveSessionStatus", () => {
         completedAt: null,
         totalCostUsd: 0,
         totalDurationMs: 0,
+        currentIterationConversationId: null,
       },
     });
 
@@ -577,6 +579,7 @@ describe("deriveSessionStatus", () => {
         completedAt: "2024-01-02T00:00:00Z",
         totalCostUsd: 1.5,
         totalDurationMs: 60000,
+        currentIterationConversationId: null,
       },
     });
 

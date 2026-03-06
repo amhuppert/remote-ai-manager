@@ -26,7 +26,7 @@ import type {
   MessageContentBlock,
   GitIterationMetrics,
 } from "@/types";
-import { mutateSession, mutateConversation } from "../state";
+import { mutateSession } from "../state";
 import { acquireSessionLock } from "../lock";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "../logging";
@@ -87,16 +87,22 @@ export async function runIteration(
   });
   const conversationId = conversation.id;
 
-  // Set transcript path eagerly
+  // Set transcript path eagerly + expose conversationId on workflow for frontend
   const transcriptPath = await getTranscriptPath(conversationId);
-  await mutateConversation(
+  await mutateSession(
     projectPath,
     sessionName,
-    conversationId,
     "workflow.conversationSetup",
-    (c) => {
-      c.transcriptPath = transcriptPath;
-      c.status = "running";
+    (sess) => {
+      const conv = sess.conversations.find((c) => c.id === conversationId);
+      if (conv) {
+        conv.transcriptPath = transcriptPath;
+        conv.status = "running";
+        conv.lastActivityAt = new Date().toISOString();
+      }
+      if (sess.workflow) {
+        sess.workflow.currentIterationConversationId = conversationId;
+      }
     },
   );
 
@@ -348,16 +354,21 @@ export async function runIteration(
     if (releaseQuerySlot) releaseQuerySlot();
     if (release) release();
 
-    // Mark conversation as awaiting and archive it so iteration
-    // conversations don't clutter the active conversations panel.
-    await mutateConversation(
+    // Mark conversation as awaiting/archived + clear currentIterationConversationId
+    await mutateSession(
       projectPath,
       sessionName,
-      conversationId,
       "workflow.conversationCleanup",
-      (c) => {
-        c.status = "awaiting";
-        c.archived = true;
+      (sess) => {
+        const conv = sess.conversations.find((c) => c.id === conversationId);
+        if (conv) {
+          conv.status = "awaiting";
+          conv.archived = true;
+          conv.lastActivityAt = new Date().toISOString();
+        }
+        if (sess.workflow) {
+          sess.workflow.currentIterationConversationId = null;
+        }
       },
     ).catch(() => {});
   }

@@ -134,6 +134,7 @@ function makeWorkflow(
     completedAt: null,
     totalCostUsd: 0,
     totalDurationMs: 0,
+    currentIterationConversationId: null,
     ...overrides,
   };
 }

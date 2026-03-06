@@ -504,6 +504,9 @@ function MonitoringView({
           sessionName={sessionName}
           iterationNumber={currentIteration}
           isRunning
+          currentIterationConversationId={
+            workflow.currentIterationConversationId ?? null
+          }
         />
       )}
 

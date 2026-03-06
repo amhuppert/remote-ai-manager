@@ -191,6 +191,7 @@ export function createWorkflowRouteHandlers(
               sameErrorThreshold: 5,
             },
           },
+          currentIterationConversationId: null,
           circuitBreaker: createInitialCircuitBreakerState(),
           iterations: [],
           haltReason: null,

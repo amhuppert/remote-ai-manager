@@ -348,6 +348,7 @@ export const ralphLoopWorkflowSchema = z
     completedAt: z.string().nullable().default(null),
     totalCostUsd: z.number().default(0),
     totalDurationMs: z.number().default(0),
+    currentIterationConversationId: z.string().nullable().default(null),
   })
   // Preserve _xstateSnapshot and other opaque fields across read/write cycles.
   // Without this, Zod's safeParse() in readState() strips unknown keys,
