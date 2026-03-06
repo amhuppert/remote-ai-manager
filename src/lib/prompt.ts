@@ -301,7 +301,7 @@ export async function executePromptStream(
       prompt: sdkPrompt,
       options: {
         model: effectiveModel ?? undefined,
-        ...(ultrathinkDetected ? { effort: "max" as const } : {}),
+        ...(ultrathinkDetected ? { effort: "high" as const } : {}),
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
