@@ -107,8 +107,12 @@ export async function copyTranscriptUpTo(
   const raw = await readFile(sourceTranscriptPath, "utf-8");
   const lines = raw.split("\n").filter((line) => line.trim().length > 0);
 
-  // Find the raw line index boundaries based on visible message counting
-  let visibleCount = -1;
+  // Find the raw line index boundaries based on merged visible message counting.
+  // Consecutive JSONL entries with the same role are merged into a single logical
+  // message (matching readConversationMessages), so we only increment the merged
+  // index on role transitions.
+  let mergedIndex = -1;
+  let lastVisibleRole: string | null = null;
   let cutoffLineIndex = -1;
 
   for (let i = 0; i < lines.length; i++) {
@@ -125,45 +129,49 @@ export async function copyTranscriptUpTo(
       entry.content.length > 0;
 
     if (isVisible) {
-      visibleCount++;
+      // Only increment on role transitions (merged message boundary)
+      if (entry.role !== lastVisibleRole) {
+        mergedIndex++;
+        lastVisibleRole = entry.role ?? null;
+      }
 
       if (appendEditedMessage) {
         // For edit-and-fork: copy up to (but NOT including) the target message
-        if (visibleCount === upToMessageIndex) {
+        if (mergedIndex === upToMessageIndex) {
           cutoffLineIndex = i - 1;
           break;
         }
       } else if (includeAssistantResponse) {
-        // For direct fork: include the target user message + next assistant response
-        if (visibleCount === upToMessageIndex) {
-          // This is the target user message — continue to find assistant response
+        // For direct fork: include the target message + next assistant response
+        if (mergedIndex <= upToMessageIndex) {
+          // Still in or before the target message — keep including
           cutoffLineIndex = i;
         } else if (
-          visibleCount === upToMessageIndex + 1 &&
+          mergedIndex === upToMessageIndex + 1 &&
           entry.role === "assistant"
         ) {
-          // Found the assistant response after the fork point
+          // In the assistant response after the fork point — include all its lines
           cutoffLineIndex = i;
-          break;
-        } else if (visibleCount > upToMessageIndex) {
-          // Next visible message is user, not assistant — stop
+        } else {
+          // Past the assistant response (or next message is user) — stop
           break;
         }
       } else {
-        // Copy up to and including the target message
-        if (visibleCount === upToMessageIndex) {
+        // Copy up to and including all lines of the target message
+        if (mergedIndex <= upToMessageIndex) {
           cutoffLineIndex = i;
+        } else {
           break;
         }
       }
-    } else if (visibleCount >= 0 && cutoffLineIndex >= 0) {
+    } else if (mergedIndex >= 0 && cutoffLineIndex >= 0) {
       // Non-visible lines after the cutoff — include them if they come before the next visible message
       cutoffLineIndex = i;
     }
   }
 
   // If we never broke, include remaining non-visible lines after the last match
-  if (cutoffLineIndex === -1 && visibleCount >= upToMessageIndex) {
+  if (cutoffLineIndex === -1 && mergedIndex >= upToMessageIndex) {
     cutoffLineIndex = lines.length - 1;
   }
 

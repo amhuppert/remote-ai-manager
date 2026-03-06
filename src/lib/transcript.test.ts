@@ -6,6 +6,7 @@ import {
   appendTranscriptEntry,
   getTranscriptPath,
   parseCommandContent,
+  copyTranscriptUpTo,
   type TranscriptEntry,
 } from "./transcript";
 
@@ -481,5 +482,330 @@ describe("parseCommandContent", () => {
       name: "/commit",
       args: "fix bug",
     });
+  });
+});
+
+// ==========================================================================
+// copyTranscriptUpTo
+// ==========================================================================
+
+describe("copyTranscriptUpTo", () => {
+  /**
+   * Helper: build a JSONL transcript file and return its path.
+   * Each entry is a TranscriptEntry line.
+   */
+  async function writeTranscript(
+    name: string,
+    entries: TranscriptEntry[],
+  ): Promise<string> {
+    const filePath = path.join(TEST_DIR, "transcripts", `${name}.jsonl`);
+    const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    await writeFile(filePath, content, "utf-8");
+    return filePath;
+  }
+
+  /** Read the target transcript and return parsed lines */
+  async function readTarget(
+    conversationId: string,
+  ): Promise<TranscriptEntry[]> {
+    const targetPath = path.join(
+      TEST_DIR,
+      "transcripts",
+      `${conversationId}.jsonl`,
+    );
+    const raw = await readFile(targetPath, "utf-8");
+    return raw
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as TranscriptEntry);
+  }
+
+  // ---- The red test: exposes merged vs raw counting mismatch ----
+
+  it("uses merged message indices when assistant has multiple JSONL lines", async () => {
+    // Transcript with consecutive assistant lines that get merged:
+    //   Merged msg 0: user "Hello"
+    //   Merged msg 1: assistant "Part 1" + "Part 2" + "Part 3" (3 JSONL lines)
+    //   Merged msg 2: user "Follow-up"
+    //   Merged msg 3: assistant "Response 2a" + "Response 2b" (2 JSONL lines)
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 1" }],
+      },
+      {
+        timestamp: "t2",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 2" }],
+      },
+      {
+        timestamp: "t3",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 3" }],
+      },
+      {
+        timestamp: "t4",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Follow-up" }],
+      },
+      {
+        timestamp: "t5",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Response 2a" }],
+      },
+      {
+        timestamp: "t6",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Response 2b" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("fork-merge-source", entries);
+
+    // Verify readConversationMessages sees 4 merged messages
+    const messages = await readConversationMessages(sourcePath);
+    expect(messages).toHaveLength(4);
+    expect(messages[2]!.role).toBe("user");
+    expect(messages[3]!.role).toBe("assistant");
+
+    // Fork at merged message index 2 (the "Follow-up" user message),
+    // including the assistant response after it
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "fork-merge-target",
+      upToMessageIndex: 2,
+      includeAssistantResponse: true,
+    });
+
+    const target = await readTarget("fork-merge-target");
+
+    // Should include ALL 7 lines: the full conversation up through the 2nd assistant response
+    expect(target).toHaveLength(7);
+    // Last line should be the final assistant chunk
+    expect(target[target.length - 1]!.content![0]).toEqual({
+      type: "text",
+      text: "Response 2b",
+    });
+  });
+
+  it("uses merged message indices for fork without assistant response", async () => {
+    // Same transcript as above
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 1" }],
+      },
+      {
+        timestamp: "t2",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 2" }],
+      },
+      {
+        timestamp: "t3",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 3" }],
+      },
+      {
+        timestamp: "t4",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Follow-up" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("fork-noresp-source", entries);
+
+    // Fork at merged index 2 (the "Follow-up" user message), no assistant response
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "fork-noresp-target",
+      upToMessageIndex: 2,
+      includeAssistantResponse: false,
+    });
+
+    const target = await readTarget("fork-noresp-target");
+
+    // Should include all 5 lines (everything up to and including "Follow-up")
+    expect(target).toHaveLength(5);
+    expect(target[target.length - 1]!.content![0]).toEqual({
+      type: "text",
+      text: "Follow-up",
+    });
+  });
+
+  it("uses merged message indices for edit-and-fork", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 1" }],
+      },
+      {
+        timestamp: "t2",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 2" }],
+      },
+      {
+        timestamp: "t3",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Follow-up" }],
+      },
+      {
+        timestamp: "t4",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Response" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("fork-edit-source", entries);
+
+    // Edit-and-fork at merged index 2 (the "Follow-up" user message)
+    // Should copy everything BEFORE that message, then append edited text
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "fork-edit-target",
+      upToMessageIndex: 2,
+      includeAssistantResponse: false,
+      appendEditedMessage: { text: "Edited follow-up", timestamp: "t-edit" },
+    });
+
+    const target = await readTarget("fork-edit-target");
+
+    // Should have 3 original lines (user + 2 assistant) + 1 edited message = 4
+    expect(target).toHaveLength(4);
+    expect(target[target.length - 1]!.content![0]).toEqual({
+      type: "text",
+      text: "Edited follow-up",
+    });
+  });
+
+  it("preserves non-visible lines between messages when using merged indices", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "system",
+        raw: { subtype: "init" },
+      } as TranscriptEntry,
+      {
+        timestamp: "t2",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 1" }],
+      },
+      {
+        timestamp: "t3",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 2" }],
+      },
+      {
+        timestamp: "t4",
+        type: "result",
+        raw: { subtype: "success" },
+      } as TranscriptEntry,
+      {
+        timestamp: "t5",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Follow-up" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("fork-nonvisible-source", entries);
+
+    // Fork at merged index 2 (the "Follow-up"), no assistant response
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "fork-nonvisible-target",
+      upToMessageIndex: 2,
+      includeAssistantResponse: false,
+    });
+
+    const target = await readTarget("fork-nonvisible-target");
+
+    // All 6 lines: user, system, assistant, assistant, result, user
+    expect(target).toHaveLength(6);
+  });
+
+  // ---- Baseline test: simple case without merging should still work ----
+
+  it("works correctly with no consecutive same-role messages", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi" }],
+      },
+      {
+        timestamp: "t2",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Question" }],
+      },
+      {
+        timestamp: "t3",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Answer" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("fork-simple-source", entries);
+
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "fork-simple-target",
+      upToMessageIndex: 2,
+      includeAssistantResponse: true,
+    });
+
+    const target = await readTarget("fork-simple-target");
+    expect(target).toHaveLength(4);
   });
 });
