@@ -13,6 +13,7 @@ import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
 import { createInitialCircuitBreakerState as defaultCreateInitialCircuitBreakerState } from "./circuit-breaker";
 import { dispatchPlanGeneration as defaultDispatchPlanGeneration } from "./plan-generator";
+import { createTask } from "./fix-plan-manager";
 
 const logger = createLogger("ralph-loop");
 
@@ -57,17 +58,46 @@ export function createInitToolServer(
     tools: [
       tool(
         "initialize_ralph_loop",
-        "Initialize a Ralph Loop autonomous workflow for this session. Call this when the user wants to start an iterative, autonomous coding workflow. Provide a clear objective summarizing the development goal.",
+        `Initialize a Ralph Loop autonomous workflow for this session. Call this when the user wants to start an iterative, autonomous coding workflow.
+
+Analyze the user's request and break it into discrete, actionable tasks:
+- Each task should be specific and achievable in a single iteration (roughly 10-30 minutes of work)
+- Assign tasks to execution groups based on dependencies:
+  - Group 1: Foundation tasks with no dependencies (core setup, schemas, initial implementations)
+  - Group 2: Tasks that depend on group 1 completion
+  - Group 3+: Tasks that depend on previous groups
+- Tasks within the same group must be independent of each other
+- Do not include meta-tasks like "review" or "test everything" — each task should include its own testing`,
         {
           objective: z
             .string()
             .min(1)
+            .describe("A concise summary of the overall development goal"),
+          tasks: z
+            .array(
+              z.object({
+                description: z
+                  .string()
+                  .min(1)
+                  .describe(
+                    "Clear, actionable task description. Each task should be achievable in a single iteration (roughly 10-30 minutes of work).",
+                  ),
+                group: z
+                  .number()
+                  .int()
+                  .min(1)
+                  .describe(
+                    "Execution group (1-based). Group 1 = foundation tasks with no dependencies. Group 2 = tasks depending on group 1. Higher groups depend on all lower groups. Tasks within the same group must be independent of each other.",
+                  ),
+              }),
+            )
+            .min(1)
             .describe(
-              "A clear description of the development objective for the Ralph Loop workflow",
+              "Structured task plan. Break the objective into discrete, actionable tasks grouped by dependency order.",
             ),
         },
         async (args) => {
-          const { objective } = args;
+          const { objective, tasks } = args;
           const {
             projectPath,
             sessionName,
@@ -80,7 +110,6 @@ export function createInitToolServer(
             getSession,
             mutateSession,
             createInitialCircuitBreakerState,
-            dispatchPlanGeneration,
           } = { ...defaultInitToolDeps, ...depsOverride };
 
           try {
@@ -111,9 +140,14 @@ export function createInitToolServer(
               };
             }
 
+            // Convert submitted tasks to FixPlanTask entries
+            const fixPlan = tasks.map((t) =>
+              createTask({ description: t.description, group: t.group }),
+            );
+
             // Create the workflow via mutateSession
             const now = new Date().toISOString();
-            const workflow = await mutateSession(
+            await mutateSession(
               projectPath,
               sessionName,
               "initTool.createWorkflow",
@@ -121,7 +155,7 @@ export function createInitToolServer(
                 sess.workflow = {
                   status: "planning",
                   objective,
-                  fixPlan: [],
+                  fixPlan,
                   config: {
                     maxIterations: 20,
                     iterationTimeoutMs: 3_600_000,
@@ -135,7 +169,7 @@ export function createInitToolServer(
                   circuitBreaker: createInitialCircuitBreakerState(),
                   iterations: [],
                   haltReason: null,
-                  generatingPlan: true,
+                  generatingPlan: false,
                   createdAt: now,
                   startedAt: null,
                   completedAt: null,
@@ -150,10 +184,12 @@ export function createInitToolServer(
             logger.info("init_tool.create", {
               sessionName,
               objectiveLength: objective.length,
+              taskCount: fixPlan.length,
             });
 
-            // Broadcast SSE event for real-time UI update
+            // Broadcast SSE events for real-time UI update
             try {
+              const pending = fixPlan.length;
               broadcast({
                 type: "workflow-status",
                 projectName,
@@ -162,34 +198,29 @@ export function createInitToolServer(
                 iterationCount: 0,
                 maxIterations: 20,
                 taskProgress: {
-                  total: 0,
+                  total: pending,
                   completed: 0,
                   skipped: 0,
-                  pending: 0,
+                  pending,
                 },
                 haltReason: null,
               });
+              broadcast({
+                type: "workflow-fix-plan-updated",
+                projectName,
+                sessionName,
+                fixPlan,
+                source: "tool",
+              });
             } catch {
               // fire-and-forget
-            }
-
-            // Dispatch plan generation fire-and-forget
-            if (workflow) {
-              const freshSession = await getSession(projectPath, sessionName);
-              if (freshSession && freshSession.workflow) {
-                dispatchPlanGeneration({
-                  projectPath,
-                  session: freshSession,
-                  workflow: freshSession.workflow,
-                });
-              }
             }
 
             return {
               content: [
                 {
                   type: "text" as const,
-                  text: `Ralph Loop workflow created successfully with objective: "${objective}".\nPlan generation is in progress. The user should visit the Ralph Loop page for this session to review the generated plan, make any adjustments, and confirm to start the workflow.`,
+                  text: `Ralph Loop workflow created successfully with objective: "${objective}" and ${fixPlan.length} tasks.\nThe user should visit the Ralph Loop page for this session to review the plan, make any adjustments, and confirm to start the workflow.`,
                 },
               ],
             };
