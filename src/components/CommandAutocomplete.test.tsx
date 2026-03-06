@@ -32,7 +32,30 @@ const mockCommands: CommandItem[] = [
     type: "skill",
     source: "user",
   },
+  {
+    name: "/kiro:spec-design",
+    description: "Create technical design",
+    argumentHint: "<feature-name> [-y]",
+    type: "skill",
+    source: "user",
+  },
+  {
+    name: "/kiro:spec-status",
+    description: "Show spec status",
+    argumentHint: "<feature-name>",
+    type: "skill",
+    source: "user",
+  },
 ];
+
+const mockFeatures = {
+  steering: [],
+  specs: {
+    "dashboard-ui": ["requirements.md", "design.md"],
+    "file-autocomplete": ["requirements.md", "design.md"],
+    "session-lifecycle": ["requirements.md"],
+  },
+};
 
 vi.mock("@/lib/queries", () => ({
   useCommandsQuery: () => ({
@@ -43,6 +66,12 @@ vi.mock("@/lib/queries", () => ({
   }),
   useProjectCommandsQuery: () => ({
     data: { items: mockCommands },
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useKiroDocTreeQuery: () => ({
+    data: mockFeatures,
     isPending: false,
     isError: false,
     error: null,
@@ -82,7 +111,7 @@ beforeEach(() => {
 });
 
 // ===========================================================================
-// Tests
+// Tests — Command Mode
 // ===========================================================================
 
 describe("CommandAutocomplete", () => {
@@ -141,7 +170,7 @@ describe("CommandAutocomplete", () => {
       renderAutocomplete({ promptText: "/" });
     });
 
-    expect(screen.getByText("3 items")).toBeInTheDocument();
+    expect(screen.getByText("5 items")).toBeInTheDocument();
   });
 
   it("shows keyboard hints in footer", async () => {
@@ -282,7 +311,7 @@ describe("CommandAutocomplete", () => {
 
     await act(async () => {
       renderAutocomplete(
-        { promptText: "/kiro", onPromptChange, onPlaceholderChange },
+        { promptText: "/kiro:spec-i", onPromptChange, onPlaceholderChange },
         ref,
       );
     });
@@ -339,5 +368,165 @@ describe("CommandAutocomplete", () => {
 
     expect(consumed).toBe(true);
     expect(onPromptChange).toHaveBeenCalledWith("/commit ");
+  });
+});
+
+// ===========================================================================
+// Tests — Feature Argument Mode
+// ===========================================================================
+
+describe("CommandAutocomplete — feature argument mode", () => {
+  it("shows feature dropdown for kiro command with <feature-name> hint", async () => {
+    await act(async () => {
+      renderAutocomplete({ promptText: "/kiro:spec-design " });
+    });
+
+    expect(screen.getByText("Features")).toBeInTheDocument();
+    expect(screen.getByText("3 items")).toBeInTheDocument();
+  });
+
+  it("lists all features alphabetically when query is empty", async () => {
+    await act(async () => {
+      renderAutocomplete({ promptText: "/kiro:spec-status " });
+    });
+
+    expect(screen.getByText("dashboard-ui")).toBeInTheDocument();
+    expect(screen.getByText("file-autocomplete")).toBeInTheDocument();
+    expect(screen.getByText("session-lifecycle")).toBeInTheDocument();
+  });
+
+  it("does NOT show feature dropdown for commands without feature-name hint", async () => {
+    await act(async () => {
+      renderAutocomplete({ promptText: "/kiro:spec-init " });
+    });
+
+    // spec-init has <project-description>, not <feature-name>
+    expect(screen.queryByText("Features")).toBeNull();
+  });
+
+  it("does NOT show feature dropdown for non-kiro commands", async () => {
+    await act(async () => {
+      renderAutocomplete({ promptText: "/commit " });
+    });
+
+    expect(screen.queryByText("Features")).toBeNull();
+  });
+
+  it("does NOT show feature dropdown when disabled", async () => {
+    await act(async () => {
+      renderAutocomplete({ promptText: "/kiro:spec-design ", disabled: true });
+    });
+
+    expect(screen.queryByText("Features")).toBeNull();
+  });
+
+  it("filters features by partial query", async () => {
+    await act(async () => {
+      renderAutocomplete({ promptText: "/kiro:spec-design dash" });
+    });
+
+    const items = document.querySelectorAll(".cmd-item");
+    expect(items.length).toBe(1);
+    expect(items[0]?.querySelector(".cmd-name")?.textContent).toBe(
+      "dashboard-ui",
+    );
+  });
+
+  it("shows 'No matching features' for unmatched query", async () => {
+    await act(async () => {
+      renderAutocomplete({ promptText: "/kiro:spec-design zzznotfound" });
+    });
+
+    expect(screen.getByText("No matching features")).toBeInTheDocument();
+  });
+
+  it("selecting a feature sets prompt to command + feature + space", async () => {
+    const onPromptChange = vi.fn();
+    const onPlaceholderChange = vi.fn();
+    const ref = createRef<CommandAutocompleteHandle>();
+
+    await act(async () => {
+      renderAutocomplete(
+        {
+          promptText: "/kiro:spec-design ",
+          onPromptChange,
+          onPlaceholderChange,
+        },
+        ref,
+      );
+    });
+
+    act(() => {
+      ref.current?.handleKeyDown({
+        key: "Enter",
+        preventDefault: vi.fn(),
+      } as unknown as React.KeyboardEvent);
+    });
+
+    // First sorted feature is dashboard-ui
+    expect(onPromptChange).toHaveBeenCalledWith(
+      "/kiro:spec-design dashboard-ui ",
+    );
+    expect(onPlaceholderChange).toHaveBeenCalledWith("");
+  });
+
+  it("click on feature selects it", async () => {
+    const onPromptChange = vi.fn();
+
+    await act(async () => {
+      renderAutocomplete({
+        promptText: "/kiro:spec-design ",
+        onPromptChange,
+      });
+    });
+
+    const items = document.querySelectorAll(".cmd-item");
+    fireEvent.click(items[1]!);
+
+    // Second sorted feature is file-autocomplete
+    expect(onPromptChange).toHaveBeenCalledWith(
+      "/kiro:spec-design file-autocomplete ",
+    );
+  });
+
+  it("does NOT show feature dropdown when argument already has a space", async () => {
+    await act(async () => {
+      renderAutocomplete({
+        promptText: "/kiro:spec-design dashboard-ui ",
+      });
+    });
+
+    // Once the feature is selected and there's a second space, dropdown should close
+    expect(screen.queryByText("Features")).toBeNull();
+  });
+
+  it("keyboard navigation works in feature mode", async () => {
+    const ref = createRef<CommandAutocompleteHandle>();
+
+    await act(async () => {
+      renderAutocomplete({ promptText: "/kiro:spec-design " }, ref);
+    });
+
+    // Move down to second item
+    act(() => {
+      ref.current?.handleKeyDown({
+        key: "ArrowDown",
+        preventDefault: vi.fn(),
+      } as unknown as React.KeyboardEvent);
+    });
+
+    const items = document.querySelectorAll(".cmd-item");
+    expect(items[1]?.classList.contains("active")).toBe(true);
+  });
+
+  it("does not show badges or descriptions for feature items", async () => {
+    await act(async () => {
+      renderAutocomplete({ promptText: "/kiro:spec-design " });
+    });
+
+    const badges = document.querySelectorAll(".cmd-badge");
+    const descs = document.querySelectorAll(".cmd-desc");
+    expect(badges.length).toBe(0);
+    expect(descs.length).toBe(0);
   });
 });

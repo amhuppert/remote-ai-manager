@@ -10,13 +10,45 @@ import {
   forwardRef,
 } from "react";
 import { fuzzyMatch } from "@/lib/fuzzy";
-import { useCommandsQuery, useProjectCommandsQuery } from "@/lib/queries";
+import {
+  useCommandsQuery,
+  useProjectCommandsQuery,
+  useKiroDocTreeQuery,
+} from "@/lib/queries";
 import type { CommandItem } from "@/types";
 
 interface ScoredItem {
   item: CommandItem;
   score: number;
   nameIndices: number[];
+}
+
+interface ScoredFeature {
+  name: string;
+  score: number;
+  indices: number[];
+}
+
+/** Detect if the prompt is in "feature argument" mode for a Kiro command. */
+function detectFeatureArgMode(
+  promptText: string,
+  commands: CommandItem[],
+): { commandName: string; query: string } | null {
+  const spaceIdx = promptText.indexOf(" ");
+  if (spaceIdx === -1 || !promptText.startsWith("/")) return null;
+
+  const commandName = promptText.slice(0, spaceIdx);
+  const command = commands.find((c) => c.name === commandName);
+  if (!command?.argumentHint) return null;
+
+  // Check if the command expects a feature-name argument
+  if (!/feature-name/i.test(command.argumentHint)) return null;
+
+  const query = promptText.slice(spaceIdx + 1);
+  // Only show autocomplete for the first argument (no second space yet)
+  if (query.includes(" ")) return null;
+
+  return { commandName, query };
 }
 
 export interface CommandAutocompleteProps {
@@ -50,10 +82,6 @@ export const CommandAutocomplete = forwardRef<
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const visible =
-    !disabled && promptText.startsWith("/") && !promptText.includes(" ");
-  const query = visible ? promptText.slice(1) : "";
-
   // Fetch commands via TanStack Query — session-level when sessionName is provided,
   // otherwise project-level (e.g. in OptimisticDialog before a session exists)
   const sessionQuery = useCommandsQuery(projectName, sessionName ?? "", {
@@ -67,14 +95,63 @@ export const CommandAutocomplete = forwardRef<
     () => commandsQuery.data?.items ?? [],
     [commandsQuery.data?.items],
   );
-  const loading = commandsQuery.isPending && visible;
-  const error = commandsQuery.isError
-    ? (commandsQuery.error?.message ?? "Failed to load commands")
-    : null;
 
-  // Filter and score items
+  // Mode detection: command mode vs feature argument mode
+  const commandMode =
+    !disabled && promptText.startsWith("/") && !promptText.includes(" ");
+  const featureArg = useMemo(
+    () => (disabled ? null : detectFeatureArgMode(promptText, items)),
+    [disabled, promptText, items],
+  );
+  const visible = commandMode || !!featureArg;
+  const query = commandMode ? promptText.slice(1) : (featureArg?.query ?? "");
+
+  // Fetch Kiro features for feature argument mode
+  const kiroDocTree = useKiroDocTreeQuery(projectName, sessionName, {
+    enabled: !!featureArg,
+  });
+  const featureNames = useMemo(
+    () => Object.keys(kiroDocTree.data?.specs ?? {}).sort(),
+    [kiroDocTree.data?.specs],
+  );
+
+  const loading =
+    (commandMode && commandsQuery.isPending) ||
+    (!!featureArg && kiroDocTree.isPending);
+  const error =
+    commandMode && commandsQuery.isError
+      ? (commandsQuery.error?.message ?? "Failed to load commands")
+      : !!featureArg && kiroDocTree.isError
+        ? (kiroDocTree.error?.message ?? "Failed to load features")
+        : null;
+
+  // Filter and score features (feature arg mode)
+  const filteredFeatures = useMemo((): ScoredFeature[] => {
+    if (!featureArg || featureNames.length === 0) return [];
+
+    const results: ScoredFeature[] = [];
+    for (const name of featureNames) {
+      if (query === "") {
+        results.push({ name, score: 100, indices: [] });
+        continue;
+      }
+      const result = fuzzyMatch(query, name);
+      if (result.match) {
+        results.push({ name, score: result.score, indices: result.indices });
+      }
+    }
+
+    results.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.name.localeCompare(b.name);
+    });
+
+    return results;
+  }, [featureArg, featureNames, query]);
+
+  // Filter and score commands (command mode)
   const filtered = useMemo((): ScoredItem[] => {
-    if (items.length === 0) return [];
+    if (!commandMode || items.length === 0) return [];
 
     const results: ScoredItem[] = [];
 
@@ -113,10 +190,13 @@ export const CommandAutocomplete = forwardRef<
     });
 
     return results;
-  }, [items, query]);
+  }, [commandMode, items, query]);
+
+  // Unified item count for keyboard navigation
+  const totalItems = featureArg ? filteredFeatures.length : filtered.length;
 
   // Reset active index when filtered results change (state-during-render pattern)
-  const resetKey = `${query}:${filtered.length}`;
+  const resetKey = `${query}:${totalItems}:${featureArg ? "f" : "c"}`;
   const [prevResetKey, setPrevResetKey] = useState(resetKey);
   if (resetKey !== prevResetKey) {
     setPrevResetKey(resetKey);
@@ -143,6 +223,16 @@ export const CommandAutocomplete = forwardRef<
     [onPromptChange, onPlaceholderChange],
   );
 
+  // Select a feature (in feature argument mode)
+  const selectFeature = useCallback(
+    (feature: ScoredFeature) => {
+      if (!featureArg) return;
+      onPromptChange(featureArg.commandName + " " + feature.name + " ");
+      onPlaceholderChange("");
+    },
+    [featureArg, onPromptChange, onPlaceholderChange],
+  );
+
   // Keyboard handler - exposed to parent
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent): boolean => {
@@ -151,7 +241,7 @@ export const CommandAutocomplete = forwardRef<
       switch (e.key) {
         case "ArrowDown": {
           e.preventDefault();
-          setActiveIndex((prev) => Math.min(prev + 1, filtered.length - 1));
+          setActiveIndex((prev) => Math.min(prev + 1, totalItems - 1));
           return true;
         }
         case "ArrowUp": {
@@ -162,9 +252,12 @@ export const CommandAutocomplete = forwardRef<
         case "Enter":
         case "Tab": {
           e.preventDefault();
-          const selected = filtered[activeIndex];
-          if (selected) {
-            selectItem(selected);
+          if (featureArg) {
+            const selected = filteredFeatures[activeIndex];
+            if (selected) selectFeature(selected);
+          } else {
+            const selected = filtered[activeIndex];
+            if (selected) selectItem(selected);
           }
           return true;
         }
@@ -177,7 +270,17 @@ export const CommandAutocomplete = forwardRef<
           return false;
       }
     },
-    [visible, filtered, activeIndex, selectItem, onPromptChange],
+    [
+      visible,
+      featureArg,
+      filtered,
+      filteredFeatures,
+      totalItems,
+      activeIndex,
+      selectItem,
+      selectFeature,
+      onPromptChange,
+    ],
   );
 
   // Expose handleKeyDown to parent via ref
@@ -186,7 +289,7 @@ export const CommandAutocomplete = forwardRef<
   if (!visible) return null;
 
   // Render highlighted name
-  function renderName(name: string, indices: number[]) {
+  function renderHighlighted(name: string, indices: number[]) {
     if (indices.length === 0) return <span className="cmd-name">{name}</span>;
 
     const indexSet = new Set(indices);
@@ -207,17 +310,26 @@ export const CommandAutocomplete = forwardRef<
     return <span className="cmd-name">{chars}</span>;
   }
 
+  const headerLabel = featureArg ? "Features" : "Commands";
+  const emptyLabel = featureArg
+    ? "No matching features"
+    : "No matching commands";
+
   return (
     <div className="cmd-autocomplete">
       <div className="cmd-header">
-        <span>Commands</span>
+        <span>{headerLabel}</span>
         <span className="cmd-header-count">
-          {filtered.length} {filtered.length === 1 ? "item" : "items"}
+          {totalItems} {totalItems === 1 ? "item" : "items"}
         </span>
       </div>
 
       <div className="cmd-list" ref={listRef}>
-        {loading && <div className="cmd-loading">Loading commands...</div>}
+        {loading && (
+          <div className="cmd-loading">
+            Loading {featureArg ? "features" : "commands"}...
+          </div>
+        )}
 
         {error && (
           <div className="cmd-error">
@@ -225,12 +337,29 @@ export const CommandAutocomplete = forwardRef<
           </div>
         )}
 
-        {!loading && !error && filtered.length === 0 && (
-          <div className="cmd-empty">No matching commands</div>
+        {!loading && !error && totalItems === 0 && (
+          <div className="cmd-empty">{emptyLabel}</div>
         )}
 
+        {/* Feature argument mode */}
         {!loading &&
           !error &&
+          featureArg &&
+          filteredFeatures.map((feature, i) => (
+            <div
+              key={feature.name}
+              className={`cmd-item${i === activeIndex ? " active" : ""}`}
+              onMouseEnter={() => setActiveIndex(i)}
+              onClick={() => selectFeature(feature)}
+            >
+              {renderHighlighted(feature.name, feature.indices)}
+            </div>
+          ))}
+
+        {/* Command mode */}
+        {!loading &&
+          !error &&
+          !featureArg &&
           filtered.map((scored, i) => (
             <div
               key={scored.item.name}
@@ -238,7 +367,7 @@ export const CommandAutocomplete = forwardRef<
               onMouseEnter={() => setActiveIndex(i)}
               onClick={() => selectItem(scored)}
             >
-              {renderName(scored.item.name, scored.nameIndices)}
+              {renderHighlighted(scored.item.name, scored.nameIndices)}
               <span className="cmd-desc">{scored.item.description}</span>
               <span className="cmd-badge" data-type={scored.item.type}>
                 {scored.item.type}
