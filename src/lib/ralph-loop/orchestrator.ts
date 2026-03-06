@@ -198,6 +198,7 @@ async function runIterationImpl(
   const promptText = deps.buildIterationPrompt({
     objective: workflow.objective,
     fixPlan: workflow.fixPlan,
+    references: workflow.references ?? [],
     iterationNumber,
     maxIterations: workflow.config.maxIterations,
     previousIterationContext: previousContext,

@@ -109,6 +109,7 @@ function makeWorkflow(
     status: "planning",
     objective: "Implement user authentication system",
     fixPlan: [],
+    references: [],
     config: {
       maxIterations: 20,
       iterationTimeoutMs: 3_600_000,

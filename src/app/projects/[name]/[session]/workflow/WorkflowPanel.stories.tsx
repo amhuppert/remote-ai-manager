@@ -100,6 +100,7 @@ function workflow(overrides?: Partial<RalphLoopWorkflow>): RalphLoopWorkflow {
     status: "planning",
     objective: "",
     fixPlan: [],
+    references: [],
     config: defaultConfig,
     circuitBreaker: closedCB,
     iterations: [],

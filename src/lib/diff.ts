@@ -3,12 +3,30 @@ import { promisify } from "node:util";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { unlink } from "node:fs/promises";
+import { unlink as unlinkDefault } from "node:fs/promises";
 import type { SessionDiff, FileDiff, DiffHunk, DiffLine } from "@/types";
 
-const execFileAsync = promisify(execFile);
+const execFileAsyncDefault = promisify(execFile);
 
 const MAX_BUFFER = 10 * 1024 * 1024;
+
+/* ------------------------------------------------------------------ */
+/*  DI for computeDiff                                                 */
+/* ------------------------------------------------------------------ */
+
+export interface ComputeDiffDeps {
+  execFileAsync: (
+    cmd: string,
+    args: string[],
+    opts: { cwd: string; maxBuffer: number; env?: NodeJS.ProcessEnv },
+  ) => Promise<{ stdout: string; stderr: string }>;
+  unlink: (path: string) => Promise<void>;
+}
+
+export const defaultComputeDiffDeps: ComputeDiffDeps = {
+  execFileAsync: execFileAsyncDefault,
+  unlink: unlinkDefault,
+};
 
 /**
  * Compute a git diff of uncommitted changes in the session worktree.
@@ -16,7 +34,10 @@ const MAX_BUFFER = 10 * 1024 * 1024;
  * without modifying the real index. Diffs the working tree against HEAD
  * so only truly uncommitted changes are shown.
  */
-export async function computeDiff(worktreePath: string): Promise<SessionDiff> {
+export async function computeDiff(
+  worktreePath: string,
+  deps: ComputeDiffDeps = defaultComputeDiffDeps,
+): Promise<SessionDiff> {
   let rawDiff: string;
   const tmpIndex = join(tmpdir(), `cc-diff-${randomUUID()}`);
   try {
@@ -25,11 +46,11 @@ export async function computeDiff(worktreePath: string): Promise<SessionDiff> {
     const tmpOpts = { ...opts, env: tmpEnv };
 
     // Build a temp index: seed from HEAD tree, then update with working tree
-    await execFileAsync("git", ["read-tree", "HEAD"], tmpOpts);
-    await execFileAsync("git", ["add", "-A"], tmpOpts);
+    await deps.execFileAsync("git", ["read-tree", "HEAD"], tmpOpts);
+    await deps.execFileAsync("git", ["add", "-A"], tmpOpts);
 
     // Diff the temp index (working tree) against HEAD — uncommitted changes only
-    const { stdout } = await execFileAsync(
+    const { stdout } = await deps.execFileAsync(
       "git",
       ["diff", "--cached", "HEAD", "--unified=3"],
       tmpOpts,
@@ -39,7 +60,7 @@ export async function computeDiff(worktreePath: string): Promise<SessionDiff> {
     // If diff fails, return empty
     return { files: [], totalAdditions: 0, totalDeletions: 0 };
   } finally {
-    await unlink(tmpIndex).catch(() => {});
+    await deps.unlink(tmpIndex).catch(() => {});
   }
 
   if (!rawDiff.trim()) {

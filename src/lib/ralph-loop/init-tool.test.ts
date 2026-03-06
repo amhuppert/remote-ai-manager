@@ -481,4 +481,89 @@ describe("init-tool", () => {
     expect(plan[1]!.description).toBe("Build API");
     expect(plan[1]!.group).toBe(2);
   });
+
+  it("stores references in the created workflow", async () => {
+    const { createInitToolServer } = await import("./init-tool");
+
+    const session = makeSession({ workflow: null });
+    mockGetSession.mockResolvedValue(session);
+
+    let capturedWorkflow: RalphLoopWorkflow | null = null;
+    mockMutateSession.mockImplementation(
+      async (
+        _path: string,
+        _name: string,
+        _label: string,
+        mutator: (s: SessionState) => unknown,
+      ) => {
+        mutator(session);
+        capturedWorkflow = session.workflow ?? null;
+        return capturedWorkflow;
+      },
+    );
+
+    createInitToolServer({
+      projectPath: "/projects/test",
+      sessionName: "test-session",
+      projectName: "test",
+      broadcast: mockBroadcast,
+      deps: createTestDeps(),
+    });
+
+    const handler = getHandler("initialize_ralph_loop");
+    await handler({
+      objective: "Fix testing issues",
+      tasks: [{ description: "Refactor config tests", group: 1 }],
+      references: [
+        {
+          filePath: "/tmp/worktree/memory-bank/ralph-reference/audit.md",
+          description: "DI audit findings — read when implementing DI changes",
+        },
+      ],
+    });
+
+    expect(capturedWorkflow!.references).toEqual([
+      {
+        filePath: "/tmp/worktree/memory-bank/ralph-reference/audit.md",
+        description: "DI audit findings — read when implementing DI changes",
+      },
+    ]);
+  });
+
+  it("defaults references to empty array when omitted", async () => {
+    const { createInitToolServer } = await import("./init-tool");
+
+    const session = makeSession({ workflow: null });
+    mockGetSession.mockResolvedValue(session);
+
+    let capturedWorkflow: RalphLoopWorkflow | null = null;
+    mockMutateSession.mockImplementation(
+      async (
+        _path: string,
+        _name: string,
+        _label: string,
+        mutator: (s: SessionState) => unknown,
+      ) => {
+        mutator(session);
+        capturedWorkflow = session.workflow ?? null;
+        return capturedWorkflow;
+      },
+    );
+
+    createInitToolServer({
+      projectPath: "/projects/test",
+      sessionName: "test-session",
+      projectName: "test",
+      broadcast: mockBroadcast,
+      deps: createTestDeps(),
+    });
+
+    const handler = getHandler("initialize_ralph_loop");
+    await handler({
+      objective: "Build feature",
+      tasks: [{ description: "Create schema", group: 1 }],
+    });
+
+    expect(capturedWorkflow!.references).toEqual([]);
+  });
 });

@@ -487,6 +487,7 @@ describe("deriveSessionStatus", () => {
         status: "running",
         objective: "test",
         fixPlan: [],
+        references: [],
         config: {
           maxIterations: 20,
           iterationTimeoutMs: 3_600_000,
@@ -522,6 +523,7 @@ describe("deriveSessionStatus", () => {
         status: "paused",
         objective: "test",
         fixPlan: [],
+        references: [],
         config: {
           maxIterations: 20,
           iterationTimeoutMs: 3_600_000,
@@ -557,6 +559,7 @@ describe("deriveSessionStatus", () => {
         status: "completed",
         objective: "test",
         fixPlan: [],
+        references: [],
         config: {
           maxIterations: 20,
           iterationTimeoutMs: 3_600_000,

@@ -181,6 +181,7 @@ export function createWorkflowRouteHandlers(
           status: "planning",
           objective: body.objective ?? "",
           fixPlan: [],
+          references: [],
           config: {
             maxIterations: 20,
             iterationTimeoutMs: 3_600_000,

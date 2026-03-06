@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parseDiff, computeDiff } from "./diff";
+import type { ComputeDiffDeps } from "./diff";
 
 describe("parseDiff", () => {
   it("returns empty diff for empty input", () => {
@@ -123,10 +124,6 @@ index 0000000..abc1234
     expect(result.files[0]!.additions).toBe(2);
   });
 
-  // ==========================================================================
-  // 4.1 – parseDiff edge cases (Req 2.6, 2.7, 3.4)
-  // ==========================================================================
-
   it("skips deleted file mode metadata lines", () => {
     const raw = `diff --git a/old.ts b/old.ts
 deleted file mode 100644
@@ -211,54 +208,26 @@ index abc..def 100644
 });
 
 // ===========================================================================
-// 4.2 – computeDiff integration (Req 1.1, 1.2, 1.4, 1.5)
+// computeDiff — uses injected deps instead of vi.mock
 // ===========================================================================
 
-const { execFileMock, unlinkMock } = vi.hoisted(() => ({
-  execFileMock: vi.fn(),
-  unlinkMock: vi.fn(),
-}));
-
-vi.mock("node:child_process", () => ({
-  execFile: execFileMock,
-}));
-
-vi.mock("node:fs/promises", () => ({
-  unlink: unlinkMock,
-}));
-
-/** Make execFileMock resolve in sequence for successive calls */
-function mockExecSequence(results: Array<{ error?: Error; stdout?: string }>) {
-  let callIndex = 0;
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      if (!cb) return;
-      const r = results[callIndex] ?? results[results.length - 1]!;
-      callIndex++;
-      if (r.error) {
-        cb(r.error, { stdout: "", stderr: "" });
-      } else {
-        cb(null, { stdout: r.stdout ?? "", stderr: "" });
-      }
-    },
-  );
+function createMockDeps(): {
+  deps: ComputeDiffDeps;
+  mockExec: ReturnType<typeof vi.fn>;
+  mockUnlink: ReturnType<typeof vi.fn>;
+} {
+  const mockExec = vi.fn();
+  const mockUnlink = vi.fn().mockResolvedValue(undefined);
+  return {
+    deps: { execFileAsync: mockExec, unlink: mockUnlink },
+    mockExec,
+    mockUnlink,
+  };
 }
 
 describe("computeDiff", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    unlinkMock.mockResolvedValue(undefined);
-  });
-
-  it("uses temp index to diff working tree against HEAD (Req 1.1, 1.2)", async () => {
+  it("uses temp index to diff working tree against HEAD", async () => {
+    const { deps, mockExec, mockUnlink } = createMockDeps();
     const diffOutput = `diff --git a/src/app.ts b/src/app.ts
 index abc..def 100644
 --- a/src/app.ts
@@ -268,23 +237,19 @@ index abc..def 100644
 +new line
  line2`;
 
-    mockExecSequence([
-      // 0: git read-tree HEAD
-      { stdout: "" },
-      // 1: git add -A
-      { stdout: "" },
-      // 2: git diff --cached HEAD --unified=3
-      { stdout: diffOutput },
-    ]);
+    // 0: git read-tree HEAD, 1: git add -A, 2: git diff
+    mockExec
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: diffOutput, stderr: "" });
 
-    const result = await computeDiff("/projects/repo/.worktrees/test");
+    const result = await computeDiff("/projects/repo/.worktrees/test", deps);
 
     expect(result.files).toHaveLength(1);
     expect(result.files[0]!.filePath).toBe("src/app.ts");
     expect(result.totalAdditions).toBe(1);
     expect(result.totalDeletions).toBe(0);
     expect(result.files[0]!.additions).toBe(1);
-    expect(result.files[0]!.deletions).toBe(0);
     expect(result.files[0]!.hunks).toHaveLength(1);
     expect(
       result.files[0]!.hunks[0]!.lines.some(
@@ -293,31 +258,36 @@ index abc..def 100644
     ).toBe(true);
 
     // Verify temp index env is set for all git calls
-    for (const call of execFileMock.mock.calls) {
+    for (const call of mockExec.mock.calls) {
       const opts = call[2] as { env: Record<string, string> };
       expect(opts.env.GIT_INDEX_FILE).toMatch(/cc-diff-/);
     }
 
     // Verify temp index cleanup
-    expect(unlinkMock).toHaveBeenCalledTimes(1);
+    expect(mockUnlink).toHaveBeenCalledTimes(1);
   });
 
-  it("returns empty diff on read-tree failure (Req 1.5)", async () => {
-    mockExecSequence([{ error: new Error("git failed") }]);
+  it("returns empty diff on read-tree failure", async () => {
+    const { deps, mockExec, mockUnlink } = createMockDeps();
+    mockExec.mockRejectedValueOnce(new Error("git failed"));
 
-    const result = await computeDiff("/projects/repo/.worktrees/test");
+    const result = await computeDiff("/projects/repo/.worktrees/test", deps);
     expect(result.files).toHaveLength(0);
     expect(result.totalAdditions).toBe(0);
     expect(result.totalDeletions).toBe(0);
 
     // Temp index cleanup still called
-    expect(unlinkMock).toHaveBeenCalledTimes(1);
+    expect(mockUnlink).toHaveBeenCalledTimes(1);
   });
 
-  it("returns empty diff for empty git diff output (Req 1.6)", async () => {
-    mockExecSequence([{ stdout: "" }, { stdout: "" }, { stdout: "" }]);
+  it("returns empty diff for empty git diff output", async () => {
+    const { deps, mockExec } = createMockDeps();
+    mockExec
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
 
-    const result = await computeDiff("/projects/repo/.worktrees/test");
+    const result = await computeDiff("/projects/repo/.worktrees/test", deps);
     expect(result.files).toHaveLength(0);
     expect(result.totalAdditions).toBe(0);
   });

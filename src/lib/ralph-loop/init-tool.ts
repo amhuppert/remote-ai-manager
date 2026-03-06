@@ -67,7 +67,8 @@ Analyze the user's request and break it into discrete, actionable tasks:
   - Group 2: Tasks that depend on group 1 completion
   - Group 3+: Tasks that depend on previous groups
 - Tasks within the same group must be independent of each other
-- Do not include meta-tasks like "review" or "test everything" — each task should include its own testing`,
+- Do not include meta-tasks like "review" or "test everything" — each task should include its own testing
+- Executing agents only see the objective, task list, and codebase — not this conversation. Each task description must be self-contained: include the specific "what" and "why", reference files or patterns to follow when the agent can't easily discover them, and specify verification commands.`,
         {
           objective: z
             .string()
@@ -80,7 +81,7 @@ Analyze the user's request and break it into discrete, actionable tasks:
                   .string()
                   .min(1)
                   .describe(
-                    "Clear, actionable task description. Each task should be achievable in a single iteration (roughly 10-30 minutes of work).",
+                    "Self-contained task description for an agent with no access to this conversation. Include what to change, why, which files are involved, and how to verify. Achievable in a single iteration (roughly 10-30 minutes of work).",
                   ),
                 group: z
                   .number()
@@ -95,9 +96,28 @@ Analyze the user's request and break it into discrete, actionable tasks:
             .describe(
               "Structured task plan. Break the objective into discrete, actionable tasks grouped by dependency order.",
             ),
+          references: z
+            .array(
+              z.object({
+                filePath: z
+                  .string()
+                  .describe(
+                    "Absolute path to a reference document in memory-bank/ralph-reference/ within the session worktree",
+                  ),
+                description: z
+                  .string()
+                  .describe(
+                    "What the document contains and when the executing agent should read it",
+                  ),
+              }),
+            )
+            .optional()
+            .describe(
+              "Optional reference documents providing additional context. Create files in memory-bank/ralph-reference/ before calling this tool. Executing agents see file paths and descriptions in their iteration prompt and can read them on demand.",
+            ),
         },
         async (args) => {
-          const { objective, tasks } = args;
+          const { objective, tasks, references } = args;
           const {
             projectPath,
             sessionName,
@@ -156,6 +176,7 @@ Analyze the user's request and break it into discrete, actionable tasks:
                   status: "planning",
                   objective,
                   fixPlan,
+                  references: references ?? [],
                   config: {
                     maxIterations: 20,
                     iterationTimeoutMs: 3_600_000,

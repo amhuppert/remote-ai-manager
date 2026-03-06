@@ -8,6 +8,7 @@ import { getActiveTasksByGroup } from "./fix-plan-manager";
 export interface BuildPromptParams {
   objective: string;
   fixPlan: FixPlanTask[];
+  references?: Array<{ filePath: string; description: string }>;
   iterationNumber: number;
   maxIterations: number;
   previousIterationContext?: PreviousIterationContext;
@@ -50,6 +51,13 @@ export function buildIterationPrompt(params: BuildPromptParams): string {
   sections.push("## Task Plan");
   sections.push(buildTaskPlanSection(fixPlan));
   sections.push("");
+
+  // Reference Documents
+  if (params.references?.length) {
+    sections.push("## Reference Documents");
+    sections.push(buildReferencesSection(params.references));
+    sections.push("");
+  }
 
   // Previous Iteration Context
   if (previousIterationContext) {
@@ -130,6 +138,20 @@ function buildPreviousContextSection(ctx: PreviousIterationContext): string {
   return lines.length > 0
     ? lines.join("\n")
     : "No context from previous iteration.";
+}
+
+function buildReferencesSection(
+  references: Array<{ filePath: string; description: string }>,
+): string {
+  const lines: string[] = [];
+  lines.push(
+    "The following reference documents provide additional context. Read them when relevant to your current task.",
+  );
+  lines.push("");
+  for (const ref of references) {
+    lines.push(`- **${ref.filePath}**: ${ref.description}`);
+  }
+  return lines.join("\n");
 }
 
 const TOOL_INSTRUCTIONS = `You have two special tools available for this workflow iteration:

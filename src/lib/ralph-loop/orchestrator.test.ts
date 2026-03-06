@@ -157,6 +157,7 @@ function makeWorkflow(
     status: "running",
     objective: "Implement feature X",
     fixPlan: [],
+    references: [],
     config: {
       maxIterations: 20,
       iterationTimeoutMs: 3_600_000,

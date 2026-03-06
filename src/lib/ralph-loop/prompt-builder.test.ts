@@ -189,4 +189,46 @@ describe("PromptBuilder", () => {
     });
     expect(prompt).toContain("No tasks defined");
   });
+
+  it("includes reference documents section when references provided", () => {
+    const prompt = buildIterationPrompt({
+      objective: "Test",
+      fixPlan: [makeTask()],
+      references: [
+        {
+          filePath: "/tmp/worktree/memory-bank/ralph-reference/audit.md",
+          description:
+            "Testing audit findings — read when implementing DI changes",
+        },
+      ],
+      iterationNumber: 1,
+      maxIterations: 10,
+    });
+    expect(prompt).toContain("## Reference Documents");
+    expect(prompt).toContain(
+      "/tmp/worktree/memory-bank/ralph-reference/audit.md",
+    );
+    expect(prompt).toContain("Testing audit findings");
+  });
+
+  it("omits reference documents section when no references", () => {
+    const prompt = buildIterationPrompt({
+      objective: "Test",
+      fixPlan: [makeTask()],
+      iterationNumber: 1,
+      maxIterations: 10,
+    });
+    expect(prompt).not.toContain("Reference Documents");
+  });
+
+  it("omits reference documents section when references is empty array", () => {
+    const prompt = buildIterationPrompt({
+      objective: "Test",
+      fixPlan: [makeTask()],
+      references: [],
+      iterationNumber: 1,
+      maxIterations: 10,
+    });
+    expect(prompt).not.toContain("Reference Documents");
+  });
 });

@@ -2,14 +2,14 @@ import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import {
-  createRoadmapItem,
-  deleteRoadmapItem,
-  getRoadmapItems,
+  createRoadmapItem as createRoadmapItemDefault,
+  deleteRoadmapItem as deleteRoadmapItemDefault,
+  getRoadmapItems as getRoadmapItemsDefault,
 } from "@/lib/state";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
 import { roadmapItemTypeSchema } from "@/lib/schemas";
-import type { RoadmapItem } from "@/types";
+import type { RoadmapItem, RoadmapItemType } from "@/types";
 
 const logger = createLogger("roadmap-tools");
 
@@ -17,12 +17,32 @@ export interface RoadmapToolContext {
   projectPath: string;
 }
 
+export interface RoadmapToolDeps {
+  createRoadmapItem: (
+    projectPath: string,
+    data: {
+      title: string;
+      description?: string | null;
+      type: RoadmapItemType;
+    },
+  ) => Promise<RoadmapItem>;
+  deleteRoadmapItem: (projectPath: string, itemId: string) => Promise<void>;
+  getRoadmapItems: (projectPath: string) => Promise<RoadmapItem[]>;
+}
+
+export const defaultRoadmapToolDeps: RoadmapToolDeps = {
+  createRoadmapItem: createRoadmapItemDefault,
+  deleteRoadmapItem: deleteRoadmapItemDefault,
+  getRoadmapItems: getRoadmapItemsDefault,
+};
+
 /**
  * Creates an in-process MCP server with roadmap item management tools.
  * Registered unconditionally in the prompt pipeline for every conversation.
  */
 export function createRoadmapToolServer(
   context: RoadmapToolContext,
+  deps: RoadmapToolDeps = defaultRoadmapToolDeps,
 ): McpSdkServerConfigWithInstance {
   const { projectPath } = context;
 
@@ -45,7 +65,7 @@ export function createRoadmapToolServer(
         },
         async (args) => {
           try {
-            const item = await createRoadmapItem(projectPath, {
+            const item = await deps.createRoadmapItem(projectPath, {
               title: args.title,
               type: args.type,
               description: args.description,
@@ -92,7 +112,7 @@ export function createRoadmapToolServer(
         },
         async (args) => {
           try {
-            await deleteRoadmapItem(projectPath, args.item_id);
+            await deps.deleteRoadmapItem(projectPath, args.item_id);
 
             logger.info("tool.remove_roadmap_item", {
               itemId: args.item_id,
@@ -130,7 +150,7 @@ export function createRoadmapToolServer(
         {},
         async () => {
           try {
-            const allItems = await getRoadmapItems(projectPath);
+            const allItems = await deps.getRoadmapItems(projectPath);
             const items = allItems.filter((item) => !item.archived);
 
             if (items.length === 0) {

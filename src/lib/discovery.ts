@@ -1,66 +1,102 @@
 import { readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { DiscoveredProject } from "@/types";
-import { readConfig } from "./config";
-import { readState } from "./state";
+import type { DiscoveredProject, GlobalConfig, ManagerState } from "@/types";
+import { readConfig as readConfigDefault } from "./config";
+import { readState as readStateDefault } from "./state";
 import { deriveSessionStatus } from "./conversations";
 
-/**
- * Scan baseDir one level deep for directories containing a .git directory/file.
- * Returns discovered projects with session metadata from manager state.
- */
+/* ------------------------------------------------------------------ */
+/*  DI factory                                                         */
+/* ------------------------------------------------------------------ */
+
+export interface DiscoveryDeps {
+  readConfig: () => Promise<GlobalConfig>;
+  readState: () => Promise<ManagerState>;
+}
+
+export const defaultDiscoveryDeps: DiscoveryDeps = {
+  readConfig: readConfigDefault,
+  readState: readStateDefault,
+};
+
+export interface DiscoveryService {
+  discoverProjects(): Promise<DiscoveredProject[]>;
+}
+
+export function createDiscoveryService(
+  deps: DiscoveryDeps = defaultDiscoveryDeps,
+): DiscoveryService {
+  return {
+    /**
+     * Scan baseDir one level deep for directories containing a .git directory/file.
+     * Returns discovered projects with session metadata from manager state.
+     */
+    async discoverProjects(): Promise<DiscoveredProject[]> {
+      const config = await deps.readConfig();
+      const baseDir = config.baseDir;
+
+      if (!existsSync(baseDir)) {
+        return [];
+      }
+
+      const entries = await readdir(baseDir, { withFileTypes: true });
+      const state = await deps.readState();
+
+      const projects: DiscoveredProject[] = [];
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+
+        // Skip ignored patterns
+        if (config.ignorePatterns.includes(entry.name)) continue;
+
+        const repoPath = path.join(baseDir, entry.name);
+        const gitPath = path.join(repoPath, ".git");
+
+        // Check if .git exists (directory or file for worktrees)
+        try {
+          await stat(gitPath);
+        } catch {
+          continue; // No .git — skip
+        }
+
+        // Gather session stats from manager state
+        const projectState = state.projects[repoPath];
+        const sessions = projectState
+          ? Object.values(projectState.sessions)
+          : [];
+        const activeSessions = sessions.filter((s) => !s.archived).length;
+        const hasRunningSession = sessions.some(
+          (s) => deriveSessionStatus(s) === "running",
+        );
+
+        projects.push({
+          name: entry.name,
+          path: repoPath,
+          activeSessions,
+          hasRunningSession,
+        });
+      }
+
+      // Sort: projects with active sessions first, then alphabetical
+      projects.sort((a, b) => {
+        if (a.activeSessions > 0 && b.activeSessions === 0) return -1;
+        if (a.activeSessions === 0 && b.activeSessions > 0) return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      return projects;
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Default singleton (backward-compatible module-level exports)      */
+/* ------------------------------------------------------------------ */
+
+const defaultService = createDiscoveryService();
+
 export async function discoverProjects(): Promise<DiscoveredProject[]> {
-  const config = await readConfig();
-  const baseDir = config.baseDir;
-
-  if (!existsSync(baseDir)) {
-    return [];
-  }
-
-  const entries = await readdir(baseDir, { withFileTypes: true });
-  const state = await readState();
-
-  const projects: DiscoveredProject[] = [];
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-
-    // Skip ignored patterns
-    if (config.ignorePatterns.includes(entry.name)) continue;
-
-    const repoPath = path.join(baseDir, entry.name);
-    const gitPath = path.join(repoPath, ".git");
-
-    // Check if .git exists (directory or file for worktrees)
-    try {
-      await stat(gitPath);
-    } catch {
-      continue; // No .git — skip
-    }
-
-    // Gather session stats from manager state
-    const projectState = state.projects[repoPath];
-    const sessions = projectState ? Object.values(projectState.sessions) : [];
-    const activeSessions = sessions.filter((s) => !s.archived).length;
-    const hasRunningSession = sessions.some(
-      (s) => deriveSessionStatus(s) === "running",
-    );
-
-    projects.push({
-      name: entry.name,
-      path: repoPath,
-      activeSessions,
-      hasRunningSession,
-    });
-  }
-
-  // Sort: projects with active sessions first, then alphabetical
-  projects.sort((a, b) => {
-    if (a.activeSessions > 0 && b.activeSessions === 0) return -1;
-    if (a.activeSessions === 0 && b.activeSessions > 0) return 1;
-    return a.name.localeCompare(b.name);
-  });
-
-  return projects;
+  return defaultService.discoverProjects();
 }

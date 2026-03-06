@@ -1,37 +1,27 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as tailscale from "./tailscale";
+import { describe, it, expect, vi } from "vitest";
+import { createTailscaleService } from "./tailscale";
+import type { TailscaleDeps } from "./tailscale";
 
-// Mock child_process.execFile
-const mockExecFile = vi.fn();
-vi.mock("node:child_process", () => ({
-  execFile: (...args: unknown[]) => mockExecFile(...args),
-}));
-vi.mock("node:util", () => ({
-  promisify:
-    () =>
-    (...args: unknown[]) =>
-      mockExecFile(...args),
-}));
+function createMockDeps(): {
+  deps: TailscaleDeps;
+  mockExecFile: ReturnType<typeof vi.fn>;
+} {
+  const mockExecFile = vi.fn();
+  return { deps: { execFileAsync: mockExecFile }, mockExecFile };
+}
 
 describe("TailscaleService", () => {
-  beforeEach(() => {
-    tailscale._resetForTesting();
-    mockExecFile.mockReset();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   describe("getHostname", () => {
     it("resolves hostname from tailscale status --json", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockResolvedValueOnce({
         stdout: JSON.stringify({
           Self: { DNSName: "my-machine.tailnet.ts.net." },
         }),
       });
 
-      const hostname = await tailscale.getHostname();
+      const service = createTailscaleService(deps);
+      const hostname = await service.getHostname();
       expect(hostname).toBe("my-machine.tailnet.ts.net");
       expect(mockExecFile).toHaveBeenCalledWith("tailscale", [
         "status",
@@ -40,49 +30,77 @@ describe("TailscaleService", () => {
     });
 
     it("strips trailing dot from FQDN", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockResolvedValueOnce({
         stdout: JSON.stringify({ Self: { DNSName: "host.example.com." } }),
       });
 
-      expect(await tailscale.getHostname()).toBe("host.example.com");
+      const service = createTailscaleService(deps);
+      expect(await service.getHostname()).toBe("host.example.com");
     });
 
     it("caches hostname across calls", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockResolvedValueOnce({
         stdout: JSON.stringify({ Self: { DNSName: "cached.ts.net." } }),
       });
 
-      await tailscale.getHostname();
-      await tailscale.getHostname();
+      const service = createTailscaleService(deps);
+      await service.getHostname();
+      await service.getHostname();
       expect(mockExecFile).toHaveBeenCalledTimes(1);
     });
 
     it("returns null when tailscale is unavailable", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockRejectedValueOnce(new Error("command not found"));
 
-      expect(await tailscale.getHostname()).toBeNull();
+      const service = createTailscaleService(deps);
+      expect(await service.getHostname()).toBeNull();
     });
 
     it("caches unavailability (does not retry)", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockRejectedValueOnce(new Error("command not found"));
 
-      await tailscale.getHostname();
-      const result = await tailscale.getHostname();
+      const service = createTailscaleService(deps);
+      await service.getHostname();
+      const result = await service.getHostname();
       expect(result).toBeNull();
       expect(mockExecFile).toHaveBeenCalledTimes(1);
     });
 
     it("returns null when DNSName is missing", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockResolvedValueOnce({
         stdout: JSON.stringify({ Self: {} }),
       });
 
-      expect(await tailscale.getHostname()).toBeNull();
+      const service = createTailscaleService(deps);
+      expect(await service.getHostname()).toBeNull();
+    });
+
+    it("new instance gets fresh cache", async () => {
+      const { deps, mockExecFile } = createMockDeps();
+      mockExecFile.mockResolvedValueOnce({
+        stdout: JSON.stringify({ Self: { DNSName: "old.ts.net." } }),
+      });
+
+      const service1 = createTailscaleService(deps);
+      await service1.getHostname();
+
+      mockExecFile.mockResolvedValueOnce({
+        stdout: JSON.stringify({ Self: { DNSName: "new.ts.net." } }),
+      });
+
+      const service2 = createTailscaleService(deps);
+      expect(await service2.getHostname()).toBe("new.ts.net");
     });
   });
 
   describe("register", () => {
     it("registers port over HTTP and returns remote URL", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       // First call: getHostname
       mockExecFile.mockResolvedValueOnce({
         stdout: JSON.stringify({ Self: { DNSName: "my-host.ts.net." } }),
@@ -90,7 +108,8 @@ describe("TailscaleService", () => {
       // Second call: tailscale serve
       mockExecFile.mockResolvedValueOnce({ stdout: "" });
 
-      const url = await tailscale.register(3000);
+      const service = createTailscaleService(deps);
+      const url = await service.register(3000);
       expect(url).toBe("http://my-host.ts.net:3000");
       expect(mockExecFile).toHaveBeenCalledWith("tailscale", [
         "serve",
@@ -101,26 +120,32 @@ describe("TailscaleService", () => {
     });
 
     it("returns null when tailscale is unavailable", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockRejectedValueOnce(new Error("command not found"));
 
-      expect(await tailscale.register(3000)).toBeNull();
+      const service = createTailscaleService(deps);
+      expect(await service.register(3000)).toBeNull();
     });
 
     it("returns null when serve command fails", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockResolvedValueOnce({
         stdout: JSON.stringify({ Self: { DNSName: "host.ts.net." } }),
       });
       mockExecFile.mockRejectedValueOnce(new Error("permission denied"));
 
-      expect(await tailscale.register(3000)).toBeNull();
+      const service = createTailscaleService(deps);
+      expect(await service.register(3000)).toBeNull();
     });
   });
 
   describe("unregister", () => {
     it("unregisters port", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockResolvedValueOnce({ stdout: "" });
 
-      await tailscale.unregister(3000);
+      const service = createTailscaleService(deps);
+      await service.unregister(3000);
       expect(mockExecFile).toHaveBeenCalledWith("tailscale", [
         "serve",
         "--http=3000",
@@ -129,10 +154,12 @@ describe("TailscaleService", () => {
     });
 
     it("swallows errors", async () => {
+      const { deps, mockExecFile } = createMockDeps();
       mockExecFile.mockRejectedValueOnce(new Error("not found"));
 
+      const service = createTailscaleService(deps);
       // Should not throw
-      await tailscale.unregister(3000);
+      await service.unregister(3000);
     });
   });
 });

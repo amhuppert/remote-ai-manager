@@ -23,6 +23,7 @@ function makeWorkflow(
     status: "planning",
     objective: "Implement user authentication with OAuth2 support",
     fixPlan: [],
+    references: [],
     config: {
       maxIterations: 20,
       iterationTimeoutMs: 3_600_000,

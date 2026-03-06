@@ -338,6 +338,14 @@ export const ralphLoopWorkflowSchema = z
     status: workflowStatusSchema,
     objective: z.string(),
     fixPlan: z.array(fixPlanTaskSchema),
+    references: z
+      .array(
+        z.object({
+          filePath: z.string(),
+          description: z.string(),
+        }),
+      )
+      .default([]),
     config: ralphLoopConfigSchema,
     circuitBreaker: circuitBreakerStateSchema,
     iterations: z.array(ralphLoopIterationMetaSchema).default([]),
