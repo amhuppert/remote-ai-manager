@@ -1,22 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SessionState, RalphLoopWorkflow } from "@/types";
+import type { PlanGeneratorDeps } from "./plan-generator";
 
 // ---------------------------------------------------------------------------
-// Mocks
+// SDK mock (external dependency — acceptable to vi.mock)
 // ---------------------------------------------------------------------------
 
-// Track what the plan generator persists
-const sessions = new Map<string, SessionState>();
-
-// SDK mock: the plan generator expects to call submit_plan via MCP tool
+let capturedToolHandler: ((args: unknown) => Promise<unknown>) | null = null;
 let mockStreamMessages: Array<Record<string, unknown>> = [];
-vi.mock("@anthropic-ai/claude-agent-sdk", () => {
-  let capturedToolHandler: ((args: unknown) => Promise<unknown>) | null = null;
 
+vi.mock("@anthropic-ai/claude-agent-sdk", () => {
   return {
     query: vi.fn(() => {
-      // Access the MCP server to get the submit_plan handler
-      // (In real flow, the SDK invokes the tool — here we simulate it)
       return {
         async *[Symbol.asyncIterator]() {
           for (const msg of mockStreamMessages) {
@@ -61,42 +56,44 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
   };
 });
 
-vi.mock("../state", () => ({
-  getSession: vi.fn(
-    async (projectPath: string, sessionName: string) =>
-      sessions.get(`${projectPath}::${sessionName}`) ?? null,
-  ),
-  updateSession: vi.fn(async (projectPath: string, session: SessionState) => {
-    sessions.set(`${projectPath}::${session.sessionName}`, session);
-  }),
-  mutateSession: vi.fn(
-    async (
-      projectPath: string,
-      sessionName: string,
-      _label: string,
-      mutate: (session: SessionState) => unknown,
-    ) => {
-      const session = sessions.get(`${projectPath}::${sessionName}`);
-      if (!session) throw new Error(`Session not found: ${sessionName}`);
-      const result = await mutate(session);
-      session.lastActivityAt = new Date().toISOString();
-      return result;
-    },
-  ),
-}));
+// ---------------------------------------------------------------------------
+// Injected test deps (no vi.mock on internal modules)
+// ---------------------------------------------------------------------------
 
-vi.mock("../transcript", () => ({
-  readConversationMessages: vi.fn(async () => [
-    {
-      role: "user",
-      content: [{ type: "text", text: "I need an auth system" }],
-    },
-    {
-      role: "assistant",
-      content: [{ type: "text", text: "I'll help with that" }],
-    },
-  ]),
-}));
+const sessions = new Map<string, SessionState>();
+
+function createTestDeps(): PlanGeneratorDeps {
+  return {
+    getSession: vi.fn(
+      async (projectPath: string, sessionName: string) =>
+        sessions.get(`${projectPath}::${sessionName}`) ?? null,
+    ) as unknown as PlanGeneratorDeps["getSession"],
+    mutateSession: vi.fn(
+      async (
+        projectPath: string,
+        sessionName: string,
+        _label: string,
+        mutate: (session: SessionState) => unknown,
+      ) => {
+        const session = sessions.get(`${projectPath}::${sessionName}`);
+        if (!session) throw new Error(`Session not found: ${sessionName}`);
+        const result = await mutate(session);
+        session.lastActivityAt = new Date().toISOString();
+        return result;
+      },
+    ) as unknown as PlanGeneratorDeps["mutateSession"],
+    readConversationMessages: vi.fn(async () => [
+      {
+        role: "user",
+        content: [{ type: "text", text: "I need an auth system" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I'll help with that" }],
+      },
+    ]) as unknown as PlanGeneratorDeps["readConversationMessages"],
+  };
+}
 
 // Injected spy for broadcast (no vi.mock needed)
 const mockBroadcast = vi.fn();
@@ -176,10 +173,14 @@ const SESSION_NAME = "feature-auth";
 // ---------------------------------------------------------------------------
 
 describe("PlanGenerator", () => {
+  let deps: PlanGeneratorDeps;
+
   beforeEach(() => {
     vi.clearAllMocks();
     sessions.clear();
     mockStreamMessages = [];
+    capturedToolHandler = null;
+    deps = createTestDeps();
 
     const session = makeSession();
     sessions.set(`${PROJECT}::${SESSION_NAME}`, session);
@@ -195,6 +196,7 @@ describe("PlanGenerator", () => {
         projectPath: PROJECT,
         session,
         workflow: session.workflow!,
+        deps,
       }),
     ).not.toThrow();
 
@@ -211,6 +213,7 @@ describe("PlanGenerator", () => {
       projectPath: PROJECT,
       session,
       workflow: session.workflow!,
+      deps,
     });
 
     await new Promise((r) => setTimeout(r, 200));
@@ -234,6 +237,7 @@ describe("PlanGenerator", () => {
       projectPath: PROJECT,
       session,
       workflow: session.workflow!,
+      deps,
     });
 
     await new Promise((r) => setTimeout(r, 300));
@@ -258,6 +262,7 @@ describe("PlanGenerator", () => {
       session,
       workflow: session.workflow!,
       broadcast: mockBroadcast,
+      deps,
     });
 
     await new Promise((r) => setTimeout(r, 300));
@@ -294,6 +299,7 @@ describe("PlanGenerator", () => {
       projectPath: PROJECT,
       session,
       workflow: session.workflow!,
+      deps,
     });
 
     await new Promise((r) => setTimeout(r, 300));
@@ -308,18 +314,18 @@ describe("PlanGenerator", () => {
 
   it("reads conversation messages for context", async () => {
     const { dispatchPlanGeneration } = await import("./plan-generator");
-    const { readConversationMessages } = await import("../transcript");
     const session = sessions.get(`${PROJECT}::${SESSION_NAME}`)!;
 
     dispatchPlanGeneration({
       projectPath: PROJECT,
       session,
       workflow: session.workflow!,
+      deps,
     });
 
     await new Promise((r) => setTimeout(r, 200));
 
-    expect(readConversationMessages).toHaveBeenCalled();
+    expect(deps.readConversationMessages).toHaveBeenCalled();
   });
 
   it("denies AskUserQuestion tool during plan generation", async () => {
@@ -331,6 +337,7 @@ describe("PlanGenerator", () => {
       projectPath: PROJECT,
       session,
       workflow: session.workflow!,
+      deps,
     });
 
     await new Promise((r) => setTimeout(r, 200));

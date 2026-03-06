@@ -7,7 +7,7 @@
  * invoking these functions via actor-implementations.ts.
  */
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query as defaultQuery } from "@anthropic-ai/claude-agent-sdk";
 import type {
   SDKMessage,
   SDKAssistantMessage,
@@ -16,7 +16,7 @@ import type {
   SDKSystemMessage,
   Query,
 } from "@anthropic-ai/claude-agent-sdk";
-import { buildChildEnv } from "../child-env";
+import { buildChildEnv as defaultBuildChildEnv } from "../child-env";
 import type {
   SessionState,
   RalphLoopWorkflow,
@@ -26,31 +26,103 @@ import type {
   MessageContentBlock,
   GitIterationMetrics,
 } from "@/types";
-import { mutateSession } from "../state";
-import { acquireSessionLock } from "../lock";
+import { mutateSession as defaultMutateSession } from "../state";
+import { acquireSessionLock as defaultAcquireSessionLock } from "../lock";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "../logging";
-import { createConversation } from "../conversations";
-import { getTranscriptPath } from "../transcript";
-import { broadcast } from "../sse-broadcaster";
-
-import { buildIterationPrompt } from "./prompt-builder";
-import { createToolServer } from "./mcp-tools";
-import { processIteration as processCircuitBreaker } from "./circuit-breaker";
+import { createConversation as defaultCreateConversation } from "../conversations";
 import {
-  captureSnapshot,
-  computeDiff,
-  classifyProgress,
+  getTranscriptPath as defaultGetTranscriptPath,
+  safeAppendTranscriptEntry as defaultSafeAppendTranscriptEntry,
+} from "../transcript";
+import { broadcast as defaultBroadcast } from "../sse-broadcaster";
+
+import { buildIterationPrompt as defaultBuildIterationPrompt } from "./prompt-builder";
+import { createToolServer as defaultCreateToolServer } from "./mcp-tools";
+import { processIteration as defaultProcessCircuitBreaker } from "./circuit-breaker";
+import {
+  captureSnapshot as defaultCaptureSnapshot,
+  computeDiff as defaultComputeDiff,
+  classifyProgress as defaultClassifyProgress,
 } from "./progress-detector";
-import { applyFixPlanUpdate } from "./fix-plan-manager";
-import * as workflowStream from "./workflow-stream-registry";
-import { acquireQuerySlot } from "../query-semaphore";
-import { safeAppendTranscriptEntry } from "../transcript";
+import { applyFixPlanUpdate as defaultApplyFixPlanUpdate } from "./fix-plan-manager";
+import * as defaultWorkflowStream from "./workflow-stream-registry";
+import { acquireQuerySlot as defaultAcquireQuerySlot } from "../query-semaphore";
 
 const logger = createLogger("ralph-loop");
 
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/sdk-env";
+
+// ============================================================
+// Dependency Injection
+// ============================================================
+
+export interface OrchestratorDeps {
+  query: typeof defaultQuery;
+  buildChildEnv: typeof defaultBuildChildEnv;
+  mutateSession: typeof defaultMutateSession;
+  acquireSessionLock: typeof defaultAcquireSessionLock;
+  createConversation: typeof defaultCreateConversation;
+  getTranscriptPath: typeof defaultGetTranscriptPath;
+  safeAppendTranscriptEntry: typeof defaultSafeAppendTranscriptEntry;
+  broadcast: typeof defaultBroadcast;
+  buildIterationPrompt: typeof defaultBuildIterationPrompt;
+  createToolServer: typeof defaultCreateToolServer;
+  processCircuitBreaker: typeof defaultProcessCircuitBreaker;
+  captureSnapshot: typeof defaultCaptureSnapshot;
+  computeDiff: typeof defaultComputeDiff;
+  classifyProgress: typeof defaultClassifyProgress;
+  applyFixPlanUpdate: typeof defaultApplyFixPlanUpdate;
+  workflowStreamEmit: typeof defaultWorkflowStream.emit;
+  acquireQuerySlot: typeof defaultAcquireQuerySlot;
+}
+
+const defaultDeps: OrchestratorDeps = {
+  query: defaultQuery,
+  buildChildEnv: defaultBuildChildEnv,
+  mutateSession: defaultMutateSession,
+  acquireSessionLock: defaultAcquireSessionLock,
+  createConversation: defaultCreateConversation,
+  getTranscriptPath: defaultGetTranscriptPath,
+  safeAppendTranscriptEntry: defaultSafeAppendTranscriptEntry,
+  broadcast: defaultBroadcast,
+  buildIterationPrompt: defaultBuildIterationPrompt,
+  createToolServer: defaultCreateToolServer,
+  processCircuitBreaker: defaultProcessCircuitBreaker,
+  captureSnapshot: defaultCaptureSnapshot,
+  computeDiff: defaultComputeDiff,
+  classifyProgress: defaultClassifyProgress,
+  applyFixPlanUpdate: defaultApplyFixPlanUpdate,
+  workflowStreamEmit: defaultWorkflowStream.emit,
+  acquireQuerySlot: defaultAcquireQuerySlot,
+};
+
+/**
+ * Create an orchestrator with injected dependencies.
+ * Tests use this to inject mocks; production uses the default singleton exports.
+ */
+export function createOrchestrator(deps: OrchestratorDeps = defaultDeps) {
+  return {
+    runIteration: (params: RunIterationParams) =>
+      runIterationImpl(params, deps),
+    persistIterationResults: (
+      projectPath: string,
+      sessionName: string,
+      projectName: string,
+      iteration: RalphLoopIterationMeta,
+    ) =>
+      persistIterationResultsImpl(
+        projectPath,
+        sessionName,
+        projectName,
+        iteration,
+        deps,
+      ),
+  };
+}
+
+const defaultOrchestrator = createOrchestrator();
 
 // ============================================================
 // Single Iteration
@@ -66,8 +138,13 @@ export interface RunIterationParams {
   abortController: AbortController;
 }
 
-export async function runIteration(
+export const runIteration = defaultOrchestrator.runIteration;
+export const persistIterationResults =
+  defaultOrchestrator.persistIterationResults;
+
+async function runIterationImpl(
   params: RunIterationParams,
+  deps: OrchestratorDeps,
 ): Promise<RalphLoopIterationMeta> {
   const {
     projectPath,
@@ -82,14 +159,14 @@ export async function runIteration(
   const iterationStart = Date.now();
 
   // Create a managed conversation for this iteration
-  const conversation = await createConversation(projectPath, sessionName, {
+  const conversation = await deps.createConversation(projectPath, sessionName, {
     role: "iteration",
   });
   const conversationId = conversation.id;
 
   // Set transcript path eagerly + expose conversationId on workflow for frontend
-  const transcriptPath = await getTranscriptPath(conversationId);
-  await mutateSession(
+  const transcriptPath = await deps.getTranscriptPath(conversationId);
+  await deps.mutateSession(
     projectPath,
     sessionName,
     "workflow.conversationSetup",
@@ -107,18 +184,18 @@ export async function runIteration(
   );
 
   // Broadcast iteration started
-  workflowStream.emit(projectPath, sessionName, {
+  deps.workflowStreamEmit(projectPath, sessionName, {
     type: "iteration-boundary",
     iterationNumber,
     status: "started",
   });
 
   // Capture pre-iteration git snapshot
-  const preSnapshot = await captureSnapshot(session.worktreePath);
+  const preSnapshot = await deps.captureSnapshot(session.worktreePath);
 
   // Build the prompt
   const previousContext = buildPreviousContext(workflow);
-  const promptText = buildIterationPrompt({
+  const promptText = deps.buildIterationPrompt({
     objective: workflow.objective,
     fixPlan: workflow.fixPlan,
     iterationNumber,
@@ -136,7 +213,7 @@ export async function runIteration(
     addedIds: [] as string[],
   };
 
-  const toolServer = createToolServer({
+  const toolServer = deps.createToolServer({
     projectPath,
     sessionName,
     iterationNumber,
@@ -146,14 +223,14 @@ export async function runIteration(
     },
     onFixPlanUpdate: async (update: UpdateFixPlanInput) => {
       // Apply mutations inside the lock
-      const updatedPlan = await mutateSession(
+      const updatedPlan = await deps.mutateSession(
         projectPath,
         sessionName,
         "workflow.fixPlanUpdate",
         (sess) => {
           if (!sess.workflow) return null;
 
-          const result = applyFixPlanUpdate(
+          const result = deps.applyFixPlanUpdate(
             sess.workflow.fixPlan,
             update,
             iterationNumber,
@@ -172,7 +249,7 @@ export async function runIteration(
       // Broadcast fix plan update
       if (updatedPlan) {
         try {
-          broadcast({
+          deps.broadcast({
             type: "workflow-fix-plan-updated",
             projectName,
             sessionName,
@@ -207,15 +284,15 @@ export async function runIteration(
 
   try {
     // Acquire concurrency slot (waits if at capacity)
-    releaseQuerySlot = await acquireQuerySlot(
+    releaseQuerySlot = await deps.acquireQuerySlot(
       `ralph:${sessionName}:iter${iterationNumber}`,
     );
 
     // Acquire session lock
-    release = acquireSessionLock(projectPath, sessionName);
+    release = deps.acquireSessionLock(projectPath, sessionName);
 
     // Persist the user prompt in transcript
-    await safeAppendTranscriptEntry(conversationId, {
+    await deps.safeAppendTranscriptEntry(conversationId, {
       timestamp: new Date().toISOString(),
       type: "user",
       role: "user",
@@ -223,7 +300,7 @@ export async function runIteration(
     });
 
     // Execute SDK query
-    const q: Query = query({
+    const q: Query = deps.query({
       prompt: promptText,
       options: {
         systemPrompt: {
@@ -237,7 +314,7 @@ export async function runIteration(
         cwd: session.worktreePath,
         persistSession: false,
         abortController: iterationAbort,
-        env: { ...buildChildEnv(), CLAUDECODE: "" },
+        env: { ...deps.buildChildEnv(), CLAUDECODE: "" },
         mcpServers: { "ralph-loop": toolServer },
         canUseTool: async (toolName: string) => {
           if (toolName === "AskUserQuestion") {
@@ -268,6 +345,7 @@ export async function runIteration(
             resultCostUsd = cost;
             resultNumTurns = turns;
           },
+          deps,
         );
 
         // Track context token usage from assistant messages
@@ -355,38 +433,40 @@ export async function runIteration(
     if (release) release();
 
     // Mark conversation as awaiting/archived + clear currentIterationConversationId
-    await mutateSession(
-      projectPath,
-      sessionName,
-      "workflow.conversationCleanup",
-      (sess) => {
-        const conv = sess.conversations.find((c) => c.id === conversationId);
-        if (conv) {
-          conv.status = "awaiting";
-          conv.archived = true;
-          conv.lastActivityAt = new Date().toISOString();
-        }
-        if (sess.workflow) {
-          sess.workflow.currentIterationConversationId = null;
-        }
-      },
-    ).catch(() => {});
+    await deps
+      .mutateSession(
+        projectPath,
+        sessionName,
+        "workflow.conversationCleanup",
+        (sess) => {
+          const conv = sess.conversations.find((c) => c.id === conversationId);
+          if (conv) {
+            conv.status = "awaiting";
+            conv.archived = true;
+            conv.lastActivityAt = new Date().toISOString();
+          }
+          if (sess.workflow) {
+            sess.workflow.currentIterationConversationId = null;
+          }
+        },
+      )
+      .catch(() => {});
   }
 
   // Capture post-iteration git diff
-  const gitMetrics = await computeDiff(session.worktreePath, preSnapshot);
+  const gitMetrics = await deps.computeDiff(session.worktreePath, preSnapshot);
 
   // Classify progress
   const tasksCompletedCount =
     taskMutations.completedIds.length + taskMutations.skippedIds.length;
-  const progressResult = classifyProgress(
+  const progressResult = deps.classifyProgress(
     gitMetrics,
     statusReport,
     tasksCompletedCount,
   );
 
   // Broadcast iteration boundary
-  workflowStream.emit(projectPath, sessionName, {
+  deps.workflowStreamEmit(projectPath, sessionName, {
     type: "iteration-boundary",
     iterationNumber,
     status: "completed",
@@ -418,13 +498,14 @@ export async function runIteration(
 // State Persistence
 // ============================================================
 
-export async function persistIterationResults(
+async function persistIterationResultsImpl(
   projectPath: string,
   sessionName: string,
   projectName: string,
   iteration: RalphLoopIterationMeta,
+  deps: OrchestratorDeps,
 ): Promise<void> {
-  const circuitBreaker = await mutateSession(
+  const circuitBreaker = await deps.mutateSession(
     projectPath,
     sessionName,
     "workflow.iterationComplete",
@@ -445,7 +526,7 @@ export async function persistIterationResults(
         iteration.status === "error" || iteration.status === "timeout"
           ? iteration.status
           : undefined;
-      workflow.circuitBreaker = processCircuitBreaker(
+      workflow.circuitBreaker = deps.processCircuitBreaker(
         workflow.circuitBreaker,
         {
           classification: iteration.progressClassification,
@@ -460,7 +541,7 @@ export async function persistIterationResults(
 
   // Broadcast events
   try {
-    broadcast({
+    deps.broadcast({
       type: "workflow-iteration-complete",
       projectName,
       sessionName,
@@ -472,7 +553,7 @@ export async function persistIterationResults(
 
   if (circuitBreaker) {
     try {
-      broadcast({
+      deps.broadcast({
         type: "workflow-circuit-breaker",
         projectName,
         sessionName,
@@ -496,13 +577,14 @@ async function processSDKMessage(
   sessionName: string,
   contentBlocks: MessageContentBlock[],
   setResultData: (cost: number, duration: number, turns: number) => void,
+  deps: OrchestratorDeps,
 ): Promise<number> {
   const timestamp = new Date().toISOString();
 
   switch (message.type) {
     case "system": {
       const sysMsg = message as SDKSystemMessage;
-      await safeAppendTranscriptEntry(conversationId, {
+      await deps.safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "system",
         raw: { subtype: sysMsg.subtype, session_id: sysMsg.session_id },
@@ -535,14 +617,14 @@ async function processSDKMessage(
 
       // Stream content to connected UI clients
       for (const block of blocks) {
-        workflowStream.emit(projectPath, sessionName, {
+        deps.workflowStreamEmit(projectPath, sessionName, {
           type: "content",
           iterationNumber,
           content: block,
         });
       }
 
-      await safeAppendTranscriptEntry(conversationId, {
+      await deps.safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "assistant",
         role: "assistant",
@@ -559,7 +641,7 @@ async function processSDKMessage(
     }
 
     case "user": {
-      await safeAppendTranscriptEntry(conversationId, {
+      await deps.safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "tool_result",
         raw: message,
@@ -575,7 +657,7 @@ async function processSDKMessage(
         resultMsg.num_turns,
       );
 
-      await safeAppendTranscriptEntry(conversationId, {
+      await deps.safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "result",
         raw: resultMsg,
@@ -584,7 +666,7 @@ async function processSDKMessage(
     }
 
     default: {
-      await safeAppendTranscriptEntry(conversationId, {
+      await deps.safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: message.type,
         raw: message,

@@ -12,9 +12,12 @@ import { z } from "zod";
 import { getErrorMessage } from "@/lib/errors";
 import type { SessionState, RalphLoopWorkflow, FixPlanTask } from "@/types";
 import { buildChildEnv } from "../child-env";
-import { mutateSession } from "../state";
+import {
+  getSession as defaultGetSession,
+  mutateSession as defaultMutateSession,
+} from "../state";
 import { createLogger } from "../logging";
-import { readConversationMessages } from "../transcript";
+import { readConversationMessages as defaultReadConversationMessages } from "../transcript";
 import {
   broadcast as defaultBroadcast,
   type BroadcastFn,
@@ -34,7 +37,21 @@ export interface GeneratePlanParams {
   workflow: RalphLoopWorkflow;
   /** Optional broadcast function for dependency injection (default: SSE broadcaster). */
   broadcast?: BroadcastFn;
+  /** Optional deps for testing. */
+  deps?: Partial<PlanGeneratorDeps>;
 }
+
+export interface PlanGeneratorDeps {
+  mutateSession: typeof defaultMutateSession;
+  readConversationMessages: typeof defaultReadConversationMessages;
+  getSession: typeof defaultGetSession;
+}
+
+const defaultDeps: PlanGeneratorDeps = {
+  mutateSession: defaultMutateSession,
+  readConversationMessages: defaultReadConversationMessages,
+  getSession: defaultGetSession,
+};
 
 /**
  * Fire-and-forget plan generation.
@@ -42,7 +59,13 @@ export interface GeneratePlanParams {
  * Does NOT acquire the session lock (read-only context operation).
  */
 export function dispatchPlanGeneration(params: GeneratePlanParams): void {
-  const { projectPath, session, broadcast = defaultBroadcast } = params;
+  const {
+    projectPath,
+    session,
+    broadcast = defaultBroadcast,
+    deps: depsOverride,
+  } = params;
+  const deps = { ...defaultDeps, ...depsOverride };
   const sessionName = session.sessionName;
   const projectName = getProjectDisplayName(projectPath);
 
@@ -52,6 +75,7 @@ export function dispatchPlanGeneration(params: GeneratePlanParams): void {
     projectName,
     session,
     broadcast,
+    deps,
   ).catch(async (err) => {
     logger.error("plan_generator.fatal", {
       sessionName,
@@ -59,7 +83,7 @@ export function dispatchPlanGeneration(params: GeneratePlanParams): void {
     });
     // Ensure the generating flag is cleared even on unexpected errors
     try {
-      await mutateSession(
+      await deps.mutateSession(
         projectPath,
         sessionName,
         "planGenerator.clearGenerating",
@@ -83,14 +107,15 @@ export async function generatePlanTasks(params: {
   sessionName: string;
   worktreePath: string;
   objective: string;
+  deps?: Partial<PlanGeneratorDeps>;
 }): Promise<FixPlanTask[]> {
   const { projectPath, sessionName, worktreePath, objective } = params;
-  const { getSession } = await import("@/lib/state");
+  const deps = { ...defaultDeps, ...params.deps };
 
-  const session = await getSession(projectPath, sessionName);
+  const session = await deps.getSession(projectPath, sessionName);
   if (!session) return [];
 
-  const context = await gatherSessionContext(session);
+  const context = await gatherSessionContext(session, deps);
   const prompt = buildPlanningPrompt(objective, context);
 
   let generatedTasks: Array<{ description: string; group: number }> = [];
@@ -198,6 +223,7 @@ async function generatePlan(
   projectName: string,
   session: SessionState,
   broadcast: BroadcastFn = defaultBroadcast,
+  deps: PlanGeneratorDeps = defaultDeps,
 ): Promise<void> {
   const workflow = session.workflow;
   if (!workflow) return;
@@ -208,7 +234,7 @@ async function generatePlan(
   });
 
   // Gather context from most recent conversation transcript
-  const context = await gatherSessionContext(session);
+  const context = await gatherSessionContext(session, deps);
 
   // Build the planning prompt
   const prompt = buildPlanningPrompt(workflow.objective, context);
@@ -321,7 +347,7 @@ async function generatePlan(
       }),
     );
 
-    const updatedPlan = await mutateSession(
+    const updatedPlan = await deps.mutateSession(
       projectPath,
       sessionName,
       "planGenerator.appendTasks",
@@ -354,7 +380,7 @@ async function generatePlan(
     }
   } else {
     // No tasks generated — clear the flag anyway
-    await mutateSession(
+    await deps.mutateSession(
       projectPath,
       sessionName,
       "planGenerator.clearGenerating",
@@ -371,7 +397,10 @@ async function generatePlan(
 // Helpers
 // ============================================================
 
-async function gatherSessionContext(session: SessionState): Promise<string> {
+async function gatherSessionContext(
+  session: SessionState,
+  deps: PlanGeneratorDeps = defaultDeps,
+): Promise<string> {
   // Find the most recent non-iteration conversation with a transcript
   const candidates = [...session.conversations]
     .filter((c) => c.role !== "iteration" && c.transcriptPath)
@@ -386,7 +415,7 @@ async function gatherSessionContext(session: SessionState): Promise<string> {
   }
 
   const latest = candidates[0]!;
-  const messages = await readConversationMessages(latest.transcriptPath);
+  const messages = await deps.readConversationMessages(latest.transcriptPath);
 
   if (messages.length === 0) {
     return "No previous conversation context available.";

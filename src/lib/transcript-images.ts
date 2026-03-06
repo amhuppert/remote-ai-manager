@@ -10,13 +10,21 @@ import type { MessageContentBlock } from "@/types";
 // ============================================================
 
 /** Directory for externalized transcript images */
-function getImagesDir(conversationId: string): string {
-  return path.join(getConfigDirPath(), "transcripts", "images", conversationId);
+function getImagesDir(conversationId: string, configDir?: string): string {
+  return path.join(
+    configDir ?? getConfigDirPath(),
+    "transcripts",
+    "images",
+    conversationId,
+  );
 }
 
 /** Ensure the per-conversation images directory exists */
-async function ensureImagesDir(conversationId: string): Promise<string> {
-  const dir = getImagesDir(conversationId);
+async function ensureImagesDir(
+  conversationId: string,
+  configDir?: string,
+): Promise<string> {
+  const dir = getImagesDir(conversationId, configDir);
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
   }
@@ -52,8 +60,9 @@ export async function saveTranscriptImage(
   index: number,
   mediaType: string,
   base64Data: string,
+  configDir?: string,
 ): Promise<string> {
-  const dir = await ensureImagesDir(conversationId);
+  const dir = await ensureImagesDir(conversationId, configDir);
   const hash = createHash("sha256")
     .update(base64Data)
     .digest("hex")
@@ -95,6 +104,7 @@ export async function readTranscriptImage(
 export async function externalizeImageBlocks(
   conversationId: string,
   blocks: MessageContentBlock[],
+  configDir?: string,
 ): Promise<MessageContentBlock[]> {
   const result: MessageContentBlock[] = [];
   let imageIndex = 0;
@@ -106,6 +116,7 @@ export async function externalizeImageBlocks(
         imageIndex++,
         block.mediaType,
         block.base64Data,
+        configDir,
       );
       result.push({
         type: "image_ref" as const,

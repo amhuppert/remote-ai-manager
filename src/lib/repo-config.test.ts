@@ -1,84 +1,21 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { createRepoConfig, type RepoConfigDeps } from "./repo-config";
 
 // ---------------------------------------------------------------------------
-// Mocks – vi.hoisted ensures variables are available in vi.mock factories
+// Test Deps
 // ---------------------------------------------------------------------------
 
-const {
-  execFileMock,
-  existsSyncMock,
-  readFileMock,
-  hasUncommittedChangesMock,
-  commitChangesMock,
-} = vi.hoisted(() => ({
-  execFileMock: vi.fn(),
-  existsSyncMock: vi.fn<(p: string) => boolean>(),
-  readFileMock: vi.fn(),
-  hasUncommittedChangesMock: vi.fn(),
-  commitChangesMock: vi.fn(),
-}));
-
-vi.mock("node:child_process", () => ({
-  execFile: execFileMock,
-}));
-
-vi.mock("node:fs", () => ({
-  existsSync: existsSyncMock,
-}));
-
-vi.mock("node:fs/promises", () => ({
-  readFile: readFileMock,
-}));
-
-vi.mock("./git-operations", () => ({
-  hasUncommittedChanges: hasUncommittedChangesMock,
-  commitChanges: commitChangesMock,
-}));
-
-// ---------------------------------------------------------------------------
-// Import module under test (after mocks)
-// ---------------------------------------------------------------------------
-import { readRepoConfig, runPreMergeValidation } from "./repo-config";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Make execFileMock resolve via the promisified callback pattern */
-function mockExecFileSuccess(stdout = "", stderr = "") {
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      if (cb) {
-        cb(null, { stdout, stderr });
-      }
-    },
-  );
-}
-
-function mockExecFileFailure(error: Error) {
-  execFileMock.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      cb?: (
-        err: Error | null,
-        result: { stdout: string; stderr: string },
-      ) => void,
-    ) => {
-      if (cb) {
-        cb(error, { stdout: "", stderr: "" });
-      }
-    },
-  );
+function createTestDeps(): RepoConfigDeps {
+  return {
+    existsSync: vi.fn().mockReturnValue(false),
+    readFile: vi.fn().mockRejectedValue(new Error("file not found")),
+    execFileAsync: vi.fn().mockResolvedValue({ stdout: "", stderr: "" }),
+    buildChildEnv: vi.fn().mockReturnValue({}),
+    hasUncommittedChanges: vi.fn().mockResolvedValue(false),
+    commitChanges: vi.fn().mockResolvedValue({
+      hash: "autofix123",
+    }) as RepoConfigDeps["commitChanges"],
+  };
 }
 
 const BASE_PARAMS = {
@@ -89,33 +26,31 @@ const BASE_PARAMS = {
   timeoutMs: 300_000,
 };
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  existsSyncMock.mockReturnValue(false);
-  readFileMock.mockRejectedValue(new Error("file not found"));
-  hasUncommittedChangesMock.mockResolvedValue(false);
-  commitChangesMock.mockResolvedValue({ hash: "autofix123" });
-});
-
 // ===========================================================================
 // readRepoConfig
 // ===========================================================================
 
 describe("readRepoConfig", () => {
   it("returns null when no config file exists", async () => {
-    existsSyncMock.mockReturnValue(false);
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    const { readRepoConfig } = createRepoConfig(deps);
+
     const result = await readRepoConfig("/projects/foo");
     expect(result).toBeNull();
   });
 
   it("parses config with both initScriptPath and preMergeCommand", async () => {
-    existsSyncMock.mockReturnValue(true);
-    readFileMock.mockResolvedValue(
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
       JSON.stringify({
         initScriptPath: "./setup.sh",
         preMergeCommand: "./validate.sh",
       }),
     );
+    const { readRepoConfig } = createRepoConfig(deps);
+
     const result = await readRepoConfig("/projects/foo");
     expect(result).toEqual({
       initScriptPath: "./setup.sh",
@@ -124,8 +59,13 @@ describe("readRepoConfig", () => {
   });
 
   it("backward compat: parses config without preMergeCommand", async () => {
-    existsSyncMock.mockReturnValue(true);
-    readFileMock.mockResolvedValue(JSON.stringify({ initScriptPath: null }));
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({ initScriptPath: null }),
+    );
+    const { readRepoConfig } = createRepoConfig(deps);
+
     const result = await readRepoConfig("/projects/foo");
     expect(result).toEqual({ initScriptPath: null });
     expect(result?.preMergeCommand).toBeUndefined();
@@ -138,50 +78,68 @@ describe("readRepoConfig", () => {
 
 describe("runPreMergeValidation", () => {
   it("no-op when no config file exists", async () => {
-    existsSyncMock.mockReturnValue(false);
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    const { runPreMergeValidation } = createRepoConfig(deps);
+
     await runPreMergeValidation(BASE_PARAMS);
-    expect(execFileMock).not.toHaveBeenCalled();
+    expect(deps.execFileAsync).not.toHaveBeenCalled();
   });
 
   it("no-op when preMergeCommand is null", async () => {
-    existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("CommandCenter.json")) return true;
-      return false;
-    });
-    readFileMock.mockResolvedValue(
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
       JSON.stringify({ initScriptPath: null, preMergeCommand: null }),
     );
+    const { runPreMergeValidation } = createRepoConfig(deps);
+
     await runPreMergeValidation(BASE_PARAMS);
-    expect(execFileMock).not.toHaveBeenCalled();
+    expect(deps.execFileAsync).not.toHaveBeenCalled();
   });
 
   it("no-op when preMergeCommand is absent", async () => {
-    existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("CommandCenter.json")) return true;
-      return false;
-    });
-    readFileMock.mockResolvedValue(JSON.stringify({ initScriptPath: null }));
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({ initScriptPath: null }),
+    );
+    const { runPreMergeValidation } = createRepoConfig(deps);
+
     await runPreMergeValidation(BASE_PARAMS);
-    expect(execFileMock).not.toHaveBeenCalled();
+    expect(deps.execFileAsync).not.toHaveBeenCalled();
   });
 
   it("executes script with correct env vars", async () => {
-    existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("CommandCenter.json")) return true;
-      if (String(p).includes("validate.sh")) return true;
-      return false;
-    });
-    readFileMock.mockResolvedValue(
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        if (String(p).includes("validate.sh")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
       JSON.stringify({
         initScriptPath: null,
         preMergeCommand: "./validate.sh",
       }),
     );
-    mockExecFileSuccess();
+    const { runPreMergeValidation } = createRepoConfig(deps);
 
     await runPreMergeValidation(BASE_PARAMS);
 
-    expect(execFileMock).toHaveBeenCalledWith(
+    expect(deps.execFileAsync).toHaveBeenCalledWith(
       "/projects/foo/validate.sh",
       [],
       expect.objectContaining({
@@ -194,22 +152,25 @@ describe("runPreMergeValidation", () => {
           BRANCH_NAME: BASE_PARAMS.branchName,
         }),
       }),
-      expect.any(Function),
     );
   });
 
   it("throws when script file does not exist", async () => {
-    existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("CommandCenter.json")) return true;
-      if (String(p).includes("validate.sh")) return false;
-      return false;
-    });
-    readFileMock.mockResolvedValue(
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        if (String(p).includes("validate.sh")) return false;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
       JSON.stringify({
         initScriptPath: null,
         preMergeCommand: "./validate.sh",
       }),
     );
+    const { runPreMergeValidation } = createRepoConfig(deps);
 
     await expect(runPreMergeValidation(BASE_PARAMS)).rejects.toThrow(
       "Pre-merge validation script not found:",
@@ -217,23 +178,28 @@ describe("runPreMergeValidation", () => {
   });
 
   it("throws with gitOutput on script failure", async () => {
-    existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("CommandCenter.json")) return true;
-      if (String(p).includes("validate.sh")) return true;
-      return false;
-    });
-    readFileMock.mockResolvedValue(
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        if (String(p).includes("validate.sh")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
       JSON.stringify({
         initScriptPath: null,
         preMergeCommand: "./validate.sh",
       }),
     );
-
     const scriptErr = Object.assign(new Error("Command failed"), {
       stderr: "lint errors found",
       stdout: "2 problems",
     });
-    mockExecFileFailure(scriptErr);
+    (deps.execFileAsync as ReturnType<typeof vi.fn>).mockRejectedValue(
+      scriptErr,
+    );
+    const { runPreMergeValidation } = createRepoConfig(deps);
 
     try {
       await runPreMergeValidation(BASE_PARAMS);
@@ -247,23 +213,28 @@ describe("runPreMergeValidation", () => {
   });
 
   it("commits auto-fixes when script modifies files", async () => {
-    existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("CommandCenter.json")) return true;
-      if (String(p).includes("validate.sh")) return true;
-      return false;
-    });
-    readFileMock.mockResolvedValue(
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        if (String(p).includes("validate.sh")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
       JSON.stringify({
         initScriptPath: null,
         preMergeCommand: "./validate.sh",
       }),
     );
-    mockExecFileSuccess();
-    hasUncommittedChangesMock.mockResolvedValue(true);
+    (deps.hasUncommittedChanges as ReturnType<typeof vi.fn>).mockResolvedValue(
+      true,
+    );
+    const { runPreMergeValidation } = createRepoConfig(deps);
 
     await runPreMergeValidation(BASE_PARAMS);
 
-    expect(commitChangesMock).toHaveBeenCalledWith(
+    expect(deps.commitChanges).toHaveBeenCalledWith(
       BASE_PARAMS.worktreePath,
       "auto-fix: pre-merge validation",
       { skipHooks: true },
@@ -271,22 +242,27 @@ describe("runPreMergeValidation", () => {
   });
 
   it("does not commit when script leaves no changes", async () => {
-    existsSyncMock.mockImplementation((p: string) => {
-      if (String(p).includes("CommandCenter.json")) return true;
-      if (String(p).includes("validate.sh")) return true;
-      return false;
-    });
-    readFileMock.mockResolvedValue(
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        if (String(p).includes("validate.sh")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
       JSON.stringify({
         initScriptPath: null,
         preMergeCommand: "./validate.sh",
       }),
     );
-    mockExecFileSuccess();
-    hasUncommittedChangesMock.mockResolvedValue(false);
+    (deps.hasUncommittedChanges as ReturnType<typeof vi.fn>).mockResolvedValue(
+      false,
+    );
+    const { runPreMergeValidation } = createRepoConfig(deps);
 
     await runPreMergeValidation(BASE_PARAMS);
 
-    expect(commitChangesMock).not.toHaveBeenCalled();
+    expect(deps.commitChanges).not.toHaveBeenCalled();
   });
 });

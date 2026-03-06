@@ -195,3 +195,6 @@ export const useHandleWorkflowCircuitBreaker = () =>
   useWorkflowStore((s) => s.handleCircuitBreaker);
 export const useDismissWorkflowToast = () =>
   useWorkflowStore((s) => s.dismissToast);
+
+/** @internal — exposed for direct state testing */
+export { useWorkflowStore as _useWorkflowStore };

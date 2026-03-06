@@ -87,3 +87,6 @@ export const useCancelDeleteSession = () =>
   useSessionsStore((s) => s.cancelDeleteSession);
 export const useToggleArchivedSessions = () =>
   useSessionsStore((s) => s.toggleArchived);
+
+/** @internal — exposed for direct state testing */
+export { useSessionsStore as _useSessionsStore };

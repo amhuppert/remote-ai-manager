@@ -31,13 +31,13 @@ export interface TranscriptEntry {
 // ============================================================
 
 /** Get the transcripts directory path */
-function getTranscriptsDir(): string {
-  return path.join(getConfigDirPath(), "transcripts");
+function getTranscriptsDir(configDir?: string): string {
+  return path.join(configDir ?? getConfigDirPath(), "transcripts");
 }
 
 /** Ensure the transcripts directory exists */
-async function ensureTranscriptsDir(): Promise<void> {
-  const dir = getTranscriptsDir();
+async function ensureTranscriptsDir(configDir?: string): Promise<void> {
+  const dir = getTranscriptsDir(configDir);
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
   }
@@ -46,9 +46,10 @@ async function ensureTranscriptsDir(): Promise<void> {
 /** Get the full absolute path to a transcript file for a conversation */
 export async function getTranscriptPath(
   conversationId: string,
+  configDir?: string,
 ): Promise<string> {
-  await ensureTranscriptsDir();
-  return path.join(getTranscriptsDir(), `${conversationId}.jsonl`);
+  await ensureTranscriptsDir(configDir);
+  return path.join(getTranscriptsDir(configDir), `${conversationId}.jsonl`);
 }
 
 // ============================================================
@@ -62,8 +63,9 @@ export async function getTranscriptPath(
 export async function appendTranscriptEntry(
   conversationId: string,
   entry: TranscriptEntry,
+  configDir?: string,
 ): Promise<void> {
-  const filePath = await getTranscriptPath(conversationId);
+  const filePath = await getTranscriptPath(conversationId, configDir);
   const line = JSON.stringify(entry) + "\n";
   await appendFile(filePath, line, "utf-8");
 }
@@ -84,6 +86,8 @@ export interface CopyTranscriptInput {
     text: string;
     timestamp: string;
   };
+  /** Optional config directory for transcript path resolution */
+  configDir?: string;
 }
 
 /**
@@ -102,6 +106,7 @@ export async function copyTranscriptUpTo(
     upToMessageIndex,
     includeAssistantResponse,
     appendEditedMessage,
+    configDir,
   } = input;
 
   const raw = await readFile(sourceTranscriptPath, "utf-8");
@@ -191,7 +196,7 @@ export async function copyTranscriptUpTo(
   }
 
   // Write to target file
-  const targetPath = await getTranscriptPath(targetConversationId);
+  const targetPath = await getTranscriptPath(targetConversationId, configDir);
   const content = copiedLines.length > 0 ? copiedLines.join("\n") + "\n" : "";
   await writeFile(targetPath, content, "utf-8");
 }
@@ -285,9 +290,10 @@ export async function safeAppendTranscriptEntry(
   logger: {
     warn: (message: string, meta?: Record<string, unknown>) => void;
   } = transcriptLogger,
+  configDir?: string,
 ): Promise<void> {
   try {
-    await appendTranscriptEntry(conversationId, entry);
+    await appendTranscriptEntry(conversationId, entry, configDir);
   } catch (err) {
     logger.warn("transcript_write_failed", {
       conversationId,

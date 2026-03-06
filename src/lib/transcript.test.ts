@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile, mkdir, rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -11,11 +11,6 @@ import {
 } from "./transcript";
 
 const TEST_DIR = path.join("/tmp", "cc-transcript-test-" + Date.now());
-
-// Mock getConfigDirPath to use our test directory
-vi.mock("./config", () => ({
-  getConfigDirPath: () => TEST_DIR,
-}));
 
 beforeEach(async () => {
   await mkdir(path.join(TEST_DIR, "transcripts"), { recursive: true });
@@ -31,7 +26,7 @@ afterEach(async () => {
 
 describe("getTranscriptPath", () => {
   it("returns path inside transcripts directory", async () => {
-    const result = await getTranscriptPath("abc-123");
+    const result = await getTranscriptPath("abc-123", TEST_DIR);
     expect(result).toBe(path.join(TEST_DIR, "transcripts", "abc-123.jsonl"));
   });
 });
@@ -49,7 +44,7 @@ describe("appendTranscriptEntry", () => {
       content: [{ type: "text", text: "Hello!" }],
     };
 
-    await appendTranscriptEntry("conv-1", entry);
+    await appendTranscriptEntry("conv-1", entry, TEST_DIR);
 
     const filePath = path.join(TEST_DIR, "transcripts", "conv-1.jsonl");
     const raw = await readFile(filePath, "utf-8");
@@ -72,8 +67,8 @@ describe("appendTranscriptEntry", () => {
       content: [{ type: "text", text: "Hi there!" }],
     };
 
-    await appendTranscriptEntry("conv-2", entry1);
-    await appendTranscriptEntry("conv-2", entry2);
+    await appendTranscriptEntry("conv-2", entry1, TEST_DIR);
+    await appendTranscriptEntry("conv-2", entry2, TEST_DIR);
 
     const filePath = path.join(TEST_DIR, "transcripts", "conv-2.jsonl");
     const raw = await readFile(filePath, "utf-8");
@@ -90,7 +85,7 @@ describe("appendTranscriptEntry", () => {
       raw: { subtype: "init", session_id: "sess-1" },
     };
 
-    await appendTranscriptEntry("conv-3", entry);
+    await appendTranscriptEntry("conv-3", entry, TEST_DIR);
 
     const filePath = path.join(TEST_DIR, "transcripts", "conv-3.jsonl");
     const raw = await readFile(filePath, "utf-8");
@@ -588,6 +583,7 @@ describe("copyTranscriptUpTo", () => {
       targetConversationId: "fork-merge-target",
       upToMessageIndex: 2,
       includeAssistantResponse: true,
+      configDir: TEST_DIR,
     });
 
     const target = await readTarget("fork-merge-target");
@@ -644,6 +640,7 @@ describe("copyTranscriptUpTo", () => {
       targetConversationId: "fork-noresp-target",
       upToMessageIndex: 2,
       includeAssistantResponse: false,
+      configDir: TEST_DIR,
     });
 
     const target = await readTarget("fork-noresp-target");
@@ -700,6 +697,7 @@ describe("copyTranscriptUpTo", () => {
       upToMessageIndex: 2,
       includeAssistantResponse: false,
       appendEditedMessage: { text: "Edited follow-up", timestamp: "t-edit" },
+      configDir: TEST_DIR,
     });
 
     const target = await readTarget("fork-edit-target");
@@ -758,6 +756,7 @@ describe("copyTranscriptUpTo", () => {
       targetConversationId: "fork-nonvisible-target",
       upToMessageIndex: 2,
       includeAssistantResponse: false,
+      configDir: TEST_DIR,
     });
 
     const target = await readTarget("fork-nonvisible-target");
@@ -803,6 +802,7 @@ describe("copyTranscriptUpTo", () => {
       targetConversationId: "fork-simple-target",
       upToMessageIndex: 2,
       includeAssistantResponse: true,
+      configDir: TEST_DIR,
     });
 
     const target = await readTarget("fork-simple-target");

@@ -1,38 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
+import type { ConversationState } from "@/types";
+import {
+  createQueueRouteHandlers,
+  type QueueRouteDeps,
+} from "./queue-route-handlers";
 
 // ---------------------------------------------------------------------------
-// Hoisted mocks
+// Mock deps (no vi.mock needed)
 // ---------------------------------------------------------------------------
 
-const {
-  resolveProjectPathMock,
-  getSessionMock,
-  getConversationMock,
-  queueMessageMock,
-} = vi.hoisted(() => ({
-  resolveProjectPathMock: vi.fn(),
-  getSessionMock: vi.fn(),
-  getConversationMock: vi.fn(),
-  queueMessageMock: vi.fn(),
-}));
+const testSession = {
+  sessionName: "test-session",
+  worktreePath: "/projects/my-project/.worktrees/test-session",
+  branchName: "csm/test-session",
+  createdAt: "2024-01-01T00:00:00Z",
+  lastActivityAt: "2024-01-01T00:00:00Z",
+  archived: false,
+  finished: false,
+  conversations: [],
+};
 
-vi.mock("@/lib/project-resolver", () => ({
-  resolveProjectPath: resolveProjectPathMock,
-  getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
-}));
+const testConversation = {
+  id: "conv-123",
+  status: "running" as const,
+  role: null,
+};
 
-vi.mock("@/lib/state", () => ({
-  getSession: getSessionMock,
-}));
-
-vi.mock("@/lib/conversations", () => ({
-  getConversation: getConversationMock,
-}));
-
-vi.mock("@/lib/queue-message", () => ({
-  queueMessage: queueMessageMock,
-}));
+function createTestDeps(): QueueRouteDeps {
+  return {
+    resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
+    getSession: vi.fn().mockResolvedValue(testSession),
+    getConversation: vi.fn().mockResolvedValue(testConversation),
+    getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
+    queueMessage: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,34 +60,17 @@ function makeParams(
   return { params: Promise.resolve({ name, session, conversationId }) };
 }
 
-const testSession = {
-  sessionName: "test-session",
-  worktreePath: "/projects/my-project/.worktrees/test-session",
-  branchName: "csm/test-session",
-  createdAt: "2024-01-01T00:00:00Z",
-  lastActivityAt: "2024-01-01T00:00:00Z",
-  archived: false,
-  finished: false,
-  conversations: [],
-};
-
-const testConversation = {
-  id: "conv-123",
-  status: "running" as const,
-  role: null,
-};
-
 // ---------------------------------------------------------------------------
-// Reset
+// Setup
 // ---------------------------------------------------------------------------
+
+let deps: QueueRouteDeps;
+let handlers: ReturnType<typeof createQueueRouteHandlers>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.resetModules();
-  resolveProjectPathMock.mockResolvedValue("/projects/my-project");
-  getSessionMock.mockResolvedValue(testSession);
-  getConversationMock.mockResolvedValue(testConversation);
-  queueMessageMock.mockResolvedValue(undefined);
+  deps = createTestDeps();
+  handlers = createQueueRouteHandlers(deps);
 });
 
 // ===========================================================================
@@ -93,10 +79,11 @@ beforeEach(() => {
 
 describe("POST .../conversations/[conversationId]/queue", () => {
   it("returns 404 when project not found", async () => {
-    resolveProjectPathMock.mockResolvedValue(null);
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/queue/route");
-    const response = await POST(makeRequest({ text: "hello" }), makeParams());
+    vi.mocked(deps.resolveProjectPath).mockResolvedValue(null);
+    const response = await handlers.POST(
+      makeRequest({ text: "hello" }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(404);
     const body = await response.json();
@@ -104,10 +91,11 @@ describe("POST .../conversations/[conversationId]/queue", () => {
   });
 
   it("returns 404 when session not found", async () => {
-    getSessionMock.mockResolvedValue(null);
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/queue/route");
-    const response = await POST(makeRequest({ text: "hello" }), makeParams());
+    vi.mocked(deps.getSession).mockResolvedValue(null);
+    const response = await handlers.POST(
+      makeRequest({ text: "hello" }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(404);
     const body = await response.json();
@@ -115,10 +103,11 @@ describe("POST .../conversations/[conversationId]/queue", () => {
   });
 
   it("returns 404 when conversation not found", async () => {
-    getConversationMock.mockResolvedValue(null);
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/queue/route");
-    const response = await POST(makeRequest({ text: "hello" }), makeParams());
+    vi.mocked(deps.getConversation).mockResolvedValue(null);
+    const response = await handlers.POST(
+      makeRequest({ text: "hello" }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(404);
     const body = await response.json();
@@ -126,9 +115,7 @@ describe("POST .../conversations/[conversationId]/queue", () => {
   });
 
   it("returns 400 when message text is missing", async () => {
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/queue/route");
-    const response = await POST(makeRequest({}), makeParams());
+    const response = await handlers.POST(makeRequest({}), makeParams());
 
     expect(response.status).toBe(400);
     const body = await response.json();
@@ -136,9 +123,10 @@ describe("POST .../conversations/[conversationId]/queue", () => {
   });
 
   it("returns 400 when message text is empty/whitespace", async () => {
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/queue/route");
-    const response = await POST(makeRequest({ text: "   " }), makeParams());
+    const response = await handlers.POST(
+      makeRequest({ text: "   " }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(400);
     const body = await response.json();
@@ -146,13 +134,14 @@ describe("POST .../conversations/[conversationId]/queue", () => {
   });
 
   it("returns 409 when conversation is not running", async () => {
-    getConversationMock.mockResolvedValue({
+    vi.mocked(deps.getConversation).mockResolvedValue({
       ...testConversation,
       status: "awaiting",
-    });
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/queue/route");
-    const response = await POST(makeRequest({ text: "hello" }), makeParams());
+    } as ConversationState);
+    const response = await handlers.POST(
+      makeRequest({ text: "hello" }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(409);
     const body = await response.json();
@@ -160,9 +149,7 @@ describe("POST .../conversations/[conversationId]/queue", () => {
   });
 
   it("returns 200 with queued flag on success", async () => {
-    const { POST } =
-      await import("@/app/api/projects/[name]/sessions/[session]/conversations/[conversationId]/queue/route");
-    const response = await POST(
+    const response = await handlers.POST(
       makeRequest({ text: "follow up" }),
       makeParams(),
     );

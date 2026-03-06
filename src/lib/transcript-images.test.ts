@@ -1,21 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, rm, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { MessageContentBlock } from "@/types";
-
-const TEST_DIR = path.join("/tmp", "cc-transcript-images-test-" + Date.now());
-
-vi.mock("./config", () => ({
-  getConfigDirPath: () => TEST_DIR,
-}));
-
 import {
   saveTranscriptImage,
   readTranscriptImage,
   externalizeImageBlocks,
   resolveImageRefs,
 } from "./transcript-images";
+
+const TEST_DIR = path.join("/tmp", "cc-transcript-images-test-" + Date.now());
 
 // A small 1x1 red PNG encoded as base64
 const TINY_PNG_BASE64 =
@@ -40,6 +35,7 @@ describe("saveTranscriptImage", () => {
       0,
       "image/png",
       TINY_PNG_BASE64,
+      TEST_DIR,
     );
 
     expect(existsSync(filePath)).toBe(true);
@@ -52,7 +48,13 @@ describe("saveTranscriptImage", () => {
   });
 
   it("creates per-conversation images directory", async () => {
-    await saveTranscriptImage("conv-new", 0, "image/png", TINY_PNG_BASE64);
+    await saveTranscriptImage(
+      "conv-new",
+      0,
+      "image/png",
+      TINY_PNG_BASE64,
+      TEST_DIR,
+    );
 
     const dir = path.join(TEST_DIR, "transcripts", "images", "conv-new");
     expect(existsSync(dir)).toBe(true);
@@ -64,18 +66,21 @@ describe("saveTranscriptImage", () => {
       0,
       "image/jpeg",
       TINY_PNG_BASE64,
+      TEST_DIR,
     );
     const gif = await saveTranscriptImage(
       "conv-ext",
       1,
       "image/gif",
       TINY_PNG_BASE64,
+      TEST_DIR,
     );
     const webp = await saveTranscriptImage(
       "conv-ext",
       2,
       "image/webp",
       TINY_PNG_BASE64,
+      TEST_DIR,
     );
 
     expect(jpg).toMatch(/\.jpg$/);
@@ -95,6 +100,7 @@ describe("readTranscriptImage", () => {
       0,
       "image/png",
       TINY_PNG_BASE64,
+      TEST_DIR,
     );
 
     const result = await readTranscriptImage(filePath);
@@ -118,7 +124,7 @@ describe("externalizeImageBlocks", () => {
       { type: "image", mediaType: "image/png", base64Data: TINY_PNG_BASE64 },
     ];
 
-    const result = await externalizeImageBlocks("conv-ext", blocks);
+    const result = await externalizeImageBlocks("conv-ext", blocks, TEST_DIR);
 
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ type: "text", text: "Look at this:" });
@@ -136,7 +142,7 @@ describe("externalizeImageBlocks", () => {
       { type: "tool_use", name: "Read", input: { file_path: "/tmp/x" } },
     ];
 
-    const result = await externalizeImageBlocks("conv-pass", blocks);
+    const result = await externalizeImageBlocks("conv-pass", blocks, TEST_DIR);
     expect(result).toEqual(blocks);
   });
 
@@ -146,7 +152,7 @@ describe("externalizeImageBlocks", () => {
       { type: "image", mediaType: "image/jpeg", base64Data: TINY_PNG_BASE64 },
     ];
 
-    const result = await externalizeImageBlocks("conv-multi", blocks);
+    const result = await externalizeImageBlocks("conv-multi", blocks, TEST_DIR);
 
     expect(result).toHaveLength(2);
     expect(result[0]!.type).toBe("image_ref");
@@ -169,6 +175,7 @@ describe("resolveImageRefs", () => {
       0,
       "image/png",
       TINY_PNG_BASE64,
+      TEST_DIR,
     );
 
     const blocks: MessageContentBlock[] = [
@@ -225,7 +232,11 @@ describe("round-trip: externalize then resolve", () => {
       { type: "image", mediaType: "image/png", base64Data: TINY_PNG_BASE64 },
     ];
 
-    const externalized = await externalizeImageBlocks("conv-rt", original);
+    const externalized = await externalizeImageBlocks(
+      "conv-rt",
+      original,
+      TEST_DIR,
+    );
     const resolved = await resolveImageRefs(externalized);
 
     expect(resolved).toEqual(original);

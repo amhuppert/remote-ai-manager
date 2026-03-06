@@ -1,73 +1,89 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
+import {
+  createPinRouteHandlers,
+  type PinRouteDeps,
+} from "./pin-route-handlers";
 
-// Mock dependencies
-vi.mock("@/lib/project-resolver", () => ({
-  resolveProjectPath: vi.fn(),
-}));
+// ---------------------------------------------------------------------------
+// Mock deps (no vi.mock needed)
+// ---------------------------------------------------------------------------
 
-vi.mock("@/lib/state", () => ({
-  setProjectPinned: vi.fn(),
-}));
+function createTestDeps(): PinRouteDeps {
+  return {
+    resolveProjectPath: vi.fn().mockResolvedValue("/home/projects/test-proj"),
+    setProjectPinned: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function makeRequest(body: unknown): NextRequest {
-  return new NextRequest("http://localhost/api/projects/test-proj/pin", {
+  return new Request("http://localhost/api/projects/test-proj/pin", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
+  }) as unknown as NextRequest;
 }
+
+function makeParams(name = "test-proj") {
+  return { params: Promise.resolve({ name }) };
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+let deps: PinRouteDeps;
+let handlers: ReturnType<typeof createPinRouteHandlers>;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  deps = createTestDeps();
+  handlers = createPinRouteHandlers(deps);
+});
+
+// ===========================================================================
+// API route tests
+// ===========================================================================
 
 describe("POST /api/projects/[name]/pin", () => {
   it("pins a project when pinned:true", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { setProjectPinned } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/home/projects/test-proj");
-    vi.mocked(setProjectPinned).mockResolvedValue(undefined);
-
-    const { POST } = await import("@/app/api/projects/[name]/pin/route");
-    const response = await POST(makeRequest({ pinned: true }), {
-      params: Promise.resolve({ name: "test-proj" }),
-    });
+    const response = await handlers.POST(
+      makeRequest({ pinned: true }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
-    expect(setProjectPinned).toHaveBeenCalledWith(
+    expect(deps.setProjectPinned).toHaveBeenCalledWith(
       "/home/projects/test-proj",
       true,
     );
   });
 
   it("unpins a project when pinned:false", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    const { setProjectPinned } = await import("@/lib/state");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/home/projects/test-proj");
-    vi.mocked(setProjectPinned).mockResolvedValue(undefined);
-
-    const { POST } = await import("@/app/api/projects/[name]/pin/route");
-    const response = await POST(makeRequest({ pinned: false }), {
-      params: Promise.resolve({ name: "test-proj" }),
-    });
+    const response = await handlers.POST(
+      makeRequest({ pinned: false }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(200);
-    expect(setProjectPinned).toHaveBeenCalledWith(
+    expect(deps.setProjectPinned).toHaveBeenCalledWith(
       "/home/projects/test-proj",
       false,
     );
   });
 
   it("returns 404 for unknown project", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    vi.mocked(resolveProjectPath).mockResolvedValue(null);
+    vi.mocked(deps.resolveProjectPath).mockResolvedValue(null);
 
-    const { POST } = await import("@/app/api/projects/[name]/pin/route");
-    const response = await POST(makeRequest({ pinned: true }), {
-      params: Promise.resolve({ name: "nonexistent" }),
-    });
+    const response = await handlers.POST(
+      makeRequest({ pinned: true }),
+      makeParams("nonexistent"),
+    );
 
     expect(response.status).toBe(404);
     const body = await response.json();
@@ -75,13 +91,10 @@ describe("POST /api/projects/[name]/pin", () => {
   });
 
   it("returns 400 for invalid body", async () => {
-    const { resolveProjectPath } = await import("@/lib/project-resolver");
-    vi.mocked(resolveProjectPath).mockResolvedValue("/home/projects/test-proj");
-
-    const { POST } = await import("@/app/api/projects/[name]/pin/route");
-    const response = await POST(makeRequest({ invalid: "data" }), {
-      params: Promise.resolve({ name: "test-proj" }),
-    });
+    const response = await handlers.POST(
+      makeRequest({ invalid: "data" }),
+      makeParams(),
+    );
 
     expect(response.status).toBe(400);
     const body = await response.json();

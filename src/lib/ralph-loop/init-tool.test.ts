@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SessionState, RalphLoopWorkflow } from "@/types";
+import type { InitToolDeps } from "./init-tool";
 
 /**
  * Tests for the Ralph Loop initialization MCP tool server.
  *
  * We mock createSdkMcpServer and tool to capture the handler function,
  * then test it directly with valid/invalid inputs.
+ *
+ * Internal deps (getSession, mutateSession, dispatchPlanGeneration,
+ * createInitialCircuitBreakerState) are injected via the context.deps
+ * parameter — no vi.mock calls needed for those modules.
  */
 
 // Store captured tool handlers on globalThis for cross-scope access
@@ -25,6 +30,7 @@ function getCapturedTools(): Map<
   >;
 }
 
+// SDK mock is still needed to capture the tool handler registered via createSdkMcpServer/tool
 vi.mock("@anthropic-ai/claude-agent-sdk", () => {
   const TOOLS_KEY_INNER = "__test_init_tool_captured";
   function getTools(): Map<
@@ -70,21 +76,27 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
   };
 });
 
-// Mock dependencies
+// Injected mock deps — no vi.mock calls for internal modules
 const mockGetSession = vi.fn();
 const mockMutateSession = vi.fn();
 const mockBroadcast = vi.fn();
 const mockDispatchPlanGeneration = vi.fn();
+const mockCreateInitialCircuitBreakerState = vi.fn().mockReturnValue({
+  state: "closed",
+  consecutiveNoProgress: 0,
+  consecutiveSameError: 0,
+  lastErrorPattern: null,
+  lastProgressIteration: 0,
+});
 
-vi.mock("@/lib/state", () => ({
-  getSession: (...args: unknown[]) => mockGetSession(...args),
-  mutateSession: (...args: unknown[]) => mockMutateSession(...args),
-}));
-
-vi.mock("@/lib/ralph-loop/plan-generator", () => ({
-  dispatchPlanGeneration: (...args: unknown[]) =>
-    mockDispatchPlanGeneration(...args),
-}));
+function createTestDeps(): InitToolDeps {
+  return {
+    getSession: mockGetSession,
+    mutateSession: mockMutateSession,
+    dispatchPlanGeneration: mockDispatchPlanGeneration,
+    createInitialCircuitBreakerState: mockCreateInitialCircuitBreakerState,
+  };
+}
 
 function getHandler(name: string): (args: unknown) => Promise<unknown> {
   const t = getCapturedTools().get(name);
@@ -120,6 +132,7 @@ describe("init-tool", () => {
       sessionName: "test-session",
       projectName: "test",
       broadcast: mockBroadcast,
+      deps: createTestDeps(),
     });
 
     expect(server).toBeDefined();
@@ -148,6 +161,7 @@ describe("init-tool", () => {
       sessionName: "test-session",
       projectName: "test",
       broadcast: mockBroadcast,
+      deps: createTestDeps(),
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -192,6 +206,7 @@ describe("init-tool", () => {
       sessionName: "test-session",
       projectName: "test",
       broadcast: mockBroadcast,
+      deps: createTestDeps(),
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -229,6 +244,7 @@ describe("init-tool", () => {
       sessionName: "test-session",
       projectName: "test",
       broadcast: mockBroadcast,
+      deps: createTestDeps(),
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -263,6 +279,7 @@ describe("init-tool", () => {
       sessionName: "test-session",
       projectName: "test",
       broadcast: mockBroadcast,
+      deps: createTestDeps(),
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -286,6 +303,7 @@ describe("init-tool", () => {
       sessionName: "test-session",
       projectName: "test",
       broadcast: mockBroadcast,
+      deps: createTestDeps(),
     });
 
     const handler = getHandler("initialize_ralph_loop");
@@ -322,6 +340,7 @@ describe("init-tool", () => {
       sessionName: "test-session",
       projectName: "test",
       broadcast: mockBroadcast,
+      deps: createTestDeps(),
     });
 
     const handler = getHandler("initialize_ralph_loop");

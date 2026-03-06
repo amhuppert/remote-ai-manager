@@ -1,16 +1,39 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  createProjectsRouteHandlers,
+  type ProjectsRouteDeps,
+} from "./projects-route-handlers";
 
-// Mock the discovery module
-vi.mock("@/lib/discovery", () => ({
-  discoverProjects: vi.fn(),
-}));
+// ---------------------------------------------------------------------------
+// Mock deps (no vi.mock needed)
+// ---------------------------------------------------------------------------
 
-const emptyContext = { params: Promise.resolve({}) };
+function createTestDeps(): ProjectsRouteDeps {
+  return {
+    discoverProjects: vi.fn().mockResolvedValue([]),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+let deps: ProjectsRouteDeps;
+let handlers: ReturnType<typeof createProjectsRouteHandlers>;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  deps = createTestDeps();
+  handlers = createProjectsRouteHandlers(deps);
+});
+
+// ===========================================================================
+// API route tests
+// ===========================================================================
 
 describe("GET /api/projects", () => {
   it("returns JSON array of discovered projects with status 200", async () => {
-    const { discoverProjects } = await import("@/lib/discovery");
-    vi.mocked(discoverProjects).mockResolvedValue([
+    vi.mocked(deps.discoverProjects).mockResolvedValue([
       {
         name: "my-project",
         path: "/home/user/projects/my-project",
@@ -19,11 +42,7 @@ describe("GET /api/projects", () => {
       },
     ]);
 
-    const { GET } = await import("@/app/api/projects/route");
-    const response = await GET(
-      new Request("http://localhost/api/projects"),
-      emptyContext,
-    );
+    const response = await handlers.GET();
 
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -40,16 +59,11 @@ describe("GET /api/projects", () => {
   });
 
   it("returns 500 with error field when discovery fails", async () => {
-    const { discoverProjects } = await import("@/lib/discovery");
-    vi.mocked(discoverProjects).mockRejectedValue(
+    vi.mocked(deps.discoverProjects).mockRejectedValue(
       new Error("Filesystem error"),
     );
 
-    const { GET } = await import("@/app/api/projects/route");
-    const response = await GET(
-      new Request("http://localhost/api/projects"),
-      emptyContext,
-    );
+    const response = await handlers.GET();
 
     expect(response.status).toBe(500);
     const body = await response.json();
@@ -58,14 +72,9 @@ describe("GET /api/projects", () => {
   });
 
   it("returns generic error message for non-Error exceptions", async () => {
-    const { discoverProjects } = await import("@/lib/discovery");
-    vi.mocked(discoverProjects).mockRejectedValue("string error");
+    vi.mocked(deps.discoverProjects).mockRejectedValue("string error");
 
-    const { GET } = await import("@/app/api/projects/route");
-    const response = await GET(
-      new Request("http://localhost/api/projects"),
-      emptyContext,
-    );
+    const response = await handlers.GET();
 
     expect(response.status).toBe(500);
     const body = await response.json();

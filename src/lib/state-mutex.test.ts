@@ -1,22 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { withStateLock, _resetForTesting } from "./state-mutex";
+import { createStateManager } from "./state";
 
 const TEST_DIR = path.join("/tmp", "cc-state-mutex-test-" + Date.now());
 const STATE_FILE = path.join(TEST_DIR, "state.json");
 
-vi.mock("./config", () => ({
-  readConfig: vi.fn().mockResolvedValue({
-    baseDir: "/tmp/projects",
-    ignorePatterns: [],
-    stateFilePath: STATE_FILE,
-    claudeTimeoutMs: 300_000,
-  }),
-}));
+const testReadConfig = vi.fn().mockResolvedValue({
+  baseDir: "/tmp/projects",
+  ignorePatterns: [],
+  stateFilePath: STATE_FILE,
+  claudeTimeoutMs: 300_000,
+});
+
+/** State manager backed by the test config */
+const testState = createStateManager({ readConfig: testReadConfig });
 
 beforeEach(async () => {
   await mkdir(TEST_DIR, { recursive: true });
-  vi.resetModules();
+  _resetForTesting();
 });
 
 afterEach(async () => {
@@ -25,9 +28,6 @@ afterEach(async () => {
 
 describe("withStateLock", () => {
   it("serializes concurrent operations", async () => {
-    const { withStateLock, _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
     let counter = 0;
     const increment = () =>
       withStateLock("increment", async () => {
@@ -46,9 +46,6 @@ describe("withStateLock", () => {
   });
 
   it("maintains FIFO ordering", async () => {
-    const { withStateLock, _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
     const order: number[] = [];
     const promises = [1, 2, 3, 4, 5].map((n) =>
       withStateLock(`op-${n}`, async () => {
@@ -63,17 +60,11 @@ describe("withStateLock", () => {
   });
 
   it("returns the value from the callback", async () => {
-    const { withStateLock, _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
     const result = await withStateLock("test", async () => 42);
     expect(result).toBe(42);
   });
 
   it("releases lock after error so subsequent operations proceed", async () => {
-    const { withStateLock, _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
     await expect(
       withStateLock("fail", async () => {
         throw new Error("boom");
@@ -86,9 +77,6 @@ describe("withStateLock", () => {
   });
 
   it("_resetForTesting clears the mutex state", async () => {
-    const { withStateLock, _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
     const result = await withStateLock("post-reset", async () => "clean");
     expect(result).toBe("clean");
   });
@@ -96,12 +84,8 @@ describe("withStateLock", () => {
 
 describe("mutateState", () => {
   it("serializes concurrent state mutations", async () => {
-    const { writeState, mutateState } = await import("./state");
-    const { _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
     // Seed state with a counter field stored as a session name
-    await writeState({
+    await testState.writeState({
       projects: {
         "/proj": {
           rootPath: "/proj",
@@ -130,7 +114,7 @@ describe("mutateState", () => {
 
     // Concurrent mutations that each toggle a different flag
     const promises = Array.from({ length: 5 }, (_, i) =>
-      mutateState(`concurrent-${i}`, (state) => {
+      testState.mutateState(`concurrent-${i}`, (state) => {
         const session = state.projects["/proj"]!.sessions["counter"]!;
         // Accumulate: each mutation reads current value and adds to it
         session.objective = String(Number(session.objective ?? "0") + 1);
@@ -139,8 +123,7 @@ describe("mutateState", () => {
 
     await Promise.all(promises);
 
-    const { readState } = await import("./state");
-    const finalState = await readState();
+    const finalState = await testState.readState();
     const session = finalState.projects["/proj"]!.sessions["counter"]!;
     // All 5 mutations should have been applied sequentially
     expect(session.objective).toBe("5");
@@ -149,11 +132,7 @@ describe("mutateState", () => {
 
 describe("mutateSession", () => {
   it("creates project if missing and mutates session", async () => {
-    const { writeState, mutateSession, readState } = await import("./state");
-    const { _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
-    await writeState({
+    await testState.writeState({
       projects: {
         "/proj": {
           rootPath: "/proj",
@@ -180,20 +159,21 @@ describe("mutateSession", () => {
       pinnedProjects: [],
     });
 
-    await mutateSession("/proj", "test", "test.archive", (session) => {
-      session.archived = true;
-    });
+    await testState.mutateSession(
+      "/proj",
+      "test",
+      "test.archive",
+      (session) => {
+        session.archived = true;
+      },
+    );
 
-    const state = await readState();
+    const state = await testState.readState();
     expect(state.projects["/proj"]!.sessions["test"]!.archived).toBe(true);
   });
 
   it("throws if session not found", async () => {
-    const { writeState, mutateSession } = await import("./state");
-    const { _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
-    await writeState({
+    await testState.writeState({
       projects: {
         "/proj": { rootPath: "/proj", roadmapItems: [], sessions: {} },
       },
@@ -202,16 +182,12 @@ describe("mutateSession", () => {
     });
 
     await expect(
-      mutateSession("/proj", "nonexistent", "test", () => {}),
+      testState.mutateSession("/proj", "nonexistent", "test", () => {}),
     ).rejects.toThrow('Session "nonexistent" not found');
   });
 
   it("returns values from the mutation callback", async () => {
-    const { writeState, mutateSession } = await import("./state");
-    const { _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
-    await writeState({
+    await testState.writeState({
       projects: {
         "/proj": {
           rootPath: "/proj",
@@ -238,7 +214,7 @@ describe("mutateSession", () => {
       pinnedProjects: [],
     });
 
-    const name = await mutateSession(
+    const name = await testState.mutateSession(
       "/proj",
       "test",
       "test.getName",
@@ -250,13 +226,8 @@ describe("mutateSession", () => {
 
 describe("the specific merge detection bug", () => {
   it("setSessionFinished is not overwritten by concurrent mutateSession", async () => {
-    const { writeState, setSessionFinished, mutateSession, readState } =
-      await import("./state");
-    const { _resetForTesting } = await import("./state-mutex");
-    _resetForTesting();
-
     const now = new Date().toISOString();
-    await writeState({
+    await testState.writeState({
       projects: {
         "/proj": {
           rootPath: "/proj",
@@ -285,13 +256,18 @@ describe("the specific merge detection bug", () => {
 
     // Fire both concurrently — the mutex ensures they don't race
     await Promise.all([
-      setSessionFinished("/proj", "target"),
-      mutateSession("/proj", "target", "workflow.update", (session) => {
-        session.objective = "updated-objective";
-      }),
+      testState.setSessionFinished("/proj", "target"),
+      testState.mutateSession(
+        "/proj",
+        "target",
+        "workflow.update",
+        (session) => {
+          session.objective = "updated-objective";
+        },
+      ),
     ]);
 
-    const state = await readState();
+    const state = await testState.readState();
     const session = state.projects["/proj"]!.sessions["target"]!;
 
     // Both changes must be present

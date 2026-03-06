@@ -1,44 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
 import type { CommandItem } from "@/types";
+import {
+  createCommandsRouteHandlers,
+  type CommandsRouteDeps,
+} from "./commands-route-handlers";
 
 // ---------------------------------------------------------------------------
-// Hoisted mocks
+// Mock deps (no vi.mock needed)
 // ---------------------------------------------------------------------------
-
-const { resolveProjectPathMock, getSessionMock, discoverCommandsMock } =
-  vi.hoisted(() => ({
-    resolveProjectPathMock: vi.fn(),
-    getSessionMock: vi.fn(),
-    discoverCommandsMock: vi.fn(),
-  }));
-
-vi.mock("@/lib/project-resolver", () => ({
-  resolveProjectPath: resolveProjectPathMock,
-}));
-
-vi.mock("@/lib/state", () => ({
-  getSession: getSessionMock,
-}));
-
-vi.mock("@/lib/commands", () => ({
-  discoverCommands: discoverCommandsMock,
-}));
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeRequest(): NextRequest {
-  return new Request(
-    "http://localhost/api/projects/my-project/sessions/test-session/commands",
-    { method: "GET" },
-  ) as unknown as NextRequest;
-}
-
-function makeParams(name = "my-project", session = "test-session") {
-  return { params: Promise.resolve({ name, session }) };
-}
 
 const testSession = {
   sessionName: "test-session",
@@ -70,16 +40,40 @@ const testCommands: CommandItem[] = [
   },
 ];
 
+function createTestDeps(): CommandsRouteDeps {
+  return {
+    resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
+    getSession: vi.fn().mockResolvedValue(testSession),
+    discoverCommands: vi.fn().mockResolvedValue(testCommands),
+  };
+}
+
 // ---------------------------------------------------------------------------
-// Reset
+// Helpers
 // ---------------------------------------------------------------------------
+
+function makeRequest(): NextRequest {
+  return new Request(
+    "http://localhost/api/projects/my-project/sessions/test-session/commands",
+    { method: "GET" },
+  ) as unknown as NextRequest;
+}
+
+function makeParams(name = "my-project", session = "test-session") {
+  return { params: Promise.resolve({ name, session }) };
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+let deps: CommandsRouteDeps;
+let handlers: ReturnType<typeof createCommandsRouteHandlers>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.resetModules();
-  resolveProjectPathMock.mockResolvedValue("/projects/my-project");
-  getSessionMock.mockResolvedValue(testSession);
-  discoverCommandsMock.mockResolvedValue(testCommands);
+  deps = createTestDeps();
+  handlers = createCommandsRouteHandlers(deps);
 });
 
 // ===========================================================================
@@ -88,9 +82,7 @@ beforeEach(() => {
 
 describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   it("returns 200 with correct response shape", async () => {
-    const { GET } =
-      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
-    const response = await GET(makeRequest(), makeParams());
+    const response = await handlers.GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { items: CommandItem[] };
@@ -107,11 +99,9 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   });
 
   it("returns 404 when project not found", async () => {
-    resolveProjectPathMock.mockResolvedValue(null);
+    vi.mocked(deps.resolveProjectPath).mockResolvedValue(null);
 
-    const { GET } =
-      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
-    const response = await GET(makeRequest(), makeParams());
+    const response = await handlers.GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(404);
     const body = (await response.json()) as { error: string };
@@ -119,11 +109,9 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   });
 
   it("returns 404 when session not found", async () => {
-    getSessionMock.mockResolvedValue(null);
+    vi.mocked(deps.getSession).mockResolvedValue(null);
 
-    const { GET } =
-      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
-    const response = await GET(makeRequest(), makeParams());
+    const response = await handlers.GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(404);
     const body = (await response.json()) as { error: string };
@@ -131,11 +119,11 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   });
 
   it("returns 500 on discovery error", async () => {
-    discoverCommandsMock.mockRejectedValue(new Error("Scan failed"));
+    vi.mocked(deps.discoverCommands).mockRejectedValue(
+      new Error("Scan failed"),
+    );
 
-    const { GET } =
-      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
-    const response = await GET(makeRequest(), makeParams());
+    const response = await handlers.GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(500);
     const body = (await response.json()) as { error: string };
@@ -143,11 +131,9 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
   });
 
   it("returns empty items for project with no commands", async () => {
-    discoverCommandsMock.mockResolvedValue([]);
+    vi.mocked(deps.discoverCommands).mockResolvedValue([]);
 
-    const { GET } =
-      await import("@/app/api/projects/[name]/sessions/[session]/commands/route");
-    const response = await GET(makeRequest(), makeParams());
+    const response = await handlers.GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { items: CommandItem[] };

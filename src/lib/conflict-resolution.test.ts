@@ -1,14 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-
-// Mock modules before importing the module under test
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: vi.fn(),
-}));
-
-vi.mock("./config", () => ({
-  readConfig: vi.fn(),
-}));
+import type { Query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  createConflictResolver,
+  type ConflictResolutionDeps,
+} from "./conflict-resolution";
 
 // Helper: create a mock async generator that yields the given messages
 async function* mockQueryStream(
@@ -17,28 +13,27 @@ async function* mockQueryStream(
   for (const msg of messages) yield msg;
 }
 
-// Import mocked modules to configure them in tests
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import { readConfig } from "./config";
-import { resolveConflicts } from "./conflict-resolution";
+// ============================================================
+// Test Dependency Helpers
+// ============================================================
 
-const mockQuery = vi.mocked(query);
-const mockReadConfig = vi.mocked(readConfig);
-
-describe("conflict-resolution", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-
-    // Default config mock
-    mockReadConfig.mockResolvedValue({
+function createTestDeps(
+  overrides?: Partial<ConflictResolutionDeps>,
+): ConflictResolutionDeps {
+  return {
+    query: vi.fn() as unknown as ConflictResolutionDeps["query"],
+    readConfig: vi.fn().mockResolvedValue({
       baseDir: "/home/user/projects",
       ignorePatterns: [],
       stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 60_000,
       defaultModel: "opus",
-    });
-  });
+    }) as unknown as ConflictResolutionDeps["readConfig"],
+    ...overrides,
+  };
+}
 
+describe("conflict-resolution", () => {
   it("successfully extracts ConflictEntry[] from a mock Claude response with a JSON code fence", async () => {
     const conflictEntries = [
       {
@@ -89,9 +84,15 @@ All conflicts have been resolved and staged.`;
       } as SDKMessage,
     ];
 
-    mockQuery.mockReturnValue(
-      mockQueryStream(messages) as ReturnType<typeof query>,
-    );
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
@@ -114,6 +115,7 @@ All conflicts have been resolved and staged.`;
     }
 
     // Verify query was called with correct options
+    const mockQuery = deps.query as ReturnType<typeof vi.fn>;
     expect(mockQuery).toHaveBeenCalledOnce();
     const callArgs = mockQuery.mock.calls[0]![0] as Record<string, unknown>;
     expect(callArgs["options"]).toMatchObject({
@@ -152,9 +154,15 @@ All conflicts have been resolved and staged.`;
       } as SDKMessage,
     ];
 
-    mockQuery.mockReturnValue(
-      mockQueryStream(messages) as ReturnType<typeof query>,
-    );
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
@@ -205,9 +213,15 @@ ${JSON.stringify(malformedEntries, null, 2)}
       } as SDKMessage,
     ];
 
-    mockQuery.mockReturnValue(
-      mockQueryStream(messages) as ReturnType<typeof query>,
-    );
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
@@ -257,9 +271,15 @@ ${JSON.stringify(conflictEntries, null, 2)}
       } as SDKMessage,
     ];
 
-    mockQuery.mockReturnValue(
-      mockQueryStream(messages) as ReturnType<typeof query>,
-    );
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
 
     const decisions = [
       { file: "src/index.ts", decision: "approved" as const },
@@ -279,6 +299,7 @@ ${JSON.stringify(conflictEntries, null, 2)}
     expect(result.status).toBe("resolved");
 
     // Verify the prompt includes decision information
+    const mockQuery = deps.query as ReturnType<typeof vi.fn>;
     expect(mockQuery).toHaveBeenCalledOnce();
     const callArgs = mockQuery.mock.calls[0]![0] as Record<string, unknown>;
     const prompt = callArgs["prompt"] as string;
@@ -293,9 +314,13 @@ ${JSON.stringify(conflictEntries, null, 2)}
   });
 
   it("returns failed status on SDK error/exception", async () => {
-    mockQuery.mockImplementation(() => {
-      throw new Error("SDK connection failed");
+    const deps = createTestDeps({
+      query: vi.fn().mockImplementation(() => {
+        throw new Error("SDK connection failed");
+      }) as unknown as ConflictResolutionDeps["query"],
     });
+
+    const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
@@ -318,7 +343,15 @@ ${JSON.stringify(conflictEntries, null, 2)}
       throw new Error("Stream interrupted");
     }
 
-    mockQuery.mockReturnValue(failingStream() as ReturnType<typeof query>);
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          failingStream() as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
@@ -385,9 +418,15 @@ ${JSON.stringify(lastEntries, null, 2)}
       } as SDKMessage,
     ];
 
-    mockQuery.mockReturnValue(
-      mockQueryStream(messages) as ReturnType<typeof query>,
-    );
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
@@ -455,9 +494,15 @@ ${JSON.stringify(lastEntries, null, 2)}
       } as SDKMessage,
     ];
 
-    mockQuery.mockReturnValue(
-      mockQueryStream(messages) as ReturnType<typeof query>,
-    );
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
@@ -501,9 +546,15 @@ ${JSON.stringify(lastEntries, null, 2)}
       } as SDKMessage,
     ];
 
-    mockQuery.mockReturnValue(
-      mockQueryStream(messages) as ReturnType<typeof query>,
-    );
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",

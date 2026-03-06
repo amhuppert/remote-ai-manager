@@ -1,23 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
 import type { FileItem } from "@/types";
+import {
+  createFilesRouteHandlers,
+  type FilesRouteDeps,
+} from "./files-route-handlers";
 
 // ---------------------------------------------------------------------------
-// Hoisted mocks
+// Mock deps (no vi.mock needed)
 // ---------------------------------------------------------------------------
 
-const { resolveProjectPathMock, scanProjectFilesMock } = vi.hoisted(() => ({
-  resolveProjectPathMock: vi.fn(),
-  scanProjectFilesMock: vi.fn(),
-}));
+const testFiles: FileItem[] = [
+  { path: "src/index.ts" },
+  { path: "src/app.tsx" },
+  { path: "package.json" },
+];
 
-vi.mock("@/lib/project-resolver", () => ({
-  resolveProjectPath: resolveProjectPathMock,
-}));
-
-vi.mock("@/lib/file-scanner", () => ({
-  scanProjectFiles: scanProjectFilesMock,
-}));
+function createTestDeps(): FilesRouteDeps {
+  return {
+    resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
+    scanProjectFiles: vi.fn().mockResolvedValue(testFiles),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -33,21 +37,17 @@ function makeParams(name = "my-project") {
   return { params: Promise.resolve({ name }) };
 }
 
-const testFiles: FileItem[] = [
-  { path: "src/index.ts" },
-  { path: "src/app.tsx" },
-  { path: "package.json" },
-];
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Reset
-// ---------------------------------------------------------------------------
+let deps: FilesRouteDeps;
+let handlers: ReturnType<typeof createFilesRouteHandlers>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.resetModules();
-  resolveProjectPathMock.mockResolvedValue("/projects/my-project");
-  scanProjectFilesMock.mockResolvedValue(testFiles);
+  deps = createTestDeps();
+  handlers = createFilesRouteHandlers(deps);
 });
 
 // ===========================================================================
@@ -56,8 +56,7 @@ beforeEach(() => {
 
 describe("GET /api/projects/[name]/files", () => {
   it("returns 200 with correct response shape", async () => {
-    const { GET } = await import("@/app/api/projects/[name]/files/route");
-    const response = await GET(makeRequest(), makeParams());
+    const response = await handlers.GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { items: FileItem[] };
@@ -68,10 +67,9 @@ describe("GET /api/projects/[name]/files", () => {
   });
 
   it("returns 404 when project not found", async () => {
-    resolveProjectPathMock.mockResolvedValue(null);
+    vi.mocked(deps.resolveProjectPath).mockResolvedValue(null);
 
-    const { GET } = await import("@/app/api/projects/[name]/files/route");
-    const response = await GET(makeRequest(), makeParams());
+    const response = await handlers.GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(404);
     const body = (await response.json()) as { error: string };
@@ -79,10 +77,11 @@ describe("GET /api/projects/[name]/files", () => {
   });
 
   it("returns 500 on scanner error", async () => {
-    scanProjectFilesMock.mockRejectedValue(new Error("Permission denied"));
+    vi.mocked(deps.scanProjectFiles).mockRejectedValue(
+      new Error("Permission denied"),
+    );
 
-    const { GET } = await import("@/app/api/projects/[name]/files/route");
-    const response = await GET(makeRequest(), makeParams());
+    const response = await handlers.GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(500);
     const body = (await response.json()) as { error: string };
@@ -90,10 +89,9 @@ describe("GET /api/projects/[name]/files", () => {
   });
 
   it("returns empty items for project with no files", async () => {
-    scanProjectFilesMock.mockResolvedValue([]);
+    vi.mocked(deps.scanProjectFiles).mockResolvedValue([]);
 
-    const { GET } = await import("@/app/api/projects/[name]/files/route");
-    const response = await GET(makeRequest(), makeParams());
+    const response = await handlers.GET(makeRequest(), makeParams());
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { items: FileItem[] };
@@ -101,9 +99,8 @@ describe("GET /api/projects/[name]/files", () => {
   });
 
   it("passes project path to scanProjectFiles", async () => {
-    const { GET } = await import("@/app/api/projects/[name]/files/route");
-    await GET(makeRequest(), makeParams());
+    await handlers.GET(makeRequest(), makeParams());
 
-    expect(scanProjectFilesMock).toHaveBeenCalledWith("/projects/my-project");
+    expect(deps.scanProjectFiles).toHaveBeenCalledWith("/projects/my-project");
   });
 });

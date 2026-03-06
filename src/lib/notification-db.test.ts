@@ -1,10 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-// Mock dependencies before importing the module under test
-vi.mock("./config", () => ({
-  getConfigDirPath: () => "/tmp/cc-test",
-}));
-
 import {
   createNotification,
   getNotifications,

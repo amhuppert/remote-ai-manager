@@ -1,4 +1,4 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query as defaultQuery } from "@anthropic-ai/claude-agent-sdk";
 import type {
   SDKMessage,
   SDKAssistantMessage,
@@ -6,13 +6,27 @@ import type {
 import { z } from "zod";
 import { conflictEntrySchema } from "./schemas";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/schemas";
-import { readConfig } from "./config";
+import { readConfig as defaultReadConfig } from "./config";
 import { createLogger } from "./logging";
 
 const logger = createLogger("conflict-resolution");
 
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/sdk-env";
+
+// ============================================================
+// Dependency Injection
+// ============================================================
+
+export interface ConflictResolutionDeps {
+  query: typeof defaultQuery;
+  readConfig: typeof defaultReadConfig;
+}
+
+const defaultDeps: ConflictResolutionDeps = {
+  query: defaultQuery,
+  readConfig: defaultReadConfig,
+};
 
 // ============================================================
 // Public Types
@@ -112,6 +126,21 @@ function extractLastJsonCodeFence(text: string): string | null {
 // ============================================================
 
 /**
+ * Create a conflict resolver with injected dependencies.
+ * Tests use this to inject mocks; production uses the default singleton export.
+ */
+export function createConflictResolver(
+  deps: ConflictResolutionDeps = defaultDeps,
+) {
+  return {
+    resolveConflicts: (params: {
+      worktreePath: string;
+      decisions?: ConflictDecisionInput[];
+    }): Promise<ConflictResolutionResult> => resolveConflictsImpl(params, deps),
+  };
+}
+
+/**
  * Invoke Claude Agent SDK to analyze and resolve merge conflicts in a session worktree.
  *
  * - Constructs the conflict resolution prompt
@@ -124,7 +153,18 @@ export async function resolveConflicts(params: {
   worktreePath: string;
   decisions?: ConflictDecisionInput[];
 }): Promise<ConflictResolutionResult> {
+  return resolveConflictsImpl(params, defaultDeps);
+}
+
+async function resolveConflictsImpl(
+  params: {
+    worktreePath: string;
+    decisions?: ConflictDecisionInput[];
+  },
+  deps: ConflictResolutionDeps,
+): Promise<ConflictResolutionResult> {
   const { worktreePath, decisions } = params;
+  const { query, readConfig } = deps;
 
   logger.info("conflict-resolution.start", { worktreePath });
 

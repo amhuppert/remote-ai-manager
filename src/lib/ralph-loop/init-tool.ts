@@ -1,17 +1,38 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { getSession, mutateSession } from "@/lib/state";
+import {
+  getSession as defaultGetSession,
+  mutateSession as defaultMutateSession,
+} from "@/lib/state";
 import {
   broadcast as defaultBroadcast,
   type BroadcastFn,
 } from "@/lib/sse-broadcaster";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
-import { createInitialCircuitBreakerState } from "./circuit-breaker";
-import { dispatchPlanGeneration } from "./plan-generator";
+import { createInitialCircuitBreakerState as defaultCreateInitialCircuitBreakerState } from "./circuit-breaker";
+import { dispatchPlanGeneration as defaultDispatchPlanGeneration } from "./plan-generator";
 
 const logger = createLogger("ralph-loop");
+
+// ============================================================
+// Dependency Injection
+// ============================================================
+
+export interface InitToolDeps {
+  getSession: typeof defaultGetSession;
+  mutateSession: typeof defaultMutateSession;
+  createInitialCircuitBreakerState: typeof defaultCreateInitialCircuitBreakerState;
+  dispatchPlanGeneration: typeof defaultDispatchPlanGeneration;
+}
+
+const defaultInitToolDeps: InitToolDeps = {
+  getSession: defaultGetSession,
+  mutateSession: defaultMutateSession,
+  createInitialCircuitBreakerState: defaultCreateInitialCircuitBreakerState,
+  dispatchPlanGeneration: defaultDispatchPlanGeneration,
+};
 
 export interface InitToolContext {
   projectPath: string;
@@ -19,6 +40,8 @@ export interface InitToolContext {
   projectName: string;
   /** Optional broadcast function for dependency injection (default: SSE broadcaster). */
   broadcast?: BroadcastFn;
+  /** Optional dependency overrides for testing. */
+  deps?: Partial<InitToolDeps>;
 }
 
 /**
@@ -50,7 +73,15 @@ export function createInitToolServer(
             sessionName,
             projectName,
             broadcast = defaultBroadcast,
+            deps: depsOverride,
           } = context;
+
+          const {
+            getSession,
+            mutateSession,
+            createInitialCircuitBreakerState,
+            dispatchPlanGeneration,
+          } = { ...defaultInitToolDeps, ...depsOverride };
 
           try {
             // Read fresh session state to guard against race conditions
