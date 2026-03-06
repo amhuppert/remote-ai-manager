@@ -68,6 +68,22 @@
   - Ensure the panel integrates visually with the existing page layout
   - _Requirements: 6.1_
 
+- [x] 6. Create the roadmap MCP tool server and register it in the prompt executor
+- [x] 6.1 Build the MCP tool server with add, remove, and list tools
+  - Create an in-process MCP server using the established SDK pattern, accepting a project path context
+  - Add an `add_roadmap_item` tool that accepts a title, type, and optional description, then creates the item via the existing state mutation and returns a summary of the created item
+  - Add a `remove_roadmap_item` tool that accepts an item ID, deletes it via the existing state mutation, and returns a confirmation message; return an error response if the item is not found
+  - Add a `list_roadmap_items` tool that returns all non-archived items for the project formatted as a readable list grouped by type
+  - Wrap each tool handler in error handling that catches failures and returns descriptive error text to Claude
+  - Add structured logging for tool invocations
+  - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.9_
+
+- [x] 6.2 Register the roadmap tool server in the prompt executor
+  - Import and instantiate the roadmap tool server in the prompt execution function, passing the session's project path as context
+  - Add the server to the MCP servers object in the SDK query options so it is available to every Claude conversation
+  - Ensure the server is registered unconditionally alongside existing conditional tool servers
+  - _Requirements: 8.8_
+
 ## Requirements Coverage
 
 | Requirement | Covered By |
@@ -88,3 +104,5 @@
 | 7.1 | Task 3.3, 4.1, 5.1 |
 | 7.2, 7.4 | Task 3.3 |
 | 7.3 | Task 5.1 |
+| 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.9 | Task 6.1 |
+| 8.8 | Task 6.2 |

@@ -2,11 +2,11 @@
 
 ## Overview
 
-**Purpose**: The Roadmap Item Tracker adds a lightweight per-project planning surface to Command Center, enabling developers to capture and track bugs, planned features, and ideas alongside their coding sessions.
+**Purpose**: The Roadmap Item Tracker adds a lightweight per-project planning surface to Command Center, enabling developers to capture and track bugs, planned features, and ideas alongside their coding sessions. Additionally, it provides every Claude conversation with custom MCP tools for adding, removing, and listing roadmap items programmatically.
 
-**Users**: Developers using CC to manage multi-session projects. They track work items, mark them complete, archive stale ones, and transition items directly into Focus mode sessions for Claude-assisted implementation.
+**Users**: Developers using CC to manage multi-session projects. They track work items, mark them complete, archive stale ones, and transition items directly into Focus mode sessions for Claude-assisted implementation. Claude itself uses roadmap tools during conversations to capture work items discovered during coding sessions.
 
-**Impact**: Extends `ProjectState` in state.json with a `roadmapItems` array. Adds new API routes, React Query hooks, and a UI panel on the project page. No changes to existing session or conversation functionality.
+**Impact**: Extends `ProjectState` in state.json with a `roadmapItems` array. Adds new API routes, React Query hooks, a UI panel on the project page, and an MCP tool server injected into all Claude SDK `query()` calls.
 
 ### Goals
 
@@ -14,6 +14,7 @@
 - Provide archiving following the existing `archived: boolean` pattern
 - Enable one-click transition from a roadmap item into a Focus mode session
 - Integrate visually on the project page as a collapsible panel
+- Expose `add_roadmap_item`, `remove_roadmap_item`, and `list_roadmap_items` MCP tools to all Claude conversations
 
 ### Non-Goals
 
@@ -34,6 +35,7 @@ The feature extends existing patterns without introducing new architectural conc
 - **API routes**: Next.js App Router route handlers with `withTracing()`, Zod request validation
 - **Client data**: TanStack React Query for server state, Zustand for UI state
 - **Archiving**: Inline `archived: boolean` field on entities, `showArchived` Zustand toggle, `useMemo` filtering
+- **Custom MCP tools**: `createSdkMcpServer()` + `tool()` from `@anthropic-ai/claude-agent-sdk` — proven pattern with three existing tool servers in `src/lib/ralph-loop/` (`init-tool.ts`, `mcp-tools.ts`, `plan-generator.ts`)
 
 ### Architecture Pattern & Boundary Map
 
@@ -44,6 +46,11 @@ graph TB
         Store[Zustand Store]
         Queries[React Query Hooks]
         Mutations[React Query Mutations]
+    end
+
+    subgraph SDK[Claude SDK Layer]
+        PromptExecutor[executePrompt in prompt.ts]
+        RoadmapMCP[RoadmapToolServer MCP]
     end
 
     subgraph API[API Layer]
@@ -68,6 +75,8 @@ graph TB
     Mutations --> ListCreate
     Mutations --> UpdateDelete
     Mutations --> Focus
+    PromptExecutor --> RoadmapMCP
+    RoadmapMCP --> StateMutations
     ListCreate --> StateMutations
     UpdateDelete --> StateMutations
     Focus --> StateMutations
@@ -79,9 +88,9 @@ graph TB
 **Architecture Integration**:
 
 - **Selected pattern**: Extension of existing layered architecture (no new patterns)
-- **Domain boundaries**: Roadmap items are owned by `ProjectState`; Focus transition delegates to existing `createSessionFocus()` in sessions domain
-- **Existing patterns preserved**: `mutateState()` for persistence, `withTracing()` for API routes, Zod for validation, React Query + Zustand for client state
-- **New components rationale**: API routes and UI panel are new because roadmap items are a new entity type; all supporting infrastructure (schemas, state mutations, query/mutation hooks) extends existing files
+- **Domain boundaries**: Roadmap items are owned by `ProjectState`; Focus transition delegates to existing `createSessionFocus()` in sessions domain; MCP tools invoke the same state mutations as API routes
+- **Existing patterns preserved**: `mutateState()` for persistence, `withTracing()` for API routes, Zod for validation, React Query + Zustand for client state, `createSdkMcpServer()` for custom tools
+- **New components rationale**: API routes and UI panel are new because roadmap items are a new entity type; the MCP tool server is new to expose roadmap operations to Claude conversations; all supporting infrastructure extends existing files
 - **Steering compliance**: Schema-first data modeling, TypeScript strict mode, kebab-case BEM naming, colocated components
 
 ### Technology Stack
@@ -92,6 +101,7 @@ graph TB
 | State (Client) | TanStack React Query + Zustand/Immer | Server state caching + UI toggle state | Existing |
 | Validation | Zod v4 | Schema definition, request validation | Existing |
 | State (Server) | JSON state file + `mutateState()` | Roadmap item persistence | Existing — extend `ProjectState` |
+| MCP Tools | `@anthropic-ai/claude-agent-sdk` `createSdkMcpServer()` | Custom tools for Claude conversations | Existing — follows Ralph Loop pattern |
 
 ## Requirements Traceability
 
@@ -104,6 +114,11 @@ graph TB
 | 5.1–5.5 | Archiving | RoadmapStateMutations, RoadmapItemRoute, RoadmapItemsStore | Service, API, State |
 | 6.1–6.6 | List UI | RoadmapItemsPanel, RoadmapItemsStore | State |
 | 7.1–7.4 | Focus transition | RoadmapFocusRoute, RoadmapStateMutations | Service, API |
+| 8.1–8.3 | MCP add tool | RoadmapToolServer | Service |
+| 8.4–8.6 | MCP remove tool | RoadmapToolServer | Service |
+| 8.7 | MCP list tool | RoadmapToolServer | Service |
+| 8.8 | Tool registration | PromptExecutorIntegration | — |
+| 8.9 | Project scoping | RoadmapToolServer | Service |
 
 ## Components and Interfaces
 
@@ -117,6 +132,8 @@ graph TB
 | RoadmapQueryHooks | Client | React Query hooks for list/mutations | 2.1, 3.1, 4.1, 5.1, 7.1 | API routes (P0) | — |
 | RoadmapItemsStore | Client | Zustand store for UI state | 5.3–5.4, 6.6 | — | State |
 | RoadmapItemsPanel | UI | Collapsible panel for the project page | 6.1–6.6, 7.1 | RoadmapQueryHooks (P0), RoadmapItemsStore (P0) | — |
+| RoadmapToolServer | SDK | MCP tool server for Claude conversations | 8.1–8.7, 8.9 | RoadmapStateMutations (P0) | Service |
+| PromptExecutorIntegration | SDK | Register tool server in prompt pipeline | 8.8 | RoadmapToolServer (P0) | — |
 
 ### Schema Layer
 
@@ -403,6 +420,111 @@ interface RoadmapItemsActions {
 - Inline add form with type selector pills and optional description textarea
 - `ConfirmDialog` for delete confirmation
 
+### SDK Layer
+
+#### RoadmapToolServer
+
+| Field | Detail |
+|-------|--------|
+| Intent | Provide MCP tools for Claude conversations to manage roadmap items scoped to the session's project |
+| Requirements | 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.9 |
+
+**Responsibilities & Constraints**
+
+- Exposes three tools (`add_roadmap_item`, `remove_roadmap_item`, `list_roadmap_items`) as an in-process MCP server
+- All operations scoped to the `projectPath` provided via context closure — no cross-project access
+- Delegates to existing state mutation functions (`createRoadmapItem`, `deleteRoadmapItem`, `getRoadmapItems`) in `state.ts`
+- Returns structured text responses to Claude including created item details or error messages
+- Follows the established `createSdkMcpServer()` + `tool()` pattern from `src/lib/ralph-loop/init-tool.ts`
+
+**Dependencies**
+
+- Inbound: Claude SDK `query()` — tool invocations during conversation (P0)
+- Outbound: `createRoadmapItem()`, `deleteRoadmapItem()`, `getRoadmapItems()` in `state.ts` (P0)
+
+**Contracts**: Service [x]
+
+##### Service Interface
+
+```typescript
+// src/lib/roadmap-tools.ts
+
+import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
+
+interface RoadmapToolContext {
+  projectPath: string;
+}
+
+function createRoadmapToolServer(
+  context: RoadmapToolContext,
+): McpSdkServerConfigWithInstance;
+```
+
+##### Tool Definitions
+
+**`add_roadmap_item`** — Creates a new roadmap item for the session's project
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `title` | `string` | Yes | Title of the roadmap item |
+| `type` | `"bug" \| "feature" \| "idea"` | Yes | Type of item |
+| `description` | `string` | No | Optional description |
+
+- Returns: Text with created item summary (ID, title, type)
+- Error: Returns `isError: true` with message if state mutation fails
+
+**`remove_roadmap_item`** — Deletes a roadmap item by ID
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `item_id` | `string` | Yes | ID of the item to delete |
+
+- Returns: Text confirming deletion
+- Error: Returns `isError: true` with message if item ID not found
+
+**`list_roadmap_items`** — Lists all non-archived roadmap items for the project
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| (none) | — | — | — |
+
+- Returns: Formatted text listing items grouped by type (title, ID, status)
+- Returns "No roadmap items found" when empty
+
+**Implementation Notes**
+
+- File: `src/lib/roadmap-tools.ts`
+- Follows `src/lib/ralph-loop/init-tool.ts` pattern exactly: `createSdkMcpServer()` with `tool()` array, context closure for `projectPath`
+- Uses `createLogger("roadmap-tools")` for structured logging
+- Wraps each tool handler in try/catch, returning `{ isError: true }` on failure with `getErrorMessage(error)`
+- `list_roadmap_items` filters out archived items to keep Claude's view clean
+
+#### PromptExecutorIntegration
+
+| Field | Detail |
+|-------|--------|
+| Intent | Register the roadmap MCP tool server in the prompt pipeline |
+| Requirements | 8.8 |
+
+**Implementation Notes**
+
+- File: `src/lib/prompt.ts` — modify the `executePrompt()` function
+- Create roadmap tool server unconditionally for every conversation (tools are lightweight)
+- Add to the `mcpServers` object alongside the existing conditional `ralph-loop-init` server:
+
+```typescript
+const roadmapToolServer = createRoadmapToolServer({ projectPath });
+
+// In query() options:
+mcpServers: {
+  ...(initToolServer ? { "ralph-loop-init": initToolServer } : {}),
+  "roadmap-tools": roadmapToolServer,
+},
+```
+
+- The `projectPath` context is already available in `executePrompt()` — no additional data fetching needed
+
 ## Data Models
 
 ### Domain Model
@@ -446,6 +568,11 @@ erDiagram
 **System Errors (5xx)**:
 - 500: State file write failure, session creation failure — return generic error message from caught exception
 
+**MCP Tool Errors**:
+- Item not found: `remove_roadmap_item` with invalid ID — returns `{ isError: true }` with descriptive message to Claude
+- State mutation failure: Unexpected error during `mutateState()` — caught, logged, returned as `{ isError: true }` text
+- Invalid input: Zod validation failure on tool parameters — SDK handles this automatically before the tool handler is invoked
+
 No business logic errors (422) — the domain rules are simple enough to handle via validation.
 
 ## Testing Strategy
@@ -456,6 +583,10 @@ No business logic errors (422) — the domain rules are simple enough to handle 
 - `updateRoadmapItem()`: updates status, updates archived, throws on missing ID
 - `deleteRoadmapItem()`: removes item, throws on missing ID
 - `updateRoadmapItemRequestSchema`: requires at least one field
+- `createRoadmapToolServer()`: returns valid `McpSdkServerConfigWithInstance` with three tools
+- `add_roadmap_item` tool: creates item via state mutation, returns success text with item details
+- `remove_roadmap_item` tool: deletes item, returns success text; returns `isError` for missing ID
+- `list_roadmap_items` tool: returns formatted list of non-archived items; returns empty message when no items
 
 ### Integration Tests (API Routes)
 - POST creates item and returns it with generated ID

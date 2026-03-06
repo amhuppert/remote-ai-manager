@@ -33,6 +33,7 @@ import {
 import { registerQuery, unregisterQuery } from "./query-registry";
 import { acquireQuerySlot } from "./query-semaphore";
 import { createInitToolServer } from "./ralph-loop/init-tool";
+import { createRoadmapToolServer } from "./roadmap-tools";
 import { getProjectDisplayName } from "./project-resolver";
 import { safeAppendTranscriptEntry } from "./transcript";
 import { randomUUID } from "node:crypto";
@@ -325,9 +326,10 @@ export async function executePromptStream(
         persistSession: true,
         abortController,
         env: { ...buildChildEnv(), CLAUDECODE: "" },
-        ...(initToolServer
-          ? { mcpServers: { "ralph-loop-init": initToolServer } }
-          : {}),
+        mcpServers: {
+          ...(initToolServer ? { "ralph-loop-init": initToolServer } : {}),
+          "roadmap-tools": createRoadmapToolServer({ projectPath }),
+        },
         canUseTool: async (
           toolName: string,
           input: Record<string, unknown>,

@@ -3,6 +3,8 @@
 ## Introduction
 The Roadmap Item Tracker adds a lightweight planning feature to Command Center, allowing users to track bugs, planned features, and ideas per project. Items have simple status tracking (incomplete/done), support archiving (following the existing `archived: boolean` pattern used by conversations, sessions, and projects), and can be seamlessly transitioned into Focus mode sessions where the item description becomes the objective for the initialization conversation.
 
+Additionally, the tracker provides all Claude conversations managed by Command Center with custom MCP tools for adding and removing roadmap items, enabling Claude to manage roadmap items programmatically during coding sessions without leaving the conversation.
+
 ## Requirements
 
 ### Requirement 1: Roadmap Item Data Model
@@ -70,3 +72,17 @@ The Roadmap Item Tracker adds a lightweight planning feature to Command Center, 
 2. When the user initiates a Focus session from an item, the Command Center shall use the item's title and description as the objective for `createSessionFocus()`.
 3. When a Focus session is created from an item, the Command Center shall navigate the user to the new session.
 4. When a Focus session is created from an item, the Command Center shall mark the item status as `done`.
+
+### Requirement 8: Custom MCP Tools for Claude Conversations
+**Objective:** As a developer, I want Claude conversations to have tools for managing roadmap items, so that Claude can add bugs, features, and ideas to the project roadmap during coding sessions.
+
+#### Acceptance Criteria
+1. The Command Center shall provide an MCP tool server that exposes roadmap item management tools to every Claude conversation.
+2. The Command Center shall provide an `add_roadmap_item` tool that creates a new roadmap item scoped to the session's project.
+3. When Claude invokes the `add_roadmap_item` tool with a title, type, and optional description, the Command Center shall create the item using the existing `createRoadmapItem()` state mutation.
+4. The Command Center shall provide a `remove_roadmap_item` tool that deletes a roadmap item by ID from the session's project.
+5. When Claude invokes the `remove_roadmap_item` tool with an item ID, the Command Center shall delete the item using the existing `deleteRoadmapItem()` state mutation.
+6. If the specified item ID does not exist, the `remove_roadmap_item` tool shall return an error message to Claude.
+7. The Command Center shall provide a `list_roadmap_items` tool that returns all non-archived roadmap items for the session's project, so Claude can see existing items before adding duplicates.
+8. The Command Center shall register the roadmap MCP tool server in the prompt executor so that it is available to all Claude conversations.
+9. The Command Center shall scope all roadmap tool operations to the session's project path, preventing cross-project access.
