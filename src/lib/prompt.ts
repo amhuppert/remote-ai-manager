@@ -43,6 +43,10 @@ import "@/lib/sdk-env";
 
 const logger = createLogger("prompt");
 
+/** Appended to the system prompt when session.tddEnabled is true. */
+export const TDD_INSTRUCTIONS =
+  "<methodology>Use red-green TDD. Write a failing test first, run it to confirm it fails, then write the minimum code to make it pass.</methodology>";
+
 // ============================================================
 // Dependency Injection
 // ============================================================
@@ -305,9 +309,15 @@ export async function executePromptStream(
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: session.objective
-            ? `<objective>${session.objective}</objective>`
-            : undefined,
+          append:
+            [
+              session.objective
+                ? `<objective>${session.objective}</objective>`
+                : null,
+              session.tddEnabled ? TDD_INSTRUCTIONS : null,
+            ]
+              .filter(Boolean)
+              .join("\n\n") || undefined,
         },
         settingSources: ["user", "project", "local"],
         permissionMode: "bypassPermissions",

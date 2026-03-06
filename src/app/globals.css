@@ -3170,7 +3170,131 @@ textarea {
   border-color: var(--border-default);
 }
 
-/* Copy context button tooltips rendered via TooltipProvider portal */
+/* ============================================================
+   TDD Toggle Switch
+   ============================================================ */
+
+.tdd-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+  margin-top: var(--space-md);
+}
+
+.tdd-toggle:hover {
+  border-color: var(--border-default);
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.tdd-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tdd-toggle--on {
+  border-color: rgba(0, 230, 118, 0.25);
+  color: var(--green);
+}
+
+.tdd-toggle--on:hover {
+  border-color: rgba(0, 230, 118, 0.4);
+  color: var(--green);
+  background: rgba(0, 230, 118, 0.06);
+}
+
+/* Track */
+.tdd-toggle__track {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+  flex-shrink: 0;
+}
+
+.tdd-toggle--on .tdd-toggle__track {
+  background: var(--green-dim);
+  border-color: var(--green);
+  box-shadow:
+    0 0 8px var(--green-glow),
+    0 0 2px rgba(0, 230, 118, 0.3);
+}
+
+/* Knob */
+.tdd-toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    background 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.tdd-toggle--on .tdd-toggle__knob {
+  transform: translateX(16px);
+  background: #fff;
+  box-shadow: 0 0 6px rgba(0, 230, 118, 0.5);
+}
+
+/* Label */
+.tdd-toggle__label {
+  white-space: nowrap;
+}
+
+/* --- Compact variant (info strip / session table) --- */
+
+.tdd-toggle--compact {
+  margin-top: 0;
+  padding: 2px 8px;
+  font-size: 0.58rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+}
+
+.tdd-toggle--compact .tdd-toggle__track {
+  width: 26px;
+  height: 14px;
+  border-radius: 7px;
+}
+
+.tdd-toggle--compact .tdd-toggle__knob {
+  width: 8px;
+  height: 8px;
+  top: 2px;
+  left: 2px;
+}
+
+.tdd-toggle--compact.tdd-toggle--on .tdd-toggle__knob {
+  transform: translateX(12px);
+}
 
 .finished-banner {
   background: rgba(0, 229, 255, 0.08);

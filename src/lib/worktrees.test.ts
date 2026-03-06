@@ -361,6 +361,7 @@ describe("discoverAndImportWorktrees", () => {
     source: "cc",
     objective: null,
     creationMode: "fast" as const,
+    tddEnabled: true,
     workflow: null,
   };
 
@@ -443,6 +444,7 @@ describe("discoverAndImportWorktrees", () => {
       source: "cc",
       objective: null,
       creationMode: "fast" as const,
+      tddEnabled: true,
       workflow: null,
     };
 
@@ -497,6 +499,7 @@ describe("discoverAndImportWorktrees", () => {
       source: "cc",
       objective: null,
       creationMode: "fast" as const,
+      tddEnabled: true,
       workflow: null,
     };
 
@@ -718,6 +721,7 @@ describe("discoverAndImportWorktrees", () => {
       source: "cc",
       objective: "Polish the activity panel",
       creationMode: "optimistic" as const,
+      tddEnabled: true,
       workflow: null,
     };
 

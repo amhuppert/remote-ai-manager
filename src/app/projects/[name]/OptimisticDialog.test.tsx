@@ -102,7 +102,11 @@ describe("OptimisticDialog", () => {
     fireEvent.keyDown(textarea, { key: "Enter" });
 
     expect(mutateMock).toHaveBeenCalledWith(
-      { mode: "optimistic", instructions: "Fix the login bug" },
+      expect.objectContaining({
+        mode: "optimistic",
+        instructions: "Fix the login bug",
+        tddEnabled: true,
+      }),
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });

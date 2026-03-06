@@ -10,6 +10,7 @@ import { FileAutocomplete } from "@/components/FileAutocomplete";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import ImageAttachmentPreview from "@/app/projects/[name]/[session]/ImageAttachmentPreview";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
+import TddToggle from "@/components/TddToggle";
 import type { SessionCreationMode, ImagePayload } from "@/types";
 
 /** Derive a git-safe branch suffix from an arbitrary session name */
@@ -34,6 +35,7 @@ export default function CreateSessionModal({
 }: CreateSessionModalProps): React.JSX.Element | null {
   const router = useRouter();
   const [mode, setMode] = useState<SessionCreationMode>("fast");
+  const [tddEnabled, setTddEnabled] = useState(true);
   const [sessionName, setSessionName] = useState("");
   const [objective, setObjective] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -207,14 +209,23 @@ export default function CreateSessionModal({
 
     const params =
       mode === "fast"
-        ? ({ mode: "fast", sessionName: sessionName.trim() } as const)
+        ? ({
+            mode: "fast",
+            sessionName: sessionName.trim(),
+            tddEnabled,
+          } as const)
         : mode === "optimistic"
           ? ({
               mode: "optimistic",
               instructions: instructions.trim(),
               images: imagePayloads.length > 0 ? imagePayloads : undefined,
+              tddEnabled,
             } as const)
-          : ({ mode: "focus", objective: objective.trim() } as const);
+          : ({
+              mode: "focus",
+              objective: objective.trim(),
+              tddEnabled,
+            } as const);
 
     createMutation.mutate(params, {
       onSuccess: (session) => {
@@ -487,6 +498,11 @@ export default function CreateSessionModal({
             </>
           )}
           {error && <div className="form-error">{error}</div>}
+          <TddToggle
+            enabled={tddEnabled}
+            onChange={setTddEnabled}
+            disabled={createMutation.isPending}
+          />
         </div>
         <div className="modal-actions">
           <button

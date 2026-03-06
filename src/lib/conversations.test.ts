@@ -74,6 +74,7 @@ function makeSessionWith(
     source: "cc" as const,
     objective: null,
     creationMode: "fast" as const,
+    tddEnabled: true,
     workflow: null,
     ...overrides,
   };
@@ -101,6 +102,7 @@ async function seedSession(
             source: "cc" as const,
             objective: null,
             creationMode: "fast" as const,
+            tddEnabled: true,
             workflow: null,
             ...sessionOverrides,
           },
@@ -670,6 +672,7 @@ describe("finalizeInitialization", () => {
     const { state, conversations } = createTestServices();
     await seedSession(state, {
       creationMode: "focus" as const,
+      tddEnabled: true,
       workflow: null,
       objective: "Test objective",
       conversations: [
@@ -705,6 +708,7 @@ describe("finalizeInitialization", () => {
     const { state, conversations } = createTestServices();
     await seedSession(state, {
       creationMode: "focus" as const,
+      tddEnabled: true,
       workflow: null,
       objective: "Test objective",
       conversations: [makeConvo({ role: null })],

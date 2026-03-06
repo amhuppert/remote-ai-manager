@@ -36,6 +36,7 @@ function makeState(
       source: "cc",
       objective: null,
       creationMode: "fast",
+      tddEnabled: true,
       workflow: null,
     };
   }
@@ -320,6 +321,7 @@ describe("checkAllSessionsForMerge", () => {
               source: "cc",
               objective: null,
               creationMode: "fast",
+              tddEnabled: true,
               workflow: null,
             },
           },
@@ -340,6 +342,7 @@ describe("checkAllSessionsForMerge", () => {
               source: "cc",
               objective: null,
               creationMode: "fast",
+              tddEnabled: true,
               workflow: null,
             },
           },

@@ -36,6 +36,7 @@ import {
   safeAppendTranscriptEntry as defaultSafeAppendTranscriptEntry,
 } from "../transcript";
 import { broadcast as defaultBroadcast } from "../sse-broadcaster";
+import { TDD_INSTRUCTIONS } from "../prompt";
 
 import { buildIterationPrompt as defaultBuildIterationPrompt } from "./prompt-builder";
 import { createToolServer as defaultCreateToolServer } from "./mcp-tools";
@@ -307,7 +308,12 @@ async function runIterationImpl(
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: `<objective>${workflow.objective}</objective>`,
+          append: [
+            `<objective>${workflow.objective}</objective>`,
+            session.tddEnabled ? TDD_INSTRUCTIONS : null,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         },
         settingSources: ["user", "project", "local"],
         permissionMode: "bypassPermissions",

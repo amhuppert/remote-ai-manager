@@ -195,6 +195,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     opts: {
       mode: SessionCreationMode;
       objective: string | null;
+      tddEnabled?: boolean;
     },
   ): Promise<SessionState> {
     const sanitized = sanitizeBranchName(sessionName);
@@ -242,6 +243,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       source: "cc",
       objective: opts.objective,
       creationMode: opts.mode,
+      tddEnabled: opts.tddEnabled ?? true,
       workflow: null,
     };
 
@@ -378,6 +380,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   async function createSessionFast(
     projectPath: string,
     sessionName: string,
+    tddEnabled?: boolean,
   ): Promise<SessionState> {
     const validationError = validateSessionName(sessionName);
     if (validationError) {
@@ -397,6 +400,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     return provisionSession(projectPath, sessionName, {
       mode: "fast",
       objective: null,
+      tddEnabled,
     });
   }
 
@@ -407,6 +411,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   async function createSessionFocus(
     projectPath: string,
     objective: string,
+    tddEnabled?: boolean,
   ): Promise<SessionState> {
     const baseName = await generateSessionName(objective, projectPath);
 
@@ -419,6 +424,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     return provisionSession(projectPath, sessionName, {
       mode: "focus",
       objective,
+      tddEnabled,
     });
   }
 
@@ -431,6 +437,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     projectPath: string,
     instructions: string,
     images?: ImagePayload[],
+    tddEnabled?: boolean,
   ): Promise<SessionState> {
     const baseName = await generateSessionName(instructions, projectPath);
 
@@ -443,6 +450,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     const session = await provisionSession(projectPath, sessionName, {
       mode: "optimistic",
       objective: instructions,
+      tddEnabled,
     });
 
     const projectName = getProjectDisplayName(projectPath);

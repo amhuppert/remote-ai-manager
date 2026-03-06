@@ -46,12 +46,13 @@ export function useCreateSessionMutation(projectName: string) {
   return useMutation({
     mutationFn: (
       params:
-        | { mode: "fast"; sessionName: string }
-        | { mode: "focus"; objective: string }
+        | { mode: "fast"; sessionName: string; tddEnabled?: boolean }
+        | { mode: "focus"; objective: string; tddEnabled?: boolean }
         | {
             mode: "optimistic";
             instructions: string;
             images?: ImagePayload[];
+            tddEnabled?: boolean;
           },
     ) =>
       mutationFetch(
@@ -105,6 +106,28 @@ export function useArchiveSessionMutation(
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ archived }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.list(projectName),
+      });
+    },
+  });
+}
+
+export function useTddToggleMutation(projectName: string, sessionName: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (tddEnabled: boolean) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/tdd`,
+        "tdd-toggle",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tddEnabled }),
         },
       ),
     onSuccess: () => {

@@ -139,7 +139,7 @@ describe("CreateSessionModal", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(mutateMock).toHaveBeenCalledWith(
-      { mode: "fast", sessionName: "My Session" },
+      { mode: "fast", sessionName: "My Session", tddEnabled: true },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
@@ -190,7 +190,7 @@ describe("CreateSessionModal", () => {
     fireEvent.keyDown(textarea, { key: "Enter" });
 
     expect(mutateMock).toHaveBeenCalledWith(
-      { mode: "focus", objective: "Add user authentication" },
+      { mode: "focus", objective: "Add user authentication", tddEnabled: true },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
@@ -260,7 +260,11 @@ describe("CreateSessionModal", () => {
       });
 
       expect(mutateMock).toHaveBeenCalledWith(
-        { mode: "focus", objective: "Add user authentication" },
+        {
+          mode: "focus",
+          objective: "Add user authentication",
+          tddEnabled: true,
+        },
         expect.objectContaining({ onSuccess: expect.any(Function) }),
       );
     });
@@ -369,7 +373,11 @@ describe("CreateSessionModal", () => {
       fireEvent.keyDown(textarea, { key: "Enter" });
 
       expect(mutateMock).toHaveBeenCalledWith(
-        { mode: "optimistic", instructions: "Fix the login bug" },
+        expect.objectContaining({
+          mode: "optimistic",
+          instructions: "Fix the login bug",
+          tddEnabled: true,
+        }),
         expect.objectContaining({ onSuccess: expect.any(Function) }),
       );
     });
@@ -498,6 +506,7 @@ describe("CreateSessionModal", () => {
             mode: "optimistic",
             instructions: "Fix with this screenshot",
             images: [{ mediaType: "image/png", base64Data: "abc123" }],
+            tddEnabled: true,
           },
           expect.objectContaining({ onSuccess: expect.any(Function) }),
         );

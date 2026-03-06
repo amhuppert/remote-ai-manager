@@ -71,6 +71,7 @@ vi.mock("@/lib/mutations", () => ({
   useUpdateRoadmapItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteRoadmapItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useStartRoadmapFocusMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 let storeShowCreateModal = false;
@@ -143,6 +144,7 @@ const makeSessions = (count: number): SessionState[] =>
     source: "cc" as const,
     objective: null,
     creationMode: "fast" as const,
+    tddEnabled: true,
     workflow: null,
   }));
 

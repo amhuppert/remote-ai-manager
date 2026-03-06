@@ -12,6 +12,7 @@ import {
   type CommandAutocompleteHandle,
 } from "@/components/CommandAutocomplete";
 import { FileAutocomplete } from "@/components/FileAutocomplete";
+import TddToggle from "@/components/TddToggle";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import type { ImagePayload } from "@/types";
 
@@ -28,6 +29,7 @@ export default function OptimisticDialog({
 }: OptimisticDialogProps): React.JSX.Element | null {
   const [instructions, setInstructions] = useState("");
   const [cursorPosition, setCursorPosition] = useState(0);
+  const [tddEnabled, setTddEnabled] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [promptPlaceholder, setPromptPlaceholder] = useState<string | null>(
     null,
@@ -139,6 +141,7 @@ export default function OptimisticDialog({
         mode: "optimistic",
         instructions: instructions.trim(),
         images: imagePayloads.length > 0 ? imagePayloads : undefined,
+        tddEnabled,
       },
       {
         onSuccess: () => {
@@ -357,6 +360,11 @@ export default function OptimisticDialog({
             Claude will complete this task and merge the result into main
           </div>
           {error && <div className="form-error">{error}</div>}
+          <TddToggle
+            enabled={tddEnabled}
+            onChange={setTddEnabled}
+            disabled={createMutation.isPending}
+          />
         </div>
         <div className="modal-actions">
           <button

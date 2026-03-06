@@ -40,6 +40,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     source: "cc",
     objective: "Fix the login bug",
     creationMode: "optimistic",
+    tddEnabled: true,
     workflow: null,
     ...overrides,
   };

@@ -97,6 +97,7 @@ function stateWithSession(
             source: "cc",
             objective: null,
             creationMode: "fast" as const,
+            tddEnabled: true,
             workflow: null,
             ...overrides,
           },

@@ -112,6 +112,7 @@ function makeSession(overrides?: Partial<SessionState>): SessionState {
     createdAt: new Date().toISOString(),
     creationMode: "fast",
     conversations: [],
+    tddEnabled: true,
     workflow: null,
     finished: false,
     ...overrides,
@@ -148,7 +149,7 @@ describe("init-tool", () => {
   it("creates a workflow in planning status with pre-populated fixPlan", async () => {
     const { createInitToolServer } = await import("./init-tool");
 
-    const session = makeSession({ workflow: null });
+    const session = makeSession({ tddEnabled: true, workflow: null });
     mockGetSession.mockResolvedValue(session);
     mockMutateSession.mockImplementation(
       async (
@@ -195,7 +196,7 @@ describe("init-tool", () => {
   it("does not dispatch background plan generation", async () => {
     const { createInitToolServer } = await import("./init-tool");
 
-    const session = makeSession({ workflow: null });
+    const session = makeSession({ tddEnabled: true, workflow: null });
     mockGetSession.mockResolvedValue(session);
     mockMutateSession.mockImplementation(
       async (
@@ -231,7 +232,7 @@ describe("init-tool", () => {
   it("broadcasts workflow-status SSE event with accurate task counts", async () => {
     const { createInitToolServer } = await import("./init-tool");
 
-    const session = makeSession({ workflow: null });
+    const session = makeSession({ tddEnabled: true, workflow: null });
     mockGetSession.mockResolvedValue(session);
     mockMutateSession.mockImplementation(
       async (
@@ -276,7 +277,7 @@ describe("init-tool", () => {
   it("broadcasts workflow-fix-plan-updated SSE event with full plan", async () => {
     const { createInitToolServer } = await import("./init-tool");
 
-    const session = makeSession({ workflow: null });
+    const session = makeSession({ tddEnabled: true, workflow: null });
     mockGetSession.mockResolvedValue(session);
     mockMutateSession.mockImplementation(
       async (
@@ -376,7 +377,7 @@ describe("init-tool", () => {
   it("creates workflow with generatingPlan: false and populated fixPlan", async () => {
     const { createInitToolServer } = await import("./init-tool");
 
-    const session = makeSession({ workflow: null });
+    const session = makeSession({ tddEnabled: true, workflow: null });
     mockGetSession.mockResolvedValue(session);
 
     let capturedWorkflow: RalphLoopWorkflow | null = null;
@@ -427,7 +428,7 @@ describe("init-tool", () => {
   it("converts submitted tasks to FixPlanTask entries with correct fields", async () => {
     const { createInitToolServer } = await import("./init-tool");
 
-    const session = makeSession({ workflow: null });
+    const session = makeSession({ tddEnabled: true, workflow: null });
     mockGetSession.mockResolvedValue(session);
 
     let capturedWorkflow: RalphLoopWorkflow | null = null;
@@ -485,7 +486,7 @@ describe("init-tool", () => {
   it("stores references in the created workflow", async () => {
     const { createInitToolServer } = await import("./init-tool");
 
-    const session = makeSession({ workflow: null });
+    const session = makeSession({ tddEnabled: true, workflow: null });
     mockGetSession.mockResolvedValue(session);
 
     let capturedWorkflow: RalphLoopWorkflow | null = null;
@@ -533,7 +534,7 @@ describe("init-tool", () => {
   it("defaults references to empty array when omitted", async () => {
     const { createInitToolServer } = await import("./init-tool");
 
-    const session = makeSession({ workflow: null });
+    const session = makeSession({ tddEnabled: true, workflow: null });
     mockGetSession.mockResolvedValue(session);
 
     let capturedWorkflow: RalphLoopWorkflow | null = null;

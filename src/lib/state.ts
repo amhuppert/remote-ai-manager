@@ -339,6 +339,22 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
     );
   }
 
+  /** Set a session's TDD-enabled flag */
+  async function setSessionTddEnabled(
+    projectPath: string,
+    sessionName: string,
+    tddEnabled: boolean,
+  ): Promise<void> {
+    return mutateSession(
+      projectPath,
+      sessionName,
+      "setSessionTddEnabled",
+      (session) => {
+        session.tddEnabled = tddEnabled;
+      },
+    );
+  }
+
   /** Mark a session as finished (merged) and archived atomically */
   async function setSessionFinished(
     projectPath: string,
@@ -568,6 +584,7 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
     updateSession,
     removeSession,
     setSessionArchived,
+    setSessionTddEnabled,
     setSessionFinished,
     setProjectArchived,
     setProjectPinned,
@@ -599,6 +616,7 @@ export const getOrCreateProject = defaultManager.getOrCreateProject;
 export const updateSession = defaultManager.updateSession;
 export const removeSession = defaultManager.removeSession;
 export const setSessionArchived = defaultManager.setSessionArchived;
+export const setSessionTddEnabled = defaultManager.setSessionTddEnabled;
 export const setSessionFinished = defaultManager.setSessionFinished;
 export const setProjectArchived = defaultManager.setProjectArchived;
 export const setProjectPinned = defaultManager.setProjectPinned;

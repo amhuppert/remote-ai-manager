@@ -75,15 +75,24 @@ export const POST = withTracing(async (request, { params }) => {
   try {
     let session;
     if (body.mode === "fast") {
-      session = await createSessionFast(projectPath, body.sessionName);
+      session = await createSessionFast(
+        projectPath,
+        body.sessionName,
+        body.tddEnabled,
+      );
     } else if (body.mode === "optimistic") {
       session = await createSessionOptimistic(
         projectPath,
         body.instructions,
         body.images,
+        body.tddEnabled,
       );
     } else {
-      session = await createSessionFocus(projectPath, body.objective);
+      session = await createSessionFocus(
+        projectPath,
+        body.objective,
+        body.tddEnabled,
+      );
     }
     return NextResponse.json(session, { status: 201 });
   } catch (err) {

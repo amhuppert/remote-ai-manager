@@ -132,6 +132,7 @@ vi.mock("@/lib/mutations", () => ({
     mutate: vi.fn(),
     isPending: false,
   }),
+  useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
   ApiCallError: class extends Error {
     code?: string;
   },
@@ -174,6 +175,7 @@ const baseSession: SessionState = {
   source: "cc" as const,
   objective: null,
   creationMode: "fast" as const,
+  tddEnabled: true,
   workflow: null,
 };
 

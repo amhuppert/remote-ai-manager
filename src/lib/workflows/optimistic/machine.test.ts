@@ -47,6 +47,7 @@ const testSession: SessionState = {
   source: "cc",
   objective: "Build a feature",
   creationMode: "optimistic",
+  tddEnabled: true,
   workflow: null,
 };
 

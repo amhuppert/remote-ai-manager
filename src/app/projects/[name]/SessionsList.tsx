@@ -29,7 +29,9 @@ import PresetInstallDialog from "./PresetInstallDialog";
 import ProjectActionsBar from "./ProjectActionsBar";
 import RoadmapItemsPanel from "./RoadmapItemsPanel";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import TddToggle from "@/components/TddToggle";
 import Topbar from "@/components/Topbar";
+import { useTddToggleMutation } from "@/lib/mutations";
 
 function formatRelativeTime(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
@@ -57,6 +59,25 @@ function StatusBadge({ session }: { session: SessionState }) {
       <span className="dot" />
       {status}
     </span>
+  );
+}
+
+function SessionTddToggle({
+  projectName,
+  session,
+}: {
+  projectName: string;
+  session: SessionState;
+}) {
+  const tddMutation = useTddToggleMutation(projectName, session.sessionName);
+
+  return (
+    <TddToggle
+      enabled={session.tddEnabled}
+      onChange={(val) => tddMutation.mutate(val)}
+      disabled={tddMutation.isPending}
+      compact
+    />
   );
 }
 
@@ -255,8 +276,13 @@ export default function SessionsList({
                             style={{
                               display: "flex",
                               gap: "var(--space-xs)",
+                              alignItems: "center",
                             }}
                           >
+                            <SessionTddToggle
+                              projectName={projectName}
+                              session={session}
+                            />
                             <ArchiveButton
                               projectName={projectName}
                               session={session}

@@ -23,7 +23,11 @@ vi.mock("@/lib/sdk-env", () => ({}));
 // ---------------------------------------------------------------------------
 // Import module under test — use factory for DI
 // ---------------------------------------------------------------------------
-import { createPromptExecutor, type PromptDeps } from "./prompt";
+import {
+  createPromptExecutor,
+  TDD_INSTRUCTIONS,
+  type PromptDeps,
+} from "./prompt";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -66,6 +70,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     source: "cc" as const,
     objective: null,
     creationMode: "fast" as const,
+    tddEnabled: true,
     workflow: null,
     ...overrides,
   };
@@ -419,6 +424,7 @@ describe("executePromptStream", () => {
     expect(call.options.systemPrompt).toEqual({
       type: "preset",
       preset: "claude_code",
+      append: TDD_INSTRUCTIONS,
     });
     expect(call.options.settingSources).toEqual(["user", "project", "local"]);
     expect(call.options.permissionMode).toBe("bypassPermissions");

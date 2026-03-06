@@ -79,6 +79,7 @@ describe("state", () => {
               source: "cc" as const,
               objective: null,
               creationMode: "fast" as const,
+              tddEnabled: true,
               workflow: null,
             },
           },
@@ -106,6 +107,7 @@ describe("state", () => {
       source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
+      tddEnabled: true,
       workflow: null,
       claudeSessionId: null,
       transcriptPath: null,
@@ -135,6 +137,7 @@ describe("state", () => {
       source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
+      tddEnabled: true,
       workflow: null,
       claudeSessionId: null,
       transcriptPath: null,
@@ -163,6 +166,7 @@ describe("state", () => {
       source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
+      tddEnabled: true,
       workflow: null,
       claudeSessionId: null,
       transcriptPath: null,
@@ -252,6 +256,7 @@ describe("archive helpers", () => {
       source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
+      tddEnabled: true,
       workflow: null,
     };
 
@@ -339,6 +344,7 @@ describe("pin helpers", () => {
       source: "cc" as const,
       objective: null,
       creationMode: "fast" as const,
+      tddEnabled: true,
       workflow: null,
     };
 

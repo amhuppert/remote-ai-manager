@@ -16,7 +16,9 @@ import {
 import {
   useDeleteSessionMutation,
   useFinalizeInitializationMutation,
+  useTddToggleMutation,
 } from "@/lib/mutations";
+import TddToggle from "@/components/TddToggle";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import {
@@ -244,6 +246,7 @@ export default function SessionDetailPage({
     projectName,
     sessionName,
   );
+  const tddMutation = useTddToggleMutation(projectName, sessionName);
 
   // --- Prompt streaming ---
   const { send: sendPrompt, abortClient } = useSendPrompt(
@@ -1055,6 +1058,13 @@ export default function SessionDetailPage({
               >
                 {contextCopied ? "\u2713" : "\u2398"} Context
               </button>
+              <div className="si-sep" />
+              <TddToggle
+                enabled={session.tddEnabled}
+                onChange={(val) => tddMutation.mutate(val)}
+                disabled={tddMutation.isPending}
+                compact
+              />
             </div>
           </div>
 

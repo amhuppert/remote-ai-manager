@@ -402,6 +402,7 @@ export const sessionStateSchema = z.object({
   source: sessionSourceSchema.default("cc"),
   objective: z.string().nullable().default(null),
   creationMode: sessionCreationModeSchema.default("fast"),
+  tddEnabled: z.boolean().default(true),
   workflow: ralphLoopWorkflowSchema.nullable().default(null),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
@@ -525,15 +526,18 @@ export const createSessionRequestSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("fast"),
     sessionName: z.string().trim().min(1),
+    tddEnabled: z.boolean().optional(),
   }),
   z.object({
     mode: z.literal("focus"),
     objective: z.string().trim().min(1),
+    tddEnabled: z.boolean().optional(),
   }),
   z.object({
     mode: z.literal("optimistic"),
     instructions: z.string().trim().min(1),
     images: z.array(imagePayloadSchema).max(5).optional(),
+    tddEnabled: z.boolean().optional(),
   }),
 ]);
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
@@ -559,6 +563,11 @@ export const sessionArchiveRequestSchema = z.object({
   archived: z.boolean(),
 });
 export type SessionArchiveRequest = z.infer<typeof sessionArchiveRequestSchema>;
+
+export const sessionTddRequestSchema = z.object({
+  tddEnabled: z.boolean(),
+});
+export type SessionTddRequest = z.infer<typeof sessionTddRequestSchema>;
 
 export const renameConversationRequestSchema = z.object({
   name: z.string().trim().min(1).max(200),

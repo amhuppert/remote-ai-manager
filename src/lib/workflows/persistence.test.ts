@@ -238,6 +238,7 @@ describe("restoreWorkflowSnapshot", () => {
               source: "cc",
               objective: null,
               creationMode: "fast",
+              tddEnabled: true,
               workflow: null,
             },
           },
