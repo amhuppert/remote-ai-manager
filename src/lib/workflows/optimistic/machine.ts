@@ -23,6 +23,7 @@ import type {
   DispatchMergeOutput,
 } from "./actors";
 import { executePrompt, dispatchMerge } from "./actors";
+import { extractErrorMessage } from "../utils";
 
 const SCHEMA_VERSION = 1;
 
@@ -85,10 +86,7 @@ export const optimisticMachine = setup({
           target: "failed",
           actions: [
             assign({
-              error: ({ event }) =>
-                event.error instanceof Error
-                  ? event.error.message
-                  : String(event.error),
+              error: ({ event }) => extractErrorMessage(event.error),
               completedAt: () => new Date().toISOString(),
             }),
             {
@@ -100,10 +98,7 @@ export const optimisticMachine = setup({
                 context: OptimisticContext;
                 event: { type: string; error: unknown };
               }) => ({
-                error:
-                  event.error instanceof Error
-                    ? event.error.message
-                    : String(event.error),
+                error: extractErrorMessage(event.error),
                 projectName: context.projectName,
                 sessionName: context.sessionName,
                 branchName: context.branchName,
@@ -136,10 +131,7 @@ export const optimisticMachine = setup({
           target: "failed",
           actions: [
             assign({
-              error: ({ event }) =>
-                event.error instanceof Error
-                  ? event.error.message
-                  : String(event.error),
+              error: ({ event }) => extractErrorMessage(event.error),
               completedAt: () => new Date().toISOString(),
             }),
             {
@@ -151,10 +143,7 @@ export const optimisticMachine = setup({
                 context: OptimisticContext;
                 event: { type: string; error: unknown };
               }) => ({
-                error:
-                  event.error instanceof Error
-                    ? event.error.message
-                    : String(event.error),
+                error: extractErrorMessage(event.error),
                 projectName: context.projectName,
                 sessionName: context.sessionName,
                 branchName: context.branchName,

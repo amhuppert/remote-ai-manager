@@ -47,22 +47,16 @@ import {
   fixValidation,
   squashMergeActor,
 } from "./actors";
+import {
+  extractErrorMessage,
+  errorAssign,
+  createTerminalStates,
+} from "../utils";
 
 const SCHEMA_VERSION = 1;
 
-/**
- * Extract error message including gitOutput if present.
- * The original imperative code concatenated message + gitOutput.
- */
-function extractErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    const errObj = error as Error & { gitOutput?: string };
-    const parts: string[] = [errObj.message];
-    if (errObj.gitOutput) parts.push(errObj.gitOutput);
-    return parts.join("\n");
-  }
-  return String(error);
-}
+/** Standard terminal states for the merge machine. */
+const terminals = createTerminalStates(["completed", "failed"] as const);
 
 /** Exported type alias so consumers can accept the machine or `.provide()` variants. */
 export type MergeMachineType = typeof mergeMachine;
@@ -179,10 +173,7 @@ export const mergeMachine = setup({
         ],
         onError: {
           target: "failed",
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-            completedAt: () => new Date().toISOString(),
-          }),
+          actions: errorAssign(),
         },
       },
     },
@@ -198,10 +189,7 @@ export const mergeMachine = setup({
         onDone: "mergingMain",
         onError: {
           target: "failed",
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-            completedAt: () => new Date().toISOString(),
-          }),
+          actions: errorAssign(),
         },
       },
     },
@@ -225,10 +213,7 @@ export const mergeMachine = setup({
         ],
         onError: {
           target: "failed",
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-            completedAt: () => new Date().toISOString(),
-          }),
+          actions: errorAssign(),
         },
       },
     },
@@ -267,10 +252,7 @@ export const mergeMachine = setup({
         ],
         onError: {
           target: "failed",
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-            completedAt: () => new Date().toISOString(),
-          }),
+          actions: errorAssign(),
         },
       },
     },
@@ -286,10 +268,7 @@ export const mergeMachine = setup({
         onDone: "validating",
         onError: {
           target: "failed",
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-            completedAt: () => new Date().toISOString(),
-          }),
+          actions: errorAssign(),
         },
       },
     },
@@ -316,10 +295,7 @@ export const mergeMachine = setup({
           },
           {
             target: "failed",
-            actions: assign({
-              error: ({ event }) => extractErrorMessage(event.error),
-              completedAt: () => new Date().toISOString(),
-            }),
+            actions: errorAssign(),
           },
         ],
       },
@@ -348,10 +324,7 @@ export const mergeMachine = setup({
         ],
         onError: {
           target: "failed",
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-            completedAt: () => new Date().toISOString(),
-          }),
+          actions: errorAssign(),
         },
       },
     },
@@ -367,10 +340,7 @@ export const mergeMachine = setup({
         onDone: "revalidating",
         onError: {
           target: "failed",
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-            completedAt: () => new Date().toISOString(),
-          }),
+          actions: errorAssign(),
         },
       },
     },
@@ -392,10 +362,7 @@ export const mergeMachine = setup({
         },
         onError: {
           target: "failed",
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-            completedAt: () => new Date().toISOString(),
-          }),
+          actions: errorAssign(),
         },
       },
     },
@@ -420,25 +387,15 @@ export const mergeMachine = setup({
         },
         onError: {
           target: "failed",
-          actions: assign({
-            error: ({ event }) => extractErrorMessage(event.error),
-            completedAt: () => new Date().toISOString(),
-            phase: null,
-          }),
+          actions: [errorAssign(), assign({ phase: null })],
         },
       },
     },
 
-    completed: {
-      type: "final",
-      entry: [assign({ finalStatus: "completed" as const }), "onTerminal"],
-    },
+    // Standard terminal states (completed, failed)
+    ...terminals,
 
-    failed: {
-      type: "final",
-      entry: [assign({ finalStatus: "failed" as const }), "onTerminal"],
-    },
-
+    // Custom terminal state: conflicts has extra entry actions
     conflicts: {
       type: "final",
       entry: [

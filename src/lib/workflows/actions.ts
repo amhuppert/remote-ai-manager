@@ -1,29 +1,33 @@
 /**
- * Reusable XState action library for workflow machines.
+ * Generic XState action library for workflow machines.
+ *
+ * This module contains workflow-agnostic actions: snapshot persistence,
+ * generic SSE broadcasting, and notification creation. Workflow-specific
+ * actions (e.g., Ralph Loop iteration broadcasts) live in their own
+ * workflow directories.
  *
  * All actions use the XState v5 named-actions-with-params pattern so they
  * can be provided/overridden via machine.provide() in tests.
- *
- * Usage in setup():
- *   setup({
- *     actions: workflowActions,
- *     ...
- *   })
- *
- * Usage in machine config:
- *   entry: {
- *     type: 'broadcastStatus',
- *     params: ({ context }) => ({ ... }),
- *   }
  */
 
 import type {
   SSEEvent,
   WorkflowStatus,
   HaltReason,
-  FixPlanTask,
+  NotificationType,
+  JobType,
 } from "@/types";
-import type { RalphLoopIterationMeta, CircuitBreakerState } from "@/types";
+
+// Re-export Ralph Loop-specific actions for backward compatibility.
+// New code should import directly from "@/lib/workflows/ralph-loop/actions".
+export {
+  broadcastIterationComplete,
+  broadcastFixPlanUpdated,
+  broadcastCircuitBreaker,
+  type BroadcastIterationCompleteParams,
+  type BroadcastFixPlanUpdatedParams,
+  type BroadcastCircuitBreakerParams,
+} from "./ralph-loop/actions";
 
 // ============================================================
 // Action parameter types
@@ -44,23 +48,10 @@ export interface BroadcastStatusParams {
   haltReason: HaltReason | null;
 }
 
-export interface BroadcastIterationCompleteParams {
-  projectName: string;
-  sessionName: string;
-  iteration: RalphLoopIterationMeta;
-}
-
-export interface BroadcastFixPlanUpdatedParams {
-  projectName: string;
-  sessionName: string;
-  fixPlan: FixPlanTask[];
-  source: "tool" | "user";
-}
-
-export interface BroadcastCircuitBreakerParams {
-  projectName: string;
-  sessionName: string;
-  circuitBreaker: CircuitBreakerState;
+/** Parameters for the generic broadcastWorkflowEvent action. */
+export interface BroadcastWorkflowEventParams {
+  /** The SSE event to broadcast. */
+  event: SSEEvent;
 }
 
 export interface PersistSnapshotParams {
@@ -71,21 +62,14 @@ export interface PersistSnapshotParams {
 }
 
 export interface CreateNotificationParams {
-  type:
-    | "merge-completed"
-    | "merge-failed"
-    | "merge-conflicts"
-    | "commit-completed"
-    | "commit-failed"
-    | "resolve-completed"
-    | "resolve-failed";
+  type: NotificationType;
   title: string;
   message: string;
   projectName: string;
   sessionName: string;
   branchName: string;
   jobId: string;
-  jobType: "commit" | "merge" | "resolve-conflicts";
+  jobType: JobType;
   errorMessage?: string;
 }
 
@@ -109,12 +93,18 @@ let _deps: WorkflowActionDeps | null = null;
 
 function getDefaultDeps(): WorkflowActionDeps {
   if (!_deps) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const sseBroadcaster = require("@/lib/sse-broadcaster");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const persistence = require("@/lib/workflows/persistence");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const notificationDb = require("@/lib/notification-db");
+    const sseBroadcaster: {
+      broadcast: WorkflowActionDeps["broadcast"];
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+    } = require("@/lib/sse-broadcaster");
+    const persistence: {
+      persistWorkflowSnapshot: WorkflowActionDeps["persistSnapshot"];
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+    } = require("@/lib/workflows/persistence");
+    const notificationDb: {
+      createNotification: WorkflowActionDeps["createNotification"];
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+    } = require("@/lib/notification-db");
 
     _deps = {
       broadcast: sseBroadcaster.broadcast,
@@ -123,6 +113,15 @@ function getDefaultDeps(): WorkflowActionDeps {
     };
   }
   return _deps;
+}
+
+/**
+ * Get the current action dependencies.
+ * Used by workflow-specific action modules (e.g., ralph-loop/actions.ts)
+ * to access the shared broadcast/persist infrastructure.
+ */
+export function getActionDeps(): WorkflowActionDeps {
+  return getDefaultDeps();
 }
 
 /** Override dependencies (for testing). */
@@ -136,7 +135,7 @@ export function _resetDepsForTesting(): void {
 }
 
 // ============================================================
-// Named actions (for use in setup({ actions: ... }))
+// Generic Named Actions
 // ============================================================
 
 /**
@@ -153,42 +152,15 @@ export function broadcastStatus(
 }
 
 /**
- * Broadcast a workflow-iteration-complete SSE event.
+ * Generic SSE event broadcaster.
+ * Workflows can use this to broadcast any SSE event type without
+ * needing a dedicated action function.
  */
-export function broadcastIterationComplete(
+export function broadcastWorkflowEvent(
   _actionContext: unknown,
-  params: BroadcastIterationCompleteParams,
+  params: BroadcastWorkflowEventParams,
 ): void {
-  getDefaultDeps().broadcast({
-    type: "workflow-iteration-complete",
-    ...params,
-  });
-}
-
-/**
- * Broadcast a workflow-fix-plan-updated SSE event.
- */
-export function broadcastFixPlanUpdated(
-  _actionContext: unknown,
-  params: BroadcastFixPlanUpdatedParams,
-): void {
-  getDefaultDeps().broadcast({
-    type: "workflow-fix-plan-updated",
-    ...params,
-  });
-}
-
-/**
- * Broadcast a workflow-circuit-breaker SSE event.
- */
-export function broadcastCircuitBreaker(
-  _actionContext: unknown,
-  params: BroadcastCircuitBreakerParams,
-): void {
-  getDefaultDeps().broadcast({
-    type: "workflow-circuit-breaker",
-    ...params,
-  });
+  getDefaultDeps().broadcast(params.event);
 }
 
 /**
@@ -217,7 +189,7 @@ export function createNotificationAction(
 }
 
 /**
- * All workflow actions as a record for use in setup({ actions }).
+ * Generic workflow actions for use in setup({ actions }).
  *
  * Usage:
  *   import { workflowActions } from '@/lib/workflows/actions';
@@ -225,9 +197,7 @@ export function createNotificationAction(
  */
 export const workflowActions = {
   broadcastStatus,
-  broadcastIterationComplete,
-  broadcastFixPlanUpdated,
-  broadcastCircuitBreaker,
+  broadcastWorkflowEvent,
   persistSnapshot,
   createNotificationAction,
 } as const;
