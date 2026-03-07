@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "./config";
 import { createStateManager } from "./state";
@@ -290,6 +290,53 @@ describe("archive helpers", () => {
 
     const state = await readState();
     expect(state.archivedProjects.filter((p) => p === "/proj")).toHaveLength(1);
+  });
+});
+
+describe("schema backwards compatibility", () => {
+  it("readState handles sessions missing the archived field (pre-migration data)", async () => {
+    const configReader = createConfigReader(TEST_DIR);
+    const config = await configReader.readConfig();
+
+    // Write raw JSON that simulates pre-migration state: sessions without the "archived" field
+    const legacyState = {
+      projects: {
+        "/proj": {
+          rootPath: "/proj",
+          roadmapItems: [],
+          sessions: {
+            "my-session": {
+              sessionName: "my-session",
+              worktreePath: "/proj/.worktrees/my-session",
+              branchName: "csm/my-session",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              // NOTE: no "archived" field — this is the bug trigger
+              finished: false,
+              conversations: [],
+              source: "cc",
+              objective: null,
+              creationMode: "fast",
+              tddEnabled: true,
+              workflow: null,
+            },
+          },
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    };
+
+    await writeFile(config.stateFilePath, JSON.stringify(legacyState), "utf-8");
+
+    const { readState } = createTestStateManager();
+    const state = await readState();
+
+    // The session must be visible — not silently dropped
+    const project = state.projects["/proj"];
+    expect(project).toBeDefined();
+    expect(Object.keys(project!.sessions)).toHaveLength(1);
+    expect(project!.sessions["my-session"]!.archived).toBe(false);
   });
 });
 

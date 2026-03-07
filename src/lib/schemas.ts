@@ -396,7 +396,7 @@ export const sessionStateSchema = z.object({
   branchName: z.string(),
   createdAt: z.string(),
   lastActivityAt: z.string(),
-  archived: z.boolean(),
+  archived: z.boolean().default(false),
   finished: z.boolean().default(false),
   conversations: z.array(conversationStateSchema).default([]),
   source: sessionSourceSchema.default("cc"),
