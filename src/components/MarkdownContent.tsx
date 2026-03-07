@@ -152,11 +152,14 @@ export default memo(function MarkdownContent({
       rehypePlugins={[rehypeUltrathink]}
       components={{
         code({ className, children, ...props }) {
+          const rawText = String(children);
+          const codeString = rawText.replace(/\n$/, "");
           const match = /language-(\w+)/.exec(className || "");
-          const codeString = String(children).replace(/\n$/, "");
 
-          if (match) {
-            if (match[1] === "mermaid") {
+          // Fenced code blocks: have a language class OR trailing newline
+          // (react-markdown adds trailing \n to fenced block content)
+          if (match || rawText.endsWith("\n")) {
+            if (match?.[1] === "mermaid") {
               return <MermaidDiagram code={codeString} />;
             }
 
@@ -164,7 +167,7 @@ export default memo(function MarkdownContent({
               <div className="code-block-wrapper">
                 <SyntaxHighlighter
                   style={customStyle}
-                  language={match[1]}
+                  language={match?.[1] ?? "text"}
                   PreTag="div"
                 >
                   {codeString}

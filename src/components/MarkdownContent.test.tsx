@@ -36,6 +36,33 @@ describe("MarkdownContent", () => {
     expect(tokenSpans?.length ?? 0).toBe(0);
   });
 
+  it("renders a copy button for fenced code blocks with a language tag", () => {
+    const md =
+      '```typescript\nfunction hello(): string {\n  return "world";\n}\n```';
+    const { container } = render(<MarkdownContent content={md} />);
+
+    const copyBtn = container.querySelector(".code-block-copy-btn");
+    expect(copyBtn).not.toBeNull();
+    expect(copyBtn?.getAttribute("title")).toBe("Copy code");
+  });
+
+  it("renders a copy button for fenced code blocks without a language tag", () => {
+    const md = "```\nconst x = 1;\nconst y = 2;\n```";
+    const { container } = render(<MarkdownContent content={md} />);
+
+    const copyBtn = container.querySelector(".code-block-copy-btn");
+    expect(copyBtn).not.toBeNull();
+    expect(copyBtn?.getAttribute("title")).toBe("Copy code");
+  });
+
+  it("does not render a copy button for inline code", () => {
+    const md = "Use `const x = 1` in your code";
+    const { container } = render(<MarkdownContent content={md} />);
+
+    const copyBtn = container.querySelector(".code-block-copy-btn");
+    expect(copyBtn).toBeNull();
+  });
+
   it("renders mermaid code blocks with MermaidDiagram component", () => {
     const md = "```mermaid\ngraph LR\n    A --> B\n```";
     const { container } = render(<MarkdownContent content={md} />);
