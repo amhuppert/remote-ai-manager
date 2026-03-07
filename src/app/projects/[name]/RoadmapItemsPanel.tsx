@@ -140,10 +140,13 @@ export default function RoadmapItemsPanel({
   function handleStartFocus(itemId: string) {
     focusMutation.mutate(itemId, {
       onSuccess: (data) => {
-        const sessionName = data.session.sessionName;
-        router.push(
-          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`,
-        );
+        const { sessionName, conversations } = data.session;
+        const conversationId = conversations[0]?.id;
+        const basePath = conversationId
+          ? `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${encodeURIComponent(conversationId)}`
+          : `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`;
+        const url = conversationId ? `${basePath}?autoFocus=true` : basePath;
+        router.push(url);
       },
     });
   }
