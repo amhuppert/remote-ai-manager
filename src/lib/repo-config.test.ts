@@ -146,7 +146,8 @@ describe("runPreMergeValidation", () => {
         cwd: BASE_PARAMS.worktreePath,
         timeout: BASE_PARAMS.timeoutMs,
         env: expect.objectContaining({
-          PROJECT_ROOT: BASE_PARAMS.projectPath,
+          PROJECT_ROOT: BASE_PARAMS.worktreePath,
+          CLAUDE_PROJECT_DIR: BASE_PARAMS.projectPath,
           WORKTREE_PATH: BASE_PARAMS.worktreePath,
           SESSION_NAME: BASE_PARAMS.sessionName,
           BRANCH_NAME: BASE_PARAMS.branchName,

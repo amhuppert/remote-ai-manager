@@ -100,7 +100,7 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
         cwd: worktreePath,
         env: {
           ...buildChildEnv(),
-          PROJECT_ROOT: projectPath,
+          PROJECT_ROOT: worktreePath,
           CLAUDE_PROJECT_DIR: projectPath,
           WORKTREE_PATH: worktreePath,
           SESSION_NAME: sessionName,
