@@ -98,6 +98,7 @@ import ImageAttachmentPreview from "./ImageAttachmentPreview";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import type { ImagePayload } from "@/types";
 import CopyableId from "@/components/CopyableId";
+import { KiroCommandProvider } from "@/components/KiroCommandContext";
 
 interface Props {
   projectName: string;
@@ -1133,118 +1134,131 @@ export default function SessionDetailPage({
                     <button onClick={dismissCancelled}>&times;</button>
                   </div>
                 )}
-                <div className="conversation">
-                  {messagesQuery.isPending ? (
-                    <div
-                      className="empty-state"
-                      style={{ padding: "var(--space-xl) 0" }}
-                    >
-                      <div className="empty-state-title">
-                        Loading conversation...
-                      </div>
-                    </div>
-                  ) : displayMessages.length > 0 ? (
-                    <div
-                      style={{
-                        height: virtualizer.getTotalSize(),
-                        width: "100%",
-                        position: "relative",
-                      }}
-                    >
-                      {virtualizer
-                        .getVirtualItems()
-                        .map((virtualRow: VirtualItem) => {
-                          const msg = displayMessages[virtualRow.index]!;
-                          const isEditing = editingIndex === virtualRow.index;
-                          const isUserMsg = msg.role === "user";
-                          return (
-                            <div
-                              key={virtualRow.index}
-                              ref={virtualizer.measureElement}
-                              data-index={virtualRow.index}
-                              className={`message ${msg.role}${isEditing ? " editing" : ""}`}
-                              data-msg-index={virtualRow.index}
-                              style={{
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                width: "100%",
-                                transform: `translateY(${virtualRow.start}px)`,
-                              }}
-                            >
-                              <div className="message-role">
-                                {isUserMsg ? "You" : "Claude"}
-                              </div>
-                              {isEditing ? (
-                                <MessageEditor
-                                  originalText={
-                                    (
-                                      msg.content.find(
-                                        (b) => b.type === "text" && "text" in b,
-                                      ) as { text: string } | undefined
-                                    )?.text ?? ""
-                                  }
-                                  messageIndex={virtualRow.index}
-                                  onSave={handleEditSave}
-                                  onCancel={cancelEditing}
-                                  saving={forkingIndex === virtualRow.index}
-                                />
-                              ) : (
-                                <div className="message-content">
-                                  <MessageContent content={msg.content} />
-                                </div>
-                              )}
-                              {isUserMsg && !isEditing && (
-                                <MessageActions
-                                  messageIndex={virtualRow.index}
-                                  onFork={handleFork}
-                                  onEdit={startEditing}
-                                  disabled={isBusy || isReadOnly}
-                                />
-                              )}
-                              {!isUserMsg && (
-                                <AssistantMessageActions
-                                  content={msg.content}
-                                />
-                              )}
-                            </div>
-                          );
-                        })}
-                    </div>
-                  ) : (
-                    <div
-                      className="empty-state"
-                      style={{ padding: "var(--space-xl) 0" }}
-                    >
-                      <div className="empty-state-title">No messages yet</div>
-                      <div className="empty-state-desc">
-                        Send a prompt to start the conversation.
-                      </div>
-                    </div>
-                  )}
-                  {(sending || displayStatus === "running") &&
-                    (optimisticMessages.some((m) => m.role === "assistant") ? (
-                      <div className="streaming-indicator">
-                        <div className="typing-dots">
-                          <span />
-                          <span />
-                          <span />
+                <KiroCommandProvider
+                  projectName={projectName}
+                  sessionName={sessionName}
+                  conversationId={conversationId}
+                  sendPrompt={sendPrompt}
+                  messageCount={messages.length}
+                  isBusy={isBusy}
+                  selectedModel={selectedModel}
+                >
+                  <div className="conversation">
+                    {messagesQuery.isPending ? (
+                      <div
+                        className="empty-state"
+                        style={{ padding: "var(--space-xl) 0" }}
+                      >
+                        <div className="empty-state-title">
+                          Loading conversation...
                         </div>
                       </div>
+                    ) : displayMessages.length > 0 ? (
+                      <div
+                        style={{
+                          height: virtualizer.getTotalSize(),
+                          width: "100%",
+                          position: "relative",
+                        }}
+                      >
+                        {virtualizer
+                          .getVirtualItems()
+                          .map((virtualRow: VirtualItem) => {
+                            const msg = displayMessages[virtualRow.index]!;
+                            const isEditing = editingIndex === virtualRow.index;
+                            const isUserMsg = msg.role === "user";
+                            return (
+                              <div
+                                key={virtualRow.index}
+                                ref={virtualizer.measureElement}
+                                data-index={virtualRow.index}
+                                className={`message ${msg.role}${isEditing ? " editing" : ""}`}
+                                data-msg-index={virtualRow.index}
+                                style={{
+                                  position: "absolute",
+                                  top: 0,
+                                  left: 0,
+                                  width: "100%",
+                                  transform: `translateY(${virtualRow.start}px)`,
+                                }}
+                              >
+                                <div className="message-role">
+                                  {isUserMsg ? "You" : "Claude"}
+                                </div>
+                                {isEditing ? (
+                                  <MessageEditor
+                                    originalText={
+                                      (
+                                        msg.content.find(
+                                          (b) =>
+                                            b.type === "text" && "text" in b,
+                                        ) as { text: string } | undefined
+                                      )?.text ?? ""
+                                    }
+                                    messageIndex={virtualRow.index}
+                                    onSave={handleEditSave}
+                                    onCancel={cancelEditing}
+                                    saving={forkingIndex === virtualRow.index}
+                                  />
+                                ) : (
+                                  <div className="message-content">
+                                    <MessageContent content={msg.content} />
+                                  </div>
+                                )}
+                                {isUserMsg && !isEditing && (
+                                  <MessageActions
+                                    messageIndex={virtualRow.index}
+                                    onFork={handleFork}
+                                    onEdit={startEditing}
+                                    disabled={isBusy || isReadOnly}
+                                  />
+                                )}
+                                {!isUserMsg && (
+                                  <AssistantMessageActions
+                                    content={msg.content}
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
+                      </div>
                     ) : (
-                      <div className="message assistant typing-indicator">
-                        <div className="message-role">Claude</div>
-                        <div className="message-content">
+                      <div
+                        className="empty-state"
+                        style={{ padding: "var(--space-xl) 0" }}
+                      >
+                        <div className="empty-state-title">No messages yet</div>
+                        <div className="empty-state-desc">
+                          Send a prompt to start the conversation.
+                        </div>
+                      </div>
+                    )}
+                    {(sending || displayStatus === "running") &&
+                      (optimisticMessages.some(
+                        (m) => m.role === "assistant",
+                      ) ? (
+                        <div className="streaming-indicator">
                           <div className="typing-dots">
                             <span />
                             <span />
                             <span />
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  <div ref={conversationEndRef} />
-                </div>
+                      ) : (
+                        <div className="message assistant typing-indicator">
+                          <div className="message-role">Claude</div>
+                          <div className="message-content">
+                            <div className="typing-dots">
+                              <span />
+                              <span />
+                              <span />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    <div ref={conversationEndRef} />
+                  </div>
+                </KiroCommandProvider>
               </div>
 
               {/* Focus initialization confirmation bar */}
