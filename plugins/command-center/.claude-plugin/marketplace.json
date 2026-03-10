@@ -1,0 +1,13 @@
+{
+  "name": "command-center",
+  "owner": {
+    "name": "Alex Huppert"
+  },
+  "plugins": [
+    {
+      "name": "command-center",
+      "source": "./command-center",
+      "description": "Command Center (CC) plugin — project setup, configuration, and tooling"
+    }
+  ]
+}
