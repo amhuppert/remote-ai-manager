@@ -49,6 +49,10 @@ const logger = createLogger("prompt");
 export const TDD_INSTRUCTIONS =
   "<methodology>Use red-green TDD. Write a failing test first, run it to confirm it fails, then write the minimum code to make it pass.</methodology>";
 
+/** Appended to every system prompt to orient the agent about its CC environment. */
+export const CC_CONTEXT =
+  "<command-center>You are running inside Command Center (CC), a web-based control plane for managing remote Claude Code sessions. Your session runs in an isolated git worktree with its own branch. CC provides custom MCP tools: roadmap tools for tracking bugs/features/ideas, and Ralph Loop tools for autonomous multi-iteration workflows. Stay within your worktree — CC manages merging, dev servers, and session lifecycle.</command-center>";
+
 // ============================================================
 // Dependency Injection
 // ============================================================
@@ -313,6 +317,7 @@ export async function executePromptStream(
           preset: "claude_code",
           append:
             [
+              CC_CONTEXT,
               session.objective
                 ? `<objective>${session.objective}</objective>`
                 : null,

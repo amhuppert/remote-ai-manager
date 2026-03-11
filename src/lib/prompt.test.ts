@@ -26,6 +26,7 @@ vi.mock("@/lib/sdk-env", () => ({}));
 import {
   createPromptExecutor,
   TDD_INSTRUCTIONS,
+  CC_CONTEXT,
   type PromptDeps,
 } from "./prompt";
 
@@ -427,7 +428,7 @@ describe("executePromptStream", () => {
     expect(call.options.systemPrompt).toEqual({
       type: "preset",
       preset: "claude_code",
-      append: TDD_INSTRUCTIONS,
+      append: CC_CONTEXT + "\n\n" + TDD_INSTRUCTIONS,
     });
     expect(call.options.settingSources).toEqual(["user", "project", "local"]);
     expect(call.options.permissionMode).toBe("bypassPermissions");
