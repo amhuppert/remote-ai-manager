@@ -61,8 +61,8 @@ export default function CommitDialog({
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay">
+      <div className="modal">
         <h2 className="modal-title">Commit Changes</h2>
         <p className="modal-desc">
           Stage all changes and create a commit in the session worktree.

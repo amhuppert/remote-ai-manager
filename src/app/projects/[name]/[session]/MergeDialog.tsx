@@ -81,8 +81,8 @@ export default function MergeDialog({
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay">
+      <div className="modal">
         <h2 className="modal-title">Merge into Main</h2>
         <p className="modal-desc">
           Squash merge all commits from this session branch into{" "}

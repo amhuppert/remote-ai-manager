@@ -77,16 +77,8 @@ export default function PresetInstallDialog({
   const trimmedSubdir = subdir.trim().replace(/\/+$/, "");
 
   return (
-    <div
-      className="modal-overlay"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !isInstalling) onClose();
-      }}
-    >
-      <div
-        className="modal preset-install-modal"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="modal-overlay">
+      <div className="modal preset-install-modal">
         <div className="modal-title">Install Dev Server Preset</div>
         <div className="preset-install-subtitle">
           Select a preset to install into{" "}

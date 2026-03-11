@@ -51,11 +51,8 @@ export default function HotkeyHelpModal({
   const groups = groupByCategory();
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal hotkey-help-modal"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="modal-overlay">
+      <div className="modal hotkey-help-modal">
         <h2 className="modal-title">Keyboard Shortcuts</h2>
         <div className="hotkey-help-content">
           {CATEGORY_ORDER.map((category) => {

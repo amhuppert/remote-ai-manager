@@ -281,13 +281,7 @@ export default function CreateSessionModal({
       : "Agent will research the codebase and clarify the objective first";
 
   return (
-    <div
-      className="modal-overlay"
-      data-testid="modal-overlay"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <div className="modal-overlay" data-testid="modal-overlay">
       <div className="modal">
         <div className="modal-title">New Session</div>
         <div className="form-group">

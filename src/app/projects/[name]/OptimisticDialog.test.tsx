@@ -133,10 +133,10 @@ describe("OptimisticDialog", () => {
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("closes when overlay background is clicked", () => {
+  it("does not close when overlay background is clicked", () => {
     renderWithQuery(<OptimisticDialog {...defaultProps} />);
     const overlay = screen.getByTestId("modal-overlay");
     fireEvent.click(overlay);
-    expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
   });
 });

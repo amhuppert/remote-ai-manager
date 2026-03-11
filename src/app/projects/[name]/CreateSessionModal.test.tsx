@@ -212,11 +212,11 @@ describe("CreateSessionModal", () => {
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onClose when overlay background clicked", () => {
+  it("does not call onClose when overlay background clicked", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     const overlay = screen.getByTestId("modal-overlay");
     fireEvent.click(overlay);
-    expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
   });
 
   describe("fire-and-forget voice mode", () => {

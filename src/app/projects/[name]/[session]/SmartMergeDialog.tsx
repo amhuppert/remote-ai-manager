@@ -114,11 +114,8 @@ export default function SmartMergeDialog({
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal smart-merge-modal"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="modal-overlay">
+      <div className="modal smart-merge-modal">
         {/* ── Header ── */}
         <div className="smart-merge-header">
           <MergeIcon size={18} />

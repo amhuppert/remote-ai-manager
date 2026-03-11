@@ -54,12 +54,12 @@ describe("ConfirmDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onCancel when overlay backdrop clicked (Req 7.3)", () => {
+  it("does not call onCancel when overlay backdrop clicked", () => {
     const onCancel = vi.fn();
     render(<ConfirmDialog {...defaultProps} onCancel={onCancel} />);
     const overlay = screen.getByTestId("modal-overlay");
     fireEvent.click(overlay);
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it("applies danger styling when danger=true (Req 7.4)", () => {
