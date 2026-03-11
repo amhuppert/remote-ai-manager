@@ -24,6 +24,7 @@ import type { RunIterationInput, RunIterationOutput } from "./types";
 import { workflowKey, registerRuntime, cleanupRuntime } from "../runtime-state";
 import { persistWorkflowSnapshot } from "../persistence";
 import { createLogger } from "@/lib/logging";
+import { dispatchPushForWorkflowStatus } from "@/lib/push-dispatcher";
 import type { WorkflowStatus } from "@/types";
 
 const logger = createLogger("ralph-loop-xstate");
@@ -190,6 +191,13 @@ function createProvidedMachine() {
               error: err instanceof Error ? err.message : String(err),
             });
           }
+
+          // Push notification to phone for terminal states
+          dispatchPushForWorkflowStatus({
+            projectName: context.projectName,
+            sessionName: context.sessionName,
+            workflowStatus,
+          });
         })();
       },
 

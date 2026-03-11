@@ -7,6 +7,34 @@ import { z } from "zod";
 export const claudeModelSchema = z.enum(["opus", "sonnet", "haiku"]);
 export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 
+// ============================================================
+// Push Notification Config
+// ============================================================
+
+export const pushTriggerSchema = z.object({
+  jobCompleted: z.boolean().default(true),
+  waitingForInput: z.boolean().default(true),
+  workflowCompleted: z.boolean().default(true),
+  workflowHalted: z.boolean().default(true),
+});
+export type PushTriggers = z.infer<typeof pushTriggerSchema>;
+
+export const pushNotificationConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  provider: z.enum(["ntfy"]).default("ntfy"),
+  serverUrl: z.string().default("https://ntfy.sh"),
+  topic: z.string().default(""),
+  triggers: pushTriggerSchema.default({
+    jobCompleted: true,
+    waitingForInput: true,
+    workflowCompleted: true,
+    workflowHalted: true,
+  }),
+});
+export type PushNotificationConfig = z.infer<
+  typeof pushNotificationConfigSchema
+>;
+
 export const globalConfigSchema = z.object({
   baseDir: z.string(),
   ignorePatterns: z.array(z.string()),
@@ -18,6 +46,7 @@ export const globalConfigSchema = z.object({
   preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
+  pushNotification: pushNotificationConfigSchema.optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 

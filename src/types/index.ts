@@ -8,6 +8,8 @@ import type { MessageContentBlock as _MessageContentBlock } from "@/lib/schemas"
 export type {
   ClaudeModel,
   GlobalConfig,
+  PushNotificationConfig,
+  PushTriggers,
   ConversationStatus,
   ConversationRole,
   DerivedSessionStatus,

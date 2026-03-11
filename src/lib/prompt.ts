@@ -25,6 +25,7 @@ import { getConversation, createConversation } from "./conversations";
 import { getTranscriptPath } from "./transcript";
 import { externalizeImageBlocks } from "./transcript-images";
 import { broadcast } from "./sse-broadcaster";
+import { dispatchPushForConversationStatus } from "./push-dispatcher";
 import { registerQuestion } from "./question-registry";
 import {
   registerAbortController,
@@ -386,6 +387,14 @@ export async function executePromptStream(
             } catch {
               /* fire-and-forget */
             }
+
+            // Push notification to phone
+            dispatchPushForConversationStatus({
+              projectName,
+              sessionName: session.sessionName,
+              conversationId: conversationId!,
+              status: "waiting_for_input",
+            });
 
             // Emit question data on the prompt SSE stream
             emit("ask-question", { questionId, questions });

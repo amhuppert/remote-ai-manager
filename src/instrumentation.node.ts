@@ -1,6 +1,8 @@
 import { recoverStaleConversations, recoverStaleWorkflows } from "./lib/state";
 import { startMergeDetection } from "./lib/merge-detection";
 import { initialize as initNotificationDb } from "./lib/notification-db";
+import { setConfigReader } from "./lib/push-dispatcher";
+import { readConfig } from "./lib/config";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "./lib/logging";
 
@@ -33,6 +35,9 @@ export async function register() {
       error: getErrorMessage(err),
     });
   }
+
+  // Wire up push notification config reader
+  setConfigReader(readConfig);
 
   try {
     await startMergeDetection();

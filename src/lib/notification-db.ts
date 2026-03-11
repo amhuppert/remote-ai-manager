@@ -21,6 +21,7 @@ import type {
   JobStatus,
 } from "@/types";
 import type { BackgroundJob } from "@/types";
+import { dispatchPushForNotification } from "./push-dispatcher";
 
 const logger = createLogger("notification-db");
 
@@ -195,6 +196,9 @@ export function createNotification(
 
   // Broadcast notification-created SSE event
   broadcast({ type: "notification-created", notification });
+
+  // Fire-and-forget push notification to phone
+  dispatchPushForNotification(notification);
 
   logger.info("notification.created", {
     notificationId: id,
