@@ -230,6 +230,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       pendingQuestions: null,
       forkedFrom: null,
       role: opts.mode === "focus" ? "initialization" : null,
+      contextTokens: null,
+      contextWindowMax: null,
     };
     const session: SessionState = {
       sessionName,

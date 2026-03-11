@@ -42,6 +42,8 @@ const testSession: SessionState = {
       pendingQuestions: null,
       forkedFrom: null,
       role: null,
+      contextTokens: null,
+      contextWindowMax: null,
     },
   ],
   source: "cc",

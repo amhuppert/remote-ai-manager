@@ -532,6 +532,8 @@ describe("prompt route workflow guards", () => {
       pendingQuestionId: null,
       pendingQuestions: null,
       forkedFrom: null,
+      contextTokens: null,
+      contextWindowMax: null,
     });
 
     const convRouteParams = Promise.resolve({

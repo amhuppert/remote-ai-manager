@@ -72,6 +72,8 @@ export function createConversationService(
           pendingQuestions: null,
           forkedFrom: null,
           role: opts?.role ?? null,
+          contextTokens: null,
+          contextWindowMax: null,
         };
 
         session.conversations.push(conv);
@@ -265,6 +267,8 @@ export function createConversationService(
           pendingQuestions: null,
           forkedFrom,
           role: null,
+          contextTokens: null,
+          contextWindowMax: null,
         };
 
         sess.conversations.push(conversation);
@@ -325,6 +329,8 @@ export function createConversationService(
           pendingQuestions: null,
           forkedFrom: null,
           role: null,
+          contextTokens: null,
+          contextWindowMax: null,
         };
 
         session.conversations.push(newConvo);

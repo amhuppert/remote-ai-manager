@@ -170,6 +170,8 @@ const baseSession: SessionState = {
       pendingQuestions: null,
       forkedFrom: null,
       role: null,
+      contextTokens: null,
+      contextWindowMax: null,
     },
   ],
   source: "cc" as const,

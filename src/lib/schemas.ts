@@ -152,6 +152,8 @@ export const conversationStateSchema = z.object({
   pendingQuestions: z.array(askQuestionItemSchema).nullable().default(null),
   forkedFrom: forkedFromSchema,
   role: conversationRoleSchema,
+  contextTokens: z.number().nullable().default(null),
+  contextWindowMax: z.number().nullable().default(null),
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 

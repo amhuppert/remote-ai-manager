@@ -53,6 +53,8 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     pendingQuestions: null,
     forkedFrom: null,
     role: null,
+    contextTokens: null,
+    contextWindowMax: null,
     ...overrides,
   };
 }

@@ -3171,6 +3171,81 @@ textarea {
 }
 
 /* ============================================================
+   Context Fill Indicator
+   ============================================================ */
+
+.context-fill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-fill__label {
+  color: var(--text-tertiary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.58rem;
+  flex-shrink: 0;
+}
+
+.context-fill__bar-track {
+  width: 60px;
+  height: 4px;
+  background: var(--bg-base);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.context-fill__bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition:
+    width 0.4s ease,
+    background 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+.context-fill__pct {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  min-width: 2.2em;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* -- Color variants -- */
+
+.context-fill--normal .context-fill__bar-fill {
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan-glow-strong);
+}
+
+.context-fill--normal .context-fill__pct {
+  color: var(--cyan-dim);
+}
+
+.context-fill--warning .context-fill__bar-fill {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber-glow);
+}
+
+.context-fill--warning .context-fill__pct {
+  color: var(--amber-dim);
+}
+
+.context-fill--danger .context-fill__bar-fill {
+  background: var(--red);
+  box-shadow: 0 0 6px var(--red-glow);
+}
+
+.context-fill--danger .context-fill__pct {
+  color: var(--red-dim);
+}
+
+/* ============================================================
    TDD Toggle Switch
    ============================================================ */
 

@@ -35,6 +35,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
         pendingQuestions: null,
         forkedFrom: null,
         role: null,
+        contextTokens: null,
+        contextWindowMax: null,
       },
     ],
     source: "cc",

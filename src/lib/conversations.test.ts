@@ -54,6 +54,8 @@ function makeConvo(
     pendingQuestions: null,
     forkedFrom: null,
     role: null,
+    contextTokens: null,
+    contextWindowMax: null,
     ...overrides,
   };
 }

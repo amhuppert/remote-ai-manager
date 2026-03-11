@@ -37,6 +37,7 @@ import { createInitToolServer } from "./ralph-loop/init-tool";
 import { createRoadmapToolServer } from "./roadmap-tools";
 import { getProjectDisplayName } from "./project-resolver";
 import { safeAppendTranscriptEntry } from "./transcript";
+import { extractContextTokens, extractContextWindow } from "./context-fill";
 import { randomUUID } from "node:crypto";
 
 // Prevent nested session detection when CC runs inside Claude Code
@@ -456,6 +457,8 @@ export async function executePromptStream(
     let resultCostUsd: number | null = null;
     let resultDurationMs: number | null = null;
     let resultNumTurns: number | null = null;
+    let resultContextTokens: number | null = null;
+    let resultContextWindow: number | null = null;
     const contentBlocks: MessageContentBlock[] = [];
 
     try {
@@ -472,6 +475,12 @@ export async function executePromptStream(
             resultCostUsd = cost;
             resultDurationMs = duration;
             resultNumTurns = turns;
+          },
+          (tokens) => {
+            resultContextTokens = tokens;
+          },
+          (windowMax) => {
+            resultContextWindow = windowMax;
           },
           safeAppendTranscriptEntry,
         );
@@ -523,6 +532,13 @@ export async function executePromptStream(
           }
           if (resultNumTurns != null) {
             c.totalTurns = (c.totalTurns ?? 0) + resultNumTurns;
+          }
+          // Store latest context window usage
+          if (resultContextTokens != null) {
+            c.contextTokens = resultContextTokens;
+          }
+          if (resultContextWindow != null) {
+            c.contextWindowMax = resultContextWindow;
           }
         },
       ).catch((storeErr) => {
@@ -630,6 +646,8 @@ async function processMessage(
     durationMs: number,
     numTurns: number,
   ) => void,
+  setContextTokens: (tokens: number) => void,
+  setContextWindow: (windowMax: number) => void,
   safeAppendTranscriptEntry: PromptDeps["safeAppendTranscriptEntry"],
 ): Promise<void> {
   const timestamp = new Date().toISOString();
@@ -689,6 +707,12 @@ async function processMessage(
         role: "assistant",
         content: blocks,
       });
+
+      // Track context window usage from assistant message
+      const contextTokens = extractContextTokens(asstMsg.message.usage);
+      if (contextTokens > 0) {
+        setContextTokens(contextTokens);
+      }
       break;
     }
 
@@ -724,6 +748,12 @@ async function processMessage(
         setResultData(error.total_cost_usd, error.duration_ms, error.num_turns);
         const errorMessage = mapErrorSubtype(error);
         emit("error", { message: errorMessage });
+      }
+
+      // Extract context window max from model usage
+      const contextWindow = extractContextWindow(resultMsg.modelUsage);
+      if (contextWindow != null) {
+        setContextWindow(contextWindow);
       }
 
       await safeAppendTranscriptEntry(conversationId, {

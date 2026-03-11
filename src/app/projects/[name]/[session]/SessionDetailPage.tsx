@@ -19,6 +19,8 @@ import {
   useTddToggleMutation,
 } from "@/lib/mutations";
 import TddToggle from "@/components/TddToggle";
+import { ContextFillIndicator } from "@/components/ContextFillIndicator";
+import { computeContextFillPercent } from "@/lib/context-fill";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import {
@@ -214,6 +216,10 @@ export default function SessionDetailPage({
     (c) => c.id === conversationId,
   );
   const isInitConversation = activeConversation?.role === "initialization";
+  const contextPercent = computeContextFillPercent(
+    activeConversation?.contextTokens ?? null,
+    activeConversation?.contextWindowMax ?? null,
+  );
   const [focusConfirmLoading, setFocusConfirmLoading] = useState(false);
   // Flag: user clicked confirm, write-focus prompt was sent, waiting for it to finish
   const [awaitingFinalize, setAwaitingFinalize] = useState(false);
@@ -1059,6 +1065,12 @@ export default function SessionDetailPage({
               >
                 {contextCopied ? "\u2713" : "\u2398"} Context
               </button>
+              {contextPercent != null && (
+                <>
+                  <div className="si-sep" />
+                  <ContextFillIndicator percentage={contextPercent} />
+                </>
+              )}
               <div className="si-sep" />
               <TddToggle
                 enabled={session.tddEnabled}
