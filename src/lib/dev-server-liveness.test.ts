@@ -31,6 +31,7 @@ function createMockEntry(
     errorMessage: null,
     recentOutput: [],
     _process: null,
+    _pid: null,
     _startupTimer: null,
     ...overrides,
   };

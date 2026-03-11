@@ -39,6 +39,8 @@ export interface DevServerEntry {
   recentOutput: string[];
   /** Internal: child process handle (not exposed via API) */
   _process: ChildProcess | null;
+  /** Internal: PID of the process group leader (for group kills after shell exits) */
+  _pid: number | null;
   /** Internal: startup timeout timer */
   _startupTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -231,6 +233,7 @@ export function createDevServerRegistry(
 
     const child = spawn(command, {
       shell: true,
+      detached: true,
       cwd: worktreePath,
       stdio: "pipe",
       env: buildChildEnv(),
@@ -248,6 +251,7 @@ export function createDevServerRegistry(
       errorMessage: null,
       recentOutput: [],
       _process: child,
+      _pid: child.pid ?? null,
       _startupTimer: null,
     };
 
@@ -389,9 +393,13 @@ export function createDevServerRegistry(
           errorMessage: `Startup timeout (${STARTUP_TIMEOUT_MS / 1000}s): CC_PORT not detected.\n${output}`,
         });
 
-        // Kill the process
-        if (entry._process) {
-          entry._process.kill("SIGTERM");
+        // Kill the process group
+        if (entry._pid) {
+          try {
+            process.kill(-entry._pid, "SIGTERM");
+          } catch {
+            // Process group may have already exited
+          }
         }
       }
     }, STARTUP_TIMEOUT_MS);
@@ -399,7 +407,8 @@ export function createDevServerRegistry(
 
   /**
    * Stop a specific dev server.
-   * Removes Tailscale registration, kills processes on the port.
+   * Kills the process group first (shell + all children), then falls back
+   * to port-based kill for any orphaned processes.
    */
   async function stopServer(params: {
     projectPath: string;
@@ -419,6 +428,7 @@ export function createDevServerRegistry(
     logger.info("dev-server.stop", {
       serverName,
       port: entry.port,
+      pid: entry._pid,
     });
 
     // Unregister from Tailscale if enabled
@@ -429,17 +439,18 @@ export function createDevServerRegistry(
       }
     }
 
-    // Kill the startup script if still running
-    if (entry._process) {
-      try {
-        entry._process.kill("SIGTERM");
-      } catch {
-        // Process may have already exited
-      }
-      entry._process = null;
+    // Kill the entire process group (shell + dev server + all children).
+    // This is the primary kill mechanism — more reliable than killing
+    // just the shell wrapper because detached:true gives us a dedicated
+    // process group whose PGID matches the shell's PID.
+    if (entry._pid) {
+      await killProcessGroup(entry._pid);
     }
+    entry._process = null;
+    entry._pid = null;
 
-    // Kill whatever is on the port
+    // Fallback: kill by port for any orphaned processes that escaped the
+    // process group (e.g. processes that called setsid() themselves).
     if (entry.port) {
       await killByPort(entry.port);
     }
@@ -519,12 +530,12 @@ export function createDevServerRegistry(
   function _resetForTesting(): void {
     const registry = getGlobalValue<RegistryMap>(GLOBAL_KEY);
     if (registry) {
-      // Kill all processes
+      // Kill all process groups
       for (const entry of registry.values()) {
         cleanupTimer(entry);
-        if (entry._process) {
+        if (entry._pid) {
           try {
-            entry._process.kill("SIGKILL");
+            process.kill(-entry._pid, "SIGKILL");
           } catch {
             // ignore
           }
@@ -592,6 +603,41 @@ export function isPortAlive(port: number): Promise<boolean> {
     });
     socket.connect(port, "127.0.0.1");
   });
+}
+
+/**
+ * Kill an entire process group by sending signals to -pid.
+ * Sends SIGTERM first, waits up to KILL_GRACE_MS for graceful shutdown,
+ * then sends SIGKILL to force-terminate any remaining processes.
+ *
+ * Requires the process to have been spawned with `detached: true` so it
+ * has its own process group (PGID = pid).
+ */
+async function killProcessGroup(pid: number): Promise<void> {
+  // Send SIGTERM to the entire process group
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    return; // Group doesn't exist or already exited
+  }
+
+  // Wait up to KILL_GRACE_MS for the group to exit
+  const deadline = Date.now() + KILL_GRACE_MS;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(-pid, 0); // Check if any process in the group is still alive
+    } catch {
+      return; // Group has fully exited
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  // Force-kill remaining processes in the group
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // Already exited
+  }
 }
 
 /**

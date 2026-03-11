@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createServer as createTcpServer } from "node:net";
 import {
   createDevServerRegistry,
+  isPortAlive,
   type DevServerRegistryDeps,
 } from "./dev-server-registry";
 
@@ -286,6 +288,84 @@ describe("DevServerRegistry", () => {
       });
 
       expect(servers.every((s) => s.status === "stopped")).toBe(true);
+    });
+  });
+
+  describe("process group killing", () => {
+    /** Helper: find a free TCP port */
+    async function findFreePort(): Promise<number> {
+      return new Promise((resolve) => {
+        const srv = createTcpServer();
+        srv.listen(0, "127.0.0.1", () => {
+          const addr = srv.address() as { port: number };
+          srv.close(() => resolve(addr.port));
+        });
+      });
+    }
+
+    /** Helper: poll until condition is true or timeout */
+    async function waitFor(
+      fn: () => Promise<boolean>,
+      timeoutMs = 5000,
+      intervalMs = 200,
+    ): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (await fn()) return;
+        await new Promise((r) => setTimeout(r, intervalMs));
+      }
+      throw new Error("waitFor timed out");
+    }
+
+    it("stores PID in entry for process group kills", async () => {
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "pid-test",
+        command: "sleep 60",
+        worktreePath: "/tmp",
+      });
+
+      const server = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "pid-test",
+      });
+
+      expect(server!._pid).toBeGreaterThan(0);
+    });
+
+    it("kills child processes via process group when stopping", async () => {
+      const port = await findFreePort();
+
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "group-kill-test",
+        command: `echo CC_PORT=${port} && node -e "require('net').createServer(()=>{}).listen(${port}, '127.0.0.1'); setInterval(()=>{},60000)"`,
+        worktreePath: "/tmp",
+      });
+
+      // Wait for the port to become alive
+      await waitFor(() => isPortAlive(port), 5000);
+
+      const server = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "group-kill-test",
+      });
+      expect(server!.status).toBe("running");
+
+      // Stop the server
+      await registry.stopServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "group-kill-test",
+      });
+
+      // Port should be freed (process group killed)
+      await waitFor(async () => !(await isPortAlive(port)), 10000);
+      expect(await isPortAlive(port)).toBe(false);
     });
   });
 
