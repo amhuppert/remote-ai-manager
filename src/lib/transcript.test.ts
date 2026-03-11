@@ -576,29 +576,27 @@ describe("copyTranscriptUpTo", () => {
     expect(messages[2]!.role).toBe("user");
     expect(messages[3]!.role).toBe("assistant");
 
-    // Fork at merged message index 2 (the "Follow-up" user message),
-    // including the assistant response after it
+    // Fork at merged message index 2 (the "Follow-up" user message)
+    // should copy everything BEFORE it (user "Hello" + assistant "Part 1/2/3")
     await copyTranscriptUpTo({
       sourceTranscriptPath: sourcePath,
       targetConversationId: "fork-merge-target",
       upToMessageIndex: 2,
-      includeAssistantResponse: true,
       configDir: TEST_DIR,
     });
 
     const target = await readTarget("fork-merge-target");
 
-    // Should include ALL 7 lines: the full conversation up through the 2nd assistant response
-    expect(target).toHaveLength(7);
-    // Last line should be the final assistant chunk
+    // Should include 4 lines: user "Hello" + assistant "Part 1" + "Part 2" + "Part 3"
+    expect(target).toHaveLength(4);
+    expect(target[0]!.content![0]).toEqual({ type: "text", text: "Hello" });
     expect(target[target.length - 1]!.content![0]).toEqual({
       type: "text",
-      text: "Response 2b",
+      text: "Part 3",
     });
   });
 
-  it("uses merged message indices for fork without assistant response", async () => {
-    // Same transcript as above
+  it("copies everything before target when target is last message", async () => {
     const entries: TranscriptEntry[] = [
       {
         timestamp: "t0",
@@ -634,22 +632,22 @@ describe("copyTranscriptUpTo", () => {
 
     const sourcePath = await writeTranscript("fork-noresp-source", entries);
 
-    // Fork at merged index 2 (the "Follow-up" user message), no assistant response
+    // Fork at merged index 2 (the "Follow-up" user message)
+    // should copy only messages before it
     await copyTranscriptUpTo({
       sourceTranscriptPath: sourcePath,
       targetConversationId: "fork-noresp-target",
       upToMessageIndex: 2,
-      includeAssistantResponse: false,
       configDir: TEST_DIR,
     });
 
     const target = await readTarget("fork-noresp-target");
 
-    // Should include all 5 lines (everything up to and including "Follow-up")
-    expect(target).toHaveLength(5);
+    // Should include 4 lines: user "Hello" + assistant "Part 1/2/3"
+    expect(target).toHaveLength(4);
     expect(target[target.length - 1]!.content![0]).toEqual({
       type: "text",
-      text: "Follow-up",
+      text: "Part 3",
     });
   });
 
@@ -695,7 +693,6 @@ describe("copyTranscriptUpTo", () => {
       sourceTranscriptPath: sourcePath,
       targetConversationId: "fork-edit-target",
       upToMessageIndex: 2,
-      includeAssistantResponse: false,
       appendEditedMessage: { text: "Edited follow-up", timestamp: "t-edit" },
       configDir: TEST_DIR,
     });
@@ -750,24 +747,27 @@ describe("copyTranscriptUpTo", () => {
 
     const sourcePath = await writeTranscript("fork-nonvisible-source", entries);
 
-    // Fork at merged index 2 (the "Follow-up"), no assistant response
+    // Fork at merged index 2 (the "Follow-up")
+    // should copy everything before it, including non-visible lines
     await copyTranscriptUpTo({
       sourceTranscriptPath: sourcePath,
       targetConversationId: "fork-nonvisible-target",
       upToMessageIndex: 2,
-      includeAssistantResponse: false,
       configDir: TEST_DIR,
     });
 
     const target = await readTarget("fork-nonvisible-target");
 
-    // All 6 lines: user, system, assistant, assistant, result, user
-    expect(target).toHaveLength(6);
+    // 5 lines: user, system, assistant, assistant, result (everything before "Follow-up")
+    expect(target).toHaveLength(5);
+    expect(target[target.length - 1]!.type).toBe("result");
   });
 
-  // ---- Baseline test: simple case without merging should still work ----
+  // ---- Direct fork should copy only messages BEFORE the target ----
 
-  it("works correctly with no consecutive same-role messages", async () => {
+  it("direct fork excludes the target message and everything after it", async () => {
+    // Transcript: user0, assistant0, user1, assistant1
+    // Fork at message index 2 (user1) → should only include user0 + assistant0
     const entries: TranscriptEntry[] = [
       {
         timestamp: "t0",
@@ -795,17 +795,19 @@ describe("copyTranscriptUpTo", () => {
       },
     ];
 
-    const sourcePath = await writeTranscript("fork-simple-source", entries);
+    const sourcePath = await writeTranscript("fork-exclude-source", entries);
 
     await copyTranscriptUpTo({
       sourceTranscriptPath: sourcePath,
-      targetConversationId: "fork-simple-target",
+      targetConversationId: "fork-exclude-target",
       upToMessageIndex: 2,
-      includeAssistantResponse: true,
       configDir: TEST_DIR,
     });
 
-    const target = await readTarget("fork-simple-target");
-    expect(target).toHaveLength(4);
+    const target = await readTarget("fork-exclude-target");
+    // Should only have the first 2 lines (user0 + assistant0)
+    expect(target).toHaveLength(2);
+    expect(target[0]!.content![0]).toEqual({ type: "text", text: "Hello" });
+    expect(target[1]!.content![0]).toEqual({ type: "text", text: "Hi" });
   });
 });

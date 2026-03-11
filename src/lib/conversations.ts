@@ -235,8 +235,7 @@ export function createConversationService(
     await copyTranscriptUpTo({
       sourceTranscriptPath: source.transcriptPath,
       targetConversationId: newId,
-      upToMessageIndex: editedText ? messageIndex : messageIndex,
-      includeAssistantResponse: !editedText,
+      upToMessageIndex: messageIndex,
       appendEditedMessage: editedText
         ? { text: editedText, timestamp: now }
         : undefined,

@@ -77,11 +77,12 @@ export async function appendTranscriptEntry(
 export interface CopyTranscriptInput {
   sourceTranscriptPath: string;
   targetConversationId: string;
-  /** 0-based index into visible messages (user/assistant with content) */
+  /**
+   * 0-based index into visible messages (user/assistant with content).
+   * All messages BEFORE this index are copied (exclusive upper bound).
+   */
   upToMessageIndex: number;
-  /** If true, include the assistant response after the target user message */
-  includeAssistantResponse: boolean;
-  /** If provided, replaces the message at upToMessageIndex with edited text */
+  /** If provided, appends a new user message with edited text after the copied messages */
   appendEditedMessage?: {
     text: string;
     timestamp: string;
@@ -104,7 +105,6 @@ export async function copyTranscriptUpTo(
     sourceTranscriptPath,
     targetConversationId,
     upToMessageIndex,
-    includeAssistantResponse,
     appendEditedMessage,
     configDir,
   } = input;
@@ -116,6 +116,8 @@ export async function copyTranscriptUpTo(
   // Consecutive JSONL entries with the same role are merged into a single logical
   // message (matching readConversationMessages), so we only increment the merged
   // index on role transitions.
+  //
+  // Copy all JSONL lines BEFORE the target message (exclusive upper bound).
   let mergedIndex = -1;
   let lastVisibleRole: string | null = null;
   let cutoffLineIndex = -1;
@@ -140,44 +142,17 @@ export async function copyTranscriptUpTo(
         lastVisibleRole = entry.role ?? null;
       }
 
-      if (appendEditedMessage) {
-        // For edit-and-fork: copy up to (but NOT including) the target message
-        if (mergedIndex === upToMessageIndex) {
-          cutoffLineIndex = i - 1;
-          break;
-        }
-      } else if (includeAssistantResponse) {
-        // For direct fork: include the target message + next assistant response
-        if (mergedIndex <= upToMessageIndex) {
-          // Still in or before the target message — keep including
-          cutoffLineIndex = i;
-        } else if (
-          mergedIndex === upToMessageIndex + 1 &&
-          entry.role === "assistant"
-        ) {
-          // In the assistant response after the fork point — include all its lines
-          cutoffLineIndex = i;
-        } else {
-          // Past the assistant response (or next message is user) — stop
-          break;
-        }
-      } else {
-        // Copy up to and including all lines of the target message
-        if (mergedIndex <= upToMessageIndex) {
-          cutoffLineIndex = i;
-        } else {
-          break;
-        }
+      // Copy up to (but NOT including) the target message
+      if (mergedIndex >= upToMessageIndex) {
+        cutoffLineIndex = i - 1;
+        break;
       }
+
+      cutoffLineIndex = i;
     } else if (mergedIndex >= 0 && cutoffLineIndex >= 0) {
       // Non-visible lines after the cutoff — include them if they come before the next visible message
       cutoffLineIndex = i;
     }
-  }
-
-  // If we never broke, include remaining non-visible lines after the last match
-  if (cutoffLineIndex === -1 && mergedIndex >= upToMessageIndex) {
-    cutoffLineIndex = lines.length - 1;
   }
 
   // Build the copied content
