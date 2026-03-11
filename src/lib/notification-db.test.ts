@@ -17,6 +17,9 @@ import {
   _resetForTesting,
 } from "./notification-db";
 
+// Prevent tests from sending real push notifications to ntfy
+vi.mock("./push-dispatcher");
+
 // Injected spy for broadcast (no vi.mock needed)
 const mockBroadcast = vi.fn();
 
