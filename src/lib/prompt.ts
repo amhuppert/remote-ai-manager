@@ -329,6 +329,7 @@ export async function executePromptStream(
         settingSources: ["user", "project", "local"],
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
+        disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
         cwd: session.worktreePath,
         maxTurns: config.maxTurns,
         resume:
