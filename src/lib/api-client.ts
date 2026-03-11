@@ -95,7 +95,7 @@ export const commitsResponseSchema = z.object({
 export const activeConversationSchema = z.object({
   id: z.string(),
   name: z.string().nullable(),
-  status: z.enum(["running", "awaiting"]),
+  status: z.enum(["running", "awaiting", "waiting_for_input"]),
   lastActivityAt: z.string(),
   projectName: z.string(),
   projectPath: z.string(),

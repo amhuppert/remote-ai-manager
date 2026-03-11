@@ -14,6 +14,7 @@ function resetStore() {
   useNotificationStore.setState({
     jobs: new Map(),
     toastQueue: [],
+    inputToastQueue: [],
   });
 }
 
@@ -125,5 +126,77 @@ describe("notification.store — optimistic job addition", () => {
       .getState()
       .jobs.get("job-123")?.startedAt;
     expect(updatedStartedAt).toBe(originalStartedAt);
+  });
+});
+
+// ============================================================
+// Input Toast Queue Tests
+// ============================================================
+
+describe("notification.store — input toast queue", () => {
+  beforeEach(resetStore);
+
+  it("starts with an empty input toast queue", () => {
+    expect(useNotificationStore.getState().inputToastQueue).toEqual([]);
+  });
+
+  it("enqueues an input toast item", () => {
+    useNotificationStore.getState().enqueueInputToast({
+      projectName: "my-project",
+      sessionName: "my-session",
+      conversationId: "conv-1",
+    });
+
+    const queue = useNotificationStore.getState().inputToastQueue;
+    expect(queue).toHaveLength(1);
+    expect(queue[0]).toEqual({
+      projectName: "my-project",
+      sessionName: "my-session",
+      conversationId: "conv-1",
+    });
+  });
+
+  it("enqueues multiple items in FIFO order", () => {
+    const { enqueueInputToast } = useNotificationStore.getState();
+    enqueueInputToast({
+      projectName: "proj-a",
+      sessionName: "sess-a",
+      conversationId: "conv-1",
+    });
+    enqueueInputToast({
+      projectName: "proj-b",
+      sessionName: "sess-b",
+      conversationId: "conv-2",
+    });
+
+    const queue = useNotificationStore.getState().inputToastQueue;
+    expect(queue).toHaveLength(2);
+    expect(queue[0]!.conversationId).toBe("conv-1");
+    expect(queue[1]!.conversationId).toBe("conv-2");
+  });
+
+  it("dismisses the first item from the queue", () => {
+    const { enqueueInputToast } = useNotificationStore.getState();
+    enqueueInputToast({
+      projectName: "proj-a",
+      sessionName: "sess-a",
+      conversationId: "conv-1",
+    });
+    enqueueInputToast({
+      projectName: "proj-b",
+      sessionName: "sess-b",
+      conversationId: "conv-2",
+    });
+
+    useNotificationStore.getState().dismissInputToast();
+
+    const queue = useNotificationStore.getState().inputToastQueue;
+    expect(queue).toHaveLength(1);
+    expect(queue[0]!.conversationId).toBe("conv-2");
+  });
+
+  it("dismissing from an empty queue is a no-op", () => {
+    useNotificationStore.getState().dismissInputToast();
+    expect(useNotificationStore.getState().inputToastQueue).toEqual([]);
   });
 });

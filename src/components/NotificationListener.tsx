@@ -10,6 +10,7 @@ import {
   devServerKeys,
 } from "@/lib/query-keys";
 import {
+  conversationStatusEventSchema,
   jobStatusEventSchema,
   notificationCreatedEventSchema,
   notificationUpdatedEventSchema,
@@ -21,6 +22,7 @@ import {
 import {
   useAddOrUpdateJob,
   useEnqueueToast,
+  useEnqueueInputToast,
 } from "@/stores/notification.store";
 import {
   useHandleWorkflowStatusEvent,
@@ -33,6 +35,7 @@ export default function NotificationListener(): null {
   const queryClient = useQueryClient();
   const addOrUpdateJob = useAddOrUpdateJob();
   const enqueueToast = useEnqueueToast();
+  const enqueueInputToast = useEnqueueInputToast();
   const hadErrorRef = useRef(false);
   const handleWorkflowStatus = useHandleWorkflowStatusEvent();
   const handleIterationComplete = useHandleWorkflowIterationComplete();
@@ -42,11 +45,45 @@ export default function NotificationListener(): null {
   useEffect(() => {
     const es = new EventSource("/api/events");
 
-    es.addEventListener("conversation-status", () => {
+    es.addEventListener("conversation-status", (event) => {
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active,
       });
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+
+      try {
+        const parsed = JSON.parse(event.data);
+        const result = conversationStatusEventSchema.safeParse(parsed);
+        if (!result.success) return;
+        const data = result.data;
+
+        if (data.status === "waiting_for_input") {
+          // In-app toast
+          enqueueInputToast({
+            projectName: data.projectName,
+            sessionName: data.sessionName,
+            conversationId: data.conversationId,
+          });
+
+          // Browser notification (only when tab is not focused)
+          if (document.hidden && "Notification" in window) {
+            if (Notification.permission === "granted") {
+              const n = new Notification("Session needs input", {
+                body: `${data.projectName} / ${data.sessionName}`,
+                tag: `input-${data.conversationId}`,
+              });
+              n.onclick = () => {
+                window.focus();
+                n.close();
+              };
+            } else if (Notification.permission !== "denied") {
+              void Notification.requestPermission();
+            }
+          }
+        }
+      } catch {
+        // best-effort
+      }
     });
 
     es.addEventListener("ask-question", () => {
@@ -231,6 +268,7 @@ export default function NotificationListener(): null {
     queryClient,
     addOrUpdateJob,
     enqueueToast,
+    enqueueInputToast,
     handleWorkflowStatus,
     handleIterationComplete,
     handleFixPlanUpdated,

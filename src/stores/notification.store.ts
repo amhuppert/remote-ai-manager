@@ -10,17 +10,27 @@ enableMapSet();
 // Types
 // ---------------------------------------------------------------------------
 
+export interface InputNeededItem {
+  projectName: string;
+  sessionName: string;
+  conversationId: string;
+}
+
 interface NotificationState {
   /** Running jobs only — removed on terminal state */
   jobs: Map<string, BackgroundJob>;
   /** Toast queue fed exclusively by notification-created SSE events */
   toastQueue: Notification[];
+  /** Toast queue for "waiting for input" conversation events */
+  inputToastQueue: InputNeededItem[];
 }
 
 interface NotificationActions {
   addOrUpdateJob: (event: JobStatusEvent) => void;
   enqueueToast: (notification: Notification) => void;
   dismissToast: () => void;
+  enqueueInputToast: (item: InputNeededItem) => void;
+  dismissInputToast: () => void;
 }
 
 type NotificationStore = NotificationState & NotificationActions;
@@ -33,6 +43,7 @@ export const useNotificationStore = create<NotificationStore>()(
   immer((set) => ({
     jobs: new Map<string, BackgroundJob>(),
     toastQueue: [],
+    inputToastQueue: [],
 
     addOrUpdateJob: (event: JobStatusEvent) =>
       set((state) => {
@@ -75,6 +86,16 @@ export const useNotificationStore = create<NotificationStore>()(
       set((state) => {
         state.toastQueue.shift();
       }),
+
+    enqueueInputToast: (item: InputNeededItem) =>
+      set((state) => {
+        state.inputToastQueue.push(item);
+      }),
+
+    dismissInputToast: () =>
+      set((state) => {
+        state.inputToastQueue.shift();
+      }),
   })),
 );
 
@@ -116,3 +137,9 @@ export const useEnqueueToast = () =>
   useNotificationStore((s) => s.enqueueToast);
 export const useDismissToast = () =>
   useNotificationStore((s) => s.dismissToast);
+export const useEnqueueInputToast = () =>
+  useNotificationStore((s) => s.enqueueInputToast);
+export const useDismissInputToast = () =>
+  useNotificationStore((s) => s.dismissInputToast);
+export const useInputToastQueue = () =>
+  useNotificationStore((s) => s.inputToastQueue);
