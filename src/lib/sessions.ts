@@ -245,6 +245,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       creationMode: opts.mode,
       tddEnabled: opts.tddEnabled ?? true,
       workflow: null,
+      workflowHistory: [],
     };
 
     // Persist to state first — reconciliation will see this session and skip

@@ -177,6 +177,7 @@ const baseSession: SessionState = {
   creationMode: "fast" as const,
   tddEnabled: true,
   workflow: null,
+  workflowHistory: [],
 };
 
 const emptyDiff: SessionDiff = {

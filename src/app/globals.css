@@ -9612,6 +9612,21 @@ textarea {
   flex-shrink: 0;
 }
 
+/* ---- Workflow Reset ---- */
+
+.workflow-reset-section {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
+.workflow-reset-hint {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
 /* ============================================================
    Dev Server Panel
    ============================================================ */

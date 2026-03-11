@@ -36,8 +36,10 @@ interface WorkflowPanelProps {
   onGeneratePlan?: () => void;
   onConfigChange?: (config: RalphLoopConfig) => void;
   onResetCircuitBreaker?: () => void;
+  onReset?: () => void;
   isGenerating?: boolean;
   isConfirming?: boolean;
+  isResetting?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,10 +191,13 @@ export default function WorkflowPanel({
   onGeneratePlan,
   onConfigChange,
   onResetCircuitBreaker,
+  onReset,
   isGenerating = false,
   isConfirming = false,
+  isResetting = false,
 }: WorkflowPanelProps) {
   const [showAbortConfirm, setShowAbortConfirm] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [configExpanded, setConfigExpanded] = useState(false);
 
   // --- Activation CTA (no workflow) ---
@@ -272,6 +277,8 @@ export default function WorkflowPanel({
             sessionName={sessionName}
             onResetCircuitBreaker={onResetCircuitBreaker}
             onResume={onResume}
+            onReset={() => setShowResetConfirm(true)}
+            isResetting={isResetting}
           />
         )}
       </div>
@@ -302,6 +309,19 @@ export default function WorkflowPanel({
           onAbort?.();
         }}
         onCancel={() => setShowAbortConfirm(false)}
+      />
+
+      {/* Reset confirmation */}
+      <ConfirmDialog
+        open={showResetConfirm}
+        title="Reset Workflow"
+        message="This will archive the current workflow and allow you to create a new one. All iteration history and conversations are preserved."
+        confirmLabel="Reset"
+        onConfirm={() => {
+          setShowResetConfirm(false);
+          onReset?.();
+        }}
+        onCancel={() => setShowResetConfirm(false)}
       />
     </div>
   );
@@ -559,12 +579,16 @@ function CompletionView({
   sessionName,
   onResetCircuitBreaker,
   onResume,
+  onReset,
+  isResetting,
 }: {
   workflow: RalphLoopWorkflow;
   projectName: string;
   sessionName: string;
   onResetCircuitBreaker?: () => void;
   onResume?: () => void;
+  onReset?: () => void;
+  isResetting?: boolean;
 }) {
   const halt = workflow.haltReason
     ? getHaltDisplay(workflow.haltReason)
@@ -677,6 +701,16 @@ function CompletionView({
         projectName={projectName}
         sessionName={sessionName}
       />
+
+      {/* Reset — archive and start fresh */}
+      <div className="workflow-reset-section">
+        <button className="btn btn-sm" onClick={onReset} disabled={isResetting}>
+          {isResetting ? "Resetting\u2026" : "Reset Workflow"}
+        </button>
+        <span className="workflow-reset-hint">
+          Archive this workflow and start fresh
+        </span>
+      </div>
     </>
   );
 }

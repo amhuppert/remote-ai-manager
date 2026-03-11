@@ -81,6 +81,7 @@ describe("state", () => {
               creationMode: "fast" as const,
               tddEnabled: true,
               workflow: null,
+              workflowHistory: [],
             },
           },
         },
@@ -109,6 +110,7 @@ describe("state", () => {
       creationMode: "fast" as const,
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -139,6 +141,7 @@ describe("state", () => {
       creationMode: "fast" as const,
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -168,6 +171,7 @@ describe("state", () => {
       creationMode: "fast" as const,
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -258,6 +262,7 @@ describe("archive helpers", () => {
       creationMode: "fast" as const,
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
     };
 
     await writeState({
@@ -393,6 +398,7 @@ describe("pin helpers", () => {
       creationMode: "fast" as const,
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
     };
 
     await writeState({

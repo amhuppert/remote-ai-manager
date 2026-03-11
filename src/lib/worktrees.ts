@@ -281,6 +281,7 @@ export async function discoverAndImportWorktrees(
       creationMode: "fast",
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
     });
   }
 

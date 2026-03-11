@@ -38,6 +38,7 @@ function makeState(
       creationMode: "fast",
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
     };
   }
   return {
@@ -323,6 +324,7 @@ describe("checkAllSessionsForMerge", () => {
               creationMode: "fast",
               tddEnabled: true,
               workflow: null,
+              workflowHistory: [],
             },
           },
         },
@@ -344,6 +346,7 @@ describe("checkAllSessionsForMerge", () => {
               creationMode: "fast",
               tddEnabled: true,
               workflow: null,
+              workflowHistory: [],
             },
           },
         },

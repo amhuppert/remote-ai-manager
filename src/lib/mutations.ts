@@ -655,6 +655,31 @@ export function useAbortWorkflowMutation(
   });
 }
 
+export function useResetWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch(
+        workflowUrl(projectName, sessionName, "/reset"),
+        "reset-workflow",
+        { method: "POST" },
+        statusResponseSchema,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowKeys.status(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
 export function useUpdateFixPlanMutation(
   projectName: string,
   sessionName: string,

@@ -14,6 +14,7 @@ import {
   useUpdateFixPlanMutation,
   useGeneratePlanMutation,
   useUpdateWorkflowConfigMutation,
+  useResetWorkflowMutation,
 } from "@/lib/mutations";
 import WorkflowPanel from "./WorkflowPanel";
 import type { FixPlanTask } from "@/types";
@@ -53,6 +54,7 @@ export default function ConnectedWorkflowPanel({
     projectName,
     sessionName,
   );
+  const resetMutation = useResetWorkflowMutation(projectName, sessionName);
 
   // Local objective state for debounced editing
   const [localObjective, setLocalObjective] = useState<string | null>(null);
@@ -205,6 +207,10 @@ export default function ConnectedWorkflowPanel({
     resumeMutation.mutate();
   }, [workflow, updateConfigMutation, resumeMutation]);
 
+  const handleReset = useCallback(() => {
+    resetMutation.mutate();
+  }, [resetMutation]);
+
   // Build a workflow object with local edits for the presentational component
   const displayWorkflow = workflow
     ? { ...workflow, objective: displayedObjective }
@@ -228,6 +234,8 @@ export default function ConnectedWorkflowPanel({
       onGeneratePlan={handleGeneratePlan}
       onConfigChange={handleConfigChange}
       onResetCircuitBreaker={handleResetCircuitBreaker}
+      onReset={handleReset}
+      isResetting={resetMutation.isPending}
       isGenerating={
         generatePlanMutation.isPending || workflow?.generatingPlan === true
       }

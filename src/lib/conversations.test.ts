@@ -76,6 +76,7 @@ function makeSessionWith(
     creationMode: "fast" as const,
     tddEnabled: true,
     workflow: null,
+    workflowHistory: [],
     ...overrides,
   };
 }
@@ -104,6 +105,7 @@ async function seedSession(
             creationMode: "fast" as const,
             tddEnabled: true,
             workflow: null,
+            workflowHistory: [],
             ...sessionOverrides,
           },
         },

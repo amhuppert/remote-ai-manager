@@ -668,6 +668,55 @@ export function createWorkflowRouteHandlers(
     });
   }
 
+  // ===== POST /workflow/reset — Archive workflow and allow new creation =====
+  async function resetPOST(
+    _request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSessionParams(context, deps);
+    if ("error" in resolved) return resolved.error;
+    const { projectPath, sessionName, session } = resolved;
+
+    if (!session.workflow) {
+      return NextResponse.json(
+        { error: "No workflow exists" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    const terminalStatuses = ["completed", "halted", "aborted"];
+    if (!terminalStatuses.includes(session.workflow.status)) {
+      return NextResponse.json(
+        {
+          error: "Workflow must be completed, halted, or aborted to reset",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    if (deps.hasActiveWorkflow(projectPath, sessionName)) {
+      return NextResponse.json(
+        {
+          error: "Workflow actor is still active — cannot reset",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    await deps.mutateSession(
+      projectPath,
+      sessionName,
+      "workflow.reset",
+      (sess) => {
+        if (!sess.workflow) return;
+        sess.workflowHistory.push(sess.workflow);
+        sess.workflow = null;
+      },
+    );
+
+    return NextResponse.json({ status: "reset" });
+  }
+
   return {
     workflowPOST,
     workflowGET,
@@ -678,5 +727,6 @@ export function createWorkflowRouteHandlers(
     abortPOST,
     fixPlanPUT,
     conversationPromptPOST,
+    resetPOST,
   };
 }

@@ -53,6 +53,7 @@ function makeSession(workflow: RalphLoopWorkflow | null = null): SessionState {
     creationMode: "fast",
     tddEnabled: true,
     workflow,
+    workflowHistory: [],
   };
 }
 
@@ -549,5 +550,143 @@ describe("prompt route workflow guards", () => {
     expect(response.status).toBe(403);
     const body = await response.json();
     expect(body.code).toBe("MANAGED_CONVERSATION");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Reset Workflow
+// ---------------------------------------------------------------------------
+
+describe("reset", () => {
+  let deps: WorkflowRouteDeps;
+
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
+  it("resets a completed workflow, archiving to history", async () => {
+    const workflow = makeWorkflow({
+      status: "completed",
+      haltReason: { type: "plan_complete" },
+      completedAt: "2025-01-01T01:00:00Z",
+    });
+    const session = makeSession(workflow);
+    vi.mocked(deps.getSession).mockResolvedValue(session);
+    vi.mocked(deps.mutateSession).mockImplementation(
+      async (_p, _n, _l, mutate) =>
+        mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
+    );
+
+    const { resetPOST } = createWorkflowRouteHandlers(deps);
+
+    const response = await resetPOST(makeRequest("/api/reset", "POST"), {
+      params: routeParams,
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe("reset");
+    expect(deps.mutateSession).toHaveBeenCalled();
+    // Verify the mutation archived the workflow
+    expect(session.workflow).toBeNull();
+    expect(session.workflowHistory).toHaveLength(1);
+    expect(session.workflowHistory[0]!.status).toBe("completed");
+  });
+
+  it("resets a halted workflow", async () => {
+    const workflow = makeWorkflow({
+      status: "halted",
+      haltReason: { type: "circuit_breaker", reason: "no_progress" },
+    });
+    const session = makeSession(workflow);
+    vi.mocked(deps.getSession).mockResolvedValue(session);
+    vi.mocked(deps.mutateSession).mockImplementation(
+      async (_p, _n, _l, mutate) =>
+        mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
+    );
+
+    const { resetPOST } = createWorkflowRouteHandlers(deps);
+
+    const response = await resetPOST(makeRequest("/api/reset", "POST"), {
+      params: routeParams,
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("resets an aborted workflow", async () => {
+    const workflow = makeWorkflow({
+      status: "aborted",
+      haltReason: { type: "aborted" },
+    });
+    const session = makeSession(workflow);
+    vi.mocked(deps.getSession).mockResolvedValue(session);
+    vi.mocked(deps.mutateSession).mockImplementation(
+      async (_p, _n, _l, mutate) =>
+        mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
+    );
+
+    const { resetPOST } = createWorkflowRouteHandlers(deps);
+
+    const response = await resetPOST(makeRequest("/api/reset", "POST"), {
+      params: routeParams,
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("rejects reset when no workflow exists", async () => {
+    vi.mocked(deps.getSession).mockResolvedValue(makeSession(null));
+
+    const { resetPOST } = createWorkflowRouteHandlers(deps);
+
+    const response = await resetPOST(makeRequest("/api/reset", "POST"), {
+      params: routeParams,
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  it("rejects reset for running workflow", async () => {
+    vi.mocked(deps.getSession).mockResolvedValue(
+      makeSession(makeWorkflow({ status: "running" })),
+    );
+
+    const { resetPOST } = createWorkflowRouteHandlers(deps);
+
+    const response = await resetPOST(makeRequest("/api/reset", "POST"), {
+      params: routeParams,
+    });
+
+    expect(response.status).toBe(409);
+  });
+
+  it("rejects reset for paused workflow", async () => {
+    vi.mocked(deps.getSession).mockResolvedValue(
+      makeSession(makeWorkflow({ status: "paused" })),
+    );
+
+    const { resetPOST } = createWorkflowRouteHandlers(deps);
+
+    const response = await resetPOST(makeRequest("/api/reset", "POST"), {
+      params: routeParams,
+    });
+
+    expect(response.status).toBe(409);
+  });
+
+  it("rejects reset when active actor exists", async () => {
+    vi.mocked(deps.getSession).mockResolvedValue(
+      makeSession(makeWorkflow({ status: "completed" })),
+    );
+    vi.mocked(deps.hasActiveWorkflow).mockReturnValue(true);
+
+    const { resetPOST } = createWorkflowRouteHandlers(deps);
+
+    const response = await resetPOST(makeRequest("/api/reset", "POST"), {
+      params: routeParams,
+    });
+
+    expect(response.status).toBe(409);
   });
 });

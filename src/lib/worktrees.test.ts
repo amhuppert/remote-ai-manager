@@ -363,6 +363,7 @@ describe("discoverAndImportWorktrees", () => {
     creationMode: "fast" as const,
     tddEnabled: true,
     workflow: null,
+    workflowHistory: [],
   };
 
   it("imports untracked worktrees as sessions with source=imported", async () => {
@@ -446,6 +447,7 @@ describe("discoverAndImportWorktrees", () => {
       creationMode: "fast" as const,
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
     };
 
     // Git returns only main worktree — orphan's path doesn't exist on disk
@@ -501,6 +503,7 @@ describe("discoverAndImportWorktrees", () => {
       creationMode: "fast" as const,
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
     };
 
     mockGitSuccess(
@@ -723,6 +726,7 @@ describe("discoverAndImportWorktrees", () => {
       creationMode: "optimistic" as const,
       tddEnabled: true,
       workflow: null,
+      workflowHistory: [],
     };
 
     // Git discovers a worktree at a DIFFERENT path but with the SAME branch

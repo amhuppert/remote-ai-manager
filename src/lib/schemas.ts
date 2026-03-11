@@ -404,6 +404,7 @@ export const sessionStateSchema = z.object({
   creationMode: sessionCreationModeSchema.default("fast"),
   tddEnabled: z.boolean().default(true),
   workflow: ralphLoopWorkflowSchema.nullable().default(null),
+  workflowHistory: z.array(ralphLoopWorkflowSchema).default([]),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 

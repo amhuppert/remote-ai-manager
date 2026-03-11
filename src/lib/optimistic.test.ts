@@ -42,6 +42,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     creationMode: "optimistic",
     tddEnabled: true,
     workflow: null,
+    workflowHistory: [],
     ...overrides,
   };
 }

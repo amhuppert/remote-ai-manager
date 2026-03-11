@@ -146,6 +146,7 @@ const makeSessions = (count: number): SessionState[] =>
     creationMode: "fast" as const,
     tddEnabled: true,
     workflow: null,
+    workflowHistory: [],
   }));
 
 // ===========================================================================

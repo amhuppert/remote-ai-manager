@@ -49,6 +49,7 @@ const testSession: SessionState = {
   creationMode: "optimistic",
   tddEnabled: true,
   workflow: null,
+  workflowHistory: [],
 };
 
 const defaultInput: OptimisticInput = {
