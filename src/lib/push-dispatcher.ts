@@ -1,5 +1,7 @@
 import { sendPushNotification, type PushEvent } from "./push-notification";
 import { createLogger } from "./logging";
+import { readConfig } from "./config";
+import { getGlobalValue, setGlobalValue } from "./global-singleton";
 import type {
   PushNotificationConfig,
   Notification,
@@ -14,16 +16,17 @@ export type ConfigReaderFn = () => Promise<{
   pushNotification?: PushNotificationConfig;
 }>;
 
-let _configReader: ConfigReaderFn | null = null;
+const CONFIG_READER_KEY = "__cc_push_config_reader";
 
 export function setConfigReader(reader: ConfigReaderFn): void {
-  _configReader = reader;
+  setGlobalValue(CONFIG_READER_KEY, reader);
 }
 
 async function getPushConfig(): Promise<PushNotificationConfig | undefined> {
-  if (!_configReader) return undefined;
+  const configReader =
+    getGlobalValue<ConfigReaderFn>(CONFIG_READER_KEY) ?? readConfig;
   try {
-    const config = await _configReader();
+    const config = await configReader();
     return config.pushNotification;
   } catch {
     logger.warn("push-dispatcher.config_read_error");
