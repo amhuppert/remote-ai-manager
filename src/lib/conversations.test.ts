@@ -473,13 +473,13 @@ describe("deriveSessionStatus", () => {
     expect(deriveSessionStatus(session)).toBe("awaiting");
   });
 
-  it("returns idle when all conversations are new", () => {
+  it("returns new when all conversations are new", () => {
     const session = makeSessionWith([
       makeConvo({ status: "new" }),
       makeConvo({ status: "new" }),
     ]);
 
-    expect(deriveSessionStatus(session)).toBe("idle");
+    expect(deriveSessionStatus(session)).toBe("new");
   });
 
   it("returns idle when no conversations exist", () => {

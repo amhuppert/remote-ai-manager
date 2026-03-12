@@ -65,11 +65,12 @@ export type ConversationStatus =
   | "running"
   | "waiting_for_input";
 
-/** Session-level derived status (waiting_for_input > running > awaiting > idle) */
+/** Session-level derived status (waiting_for_input > running > awaiting > new > idle) */
 export type DerivedSessionStatus =
   | "waiting_for_input"
   | "running"
   | "awaiting"
+  | "new"
   | "idle";
 
 export const messageContentBlockSchema = z.discriminatedUnion("type", [

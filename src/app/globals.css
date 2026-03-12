@@ -32,6 +32,11 @@
   --green-dim: #00b85c;
   --green-glow: rgba(0, 230, 118, 0.15);
 
+  /* ---- Accent: Blue ---- */
+  --blue: #448aff;
+  --blue-dim: #2979ff;
+  --blue-glow: rgba(68, 138, 255, 0.15);
+
   /* ---- Accent: Red ---- */
   --red: #ff3d5a;
   --red-dim: #cc3148;
@@ -1266,14 +1271,21 @@ textarea {
   color: var(--cyan);
 }
 
-.session-status.idle .dot,
-.session-status.new .dot {
+.session-status.idle .dot {
   background: var(--text-tertiary);
 }
 
-.session-status.idle,
-.session-status.new {
+.session-status.idle {
   color: var(--text-tertiary);
+}
+
+.session-status.new .dot {
+  background: var(--blue);
+  box-shadow: 0 0 6px var(--blue);
+}
+
+.session-status.new {
+  color: var(--blue);
 }
 
 .session-status.ready .dot,
@@ -2783,6 +2795,11 @@ textarea {
   white-space: nowrap;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+}
+
+.np-status-new {
+  color: var(--blue);
+  background: var(--blue-glow);
 }
 
 .np-status-running {
@@ -7249,7 +7266,8 @@ textarea {
 }
 
 .sidebar-dot.new {
-  background: var(--text-tertiary);
+  background: var(--blue);
+  box-shadow: 0 0 4px var(--blue);
 }
 
 .sidebar-dot.waiting_for_input {
@@ -8337,6 +8355,11 @@ textarea {
   50% {
     opacity: 0.5;
   }
+}
+
+.unified-panel-dot.new {
+  background: var(--blue);
+  box-shadow: 0 0 6px var(--blue);
 }
 
 .unified-panel-dot.awaiting {

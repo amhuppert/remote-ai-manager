@@ -168,7 +168,7 @@ export function useCommitDiffQuery(
 export interface ActiveConversation {
   id: string;
   name: string | null;
-  status: "running" | "awaiting" | "waiting_for_input";
+  status: "new" | "running" | "awaiting" | "waiting_for_input";
   lastActivityAt: string;
   projectName: string;
   projectPath: string;

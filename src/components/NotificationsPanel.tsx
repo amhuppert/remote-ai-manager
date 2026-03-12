@@ -15,7 +15,7 @@ interface BaseNotification {
 export interface ConversationNotification extends BaseNotification {
   type: "conversation";
   name: string | null;
-  status: "running" | "awaiting" | "waiting_for_input";
+  status: "new" | "running" | "awaiting" | "waiting_for_input";
 }
 
 interface ServerNotificationBase extends BaseNotification {

@@ -11,7 +11,8 @@ import type { SessionState, DerivedSessionStatus } from "@/types";
  * - `waiting_for_input` if any conversation is waiting for user input
  * - `running` if any conversation is running
  * - `awaiting` if any conversation is awaiting
- * - `idle` otherwise (all new or no conversations)
+ * - `new` if any conversation is new (and none running/awaiting)
+ * - `idle` otherwise (no conversations)
  */
 export function deriveSessionStatus(
   session: SessionState,
@@ -36,6 +37,9 @@ export function deriveSessionStatus(
   }
   if (session.conversations.some((c) => c.status === "awaiting")) {
     return "awaiting";
+  }
+  if (session.conversations.some((c) => c.status === "new")) {
+    return "new";
   }
   return "idle";
 }

@@ -100,8 +100,7 @@ export default function UnifiedPanel(): React.JSX.Element | null {
                 No active conversations.
                 <br />
                 <span className="unified-panel-empty-hint">
-                  Conversations with status running or awaiting will appear
-                  here.
+                  New, running, or awaiting conversations will appear here.
                 </span>
               </div>
             )

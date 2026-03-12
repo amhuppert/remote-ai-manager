@@ -38,6 +38,14 @@ describe("activeConversationSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts status 'new'", () => {
+    const result = activeConversationSchema.safeParse({
+      ...BASE_CONVERSATION,
+      status: "new",
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("rejects unknown status", () => {
     const result = activeConversationSchema.safeParse({
       ...BASE_CONVERSATION,
@@ -48,18 +56,19 @@ describe("activeConversationSchema", () => {
 });
 
 describe("activeConversationsResponseSchema", () => {
-  it("parses a response with mixed statuses including waiting_for_input", () => {
+  it("parses a response with mixed statuses including new and waiting_for_input", () => {
     const result = activeConversationsResponseSchema.safeParse({
       conversations: [
         { ...BASE_CONVERSATION, id: "conv-1", status: "running" },
         { ...BASE_CONVERSATION, id: "conv-2", status: "awaiting" },
         { ...BASE_CONVERSATION, id: "conv-3", status: "waiting_for_input" },
+        { ...BASE_CONVERSATION, id: "conv-4", status: "new" },
       ],
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.conversations).toHaveLength(3);
-      expect(result.data.conversations[2]!.status).toBe("waiting_for_input");
+      expect(result.data.conversations).toHaveLength(4);
+      expect(result.data.conversations[3]!.status).toBe("new");
     }
   });
 });

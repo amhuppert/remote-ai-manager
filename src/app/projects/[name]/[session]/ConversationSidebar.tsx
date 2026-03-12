@@ -434,7 +434,7 @@ export default function ConversationSidebar({
                   <div className="convo-sidebar-empty">
                     No active conversations.
                     <span className="convo-sidebar-empty-hint">
-                      Running or awaiting conversations will appear here.
+                      New, running, or awaiting conversations will appear here.
                     </span>
                   </div>
                 ) : (

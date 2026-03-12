@@ -82,7 +82,11 @@ export default function NotificationsPanelContainer() {
           projectName: conv.projectName,
           sessionName: conv.sessionName,
           name: conv.name,
-          status: conv.status as "running" | "awaiting" | "waiting_for_input",
+          status: conv.status as
+            | "new"
+            | "running"
+            | "awaiting"
+            | "waiting_for_input",
         } satisfies ConversationNotification);
       }
     }
