@@ -33,6 +33,7 @@ import type {
   MergeOutput,
 } from "./workflows/merge/types";
 import { getErrorMessage } from "@/lib/errors";
+import { assertNever } from "./assert-never";
 import type { BackgroundJob, ConflictAnalysis, JobStatusEvent } from "@/types";
 import type { ConflictDecisionInput } from "@/lib/schemas";
 import { getGlobalSingleton } from "./global-singleton";
@@ -218,8 +219,10 @@ function buildNotificationMessage(job: BackgroundJob): string {
       return `${job.conflictCount ?? 0} conflict${(job.conflictCount ?? 0) !== 1 ? "s" : ""} detected during merge of ${branch}`;
     case "failed":
       return job.errorMessage ?? `${job.jobType} failed on ${branch}`;
-    default:
+    case "running":
       return `${job.jobType} on ${branch}`;
+    default:
+      return assertNever(job.status);
   }
 }
 

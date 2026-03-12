@@ -7,6 +7,7 @@ import { z } from "zod";
 import { conflictEntrySchema } from "./schemas";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/schemas";
 import { readConfig as defaultReadConfig } from "./config";
+import { assertNever } from "./assert-never";
 import { createLogger } from "./logging";
 
 const logger = createLogger("conflict-resolution");
@@ -95,6 +96,8 @@ function buildDecisionsPrompt(decisions: ConflictDecisionInput[]): string {
           `- **${d.file}**: PENDING — no decision from the user yet. Resolve this file with extra care, preferring the safest merge strategy.`,
         );
         break;
+      default:
+        assertNever(d.decision);
     }
   }
 

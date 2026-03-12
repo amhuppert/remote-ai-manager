@@ -38,6 +38,7 @@ import type {
   RunIterationOutput,
 } from "./types";
 import { generatePlanActor, runIterationActor } from "./actors";
+import { haltReasonToTerminalStatus } from "@/lib/ralph-loop/exit-detector";
 
 // Guards replicate exit-detector.ts logic inline for XState type safety.
 // The pure functions in exit-detector.ts remain the canonical reference.
@@ -474,12 +475,9 @@ export const ralphLoopMachine = setup({
   },
 
   output: ({ context }) => ({
-    status:
-      context.haltReason?.type === "plan_complete"
-        ? ("completed" as const)
-        : context.haltReason?.type === "aborted"
-          ? ("aborted" as const)
-          : ("halted" as const),
+    status: context.haltReason
+      ? haltReasonToTerminalStatus(context.haltReason)
+      : ("halted" as const),
     haltReason: context.haltReason,
     iterations: context.iterations,
     totalCostUsd: context.totalCostUsd,

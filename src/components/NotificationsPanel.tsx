@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback } from "react";
+import { assertNever } from "@/lib/assert-never";
 import { getItemLabel } from "./notification-helpers";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -147,6 +148,8 @@ function getItemHref(item: NotificationItem): string {
       return base;
     case "workflow":
       return base;
+    default:
+      return assertNever(item);
   }
 }
 
@@ -162,6 +165,8 @@ function getItemTitle(item: NotificationItem): string {
       return `Resolve conflicts on ${item.branchName}`;
     case "workflow":
       return "Ralph Loop";
+    default:
+      return assertNever(item);
   }
 }
 
@@ -177,6 +182,8 @@ function getItemCategory(item: NotificationItem): string {
       return "resolve";
     case "workflow":
       return "workflow";
+    default:
+      return assertNever(item);
   }
 }
 
@@ -184,29 +191,54 @@ function getItemStatusClass(item: NotificationItem): string {
   switch (item.type) {
     case "conversation":
       return item.status;
-    case "merge":
-      return item.status === "success"
-        ? "success"
-        : item.status === "conflicts"
-          ? "warning"
-          : item.status === "error"
-            ? "error"
-            : "running";
+    case "merge": {
+      const status = item.status;
+      switch (status) {
+        case "success":
+          return "success";
+        case "conflicts":
+          return "warning";
+        case "error":
+          return "error";
+        case "running":
+          return "running";
+        default:
+          return assertNever(status);
+      }
+    }
     case "commit":
-    case "resolve-conflicts":
-      return item.status === "success"
-        ? "success"
-        : item.status === "error"
-          ? "error"
-          : "running";
-    case "workflow":
-      return item.status === "completed"
-        ? "success"
-        : item.status === "halted"
-          ? "warning"
-          : item.status === "aborted"
-            ? "error"
-            : item.status; // "running" | "paused"
+    case "resolve-conflicts": {
+      const status = item.status;
+      switch (status) {
+        case "success":
+          return "success";
+        case "error":
+          return "error";
+        case "running":
+          return "running";
+        default:
+          return assertNever(status);
+      }
+    }
+    case "workflow": {
+      const status = item.status;
+      switch (status) {
+        case "completed":
+          return "success";
+        case "halted":
+          return "warning";
+        case "aborted":
+          return "error";
+        case "running":
+          return "running";
+        case "paused":
+          return "paused";
+        default:
+          return assertNever(status);
+      }
+    }
+    default:
+      return assertNever(item);
   }
 }
 
@@ -329,6 +361,8 @@ function getItemIcon(item: NotificationItem) {
       return <ResolveIcon />;
     case "workflow":
       return <WorkflowIcon />;
+    default:
+      return assertNever(item);
   }
 }
 

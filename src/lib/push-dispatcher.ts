@@ -1,4 +1,5 @@
 import { sendPushNotification, type PushEvent } from "./push-notification";
+import { assertNever } from "./assert-never";
 import { createLogger } from "./logging";
 import { readConfig } from "./config";
 import { getGlobalValue, setGlobalValue } from "./global-singleton";
@@ -70,17 +71,24 @@ export async function pushForConversationStatus(
   config: PushNotificationConfig | undefined,
   info: ConversationStatusInfo,
 ): Promise<void> {
-  if (info.status !== "waiting_for_input") return;
-
-  const event: PushEvent = {
-    trigger: "waiting-for-input",
-    title: "Waiting for input",
-    message: `Session ${info.sessionName} needs your input`,
-    projectName: info.projectName,
-    sessionName: info.sessionName,
-  };
-
-  await sendPushNotification(config, event);
+  switch (info.status) {
+    case "waiting_for_input":
+      await sendPushNotification(config, {
+        trigger: "waiting-for-input",
+        title: "Waiting for input",
+        message: `Session ${info.sessionName} needs your input`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
+    case "new":
+    case "running":
+    case "awaiting":
+      // No push notification for these statuses
+      return;
+    default:
+      assertNever(info.status);
+  }
 }
 
 // ============================================================
@@ -97,22 +105,33 @@ export async function pushForWorkflowStatus(
   config: PushNotificationConfig | undefined,
   info: WorkflowStatusInfo,
 ): Promise<void> {
-  if (info.workflowStatus === "completed") {
-    await sendPushNotification(config, {
-      trigger: "workflow-completed",
-      title: "Workflow completed",
-      message: `Ralph Loop workflow completed for session ${info.sessionName}`,
-      projectName: info.projectName,
-      sessionName: info.sessionName,
-    });
-  } else if (info.workflowStatus === "halted") {
-    await sendPushNotification(config, {
-      trigger: "workflow-halted",
-      title: "Workflow halted",
-      message: `Ralph Loop workflow halted for session ${info.sessionName}`,
-      projectName: info.projectName,
-      sessionName: info.sessionName,
-    });
+  switch (info.workflowStatus) {
+    case "completed":
+      await sendPushNotification(config, {
+        trigger: "workflow-completed",
+        title: "Workflow completed",
+        message: `Ralph Loop workflow completed for session ${info.sessionName}`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
+    case "halted":
+      await sendPushNotification(config, {
+        trigger: "workflow-halted",
+        title: "Workflow halted",
+        message: `Ralph Loop workflow halted for session ${info.sessionName}`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
+    case "aborted":
+    case "planning":
+    case "running":
+    case "paused":
+      // No push notification for intermediate/abort statuses
+      return;
+    default:
+      assertNever(info.workflowStatus);
   }
 }
 

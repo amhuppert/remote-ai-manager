@@ -23,9 +23,10 @@ import type { GeneratePlanInput, GeneratePlanOutput } from "./types";
 import type { RunIterationInput, RunIterationOutput } from "./types";
 import { workflowKey, registerRuntime, cleanupRuntime } from "../runtime-state";
 import { persistWorkflowSnapshot } from "../persistence";
+import { haltReasonToTerminalStatus } from "@/lib/ralph-loop/exit-detector";
 import { createLogger } from "@/lib/logging";
 import { dispatchPushForWorkflowStatus } from "@/lib/push-dispatcher";
-import type { WorkflowStatus } from "@/types";
+import type { HaltReason, WorkflowStatus } from "@/types";
 
 const logger = createLogger("ralph-loop-xstate");
 
@@ -84,18 +85,11 @@ function mapStateToWorkflowStatus(
  * they reliably indicate the terminal status.
  */
 function deriveWorkflowStatus(
-  context: { haltReason: { type: string } | null; completedAt: string | null },
+  context: { haltReason: HaltReason | null; completedAt: string | null },
   snapshotValue: string | Record<string, unknown>,
 ): WorkflowStatus {
   if (context.haltReason) {
-    switch (context.haltReason.type) {
-      case "plan_complete":
-        return "completed";
-      case "aborted":
-        return "aborted";
-      default:
-        return "halted";
-    }
+    return haltReasonToTerminalStatus(context.haltReason);
   }
   return mapStateToWorkflowStatus(snapshotValue);
 }

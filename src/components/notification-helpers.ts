@@ -1,49 +1,86 @@
 import type { NotificationItem } from "./NotificationsPanel";
+import { assertNever } from "@/lib/assert-never";
 
 export function getItemLabel(item: NotificationItem): string {
   switch (item.type) {
-    case "conversation":
-      return item.status === "running"
-        ? "Running"
-        : item.status === "awaiting"
-          ? "Awaiting"
-          : item.status === "new"
-            ? "New"
-            : "Needs input";
-    case "merge":
-      if (item.status === "running") {
-        if (item.phase === "validating" || item.phase === "re-validating")
-          return "Validating...";
-        if (item.phase === "fixing-validation") return "Fixing errors...";
-        if (item.phase === "squash-merging") return "Finalizing...";
-        return "Merging...";
+    case "conversation": {
+      const status = item.status;
+      switch (status) {
+        case "running":
+          return "Running";
+        case "awaiting":
+          return "Awaiting";
+        case "new":
+          return "New";
+        case "waiting_for_input":
+          return "Needs input";
+        default:
+          return assertNever(status);
       }
-      return item.status === "success"
-        ? "Merged"
-        : item.status === "conflicts"
-          ? `${item.conflictCount ?? 0} conflict${(item.conflictCount ?? 0) !== 1 ? "s" : ""}`
-          : "Merge failed";
-    case "commit":
-      return item.status === "running"
-        ? "Committing..."
-        : item.status === "success"
-          ? "Committed"
-          : "Commit failed";
-    case "resolve-conflicts":
-      return item.status === "running"
-        ? "Resolving..."
-        : item.status === "success"
-          ? "Resolved"
-          : "Resolution failed";
-    case "workflow": {
-      const labels: Record<string, string> = {
-        running: `${item.iterationCount}/${item.maxIterations}`,
-        paused: "Paused",
-        completed: "Complete",
-        halted: "Halted",
-        aborted: "Aborted",
-      };
-      return labels[item.status] ?? item.status;
     }
+    case "merge": {
+      const status = item.status;
+      switch (status) {
+        case "running":
+          if (item.phase === "validating" || item.phase === "re-validating")
+            return "Validating...";
+          if (item.phase === "fixing-validation") return "Fixing errors...";
+          if (item.phase === "squash-merging") return "Finalizing...";
+          return "Merging...";
+        case "success":
+          return "Merged";
+        case "conflicts":
+          return `${item.conflictCount ?? 0} conflict${(item.conflictCount ?? 0) !== 1 ? "s" : ""}`;
+        case "error":
+          return "Merge failed";
+        default:
+          return assertNever(status);
+      }
+    }
+    case "commit": {
+      const status = item.status;
+      switch (status) {
+        case "running":
+          return "Committing...";
+        case "success":
+          return "Committed";
+        case "error":
+          return "Commit failed";
+        default:
+          return assertNever(status);
+      }
+    }
+    case "resolve-conflicts": {
+      const status = item.status;
+      switch (status) {
+        case "running":
+          return "Resolving...";
+        case "success":
+          return "Resolved";
+        case "error":
+          return "Resolution failed";
+        default:
+          return assertNever(status);
+      }
+    }
+    case "workflow": {
+      const status = item.status;
+      switch (status) {
+        case "running":
+          return `${item.iterationCount}/${item.maxIterations}`;
+        case "paused":
+          return "Paused";
+        case "completed":
+          return "Complete";
+        case "halted":
+          return "Halted";
+        case "aborted":
+          return "Aborted";
+        default:
+          return assertNever(status);
+      }
+    }
+    default:
+      return assertNever(item);
   }
 }

@@ -1,3 +1,4 @@
+import { assertNever } from "@/lib/assert-never";
 import type {
   FixPlanTask,
   RalphLoopIterationMeta,
@@ -136,5 +137,39 @@ function checkStalledExitSignal(
 
 /** Classify a halt reason as successful or problematic. */
 export function isSuccessfulHalt(reason: HaltReason): boolean {
-  return reason.type === "plan_complete";
+  switch (reason.type) {
+    case "plan_complete":
+      return true;
+    case "iteration_cap":
+    case "circuit_breaker":
+    case "permission_denied":
+    case "test_saturation":
+    case "stalled_exit_signal":
+    case "aborted":
+    case "context_limit":
+      return false;
+    default:
+      return assertNever(reason);
+  }
+}
+
+/** Map a HaltReason to its terminal workflow output status. */
+export function haltReasonToTerminalStatus(
+  reason: HaltReason,
+): "completed" | "halted" | "aborted" {
+  switch (reason.type) {
+    case "plan_complete":
+      return "completed";
+    case "aborted":
+      return "aborted";
+    case "iteration_cap":
+    case "circuit_breaker":
+    case "permission_denied":
+    case "test_saturation":
+    case "stalled_exit_signal":
+    case "context_limit":
+      return "halted";
+    default:
+      return assertNever(reason);
+  }
 }
