@@ -744,6 +744,19 @@ async function processMessage(
           success.duration_ms,
           success.num_turns,
         );
+
+        // When the SDK returns result text but no assistant messages were
+        // produced (e.g. "Unknown skill: X"), emit the result text as content
+        // so the client actually displays it.
+        if (success.result && contentBlocks.length === 0) {
+          const textBlock: MessageContentBlock = {
+            type: "text",
+            text: success.result,
+          };
+          contentBlocks.push(textBlock);
+          emit("content", textBlock);
+        }
+
         emit("result", {
           sessionId: success.session_id,
           costUsd: success.total_cost_usd,

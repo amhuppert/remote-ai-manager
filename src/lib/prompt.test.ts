@@ -575,6 +575,45 @@ describe("executePromptStream", () => {
     expect(events.find(([e]) => e === "done")).toBeTruthy();
   });
 
+  it("emits result text as content when SDK returns result with no assistant messages", async () => {
+    // Simulates: user invokes unknown skill → SDK returns result:success with
+    // text in the `result` field but no assistant messages at all.
+    const mockQuery = createMockQuery([
+      {
+        type: "system",
+        subtype: "init",
+        session_id: "sess-1",
+        uuid: "u1",
+      },
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "sess-1",
+        uuid: "u2",
+        total_cost_usd: 0,
+        duration_ms: 17,
+        duration_api_ms: 0,
+        num_turns: 1,
+        result: "Unknown skill: frontend-design:frontend-design",
+        is_error: false,
+      },
+    ]);
+    queryMock.mockReturnValue(mockQuery);
+
+    const events: Array<[string, unknown]> = [];
+    const emit = (event: string, data: unknown) => events.push([event, data]);
+
+    await executePromptStream("/projects/repo", makeSession(), "test", emit);
+
+    // The result text should appear as a content event so the client can display it
+    const contentEvents = events.filter(([e]) => e === "content");
+    expect(contentEvents).toHaveLength(1);
+    expect(contentEvents[0]![1]).toEqual({
+      type: "text",
+      text: "Unknown skill: frontend-design:frontend-design",
+    });
+  });
+
   it("registers query in query-registry during execution", async () => {
     const mockQuery = createMockQuery([
       { type: "system", subtype: "init", session_id: "sess-1", uuid: "u1" },
