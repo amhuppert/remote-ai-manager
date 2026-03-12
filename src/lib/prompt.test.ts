@@ -155,6 +155,9 @@ function createTestDeps(): PromptDeps {
     createInitToolServer: vi.fn(() => ({
       __mock: true,
     })) as unknown as PromptDeps["createInitToolServer"],
+    createNotificationToolServer: vi.fn(() => ({
+      __mock: true,
+    })) as unknown as PromptDeps["createNotificationToolServer"],
     getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
     buildChildEnv: vi.fn(() => ({})) as unknown as PromptDeps["buildChildEnv"],
   };

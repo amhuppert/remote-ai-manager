@@ -113,3 +113,51 @@ export async function sendPushNotification(
     });
   }
 }
+
+/**
+ * Send a push notification directly from an agent tool invocation.
+ * No trigger-based config gate — the tool registration is the gate.
+ */
+export async function sendAgentNotification(
+  config: PushNotificationConfig,
+  title: string,
+  message: string,
+  tags: string,
+  projectName: string,
+  sessionName: string,
+): Promise<void> {
+  const baseUrl = config.serverUrl.replace(/\/+$/, "");
+  const url = `${baseUrl}/${config.topic}`;
+  const formattedTitle = `[${projectName}] ${title}`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Title: formattedTitle,
+        Tags: tags,
+      },
+      body: message,
+    });
+
+    if (!response.ok) {
+      logger.warn("agent-notification.send_failed", {
+        status: response.status,
+        projectName,
+        sessionName,
+      });
+    } else {
+      logger.debug("agent-notification.sent", {
+        title,
+        projectName,
+        sessionName,
+      });
+    }
+  } catch (error) {
+    logger.warn("agent-notification.send_error", {
+      error: error instanceof Error ? error.message : String(error),
+      projectName,
+      sessionName,
+    });
+  }
+}

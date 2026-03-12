@@ -3,6 +3,7 @@ import {
   sendPushNotification,
   shouldSendPush,
   formatPushMessage,
+  sendAgentNotification,
   type PushEvent,
 } from "./push-notification";
 import type { PushNotificationConfig } from "@/types";
@@ -225,5 +226,75 @@ describe("sendPushNotification", () => {
 
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://ntfy.sh/test-topic");
+  });
+});
+
+describe("sendAgentNotification", () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it("sends POST to correct ntfy URL with correct headers and body", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+    const config = makeConfig();
+
+    await sendAgentNotification(
+      config,
+      "Build Done",
+      "All tests passed",
+      "white_check_mark",
+      "my-project",
+      "my-session",
+    );
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://ntfy.sh/test-topic");
+    expect(options.method).toBe("POST");
+    expect(options.headers).toEqual(
+      expect.objectContaining({
+        Title: "[my-project] Build Done",
+        Tags: "white_check_mark",
+      }),
+    );
+    expect(options.body).toBe("All tests passed");
+  });
+
+  it("formats title with project name prefix", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+    const config = makeConfig();
+
+    await sendAgentNotification(
+      config,
+      "Task Complete",
+      "Done",
+      "robot",
+      "cool-project",
+      "sess",
+    );
+
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Record<string, string>;
+    expect(headers.Title).toBe("[cool-project] Task Complete");
+  });
+
+  it("logs warning on HTTP error response", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    const config = makeConfig();
+
+    // Should not throw
+    await expect(
+      sendAgentNotification(config, "Test", "Body", "robot", "proj", "sess"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("logs warning on network error (fetch throws)", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("Connection refused"));
+    const config = makeConfig();
+
+    // Should not throw
+    await expect(
+      sendAgentNotification(config, "Test", "Body", "robot", "proj", "sess"),
+    ).resolves.toBeUndefined();
   });
 });

@@ -35,6 +35,7 @@ import { registerQuery, unregisterQuery } from "./query-registry";
 import { acquireQuerySlot } from "./query-semaphore";
 import { createInitToolServer } from "./ralph-loop/init-tool";
 import { createRoadmapToolServer } from "./roadmap-tools";
+import { createNotificationToolServer } from "./agent-notification-tool";
 import { getProjectDisplayName } from "./project-resolver";
 import { safeAppendTranscriptEntry } from "./transcript";
 import { extractContextTokens, extractContextWindow } from "./context-fill";
@@ -51,7 +52,7 @@ export const TDD_INSTRUCTIONS =
 
 /** Appended to every system prompt to orient the agent about its CC environment. */
 export const CC_CONTEXT =
-  "<command-center>You are running inside Command Center (CC), a web-based control plane for managing remote Claude Code sessions. Your session runs in an isolated git worktree with its own branch. CC provides custom MCP tools: roadmap tools for tracking bugs/features/ideas, and Ralph Loop tools for autonomous multi-iteration workflows. Stay within your worktree — CC manages merging, dev servers, and session lifecycle.</command-center>";
+  "<command-center>You are running inside Command Center (CC), a web-based control plane for managing remote Claude Code sessions. Your session runs in an isolated git worktree with its own branch. CC provides custom MCP tools: roadmap tools for tracking bugs/features/ideas, Ralph Loop tools for autonomous multi-iteration workflows, and a notification tool to send push notifications to the user's phone when warranted (e.g., long tasks complete, user asked to be notified). Stay within your worktree — CC manages merging, dev servers, and session lifecycle.</command-center>";
 
 // ============================================================
 // Dependency Injection
@@ -74,6 +75,7 @@ export interface PromptDeps {
   unregisterQuery: typeof unregisterQuery;
   acquireQuerySlot: typeof acquireQuerySlot;
   createInitToolServer: typeof createInitToolServer;
+  createNotificationToolServer: typeof createNotificationToolServer;
   getProjectDisplayName: typeof getProjectDisplayName;
   buildChildEnv: typeof buildChildEnv;
 }
@@ -95,6 +97,7 @@ const defaultPromptDeps: PromptDeps = {
   unregisterQuery,
   acquireQuerySlot,
   createInitToolServer,
+  createNotificationToolServer,
   getProjectDisplayName,
   buildChildEnv,
 };
@@ -172,6 +175,7 @@ export async function executePromptStream(
     unregisterQuery,
     acquireQuerySlot,
     createInitToolServer,
+    createNotificationToolServer,
     getProjectDisplayName,
     buildChildEnv,
   } = deps;
@@ -296,6 +300,29 @@ export async function executePromptStream(
           })
         : null;
 
+    // Conditionally register notification tool when push notifications are configured
+    const pushConfig = config.pushNotification;
+    const notificationToolEnabled = pushConfig?.enabled && pushConfig?.topic;
+    const notificationToolServer = notificationToolEnabled
+      ? createNotificationToolServer(
+          { projectName, sessionName: session.sessionName },
+          {
+            sendNotification: async (title, message, tags) => {
+              const { sendAgentNotification } =
+                await import("./push-notification");
+              await sendAgentNotification(
+                pushConfig,
+                title,
+                message,
+                tags,
+                projectName,
+                session.sessionName,
+              );
+            },
+          },
+        )
+      : null;
+
     // Detect ultrathink keyword for max reasoning effort
     const ultrathinkDetected = /\bultrathink\b/i.test(promptText);
     if (ultrathinkDetected) {
@@ -346,6 +373,9 @@ export async function executePromptStream(
         env: { ...buildChildEnv(), CLAUDECODE: "" },
         mcpServers: {
           ...(initToolServer ? { "ralph-loop-init": initToolServer } : {}),
+          ...(notificationToolServer
+            ? { "agent-notification": notificationToolServer }
+            : {}),
           "roadmap-tools": createRoadmapToolServer({ projectPath }),
         },
         canUseTool: async (
