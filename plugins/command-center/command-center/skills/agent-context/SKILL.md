@@ -62,6 +62,8 @@ Use roadmap tools when you discover work that is out of scope for the current ta
 
 If the user wants to start an autonomous multi-iteration workflow, the `initialize_ralph_loop` tool is available. It creates a Ralph Loop workflow with a structured task plan.
 
+**Before calling this tool, use the `/command-center:plan-ralph-loop` skill** to ensure high-quality task planning. The skill guides you through proper decomposition, dependency grouping, and avoids common pitfalls like stub orphaning and context budget overload.
+
 | Parameter | Type | Description |
 |---|---|---|
 | `objective` | string | Concise summary of the development goal |
@@ -76,7 +78,7 @@ When running inside a Ralph Loop iteration, you have two additional tools instea
 
 | Tool | Purpose |
 |---|---|
-| `report_status` | Report your iteration status: `in_progress`, `complete`, or `blocked`. Include a `work_summary` and `work_type`. Set `exit_signal: true` when you believe the overall objective is met. |
+| `report_status` | Report your iteration status: `in_progress`, `complete`, or `blocked`. Include a `work_summary` and `work_type`. Set `exit_signal: true` ONLY when ALL tasks are resolved — if tasks remain pending, `exit_signal` must be `false`. |
 | `update_fix_plan` | Mutate the task plan: mark tasks as `completedTaskIds`, skip tasks with `skippedTasks: [{ taskId, reason }]`, or add discovered tasks with `newTasks: [{ description, group }]`. Changes broadcast to the UI immediately. |
 
 **During Ralph Loop iterations:**

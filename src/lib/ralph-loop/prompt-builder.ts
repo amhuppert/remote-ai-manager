@@ -161,9 +161,15 @@ Call this tool **at the end of your iteration** with an honest assessment of you
 
 Input:
 - \`status\`: "in_progress" | "complete" | "blocked"
-- \`exit_signal\`: true if you believe the overall objective is complete, false otherwise
+- \`exit_signal\`: true ONLY if ALL tasks in the plan are resolved AND the overall objective is fully met. false otherwise.
 - \`work_summary\`: Brief description of what you accomplished this iteration
 - \`work_type\`: "implementation" | "testing" | "documentation" | "refactoring"
+
+**CRITICAL: exit_signal rules:**
+- \`exit_signal: false\` means "there is more work to do in future iterations" — this is the normal case.
+- \`exit_signal: true\` means "the ENTIRE objective is complete, stop the loop." Only set this when every task is resolved.
+- If pending tasks remain in the plan, \`exit_signal\` MUST be \`false\`, regardless of how much progress you made this iteration.
+- When you finish your iteration's work but tasks remain, use \`status: "in_progress"\` with \`exit_signal: false\`.
 
 ### update_fix_plan
 Call this tool **whenever** you complete a task, discover a new task, or determine a task is unnecessary.
@@ -177,7 +183,8 @@ Input:
 - Focus on tasks in the current group (lowest group number with unresolved tasks). Do not start tasks from a later group until all current-group tasks are resolved.
 - When adding new tasks, assign the current group number if the task is independent, or a higher group number if it depends on other unfinished tasks.
 - Call \`update_fix_plan\` as soon as you complete or skip a task — don't wait until the end.
+- Only mark a task as completed when the implementation is **fully functional**, not just scaffolded. If a task says "build screen X" and you created the component but didn't wire it into the app's routing/navigation, the task is NOT complete.
 - Call \`report_status\` once at the end of your work with an honest assessment.
 - If you encounter permission errors or are blocked, report status as "blocked".
 - Make your best judgment and proceed autonomously — do not ask for user input.
-- **Context limits**: This iteration has a context token budget. If tool responses include a "CONTEXT LIMIT APPROACHING" warning, immediately wrap up: commit or save your current work, call \`update_fix_plan\` for any completed/skipped tasks, and call \`report_status\`. Do not start new tasks after seeing this warning. Your work will be preserved and continued in the next iteration.`;
+- **Context limits**: This iteration has a context token budget. If tool responses include a "CONTEXT LIMIT APPROACHING" warning, immediately wrap up: commit or save your current work, call \`update_fix_plan\` for any completed/skipped tasks, and call \`report_status\` with \`exit_signal: false\`. Do not start new tasks after seeing this warning. Your work will be preserved and continued in the next iteration.`;

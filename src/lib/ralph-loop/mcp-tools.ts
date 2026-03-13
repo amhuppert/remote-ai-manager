@@ -40,7 +40,7 @@ export function createToolServer(
           exit_signal: z
             .boolean()
             .describe(
-              "Set to true if you believe the overall objective is complete and the loop should stop",
+              "Set to true ONLY when ALL tasks in the plan are resolved (completed or skipped) AND you have verified the work is fully integrated. If tasks remain pending, this MUST be false even if you personally finished your iteration's work. Setting exit_signal prematurely causes the loop to end with incomplete work.",
             ),
           work_summary: z
             .string()

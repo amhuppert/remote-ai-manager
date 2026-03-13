@@ -60,6 +60,8 @@ export function createInitToolServer(
         "initialize_ralph_loop",
         `Initialize a Ralph Loop autonomous workflow for this session. Call this when the user wants to start an iterative, autonomous coding workflow.
 
+Use the /command-center:plan-ralph-loop skill to plan the workflow before calling this tool. If the skill is not available, follow these guidelines:
+
 Analyze the user's request and break it into discrete, actionable tasks:
 - Each task should be specific and achievable in a single iteration (roughly 10-30 minutes of work)
 - Assign tasks to execution groups based on dependencies:
@@ -68,7 +70,9 @@ Analyze the user's request and break it into discrete, actionable tasks:
   - Group 3+: Tasks that depend on previous groups
 - Tasks within the same group must be independent of each other
 - Do not include meta-tasks like "review" or "test everything" — each task should include its own testing
-- Executing agents only see the objective, task list, and codebase — not this conversation. Each task description must be self-contained: include the specific "what" and "why", reference files or patterns to follow when the agent can't easily discover them, and specify verification commands.`,
+- Executing agents only see the objective, task list, and codebase — not this conversation. Each task description must be self-contained: include the specific "what" and "why", reference files or patterns to follow when the agent can't easily discover them, and specify verification commands.
+- When one task creates stubs/placeholders that a later task fills in, the later task MUST explicitly say to update the stub files. Never assume a later task will "just know" to wire things together.
+- ALWAYS include a final task in the highest group that validates the complete implementation end-to-end. This task should verify that all components are wired together, the app builds/compiles successfully, and the deliverable works as a whole — not just that individual pieces pass their unit tests.`,
         {
           objective: z
             .string()
@@ -180,8 +184,8 @@ Analyze the user's request and break it into discrete, actionable tasks:
                   config: {
                     maxIterations: 20,
                     iterationTimeoutMs: 3_600_000,
-                    contextSoftLimitTokens: 160_000,
-                    contextHardLimitTokens: 180_000,
+                    contextSoftLimitTokens: 80_000,
+                    contextHardLimitTokens: 100_000,
                     circuitBreaker: {
                       noProgressThreshold: 3,
                       sameErrorThreshold: 5,
