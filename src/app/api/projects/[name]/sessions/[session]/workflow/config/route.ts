@@ -7,7 +7,7 @@ import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-/** PUT — Update workflow configuration (only during planning or paused) */
+/** PUT — Update workflow configuration (only during planning or stopped) */
 export const PUT = withTracing(async (request, { params }) => {
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
@@ -39,11 +39,13 @@ export const PUT = withTracing(async (request, { params }) => {
 
   if (
     session.workflow.status !== "planning" &&
-    session.workflow.status !== "paused"
+    session.workflow.status !== "stopped" &&
+    session.workflow.status !== "halted"
   ) {
     return NextResponse.json(
       {
-        error: "Config can only be edited during planning or paused phases",
+        error:
+          "Config can only be edited during planning, stopped, or halted phases",
       } satisfies ApiError,
       { status: 409 },
     );

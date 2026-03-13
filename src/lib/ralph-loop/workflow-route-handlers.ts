@@ -342,36 +342,6 @@ export function createWorkflowRouteHandlers(
     );
   }
 
-  // ===== POST /workflow/pause =====
-  async function pausePOST(
-    _request: Request,
-    context: RouteContext,
-  ): Promise<Response> {
-    const resolved = await resolveSessionParams(context, deps);
-    if ("error" in resolved) return resolved.error;
-    const { projectPath, sessionName, session } = resolved;
-
-    if (!session.workflow || session.workflow.status !== "running") {
-      return NextResponse.json(
-        { error: "Workflow is not running" } satisfies ApiError,
-        { status: 409 },
-      );
-    }
-
-    if (!deps.hasActiveWorkflow(projectPath, sessionName)) {
-      return NextResponse.json(
-        {
-          error: "Workflow not found in actor registry",
-        } satisfies ApiError,
-        { status: 409 },
-      );
-    }
-
-    deps.sendEvent(projectPath, sessionName, { type: "PAUSE" });
-
-    return NextResponse.json({ status: "pause_requested" });
-  }
-
   // ===== POST /workflow/resume =====
   async function resumePOST(
     _request: Request,
@@ -389,29 +359,29 @@ export function createWorkflowRouteHandlers(
     }
 
     if (
-      session.workflow.status !== "paused" &&
+      session.workflow.status !== "stopped" &&
       session.workflow.status !== "halted"
     ) {
       return NextResponse.json(
         {
-          error: "Workflow must be paused or halted to resume",
+          error: "Workflow must be stopped or halted to resume",
         } satisfies ApiError,
         { status: 409 },
       );
     }
 
-    if (session.workflow.status === "halted") {
-      await deps.mutateSession(
-        projectPath,
-        sessionName,
-        "workflow.clearHaltForResume",
-        (sess) => {
-          if (sess.workflow) {
-            sess.workflow.haltReason = null;
-          }
-        },
-      );
-    }
+    // Clear halt reason before resuming so the new actor starts clean
+    await deps.mutateSession(
+      projectPath,
+      sessionName,
+      "workflow.clearHaltForResume",
+      (sess) => {
+        if (sess.workflow) {
+          sess.workflow.haltReason = null;
+          sess.workflow.completedAt = null;
+        }
+      },
+    );
 
     deps.resumeWorkflow({
       projectPath,
@@ -430,8 +400,8 @@ export function createWorkflowRouteHandlers(
     return NextResponse.json({ workflow: session.workflow }, { status: 202 });
   }
 
-  // ===== POST /workflow/abort =====
-  async function abortPOST(
+  // ===== POST /workflow/stop =====
+  async function stopPOST(
     _request: Request,
     context: RouteContext,
   ): Promise<Response> {
@@ -439,36 +409,32 @@ export function createWorkflowRouteHandlers(
     if ("error" in resolved) return resolved.error;
     const { projectPath, sessionName, session } = resolved;
 
-    if (
-      !session.workflow ||
-      (session.workflow.status !== "running" &&
-        session.workflow.status !== "paused")
-    ) {
+    if (!session.workflow || session.workflow.status !== "running") {
       return NextResponse.json(
         {
-          error: "Workflow must be running or paused to abort",
+          error: "Workflow must be running to stop",
         } satisfies ApiError,
         { status: 409 },
       );
     }
 
     if (deps.hasActiveWorkflow(projectPath, sessionName)) {
-      deps.sendEvent(projectPath, sessionName, { type: "ABORT" });
+      deps.sendEvent(projectPath, sessionName, { type: "STOP" });
     } else {
       await deps.mutateSession(
         projectPath,
         sessionName,
-        "workflow.abort",
+        "workflow.stop",
         (sess) => {
           if (!sess.workflow) return;
-          sess.workflow.status = "aborted";
-          sess.workflow.haltReason = { type: "aborted" };
+          sess.workflow.status = "stopped";
+          sess.workflow.haltReason = { type: "stopped" };
           sess.workflow.completedAt = new Date().toISOString();
         },
       );
     }
 
-    return NextResponse.json({ status: "aborted" });
+    return NextResponse.json({ status: "stopped" });
   }
 
   // ===== PUT /workflow/fix-plan =====
@@ -489,11 +455,13 @@ export function createWorkflowRouteHandlers(
 
     if (
       session.workflow.status !== "planning" &&
-      session.workflow.status !== "paused"
+      session.workflow.status !== "stopped" &&
+      session.workflow.status !== "halted"
     ) {
       return NextResponse.json(
         {
-          error: "Fix plan can only be edited during planning or paused phases",
+          error:
+            "Fix plan can only be edited during planning, stopped, or halted phases",
         } satisfies ApiError,
         { status: 409 },
       );
@@ -684,11 +652,11 @@ export function createWorkflowRouteHandlers(
       );
     }
 
-    const terminalStatuses = ["completed", "halted", "aborted"];
+    const terminalStatuses = ["completed", "halted", "stopped"];
     if (!terminalStatuses.includes(session.workflow.status)) {
       return NextResponse.json(
         {
-          error: "Workflow must be completed, halted, or aborted to reset",
+          error: "Workflow must be completed, halted, or stopped to reset",
         } satisfies ApiError,
         { status: 409 },
       );
@@ -722,9 +690,8 @@ export function createWorkflowRouteHandlers(
     workflowGET,
     workflowPATCH,
     confirmPOST,
-    pausePOST,
+    stopPOST,
     resumePOST,
-    abortPOST,
     fixPlanPUT,
     conversationPromptPOST,
     resetPOST,

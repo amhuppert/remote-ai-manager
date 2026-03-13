@@ -500,7 +500,7 @@ describe("ExitDetector", () => {
       expect(
         isSuccessfulHalt({ type: "stalled_exit_signal", remainingTasks: 3 }),
       ).toBe(false);
-      expect(isSuccessfulHalt({ type: "aborted" })).toBe(false);
+      expect(isSuccessfulHalt({ type: "stopped" })).toBe(false);
     });
   });
 });

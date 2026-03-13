@@ -538,93 +538,30 @@ describe("Ralph Loop Machine", () => {
   });
 
   // ──────────────────────────────────────────────────────
-  // Pause / Resume
+  // Stop
   // ──────────────────────────────────────────────────────
-  describe("pause and resume", () => {
-    it("can be paused and resumed during running state", async () => {
-      const iterationResolvers: Array<{
-        resolve: (v: RunIterationOutput) => void;
-      }> = [];
-
-      const actor = startMachine({
-        runIteration: fromPromise<RunIterationOutput, RunIterationInput>(
-          () =>
-            new Promise<RunIterationOutput>((resolve) => {
-              iterationResolvers.push({ resolve });
-            }),
-        ),
-      });
-
-      actor.send({ type: "CONFIRM_PLAN" });
-
-      // Wait for first iteration to be invoked
-      await vi.waitFor(() => {
-        expect(iterationResolvers).toHaveLength(1);
-      });
-
-      // Complete first iteration with pending tasks
-      iterationResolvers[0]!.resolve(
-        makeIterationOutput({
-          iterationOverrides: { iterationNumber: 1 },
-          planOverrides: [makeTask({ id: "task-1", status: "pending" })],
-        }),
-      );
-
-      // Wait for second iteration to be invoked
-      await vi.waitFor(() => {
-        expect(iterationResolvers).toHaveLength(2);
-      });
-
-      // Pause during second iteration
-      actor.send({ type: "PAUSE" });
-      expect(actor.getSnapshot().value).toBe("paused");
-
-      // Resume
-      actor.send({ type: "RESUME" });
-
-      // Wait for third iteration to be invoked
-      await vi.waitFor(() => {
-        expect(iterationResolvers).toHaveLength(3);
-      });
-
-      // Complete with all tasks done
-      iterationResolvers[2]!.resolve(
-        makeIterationOutput({
-          iterationOverrides: { iterationNumber: 3 },
-          planOverrides: [makeTask({ id: "task-1", status: "completed" })],
-        }),
-      );
-
-      const output = await toPromise(actor);
-      expect(output.status).toBe("completed");
-    });
-  });
-
-  // ──────────────────────────────────────────────────────
-  // Abort
-  // ──────────────────────────────────────────────────────
-  describe("abort", () => {
-    it("aborts from planning state", async () => {
+  describe("stop", () => {
+    it("stops from planning state", async () => {
       const actor = startMachine();
-      actor.send({ type: "ABORT" });
+      actor.send({ type: "STOP" });
 
       const output = await toPromise(actor);
-      expect(output.status).toBe("aborted");
-      expect(output.haltReason?.type).toBe("aborted");
+      expect(output.status).toBe("stopped");
+      expect(output.haltReason?.type).toBe("stopped");
     });
 
-    it("aborts from awaitingConfirmation state", async () => {
+    it("stops from awaitingConfirmation state", async () => {
       const actor = startMachine();
       actor.send({ type: "GENERATE_PLAN" });
       await waitForState(actor, "awaitingConfirmation");
 
-      actor.send({ type: "ABORT" });
+      actor.send({ type: "STOP" });
 
       const output = await toPromise(actor);
-      expect(output.status).toBe("aborted");
+      expect(output.status).toBe("stopped");
     });
 
-    it("aborts from running state", async () => {
+    it("stops from running state", async () => {
       let resolveIteration: ((v: RunIterationOutput) => void) | null = null;
 
       const actor = startMachine({
@@ -642,47 +579,11 @@ describe("Ralph Loop Machine", () => {
         expect(resolveIteration).not.toBeNull();
       });
 
-      actor.send({ type: "ABORT" });
+      actor.send({ type: "STOP" });
 
       const output = await toPromise(actor);
-      expect(output.status).toBe("aborted");
-      expect(output.haltReason?.type).toBe("aborted");
-    });
-
-    it("aborts from paused state", async () => {
-      const resolvers: Array<{ resolve: (v: RunIterationOutput) => void }> = [];
-
-      const actor = startMachine({
-        runIteration: fromPromise<RunIterationOutput, RunIterationInput>(
-          () =>
-            new Promise<RunIterationOutput>((resolve) => {
-              resolvers.push({ resolve });
-            }),
-        ),
-      });
-
-      actor.send({ type: "CONFIRM_PLAN" });
-      await vi.waitFor(() => expect(resolvers).toHaveLength(1));
-
-      // Complete first iteration
-      resolvers[0]!.resolve(
-        makeIterationOutput({
-          iterationOverrides: { iterationNumber: 1 },
-          planOverrides: [makeTask({ status: "pending" })],
-        }),
-      );
-
-      // Wait for second iteration to start
-      await vi.waitFor(() => expect(resolvers).toHaveLength(2));
-
-      // Pause then abort
-      actor.send({ type: "PAUSE" });
-      expect(actor.getSnapshot().value).toBe("paused");
-
-      actor.send({ type: "ABORT" });
-
-      const output = await toPromise(actor);
-      expect(output.status).toBe("aborted");
+      expect(output.status).toBe("stopped");
+      expect(output.haltReason?.type).toBe("stopped");
     });
   });
 
@@ -888,13 +789,13 @@ describe("Ralph Loop Machine", () => {
       expect(output.haltReason?.type).toBe("iteration_cap");
     });
 
-    it("maps aborted output correctly", async () => {
+    it("maps stopped output correctly", async () => {
       const actor = startMachine();
-      actor.send({ type: "ABORT" });
+      actor.send({ type: "STOP" });
 
       const output = await toPromise(actor);
-      expect(output.status).toBe("aborted");
-      expect(output.haltReason?.type).toBe("aborted");
+      expect(output.status).toBe("stopped");
+      expect(output.haltReason?.type).toBe("stopped");
     });
   });
 

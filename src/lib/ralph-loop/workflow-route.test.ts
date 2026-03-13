@@ -270,25 +270,25 @@ describe("confirm and start", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Pause / Resume / Abort
+// Tests: Stop / Resume
 // ---------------------------------------------------------------------------
 
-describe("pause", () => {
+describe("stop", () => {
   let deps: WorkflowRouteDeps;
 
   beforeEach(() => {
     deps = makeDeps();
   });
 
-  it("sends PAUSE event for running workflow with active actor", async () => {
+  it("sends STOP event for running workflow with active actor", async () => {
     vi.mocked(deps.getSession).mockResolvedValue(
       makeSession(makeWorkflow({ status: "running" })),
     );
     vi.mocked(deps.hasActiveWorkflow).mockReturnValue(true);
 
-    const { pausePOST } = createWorkflowRouteHandlers(deps);
+    const { stopPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await pausePOST(makeRequest("/api/pause", "POST"), {
+    const response = await stopPOST(makeRequest("/api/stop", "POST"), {
       params: routeParams,
     });
 
@@ -296,18 +296,18 @@ describe("pause", () => {
     expect(deps.sendEvent).toHaveBeenCalledWith(
       "/tmp/projects/test",
       "test-session",
-      { type: "PAUSE" },
+      { type: "STOP" },
     );
   });
 
-  it("rejects pause for non-running workflow", async () => {
+  it("rejects stop for non-running workflow", async () => {
     vi.mocked(deps.getSession).mockResolvedValue(
-      makeSession(makeWorkflow({ status: "paused" })),
+      makeSession(makeWorkflow({ status: "stopped" })),
     );
 
-    const { pausePOST } = createWorkflowRouteHandlers(deps);
+    const { stopPOST } = createWorkflowRouteHandlers(deps);
 
-    const response = await pausePOST(makeRequest("/api/pause", "POST"), {
+    const response = await stopPOST(makeRequest("/api/stop", "POST"), {
       params: routeParams,
     });
 
@@ -322,9 +322,9 @@ describe("resume", () => {
     deps = makeDeps();
   });
 
-  it("resumes a paused workflow via XState workflow manager", async () => {
+  it("resumes a stopped workflow via XState workflow manager", async () => {
     vi.mocked(deps.getSession).mockResolvedValue(
-      makeSession(makeWorkflow({ status: "paused" })),
+      makeSession(makeWorkflow({ status: "stopped" })),
     );
 
     const { resumePOST } = createWorkflowRouteHandlers(deps);
@@ -369,67 +369,6 @@ describe("resume", () => {
     const { resumePOST } = createWorkflowRouteHandlers(deps);
 
     const response = await resumePOST(makeRequest("/api/resume", "POST"), {
-      params: routeParams,
-    });
-
-    expect(response.status).toBe(409);
-  });
-});
-
-describe("abort", () => {
-  let deps: WorkflowRouteDeps;
-
-  beforeEach(() => {
-    deps = makeDeps();
-  });
-
-  it("sends ABORT event for running workflow with active actor", async () => {
-    vi.mocked(deps.getSession).mockResolvedValue(
-      makeSession(makeWorkflow({ status: "running" })),
-    );
-    vi.mocked(deps.hasActiveWorkflow).mockReturnValue(true);
-
-    const { abortPOST } = createWorkflowRouteHandlers(deps);
-
-    const response = await abortPOST(makeRequest("/api/abort", "POST"), {
-      params: routeParams,
-    });
-
-    expect(response.status).toBe(200);
-    expect(deps.sendEvent).toHaveBeenCalledWith(
-      "/tmp/projects/test",
-      "test-session",
-      { type: "ABORT" },
-    );
-  });
-
-  it("aborts a paused workflow directly when no active actor", async () => {
-    const session = makeSession(makeWorkflow({ status: "paused" }));
-    vi.mocked(deps.getSession).mockResolvedValue(session);
-    vi.mocked(deps.hasActiveWorkflow).mockReturnValue(false);
-    vi.mocked(deps.mutateSession).mockImplementation(
-      async (_p, _n, _l, mutate) =>
-        mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
-    );
-
-    const { abortPOST } = createWorkflowRouteHandlers(deps);
-
-    const response = await abortPOST(makeRequest("/api/abort", "POST"), {
-      params: routeParams,
-    });
-
-    expect(response.status).toBe(200);
-    expect(deps.mutateSession).toHaveBeenCalled();
-  });
-
-  it("rejects abort for completed workflow", async () => {
-    vi.mocked(deps.getSession).mockResolvedValue(
-      makeSession(makeWorkflow({ status: "completed" })),
-    );
-
-    const { abortPOST } = createWorkflowRouteHandlers(deps);
-
-    const response = await abortPOST(makeRequest("/api/abort", "POST"), {
       params: routeParams,
     });
 
@@ -616,10 +555,10 @@ describe("reset", () => {
     expect(response.status).toBe(200);
   });
 
-  it("resets an aborted workflow", async () => {
+  it("resets a stopped workflow", async () => {
     const workflow = makeWorkflow({
-      status: "aborted",
-      haltReason: { type: "aborted" },
+      status: "stopped",
+      haltReason: { type: "stopped" },
     });
     const session = makeSession(workflow);
     vi.mocked(deps.getSession).mockResolvedValue(session);
@@ -663,9 +602,9 @@ describe("reset", () => {
     expect(response.status).toBe(409);
   });
 
-  it("rejects reset for paused workflow", async () => {
+  it("rejects reset for planning workflow", async () => {
     vi.mocked(deps.getSession).mockResolvedValue(
-      makeSession(makeWorkflow({ status: "paused" })),
+      makeSession(makeWorkflow({ status: "planning" })),
     );
 
     const { resetPOST } = createWorkflowRouteHandlers(deps);

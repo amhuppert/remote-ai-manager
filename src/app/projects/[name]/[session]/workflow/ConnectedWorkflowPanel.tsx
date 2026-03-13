@@ -8,9 +8,8 @@ import {
   useStartWorkflowMutation,
   useUpdateWorkflowObjectiveMutation,
   useConfirmWorkflowMutation,
-  usePauseWorkflowMutation,
+  useStopWorkflowMutation,
   useResumeWorkflowMutation,
-  useAbortWorkflowMutation,
   useUpdateFixPlanMutation,
   useGeneratePlanMutation,
   useUpdateWorkflowConfigMutation,
@@ -35,9 +34,8 @@ export default function ConnectedWorkflowPanel({
   // Mutations
   const startMutation = useStartWorkflowMutation(projectName, sessionName);
   const confirmMutation = useConfirmWorkflowMutation(projectName, sessionName);
-  const pauseMutation = usePauseWorkflowMutation(projectName, sessionName);
+  const stopMutation = useStopWorkflowMutation(projectName, sessionName);
   const resumeMutation = useResumeWorkflowMutation(projectName, sessionName);
-  const abortMutation = useAbortWorkflowMutation(projectName, sessionName);
   const updateFixPlanMutation = useUpdateFixPlanMutation(
     projectName,
     sessionName,
@@ -88,17 +86,13 @@ export default function ConnectedWorkflowPanel({
     }
   }, [confirmMutation, updateObjectiveMutation, workflow, localObjective]);
 
-  const handlePause = useCallback(() => {
-    pauseMutation.mutate();
-  }, [pauseMutation]);
+  const handleStop = useCallback(() => {
+    stopMutation.mutate();
+  }, [stopMutation]);
 
   const handleResume = useCallback(() => {
     resumeMutation.mutate();
   }, [resumeMutation]);
-
-  const handleAbort = useCallback(() => {
-    abortMutation.mutate();
-  }, [abortMutation]);
 
   const handleTaskAdd = useCallback(
     (description: string) => {
@@ -224,9 +218,8 @@ export default function ConnectedWorkflowPanel({
       onActivate={handleActivate}
       onObjectiveChange={handleObjectiveChange}
       onConfirmStart={handleConfirmStart}
-      onPause={handlePause}
+      onStop={handleStop}
       onResume={handleResume}
-      onAbort={handleAbort}
       onTaskAdd={handleTaskAdd}
       onTaskRemove={handleTaskRemove}
       onTaskEdit={handleTaskEdit}

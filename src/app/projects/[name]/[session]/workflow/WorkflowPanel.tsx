@@ -26,9 +26,8 @@ interface WorkflowPanelProps {
   onActivate?: () => void;
   onObjectiveChange?: (objective: string) => void;
   onConfirmStart?: () => void;
-  onPause?: () => void;
+  onStop?: () => void;
   onResume?: () => void;
-  onAbort?: () => void;
   onTaskAdd?: (description: string) => void;
   onTaskRemove?: (taskId: string) => void;
   onTaskEdit?: (taskId: string, description: string) => void;
@@ -64,10 +63,9 @@ function getStatusLabel(status: WorkflowStatus): string {
   const labels: Record<WorkflowStatus, string> = {
     planning: "Planning",
     running: "Running",
-    paused: "Paused",
+    stopped: "Stopped",
     completed: "Completed",
     halted: "Halted",
-    aborted: "Aborted",
   };
   return labels[status];
 }
@@ -76,10 +74,9 @@ function getStatusIcon(status: WorkflowStatus): string {
   const icons: Record<WorkflowStatus, string> = {
     planning: "\u25C7",
     running: "\u25CF",
-    paused: "\u2016",
+    stopped: "\u25A0",
     completed: "\u2713",
     halted: "\u26A0",
-    aborted: "\u2715",
   };
   return icons[status];
 }
@@ -152,11 +149,12 @@ function getHaltDisplay(reason: HaltReason): {
         icon: "\u26A0",
         classification: "problem",
       };
-    case "aborted":
+    case "stopped":
       return {
-        title: "Workflow Aborted",
-        description: "The workflow was manually aborted by the user.",
-        icon: "\u2715",
+        title: "Workflow Stopped",
+        description:
+          "The workflow was stopped by the user. All progress is preserved and you can resume at any time.",
+        icon: "\u25A0",
         classification: "neutral",
       };
     case "context_limit":
@@ -181,9 +179,8 @@ export default function WorkflowPanel({
   onActivate,
   onObjectiveChange,
   onConfirmStart,
-  onPause,
+  onStop,
   onResume,
-  onAbort,
   onTaskAdd,
   onTaskRemove,
   onTaskEdit,
@@ -196,7 +193,7 @@ export default function WorkflowPanel({
   isConfirming = false,
   isResetting = false,
 }: WorkflowPanelProps) {
-  const [showAbortConfirm, setShowAbortConfirm] = useState(false);
+  const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [configExpanded, setConfigExpanded] = useState(false);
 
@@ -255,22 +252,17 @@ export default function WorkflowPanel({
           />
         )}
 
-        {(status === "running" || status === "paused") && (
+        {status === "running" && (
           <MonitoringView
             projectName={projectName}
             sessionName={sessionName}
             workflow={workflow}
-            onConfigChange={onConfigChange}
-            onTaskEdit={onTaskEdit}
-            onTaskReorder={onTaskReorder}
-            onTaskRemove={onTaskRemove}
-            onTaskAdd={onTaskAdd}
           />
         )}
 
         {(status === "completed" ||
           status === "halted" ||
-          status === "aborted") && (
+          status === "stopped") && (
           <CompletionView
             workflow={workflow}
             projectName={projectName}
@@ -283,32 +275,25 @@ export default function WorkflowPanel({
         )}
       </div>
 
-      {/* Footer — control bar for active states */}
-      {(status === "running" || status === "paused" || status === "halted") && (
+      {/* Footer — control bar for running state */}
+      {status === "running" && (
         <div className="workflow-panel-footer">
-          <ControlBar
-            status={status}
-            circuitBreakerState={workflow.circuitBreaker.state}
-            onPause={onPause}
-            onResume={onResume}
-            onAbort={() => setShowAbortConfirm(true)}
-            onResetCircuitBreaker={onResetCircuitBreaker}
-          />
+          <ControlBar onStop={() => setShowStopConfirm(true)} />
         </div>
       )}
 
-      {/* Abort confirmation */}
+      {/* Stop confirmation */}
       <ConfirmDialog
-        open={showAbortConfirm}
-        title="Abort Workflow"
-        message="This will terminate the current iteration and stop the workflow. All completed work is preserved."
-        confirmLabel="Abort"
+        open={showStopConfirm}
+        title="Stop Workflow"
+        message="This will stop after the current iteration completes. All progress is preserved and you can resume later."
+        confirmLabel="Stop"
         danger
         onConfirm={() => {
-          setShowAbortConfirm(false);
-          onAbort?.();
+          setShowStopConfirm(false);
+          onStop?.();
         }}
-        onCancel={() => setShowAbortConfirm(false)}
+        onCancel={() => setShowStopConfirm(false)}
       />
 
       {/* Reset confirmation */}
@@ -432,28 +417,14 @@ function MonitoringView({
   projectName,
   sessionName,
   workflow,
-  onConfigChange,
-  onTaskEdit,
-  onTaskReorder,
-  onTaskRemove,
-  onTaskAdd,
 }: {
   projectName: string;
   sessionName: string;
   workflow: RalphLoopWorkflow;
-  onConfigChange?: (config: RalphLoopConfig) => void;
-  onTaskEdit?: (id: string, description: string) => void;
-  onTaskReorder?: (taskIds: string[]) => void;
-  onTaskRemove?: (id: string) => void;
-  onTaskAdd?: (description: string) => void;
 }) {
-  const { config, circuitBreaker, iterations, fixPlan, status } = workflow;
-  const isPaused = status === "paused";
-  const isRunning = status === "running";
+  const { config, circuitBreaker, iterations, fixPlan } = workflow;
   // When running, an iteration is in progress — show iterations.length + 1
-  const currentIteration = isRunning
-    ? iterations.length + 1
-    : iterations.length;
+  const currentIteration = iterations.length + 1;
 
   const completedTasks = fixPlan.filter((t) => t.status === "completed").length;
   const skippedTasks = fixPlan.filter((t) => t.status === "skipped").length;
@@ -518,46 +489,18 @@ function MonitoringView({
       </div>
 
       {/* Live iteration stream */}
-      {isRunning && (
-        <LiveIterationStream
-          projectName={projectName}
-          sessionName={sessionName}
-          iterationNumber={currentIteration}
-          isRunning
-          currentIterationConversationId={
-            workflow.currentIterationConversationId ?? null
-          }
-        />
-      )}
-
-      {isPaused && (
-        <div className="workflow-between-iterations">
-          Workflow paused after iteration {currentIteration}. Edit tasks or
-          config, then resume.
-        </div>
-      )}
-
-      {/* Task Plan (editable when paused, read-only during running) */}
-      <TaskPlanEditor
-        tasks={fixPlan}
-        readOnly={!isPaused}
-        showProgress
-        onTaskEdit={isPaused ? onTaskEdit : undefined}
-        onTaskReorder={isPaused ? onTaskReorder : undefined}
-        onTaskRemove={isPaused ? onTaskRemove : undefined}
-        onTaskAdd={isPaused ? onTaskAdd : undefined}
+      <LiveIterationStream
+        projectName={projectName}
+        sessionName={sessionName}
+        iterationNumber={currentIteration}
+        isRunning
+        currentIterationConversationId={
+          workflow.currentIterationConversationId ?? null
+        }
       />
 
-      {/* Config (editable when paused) */}
-      {isPaused && (
-        <div className="workflow-config">
-          <span className="wf-section-label">Configuration</span>
-          <WorkflowConfigPanel
-            config={config}
-            onConfigChange={onConfigChange}
-          />
-        </div>
-      )}
+      {/* Task Plan (read-only during running) */}
+      <TaskPlanEditor tasks={fixPlan} readOnly showProgress />
 
       {/* Iteration History */}
       <IterationTimeline
@@ -658,17 +601,26 @@ function CompletionView({
       {/* Cumulative git diff */}
       <CumulativeDiff iterations={workflow.iterations} />
 
-      {/* Recovery actions for problematic halts */}
-      {halt.classification === "problem" && (
+      {/* Resume actions for stopped/halted workflows */}
+      {workflow.status !== "completed" && (
         <div className="workflow-recovery">
-          <span className="workflow-recovery-title">Recovery Options</span>
-          <span className="workflow-recovery-description">
-            {workflow.haltReason?.type === "circuit_breaker"
-              ? "Reset the circuit breaker and resume to retry, or edit the task plan to simplify remaining work."
-              : workflow.haltReason?.type === "stalled_exit_signal"
-                ? "Review remaining tasks below. Skip or remove tasks that are no longer needed, then resume."
-                : "Review the task plan and adjust as needed, then resume the workflow."}
+          <span className="workflow-recovery-title">
+            {halt.classification === "problem" ? "Recovery Options" : "Resume"}
           </span>
+          {halt.classification === "problem" && (
+            <span className="workflow-recovery-description">
+              {workflow.haltReason?.type === "circuit_breaker"
+                ? "Reset the circuit breaker and resume to retry, or edit the task plan to simplify remaining work."
+                : workflow.haltReason?.type === "stalled_exit_signal"
+                  ? "Review remaining tasks below. Skip or remove tasks that are no longer needed, then resume."
+                  : "Review the task plan and adjust as needed, then resume the workflow."}
+            </span>
+          )}
+          {halt.classification === "neutral" && (
+            <span className="workflow-recovery-description">
+              Pick up where you left off. All progress is preserved.
+            </span>
+          )}
           <div className="workflow-recovery-actions">
             {workflow.haltReason?.type === "circuit_breaker" && (
               <button className="btn btn-sm" onClick={onResetCircuitBreaker}>
@@ -719,45 +671,12 @@ function CompletionView({
 // Control Bar
 // ---------------------------------------------------------------------------
 
-function ControlBar({
-  status,
-  circuitBreakerState,
-  onPause,
-  onResume,
-  onAbort,
-  onResetCircuitBreaker,
-}: {
-  status: WorkflowStatus;
-  circuitBreakerState: CircuitBreakerStateEnum;
-  onPause?: () => void;
-  onResume?: () => void;
-  onAbort?: () => void;
-  onResetCircuitBreaker?: () => void;
-}) {
+function ControlBar({ onStop }: { onStop?: () => void }) {
   return (
     <div className="workflow-controls">
-      {status === "running" && (
-        <button className="btn btn-sm btn-amber" onClick={onPause}>
-          {"\u23F8"} Pause
-        </button>
-      )}
-      {(status === "paused" || status === "halted") && (
-        <>
-          {circuitBreakerState === "open" && (
-            <button className="btn btn-sm" onClick={onResetCircuitBreaker}>
-              Reset CB
-            </button>
-          )}
-          <button className="btn btn-sm btn-primary" onClick={onResume}>
-            {"\u25B6"} Resume
-          </button>
-        </>
-      )}
-      {(status === "running" || status === "paused") && (
-        <button className="btn btn-sm btn-danger" onClick={onAbort}>
-          {"\u2715"} Abort
-        </button>
-      )}
+      <button className="btn btn-sm btn-danger" onClick={onStop}>
+        {"\u25A0"} Stop
+      </button>
     </div>
   );
 }

@@ -298,8 +298,8 @@ const runningMidProgress = workflow({
   totalDurationMs: 793_000,
 });
 
-const paused = workflow({
-  status: "paused",
+const stopped = workflow({
+  status: "stopped",
   objective: planningWithTasks.objective,
   fixPlan: runningMidProgress.fixPlan,
   iterations: runningMidProgress.iterations,
@@ -540,8 +540,8 @@ const completedSuccess = workflow({
   totalDurationMs: 2_820_000,
 });
 
-const aborted = workflow({
-  status: "aborted",
+const stoppedMidIteration = workflow({
+  status: "stopped",
   objective: planningWithTasks.objective,
   fixPlan: [
     task("t1", "Implement JWT tokens", {
@@ -568,7 +568,7 @@ const aborted = workflow({
       progressClassification: "progress",
     }),
   ],
-  haltReason: { type: "aborted" },
+  haltReason: { type: "stopped" },
   startedAt: "2026-02-25T10:05:00Z",
   totalCostUsd: 0.5,
   totalDurationMs: 292_000,
@@ -587,9 +587,8 @@ const meta = {
     onActivate: fn(),
     onObjectiveChange: fn(),
     onConfirmStart: fn(),
-    onPause: fn(),
+    onStop: fn(),
     onResume: fn(),
-    onAbort: fn(),
     onTaskAdd: fn(),
     onTaskRemove: fn(),
     onGeneratePlan: fn(),
@@ -656,9 +655,9 @@ export const RunningMidProgress: Story = {
   args: { workflow: runningMidProgress },
 };
 
-/** Paused — user paused after 4 iterations */
-export const Paused: Story = {
-  args: { workflow: paused },
+/** Stopped — user stopped after 4 iterations */
+export const Stopped: Story = {
+  args: { workflow: stopped },
 };
 
 /** Halted — circuit breaker tripped due to no progress */
@@ -676,7 +675,7 @@ export const CompletedSuccess: Story = {
   args: { workflow: completedSuccess },
 };
 
-/** Aborted — user manually aborted during iteration 2 */
-export const Aborted: Story = {
-  args: { workflow: aborted },
+/** Stopped mid-iteration — user stopped during iteration 2 */
+export const StoppedMidIteration: Story = {
+  args: { workflow: stoppedMidIteration },
 };

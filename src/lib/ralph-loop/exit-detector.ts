@@ -145,7 +145,7 @@ export function isSuccessfulHalt(reason: HaltReason): boolean {
     case "permission_denied":
     case "test_saturation":
     case "stalled_exit_signal":
-    case "aborted":
+    case "stopped":
     case "context_limit":
       return false;
     default:
@@ -156,12 +156,12 @@ export function isSuccessfulHalt(reason: HaltReason): boolean {
 /** Map a HaltReason to its terminal workflow output status. */
 export function haltReasonToTerminalStatus(
   reason: HaltReason,
-): "completed" | "halted" | "aborted" {
+): "completed" | "halted" | "stopped" {
   switch (reason.type) {
     case "plan_complete":
       return "completed";
-    case "aborted":
-      return "aborted";
+    case "stopped":
+      return "stopped";
     case "iteration_cap":
     case "circuit_breaker":
     case "permission_denied":

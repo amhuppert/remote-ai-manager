@@ -446,7 +446,7 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
   }
 
   /**
-   * On startup, detect workflows stuck in "running" status and reset to "paused".
+   * On startup, detect workflows stuck in "running" status and reset to "stopped".
    * Follows the same recovery pattern as recoverStaleConversations.
    */
   async function recoverStaleWorkflows(): Promise<number> {
@@ -460,7 +460,7 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
               sessionName: session.sessionName,
               previousStatus: session.workflow.status,
             });
-            session.workflow.status = "paused";
+            session.workflow.status = "stopped";
             recovered++;
           }
         }

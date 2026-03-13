@@ -5,5 +5,5 @@ export const dynamic = "force-dynamic";
 
 const handlers = createWorkflowRouteHandlers();
 
-/** POST — Pause a running workflow (stops after current iteration) */
-export const POST = withTracing(handlers.pausePOST);
+/** POST — Stop a running workflow (preserves progress, resumable) */
+export const POST = withTracing(handlers.stopPOST);

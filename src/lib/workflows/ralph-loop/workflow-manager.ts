@@ -59,10 +59,8 @@ function mapStateToWorkflowStatus(
         return "completed";
       case "halted":
         return "halted";
-      case "aborted":
-        return "aborted";
-      case "paused":
-        return "paused";
+      case "stopped":
+        return "stopped";
       case "planning":
       case "generatingPlan":
       case "awaitingConfirmation":
@@ -263,8 +261,8 @@ export function startWorkflow(input: RalphLoopInput): void {
       const terminalStatus =
         snapshot.output?.status === "completed"
           ? ("completed" as const)
-          : snapshot.output?.status === "aborted"
-            ? ("aborted" as const)
+          : snapshot.output?.status === "stopped"
+            ? ("stopped" as const)
             : ("halted" as const);
 
       logger.info("workflow-manager.workflow_terminal", {
@@ -325,30 +323,14 @@ export function startWorkflow(input: RalphLoopInput): void {
 }
 
 /**
- * Resume a paused or halted workflow.
+ * Resume a stopped or halted workflow.
  *
- * If an actor exists in memory (paused), sends RESUME event.
- * If no actor exists (server restart or halted), creates a new one
- * from the current state and starts it running.
+ * Since stopped/halted are terminal states (no in-memory actor),
+ * this always creates a new actor from the preserved state.
  */
 export function resumeWorkflow(input: RalphLoopInput): void {
-  const key = workflowKey(input.projectPath, input.sessionName);
-
-  // Check for existing paused actor
-  const existing = getActorRegistry().get(key);
-  if (existing) {
-    const snapshot = existing.getSnapshot();
-    if (snapshot.value === "paused") {
-      existing.send({ type: "RESUME" });
-      logger.info("workflow-manager.workflow_resumed", {
-        sessionName: input.sessionName,
-      });
-      return;
-    }
-  }
-
-  // No existing actor — create a new one (e.g., resuming after server restart)
-  // Start fresh with existing state as input → CONFIRM_PLAN → running
+  // Always create a new actor — stopped and halted are terminal states,
+  // so no in-memory actor exists. Start fresh with preserved state as input.
   startWorkflow(input);
 }
 

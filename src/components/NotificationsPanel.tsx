@@ -50,7 +50,7 @@ export interface ResolveConflictsNotification extends ServerNotificationBase {
 
 export interface WorkflowNotification extends BaseNotification {
   type: "workflow";
-  status: "running" | "paused" | "completed" | "halted" | "aborted";
+  status: "running" | "stopped" | "completed" | "halted";
   iterationCount: number;
   maxIterations: number;
   read?: boolean;
@@ -227,12 +227,10 @@ function getItemStatusClass(item: NotificationItem): string {
           return "success";
         case "halted":
           return "warning";
-        case "aborted":
-          return "error";
+        case "stopped":
+          return "paused";
         case "running":
           return "running";
-        case "paused":
-          return "paused";
         default:
           return assertNever(status);
       }

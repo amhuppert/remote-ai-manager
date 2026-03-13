@@ -7,9 +7,7 @@
  *                                                           │
  *                                     ┌─────────────────────┤
  *                                     ▼                     ▼
- *                                   paused               halted
- *                                     │
- *                                     └──→ running (on RESUME)
+ *                                   stopped               halted
  *
  *   running (compound):
  *     executingIteration ─→ evaluatingExit ─→ executingIteration (continue)
@@ -21,9 +19,7 @@
  *   PLAN_GENERATED    — Plan generation succeeded (carries tasks)
  *   PLAN_GENERATION_FAILED — Plan generation failed
  *   CONFIRM_PLAN      — User confirms plan, start running
- *   PAUSE             — Pause between iterations
- *   RESUME            — Resume from paused state
- *   ABORT             — Abort from any active state
+ *   STOP              — Stop from any active state (preserves progress, resumable)
  */
 
 import { setup, assign, fromPromise } from "xstate";
@@ -207,9 +203,9 @@ export const ralphLoopMachine = setup({
       completedAt: () => new Date().toISOString(),
     }),
 
-    /** Set halt reason for abort. */
-    setAborted: assign({
-      haltReason: () => ({ type: "aborted" as const }),
+    /** Set halt reason for user-initiated stop. */
+    setStopped: assign({
+      haltReason: () => ({ type: "stopped" as const }),
       completedAt: () => new Date().toISOString(),
     }),
 
@@ -256,11 +252,11 @@ export const ralphLoopMachine = setup({
 
   initial: "planning",
 
-  // Global ABORT handler: works from any non-final state
+  // Global STOP handler: works from any non-final state
   on: {
-    ABORT: {
-      target: ".aborted",
-      actions: "setAborted",
+    STOP: {
+      target: ".stopped",
+      actions: "setStopped",
     },
   },
 
@@ -336,13 +332,6 @@ export const ralphLoopMachine = setup({
     // ──────────────────────────────────────────────────────
     running: {
       entry: "broadcastWorkflowStatus",
-
-      on: {
-        PAUSE: {
-          target: "paused",
-          actions: "persistSnapshot",
-        },
-      },
 
       initial: "executingIteration",
       states: {
@@ -444,18 +433,6 @@ export const ralphLoopMachine = setup({
     },
 
     // ──────────────────────────────────────────────────────
-    // Paused: waiting for user to resume
-    // ──────────────────────────────────────────────────────
-    paused: {
-      entry: "broadcastWorkflowStatus",
-      on: {
-        RESUME: {
-          target: "running",
-        },
-      },
-    },
-
-    // ──────────────────────────────────────────────────────
     // Terminal States
     // ──────────────────────────────────────────────────────
     completed: {
@@ -468,7 +445,7 @@ export const ralphLoopMachine = setup({
       entry: ["broadcastWorkflowStatus", "persistSnapshot"],
     },
 
-    aborted: {
+    stopped: {
       type: "final",
       entry: ["broadcastWorkflowStatus", "persistSnapshot"],
     },

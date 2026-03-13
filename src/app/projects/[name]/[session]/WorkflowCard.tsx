@@ -16,14 +16,12 @@ function getStatusColor(status: WorkflowStatus): string {
       return "var(--text-secondary)";
     case "running":
       return "var(--cyan)";
-    case "paused":
+    case "stopped":
       return "var(--amber)";
     case "completed":
       return "var(--green)";
     case "halted":
       return "var(--red)";
-    case "aborted":
-      return "var(--text-tertiary)";
   }
 }
 
@@ -33,14 +31,12 @@ function getStatusIcon(status: WorkflowStatus): string {
       return "\u25C7"; // diamond
     case "running":
       return "\u25CF"; // circle
-    case "paused":
-      return "\u2016"; // double vertical
+    case "stopped":
+      return "\u25A0"; // filled square
     case "completed":
       return "\u2713"; // checkmark
     case "halted":
-      return "\u2717"; // X
-    case "aborted":
-      return "\u2014"; // em dash
+      return "\u26A0"; // warning
   }
 }
 

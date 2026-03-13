@@ -127,12 +127,12 @@ export const Running: Story = {
   },
 };
 
-export const Paused: Story = {
+export const Stopped: Story = {
   args: {
     projectName: "my-project",
     sessionName: "feature-auth",
     workflow: makeWorkflow({
-      status: "paused",
+      status: "stopped",
       fixPlan: [
         makeTask({ status: "completed" }),
         makeTask({ status: "completed" }),

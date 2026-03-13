@@ -173,7 +173,7 @@ describe("workflow.store — handleStatusEvent", () => {
     expect(_useWorkflowStore.getState().toastQueue).toHaveLength(0);
   });
 
-  it("pushes halted and aborted to toast queue", () => {
+  it("pushes halted and stopped to toast queue", () => {
     _useWorkflowStore.getState().handleStatusEvent(
       makeStatusEvent({
         workflowStatus: "halted",
@@ -186,7 +186,7 @@ describe("workflow.store — handleStatusEvent", () => {
     _useWorkflowStore.getState().handleStatusEvent(
       makeStatusEvent({
         sessionName: "other",
-        workflowStatus: "aborted",
+        workflowStatus: "stopped",
       }),
     );
 

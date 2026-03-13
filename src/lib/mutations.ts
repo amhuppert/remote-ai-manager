@@ -583,7 +583,7 @@ export function useConfirmWorkflowMutation(
   });
 }
 
-export function usePauseWorkflowMutation(
+export function useStopWorkflowMutation(
   projectName: string,
   sessionName: string,
 ) {
@@ -592,14 +592,17 @@ export function usePauseWorkflowMutation(
   return useMutation({
     mutationFn: () =>
       mutationFetch(
-        workflowUrl(projectName, sessionName, "/pause"),
-        "pause-workflow",
+        workflowUrl(projectName, sessionName, "/stop"),
+        "stop-workflow",
         { method: "POST" },
         statusResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: workflowKeys.status(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
       });
     },
   });
@@ -618,31 +621,6 @@ export function useResumeWorkflowMutation(
         "resume-workflow",
         { method: "POST" },
         workflowMutationResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
-    },
-  });
-}
-
-export function useAbortWorkflowMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: () =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName, "/abort"),
-        "abort-workflow",
-        { method: "POST" },
-        statusResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({

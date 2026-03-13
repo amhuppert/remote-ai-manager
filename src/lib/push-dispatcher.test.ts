@@ -174,11 +174,11 @@ describe("pushForWorkflowStatus", () => {
     expect(sendPushNotification).not.toHaveBeenCalled();
   });
 
-  it("does not send push for aborted workflow", async () => {
+  it("does not send push for stopped workflow", async () => {
     await pushForWorkflowStatus(pushConfig, {
       projectName: "proj",
       sessionName: "sess",
-      workflowStatus: "aborted",
+      workflowStatus: "stopped",
     });
 
     expect(sendPushNotification).not.toHaveBeenCalled();

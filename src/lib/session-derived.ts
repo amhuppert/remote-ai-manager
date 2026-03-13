@@ -7,7 +7,6 @@ import type { SessionState, DerivedSessionStatus } from "@/types";
 /**
  * Derive session status from workflow state and conversations:
  * - Workflow running → `running` (stable, no flicker between iterations)
- * - Workflow paused → `awaiting`
  * - `waiting_for_input` if any conversation is waiting for user input
  * - `running` if any conversation is running
  * - `awaiting` if any conversation is awaiting
@@ -21,8 +20,7 @@ export function deriveSessionStatus(
   if (session.workflow) {
     const ws = session.workflow.status;
     if (ws === "running") return "running";
-    if (ws === "paused") return "awaiting";
-    // planning, completed, halted, aborted — fall through to conversation-based
+    // planning, completed, halted, stopped — fall through to conversation-based
   }
 
   if (session.conversations.length === 0) {

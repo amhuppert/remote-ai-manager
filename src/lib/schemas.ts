@@ -317,7 +317,7 @@ export const haltReasonSchema = z.discriminatedUnion("type", [
     type: z.literal("stalled_exit_signal"),
     remainingTasks: z.number(),
   }),
-  z.object({ type: z.literal("aborted") }),
+  z.object({ type: z.literal("stopped") }),
   z.object({ type: z.literal("context_limit") }),
 ]);
 export type HaltReason = z.infer<typeof haltReasonSchema>;
@@ -357,10 +357,9 @@ export type RalphLoopIterationMeta = z.infer<
 export const workflowStatusSchema = z.enum([
   "planning",
   "running",
-  "paused",
+  "stopped",
   "completed",
   "halted",
-  "aborted",
 ]);
 export type WorkflowStatus = z.infer<typeof workflowStatusSchema>;
 

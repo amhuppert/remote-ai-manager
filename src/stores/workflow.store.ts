@@ -73,7 +73,7 @@ function makeKey(projectName: string, sessionName: string): string {
   return `${projectName}::${sessionName}`;
 }
 
-const TERMINAL_STATUSES: WorkflowStatus[] = ["completed", "halted", "aborted"];
+const TERMINAL_STATUSES: WorkflowStatus[] = ["completed", "halted", "stopped"];
 
 // ---------------------------------------------------------------------------
 // Store (private)
@@ -162,10 +162,7 @@ const useWorkflowStore = create<WorkflowStore>()(
 export const useActiveWorkflows = () => {
   const workflows = useWorkflowStore((s) => s.workflows);
   return useMemo(
-    () =>
-      Array.from(workflows.values()).filter(
-        (w) => w.status === "running" || w.status === "paused",
-      ),
+    () => Array.from(workflows.values()).filter((w) => w.status === "running"),
     [workflows],
   );
 };

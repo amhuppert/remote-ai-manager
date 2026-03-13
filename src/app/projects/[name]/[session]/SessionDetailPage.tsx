@@ -198,9 +198,7 @@ export default function SessionDetailPage({
   const conversations = conversationsQuery.data;
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
   const isFinished = session?.finished ?? false;
-  const workflowActive =
-    session?.workflow?.status === "running" ||
-    session?.workflow?.status === "paused";
+  const workflowActive = session?.workflow?.status === "running";
   const isIterationConversation =
     session?.conversations.find((c) => c.id === conversationId)?.role ===
     "iteration";

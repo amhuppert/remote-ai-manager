@@ -523,10 +523,10 @@ describe("deriveSessionStatus", () => {
     expect(deriveSessionStatus(session)).toBe("running");
   });
 
-  it("returns awaiting when workflow status is paused", () => {
+  it("falls through to conversation status when workflow status is stopped", () => {
     const session = makeSessionWith([makeConvo({ status: "new" })], {
       workflow: {
-        status: "paused",
+        status: "stopped",
         objective: "test",
         fixPlan: [],
         references: [],
@@ -556,7 +556,7 @@ describe("deriveSessionStatus", () => {
       },
     });
 
-    expect(deriveSessionStatus(session)).toBe("awaiting");
+    expect(deriveSessionStatus(session)).toBe("new");
   });
 
   it("falls through to conversation status for non-active workflow states", () => {

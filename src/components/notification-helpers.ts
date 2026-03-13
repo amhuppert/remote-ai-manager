@@ -68,14 +68,12 @@ export function getItemLabel(item: NotificationItem): string {
       switch (status) {
         case "running":
           return `${item.iterationCount}/${item.maxIterations}`;
-        case "paused":
-          return "Paused";
+        case "stopped":
+          return "Stopped";
         case "completed":
           return "Complete";
         case "halted":
           return "Halted";
-        case "aborted":
-          return "Aborted";
         default:
           return assertNever(status);
       }

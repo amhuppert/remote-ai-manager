@@ -2,7 +2,7 @@
  * Types for the Ralph Loop XState machine.
  *
  * Models the full autonomous iteration workflow:
- *   planning → generatingPlan → awaitingConfirmation → running → completed/halted/aborted
+ *   planning → generatingPlan → awaitingConfirmation → running → completed/halted/stopped
  *
  * The running state is a compound state with sub-states:
  *   executingIteration → evaluatingExit → (continue | halt)
@@ -89,9 +89,7 @@ export type RalphLoopEvent =
   | { type: "PLAN_GENERATED"; tasks: FixPlanTask[] }
   | { type: "PLAN_GENERATION_FAILED"; error: string }
   | { type: "CONFIRM_PLAN" }
-  | { type: "PAUSE" }
-  | { type: "RESUME" }
-  | { type: "ABORT" };
+  | { type: "STOP" };
 
 // ============================================================
 // Machine Output
@@ -99,7 +97,7 @@ export type RalphLoopEvent =
 
 /** Output produced when the machine reaches a terminal state. */
 export interface RalphLoopOutput {
-  status: "completed" | "halted" | "aborted";
+  status: "completed" | "halted" | "stopped";
   haltReason: HaltReason | null;
   iterations: RalphLoopIterationMeta[];
   totalCostUsd: number;

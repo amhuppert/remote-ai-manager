@@ -124,11 +124,10 @@ export async function pushForWorkflowStatus(
         sessionName: info.sessionName,
       });
       return;
-    case "aborted":
+    case "stopped":
     case "planning":
     case "running":
-    case "paused":
-      // No push notification for intermediate/abort statuses
+      // No push notification for intermediate/stop statuses
       return;
     default:
       assertNever(info.workflowStatus);
