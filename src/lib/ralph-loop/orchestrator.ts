@@ -356,6 +356,11 @@ async function runIterationImpl(
           deps,
         );
 
+        // Result message is always final — exit the loop immediately.
+        // The SDK async generator may not close promptly (e.g., MCP
+        // server cleanup keeps it alive), so we must not wait for it.
+        if (contextTokens === RESULT_SENTINEL) break;
+
         // Track context token usage from assistant messages
         if (contextTokens > 0) {
           peakContextTokens = Math.max(peakContextTokens, contextTokens);
@@ -577,6 +582,9 @@ async function persistIterationResultsImpl(
 // SDK Message Processing
 // ============================================================
 
+/** Sentinel value returned by processSDKMessage for result messages to signal loop exit. */
+const RESULT_SENTINEL = -1;
+
 async function processSDKMessage(
   message: SDKMessage,
   conversationId: string,
@@ -670,7 +678,7 @@ async function processSDKMessage(
         type: "result",
         raw: resultMsg,
       });
-      return 0;
+      return RESULT_SENTINEL;
     }
 
     default: {

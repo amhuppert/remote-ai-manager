@@ -578,6 +578,41 @@ describe("orchestrator", () => {
       expect(releaseLock).toHaveBeenCalled();
     });
 
+    it("exits the message loop after receiving result even if generator stays open", async () => {
+      // Simulate SDK behavior where the async generator doesn't close after
+      // yielding the result message (e.g., MCP server keeps it alive).
+      // Without the fix, this test would hang forever.
+      deps.query = vi.fn(() => ({
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: "system",
+            subtype: "init",
+            session_id: "sdk-session-1",
+          };
+          yield {
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            total_cost_usd: 0.1,
+            duration_ms: 5000,
+            num_turns: 2,
+            session_id: "sdk-session-1",
+          };
+          // Generator stays open — simulates MCP server keeping connection alive
+          await new Promise(() => {});
+        },
+      })) as unknown as OrchestratorDeps["query"];
+
+      const orchestrator = createOrchestrator(deps);
+      const params = makeIterationParams();
+
+      const result = await orchestrator.runIteration(params);
+
+      expect(result.status).toBe("completed");
+      expect(result.costUsd).toBe(0.1);
+      expect(result.turns).toBe(2);
+    });
+
     it("handles setup errors (e.g. lock acquisition failure)", async () => {
       deps.acquireSessionLock = vi.fn(() => {
         throw new Error("Lock already held");
