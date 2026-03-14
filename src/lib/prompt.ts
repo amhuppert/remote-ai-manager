@@ -39,6 +39,7 @@ import { createNotificationToolServer } from "./agent-notification-tool";
 import { getProjectDisplayName } from "./project-resolver";
 import { safeAppendTranscriptEntry } from "./transcript";
 import { extractContextTokens, extractContextWindow } from "./context-fill";
+import { resolvePluginPaths } from "./commands";
 import { randomUUID } from "node:crypto";
 
 // Prevent nested session detection when CC runs inside Claude Code
@@ -331,6 +332,13 @@ export async function executePromptStream(
       });
     }
 
+    // Resolve enabled plugins for SDK skill loading
+    const pluginPaths = await resolvePluginPaths();
+    const sdkPlugins = pluginPaths.map((p) => ({
+      type: "local" as const,
+      path: p.path,
+    }));
+
     // Create SDK query
     const abortController = new AbortController();
     registerAbortController(conversationId, abortController);
@@ -357,6 +365,7 @@ export async function executePromptStream(
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
+        ...(sdkPlugins.length > 0 ? { plugins: sdkPlugins } : {}),
         cwd: session.worktreePath,
         maxTurns: config.maxTurns,
         resume:

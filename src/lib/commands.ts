@@ -197,7 +197,7 @@ async function scanSkillsDir(
 /**
  * Resolve enabled plugin paths from user settings and installed plugins cache.
  */
-async function resolvePluginPaths(): Promise<
+export async function resolvePluginPaths(): Promise<
   Array<{ name: string; path: string }>
 > {
   const homeDir = os.homedir();
