@@ -312,7 +312,6 @@ export const haltReasonSchema = z.discriminatedUnion("type", [
     reason: z.enum(["no_progress", "repeated_error"]),
   }),
   z.object({ type: z.literal("permission_denied") }),
-  z.object({ type: z.literal("test_saturation") }),
   z.object({
     type: z.literal("stalled_exit_signal"),
     remainingTasks: z.number(),

@@ -134,14 +134,6 @@ function getHaltDisplay(reason: HaltReason): {
         icon: "\uD83D\uDD12",
         classification: "problem",
       };
-    case "test_saturation":
-      return {
-        title: "Test Saturation",
-        description:
-          "Too many consecutive test-only iterations without implementation work.",
-        icon: "\u27F3",
-        classification: "problem",
-      };
     case "stalled_exit_signal":
       return {
         title: "Stalled \u2014 Tasks Remaining",

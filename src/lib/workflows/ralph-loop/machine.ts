@@ -107,17 +107,6 @@ export const ralphLoopMachine = setup({
       return false;
     },
 
-    /** Test saturation — 3+ of last 5 iterations are test-only. */
-    isTestSaturated: ({ context }) => {
-      const iterations = context.iterations;
-      const last5 = iterations.slice(-5);
-      if (last5.length < 3) return false;
-      const testOnlyCount = last5.filter(
-        (iter) => iter.statusReport?.work_type === "testing",
-      ).length;
-      return testOnlyCount >= 3;
-    },
-
     /** Stalled exit signal — 2+ of last 3 signal exit but tasks remain. */
     isStalledExitSignal: ({ context }) => {
       const iterations = context.iterations;
@@ -183,12 +172,6 @@ export const ralphLoopMachine = setup({
     /** Set halt reason for permission_denied. */
     setHaltPermissionDenied: assign({
       haltReason: () => ({ type: "permission_denied" as const }),
-      completedAt: () => new Date().toISOString(),
-    }),
-
-    /** Set halt reason for test_saturation. */
-    setHaltTestSaturation: assign({
-      haltReason: () => ({ type: "test_saturation" as const }),
       completedAt: () => new Date().toISOString(),
     }),
 
@@ -411,13 +394,7 @@ export const ralphLoopMachine = setup({
               target: "#ralphLoop.halted",
               actions: "setHaltPermissionDenied",
             },
-            // Priority 5: Test saturation → halted
-            {
-              guard: "isTestSaturated",
-              target: "#ralphLoop.halted",
-              actions: "setHaltTestSaturation",
-            },
-            // Priority 6: Stalled exit signal → halted
+            // Priority 5: Stalled exit signal → halted
             {
               guard: "isStalledExitSignal",
               target: "#ralphLoop.halted",

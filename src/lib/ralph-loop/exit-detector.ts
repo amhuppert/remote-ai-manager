@@ -53,12 +53,7 @@ export function evaluate(params: ExitEvaluationParams): ExitDecision {
     return { action: "halt", reason: { type: "permission_denied" } };
   }
 
-  // 5. Test saturation (3+ of last 5 test-only)
-  if (hasTestSaturation(iterations)) {
-    return { action: "halt", reason: { type: "test_saturation" } };
-  }
-
-  // 6. Stalled exit signal (2+ of last 3 signal exit but tasks remain)
+  // 5. Stalled exit signal (2+ of last 3 signal exit but tasks remain)
   const stalledResult = checkStalledExitSignal(iterations, fixPlan);
   if (stalledResult) {
     return { action: "halt", reason: stalledResult };
@@ -100,18 +95,6 @@ function hasConsecutivePermissionDenials(
   return false;
 }
 
-/** Check if 3+ of the last 5 iterations are test-only (work_type: testing with no implementation). */
-function hasTestSaturation(iterations: RalphLoopIterationMeta[]): boolean {
-  const last5 = iterations.slice(-5);
-  if (last5.length < 3) return false;
-
-  const testOnlyCount = last5.filter(
-    (iter) => iter.statusReport?.work_type === "testing",
-  ).length;
-
-  return testOnlyCount >= 3;
-}
-
 /** Check for stalled exit signal: 2+ of last 3 iterations report exit_signal: true but tasks remain. */
 function checkStalledExitSignal(
   iterations: RalphLoopIterationMeta[],
@@ -143,7 +126,6 @@ export function isSuccessfulHalt(reason: HaltReason): boolean {
     case "iteration_cap":
     case "circuit_breaker":
     case "permission_denied":
-    case "test_saturation":
     case "stalled_exit_signal":
     case "stopped":
     case "context_limit":
@@ -165,7 +147,6 @@ export function haltReasonToTerminalStatus(
     case "iteration_cap":
     case "circuit_breaker":
     case "permission_denied":
-    case "test_saturation":
     case "stalled_exit_signal":
     case "context_limit":
       return "halted";

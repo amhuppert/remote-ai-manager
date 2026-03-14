@@ -271,67 +271,6 @@ describe("ExitDetector", () => {
     });
   });
 
-  describe("test_saturation", () => {
-    it("halts when 3+ of last 5 iterations are test-only", () => {
-      const iters = Array.from({ length: 5 }, (_, i) =>
-        makeIteration({
-          iterationNumber: i + 1,
-          statusReport: makeStatusReport({
-            work_type: i < 3 ? "testing" : "implementation",
-          }),
-        }),
-      );
-      const result = evaluate(
-        makeParams({
-          iterations: iters,
-          currentIteration: iters[4],
-        }),
-      );
-      expect(result).toEqual({
-        action: "halt",
-        reason: { type: "test_saturation" },
-      });
-    });
-
-    it("does not halt with only 2 test-only in last 5", () => {
-      const iters = Array.from({ length: 5 }, (_, i) =>
-        makeIteration({
-          iterationNumber: i + 1,
-          statusReport: makeStatusReport({
-            work_type: i < 2 ? "testing" : "implementation",
-          }),
-        }),
-      );
-      const result = evaluate(
-        makeParams({
-          iterations: iters,
-          currentIteration: iters[4],
-        }),
-      );
-      expect(result.action).toBe("continue");
-    });
-
-    it("does not halt with fewer than 3 iterations", () => {
-      const iters = [
-        makeIteration({
-          iterationNumber: 1,
-          statusReport: makeStatusReport({ work_type: "testing" }),
-        }),
-        makeIteration({
-          iterationNumber: 2,
-          statusReport: makeStatusReport({ work_type: "testing" }),
-        }),
-      ];
-      const result = evaluate(
-        makeParams({
-          iterations: iters,
-          currentIteration: iters[1],
-        }),
-      );
-      expect(result.action).toBe("continue");
-    });
-  });
-
   describe("stalled_exit_signal", () => {
     it("halts when 2+ of last 3 iterations signal exit with unresolved tasks", () => {
       const iters = [
@@ -496,7 +435,6 @@ describe("ExitDetector", () => {
         isSuccessfulHalt({ type: "circuit_breaker", reason: "no_progress" }),
       ).toBe(false);
       expect(isSuccessfulHalt({ type: "permission_denied" })).toBe(false);
-      expect(isSuccessfulHalt({ type: "test_saturation" })).toBe(false);
       expect(
         isSuccessfulHalt({ type: "stalled_exit_signal", remainingTasks: 3 }),
       ).toBe(false);

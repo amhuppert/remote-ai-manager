@@ -477,34 +477,6 @@ describe("Ralph Loop Machine", () => {
       expect(callCount).toBe(2);
     });
 
-    it("halts on test saturation (3+ of last 5 test-only)", async () => {
-      let callCount = 0;
-      const actor = startMachine({
-        runIteration: mockRunIteration(async ({ input }) => {
-          callCount++;
-          return makeIterationOutput({
-            iterationOverrides: {
-              iterationNumber: input.iterationNumber,
-              statusReport: {
-                status: "in_progress",
-                exit_signal: false,
-                work_summary: "Running tests",
-                work_type: "testing",
-              },
-            },
-            planOverrides: [makeTask({ id: "task-1", status: "pending" })],
-          });
-        }),
-      });
-
-      actor.send({ type: "CONFIRM_PLAN" });
-
-      const output = await toPromise(actor);
-      expect(output.status).toBe("halted");
-      expect(output.haltReason?.type).toBe("test_saturation");
-      expect(callCount).toBe(3);
-    });
-
     it("halts on stalled exit signal (2+ of last 3 signal exit, tasks remain)", async () => {
       let callCount = 0;
       const actor = startMachine({
