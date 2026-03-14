@@ -27,7 +27,7 @@ export const GET = withTracing(async (_request, { params }) => {
     );
   }
 
-  const repoConfig = await readRepoConfig(projectPath);
+  const repoConfig = await readRepoConfig(sessionState.worktreePath);
   const configuredServers = repoConfig?.devServers ?? [];
 
   // Merge configured servers with runtime state

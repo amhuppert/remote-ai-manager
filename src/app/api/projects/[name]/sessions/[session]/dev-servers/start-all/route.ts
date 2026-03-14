@@ -27,7 +27,7 @@ export const POST = withTracing(async (_request, { params }) => {
     );
   }
 
-  const repoConfig = await readRepoConfig(projectPath);
+  const repoConfig = await readRepoConfig(sessionState.worktreePath);
   const configuredServers = repoConfig?.devServers;
   if (!configuredServers || configuredServers.length === 0) {
     return NextResponse.json(
