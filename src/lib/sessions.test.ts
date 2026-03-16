@@ -3,6 +3,7 @@ import type { GitClient } from "./git-client";
 import {
   validateSessionName,
   sanitizeBranchName,
+  generateRandomSuffix,
   createSessionService,
   type SessionDeps,
 } from "./sessions";
@@ -312,6 +313,28 @@ describe("sanitizeBranchName", () => {
 });
 
 // ===========================================================================
+// 1.2b – Random suffix generation
+// ===========================================================================
+
+describe("generateRandomSuffix", () => {
+  it("returns a 6-character string", () => {
+    const result = generateRandomSuffix();
+    expect(result).toHaveLength(6);
+  });
+
+  it("returns only lowercase hex characters", () => {
+    const result = generateRandomSuffix();
+    expect(result).toMatch(/^[a-f0-9]{6}$/);
+  });
+
+  it("returns different values on successive calls", () => {
+    const a = generateRandomSuffix();
+    const b = generateRandomSuffix();
+    expect(a).not.toBe(b);
+  });
+});
+
+// ===========================================================================
 // 1.3 – generateSessionName
 // ===========================================================================
 
@@ -376,8 +399,10 @@ describe("createSessionFocus", () => {
     );
 
     expect(session.sessionName).toBe("My Feature");
-    expect(session.worktreePath).toBe("/projects/repo/.worktrees/my-feature");
-    expect(session.branchName).toBe("csm/my-feature");
+    expect(session.worktreePath).toMatch(
+      /^\/projects\/repo\/\.worktrees\/my-feature-[a-f0-9]{6}$/,
+    );
+    expect(session.branchName).toMatch(/^csm\/my-feature-[a-f0-9]{6}$/);
     expect(session.objective).toBe("Implement my feature");
     expect(session.conversations).toHaveLength(1);
     expect(session.conversations[0]).toMatchObject({
@@ -415,15 +440,18 @@ describe("createSessionFocus", () => {
   it("calls git worktree add with correct arguments", async () => {
     queryMock.mockReturnValue(mockQueryResponse("Build Feature"));
     mockGitSuccess();
-    await service.createSessionFocus("/projects/repo", "Build feature");
+    const session = await service.createSessionFocus(
+      "/projects/repo",
+      "Build feature",
+    );
 
     expect(gitMock).toHaveBeenCalledWith(
       [
         "worktree",
         "add",
         "-b",
-        "csm/build-feature",
-        "/projects/repo/.worktrees/build-feature",
+        session.branchName,
+        session.worktreePath,
         "main",
       ],
       "/projects/repo",
@@ -433,17 +461,17 @@ describe("createSessionFocus", () => {
   it("writes memory-bank/focus.md with objective", async () => {
     queryMock.mockReturnValue(mockQueryResponse("Auth Feature"));
     mockGitSuccess();
-    await service.createSessionFocus(
+    const session = await service.createSessionFocus(
       "/projects/repo",
       "Add user authentication",
     );
 
     expect(deps.mkdir).toHaveBeenCalledWith(
-      "/projects/repo/.worktrees/auth-feature/memory-bank",
+      `${session.worktreePath}/memory-bank`,
       { recursive: true },
     );
     expect(deps.writeFile).toHaveBeenCalledWith(
-      "/projects/repo/.worktrees/auth-feature/memory-bank/focus.md",
+      `${session.worktreePath}/memory-bank/focus.md`,
       "# Session Focus\n\n## Objective\n\nAdd user authentication\n\n> This focus document will be enriched after objective analysis.\n",
       "utf-8",
     );
@@ -544,7 +572,10 @@ describe("createSessionFocus", () => {
       return false;
     });
 
-    await service.createSessionFocus("/projects/repo", "With init objective");
+    const session = await service.createSessionFocus(
+      "/projects/repo",
+      "With init objective",
+    );
 
     // execFileAsyncMock should be called for the init script
     expect(execFileAsyncMock).toHaveBeenCalledTimes(1);
@@ -557,11 +588,11 @@ describe("createSessionFocus", () => {
       env: Record<string, string>;
       timeout: number;
     };
-    expect(opts.cwd).toBe("/projects/repo/.worktrees/with-init");
+    expect(opts.cwd).toBe(session.worktreePath);
     expect(opts.env.PROJECT_ROOT).toBe("/projects/repo");
-    expect(opts.env.WORKTREE_PATH).toBe("/projects/repo/.worktrees/with-init");
+    expect(opts.env.WORKTREE_PATH).toBe(session.worktreePath);
     expect(opts.env.SESSION_NAME).toBe("With Init");
-    expect(opts.env.BRANCH_NAME).toBe("csm/with-init");
+    expect(opts.env.BRANCH_NAME).toBe(session.branchName);
     expect(opts.timeout).toBe(60_000);
   });
 
@@ -702,8 +733,10 @@ describe("createSessionFast", () => {
     );
 
     expect(session.sessionName).toBe("My Feature");
-    expect(session.worktreePath).toBe("/projects/repo/.worktrees/my-feature");
-    expect(session.branchName).toBe("csm/my-feature");
+    expect(session.worktreePath).toMatch(
+      /^\/projects\/repo\/\.worktrees\/my-feature-[a-f0-9]{6}$/,
+    );
+    expect(session.branchName).toMatch(/^csm\/my-feature-[a-f0-9]{6}$/);
     expect(session.objective).toBeNull();
     expect(session.creationMode).toBe("fast");
     expect(session.conversations).toHaveLength(1);
@@ -723,10 +756,13 @@ describe("createSessionFast", () => {
 
   it("writes focus.md with session name as fallback objective", async () => {
     mockGitSuccess(); // git worktree add
-    await service.createSessionFast("/projects/repo", "Quick Fix");
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "Quick Fix",
+    );
 
     expect(deps.writeFile).toHaveBeenCalledWith(
-      "/projects/repo/.worktrees/quick-fix/memory-bank/focus.md",
+      `${session.worktreePath}/memory-bank/focus.md`,
       "# Session Focus\n\n## Objective\n\nQuick Fix\n",
       "utf-8",
     );
@@ -746,9 +782,11 @@ describe("createSessionFast", () => {
     );
 
     expect(session.sessionName).toBe("test, with special chars!");
-    expect(session.branchName).toBe("csm/test-with-special-chars");
-    expect(session.worktreePath).toBe(
-      "/projects/repo/.worktrees/test-with-special-chars",
+    expect(session.branchName).toMatch(
+      /^csm\/test-with-special-chars-[a-f0-9]{6}$/,
+    );
+    expect(session.worktreePath).toMatch(
+      /^\/projects\/repo\/\.worktrees\/test-with-special-chars-[a-f0-9]{6}$/,
     );
   });
 
@@ -770,6 +808,61 @@ describe("createSessionFast", () => {
     const project = savedState.projects["/projects/repo"];
     expect(project.sessions["Persist Test"]).toBeDefined();
     expect(project.sessions["Persist Test"].creationMode).toBe("fast");
+  });
+});
+
+// ===========================================================================
+// 1.5b – Random suffix in branch/worktree paths
+// ===========================================================================
+
+describe("provisionSession — random suffix", () => {
+  it("branchName includes a 6-char hex suffix", async () => {
+    mockGitSuccess();
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "My Feature",
+    );
+    expect(session.branchName).toMatch(/^csm\/my-feature-[a-f0-9]{6}$/);
+  });
+
+  it("worktreePath includes the same suffix", async () => {
+    mockGitSuccess();
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "My Feature",
+    );
+    expect(session.worktreePath).toMatch(
+      /^\/projects\/repo\/\.worktrees\/my-feature-[a-f0-9]{6}$/,
+    );
+  });
+
+  it("sessionName does NOT include the suffix", async () => {
+    mockGitSuccess();
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "My Feature",
+    );
+    expect(session.sessionName).toBe("My Feature");
+  });
+
+  it("git worktree add uses the suffixed branch and path", async () => {
+    mockGitSuccess();
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "My Feature",
+    );
+
+    expect(gitMock).toHaveBeenCalledWith(
+      [
+        "worktree",
+        "add",
+        "-b",
+        session.branchName,
+        session.worktreePath,
+        "main",
+      ],
+      "/projects/repo",
+    );
   });
 });
 
@@ -942,13 +1035,17 @@ describe("deleteSession", () => {
 describe("provisionSession — optimistic mode gets fast-mode treatment", () => {
   it("writes fast-mode focus.md content for optimistic sessions", async () => {
     mockGitSuccess();
-    await service.provisionSession("/projects/repo", "opt-task", {
-      mode: "optimistic",
-      objective: "Fix the bug in login",
-    });
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "opt-task",
+      {
+        mode: "optimistic",
+        objective: "Fix the bug in login",
+      },
+    );
 
     expect(deps.writeFile).toHaveBeenCalledWith(
-      "/projects/repo/.worktrees/opt-task/memory-bank/focus.md",
+      `${session.worktreePath}/memory-bank/focus.md`,
       "# Session Focus\n\n## Objective\n\nFix the bug in login\n",
       "utf-8",
     );
@@ -970,13 +1067,17 @@ describe("provisionSession — optimistic mode gets fast-mode treatment", () => 
 
   it("still writes focus-mode content for focus sessions", async () => {
     mockGitSuccess();
-    await service.provisionSession("/projects/repo", "focus-check", {
-      mode: "focus",
-      objective: "Research the auth system",
-    });
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "focus-check",
+      {
+        mode: "focus",
+        objective: "Research the auth system",
+      },
+    );
 
     expect(deps.writeFile).toHaveBeenCalledWith(
-      "/projects/repo/.worktrees/focus-check/memory-bank/focus.md",
+      `${session.worktreePath}/memory-bank/focus.md`,
       "# Session Focus\n\n## Objective\n\nResearch the auth system\n\n> This focus document will be enriched after objective analysis.\n",
       "utf-8",
     );

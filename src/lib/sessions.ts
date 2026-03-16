@@ -36,6 +36,11 @@ export function sanitizeBranchName(sessionName: string): string {
     .replace(/^-|-$/g, "");
 }
 
+/** Generate a 6-character random hex suffix for branch/worktree uniqueness */
+export function generateRandomSuffix(): string {
+  return crypto.randomBytes(3).toString("hex");
+}
+
 /** Validate session name: non-empty, reasonable length, must produce a valid branch suffix */
 export function validateSessionName(name: string): string | null {
   if (!name || name.trim().length === 0) {
@@ -199,8 +204,10 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     },
   ): Promise<SessionState> {
     const sanitized = sanitizeBranchName(sessionName);
-    const branchName = `csm/${sanitized}`;
-    const worktreePath = path.join(projectPath, ".worktrees", sanitized);
+    const suffix = generateRandomSuffix();
+    const dirName = `${sanitized}-${suffix}`;
+    const branchName = `csm/${dirName}`;
+    const worktreePath = path.join(projectPath, ".worktrees", dirName);
 
     if (existsSync(worktreePath)) {
       throw new Error(`Worktree directory already exists: ${worktreePath}`);

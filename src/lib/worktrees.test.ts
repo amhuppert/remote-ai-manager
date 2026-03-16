@@ -296,6 +296,36 @@ describe("deriveSessionName", () => {
     });
     expect(name).toBe("main");
   });
+
+  it("strips random 6-char hex suffix from csm/ branch", () => {
+    const name = deriveSessionName({
+      path: "/tmp/wt",
+      head: "abc",
+      branch: "refs/heads/csm/my-feature-a1b2c3",
+      isMainWorktree: false,
+    });
+    expect(name).toBe("my-feature");
+  });
+
+  it("handles csm/ branch without suffix (backward compat)", () => {
+    const name = deriveSessionName({
+      path: "/tmp/wt",
+      head: "abc",
+      branch: "refs/heads/csm/my-feature",
+      isMainWorktree: false,
+    });
+    expect(name).toBe("my-feature");
+  });
+
+  it("does not strip partial hex suffixes (less than 6 chars)", () => {
+    const name = deriveSessionName({
+      path: "/tmp/wt",
+      head: "abc",
+      branch: "refs/heads/csm/my-feature-a1b2",
+      isMainWorktree: false,
+    });
+    expect(name).toBe("my-feature-a1b2");
+  });
 });
 
 // ===========================================================================

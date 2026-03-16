@@ -116,6 +116,8 @@ export function deriveSessionName(worktree: DiscoveredWorktree): string {
     // Strip csm/ prefix (branch naming convention)
     if (name.startsWith("csm/")) {
       name = name.slice("csm/".length);
+      // Strip trailing random suffix (6 hex chars) added during provisioning
+      name = name.replace(/-[a-f0-9]{6}$/, "");
     }
     return name;
   }
