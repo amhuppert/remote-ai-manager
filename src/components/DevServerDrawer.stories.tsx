@@ -72,11 +72,12 @@ const errorNextDev: DevServerRuntimeState = {
   recentOutput: [],
 };
 
-// ── Toolbar decorator (simulates topbar context) ────────────
+// ── Toolbar decorator (simulates topbar session controls) ────
 
 /**
  * Simulates the topbar session controls area where the
- * trigger button will live in production.
+ * trigger button lives in production. The panel opens
+ * downward via portal so it renders outside this wrapper.
  */
 function ToolbarDecorator(Story: React.ComponentType) {
   return (

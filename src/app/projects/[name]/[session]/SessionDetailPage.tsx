@@ -101,6 +101,13 @@ import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import type { ImagePayload } from "@/types";
 import CopyableId from "@/components/CopyableId";
 import { KiroCommandProvider } from "@/components/KiroCommandContext";
+import DevServerDrawer from "@/components/DevServerDrawer";
+import { useDevServers } from "@/hooks/use-dev-servers";
+import {
+  useDevServerDrawerOpen,
+  useToggleDevServerDrawer,
+  useCloseDevServerDrawer,
+} from "@/stores/dev-server-drawer.store";
 
 interface Props {
   projectName: string;
@@ -192,6 +199,18 @@ export default function SessionDetailPage({
   const cancelEditing = useCancelEditing();
   const setPendingForkPrompt = useSetPendingForkPrompt();
   const consumePendingForkPrompt = useConsumePendingForkPrompt();
+
+  // --- Dev server ---
+  const dsOpen = useDevServerDrawerOpen();
+  const dsToggle = useToggleDevServerDrawer();
+  const dsClose = useCloseDevServerDrawer();
+  const {
+    servers: dsServers,
+    startServer: dsStartServer,
+    stopServer: dsStopServer,
+    startAll: dsStartAll,
+    stopAll: dsStopAll,
+  } = useDevServers(projectName, sessionName);
 
   // --- Derived from query data ---
   const session = sessionQuery.data;
@@ -464,23 +483,33 @@ export default function SessionDetailPage({
     }
   }, [visibleMidIndex, displayMessages.length, navigateToMessage]);
 
+  // Scroll panel body to bottom — avoids scrollIntoView which propagates
+  // through overflow:hidden ancestors and shifts the entire page up.
+  const scrollPanelToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      const el = panelBodyRef.current;
+      if (el?.scrollTo) el.scrollTo({ top: el.scrollHeight, behavior });
+    },
+    [],
+  );
+
   // Auto-scroll to bottom on initial load
   const initialScrollDone = useRef(false);
   useEffect(() => {
     if (!initialScrollDone.current && displayMessages.length > 0) {
       initialScrollDone.current = true;
-      conversationEndRef.current?.scrollIntoView({ behavior: "instant" });
+      scrollPanelToBottom("instant");
     }
-  }, [displayMessages.length]);
+  }, [displayMessages.length, scrollPanelToBottom]);
 
   // Auto-scroll to bottom when new messages arrive
   const prevMessageCountRef = useRef(displayMessages.length);
   useEffect(() => {
     if (displayMessages.length > prevMessageCountRef.current) {
-      conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollPanelToBottom();
     }
     prevMessageCountRef.current = displayMessages.length;
-  }, [displayMessages.length]);
+  }, [displayMessages.length, scrollPanelToBottom]);
 
   // Auto-scroll as streaming content blocks arrive
   const optimisticContentCount = useMemo(
@@ -489,9 +518,9 @@ export default function SessionDetailPage({
   );
   useEffect(() => {
     if (optimisticContentCount > 0) {
-      conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollPanelToBottom();
     }
-  }, [optimisticContentCount]);
+  }, [optimisticContentCount, scrollPanelToBottom]);
 
   const scrollToMessage = useCallback(
     (index: number) => {
@@ -506,11 +535,11 @@ export default function SessionDetailPage({
   );
 
   const scrollToEnd = useCallback(() => {
-    conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    scrollPanelToBottom();
     if (displayMessages.length > 0) {
       navigateToMessage(displayMessages.length - 1);
     }
-  }, [displayMessages.length, navigateToMessage]);
+  }, [displayMessages.length, navigateToMessage, scrollPanelToBottom]);
 
   const handlePrevMessage = useCallback(() => {
     const prevTurnStart = turnStartIndices[currentTurnIndex - 1];
@@ -969,6 +998,16 @@ export default function SessionDetailPage({
             <LayoutSwitcher
               activeLayout={layout}
               onLayoutChange={handleLayoutChange}
+            />
+            <DevServerDrawer
+              open={dsOpen}
+              servers={dsServers}
+              onClose={dsClose}
+              onToggle={dsToggle}
+              onStart={dsStartServer}
+              onStop={dsStopServer}
+              onStartAll={dsStartAll}
+              onStopAll={dsStopAll}
             />
             <div className="topbar-sep" />
             <button
