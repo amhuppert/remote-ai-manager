@@ -46,6 +46,14 @@ export interface ResolveConflictsOutput {
   partialConflicts?: ConflictEntry[];
 }
 
+export interface AnalyzeConflictsInput {
+  worktreePath: string;
+}
+export interface AnalyzeConflictsOutput {
+  status: "analyzed" | "failed";
+  conflicts: ConflictEntry[];
+}
+
 export interface RunValidationInput {
   projectPath: string;
   worktreePath: string;
@@ -132,6 +140,21 @@ export const resolveConflictsActor = fromPromise<
     conflicts: result.status === "resolved" ? result.conflicts : [],
     partialConflicts:
       result.status === "failed" ? result.partialConflicts : undefined,
+  };
+});
+
+/** Analyze merge conflicts without resolving them. */
+export const analyzeConflictsActor = fromPromise<
+  AnalyzeConflictsOutput,
+  AnalyzeConflictsInput
+>(async ({ input }) => {
+  const { analyzeConflicts } = await import("@/lib/conflict-resolution");
+  const result = await analyzeConflicts({
+    worktreePath: input.worktreePath,
+  });
+  return {
+    status: result.status,
+    conflicts: result.status === "analyzed" ? result.conflicts : [],
   };
 });
 

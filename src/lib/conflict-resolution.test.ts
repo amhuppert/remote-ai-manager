@@ -566,3 +566,201 @@ ${JSON.stringify(lastEntries, null, 2)}
     }
   });
 });
+
+// ============================================================
+// analyzeConflicts tests
+// ============================================================
+
+describe("analyzeConflicts", () => {
+  it("successfully extracts ConflictEntry[] from analysis-only response", async () => {
+    const conflictEntries = [
+      {
+        file: "src/index.ts",
+        description: "Conflicting import statements",
+        resolution: "Keep both imports in correct order",
+        rationale:
+          "Both imports are needed: one from main and one from the feature branch",
+      },
+    ];
+
+    const assistantText = `I've analyzed the merge conflicts. Here's the structured analysis:
+
+\`\`\`json
+${JSON.stringify(conflictEntries, null, 2)}
+\`\`\``;
+
+    const messages: SDKMessage[] = [
+      {
+        type: "system",
+        subtype: "init",
+        session_id: "test-session",
+      } as SDKMessage,
+      {
+        type: "assistant",
+        session_id: "test-session",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: assistantText }],
+        },
+      } as SDKMessage,
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "test-session",
+        total_cost_usd: 0.01,
+        duration_ms: 1000,
+        num_turns: 1,
+      } as SDKMessage,
+    ];
+
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { analyzeConflicts } = createConflictResolver(deps);
+
+    const result = await analyzeConflicts({
+      worktreePath: "/tmp/worktree",
+    });
+
+    expect(result.status).toBe("analyzed");
+    if (result.status === "analyzed") {
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0]!.file).toBe("src/index.ts");
+      expect(result.conflicts[0]!.description).toBe(
+        "Conflicting import statements",
+      );
+      expect(result.conflicts[0]!.resolution).toBe(
+        "Keep both imports in correct order",
+      );
+    }
+  });
+
+  it("uses analysis-only prompt that does not instruct file editing", async () => {
+    const conflictEntries = [
+      {
+        file: "src/index.ts",
+        description: "Conflict",
+        resolution: "Proposed fix",
+        rationale: "Reason",
+      },
+    ];
+
+    const assistantText = `\`\`\`json
+${JSON.stringify(conflictEntries, null, 2)}
+\`\`\``;
+
+    const messages: SDKMessage[] = [
+      {
+        type: "system",
+        subtype: "init",
+        session_id: "test-session",
+      } as SDKMessage,
+      {
+        type: "assistant",
+        session_id: "test-session",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: assistantText }],
+        },
+      } as SDKMessage,
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "test-session",
+        total_cost_usd: 0.01,
+        duration_ms: 500,
+        num_turns: 1,
+      } as SDKMessage,
+    ];
+
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { analyzeConflicts } = createConflictResolver(deps);
+
+    await analyzeConflicts({ worktreePath: "/tmp/worktree" });
+
+    // Verify the system prompt does NOT instruct editing or staging
+    const mockQuery = deps.query as ReturnType<typeof vi.fn>;
+    const callArgs = mockQuery.mock.calls[0]![0] as Record<string, unknown>;
+    const options = callArgs["options"] as Record<string, unknown>;
+    const systemPrompt = options["systemPrompt"] as Record<string, unknown>;
+    const appendedPrompt = systemPrompt["append"] as string;
+
+    expect(appendedPrompt).not.toContain("Edit each file");
+    expect(appendedPrompt).not.toContain("Stage each resolved file");
+    expect(appendedPrompt).toContain("DO NOT");
+  });
+
+  it("returns failed status when no JSON code fence is found", async () => {
+    const messages: SDKMessage[] = [
+      {
+        type: "system",
+        subtype: "init",
+        session_id: "test-session",
+      } as SDKMessage,
+      {
+        type: "assistant",
+        session_id: "test-session",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I analyzed but forgot the JSON output." },
+          ],
+        },
+      } as SDKMessage,
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "test-session",
+        total_cost_usd: 0.01,
+        duration_ms: 500,
+        num_turns: 1,
+      } as SDKMessage,
+    ];
+
+    const deps = createTestDeps({
+      query: vi
+        .fn()
+        .mockReturnValue(
+          mockQueryStream(messages) as unknown as Query,
+        ) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { analyzeConflicts } = createConflictResolver(deps);
+
+    const result = await analyzeConflicts({ worktreePath: "/tmp/worktree" });
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.error).toContain("No JSON code fence found");
+    }
+  });
+
+  it("returns failed status on SDK error", async () => {
+    const deps = createTestDeps({
+      query: vi.fn().mockImplementation(() => {
+        throw new Error("SDK connection failed");
+      }) as unknown as ConflictResolutionDeps["query"],
+    });
+
+    const { analyzeConflicts } = createConflictResolver(deps);
+
+    const result = await analyzeConflicts({ worktreePath: "/tmp/worktree" });
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.error).toContain("SDK connection failed");
+    }
+  });
+});

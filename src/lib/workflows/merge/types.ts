@@ -12,6 +12,7 @@ import type { ConflictEntry, ConflictDecisionInput } from "@/lib/schemas";
 export type MergePhase =
   | "committing-uncommitted"
   | "merging-main"
+  | "analyzing-conflicts"
   | "resolving-conflicts"
   | "validating"
   | "fixing-validation"

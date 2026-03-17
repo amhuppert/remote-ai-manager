@@ -7,7 +7,7 @@
  *                                                         ↓
  *                                         (clean) → validating → squashMerging → completed
  *                                         (conflicts + autoResolve) → resolvingConflicts → committingResolution → validating
- *                                         (conflicts + !autoResolve) → conflicts (final)
+ *                                         (conflicts + !autoResolve) → analyzingConflicts → conflicts (final)
  *
  *   routing → resolvingConflicts (for resolve-conflicts jobs)
  *
@@ -33,6 +33,8 @@ import type {
   MergeMainOutput,
   ResolveConflictsInput,
   ResolveConflictsOutput,
+  AnalyzeConflictsInput,
+  AnalyzeConflictsOutput,
   RunValidationInput,
   RunValidationOutput,
   FixValidationInput,
@@ -45,6 +47,7 @@ import {
   commitChangesActor,
   mergeMain,
   resolveConflictsActor,
+  analyzeConflictsActor,
   runValidation,
   fixValidation,
   squashMergeActor,
@@ -83,6 +86,9 @@ export const mergeMachine = setup({
     resolveConflicts: resolveConflictsActor as ReturnType<
       typeof fromPromise<ResolveConflictsOutput, ResolveConflictsInput>
     >,
+    analyzeConflicts: analyzeConflictsActor as ReturnType<
+      typeof fromPromise<AnalyzeConflictsOutput, AnalyzeConflictsInput>
+    >,
     runValidation: runValidation as ReturnType<
       typeof fromPromise<RunValidationOutput, RunValidationInput>
     >,
@@ -108,6 +114,10 @@ export const mergeMachine = setup({
     resolutionSucceeded: ({ event }) => {
       const e = event as unknown as { output: ResolveConflictsOutput };
       return e.output.status === "resolved";
+    },
+    analysisSucceeded: ({ event }) => {
+      const e = event as unknown as { output: AnalyzeConflictsOutput };
+      return e.output.status === "analyzed";
     },
     fixSucceeded: ({ event }) => {
       const e = event as unknown as { output: FixValidationOutput };
@@ -228,8 +238,33 @@ export const mergeMachine = setup({
     conflictsDetected: {
       always: [
         { guard: "shouldAutoResolve", target: "resolvingConflicts" },
-        { target: "conflicts" },
+        { target: "analyzingConflicts" },
       ],
+    },
+
+    analyzingConflicts: {
+      entry: assign({ phase: "analyzing-conflicts" as const }),
+      invoke: {
+        src: "analyzeConflicts",
+        input: ({ context }) => ({ worktreePath: context.worktreePath }),
+        onDone: [
+          {
+            guard: "analysisSucceeded",
+            actions: assign({
+              conflictAnalysis: ({ event }) => event.output.conflicts,
+            }),
+            target: "conflicts",
+          },
+          {
+            // Analysis failed — go to conflicts without analysis
+            target: "conflicts",
+          },
+        ],
+        onError: {
+          // Graceful degradation — go to conflicts without analysis
+          target: "conflicts",
+        },
+      },
     },
 
     resolvingConflicts: {

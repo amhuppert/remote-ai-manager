@@ -37,6 +37,10 @@ export type ConflictResolutionResult =
   | { status: "resolved"; conflicts: ConflictEntry[] }
   | { status: "failed"; error: string; partialConflicts?: ConflictEntry[] };
 
+export type ConflictAnalysisResult =
+  | { status: "analyzed"; conflicts: ConflictEntry[] }
+  | { status: "failed"; error: string };
+
 // ============================================================
 // System Prompt
 // ============================================================
@@ -68,6 +72,31 @@ IMPORTANT:
 - The JSON must be a valid array of objects with exactly: file, description, resolution, rationale fields.
 - Every conflict marker must be removed — no <<<<<<< or ======= or >>>>>>> markers should remain.
 - Stage every resolved file with git add.`;
+
+const CONFLICT_ANALYSIS_INSTRUCTIONS = `You are a merge conflict analysis specialist. Your task is to analyze all git merge conflicts in this worktree and describe them, WITHOUT resolving them.
+
+Follow these steps precisely:
+
+1. Run \`git diff --name-only --diff-filter=U\` to find all conflicted files.
+2. Read each conflicted file and analyze the conflict markers (<<<<<<< HEAD, =======, >>>>>>> markers).
+3. For each file, understand the intent of both sides and propose how the conflict should be resolved.
+4. Output a single JSON code fence with your analysis using exactly this schema:
+
+\`\`\`json
+[
+  {
+    "file": "path/to/file",
+    "description": "Brief description of what conflicted",
+    "resolution": "Proposed resolution — what should be done to merge correctly",
+    "rationale": "Why this resolution is correct"
+  }
+]
+\`\`\`
+
+IMPORTANT:
+- DO NOT edit any files. DO NOT remove conflict markers. DO NOT run git add. This is analysis only.
+- The JSON must be a valid array of objects with exactly: file, description, resolution, rationale fields.
+- Analyze ALL conflicted files before outputting the JSON.`;
 
 // ============================================================
 // Decision Prompt Builder
@@ -140,6 +169,9 @@ export function createConflictResolver(
       worktreePath: string;
       decisions?: ConflictDecisionInput[];
     }): Promise<ConflictResolutionResult> => resolveConflictsImpl(params, deps),
+    analyzeConflicts: (params: {
+      worktreePath: string;
+    }): Promise<ConflictAnalysisResult> => analyzeConflictsImpl(params, deps),
   };
 }
 
@@ -289,6 +321,140 @@ async function resolveConflictsImpl(
   });
 
   return { status: "resolved", conflicts };
+}
+
+// ============================================================
+// Analyze Conflicts (analysis-only, no file edits)
+// ============================================================
+
+/**
+ * Invoke Claude Agent SDK to analyze merge conflicts without resolving them.
+ * Produces structured ConflictEntry[] describing each conflict and a proposed resolution,
+ * but does NOT edit files or remove conflict markers.
+ */
+export async function analyzeConflicts(params: {
+  worktreePath: string;
+}): Promise<ConflictAnalysisResult> {
+  return analyzeConflictsImpl(params, defaultDeps);
+}
+
+async function analyzeConflictsImpl(
+  params: { worktreePath: string },
+  deps: ConflictResolutionDeps,
+): Promise<ConflictAnalysisResult> {
+  const { worktreePath } = params;
+  const { query, readConfig } = deps;
+
+  logger.info("conflict-analysis.start", { worktreePath });
+
+  let config;
+  try {
+    config = await readConfig();
+  } catch (err) {
+    const errorMsg =
+      err instanceof Error ? err.message : "Failed to read config";
+    logger.error("conflict-analysis.config_error", { error: errorMsg });
+    return { status: "failed", error: errorMsg };
+  }
+
+  const prompt =
+    "Analyze all merge conflicts in this worktree. Follow the instructions in your system prompt precisely. Do NOT edit any files.";
+
+  const assistantTexts: string[] = [];
+
+  try {
+    const abortController = new AbortController();
+
+    const timeoutHandle = setTimeout(() => {
+      logger.warn("conflict-analysis.timeout", {
+        worktreePath,
+        timeoutMs: config.claudeTimeoutMs,
+      });
+      abortController.abort();
+    }, config.claudeTimeoutMs);
+
+    try {
+      const stream = query({
+        prompt,
+        options: {
+          systemPrompt: {
+            type: "preset",
+            preset: "claude_code",
+            append: CONFLICT_ANALYSIS_INSTRUCTIONS,
+          },
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          cwd: worktreePath,
+          persistSession: false,
+          abortController,
+          settingSources: ["user", "project", "local"],
+          env: { CLAUDECODE: "" },
+        },
+      });
+
+      for await (const message of stream) {
+        collectAssistantText(message, assistantTexts);
+      }
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "Unknown SDK error";
+    logger.error("conflict-analysis.sdk_error", {
+      worktreePath,
+      error: errorMsg,
+    });
+    return { status: "failed", error: errorMsg };
+  }
+
+  const fullText = assistantTexts.join("\n");
+  logger.debug("conflict-analysis.full_text_length", {
+    length: fullText.length,
+  });
+
+  const jsonContent = extractLastJsonCodeFence(fullText);
+  if (!jsonContent) {
+    logger.warn("conflict-analysis.no_json_fence", { worktreePath });
+    return {
+      status: "failed",
+      error: "No JSON code fence found in Claude's response",
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonContent);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "Invalid JSON";
+    logger.warn("conflict-analysis.json_parse_error", {
+      worktreePath,
+      error: errorMsg,
+    });
+    return {
+      status: "failed",
+      error: `Failed to parse conflict entries JSON: ${errorMsg}`,
+    };
+  }
+
+  const parseResult = z.array(conflictEntrySchema).safeParse(parsed);
+  if (!parseResult.success) {
+    logger.warn("conflict-analysis.zod_parse_error", {
+      worktreePath,
+      error: parseResult.error.message,
+    });
+    return {
+      status: "failed",
+      error: `Failed to parse conflict entries: ${parseResult.error.message}`,
+    };
+  }
+
+  const conflicts = parseResult.data;
+  logger.info("conflict-analysis.analyzed", {
+    worktreePath,
+    conflictCount: conflicts.length,
+  });
+
+  return { status: "analyzed", conflicts };
 }
 
 // ============================================================

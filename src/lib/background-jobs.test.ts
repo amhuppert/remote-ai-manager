@@ -18,6 +18,8 @@ import type {
   MergeMainOutput,
   ResolveConflictsInput,
   ResolveConflictsOutput,
+  AnalyzeConflictsInput,
+  AnalyzeConflictsOutput,
   RunValidationInput,
   FixValidationInput,
   FixValidationOutput,
@@ -40,6 +42,7 @@ const mockCheckUncommitted = vi.fn();
 const mockCommitChangesActor = vi.fn();
 const mockMergeMain = vi.fn();
 const mockResolveConflictsActor = vi.fn();
+const mockAnalyzeConflictsActor = vi.fn();
 const mockRunValidation = vi.fn();
 const mockFixValidation = vi.fn();
 const mockSquashMergeActor = vi.fn();
@@ -61,6 +64,10 @@ const testMachine = mergeMachine.provide({
       ResolveConflictsOutput,
       ResolveConflictsInput
     >(async ({ input }) => mockResolveConflictsActor(input)),
+    analyzeConflicts: fromPromise<
+      AnalyzeConflictsOutput,
+      AnalyzeConflictsInput
+    >(async ({ input }) => mockAnalyzeConflictsActor(input)),
     runValidation: fromPromise<void, RunValidationInput>(async ({ input }) =>
       mockRunValidation(input),
     ),
@@ -157,6 +164,11 @@ describe("background-jobs", () => {
     mockAcquireSessionLock.mockReturnValue(releaseSession);
     // Default: no uncommitted changes
     mockCheckUncommitted.mockResolvedValue({ hasChanges: false });
+    // Default: analyze conflicts returns empty analysis
+    mockAnalyzeConflictsActor.mockResolvedValue({
+      status: "analyzed" as const,
+      conflicts: [],
+    });
     // Default: pre-merge validation passes
     mockRunValidation.mockResolvedValue(undefined);
     // Default: fix validation succeeds

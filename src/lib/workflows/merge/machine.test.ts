@@ -11,6 +11,8 @@ import type {
   MergeMainOutput,
   ResolveConflictsInput,
   ResolveConflictsOutput,
+  AnalyzeConflictsInput,
+  AnalyzeConflictsOutput,
   RunValidationInput,
   RunValidationOutput,
   FixValidationInput,
@@ -51,6 +53,14 @@ function mockResolveConflicts(
   fn: (input: ResolveConflictsInput) => Promise<ResolveConflictsOutput>,
 ) {
   return fromPromise<ResolveConflictsOutput, ResolveConflictsInput>(
+    async ({ input }) => fn(input),
+  );
+}
+
+function mockAnalyzeConflicts(
+  fn: (input: AnalyzeConflictsInput) => Promise<AnalyzeConflictsOutput>,
+) {
+  return fromPromise<AnalyzeConflictsOutput, AnalyzeConflictsInput>(
     async ({ input }) => fn(input),
   );
 }
@@ -99,6 +109,7 @@ type ActorOverrides = {
   commitChanges?: ReturnType<typeof mockCommitChanges>;
   mergeMain?: ReturnType<typeof mockMergeMain>;
   resolveConflicts?: ReturnType<typeof mockResolveConflicts>;
+  analyzeConflicts?: ReturnType<typeof mockAnalyzeConflicts>;
   runValidation?: ReturnType<typeof mockRunValidation>;
   fixValidation?: ReturnType<typeof mockFixValidation>;
   squashMerge?: ReturnType<typeof mockSquashMerge>;
@@ -121,6 +132,12 @@ function createTestMachine(overrides: ActorOverrides = {}) {
         overrides.resolveConflicts ??
         mockResolveConflicts(async () => ({
           status: "resolved",
+          conflicts: [],
+        })),
+      analyzeConflicts:
+        overrides.analyzeConflicts ??
+        mockAnalyzeConflicts(async () => ({
+          status: "analyzed",
           conflicts: [],
         })),
       runValidation:
@@ -220,12 +237,50 @@ describe("mergeMachine", () => {
   });
 
   describe("merge with conflicts without autoResolve", () => {
-    it("goes to conflicts terminal state", async () => {
+    it("analyzes conflicts then goes to conflicts terminal state with analysis", async () => {
+      const states: string[] = [];
       const machine = createTestMachine({
         mergeMain: mockMergeMain(async () => ({
           status: "conflicts",
           conflictFiles: ["README.md"],
         })),
+        analyzeConflicts: mockAnalyzeConflicts(async () => ({
+          status: "analyzed",
+          conflicts: [
+            {
+              file: "README.md",
+              description: "Conflicting heading",
+              resolution: "Keep feature branch heading",
+              rationale: "Feature branch has the updated title",
+            },
+          ],
+        })),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, autoResolve: false },
+      });
+
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("conflicts");
+      expect(output.conflictFiles).toEqual(["README.md"]);
+      expect(output.conflictAnalysis).toHaveLength(1);
+      expect(output.conflictAnalysis![0]!.file).toBe("README.md");
+      expect(states).toContain("analyzingConflicts");
+    });
+
+    it("gracefully degrades to conflicts terminal when analysis fails", async () => {
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["README.md"],
+        })),
+        analyzeConflicts: mockAnalyzeConflicts(async () => {
+          throw new Error("SDK unavailable");
+        }),
       });
       const actor = createActor(machine, {
         input: { ...defaultInput, autoResolve: false },
@@ -236,6 +291,7 @@ describe("mergeMachine", () => {
 
       expect(output.status).toBe("conflicts");
       expect(output.conflictFiles).toEqual(["README.md"]);
+      expect(output.conflictAnalysis).toBeNull();
     });
   });
 
@@ -647,6 +703,37 @@ describe("mergeMachine", () => {
       expect(phases).toContain("merging-main");
       expect(phases).toContain("validating");
       expect(phases).toContain("squash-merging");
+    });
+
+    it("includes analyzing-conflicts phase when autoResolve is false", async () => {
+      const phases: (string | null)[] = [];
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["a.ts"],
+        })),
+        analyzeConflicts: mockAnalyzeConflicts(async () => ({
+          status: "analyzed",
+          conflicts: [
+            {
+              file: "a.ts",
+              description: "Conflict",
+              resolution: "Fix",
+              rationale: "Reason",
+            },
+          ],
+        })),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, autoResolve: false },
+      });
+
+      actor.subscribe((s) => phases.push(s.context.phase));
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(phases).toContain("analyzing-conflicts");
     });
   });
 });
