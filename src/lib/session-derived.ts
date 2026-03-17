@@ -6,6 +6,7 @@ import type { SessionState, DerivedSessionStatus } from "@/types";
 
 /**
  * Derive session status from workflow state and conversations:
+ * - Finished sessions → `idle` (merged, no longer active)
  * - Workflow running → `running` (stable, no flicker between iterations)
  * - `waiting_for_input` if any conversation is waiting for user input
  * - `running` if any conversation is running
@@ -16,6 +17,9 @@ import type { SessionState, DerivedSessionStatus } from "@/types";
 export function deriveSessionStatus(
   session: SessionState,
 ): DerivedSessionStatus {
+  // Finished sessions are done — conversation statuses are irrelevant
+  if (session.finished) return "idle";
+
   // Workflow status takes priority — provides stable status during execution
   if (session.workflow) {
     const ws = session.workflow.status;

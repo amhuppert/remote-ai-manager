@@ -628,8 +628,12 @@ export async function executePromptStream(
           c.pendingQuestionId = null;
           c.pendingQuestions = null;
         },
-      ).catch(() => {
-        // best-effort status reset
+      ).catch((err) => {
+        logger.error("prompt.status_reset_failed", {
+          sessionName: session.sessionName,
+          conversationId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
 
       // Broadcast awaiting status
