@@ -1,16 +1,10 @@
 "use client";
 
 import { useMemo, useCallback, useState } from "react";
-import Link from "next/link";
-import type { SessionState } from "@/types";
-import {
-  deriveSessionStatus,
-  deriveSessionPromptCount,
-} from "@/lib/session-derived";
+import { deriveSessionStatus } from "@/lib/session-derived";
 import { useSessionsQuery, usePresetsQuery } from "@/lib/queries";
 import {
   useDeleteSessionMutation,
-  useArchiveSessionMutation,
   useInstallPresetMutation,
 } from "@/lib/mutations";
 import {
@@ -19,7 +13,6 @@ import {
   useShowArchivedSessions,
   useOpenCreateModal,
   useCloseCreateModal,
-  useConfirmDeleteSession,
   useCancelDeleteSession,
   useToggleArchivedSessions,
 } from "@/stores/sessions.store";
@@ -28,84 +21,9 @@ import OptimisticDialog from "./OptimisticDialog";
 import PresetInstallDialog from "./PresetInstallDialog";
 import ProjectActionsBar from "./ProjectActionsBar";
 import RoadmapItemsPanel from "./RoadmapItemsPanel";
+import SessionsTable from "./SessionsTable";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import TddToggle from "@/components/TddToggle";
 import Topbar from "@/components/Topbar";
-import { useTddToggleMutation } from "@/lib/mutations";
-
-function formatRelativeTime(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function StatusBadge({ session }: { session: SessionState }) {
-  if (session.finished) {
-    return (
-      <span className="session-status merged">
-        <span className="dot" />
-        merged
-      </span>
-    );
-  }
-  const status = deriveSessionStatus(session);
-  return (
-    <span className={`session-status ${status}`}>
-      <span className="dot" />
-      {status}
-    </span>
-  );
-}
-
-function SessionTddToggle({
-  projectName,
-  session,
-}: {
-  projectName: string;
-  session: SessionState;
-}) {
-  const tddMutation = useTddToggleMutation(projectName, session.sessionName);
-
-  return (
-    <TddToggle
-      enabled={session.tddEnabled}
-      onChange={(val) => tddMutation.mutate(val)}
-      disabled={tddMutation.isPending}
-      compact
-    />
-  );
-}
-
-function ArchiveButton({
-  projectName,
-  session,
-}: {
-  projectName: string;
-  session: SessionState;
-}) {
-  const archiveMutation = useArchiveSessionMutation(
-    projectName,
-    session.sessionName,
-  );
-
-  return (
-    <button
-      className="btn btn-sm"
-      onClick={(e) => {
-        e.stopPropagation();
-        archiveMutation.mutate(!session.archived);
-      }}
-      disabled={archiveMutation.isPending}
-    >
-      {session.archived ? "Unarchive" : "Archive"}
-    </button>
-  );
-}
 
 interface SessionsListProps {
   projectName: string;
@@ -123,7 +41,6 @@ export default function SessionsList({
   const showArchived = useShowArchivedSessions();
   const openCreateModal = useOpenCreateModal();
   const closeCreateModal = useCloseCreateModal();
-  const confirmDelete = useConfirmDeleteSession();
   const cancelDelete = useCancelDeleteSession();
   const toggleArchived = useToggleArchivedSessions();
 
@@ -131,11 +48,12 @@ export default function SessionsList({
   const deleteMutation = useDeleteSessionMutation(projectName);
   const installPresetMutation = useInstallPresetMutation(projectName);
 
-  // --- Optimistic dialog ---
+  // --- Local state ---
   const [optimisticDialogOpen, setOptimisticDialogOpen] = useState(false);
-
-  // --- Preset install dialog ---
   const [presetDialogOpen, setPresetDialogOpen] = useState(false);
+  const [nameFilter, setNameFilter] = useState("");
+
+  // --- Presets ---
   const presetsQuery = usePresetsQuery(projectName);
   const installedPresets = useMemo(
     () => presetsQuery.data?.filter((p) => p.installed).map((p) => p.id) ?? [],
@@ -210,101 +128,12 @@ export default function SessionsList({
               />
 
               {filteredSessions.length > 0 ? (
-                <table className="sessions-table">
-                  <thead>
-                    <tr>
-                      <th>Session</th>
-                      <th>Branch</th>
-                      <th>Status</th>
-                      <th>Last Activity</th>
-                      <th>Prompts</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredSessions.map((session) => (
-                      <tr
-                        key={session.sessionName}
-                        className={session.archived ? "archived" : ""}
-                      >
-                        <td>
-                          <Link
-                            href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`}
-                            className="session-name-cell"
-                          >
-                            <span className="session-name">
-                              {session.sessionName}
-                            </span>
-                            {session.finished && (
-                              <span className="session-badge merged">
-                                merged
-                              </span>
-                            )}
-                            {session.creationMode === "focus" && (
-                              <span className="session-badge focus">focus</span>
-                            )}
-                            {session.creationMode === "optimistic" && (
-                              <span className="session-badge optimistic">
-                                optimistic
-                              </span>
-                            )}
-                            {session.creationMode === "fast" && (
-                              <span className="session-badge fast">fast</span>
-                            )}
-                          </Link>
-                        </td>
-                        <td>
-                          <span className="session-branch">
-                            {session.branchName}
-                          </span>
-                        </td>
-                        <td>
-                          <StatusBadge session={session} />
-                        </td>
-                        <td>
-                          <span className="session-time">
-                            {formatRelativeTime(session.lastActivityAt)}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="session-time">
-                            {deriveSessionPromptCount(session)}
-                          </span>
-                        </td>
-                        <td>
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: "var(--space-xs)",
-                              alignItems: "center",
-                            }}
-                          >
-                            <SessionTddToggle
-                              projectName={projectName}
-                              session={session}
-                            />
-                            <ArchiveButton
-                              projectName={projectName}
-                              session={session}
-                            />
-                            <button
-                              className="btn btn-danger btn-sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                confirmDelete({
-                                  sessionName: session.sessionName,
-                                  projectName,
-                                });
-                              }}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <SessionsTable
+                  sessions={filteredSessions}
+                  projectName={projectName}
+                  nameFilter={nameFilter}
+                  onNameFilterChange={setNameFilter}
+                />
               ) : (
                 <div className="empty-state">
                   <div className="empty-state-icon">&#128640;</div>

@@ -1324,6 +1324,53 @@ textarea {
   color: var(--text-secondary);
 }
 
+/* ---- Sessions table: filter input ---- */
+
+.sessions-filter-input {
+  width: 100%;
+  max-width: 320px;
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.sessions-filter-input:focus {
+  border-color: var(--border-default);
+}
+
+.sessions-filter-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* ---- Sessions table: sortable headers ---- */
+
+.sessions-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sessions-table th.sortable:hover {
+  color: var(--text-secondary);
+}
+
+.sort-indicator {
+  margin-left: 4px;
+  font-size: 0.6rem;
+  opacity: 0.3;
+}
+
+.sort-indicator.active {
+  opacity: 1;
+  color: var(--text-primary);
+}
+
 /* ============================================================
    Roadmap Items Panel
    ============================================================ */
