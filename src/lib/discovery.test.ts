@@ -251,6 +251,91 @@ describe("discoverProjects — session metadata enrichment", () => {
     expect(projects[0]!.hasRunningSession).toBe(true);
   });
 
+  it("ignores archived sessions for hasRunningSession", async () => {
+    const repoPath = await createGitRepo("archived-running");
+
+    const state = {
+      projects: {
+        [repoPath]: {
+          rootPath: repoPath,
+          sessions: {
+            "session-archived-running": {
+              sessionName: "session-archived-running",
+              worktreePath: "/tmp/wt1",
+              branchName: "csm/session-archived-running",
+              createdAt: "2026-01-01T00:00:00Z",
+              lastActivityAt: "2026-01-01T00:00:00Z",
+              archived: true,
+              finished: false,
+              conversations: [
+                {
+                  id: "conv-stuck",
+                  claudeSessionId: "abc",
+                  transcriptPath: null,
+                  status: "running",
+                  promptCount: 1,
+                  createdAt: "2026-01-01T00:00:00Z",
+                  lastActivityAt: "2026-01-01T00:00:00Z",
+                  source: "cc",
+                  summary: null,
+                },
+              ],
+            },
+          },
+        } as never,
+      },
+    };
+
+    const service = createTestService(state);
+    const projects = await service.discoverProjects();
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0]!.hasRunningSession).toBe(false);
+    expect(projects[0]!.activeSessions).toBe(0);
+  });
+
+  it("ignores finished sessions for hasRunningSession", async () => {
+    const repoPath = await createGitRepo("finished-running");
+
+    const state = {
+      projects: {
+        [repoPath]: {
+          rootPath: repoPath,
+          sessions: {
+            "session-finished": {
+              sessionName: "session-finished",
+              worktreePath: "/tmp/wt1",
+              branchName: "csm/session-finished",
+              createdAt: "2026-01-01T00:00:00Z",
+              lastActivityAt: "2026-01-01T00:00:00Z",
+              archived: false,
+              finished: true,
+              conversations: [
+                {
+                  id: "conv-stuck",
+                  claudeSessionId: "abc",
+                  transcriptPath: null,
+                  status: "running",
+                  promptCount: 1,
+                  createdAt: "2026-01-01T00:00:00Z",
+                  lastActivityAt: "2026-01-01T00:00:00Z",
+                  source: "cc",
+                  summary: null,
+                },
+              ],
+            },
+          },
+        } as never,
+      },
+    };
+
+    const service = createTestService(state);
+    const projects = await service.discoverProjects();
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0]!.hasRunningSession).toBe(false);
+  });
+
   it("returns activeSessions: 0 and hasRunningSession: false when project has no state entry", async () => {
     await createGitRepo("unknown-project");
 

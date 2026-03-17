@@ -66,8 +66,9 @@ export function createDiscoveryService(
         const sessions = projectState
           ? Object.values(projectState.sessions)
           : [];
-        const activeSessions = sessions.filter((s) => !s.archived).length;
-        const hasRunningSession = sessions.some(
+        const nonArchivedSessions = sessions.filter((s) => !s.archived);
+        const activeSessions = nonArchivedSessions.length;
+        const hasRunningSession = nonArchivedSessions.some(
           (s) => deriveSessionStatus(s) === "running",
         );
 

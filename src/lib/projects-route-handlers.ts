@@ -7,6 +7,8 @@
 
 import { NextResponse } from "next/server";
 import { discoverProjects as defaultDiscoverProjects } from "@/lib/discovery";
+import { recoverOrphanedConversations as defaultRecoverOrphaned } from "@/lib/state";
+import { getQuery } from "@/lib/query-registry";
 import type { DiscoveredProject } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -15,10 +17,14 @@ import type { DiscoveredProject } from "@/types";
 
 export interface ProjectsRouteDeps {
   discoverProjects: () => Promise<DiscoveredProject[]>;
+  recoverOrphanedConversations?: (
+    isQueryActive: (conversationId: string) => boolean,
+  ) => Promise<number>;
 }
 
 const defaultDeps: ProjectsRouteDeps = {
   discoverProjects: defaultDiscoverProjects,
+  recoverOrphanedConversations: defaultRecoverOrphaned,
 };
 
 // ---------------------------------------------------------------------------
@@ -30,6 +36,12 @@ export function createProjectsRouteHandlers(
 ) {
   async function GET(): Promise<Response> {
     try {
+      // Recover conversations stuck in "running" with no active SDK query.
+      // Runs on every project list fetch to prevent stale "running" badges.
+      await deps.recoverOrphanedConversations?.(
+        (id) => getQuery(id) !== undefined,
+      );
+
       const projects = await deps.discoverProjects();
       return NextResponse.json(projects);
     } catch (err) {

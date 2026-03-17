@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  projectKeys,
   sessionKeys,
   conversationKeys,
   notificationKeys,
@@ -50,6 +51,7 @@ export default function NotificationListener(): null {
         queryKey: conversationKeys.active,
       });
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+      void queryClient.invalidateQueries({ queryKey: projectKeys.list() });
 
       try {
         const parsed = JSON.parse(event.data);
