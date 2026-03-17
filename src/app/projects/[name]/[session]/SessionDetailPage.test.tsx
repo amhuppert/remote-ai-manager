@@ -72,12 +72,14 @@ vi.mock("@tanstack/react-virtual", () => ({
 // ---------------------------------------------------------------------------
 
 const sendPromptMock = vi.fn();
+const abortClientMock = vi.fn();
 vi.mock("@/hooks/use-send-prompt", () => ({
-  useSendPrompt: () => ({ send: sendPromptMock, abortClient: vi.fn() }),
+  useSendPrompt: () => ({ send: sendPromptMock, abortClient: abortClientMock }),
 }));
 
+const abortPromptMock = vi.fn();
 vi.mock("@/hooks/use-abort-prompt", () => ({
-  useAbortPrompt: () => vi.fn(),
+  useAbortPrompt: () => abortPromptMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -329,6 +331,93 @@ describe("SessionDetailPage", () => {
     testSessionPending = true;
     renderPage();
     expect(screen.getByText("Loading session...")).toBeInTheDocument();
+  });
+
+  describe("Escape key abort behavior", () => {
+    /**
+     * Helper to find the callback registered for a given hotkey ID.
+     * useAppHotkey is called multiple times (one per hotkey);
+     * we need the one registered for "abortPrompt".
+     */
+    function getAbortHotkeyCallback(): (e: KeyboardEvent) => void {
+      const call = vi
+        .mocked(useAppHotkey)
+        .mock.calls.find(([id]) => id === "abortPrompt");
+      expect(call).toBeDefined();
+      return call![1];
+    }
+
+    it("sends abort when conversation is running on server even if sending=false", () => {
+      // Simulate: conversation is running on server but no active SSE stream
+      // (e.g., page refreshed while Claude was working)
+      testSession = {
+        ...baseSession,
+        conversations: [
+          { ...baseSession.conversations[0]!, status: "running" },
+        ],
+      };
+
+      vi.mocked(useAppHotkey).mockClear();
+      renderPage();
+
+      const abortCallback = getAbortHotkeyCallback();
+      abortCallback({} as KeyboardEvent);
+
+      expect(abortPromptMock).toHaveBeenCalled();
+    });
+
+    it("sends abort when conversation is waiting_for_input", () => {
+      testSession = {
+        ...baseSession,
+        conversations: [
+          { ...baseSession.conversations[0]!, status: "waiting_for_input" },
+        ],
+      };
+
+      vi.mocked(useAppHotkey).mockClear();
+      renderPage();
+
+      const abortCallback = getAbortHotkeyCallback();
+      abortCallback({} as KeyboardEvent);
+
+      expect(abortPromptMock).toHaveBeenCalled();
+    });
+
+    it("does NOT call abortClient when sending=false (no active SSE stream)", () => {
+      testSession = {
+        ...baseSession,
+        conversations: [
+          { ...baseSession.conversations[0]!, status: "running" },
+        ],
+      };
+
+      vi.mocked(useAppHotkey).mockClear();
+      renderPage();
+
+      const abortCallback = getAbortHotkeyCallback();
+      abortCallback({} as KeyboardEvent);
+
+      // abortClient should NOT be called — there's no SSE stream to abort
+      expect(abortClientMock).not.toHaveBeenCalled();
+      // but the server-side abort should still fire
+      expect(abortPromptMock).toHaveBeenCalled();
+    });
+
+    it("does NOT send abort when conversation is idle", () => {
+      // Conversation status is "new" (idle), not running
+      testSession = {
+        ...baseSession,
+        conversations: [{ ...baseSession.conversations[0]!, status: "new" }],
+      };
+
+      vi.mocked(useAppHotkey).mockClear();
+      renderPage();
+
+      const abortCallback = getAbortHotkeyCallback();
+      abortCallback({} as KeyboardEvent);
+
+      expect(abortPromptMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("fire-and-forget voice mode", () => {

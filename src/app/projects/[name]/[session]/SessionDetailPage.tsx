@@ -567,16 +567,28 @@ export default function SessionDetailPage({
   useAppHotkey("lastMessage", scrollToEnd);
 
   // Abort / clear input hotkey (Escape)
+  // Check both the client-side SSE stream flag AND the server-side conversation
+  // status so that abort works even after page refresh or connection drops.
+  const conversationRunning =
+    activeConversation?.status === "running" ||
+    activeConversation?.status === "waiting_for_input";
   const handleAbortOrClear = useCallback(() => {
-    if (sending) {
-      abortClient();
+    if (sending || conversationRunning) {
+      if (sending) abortClient();
       void abortPrompt();
     } else {
       setPromptText("");
       clearPlaceholder();
       clearImages();
     }
-  }, [sending, abortClient, abortPrompt, clearPlaceholder, clearImages]);
+  }, [
+    sending,
+    conversationRunning,
+    abortClient,
+    abortPrompt,
+    clearPlaceholder,
+    clearImages,
+  ]);
   useAppHotkey("abortPrompt", handleAbortOrClear);
 
   // --- Handlers ---
