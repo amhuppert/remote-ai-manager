@@ -11,7 +11,9 @@
  *
  *   routing → resolvingConflicts (for resolve-conflicts jobs)
  *
- *   validating → (fail + autoResolve) → fixingValidation → committingFix → revalidating → squashMerging
+ *   validating → (fail + autoResolve) → fixingValidation → checkingFixChanges → committingFix → revalidating → squashMerging
+ *                                                                             ↘ (no changes) → revalidating
+ *                                                                          ↗ (retry if attempts remain)
  *             → (fail + !autoResolve) → failed (final)
  */
 
@@ -111,6 +113,8 @@ export const mergeMachine = setup({
       const e = event as unknown as { output: FixValidationOutput };
       return e.output.status === "fixed";
     },
+    hasFixRetriesRemaining: ({ context }) =>
+      context.fixAttempt < context.maxFixAttempts,
   },
   actions: {
     onTerminal: () => {
@@ -141,6 +145,9 @@ export const mergeMachine = setup({
     mergeHash: null,
     commitHash: null,
     validationTimeoutMs: input.validationTimeoutMs ?? 300_000,
+    fixAttempt: 0,
+    maxFixAttempts: input.maxFixAttempts ?? 2,
+    fixSessionId: null,
     finalStatus: null,
   }),
   initial: "routing",
@@ -302,17 +309,32 @@ export const mergeMachine = setup({
     },
 
     fixingValidation: {
-      entry: assign({ phase: "fixing-validation" as const }),
+      entry: [
+        assign({ phase: "fixing-validation" as const }),
+        assign({ fixAttempt: ({ context }) => context.fixAttempt + 1 }),
+      ],
       invoke: {
         src: "fixValidation",
         input: ({ context }) => ({
           worktreePath: context.worktreePath,
           validationOutput: context.error ?? "",
+          projectPath: context.projectPath,
+          sessionName: context.sessionName,
+          branchName: context.branchName,
+          claudeSessionId: context.fixSessionId ?? undefined,
         }),
         onDone: [
           {
             guard: "fixSucceeded",
-            target: "committingFix",
+            actions: assign({
+              fixSessionId: ({ event }) => {
+                const e = event as unknown as {
+                  output: FixValidationOutput;
+                };
+                return e.output.claudeSessionId ?? null;
+              },
+            }),
+            target: "checkingFixChanges",
           },
           {
             // Fix failed — go to failed with original error
@@ -325,6 +347,30 @@ export const mergeMachine = setup({
         onError: {
           target: "failed",
           actions: errorAssign(),
+        },
+      },
+    },
+
+    /**
+     * Check whether the fix agent actually made changes before committing.
+     * If it didn't (e.g. it couldn't fix test failures), skip straight to
+     * revalidating so the machine can decide whether to retry or fail based
+     * on actual validation results, not a spurious commit error.
+     */
+    checkingFixChanges: {
+      invoke: {
+        src: "checkUncommitted",
+        input: ({ context }) => ({ worktreePath: context.worktreePath }),
+        onDone: [
+          {
+            guard: "hasUncommittedChanges",
+            target: "committingFix",
+          },
+          { target: "revalidating" },
+        ],
+        onError: {
+          // Best-effort: if we can't check, try to commit anyway
+          target: "committingFix",
         },
       },
     },
@@ -360,10 +406,21 @@ export const mergeMachine = setup({
           target: "squashMerging",
           actions: assign({ error: null }),
         },
-        onError: {
-          target: "failed",
-          actions: errorAssign(),
-        },
+        onError: [
+          {
+            // Retry: go back to fixingValidation with new error output
+            guard: "hasFixRetriesRemaining",
+            actions: assign({
+              error: ({ event }) => extractErrorMessage(event.error),
+            }),
+            target: "fixingValidation",
+          },
+          {
+            // No retries remaining — fail
+            target: "failed",
+            actions: errorAssign(),
+          },
+        ],
       },
     },
 

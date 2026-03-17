@@ -65,6 +65,15 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Pre-merge validation timeout in ms. */
   validationTimeoutMs: number;
 
+  /** Current fix attempt (0 = not started, incremented on each fixingValidation entry). */
+  fixAttempt: number;
+
+  /** Maximum number of fix attempts before giving up (default 2). */
+  maxFixAttempts: number;
+
+  /** Claude session ID from the fix agent, used to resume the conversation on retry. */
+  fixSessionId: string | null;
+
   /** Explicit terminal status set by final state entry actions. */
   finalStatus: "completed" | "failed" | "conflicts" | null;
 }
@@ -82,6 +91,7 @@ export interface MergeInput {
   jobType?: "merge" | "commit" | "resolve-conflicts";
   decisions?: ConflictDecisionInput[];
   validationTimeoutMs?: number;
+  maxFixAttempts?: number;
 }
 
 /** Events the merge machine can receive. */

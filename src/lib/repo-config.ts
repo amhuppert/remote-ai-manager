@@ -109,12 +109,23 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
         timeout: timeoutMs,
       });
     } catch (err) {
-      const childErr = err as Error & { stderr?: string; stdout?: string };
+      const childErr = err as Error & {
+        stderr?: string;
+        stdout?: string;
+        killed?: boolean;
+      };
       const rawOutput = [childErr.stderr?.trim(), childErr.stdout?.trim()]
         .filter(Boolean)
         .join("\n")
         .trim();
-      const newErr = new Error("Pre-merge validation failed");
+
+      const isTimeout = childErr.killed === true;
+      const timeoutSec = Math.round(timeoutMs / 1000);
+      const message = isTimeout
+        ? `Pre-merge validation timed out after ${timeoutSec}s`
+        : "Pre-merge validation failed";
+
+      const newErr = new Error(message);
       (newErr as Error & { gitOutput?: string }).gitOutput =
         rawOutput || undefined;
       throw newErr;

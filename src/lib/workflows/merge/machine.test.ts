@@ -272,9 +272,16 @@ describe("mergeMachine", () => {
   describe("validation failure with auto-fix", () => {
     it("fixes validation errors and revalidates", async () => {
       let validationCallCount = 0;
+      let checkCallCount = 0;
       const states: string[] = [];
 
       const machine = createTestMachine({
+        checkUncommitted: mockCheckUncommitted(async () => {
+          checkCallCount++;
+          // First call: checkingUncommitted (no uncommitted changes)
+          // Second call: checkingFixChanges (agent made changes)
+          return { hasChanges: checkCallCount > 1 };
+        }),
         runValidation: mockRunValidation(async () => {
           validationCallCount++;
           if (validationCallCount === 1) {
@@ -295,6 +302,7 @@ describe("mergeMachine", () => {
 
       expect(output.status).toBe("completed");
       expect(states).toContain("fixingValidation");
+      expect(states).toContain("checkingFixChanges");
       expect(states).toContain("committingFix");
       expect(states).toContain("revalidating");
     });
@@ -339,8 +347,8 @@ describe("mergeMachine", () => {
     });
   });
 
-  describe("revalidation failure", () => {
-    it("fails when revalidation fails after fix", async () => {
+  describe("revalidation failure (no retry)", () => {
+    it("fails immediately when maxFixAttempts is 1", async () => {
       let validationCallCount = 0;
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
@@ -351,13 +359,162 @@ describe("mergeMachine", () => {
           status: "fixed",
         })),
       });
-      const actor = createActor(machine, { input: defaultInput });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, maxFixAttempts: 1 },
+      });
       actor.start();
 
       const output = await toPromise(actor);
 
       expect(output.status).toBe("failed");
       expect(output.error).toContain("Validation error #2");
+    });
+  });
+
+  describe("validation fix retry", () => {
+    it("retries fix when revalidation fails and succeeds on retry", async () => {
+      let validationCallCount = 0;
+      let fixCallCount = 0;
+      const states: string[] = [];
+
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          validationCallCount++;
+          // First two calls fail (initial validation + first revalidation)
+          if (validationCallCount <= 2) {
+            throw new Error(`Validation error #${validationCallCount}`);
+          }
+          // Third call (second revalidation) succeeds
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount++;
+          return {
+            status: "fixed",
+            claudeSessionId: `session-${fixCallCount}`,
+          };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("completed");
+      expect(fixCallCount).toBe(2);
+      expect(states.filter((s) => s === "fixingValidation")).toHaveLength(2);
+      expect(states.filter((s) => s === "revalidating")).toHaveLength(2);
+    });
+
+    it("fails when all fix retries are exhausted", async () => {
+      let fixCallCount = 0;
+
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          throw new Error("persistent error");
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount++;
+          return {
+            status: "fixed",
+            claudeSessionId: `session-${fixCallCount}`,
+          };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(fixCallCount).toBe(2); // Default maxFixAttempts is 2
+    });
+
+    it("passes claudeSessionId from first attempt to retry", async () => {
+      let validationCallCount = 0;
+      const fixInputs: FixValidationInput[] = [];
+
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          validationCallCount++;
+          if (validationCallCount <= 2) {
+            throw new Error(`error ${validationCallCount}`);
+          }
+        }),
+        fixValidation: mockFixValidation(async (input) => {
+          fixInputs.push({ ...input });
+          return { status: "fixed", claudeSessionId: "sdk-session-42" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(fixInputs).toHaveLength(2);
+      expect(fixInputs[0]!.claudeSessionId).toBeUndefined();
+      expect(fixInputs[1]!.claudeSessionId).toBe("sdk-session-42");
+    });
+
+    it("respects custom maxFixAttempts", async () => {
+      let fixCallCount = 0;
+
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          throw new Error("error");
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount++;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, maxFixAttempts: 3 },
+      });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(fixCallCount).toBe(3);
+    });
+  });
+
+  describe("committingFix with no changes", () => {
+    it("skips commit and proceeds to revalidating when fix agent makes no changes", async () => {
+      let validationCallCount = 0;
+      const states: string[] = [];
+
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          validationCallCount++;
+          if (validationCallCount === 1) {
+            throw new Error("lint errors");
+          }
+          // Second call (revalidation) succeeds
+        }),
+        fixValidation: mockFixValidation(async () => ({
+          status: "fixed",
+        })),
+        commitChanges: mockCommitChanges(async (input) => {
+          if (input.message === "auto-fix: validation errors") {
+            throw new Error("No uncommitted changes to commit");
+          }
+          return { hash: "abc123" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("completed");
+      expect(states).toContain("fixingValidation");
+      expect(states).toContain("revalidating");
+      expect(states).toContain("squashMerging");
     });
   });
 
@@ -443,6 +600,34 @@ describe("mergeMachine", () => {
       expect(ctx.error).toBeNull();
       expect(ctx.mergeHash).toBeNull();
       expect(ctx.conflictFiles).toEqual([]);
+      expect(ctx.fixAttempt).toBe(0);
+      expect(ctx.maxFixAttempts).toBe(2);
+      expect(ctx.fixSessionId).toBeNull();
+    });
+  });
+
+  describe("fixValidation receives project context", () => {
+    it("passes projectPath, sessionName, and branchName to fixValidation actor", async () => {
+      let capturedInput: FixValidationInput | null = null;
+
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          throw new Error("lint errors");
+        }),
+        fixValidation: mockFixValidation(async (input) => {
+          capturedInput = input;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.projectPath).toBe("/projects/app");
+      expect(capturedInput!.sessionName).toBe("test-session");
+      expect(capturedInput!.branchName).toBe("csm/test-session");
     });
   });
 

@@ -213,6 +213,43 @@ describe("runPreMergeValidation", () => {
     }
   });
 
+  it("throws with timeout message when script is killed by timeout", async () => {
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        if (String(p).includes("validate.sh")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({
+        initScriptPath: null,
+        preMergeCommand: "./validate.sh",
+      }),
+    );
+    const timeoutErr = Object.assign(new Error("Command failed"), {
+      killed: true,
+      signal: "SIGTERM",
+      stderr: "",
+      stdout: "All checks passed!\ntests starting...",
+    });
+    (deps.execFileAsync as ReturnType<typeof vi.fn>).mockRejectedValue(
+      timeoutErr,
+    );
+    const { runPreMergeValidation } = createRepoConfig(deps);
+
+    try {
+      await runPreMergeValidation(BASE_PARAMS);
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      const e = err as Error & { gitOutput?: string };
+      expect(e.message).toContain("timed out");
+      expect(e.message).toContain("300");
+      expect(e.gitOutput).toContain("All checks passed!");
+    }
+  });
+
   it("commits auto-fixes when script modifies files", async () => {
     const deps = createTestDeps();
     (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(

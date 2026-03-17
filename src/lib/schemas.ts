@@ -508,6 +508,7 @@ export type DevServersStatusResponse = z.infer<
 export const perRepoConfigSchema = z.object({
   initScriptPath: z.string().nullable(),
   preMergeCommand: z.string().nullable().optional(),
+  preMergeTimeoutMs: z.number().int().positive().optional(),
   devServers: z.array(devServerConfigSchema).optional(),
 });
 export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;

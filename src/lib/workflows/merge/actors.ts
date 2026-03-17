@@ -58,10 +58,15 @@ export type RunValidationOutput = void;
 export interface FixValidationInput {
   worktreePath: string;
   validationOutput: string;
+  projectPath: string;
+  sessionName: string;
+  branchName: string;
+  claudeSessionId?: string;
 }
 export interface FixValidationOutput {
   status: "fixed" | "failed";
   error?: string;
+  claudeSessionId?: string;
 }
 
 export interface SquashMergeInput {
@@ -135,13 +140,26 @@ export const runValidation = fromPromise<
   RunValidationOutput,
   RunValidationInput
 >(async ({ input }) => {
-  const { runPreMergeValidation } = await import("@/lib/repo-config");
+  const { runPreMergeValidation, readRepoConfig } =
+    await import("@/lib/repo-config");
+
+  // Per-repo timeout takes precedence over the machine's default
+  let timeoutMs = input.timeoutMs;
+  try {
+    const repoConfig = await readRepoConfig(input.projectPath);
+    if (repoConfig?.preMergeTimeoutMs) {
+      timeoutMs = repoConfig.preMergeTimeoutMs;
+    }
+  } catch {
+    // Best-effort: use the machine's default timeout
+  }
+
   await runPreMergeValidation({
     projectPath: input.projectPath,
     worktreePath: input.worktreePath,
     sessionName: input.sessionName,
     branchName: input.branchName,
-    timeoutMs: input.timeoutMs,
+    timeoutMs,
   });
 });
 
@@ -151,13 +169,36 @@ export const fixValidation = fromPromise<
   FixValidationInput
 >(async ({ input }) => {
   const { fixValidationErrors } = await import("@/lib/validation-fix");
+  const { readRepoConfig } = await import("@/lib/repo-config");
+  const path = await import("node:path");
+
+  // Resolve the validation command so the agent can verify its own fixes
+  let validationCommand: string | undefined;
+  try {
+    const repoConfig = await readRepoConfig(input.projectPath);
+    if (repoConfig?.preMergeCommand) {
+      const scriptPath = path.default.isAbsolute(repoConfig.preMergeCommand)
+        ? repoConfig.preMergeCommand
+        : path.default.join(input.projectPath, repoConfig.preMergeCommand);
+      validationCommand = scriptPath;
+    }
+  } catch {
+    // Best-effort: if we can't read the config, the agent just won't verify
+  }
+
   const result = await fixValidationErrors({
     worktreePath: input.worktreePath,
     validationOutput: input.validationOutput,
+    validationCommand,
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    branchName: input.branchName,
+    claudeSessionId: input.claudeSessionId,
   });
   return {
     status: result.status === "fixed" ? "fixed" : "failed",
     error: result.status === "failed" ? result.error : undefined,
+    claudeSessionId: result.claudeSessionId,
   };
 });
 
