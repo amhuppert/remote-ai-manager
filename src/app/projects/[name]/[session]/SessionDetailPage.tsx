@@ -365,6 +365,11 @@ export default function SessionDetailPage({
   useEffect(() => {
     initialScrollDone.current = false;
     clearConversationMessages();
+
+    // Reset any accidental scroll on ancestors (overflow:clip prevents new
+    // occurrences; this cleans up any pre-existing scroll offset).
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
   }, [conversationId, clearConversationMessages]);
 
   // --- Recover persisted question state on page load / navigation ---

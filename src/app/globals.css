@@ -84,6 +84,9 @@
 }
 
 html {
+  height: 100vh;
+  max-height: 100vh;
+  overflow: clip;
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -95,8 +98,9 @@ body {
   line-height: 1.5;
   color: var(--text-primary);
   background-color: var(--bg-void);
-  height: 100vh;
-  overflow: hidden;
+  height: 100%;
+  max-height: 100vh;
+  overflow: clip;
 }
 
 /* ============================================================
@@ -330,7 +334,7 @@ textarea {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  overflow: hidden;
+  overflow: clip;
 }
 
 .main {
@@ -345,7 +349,7 @@ textarea {
 /* Detail page has tighter padding and no scroll — inner panels handle their own scroll */
 .app[data-page="detail"] .main {
   padding: var(--space-md) var(--space-lg);
-  overflow: hidden;
+  overflow: clip;
 }
 
 /* ============================================================
@@ -3503,7 +3507,7 @@ textarea {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow: clip;
   min-height: 0;
 }
 
@@ -4661,7 +4665,7 @@ textarea {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow: clip;
   display: flex;
   flex-direction: column;
   min-height: 0;
