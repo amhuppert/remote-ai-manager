@@ -3254,11 +3254,7 @@ textarea {
   min-height: 500px;
 }
 
-/* Merged/finished session — constrain width for readability */
-.session-detail-layout.finished .session-content-area {
-  max-width: 800px;
-}
-
+/* Merged/finished session — constrain banner width for readability */
 .session-detail-layout.finished .finished-banner {
   max-width: 800px;
 }
