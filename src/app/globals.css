@@ -4640,6 +4640,7 @@ textarea {
 }
 
 .model-selector-dropdown {
+  position: fixed;
   z-index: 150;
   min-width: 180px;
   padding: 4px;
