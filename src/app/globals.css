@@ -3,14 +3,16 @@
    ============================================================ */
 
 :root {
-  /* ---- Base palette — 5 elevation levels ---- */
+  /* ---- Base palette — 6 elevation levels ---- */
   --bg-void: #06090f;
   --bg-base: #0b1019;
   --bg-surface: #111825;
   --bg-raised: #172033;
+  --bg-elevated: #1a2740;
   --bg-hover: #1c2841;
 
-  /* ---- Borders — 3 intensity levels ---- */
+  /* ---- Borders — 4 intensity levels ---- */
+  --border-dim: #141d2e;
   --border-subtle: #1a2338;
   --border-default: #243048;
   --border-strong: #2e3d5c;
@@ -41,11 +43,12 @@
   --red: #ff3d5a;
   --red-dim: #cc3148;
   --red-glow: rgba(255, 61, 90, 0.12);
+  --red-text: #e8506c;
 
   /* ---- Text — 4 levels ---- */
   --text-primary: #dce2f0;
   --text-secondary: #7b899f;
-  --text-tertiary: #4d5a72;
+  --text-tertiary: #738699;
   --text-inverse: #06090f;
 
   /* ---- Typography (set by next/font, fallbacks here) ---- */
@@ -61,6 +64,17 @@
   --space-xl: 32px;
   --space-2xl: 48px;
   --space-3xl: 64px;
+
+  /* ---- Sizing floors ---- */
+  --font-size-floor: 0.7rem;
+  --icon-size-min: 20px;
+  --icon-btn-min: 24px;
+  --touch-target-min: 44px;
+
+  /* ---- Semantic spacing ---- */
+  --space-section: var(--space-xl);
+  --space-header-content: var(--space-sm);
+  --space-item: var(--space-xs);
 
   /* ---- Border radii ---- */
   --radius-sm: 4px;
@@ -145,7 +159,7 @@ body::after {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 500;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -621,37 +635,12 @@ textarea {
    ============================================================ */
 
 .pinned-section {
-  margin-bottom: 0;
-}
-
-.pinned-section-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--amber);
-  margin-bottom: var(--space-md);
-}
-
-.pinned-section-header .pinned-star {
-  font-size: 0.85rem;
-  line-height: 1;
-  filter: drop-shadow(0 0 4px rgba(255, 179, 0, 0.5));
-}
-
-.pinned-section-header .pinned-count {
-  color: var(--text-tertiary);
-  font-weight: 500;
-  font-size: 0.62rem;
+  margin-bottom: var(--space-section);
 }
 
 /* Pinned card enhancements */
 .project-card.pinned {
-  border-color: rgba(255, 179, 0, 0.15);
+  border-color: rgba(255, 183, 77, 0.25);
 }
 
 .project-card.pinned::before {
@@ -665,7 +654,7 @@ textarea {
 }
 
 .project-card.pinned:hover {
-  border-color: rgba(255, 179, 0, 0.3);
+  border-color: rgba(255, 183, 77, 0.4);
 }
 
 .project-card.pinned:hover::before {
@@ -777,10 +766,53 @@ textarea {
   border-color: var(--border-strong);
   background: var(--bg-raised);
   transform: translateY(-1px);
+  box-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.4);
 }
 
 .project-card:hover::before {
   opacity: 1;
+}
+
+/* Activity-based visual hierarchy — 3 tiers: idle (recessed), has-sessions (surface), active (elevated+glow) */
+
+.project-card.active {
+  border-left: 3px solid var(--cyan);
+  background: var(--bg-raised);
+  box-shadow:
+    inset 3px 0 8px -4px rgba(0, 229, 255, 0.15),
+    0 0 16px -4px rgba(0, 229, 255, 0.12);
+}
+
+.project-card.active:hover {
+  box-shadow:
+    inset 3px 0 12px -4px rgba(0, 229, 255, 0.25),
+    0 0 24px -4px rgba(0, 229, 255, 0.18);
+}
+
+.project-card.has-sessions {
+  border-color: var(--border-default);
+}
+
+.project-card.has-sessions:hover {
+  border-color: var(--border-strong);
+}
+
+.project-card.idle {
+  background: var(--bg-base);
+  border-color: var(--border-dim);
+}
+
+.project-card.idle:hover {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.project-card.idle .project-name {
+  color: var(--text-secondary);
+}
+
+.project-card.idle:hover .project-name {
+  color: var(--text-primary);
 }
 
 .project-card-header {
@@ -796,36 +828,6 @@ textarea {
   font-size: 1.05rem;
   color: var(--text-primary);
   letter-spacing: -0.01em;
-}
-
-.project-badge {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  border-radius: 100px;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-}
-
-.project-badge.active {
-  background: var(--cyan-glow);
-  color: var(--cyan);
-  border: 1px solid rgba(0, 229, 255, 0.2);
-}
-
-.project-badge.idle {
-  background: rgba(123, 137, 159, 0.1);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
-}
-
-.project-badge.has-sessions {
-  background: var(--green-glow);
-  color: var(--green);
-  border: 1px solid rgba(0, 230, 118, 0.2);
 }
 
 .project-path {
@@ -858,9 +860,14 @@ textarea {
   color: var(--text-primary);
 }
 
+.stat-value--empty {
+  color: var(--text-tertiary);
+  font-style: normal;
+}
+
 .stat-label {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -975,12 +982,6 @@ textarea {
   opacity: 0.75;
 }
 
-.project-badge.archived-badge {
-  background: rgba(123, 137, 159, 0.1);
-  color: var(--text-tertiary);
-  border: 1px dashed var(--border-default);
-}
-
 /* ============================================================
    Projects Controls Bar (Search + Filters + Archive Toggle)
    ============================================================ */
@@ -1047,7 +1048,11 @@ textarea {
   color: var(--text-secondary);
 }
 
-.filter-pills {
+/* ============================================================
+   Canonical Tabs (.cc-tabs / .cc-tab)
+   ============================================================ */
+
+.cc-tabs {
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -1056,37 +1061,177 @@ textarea {
   border-radius: var(--radius-md);
 }
 
-.filter-pill {
+.cc-tab {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 5px 10px;
+  min-height: 28px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 600;
+  font-size: 0.72rem;
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   cursor: pointer;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
-.filter-pill:hover {
+.cc-tab:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.filter-pill.active {
+.cc-tab.active {
   background: var(--cyan);
   color: var(--text-inverse);
 }
 
-.filter-pill-count {
-  font-size: 0.62rem;
-  opacity: 0.7;
+.cc-tab-count {
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  opacity: 0.85;
+  padding: 0 4px;
+  border-radius: 9999px;
+}
+
+.cc-tab.active .cc-tab-count {
+  opacity: 1;
+}
+
+/* ============================================================
+   Canonical Section Header (.cc-section-header)
+   ============================================================ */
+
+.cc-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 28px;
+  margin-bottom: var(--space-header-content);
+}
+
+.cc-section-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.cc-section-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.cc-section-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.cc-section-count {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
+.cc-section-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+/* ============================================================
+   Canonical Badge System (.cc-badge)
+   ============================================================ */
+
+.cc-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+
+/* Status tier — semantic state */
+.cc-badge--status {
+  /* Default idle */
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+
+.cc-badge--status[data-status="running"],
+.cc-badge--status[data-status="active"] {
+  background: var(--cyan-glow);
+  color: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan-glow);
+}
+
+.cc-badge--status[data-status="merged"],
+.cc-badge--status[data-status="ready"] {
+  background: var(--green-glow);
+  color: var(--green);
+}
+
+.cc-badge--status[data-status="awaiting"],
+.cc-badge--status[data-status="warning"] {
+  background: var(--amber-glow);
+  color: var(--amber);
+}
+
+/* Type tier — category */
+.cc-badge--type {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+
+.cc-badge--type[data-type="feature"] {
+  background: var(--cyan-glow);
+  color: var(--cyan);
+}
+
+.cc-badge--type[data-type="bug"] {
+  background: var(--red-glow);
+  color: var(--red);
+}
+
+.cc-badge--type[data-type="idea"] {
+  background: var(--amber-glow);
+  color: var(--amber);
+}
+
+/* Count tier — numeric */
+.cc-badge--count {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+
+.cc-badge--count[data-active="true"] {
+  background: var(--cyan-glow);
+  color: var(--cyan);
+}
+
+/* Subtle variant — reduced visual weight for repetitive contexts */
+.cc-badge--subtle {
+  opacity: 0.5;
 }
 
 .btn-toggle {
@@ -1206,7 +1351,7 @@ textarea {
 
 .sessions-table th {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -1362,7 +1507,7 @@ textarea {
 
 .sort-indicator {
   margin-left: 4px;
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   opacity: 0.3;
 }
 
@@ -1404,7 +1549,7 @@ textarea {
 }
 
 .roadmap-chevron {
-  font-size: 0.55rem;
+  font-size: 0.7rem;
   transition: transform 0.15s ease;
   display: inline-block;
 }
@@ -1423,7 +1568,7 @@ textarea {
 
 .roadmap-count {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
 }
 
@@ -1471,7 +1616,7 @@ textarea {
   flex-shrink: 0;
   transition: all 0.15s ease;
   color: transparent;
-  font-size: 0.55rem;
+  font-size: 0.7rem;
   padding: 0;
 }
 
@@ -1493,7 +1638,7 @@ textarea {
   padding: 1px 7px;
   border-radius: 9999px;
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1642,7 +1787,7 @@ textarea {
   border-radius: 9999px;
   background: transparent;
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1776,14 +1921,14 @@ textarea {
 
 .form-hint {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-tertiary);
   margin-top: var(--space-xs);
 }
 
 .form-error {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--red);
   margin-top: var(--space-xs);
 }
@@ -1853,7 +1998,7 @@ textarea {
   color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-size: 0.62rem;
+  font-size: 0.7rem;
 }
 
 .merge-info-value {
@@ -2019,7 +2164,7 @@ textarea {
 
 .smart-merge-toggle-hint {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   line-height: 1.4;
 }
@@ -2081,7 +2226,7 @@ textarea {
 
 .smart-merge-submitted-hint {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   max-width: 340px;
   line-height: 1.5;
@@ -2141,7 +2286,7 @@ textarea {
 
 .cr-page-subtitle {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
 }
 
@@ -2156,7 +2301,7 @@ textarea {
   border: 1px solid var(--border-subtle);
   border-radius: 100px;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-secondary);
 }
 
@@ -2188,7 +2333,7 @@ textarea {
 
 .cr-summary-desc {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -2198,7 +2343,7 @@ textarea {
   color: var(--cyan);
   padding: 1px 5px;
   border-radius: 3px;
-  font-size: 0.65rem;
+  font-size: 0.7rem;
 }
 
 .cr-summary-stats {
@@ -2210,7 +2355,7 @@ textarea {
 
 .cr-stat {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -2282,7 +2427,7 @@ textarea {
 
 .cr-card-chevron {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   transition: transform 0.15s ease;
   flex-shrink: 0;
 }
@@ -2297,7 +2442,7 @@ textarea {
   border-radius: 50%;
   background: var(--amber-glow);
   color: var(--amber);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -2382,7 +2527,7 @@ textarea {
 
 .cr-section-label {
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -2410,7 +2555,7 @@ textarea {
 .cr-feedback-label {
   display: block;
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -2535,7 +2680,7 @@ textarea {
 
 .merge-toast-detail {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2547,7 +2692,7 @@ textarea {
   color: var(--cyan);
   padding: 0 4px;
   border-radius: 2px;
-  font-size: 0.62rem;
+  font-size: 0.7rem;
 }
 
 .merge-toast-hash {
@@ -2562,7 +2707,7 @@ textarea {
   background: transparent;
   color: var(--cyan);
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -2704,7 +2849,7 @@ textarea {
 }
 
 .np-empty-hint {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   opacity: 0.7;
 }
 
@@ -2727,7 +2872,7 @@ textarea {
 
 .np-section-label {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
@@ -2736,7 +2881,7 @@ textarea {
 
 .np-section-count {
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   background: var(--bg-raised);
   padding: 1px 5px;
@@ -2812,7 +2957,7 @@ textarea {
 }
 
 .np-item-meta {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -2822,7 +2967,7 @@ textarea {
 }
 
 .np-item-error {
-  font-size: 0.63rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--red);
   white-space: nowrap;
@@ -2843,7 +2988,7 @@ textarea {
 
 /* Status badge */
 .np-item-status {
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   font-weight: 600;
   padding: 1px 6px;
@@ -2890,7 +3035,7 @@ textarea {
 
 /* Time */
 .np-item-time {
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -2933,7 +3078,7 @@ textarea {
   border: none;
   cursor: pointer;
   color: var(--text-tertiary);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   padding: 2px 4px;
   border-radius: var(--radius-sm);
   margin-left: var(--space-xs);
@@ -2957,7 +3102,7 @@ textarea {
   border: none;
   cursor: pointer;
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--accent-blue, #63b3ed);
   padding: 2px 8px;
   border-radius: var(--radius-sm);
@@ -3088,8 +3233,8 @@ textarea {
 }
 
 .spinner {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border: 2px solid rgba(0, 229, 255, 0.2);
   border-top-color: var(--cyan);
   border-radius: 50%;
@@ -3109,13 +3254,22 @@ textarea {
   min-height: 500px;
 }
 
+/* Merged/finished session — constrain width for readability */
+.session-detail-layout.finished .session-content-area {
+  max-width: 800px;
+}
+
+.session-detail-layout.finished .finished-banner {
+  max-width: 800px;
+}
+
 /* Session info strip — ultra-compact */
 .session-info-strip {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   position: relative;
   z-index: 2;
 }
@@ -3143,7 +3297,7 @@ textarea {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  font-size: 0.58rem;
+  font-size: 0.7rem;
 }
 
 .session-info-strip .si-val {
@@ -3215,7 +3369,7 @@ textarea {
 }
 
 .session-info-strip .si-expand-hint {
-  font-size: 0.5rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   margin-left: auto;
 }
@@ -3226,7 +3380,7 @@ textarea {
   border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -3258,7 +3412,7 @@ textarea {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   flex-shrink: 0;
 }
 
@@ -3281,7 +3435,7 @@ textarea {
 }
 
 .context-fill__pct {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   min-width: 2.2em;
@@ -3315,7 +3469,7 @@ textarea {
 }
 
 .context-fill--danger .context-fill__pct {
-  color: var(--red-dim);
+  color: var(--red-text);
 }
 
 /* ============================================================
@@ -3391,10 +3545,10 @@ textarea {
 /* Knob */
 .tdd-toggle__knob {
   position: absolute;
-  top: 2px;
+  top: 1px;
   left: 2px;
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: var(--text-tertiary);
   transition:
@@ -3404,7 +3558,7 @@ textarea {
 }
 
 .tdd-toggle--on .tdd-toggle__knob {
-  transform: translateX(16px);
+  transform: translateX(16px); /* 32px track - 12px knob - 4px padding */
   background: #fff;
   box-shadow: 0 0 6px rgba(0, 230, 118, 0.5);
 }
@@ -3419,7 +3573,7 @@ textarea {
 .tdd-toggle--compact {
   margin-top: 0;
   padding: 2px 8px;
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -3428,20 +3582,20 @@ textarea {
 }
 
 .tdd-toggle--compact .tdd-toggle__track {
-  width: 26px;
-  height: 14px;
-  border-radius: 7px;
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
 }
 
 .tdd-toggle--compact .tdd-toggle__knob {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   top: 2px;
   left: 2px;
 }
 
 .tdd-toggle--compact.tdd-toggle--on .tdd-toggle__knob {
-  transform: translateX(12px);
+  transform: translateX(14px); /* 28px track - 10px knob - 4px padding */
 }
 
 .finished-banner {
@@ -3539,7 +3693,7 @@ textarea {
 
 .layout-btn svg {
   width: 18px;
-  height: 12px;
+  height: 16px;
 }
 
 /* Layout button tooltips rendered via TooltipProvider portal */
@@ -3595,7 +3749,7 @@ textarea {
 
 .message-role {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -3920,7 +4074,7 @@ textarea {
 
 .msg-actions-confirm-label {
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   color: var(--text-secondary);
   white-space: nowrap;
   padding: 0 4px;
@@ -3938,7 +4092,7 @@ textarea {
   align-items: center;
   gap: var(--space-xs);
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--cyan-dim);
   letter-spacing: 0.02em;
 }
@@ -3978,7 +4132,7 @@ textarea {
 
 .msg-editor-shortcut {
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
 }
 
@@ -4052,21 +4206,21 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-tertiary);
-  font-size: 0.55rem;
+  font-size: 0.7rem;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .nav-btn svg {
-  width: 10px;
-  height: 10px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
@@ -4078,7 +4232,7 @@ textarea {
 
 .msg-counter {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   min-width: 28px;
   text-align: center;
@@ -4364,7 +4518,7 @@ textarea {
   background: var(--red);
   color: #fff;
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   line-height: 1;
   padding: 2px 4px;
   border-radius: var(--radius-sm);
@@ -4463,7 +4617,7 @@ textarea {
 
 .ask-question-subheader {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -4629,7 +4783,7 @@ textarea {
 }
 
 .model-selector-chevron {
-  font-size: 0.5rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   transition: color 0.15s ease;
 }
@@ -4696,7 +4850,7 @@ textarea {
 }
 
 .model-option-desc {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 400;
   color: var(--text-tertiary);
 }
@@ -4748,7 +4902,7 @@ textarea {
 
 .diff-toolbar-label {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -4790,8 +4944,8 @@ textarea {
 }
 
 .diff-nav-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
@@ -4837,7 +4991,7 @@ textarea {
 }
 
 .diff-file-chevron {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   transition: transform 0.15s ease;
   color: var(--text-tertiary);
   flex-shrink: 0;
@@ -4856,7 +5010,7 @@ textarea {
 }
 
 .diff-file-stat {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 400;
   flex-shrink: 0;
 }
@@ -5147,60 +5301,6 @@ textarea {
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
-/* ---- Segment tabs (Steering / Features) ---- */
-
-.spec-browser-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-}
-
-.spec-browser-tab {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex: 1;
-  padding: 10px 12px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.spec-browser-tab:hover {
-  color: var(--text-secondary);
-  background: var(--bg-hover);
-}
-
-.spec-browser-tab.active {
-  color: var(--cyan);
-  border-bottom-color: var(--cyan);
-}
-
-.spec-browser-tab-count {
-  font-size: 0.58rem;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 100px;
-  background: var(--bg-raised);
-  color: var(--text-tertiary);
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.spec-browser-tab.active .spec-browser-tab-count {
-  background: var(--cyan-glow);
-  color: var(--cyan-dim);
-}
-
 /* ---- Scrollable list ---- */
 
 .spec-browser-list {
@@ -5239,9 +5339,9 @@ textarea {
 
 .spec-browser-group-chevron {
   flex-shrink: 0;
-  width: 12px;
+  width: 16px;
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
 }
 
 .spec-browser-group-name {
@@ -5254,7 +5354,7 @@ textarea {
 
 .spec-browser-group-count {
   flex-shrink: 0;
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 500;
   padding: 1px 6px;
   border-radius: 100px;
@@ -5350,44 +5450,6 @@ textarea {
   white-space: nowrap;
 }
 
-/* ---- File pills (content view file switcher) ---- */
-
-.spec-browser-pills {
-  display: flex;
-  gap: 2px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-  overflow-x: auto;
-}
-
-.spec-browser-pill {
-  padding: 4px 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.spec-browser-pill:hover {
-  color: var(--text-secondary);
-  background: var(--bg-hover);
-}
-
-.spec-browser-pill.active {
-  color: var(--cyan);
-  background: var(--cyan-glow);
-}
-
 /* ---- Content area ---- */
 
 .spec-browser-content {
@@ -5419,11 +5481,6 @@ textarea {
 /* ---- Mobile overrides ---- */
 
 @media (max-width: 768px) {
-  .spec-browser-tab {
-    padding: 12px;
-    min-height: 44px;
-  }
-
   .spec-browser-group {
     padding: 10px 12px;
     min-height: 44px;
@@ -5442,11 +5499,6 @@ textarea {
     width: 44px;
     height: 44px;
   }
-
-  .spec-browser-pill {
-    padding: 8px 12px;
-    min-height: 44px;
-  }
 }
 
 /* ============================================================
@@ -5459,7 +5511,7 @@ textarea {
   padding: 1px 7px;
   border-radius: 9999px;
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -5624,7 +5676,7 @@ textarea {
   align-items: center;
   gap: var(--space-sm);
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   padding-top: 1px;
 }
@@ -5695,8 +5747,8 @@ textarea {
 
 .commit-diff-loading::before {
   content: "";
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   border: 2px solid var(--border-default);
   border-top-color: var(--cyan-dim);
   border-radius: 50%;
@@ -5956,7 +6008,7 @@ textarea {
 
 .tool-use-group-chevron {
   margin-left: auto;
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   flex-shrink: 0;
   transition: color 0.15s ease;
@@ -6064,7 +6116,7 @@ textarea {
 .kiro-cmd-popover-header {
   display: block;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -6144,6 +6196,17 @@ textarea {
    ============================================================ */
 
 @media (max-width: 768px) {
+  /* ---- Mobile touch target minimums ---- */
+  .btn-icon-only,
+  .nav-btn,
+  .diff-nav-btn,
+  .roadmap-expand-btn,
+  .roadmap-btn-focus,
+  .pin-toggle-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .main {
     padding: var(--space-md) var(--space-md);
   }
@@ -6303,40 +6366,6 @@ textarea {
     border-top: 1px solid var(--border-subtle);
   }
 
-  .mobile-panel-tabs {
-    display: flex;
-    gap: 2px;
-    padding: 3px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-  }
-
-  .mobile-tab {
-    display: flex;
-    flex: 1;
-    align-items: center;
-    justify-content: center;
-    min-width: 0;
-    height: 36px;
-    padding: 0 var(--space-sm);
-    border: none;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-tertiary);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    transition: all 0.15s ease;
-  }
-
-  .mobile-tab.active {
-    background: var(--cyan);
-    color: var(--text-inverse);
-  }
-
   .mobile-actions {
     display: flex;
     gap: var(--space-sm);
@@ -6388,7 +6417,7 @@ textarea {
     background: var(--bg-surface);
     color: var(--text-secondary);
     font-family: var(--font-mono);
-    font-size: 0.68rem;
+    font-size: 0.72rem;
     cursor: pointer;
     transition: all 0.15s ease;
   }
@@ -6424,7 +6453,7 @@ textarea {
   /* Info strip: collapsible on mobile */
   .session-info-strip {
     cursor: pointer;
-    font-size: 0.62rem;
+    font-size: 0.7rem;
   }
 
   .session-info-strip .si-summary {
@@ -6510,8 +6539,8 @@ textarea {
   }
 
   .nav-btn svg {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
   }
 
   /* Message nav: own row on mobile for breathing room */
@@ -6556,7 +6585,7 @@ textarea {
   }
 
   .msg-actions-confirm-label {
-    font-size: 0.68rem;
+    font-size: 0.72rem;
   }
 
   .msg-editor-shortcut {
@@ -6715,7 +6744,7 @@ textarea {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
 }
 
 .convo-list-meta .si-val {
@@ -6768,7 +6797,7 @@ textarea {
 }
 
 .convo-badge {
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -6806,7 +6835,7 @@ textarea {
 }
 
 .convo-card-meta {
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-family: var(--font-mono);
   color: var(--text-tertiary);
 }
@@ -6908,7 +6937,7 @@ textarea {
 }
 
 .workflow-card-iteration {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   margin-left: auto;
@@ -6921,7 +6950,7 @@ textarea {
 }
 
 .workflow-card-label {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -6957,7 +6986,7 @@ textarea {
 }
 
 .workflow-card-progress-text {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -7001,7 +7030,7 @@ textarea {
   color: var(--text-tertiary);
   flex-shrink: 0;
   line-height: 1;
-  width: 12px;
+  width: 16px;
   text-align: center;
 }
 
@@ -7020,7 +7049,7 @@ textarea {
   align-items: center;
   gap: var(--space-xs);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-tertiary);
 }
 
@@ -7031,13 +7060,13 @@ textarea {
 .git-panel-stat-add {
   color: var(--green);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
 }
 
 .git-panel-stat-rm {
   color: var(--red);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
 }
 
 .git-panel-header-actions {
@@ -7049,55 +7078,6 @@ textarea {
 
 .git-panel-body {
   border-top: 1px solid var(--border-subtle);
-}
-
-.git-panel-tabs {
-  display: flex;
-  padding: 0 var(--space-md);
-  gap: 0;
-  border-bottom: 1px solid var(--border-subtle);
-  background: rgba(17, 24, 37, 0.3);
-}
-
-.git-panel-tab {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: var(--space-sm) var(--space-md);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 500;
-  color: var(--text-tertiary);
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition:
-    color 0.15s ease,
-    border-color 0.15s ease;
-  margin-bottom: -1px;
-}
-
-.git-panel-tab:hover {
-  color: var(--text-secondary);
-}
-
-.git-panel-tab.active {
-  color: var(--cyan);
-  border-bottom-color: var(--cyan);
-}
-
-.git-panel-tab-count {
-  font-size: 0.58rem;
-  padding: 0 5px;
-  border-radius: 100px;
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
-  line-height: 1.6;
-}
-
-.git-panel-tab.active .git-panel-tab-count {
-  background: var(--cyan-glow);
 }
 
 .git-panel-content {
@@ -7142,7 +7122,7 @@ textarea {
   display: flex;
   gap: var(--space-xs);
   flex-shrink: 0;
-  font-size: 0.62rem;
+  font-size: 0.7rem;
 }
 
 /* Commit list */
@@ -7172,7 +7152,7 @@ textarea {
 
 .git-panel-commit-hash {
   color: var(--cyan-dim);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   flex-shrink: 0;
 }
 
@@ -7186,7 +7166,7 @@ textarea {
 
 .git-panel-commit-meta {
   color: var(--text-tertiary);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -7254,7 +7234,7 @@ textarea {
 }
 
 .convo-sidebar-title {
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -7265,7 +7245,7 @@ textarea {
 
 .convo-sidebar-toggle {
   flex-shrink: 0;
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
 }
 
@@ -7353,7 +7333,7 @@ textarea {
 }
 
 .convo-sidebar-item-meta {
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--text-tertiary);
 }
@@ -7399,7 +7379,7 @@ textarea {
 .convo-sidebar-archive-toggle {
   display: inline-flex;
   align-items: center;
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   background: transparent;
@@ -7449,65 +7429,6 @@ textarea {
   flex-shrink: 0;
 }
 
-/* ---- Sidebar tab switcher ---- */
-
-.convo-sidebar-tabs {
-  display: flex;
-  gap: 2px;
-  padding: var(--space-xs);
-  background: var(--bg-base);
-  border-bottom: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-}
-
-.convo-sidebar-tab {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 5px 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-.convo-sidebar-tab:hover {
-  color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.convo-sidebar-tab.active {
-  color: var(--cyan);
-  background: rgba(0, 229, 255, 0.08);
-}
-
-.convo-sidebar-tab-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 7px;
-  background: var(--cyan);
-  color: var(--bg-base);
-  font-size: 0.52rem;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  line-height: 1;
-}
-
 /* ---- Active conversation items (within sidebar) ---- */
 
 .convo-sidebar-item-name-row {
@@ -7539,7 +7460,7 @@ textarea {
   border: 1px solid var(--border-subtle);
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 0.56rem;
+  font-size: 0.7rem;
   text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
@@ -7561,14 +7482,14 @@ textarea {
 
 .convo-sidebar-meta-sep {
   color: var(--border-default);
-  font-size: 0.48rem;
+  font-size: 0.7rem;
   line-height: 1;
   flex-shrink: 0;
 }
 
 .convo-sidebar-active-time {
   font-family: var(--font-mono);
-  font-size: 0.55rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   white-space: nowrap;
   flex-shrink: 0;
@@ -7580,12 +7501,12 @@ textarea {
   text-align: center;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   line-height: 1.6;
 }
 
 .convo-sidebar-empty-hint {
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   opacity: 0.7;
   display: block;
   margin-top: var(--space-xs);
@@ -7800,7 +7721,7 @@ textarea {
 
 /* Type badge */
 .cmd-badge {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   padding: 1px 6px;
   border-radius: 9999px;
   white-space: nowrap;
@@ -7821,7 +7742,7 @@ textarea {
 
 /* Source label */
 .cmd-source {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   white-space: nowrap;
   flex-shrink: 0;
@@ -7837,7 +7758,7 @@ textarea {
   padding: var(--space-xs) var(--space-sm);
   border-top: 1px solid var(--border-subtle);
   background: rgba(17, 24, 37, 0.95);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   z-index: 1;
 }
@@ -7848,7 +7769,7 @@ textarea {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   line-height: 1.4;
   color: var(--text-secondary);
   background: var(--bg-raised);
@@ -8005,7 +7926,7 @@ textarea {
 
 /* Extension badge */
 .file-ext {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   padding: 1px 6px;
   border-radius: 9999px;
   white-space: nowrap;
@@ -8024,7 +7945,7 @@ textarea {
   padding: var(--space-xs) var(--space-sm);
   border-top: 1px solid var(--border-subtle);
   background: rgba(17, 24, 37, 0.95);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   z-index: 1;
 }
@@ -8035,7 +7956,7 @@ textarea {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   line-height: 1.4;
   color: var(--text-secondary);
   background: var(--bg-raised);
@@ -8161,7 +8082,7 @@ textarea {
 
 .hotkey-help-category {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -8259,7 +8180,7 @@ textarea {
   border-radius: 8px;
   background: var(--cyan);
   color: var(--bg-base);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   font-weight: 700;
   font-family: var(--font-mono);
   line-height: 1;
@@ -8348,7 +8269,7 @@ textarea {
 }
 
 .unified-panel-empty-hint {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   opacity: 0.7;
 }
 
@@ -8440,7 +8361,7 @@ textarea {
 }
 
 .unified-panel-item-meta {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -8451,7 +8372,7 @@ textarea {
 
 /* Time */
 .unified-panel-item-time {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -8558,7 +8479,7 @@ textarea {
 
 .workflow-status-badge {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -8648,7 +8569,7 @@ textarea {
 
 .wf-section-label {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -8700,7 +8621,7 @@ textarea {
 
 .task-plan-label {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -8716,7 +8637,7 @@ textarea {
 
 .task-plan-generate {
   font-family: var(--font-mono) !important;
-  font-size: 0.68rem !important;
+  font-size: 0.72rem !important;
   color: var(--cyan-dim) !important;
   border-color: rgba(0, 229, 255, 0.2) !important;
   background: transparent !important;
@@ -8762,7 +8683,7 @@ textarea {
 
 .task-plan-progress-pct {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-secondary);
   min-width: 32px;
   text-align: right;
@@ -8851,13 +8772,13 @@ textarea {
 }
 
 .task-plan-skip-reason {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   font-style: italic;
 }
 
 .task-plan-added-by {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--cyan-dim);
 }
 
@@ -8873,7 +8794,7 @@ textarea {
 
 .task-plan-group-label {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -9011,7 +8932,7 @@ textarea {
 }
 
 .workflow-config-toggle-arrow {
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   display: inline-block;
   transition: transform 0.15s ease;
 }
@@ -9038,7 +8959,7 @@ textarea {
 
 .workflow-config-field label {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -9068,7 +8989,7 @@ textarea {
 
 .workflow-config-error {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--red);
   margin-top: 2px;
 }
@@ -9092,7 +9013,7 @@ textarea {
 
 .workflow-metric-label {
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -9242,7 +9163,7 @@ textarea {
   align-items: center;
   gap: var(--space-xs);
   color: var(--cyan);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 600;
 }
 
@@ -9259,7 +9180,7 @@ textarea {
   align-items: center;
   gap: var(--space-sm);
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
 }
 
 .live-output-counts {
@@ -9303,7 +9224,7 @@ textarea {
 
 .stream-tool-name::before {
   content: "\25B6 ";
-  font-size: 0.6rem;
+  font-size: 0.7rem;
 }
 
 .stream-tool-result {
@@ -9435,7 +9356,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-secondary);
 }
 
@@ -9455,7 +9376,7 @@ textarea {
 
 .work-type-badge {
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -9484,7 +9405,7 @@ textarea {
 }
 
 .iteration-card-exit-signal {
-  font-size: 0.6rem;
+  font-size: 0.7rem;
 }
 
 .iteration-card-exit-signal.true {
@@ -9496,7 +9417,7 @@ textarea {
 }
 
 .iteration-card-error-badge {
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -9507,7 +9428,7 @@ textarea {
 }
 
 .iteration-card-timeout-badge {
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -9526,7 +9447,7 @@ textarea {
 .iteration-card-expand {
   all: unset;
   cursor: pointer;
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   padding: 2px 4px;
   border-radius: var(--radius-sm);
@@ -9561,7 +9482,7 @@ textarea {
 .iteration-diff-file {
   font-family: var(--font-mono);
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   padding-left: var(--space-sm);
 }
 
@@ -9604,7 +9525,7 @@ textarea {
 }
 
 .cumulative-diff-arrow {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   transition: transform 0.15s ease;
 }
 .cumulative-diff-arrow.expanded {
@@ -9624,7 +9545,7 @@ textarea {
 }
 
 .cumulative-diff-file {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-tertiary);
 }
 
@@ -9698,7 +9619,7 @@ textarea {
 
 .workflow-stat-label {
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -9843,7 +9764,7 @@ textarea {
 
 .dev-server-status {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -9860,7 +9781,7 @@ textarea {
 
 .dev-server-port {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-tertiary);
 }
 
@@ -9875,7 +9796,7 @@ textarea {
 
 .dev-server-error-output {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--red);
   background: var(--surface);
   border: 1px solid var(--red-glow);
@@ -9909,7 +9830,7 @@ textarea {
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -10124,7 +10045,7 @@ textarea {
 /* Status text */
 .ds-status-text {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -10132,7 +10053,7 @@ textarea {
 
 .ds-port {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
 }
 
@@ -10148,7 +10069,7 @@ textarea {
 
 .ds-error-output {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--red);
   background: var(--bg-base);
   border: 1px solid var(--red-glow);
@@ -10177,7 +10098,7 @@ textarea {
     height: 36px;
     min-height: 36px;
     padding: 6px 12px;
-    font-size: 0.65rem;
+    font-size: 0.7rem;
   }
 
   /* Bottom sheet panel on mobile */
@@ -10319,7 +10240,7 @@ textarea {
 
 .preset-card-installed {
   margin-left: auto;
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -10327,7 +10248,7 @@ textarea {
 }
 
 .preset-card-description {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-secondary);
   line-height: 1.4;
 }
@@ -10340,7 +10261,7 @@ textarea {
 }
 
 .preset-card-file {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   padding-left: var(--space-sm);
   position: relative;
@@ -10394,7 +10315,7 @@ textarea {
 
 .preset-subdir-hint {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--text-tertiary);
   margin-top: 4px;
 }
@@ -10407,7 +10328,7 @@ textarea {
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-section);
 }
 
 .roadmap-header {
@@ -10532,7 +10453,7 @@ textarea {
   border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   padding: 2px 8px;
   cursor: pointer;
   text-transform: uppercase;
@@ -10624,7 +10545,7 @@ textarea {
 
 .roadmap-type {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -10678,18 +10599,20 @@ textarea {
 }
 
 .roadmap-btn-focus {
-  background: var(--cyan-glow);
-  border: 1px solid var(--cyan-dim);
+  background: transparent;
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  color: var(--cyan);
+  color: var(--text-secondary);
   cursor: pointer;
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   padding: 2px 6px;
   transition: all 0.1s ease;
 }
 
 .roadmap-btn-focus:hover:not(:disabled) {
-  background: var(--cyan-glow-strong);
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--cyan);
 }
 
 .roadmap-btn-focus:disabled {
@@ -10730,12 +10653,12 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   background: none;
   border: none;
   color: var(--text-tertiary);
-  font-size: 0.55rem;
+  font-size: 0.7rem;
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition:

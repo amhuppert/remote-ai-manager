@@ -23,16 +23,21 @@ export default function ProjectCard({
   onArchive,
   onPin,
 }: ProjectCardProps): React.JSX.Element {
-  const badgeClass = project.hasRunningSession
-    ? "project-badge active"
+  const badgeStatus = project.hasRunningSession
+    ? "running"
     : project.activeSessions > 0
-      ? "project-badge has-sessions"
-      : "project-badge idle";
+      ? "active"
+      : "idle";
   const badgeText = project.hasRunningSession
     ? "running"
     : project.activeSessions > 0
       ? `${project.activeSessions} session${project.activeSessions === 1 ? "" : "s"}`
       : "idle";
+  const cardActivityClass = project.hasRunningSession
+    ? " active"
+    : project.activeSessions > 0
+      ? " has-sessions"
+      : " idle";
 
   const menuItems = [
     {
@@ -48,7 +53,7 @@ export default function ProjectCard({
   return (
     <Link
       href={`/projects/${encodeURIComponent(project.name)}`}
-      className={`project-card${archived ? " archived" : ""}${pinned ? " pinned" : ""}`}
+      className={`project-card${archived ? " archived" : ""}${pinned ? " pinned" : ""}${cardActivityClass}`}
     >
       <div className="project-card-header">
         <div className="project-name">{project.name}</div>
@@ -66,9 +71,16 @@ export default function ProjectCard({
             <span className="pin-icon">{pinned ? "\u2605" : "\u2606"}</span>
           </button>
           {archived ? (
-            <div className="project-badge archived-badge">archived</div>
+            <span className="cc-badge cc-badge--status" data-status="idle">
+              archived
+            </span>
           ) : (
-            <div className={badgeClass}>{badgeText}</div>
+            <span
+              className="cc-badge cc-badge--status"
+              data-status={badgeStatus}
+            >
+              {badgeText}
+            </span>
           )}
           <CardContextMenu
             items={menuItems}
@@ -84,11 +96,11 @@ export default function ProjectCard({
           <span className="stat-label">Sessions</span>
         </div>
         <div className="stat">
-          <span className="stat-value">&mdash;</span>
+          <span className="stat-value">0</span>
           <span className="stat-label">Prompts</span>
         </div>
         <div className="stat">
-          <span className="stat-value">&mdash;</span>
+          <span className="stat-value stat-value--empty">&mdash;</span>
           <span className="stat-label">Last active</span>
         </div>
       </div>

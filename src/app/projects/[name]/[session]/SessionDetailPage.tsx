@@ -1012,6 +1012,13 @@ export default function SessionDetailPage({
               {displayStatus}
             </div>
             <div className="topbar-sep" />
+            <TddToggle
+              enabled={session.tddEnabled}
+              onChange={(val) => tddMutation.mutate(val)}
+              disabled={tddMutation.isPending}
+              compact
+            />
+            <div className="topbar-sep" />
             <LayoutSwitcher
               activeLayout={layout}
               onLayoutChange={handleLayoutChange}
@@ -1056,7 +1063,9 @@ export default function SessionDetailPage({
       />
 
       <main className="main">
-        <div className="session-detail-layout stagger-in">
+        <div
+          className={`session-detail-layout stagger-in${isFinished ? " finished" : ""}`}
+        >
           {/* Info strip */}
           <div
             className={`session-info-strip${infoExpanded ? " expanded" : ""}`}
@@ -1125,13 +1134,6 @@ export default function SessionDetailPage({
                   <ContextFillIndicator percentage={contextPercent} />
                 </>
               )}
-              <div className="si-sep" />
-              <TddToggle
-                enabled={session.tddEnabled}
-                onChange={(val) => tddMutation.mutate(val)}
-                disabled={tddMutation.isPending}
-                compact
-              />
             </div>
           </div>
 
@@ -1558,29 +1560,29 @@ export default function SessionDetailPage({
 
       {/* Mobile bottom action bar */}
       <div className="mobile-bottom-bar">
-        <div className="mobile-panel-tabs">
+        <div className="cc-tabs">
           <button
-            className={`mobile-tab${mobilePanel === "chat" ? " active" : ""}`}
+            className={`cc-tab${mobilePanel === "chat" ? " active" : ""}`}
             onClick={() => switchMobilePanel("chat")}
           >
             Chat
           </button>
           <button
-            className={`mobile-tab${mobilePanel === "diff" ? " active" : ""}`}
+            className={`cc-tab${mobilePanel === "diff" ? " active" : ""}`}
             onClick={() => switchMobilePanel("diff")}
           >
             Diff
           </button>
           {session.creationMode === "focus" && (
             <button
-              className={`mobile-tab${mobilePanel === "focus" ? " active" : ""}`}
+              className={`cc-tab${mobilePanel === "focus" ? " active" : ""}`}
               onClick={() => switchMobilePanel("focus")}
             >
               Focus
             </button>
           )}
           <button
-            className={`mobile-tab${mobilePanel === "specs" ? " active" : ""}`}
+            className={`cc-tab${mobilePanel === "specs" ? " active" : ""}`}
             onClick={() => switchMobilePanel("specs")}
           >
             Specs

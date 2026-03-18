@@ -218,19 +218,17 @@ export default function ProjectsGrid(): React.JSX.Element {
                 )}
               </div>
 
-              <div className="filter-pills">
+              <div className="cc-tabs">
                 {(["all", "active", "running", "idle"] as const).map(
                   (filter) => (
                     <button
                       key={filter}
-                      className={`filter-pill${statusFilter === filter ? " active" : ""}`}
+                      className={`cc-tab${statusFilter === filter ? " active" : ""}`}
                       onClick={() => filterByStatus(filter)}
                       type="button"
                     >
                       {filter}
-                      <span className="filter-pill-count">
-                        {counts[filter]}
-                      </span>
+                      <span className="cc-tab-count">{counts[filter]}</span>
                     </button>
                   ),
                 )}
@@ -250,11 +248,10 @@ export default function ProjectsGrid(): React.JSX.Element {
             {showPinnedSection && (
               <>
                 <div className="pinned-section">
-                  <div className="pinned-section-header">
-                    <span className="pinned-star">&#9733;</span>
-                    <span>Pinned</span>
-                    <span className="pinned-count">
-                      {visiblePinnedProjects.length}
+                  <div className="cc-section-header">
+                    <span className="cc-section-label">Pinned</span>
+                    <span className="cc-section-count">
+                      ({visiblePinnedProjects.length})
                     </span>
                   </div>
                   <div className="projects-grid stagger-in">

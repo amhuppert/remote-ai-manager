@@ -68,15 +68,16 @@ Key qualities:
 
 ### Elevation Model
 
-The five background levels form a visual depth stack. Use the correct level for each context:
+The six background levels form a visual depth stack. Use the correct level for each context:
 
 | Level | Token | When to use |
 |-------|-------|-------------|
 | Void | `--bg-void` | Page background — the deepest layer, only on `body` |
-| Base | `--bg-base` | Inset/recessed areas — input backgrounds, prompt input area, code block backgrounds |
+| Base | `--bg-base` | Inset/recessed areas — input backgrounds, prompt input area, code block backgrounds, idle card surfaces |
 | Surface | `--bg-surface` | Default component surfaces — cards, panels, topbar (with alpha), modals |
-| Raised | `--bg-raised` | Elevated elements — tooltips, file headers, branch chips, hover states on base |
-| Hover | `--bg-hover` | Hover states on surface-level elements — card hover, button hover, row hover |
+| Raised | `--bg-raised` | Elevated elements — tooltips, file headers, branch chips, active card surfaces, hover states on base |
+| Elevated | `--bg-elevated` | Interactive hover states on items within surfaces — sidebar items, list rows, panel toggles |
+| Hover | `--bg-hover` | Hover states on surface-level elements — card hover, button hover, tab hover |
 
 Depth increases from void → hover. Never skip levels (e.g., don't use raised for a card that should be surface).
 
@@ -84,8 +85,9 @@ Depth increases from void → hover. Never skip levels (e.g., don't use raised f
 
 | Level | Token | When to use |
 |-------|-------|-------------|
+| Dim | `--border-dim` | Recessed/inactive elements — idle card borders, de-emphasized containers |
 | Subtle | `--border-subtle` | Default borders on panels, cards, file sections, info strip separators |
-| Default | `--border-default` | Input borders, table header borders, button borders, topbar divider |
+| Default | `--border-default` | Input borders, table header borders, button borders, topbar divider, has-sessions card borders |
 | Strong | `--border-strong` | Hover/focused borders — appears on interaction, never at rest |
 
 ### Glow Effect Semantics
@@ -110,13 +112,20 @@ These recipes are the canonical typographic treatments. Use them consistently:
 | Modal title | Display | 700 | 1.2rem | — |
 | Empty-state title | Display | 700 | 1.1rem | Secondary color |
 | Section/panel label | Mono | 600 | 0.72rem | Uppercase, 0.08em tracking |
-| Metadata label (tiny) | Mono | 600 | 0.58–0.65rem | Uppercase, 0.06–0.1em tracking |
+| Metadata label | Mono | 600 | 0.7rem | Uppercase, 0.06–0.1em tracking |
 | Button text | Mono | 500 | 0.78rem / 0.72rem (sm) | — |
 | Data values | Mono | 400–600 | varies | — |
 | Conversation prose | Body | 400 | 0.9rem | 1.65 line-height |
 | Inline code | Mono | — | 0.82rem | Raised bg, cyan color, 2px 6px padding |
 | Code blocks | Mono | — | 0.8rem | 1.55 line-height, base bg |
 | Diff content | Mono | — | 0.75rem | 1.7 line-height |
+
+**Font-Size Floor**: All text must be at minimum `0.7rem`. The 5-tier size system:
+1. **Floor** (0.7rem) — metadata labels, badges, smallest visible text
+2. **Compact** (0.72rem) — section labels, small buttons, tab text
+3. **Default** (0.78rem) — button text, table cells, descriptions
+4. **Content** (0.8–0.9rem) — conversation prose, code blocks
+5. **Display** (1.0rem+) — titles, headings, page titles
 
 ### Navigation Philosophy
 
@@ -152,6 +161,87 @@ These rules cannot be expressed in CSS and must be enforced through code review:
 7. **Layout persistence**: Layout switcher selection persists per-session (localStorage or URL param).
 8. **No hover-only controls**: All interactive controls (buttons, actions, toggles) must be visible at all times. Never hide controls behind hover states using `opacity: 0`, `visibility: hidden`, or `display: none` with hover-triggered reveal. Hover-gated controls are inaccessible on touch devices, undiscoverable for new users, and fail keyboard-only navigation. Hover effects should be limited to visual feedback (background color change, border highlight) on already-visible elements.
 
+## Accessibility Minimums
+
+| Constraint | Value | Rationale |
+|-----------|-------|-----------|
+| Text contrast (normal) | 4.5:1 minimum against bg-void and bg-surface | WCAG AA level |
+| Text contrast (large) | 3:1 minimum | WCAG AA for 18px+ or 14px+ bold |
+| Font-size floor | 0.7rem (11.2px at default root) | Legibility on high-DPI displays |
+| Icon minimum | 20px width and height | Visibility at desktop distances |
+| Icon button minimum | 24px width and height (desktop) | Clickable target for mouse |
+| Touch target minimum | 44px min-width and min-height (mobile ≤768px) | WCAG 2.2 touch target size |
+| Toggle track minimum | 28px wide × 16px tall, 12px knob | Finger-operable toggle |
+
+## Canonical Patterns
+
+### Tabs (`.cc-tabs` / `.cc-tab`)
+
+Container for pill-style tab switchers used throughout the application.
+
+- **Container** (`.cc-tabs`): `display: flex`, `gap: 2px`, `padding: 3px`, `border: 1px solid --border-subtle`, `border-radius: --radius-md`, `background: --bg-base`
+- **Tab** (`.cc-tab`): mono font, 0.72rem, 500 weight, rounded, `padding: 5px 12px`
+- **States**: inactive (transparent bg, `--text-secondary`), hover (`--bg-hover`, `--text-primary`), active (`--cyan` bg, `--text-inverse`)
+- **Count badge** (`.cc-tab-count`): 0.7rem, pill shape, opacity 0.85; full opacity in active tab
+- **Mobile**: min-height 36px, `flex: 1` for full-width distribution
+
+**Locations**: ProjectsGrid filter pills, ConversationSidebar tabs, DiffPanel tabs, RightPane tabs, SessionGitPanel tabs, SpecBrowser tabs
+
+### Section Headers (`.cc-section-header`)
+
+Collapsible/static section dividers with label, count, and trailing actions.
+
+- **Container** (`.cc-section-header`): `display: flex`, `align-items: center`, `gap: --space-sm`, `margin-bottom: --space-header-content`
+- **Chevron** (`.cc-section-chevron`): 16px, rotate animation 0.15s ease, color `--text-secondary`
+- **Label** (`.cc-section-label`): mono, 0.72rem, 600 weight, uppercase, 0.08em tracking, `--text-secondary`
+- **Count** (`.cc-section-count`): mono, 0.7rem, 400 weight, `--text-tertiary`
+- **Actions** (`.cc-section-actions`): `margin-left: auto`, flex, gap
+
+**Locations**: ProjectsGrid pinned section, RoadmapItemsPanel header, ConversationSidebar header, SessionGitPanel header
+
+### Badges (`.cc-badge`)
+
+Unified badge system with status, type, count, and subtle variants.
+
+- **Base** (`.cc-badge`): `inline-flex`, mono, 0.7rem, 600 weight, pill shape, `2px 8px` padding
+- **Status** (`.cc-badge--status`): color via `data-status` attribute — cyan for running/active, green for merged, amber for awaiting, neutral for idle
+- **Type** (`.cc-badge--type`): color via `data-type` attribute — cyan for feature, red for bug, amber for idea
+- **Count** (`.cc-badge--count`): neutral default (`--bg-raised`, `--text-secondary`)
+- **Subtle** (`.cc-badge--subtle`): 50% background opacity for repetitive contexts (e.g., merged badge in archived view)
+
+**Locations**: ProjectCard status, SessionsTable status/mode, RoadmapItemsPanel type badges
+
+### Empty States (`.empty-state`)
+
+Centered empty view with icon, title, and description.
+
+- **Container**: flex column, centered, `padding: --space-3xl --space-xl`
+- **Icon** (`.empty-state-icon`): 2.5rem, opacity 0.3
+- **Title** (`.empty-state-title`): display font, 700 weight, 1.1rem, `--text-secondary`
+- **Description** (`.empty-state-desc`): mono, 0.78rem, `--text-tertiary`, `max-width: 320px`
+
+### Null Value Treatment
+
+- **Count fields** (sessions, prompts): display `0`, not em-dash
+- **Temporal fields** (last active): display `—` with `.stat-value--empty` class (`--text-tertiary`, `font-style: normal`)
+
+### Button Weight Hierarchy
+
+| Tier | Class | Background | Border | Text Color | Use Case |
+|------|-------|-----------|--------|------------|----------|
+| Primary | `.btn-primary` | `--cyan` | `--cyan` | `--text-inverse` | Main CTA (Merge, Create) |
+| Secondary | `.btn` | `--bg-surface` | `--border-default` | `--text-primary` | Standard actions (Commit, Archive) |
+| Tertiary/Ghost | `.btn-ghost` | transparent | transparent | `--text-secondary` | Low-emphasis (filter, navigation) |
+| Danger | `.btn-danger` | transparent | red 30% | `--red` | Destructive actions (Delete) |
+
+## Spacing Patterns
+
+| Token | Value | Where to Apply |
+|-------|-------|---------------|
+| `--space-section` | `var(--space-xl)` | Between major visual sections (pinned/unpinned, roadmap/table, info strip/content) |
+| `--space-header-content` | `var(--space-sm)` | From section header to its content (table header to rows, panel header to body) |
+| `--space-item` | `var(--space-xs)` | Between items within a list (roadmap items, conversation entries) |
+
 ## Architecture
 
 ### Existing Architecture Analysis
@@ -160,7 +250,7 @@ The design system is already fully implemented across three files:
 
 | File                  | Role                                                        | Lines  |
 | --------------------- | ----------------------------------------------------------- | ------ |
-| `src/app/globals.css` | All tokens, component styles, responsive rules, animations  | ~1859  |
+| `src/app/globals.css` | All tokens, component styles, responsive rules, animations  | ~10750 |
 | `src/app/layout.tsx`  | Font loading via `next/font/google`, CSS variable injection | ~44    |
 | `src/types/index.ts`  | TypeScript type for `LayoutMode` union                      | 1 line |
 
@@ -246,7 +336,7 @@ graph TB
 | 4.1–4.8     | Button variants            | ButtonStyles             | `globals.css` `.btn` section                                    |
 | 5.1–5.6     | Status indicators          | StatusStyles             | `globals.css` `.status-indicator`, `.session-status` sections   |
 | 6.1–6.6     | Card component             | CardStyles               | `globals.css` `.project-card` section                           |
-| 7.1–7.2     | Badge/pill                 | BadgeStyles              | `globals.css` `.project-badge` section                          |
+| 7.1–7.2     | Badge/pill                 | BadgeStyles              | `globals.css` `.cc-badge` section                               |
 | 8.1–8.5     | Modal/overlay              | ModalStyles              | `globals.css` `.modal` section                                  |
 | 9.1–9.5     | Form elements              | FormStyles               | `globals.css` `.form-*` section                                 |
 | 10.1–10.4   | Atmospheric effects        | AtmosphericEffects       | `globals.css` `body::before`, `body::after`, scrollbar          |
@@ -317,20 +407,21 @@ The token layer maintains state through CSS custom properties:
 
 ```
 :root {
-  /* Background elevation scale (5 levels) */
-  --bg-void, --bg-base, --bg-surface, --bg-raised, --bg-hover
+  /* Background elevation scale (6 levels) */
+  --bg-void, --bg-base, --bg-surface, --bg-raised, --bg-elevated, --bg-hover
 
-  /* Border intensity scale (3 levels) */
-  --border-subtle, --border-default, --border-strong
+  /* Border intensity scale (4 levels) */
+  --border-dim, --border-subtle, --border-default, --border-strong
 
   /* Accent families (4 × base/dim/glow) */
   --cyan, --cyan-dim, --cyan-glow, --cyan-glow-strong, --cyan-glow-text
   --amber, --amber-dim, --amber-glow
   --green, --green-dim, --green-glow
   --red, --red-dim, --red-glow
+  --red-text: #e8506c  /* WCAG AA compliant red for text on dark backgrounds */
 
   /* Text hierarchy (4 levels) */
-  --text-primary, --text-secondary, --text-tertiary, --text-inverse
+  --text-primary, --text-secondary, --text-tertiary: #738699, --text-inverse
 
   /* Typography (semantic aliases) */
   --font-display: var(--font-anybody)
@@ -339,6 +430,17 @@ The token layer maintains state through CSS custom properties:
 
   /* Spacing scale (7 steps) */
   --space-xs through --space-3xl
+
+  /* Semantic spacing tokens */
+  --space-section: var(--space-xl)       /* Between major visual sections */
+  --space-header-content: var(--space-sm) /* From section header to content */
+  --space-item: var(--space-xs)          /* Between items within a list */
+
+  /* Sizing floor tokens */
+  --font-size-floor: 0.7rem    /* Minimum readable font size */
+  --icon-size-min: 20px        /* Minimum icon dimension */
+  --icon-btn-min: 24px         /* Minimum icon button dimension */
+  --touch-target-min: 44px     /* Minimum mobile touch target */
 
   /* Radii (3 sizes) */
   --radius-sm, --radius-md, --radius-lg
@@ -513,7 +615,11 @@ Components in this layer are presentational CSS — they define visual contracts
 
 - Card: `--bg-surface`, `--border-subtle`, `--radius-lg`, hover lifts and reveals cyan gradient `::before`
 - Grid: `auto-fill`, `minmax(340px, 1fr)`, single-column at ≤900px
-- Contents: `.project-name`, `.project-badge`, `.project-path`, `.project-stats`
+- Contents: `.project-name`, `.cc-badge`, `.project-path`, `.project-stats`
+- **3-tier activity hierarchy** (elevation-based, not opacity-based):
+  - `.idle`: `--bg-base` (recessed), `--border-dim`, project name dimmed to `--text-secondary`; hover restores to surface
+  - `.has-sessions`: `--border-default` (brighter border, standard surface)
+  - `.active`: `--bg-raised`, cyan left border, resting outer glow `0 0 16px -4px rgba(0,229,255,0.12)`; hover intensifies glow
 
 #### BadgeStyles
 
@@ -524,8 +630,10 @@ Components in this layer are presentational CSS — they define visual contracts
 
 **Implementation Notes**
 
-- `border-radius: 100px`, mono `0.68rem`, 600 weight
-- `.active`: cyan glow background + text; `.idle`: neutral gray
+- All badges use the unified `.cc-badge` system — see Canonical Patterns section above
+- `border-radius: 9999px`, mono `0.7rem`, 600 weight
+- Status colors via `data-status` attribute; type colors via `data-type` attribute
+- Legacy `.project-badge` classes have been removed — all badge usage migrated to `.cc-badge`
 
 #### ModalStyles
 
@@ -552,7 +660,7 @@ Components in this layer are presentational CSS — they define visual contracts
 
 - Messages: user role in amber, assistant in cyan, assistant content has `2px` left border
 - Code: inline (`--cyan`, `--bg-raised`), blocks (`--bg-base`, `--border-subtle`)
-- Nav: `20px` buttons flanking counter (mobile: `44px`)
+- Nav: `24px` buttons flanking counter (mobile: `44px`)
 - Prompt: textarea + `48px` send button; busy state: `pulse-border`; mobile: `position: sticky; bottom: 0`
 
 #### LayoutSwitcherStyles
@@ -607,7 +715,7 @@ Components in this layer are presentational CSS — they define visual contracts
 **Implementation Notes**
 
 - Hooks banner: amber-glow bg, amber text, icon/text/action structure
-- Running indicator: cyan-glow bg, spinner (`14px`, `spin` 0.8s)
+- Running indicator: cyan-glow bg, spinner (`16px`, `spin` 0.8s)
 
 #### EmptyStateStyles
 

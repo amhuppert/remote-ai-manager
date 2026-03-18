@@ -229,43 +229,43 @@ export default function ConversationSidebar({
       <div
         className={`convo-sidebar${collapsed ? " collapsed" : ""}${mobileOpen ? " mobile-open" : ""}`}
       >
-        <div className="convo-sidebar-header">
+        <div className="cc-section-header convo-sidebar-header">
           {(!collapsed || mobileOpen) && (
-            <span className="convo-sidebar-title">Conversations</span>
+            <span className="cc-section-label">Conversations</span>
           )}
-          <button
-            className="btn-icon-only convo-sidebar-toggle"
-            onClick={toggleCollapsed}
-            data-tooltip={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {collapsed ? "\u25B6" : "\u25C0"}
-          </button>
-          <button
-            className="convo-sidebar-close"
-            onClick={onMobileClose}
-            data-tooltip="Close"
-          >
-            &#10005;
-          </button>
+          <div className="cc-section-actions">
+            <button
+              className="btn-icon-only convo-sidebar-toggle"
+              onClick={toggleCollapsed}
+              data-tooltip={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {collapsed ? "\u25B6" : "\u25C0"}
+            </button>
+            <button
+              className="convo-sidebar-close"
+              onClick={onMobileClose}
+              data-tooltip="Close"
+            >
+              &#10005;
+            </button>
+          </div>
         </div>
         {(!collapsed || mobileOpen) && (
           <>
-            <div className="convo-sidebar-tabs">
+            <div className="cc-tabs">
               <button
-                className={`convo-sidebar-tab${activeTab === "session" ? " active" : ""}`}
+                className={`cc-tab${activeTab === "session" ? " active" : ""}`}
                 onClick={() => setActiveTab("session")}
               >
                 Session
               </button>
               <button
-                className={`convo-sidebar-tab${activeTab === "active" ? " active" : ""}`}
+                className={`cc-tab${activeTab === "active" ? " active" : ""}`}
                 onClick={() => setActiveTab("active")}
               >
                 Active
                 {activeConvoList.length > 0 && (
-                  <span className="convo-sidebar-tab-badge">
-                    {activeConvoList.length}
-                  </span>
+                  <span className="cc-tab-count">{activeConvoList.length}</span>
                 )}
               </button>
             </div>

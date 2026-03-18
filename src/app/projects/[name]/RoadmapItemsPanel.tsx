@@ -214,19 +214,21 @@ export default function RoadmapItemsPanel({
   return (
     <div className="roadmap-panel">
       {/* Header */}
-      <div className="roadmap-header">
+      <div className="cc-section-header roadmap-header">
         <button
           className="roadmap-header-toggle"
           onClick={() => setCollapsed(!collapsed)}
         >
-          <span className={`roadmap-chevron ${collapsed ? "collapsed" : ""}`}>
-            ▾
+          <span
+            className={`cc-section-chevron${collapsed ? " collapsed" : ""}`}
+          >
+            &#9662;
           </span>
-          <span className="roadmap-label">Roadmap</span>
-          <span className="roadmap-count">({activeCount})</span>
+          <span className="cc-section-label">Roadmap</span>
+          <span className="cc-section-count">({activeCount})</span>
         </button>
 
-        <div className="roadmap-header-actions">
+        <div className="cc-section-actions roadmap-header-actions">
           {archivedCount > 0 && (
             <button
               className={`btn btn-sm btn-toggle ${showArchived ? "active" : ""}`}
@@ -327,7 +329,10 @@ export default function RoadmapItemsPanel({
                         {item.status === "done" && "✓"}
                       </button>
 
-                      <span className={`roadmap-type ${item.type}`}>
+                      <span
+                        className={`cc-badge cc-badge--type`}
+                        data-type={item.type}
+                      >
                         {TYPE_LABELS[item.type]}
                       </span>
 
@@ -434,10 +439,11 @@ export default function RoadmapItemsPanel({
               })}
             </div>
           ) : (
-            <div className="roadmap-empty">
-              <div className="roadmap-empty-icon">✦</div>
-              <div className="roadmap-empty-text">
-                No roadmap items yet. Add bugs, features, or ideas to track.
+            <div className="empty-state" style={{ padding: "var(--space-xl)" }}>
+              <div className="empty-state-icon">✦</div>
+              <div className="empty-state-title">No roadmap items</div>
+              <div className="empty-state-desc">
+                Add bugs, features, or ideas to track.
               </div>
             </div>
           )}

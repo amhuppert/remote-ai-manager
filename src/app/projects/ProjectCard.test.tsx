@@ -71,12 +71,12 @@ describe("ProjectCard", () => {
         }}
       />,
     );
-    const badge = container.querySelector(".project-badge");
-    expect(badge?.className).toContain("active");
+    const badge = container.querySelector(".cc-badge");
+    expect(badge?.getAttribute("data-status")).toBe("running");
     expect(badge?.textContent).toBe("running");
   });
 
-  it("shows has-sessions badge when sessions exist but none running (Req 1.4)", () => {
+  it("shows active badge when sessions exist but none running (Req 1.4)", () => {
     const { container } = render(
       <ProjectCard
         {...defaultProps}
@@ -88,8 +88,8 @@ describe("ProjectCard", () => {
         }}
       />,
     );
-    const badge = container.querySelector(".project-badge");
-    expect(badge?.className).toContain("has-sessions");
+    const badge = container.querySelector(".cc-badge");
+    expect(badge?.getAttribute("data-status")).toBe("active");
     expect(badge?.textContent).toBe("2 sessions");
   });
 
@@ -105,8 +105,8 @@ describe("ProjectCard", () => {
         }}
       />,
     );
-    const badge = container.querySelector(".project-badge");
-    expect(badge?.className).toContain("has-sessions");
+    const badge = container.querySelector(".cc-badge");
+    expect(badge?.getAttribute("data-status")).toBe("active");
     expect(badge?.textContent).toBe("1 session");
   });
 
@@ -122,8 +122,8 @@ describe("ProjectCard", () => {
         }}
       />,
     );
-    const badge = container.querySelector(".project-badge");
-    expect(badge?.className).toContain("idle");
+    const badge = container.querySelector(".cc-badge");
+    expect(badge?.getAttribute("data-status")).toBe("idle");
     expect(badge?.textContent).toBe("idle");
   });
 
@@ -142,7 +142,7 @@ describe("ProjectCard", () => {
     );
     const card = container.querySelector(".project-card");
     expect(card?.className).toContain("archived");
-    const badge = container.querySelector(".project-badge");
+    const badge = container.querySelector(".cc-badge");
     expect(badge?.textContent).toBe("archived");
   });
 

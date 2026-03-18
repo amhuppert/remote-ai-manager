@@ -88,15 +88,20 @@ export default function SessionGitPanel({
   return (
     <div className={`git-panel${collapsed ? " collapsed" : ""}`}>
       {/* Header */}
-      <div className="git-panel-header" onClick={toggleCollapsed}>
+      <div
+        className="cc-section-header git-panel-header"
+        onClick={toggleCollapsed}
+      >
         <div className="git-panel-header-left">
-          <span className="git-panel-chevron">
-            {collapsed ? "\u25B8" : "\u25BE"}
+          <span
+            className={`cc-section-chevron${collapsed ? " collapsed" : ""}`}
+          >
+            &#9662;
           </span>
-          <span className="git-panel-label">Git</span>
+          <span className="cc-section-label">Git</span>
           {hasChanges && (
             <span className="git-panel-summary">
-              <span className="git-panel-file-count">
+              <span className="cc-section-count">
                 {diff.files.length} file{diff.files.length !== 1 ? "s" : ""}{" "}
                 changed
               </span>
@@ -108,14 +113,14 @@ export default function SessionGitPanel({
           )}
           {!hasChanges && hasCommits && (
             <span className="git-panel-summary">
-              <span className="git-panel-file-count">
+              <span className="cc-section-count">
                 {commits.length} commit{commits.length !== 1 ? "s" : ""}
               </span>
             </span>
           )}
         </div>
         <div
-          className="git-panel-header-actions"
+          className="cc-section-actions git-panel-header-actions"
           onClick={(e) => e.stopPropagation()}
         >
           {(hasChanges || hasCommits) && (
@@ -149,25 +154,23 @@ export default function SessionGitPanel({
         <div className="git-panel-body">
           {/* Tab bar */}
           {(hasChanges || hasCommits) && (
-            <div className="git-panel-tabs">
+            <div className="cc-tabs">
               <button
-                className={`git-panel-tab${activeTab === "changes" ? " active" : ""}`}
+                className={`cc-tab${activeTab === "changes" ? " active" : ""}`}
                 onClick={() => setActiveTab("changes")}
               >
                 Changes
                 {hasChanges && (
-                  <span className="git-panel-tab-count">
-                    {diff.files.length}
-                  </span>
+                  <span className="cc-tab-count">{diff.files.length}</span>
                 )}
               </button>
               <button
-                className={`git-panel-tab${activeTab === "commits" ? " active" : ""}`}
+                className={`cc-tab${activeTab === "commits" ? " active" : ""}`}
                 onClick={() => setActiveTab("commits")}
               >
                 Commits
                 {hasCommits && (
-                  <span className="git-panel-tab-count">{commits.length}</span>
+                  <span className="cc-tab-count">{commits.length}</span>
                 )}
               </button>
             </div>

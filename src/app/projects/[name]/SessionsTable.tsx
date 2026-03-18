@@ -156,16 +156,36 @@ export default function SessionsTable({
             >
               <span className="session-name">{session.sessionName}</span>
               {session.finished && (
-                <span className="session-badge merged">merged</span>
+                <span
+                  className="cc-badge cc-badge--status cc-badge--subtle"
+                  data-status="merged"
+                >
+                  merged
+                </span>
               )}
               {session.creationMode === "focus" && (
-                <span className="session-badge focus">focus</span>
+                <span
+                  className="cc-badge cc-badge--status"
+                  data-status="active"
+                >
+                  focus
+                </span>
               )}
               {session.creationMode === "optimistic" && (
-                <span className="session-badge optimistic">optimistic</span>
+                <span
+                  className="cc-badge cc-badge--status"
+                  data-status="active"
+                >
+                  optimistic
+                </span>
               )}
               {session.creationMode === "fast" && (
-                <span className="session-badge fast">fast</span>
+                <span
+                  className="cc-badge cc-badge--status"
+                  data-status="active"
+                >
+                  fast
+                </span>
               )}
             </Link>
           );

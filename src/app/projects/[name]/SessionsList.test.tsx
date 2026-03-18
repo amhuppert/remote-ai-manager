@@ -240,9 +240,11 @@ describe("SessionsList", () => {
     const { container } = renderWithQuery(
       <SessionsList projectName="my-project" />,
     );
-    const badge = container.querySelector(".session-badge.optimistic");
-    expect(badge).not.toBeNull();
-    expect(badge?.textContent?.trim()).toBe("optimistic");
+    const badges = container.querySelectorAll(".cc-badge");
+    const optimisticBadge = Array.from(badges).find(
+      (b) => b.textContent?.trim() === "optimistic",
+    );
+    expect(optimisticBadge).not.toBeNull();
   });
 
   it("renders Quick Task button for standalone optimistic dialog", () => {

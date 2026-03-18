@@ -38,9 +38,9 @@ export default function RightPane({
     <div className="right-pane sidebar-diff-panel">
       {/* Tab bar — always visible */}
       <div className="right-pane-tabs">
-        <div className="filter-pills">
+        <div className="cc-tabs">
           <button
-            className={`filter-pill${rightPaneTab === "diff" ? " active" : ""}`}
+            className={`cc-tab${rightPaneTab === "diff" ? " active" : ""}`}
             onClick={() => switchRightPaneTab("diff")}
             type="button"
           >
@@ -48,7 +48,7 @@ export default function RightPane({
           </button>
           {isFocusMode && (
             <button
-              className={`filter-pill${rightPaneTab === "focus" ? " active" : ""}`}
+              className={`cc-tab${rightPaneTab === "focus" ? " active" : ""}`}
               onClick={() => switchRightPaneTab("focus")}
               type="button"
             >
@@ -56,7 +56,7 @@ export default function RightPane({
             </button>
           )}
           <button
-            className={`filter-pill${rightPaneTab === "specs" ? " active" : ""}`}
+            className={`cc-tab${rightPaneTab === "specs" ? " active" : ""}`}
             onClick={() => switchRightPaneTab("specs")}
             type="button"
           >

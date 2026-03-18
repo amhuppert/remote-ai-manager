@@ -107,33 +107,33 @@ function SidebarShell({
 
   return (
     <div className="convo-sidebar" style={{ height: "100%" }}>
-      <div className="convo-sidebar-header">
-        <span className="convo-sidebar-title">Conversations</span>
-        <button
-          className="btn-icon-only convo-sidebar-toggle"
-          onClick={onToggleCollapse}
-          data-tooltip="Collapse"
-        >
-          &#9664;
-        </button>
+      <div className="cc-section-header convo-sidebar-header">
+        <span className="cc-section-label">Conversations</span>
+        <div className="cc-section-actions">
+          <button
+            className="btn-icon-only convo-sidebar-toggle"
+            onClick={onToggleCollapse}
+            data-tooltip="Collapse"
+          >
+            &#9664;
+          </button>
+        </div>
       </div>
 
-      <div className="convo-sidebar-tabs">
+      <div className="cc-tabs">
         <button
-          className={`convo-sidebar-tab${activeTab === "session" ? " active" : ""}`}
+          className={`cc-tab${activeTab === "session" ? " active" : ""}`}
           onClick={() => setActiveTab("session")}
         >
           Session
         </button>
         <button
-          className={`convo-sidebar-tab${activeTab === "active" ? " active" : ""}`}
+          className={`cc-tab${activeTab === "active" ? " active" : ""}`}
           onClick={() => setActiveTab("active")}
         >
           Active
           {activeConversations.length > 0 && (
-            <span className="convo-sidebar-tab-badge">
-              {activeConversations.length}
-            </span>
+            <span className="cc-tab-count">{activeConversations.length}</span>
           )}
         </button>
       </div>

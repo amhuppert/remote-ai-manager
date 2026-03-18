@@ -158,11 +158,11 @@ export function SpecBrowserView({
           <span className="spec-browser-context">{contextLabel}</span>
         </div>
         {currentFiles.length > 1 && (
-          <div className="spec-browser-pills">
+          <div className="cc-tabs">
             {currentFiles.map((file) => (
               <button
                 key={file}
-                className={`spec-browser-pill${selection!.file === file ? " active" : ""}`}
+                className={`cc-tab${selection!.file === file ? " active" : ""}`}
                 onClick={() => onSelectFile(selection!.category, file)}
                 type="button"
               >
@@ -188,21 +188,21 @@ export function SpecBrowserView({
   return (
     <div className="spec-browser">
       {showTabs && (
-        <div className="spec-browser-tabs">
+        <div className="cc-tabs">
           <button
-            className={`spec-browser-tab${effectiveSegment === "steering" ? " active" : ""}`}
+            className={`cc-tab${effectiveSegment === "steering" ? " active" : ""}`}
             onClick={() => onSegmentChange("steering")}
             type="button"
           >
             Steering
           </button>
           <button
-            className={`spec-browser-tab${effectiveSegment === "features" ? " active" : ""}`}
+            className={`cc-tab${effectiveSegment === "features" ? " active" : ""}`}
             onClick={() => onSegmentChange("features")}
             type="button"
           >
             Features
-            <span className="spec-browser-tab-count">{featureCount}</span>
+            <span className="cc-tab-count">{featureCount}</span>
           </button>
         </div>
       )}

@@ -505,27 +505,25 @@ export default function SessionDiffViewer({
 
             {/* Tab bar */}
             <div className="diff-tab-bar">
-              <div className="filter-pills">
+              <div className="cc-tabs">
                 <button
-                  className={`filter-pill${activeTab === "uncommitted" ? " active" : ""}`}
+                  className={`cc-tab${activeTab === "uncommitted" ? " active" : ""}`}
                   onClick={() => setActiveTab("uncommitted")}
                   type="button"
                 >
                   Uncommitted
                   {diff.files.length > 0 && (
-                    <span className="filter-pill-count">
-                      {diff.files.length}
-                    </span>
+                    <span className="cc-tab-count">{diff.files.length}</span>
                   )}
                 </button>
                 <button
-                  className={`filter-pill${activeTab === "commits" ? " active" : ""}`}
+                  className={`cc-tab${activeTab === "commits" ? " active" : ""}`}
                   onClick={() => setActiveTab("commits")}
                   type="button"
                 >
                   Commits
                   {commits.length > 0 && (
-                    <span className="filter-pill-count">{commits.length}</span>
+                    <span className="cc-tab-count">{commits.length}</span>
                   )}
                 </button>
               </div>
