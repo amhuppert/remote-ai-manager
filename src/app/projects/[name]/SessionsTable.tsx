@@ -300,7 +300,7 @@ export default function SessionsTable({
       <input
         type="text"
         className="sessions-filter-input"
-        placeholder="Filter sessions\u2026"
+        placeholder="Filter sessions…"
         value={nameFilter}
         onChange={(e) => onNameFilterChange(e.target.value)}
       />
