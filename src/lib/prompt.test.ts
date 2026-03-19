@@ -7,11 +7,16 @@ import type { SessionState, ConversationState } from "@/types";
 
 vi.mock("@/lib/sdk-env", () => ({}));
 
+vi.mock("./push-dispatcher", () => ({
+  dispatchPushForConversationStatus: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Import module under test — use factory for DI
 // ---------------------------------------------------------------------------
 import { createPromptExecutor, type PromptDeps } from "./prompt";
 import type { QuerySession, TurnResult, TurnEmit } from "./query-session";
+import { dispatchPushForConversationStatus } from "./push-dispatcher";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -668,6 +673,22 @@ describe("executePromptStream", () => {
     const statuses = statusCalls.map(([event]) => event.status);
     expect(statuses).toContain("running");
     expect(statuses).toContain("awaiting");
+  });
+
+  it("dispatches push notification for awaiting status", async () => {
+    const qs = createMockQuerySession([]);
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
+
+    expect(dispatchPushForConversationStatus).toHaveBeenCalledWith({
+      projectName: "repo",
+      sessionName: "test-session",
+      conversationId: "conv-123",
+      status: "awaiting",
+    });
   });
 
   it("emits error and done when sendPrompt throws", async () => {
