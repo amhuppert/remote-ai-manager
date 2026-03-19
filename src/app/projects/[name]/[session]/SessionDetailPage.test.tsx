@@ -281,8 +281,8 @@ describe("SessionDetailPage", () => {
     expect(
       screen.getAllByText("csm/test-session").length,
     ).toBeGreaterThanOrEqual(1);
-    // Prompt count rendered as text
-    expect(screen.getByText("5")).toBeInTheDocument();
+    // Prompt count rendered as text (info strip + mobile action menu)
+    expect(screen.getAllByText("5").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows turn counter with position / total", () => {

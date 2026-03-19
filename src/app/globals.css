@@ -6154,6 +6154,240 @@ textarea {
   display: none;
 }
 
+.mobile-context-fill {
+  display: none;
+}
+
+.mobile-info-panel {
+  display: none;
+}
+
+/* ============================================================
+   Mobile Action Menu — bottom-sheet for session actions
+   ============================================================ */
+
+.mobile-action-menu-trigger {
+  display: none;
+}
+
+.mobile-action-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(6, 9, 15, 0.7);
+  backdrop-filter: blur(4px);
+  animation: fadeIn 0.15s ease;
+}
+
+.mobile-action-backdrop.visible {
+  display: block;
+}
+
+.mobile-action-sheet {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 201;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-default);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-md);
+  padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0));
+  animation: slideUpSheet 0.25s ease;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.mobile-action-sheet.visible {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.mobile-action-sheet-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-default);
+  margin: 0 auto var(--space-sm);
+  flex-shrink: 0;
+}
+
+.mobile-action-sheet-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-action-sheet-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.mobile-action-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-sm);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  min-height: 44px;
+  width: 100%;
+  text-align: left;
+}
+
+.mobile-action-item:hover {
+  background: var(--bg-hover);
+}
+
+.mobile-action-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mobile-action-item.danger {
+  color: var(--red-text);
+}
+
+.mobile-action-item.danger:hover {
+  background: var(--red-glow);
+}
+
+.mobile-action-icon {
+  width: 20px;
+  text-align: center;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.mobile-action-label {
+  flex: 1;
+}
+
+.mobile-action-meta {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.mobile-action-sheet-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: var(--space-xs) 0;
+}
+
+/* Session info section in action menu */
+/* TDD toggle row within action sheet */
+.mobile-action-tdd-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  min-height: 44px;
+}
+
+.mobile-action-tdd-row .tdd-toggle {
+  margin-top: 0;
+  border: none;
+  padding: 4px 0;
+  flex: 1;
+}
+
+/* Dev server trigger within action sheet */
+.mobile-action-ds-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  min-height: 44px;
+  width: 100%;
+  text-align: left;
+  border: none;
+}
+
+.mobile-action-ds-row:hover {
+  background: var(--bg-hover);
+}
+
+/* Styled action buttons (desktop-consistent) */
+.mobile-action-btn-commit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: 10px var(--space-md);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-height: 44px;
+}
+
+.mobile-action-btn-commit:hover {
+  background: var(--bg-raised);
+  border-color: var(--border-strong);
+}
+
+.mobile-action-btn-commit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mobile-action-btn-merge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: 10px var(--space-md);
+  border: 1px solid var(--cyan);
+  border-radius: var(--radius-sm);
+  background: var(--cyan);
+  color: var(--text-inverse);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-height: 44px;
+}
+
+.mobile-action-btn-merge:hover {
+  background: var(--cyan-dim);
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 20px var(--cyan-glow);
+}
+
+.mobile-action-btn-merge:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ============================================================
    Responsive: Tablet (<=900px)
    ============================================================ */
@@ -6277,11 +6511,13 @@ textarea {
     height: 8px;
   }
 
-  /* Hide layout switcher, separators, and action buttons on mobile (use bottom bar instead) */
+  /* Hide most session controls on mobile — relocated to bottom bar / context menu */
   .topbar-status-session .layout-switcher,
   .topbar-status-session .topbar-sep,
   .topbar-status-session .btn,
-  .topbar-status-session .btn-icon-only {
+  .topbar-status-session .btn-icon-only,
+  .topbar-status-session .tdd-toggle,
+  .topbar-status-session .ds-wrapper {
     display: none;
   }
 
@@ -6338,41 +6574,67 @@ textarea {
   /* ---- Session detail: mobile bottom bar ---- */
 
   .app[data-page="detail"] .main {
-    padding-bottom: calc(var(--space-md) + 100px);
+    padding: 0;
+    padding-bottom: 48px;
   }
 
   .mobile-bottom-bar {
     display: flex;
-    flex-direction: column;
-    gap: var(--space-xs);
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-sm);
     position: fixed;
     bottom: 0;
     left: 0;
     right: 0;
     z-index: 100;
-    padding: var(--space-sm) var(--space-md);
-    padding-bottom: calc(var(--space-sm) + env(safe-area-inset-bottom, 0));
+    height: 48px;
+    padding: 0 var(--space-md);
+    padding-bottom: env(safe-area-inset-bottom, 0);
     background: rgba(11, 16, 25, 0.92);
     backdrop-filter: blur(16px) saturate(140%);
     border-top: 1px solid var(--border-subtle);
   }
 
+  .mobile-bottom-bar .cc-tabs {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mobile-bottom-bar .cc-tab {
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: 0.7rem;
+  }
+
   .mobile-actions {
+    display: none;
+  }
+
+  /* Show the action menu trigger button in the bottom bar */
+  .mobile-action-menu-trigger {
     display: flex;
-    gap: var(--space-sm);
-    justify-content: flex-end;
-  }
-
-  .mobile-bottom-bar .btn-sm {
-    min-height: 36px;
-    padding: 6px 14px;
-    font-size: 0.72rem;
-  }
-
-  .mobile-bottom-bar .btn-icon-only {
+    align-items: center;
+    justify-content: center;
     width: 36px;
     height: 36px;
-    font-size: 0.85rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+    padding: 0;
+    line-height: 1;
+    letter-spacing: 2px;
+  }
+
+  .mobile-action-menu-trigger:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-default);
   }
 
   /* Mobile panel switching via data attribute */
@@ -6435,49 +6697,39 @@ textarea {
     display: flex;
   }
 
-  /* Session detail layout: account for mobile bottom bar */
+  /* Session detail layout: full bleed, account for topbar + bottom bar */
   .session-detail-layout {
-    height: calc(100vh - var(--topbar-height) - var(--space-md) * 2 - 100px);
+    height: calc(100vh - var(--topbar-height) - 48px);
     min-height: 300px;
+    gap: 0;
   }
 
-  /* Info strip: collapsible on mobile */
+  /* Info strip: hidden on mobile — accessible via Info tab */
   .session-info-strip {
-    cursor: pointer;
-    font-size: 0.7rem;
-  }
-
-  .session-info-strip .si-summary {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px var(--space-sm);
-  }
-
-  .session-info-strip .si-details {
-    display: none;
-    flex-wrap: wrap;
-    gap: var(--space-xs) var(--space-sm);
-    padding: 0 var(--space-sm) var(--space-sm);
-  }
-
-  .session-info-strip.expanded .si-details {
-    display: flex;
-  }
-
-  .session-info-strip .si-sep {
     display: none;
   }
 
-  /* Prompt input stays at bottom via flex layout — no sticky needed */
+  /* Full-bleed conversation panel on mobile */
+  .prompt-panel {
+    border: none;
+    border-radius: 0;
+  }
+
+  /* Background step: prompt area has a distinct background from conversation */
   .prompt-input-area {
     flex-shrink: 0;
-    padding: var(--space-sm) var(--space-md);
-    padding-bottom: calc(var(--space-sm) + env(safe-area-inset-bottom, 0));
+    padding: var(--space-xs) var(--space-sm);
+    background: rgba(11, 16, 25, 0.6);
+    border-top: 1px solid var(--border-default);
+  }
+
+  .panel-body {
+    padding: var(--space-sm);
   }
 
   .prompt-textarea {
     min-height: 44px;
+    max-height: 120px;
   }
 
   .prompt-toolbar .send-btn,
@@ -6534,18 +6786,32 @@ textarea {
     height: 16px;
   }
 
-  /* Message nav: own row on mobile for breathing room */
+  /* Panel header: compact single row on mobile, never shrink */
   .prompt-panel .panel-header {
-    flex-wrap: wrap;
+    padding: var(--space-xs) var(--space-sm);
     gap: var(--space-xs);
+    flex-shrink: 0;
   }
 
+  /* Hide redundant title on mobile — Chat tab already indicates the panel */
+  .prompt-panel .panel-header .panel-title {
+    display: none;
+  }
+
+  /* Message nav: spread left/counter/right across full width */
   .msg-nav {
-    order: 3;
-    flex: 1 0 100%;
-    justify-content: center;
-    padding-top: var(--space-xs);
-    border-top: 1px solid var(--border-subtle);
+    flex: 1;
+    justify-content: space-between;
+  }
+
+  .msg-nav .nav-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .msg-nav .nav-counter {
+    font-size: 0.7rem;
+    min-width: 40px;
   }
 
   /* ---- Message actions: flow below content on mobile ---- */
@@ -6682,6 +6948,137 @@ textarea {
   .merge-toast-close {
     width: 36px;
     height: 36px;
+  }
+
+  /* ---- Context fill bar: full-width below panel header on mobile ---- */
+
+  .mobile-context-fill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px var(--space-sm);
+    border-bottom: 1px solid var(--border-subtle);
+    background: rgba(17, 24, 37, 0.3);
+    flex-shrink: 0;
+  }
+
+  .mobile-context-fill .context-fill {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mobile-context-fill .context-fill__label {
+    display: none;
+  }
+
+  .mobile-context-fill .context-fill__bar-track {
+    flex: 1;
+    width: auto;
+  }
+
+  /* ---- Mobile Info tab panel ---- */
+
+  .app[data-mobile-panel="info"] .mobile-info-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--space-md) var(--space-sm);
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .mobile-info-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    border-radius: var(--radius-sm);
+  }
+
+  .mobile-info-row:nth-child(odd) {
+    background: rgba(17, 24, 37, 0.3);
+  }
+
+  .mobile-info-label {
+    color: var(--text-tertiary);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.7rem;
+    flex-shrink: 0;
+    min-width: 80px;
+  }
+
+  .mobile-info-value {
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .mobile-info-copyable {
+    cursor: pointer;
+    transition: background 0.1s ease;
+  }
+
+  .mobile-info-copyable:active {
+    background: var(--bg-hover);
+  }
+
+  .mobile-info-copy-icon {
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+    font-size: 0.8rem;
+    width: 20px;
+    text-align: center;
+  }
+
+  .mobile-info-actions {
+    padding: var(--space-md) var(--space-sm);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .mobile-info-actions .btn {
+    display: flex;
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ---- Mobile panel switching: info hides conversation + diff ---- */
+
+  .app[data-mobile-panel="info"] .prompt-panel,
+  .app[data-mobile-panel="info"] .sidebar-diff-panel {
+    display: none;
+  }
+
+  .app[data-mobile-panel="info"]
+    .session-content-area.with-sidebar
+    > .prompt-panel,
+  .app[data-mobile-panel="info"]
+    .session-content-area.with-sidebar
+    > .sidebar-diff-panel {
+    display: none;
+  }
+
+  /* ---- Bottom bar: horizontal scroll for tabs when many ---- */
+
+  .mobile-bottom-bar .cc-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-bottom-bar .cc-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mobile-bottom-bar .cc-tab {
+    flex-shrink: 0;
   }
 
   @keyframes slideUpSheet {

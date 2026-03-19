@@ -11,7 +11,7 @@ import type {
 // Types
 // ---------------------------------------------------------------------------
 
-type MobilePanel = "chat" | "diff" | "focus" | "specs";
+type MobilePanel = "chat" | "diff" | "focus" | "specs" | "info";
 type RightPaneTab = "diff" | "focus" | "specs";
 
 interface SpecBrowserSelection {

@@ -101,6 +101,7 @@ import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import type { ImagePayload } from "@/types";
 import CopyableId from "@/components/CopyableId";
 import { KiroCommandProvider } from "@/components/KiroCommandContext";
+import MobileActionMenu from "@/components/MobileActionMenu";
 import DevServerDrawer from "@/components/DevServerDrawer";
 import { useDevServers } from "@/hooks/use-dev-servers";
 import {
@@ -115,6 +116,29 @@ interface Props {
   conversationId: string;
   defaultModel: ModelId;
   autoFocus?: boolean;
+}
+
+function MobileInfoCopyRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div
+      className="mobile-info-row mobile-info-copyable"
+      onClick={() => {
+        void navigator.clipboard.writeText(value).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      role="button"
+      tabIndex={0}
+    >
+      <span className="mobile-info-label">{label}</span>
+      <span className="mobile-info-value">{value}</span>
+      <span className="mobile-info-copy-icon">
+        {copied ? "\u2713" : "\u2398"}
+      </span>
+    </div>
+  );
 }
 
 function formatDate(iso: string): string {
@@ -163,7 +187,7 @@ export default function SessionDetailPage({
   const switchMobilePanelRaw = useSwitchMobilePanel();
   const switchRightPaneTab = useSwitchRightPaneTab();
   const switchMobilePanel = useCallback(
-    (panel: "chat" | "diff" | "focus" | "specs") => {
+    (panel: "chat" | "diff" | "focus" | "specs" | "info") => {
       switchMobilePanelRaw(panel);
       // Sync right pane tab when switching to diff, focus, or specs via mobile tabs
       if (panel === "focus") switchRightPaneTab("focus");
@@ -1189,6 +1213,11 @@ export default function SessionDetailPage({
                   onLast={scrollToEnd}
                 />
               </div>
+              {contextPercent != null && (
+                <div className="mobile-context-fill">
+                  <ContextFillIndicator percentage={contextPercent} />
+                </div>
+              )}
               <div className="panel-body" ref={panelBodyRef}>
                 {promptError && (
                   <div className="prompt-error">
@@ -1554,6 +1583,66 @@ export default function SessionDetailPage({
                 sessionName={session.sessionName}
               />
             )}
+
+            {/* Mobile info panel */}
+            {mobilePanel === "info" && (
+              <div className="mobile-info-panel">
+                <div className="mobile-info-row">
+                  <span className="mobile-info-label">Status</span>
+                  <span className="mobile-info-value">
+                    <span
+                      className={`status-dot ${statusDotClass}`}
+                      style={{
+                        width: 6,
+                        height: 6,
+                        display: "inline-block",
+                        marginRight: 6,
+                      }}
+                    />
+                    {displayStatus}
+                  </span>
+                </div>
+                <MobileInfoCopyRow label="Branch" value={session.branchName} />
+                <div className="mobile-info-row">
+                  <span className="mobile-info-label">Created</span>
+                  <span className="mobile-info-value">
+                    {formatDate(session.createdAt)}
+                  </span>
+                </div>
+                <div className="mobile-info-row">
+                  <span className="mobile-info-label">Prompts</span>
+                  <span className="mobile-info-value">
+                    {deriveSessionPromptCount(session)}
+                  </span>
+                </div>
+                <MobileInfoCopyRow
+                  label="Worktree"
+                  value={session.worktreePath}
+                />
+                <MobileInfoCopyRow label="Conv ID" value={conversationId} />
+                {(() => {
+                  const claudeSid = session.conversations.find(
+                    (c) => c.id === conversationId,
+                  )?.claudeSessionId;
+                  return claudeSid ? (
+                    <MobileInfoCopyRow label="Claude" value={claudeSid} />
+                  ) : null;
+                })()}
+                {contextPercent != null && (
+                  <div className="mobile-info-row">
+                    <span className="mobile-info-label">Context</span>
+                    <span className="mobile-info-value">
+                      <ContextFillIndicator percentage={contextPercent} />
+                    </span>
+                  </div>
+                )}
+                <div className="mobile-info-actions">
+                  <button className="btn btn-sm" onClick={handleCopyContext}>
+                    {contextCopied ? "\u2713 Copied" : "\u2398 Copy Context"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </main>
@@ -1587,26 +1676,28 @@ export default function SessionDetailPage({
           >
             Specs
           </button>
-        </div>
-        <div className="mobile-actions">
           <button
-            className="btn btn-sm"
-            disabled={commitDisabled}
-            onClick={requestCommit}
+            className={`cc-tab${mobilePanel === "info" ? " active" : ""}`}
+            onClick={() => switchMobilePanel("info")}
           >
-            Commit
-          </button>
-          <button
-            className="btn btn-sm btn-primary"
-            disabled={mergeDisabled}
-            onClick={requestMerge}
-          >
-            Merge
-          </button>
-          <button className="btn-icon-only danger" onClick={requestDelete}>
-            &#10005;
+            Info
           </button>
         </div>
+        <MobileActionMenu
+          tddEnabled={session.tddEnabled}
+          onTddToggle={(val) => tddMutation.mutate(val)}
+          tddDisabled={tddMutation.isPending}
+          commitDisabled={commitDisabled}
+          mergeDisabled={mergeDisabled}
+          onCommit={requestCommit}
+          onMerge={requestMerge}
+          onDelete={requestDelete}
+          devServerCounts={{
+            running: dsServers.filter((s) => s.status === "running").length,
+            total: dsServers.length,
+          }}
+          onDevServers={dsToggle}
+        />
       </div>
 
       <ConfirmDialog
