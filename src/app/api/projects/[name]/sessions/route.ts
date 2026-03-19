@@ -13,6 +13,8 @@ import {
   type CreateSessionRequest,
 } from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
+import { readConfig, resolveBranchPrefix } from "@/lib/config";
+import { readRepoConfig } from "@/lib/repo-config";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -31,9 +33,14 @@ export const GET = withTracing(async (_request, { params }) => {
   const existingSessions = await getProjectSessions(projectPath);
 
   // Reconcile worktrees: discover and import untracked ones
+  const globalConfig = await readConfig();
+  const repoConfig = await readRepoConfig(projectPath);
+  const branchPrefix = resolveBranchPrefix(globalConfig, repoConfig);
   const reconciliation = await discoverAndImportWorktrees(
     projectPath,
     existingSessions,
+    {},
+    branchPrefix,
   );
 
   // Re-read sessions after reconciliation to include newly imported ones

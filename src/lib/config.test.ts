@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { createConfigReader } from "./config";
+import { createConfigReader, resolveBranchPrefix } from "./config";
+import { globalConfigSchema, perRepoConfigSchema } from "./schemas";
 
 const TEST_DIR = path.join("/tmp", "cc-config-test-" + Date.now());
 
@@ -112,5 +113,85 @@ describe("config", () => {
       ".venv",
     ];
     expect(config.ignorePatterns).toEqual(expectedPatterns);
+  });
+
+  it("readConfig preserves branchPrefix when set", async () => {
+    const reader = createConfigReader(TEST_DIR);
+    const original = await reader.readConfig();
+
+    const modified = { ...original, branchPrefix: "dev" };
+    await reader.writeConfig(modified);
+
+    const reread = await reader.readConfig();
+    expect(reread.branchPrefix).toBe("dev");
+  });
+});
+
+describe("schema: branchPrefix field", () => {
+  it("globalConfigSchema accepts branchPrefix", () => {
+    const result = globalConfigSchema
+      .partial()
+      .safeParse({ branchPrefix: "dev" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.branchPrefix).toBe("dev");
+    }
+  });
+
+  it("globalConfigSchema allows omitted branchPrefix", () => {
+    const result = globalConfigSchema.partial().safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.branchPrefix).toBeUndefined();
+    }
+  });
+
+  it("perRepoConfigSchema accepts branchPrefix", () => {
+    const result = perRepoConfigSchema.safeParse({
+      initScriptPath: null,
+      branchPrefix: "feature",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.branchPrefix).toBe("feature");
+    }
+  });
+
+  it("perRepoConfigSchema allows omitted branchPrefix", () => {
+    const result = perRepoConfigSchema.safeParse({ initScriptPath: null });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.branchPrefix).toBeUndefined();
+    }
+  });
+});
+
+describe("resolveBranchPrefix", () => {
+  it("returns 'csm' when neither config has branchPrefix", () => {
+    expect(resolveBranchPrefix({}, null)).toBe("csm");
+  });
+
+  it("returns global value when only global has branchPrefix", () => {
+    expect(resolveBranchPrefix({ branchPrefix: "dev" }, null)).toBe("dev");
+  });
+
+  it("returns per-project value when only per-project has it", () => {
+    expect(resolveBranchPrefix({}, { branchPrefix: "feature" })).toBe(
+      "feature",
+    );
+  });
+
+  it("per-project overrides global", () => {
+    expect(
+      resolveBranchPrefix({ branchPrefix: "dev" }, { branchPrefix: "feature" }),
+    ).toBe("feature");
+  });
+
+  it("returns 'csm' when repoConfig is null", () => {
+    expect(resolveBranchPrefix({}, null)).toBe("csm");
+  });
+
+  it("returns 'csm' when repoConfig is undefined", () => {
+    expect(resolveBranchPrefix({})).toBe("csm");
   });
 });

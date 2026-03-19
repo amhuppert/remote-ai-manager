@@ -18,6 +18,7 @@ import { readState, mutateState } from "./state";
 import { createLogger } from "./logging";
 import { ensureUniqueName } from "./worktrees";
 import { readRepoConfig } from "./repo-config";
+import { readConfig, resolveBranchPrefix } from "./config";
 import { stopAllForSession } from "./dev-server-registry";
 import { getErrorMessage } from "@/lib/errors";
 import { getProjectDisplayName } from "./project-resolver";
@@ -76,6 +77,7 @@ export interface SessionDeps {
   readState: typeof readState;
   mutateState: typeof mutateState;
   ensureUniqueName: typeof ensureUniqueName;
+  readConfig: typeof readConfig;
   readRepoConfig: typeof readRepoConfig;
   stopAllForSession: typeof stopAllForSession;
   getProjectDisplayName: typeof getProjectDisplayName;
@@ -94,6 +96,7 @@ export const defaultSessionDeps: SessionDeps = {
   readState,
   mutateState,
   ensureUniqueName,
+  readConfig,
   readRepoConfig,
   stopAllForSession,
   getProjectDisplayName,
@@ -121,6 +124,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     readState,
     mutateState,
     ensureUniqueName,
+    readConfig,
     readRepoConfig,
     stopAllForSession,
     getProjectDisplayName,
@@ -207,7 +211,12 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     const sanitized = sanitizeBranchName(sessionName);
     const suffix = generateRandomSuffix();
     const dirName = `${sanitized}-${suffix}`;
-    const branchName = `csm/${dirName}`;
+
+    const globalConfig = await readConfig();
+    const repoConfig = await readRepoConfig(projectPath);
+    const prefix = resolveBranchPrefix(globalConfig, repoConfig);
+    const branchName = prefix ? `${prefix}/${dirName}` : dirName;
+
     const worktreePath = path.join(projectPath, ".worktrees", dirName);
 
     if (existsSync(worktreePath)) {
@@ -310,7 +319,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       }
 
       // Run optional init script
-      const repoConfig = await readRepoConfig(projectPath);
       if (repoConfig?.initScriptPath) {
         const scriptPath = path.isAbsolute(repoConfig.initScriptPath)
           ? repoConfig.initScriptPath

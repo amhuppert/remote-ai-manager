@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { globalConfigSchema } from "./schemas";
-import type { GlobalConfig } from "@/types";
+import type { GlobalConfig, PerRepoConfig } from "@/types";
 
 /** Returns the OS-appropriate config directory for Command Center */
 function getConfigDir(): string {
@@ -138,4 +138,15 @@ export async function writeConfig(config: GlobalConfig): Promise<void> {
 /** Get the config directory path (for testing/diagnostics) */
 export function getConfigDirPath(): string {
   return CONFIG_DIR;
+}
+
+/**
+ * Resolve the branch prefix from per-project and global config.
+ * Per-project overrides global. Falls back to "csm".
+ */
+export function resolveBranchPrefix(
+  globalConfig: Pick<GlobalConfig, "branchPrefix">,
+  repoConfig?: Pick<PerRepoConfig, "branchPrefix"> | null,
+): string {
+  return repoConfig?.branchPrefix ?? globalConfig.branchPrefix ?? "csm";
 }

@@ -103,19 +103,22 @@ export function parseWorktreeList(
 
 /**
  * Derive a session display name from a worktree.
- * Strips `refs/heads/` and `csm/` prefixes from branch name.
+ * Strips `refs/heads/` and the configured branch prefix from the branch name.
  * Falls back to directory basename for detached HEAD.
  */
-export function deriveSessionName(worktree: DiscoveredWorktree): string {
+export function deriveSessionName(
+  worktree: DiscoveredWorktree,
+  branchPrefix = "csm",
+): string {
   if (worktree.branch) {
     let name = worktree.branch;
     // Strip refs/heads/ prefix (git porcelain convention)
     if (name.startsWith("refs/heads/")) {
       name = name.slice("refs/heads/".length);
     }
-    // Strip csm/ prefix (branch naming convention)
-    if (name.startsWith("csm/")) {
-      name = name.slice("csm/".length);
+    const prefixWithSlash = branchPrefix ? `${branchPrefix}/` : "";
+    if (prefixWithSlash && name.startsWith(prefixWithSlash)) {
+      name = name.slice(prefixWithSlash.length);
       // Strip trailing random suffix (6 hex chars) added during provisioning
       name = name.replace(/-[a-f0-9]{6}$/, "");
     }
@@ -185,6 +188,7 @@ export async function discoverAndImportWorktrees(
   projectPath: string,
   existingSessions: SessionState[],
   deps: Partial<WorktreeDeps> = {},
+  branchPrefix = "csm",
 ): Promise<ReconciliationResult> {
   const d = { ...defaultWorktreeDeps, ...deps };
 
@@ -259,7 +263,7 @@ export async function discoverAndImportWorktrees(
   const usedNames = new Set(existingNames);
 
   for (const wt of untracked) {
-    const baseName = deriveSessionName(wt);
+    const baseName = deriveSessionName(wt, branchPrefix);
     const sessionName = ensureUniqueName(baseName, usedNames);
     usedNames.add(sessionName);
 

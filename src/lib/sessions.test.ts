@@ -41,6 +41,7 @@ function createTestDeps() {
         },
       ),
     ensureUniqueName: vi.fn().mockImplementation((name: string) => name),
+    readConfig: vi.fn().mockResolvedValue({}),
     readRepoConfig: vi.fn().mockResolvedValue(null),
     stopAllForSession: vi.fn().mockResolvedValue(undefined),
     getProjectDisplayName: vi
@@ -863,6 +864,50 @@ describe("provisionSession — random suffix", () => {
       ],
       "/projects/repo",
     );
+  });
+});
+
+// ===========================================================================
+// 1.5c – Configurable branch prefix
+// ===========================================================================
+
+describe("provisionSession — configurable branch prefix", () => {
+  it("uses global branchPrefix when configured", async () => {
+    mockGitSuccess();
+    (deps.readConfig as Mock).mockResolvedValue({ branchPrefix: "dev" });
+
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "My Feature",
+    );
+    expect(session.branchName).toMatch(/^dev\/my-feature-[a-f0-9]{6}$/);
+  });
+
+  it("per-project branchPrefix overrides global", async () => {
+    mockGitSuccess();
+    (deps.readConfig as Mock).mockResolvedValue({ branchPrefix: "dev" });
+    (deps.readRepoConfig as Mock).mockResolvedValue({
+      initScriptPath: null,
+      branchPrefix: "feature",
+    });
+
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "My Feature",
+    );
+    expect(session.branchName).toMatch(/^feature\/my-feature-[a-f0-9]{6}$/);
+  });
+
+  it("defaults to csm when no branchPrefix is configured", async () => {
+    mockGitSuccess();
+    (deps.readConfig as Mock).mockResolvedValue({});
+    (deps.readRepoConfig as Mock).mockResolvedValue(null);
+
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "My Feature",
+    );
+    expect(session.branchName).toMatch(/^csm\/my-feature-[a-f0-9]{6}$/);
   });
 });
 

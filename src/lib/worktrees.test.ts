@@ -326,6 +326,45 @@ describe("deriveSessionName", () => {
     });
     expect(name).toBe("my-feature-a1b2");
   });
+
+  it("strips custom prefix when branchPrefix is provided", () => {
+    const name = deriveSessionName(
+      {
+        path: "/tmp/wt",
+        head: "abc",
+        branch: "refs/heads/dev/my-feature-abc123",
+        isMainWorktree: false,
+      },
+      "dev",
+    );
+    expect(name).toBe("my-feature");
+  });
+
+  it("does not strip csm/ when branchPrefix is a different value", () => {
+    const name = deriveSessionName(
+      {
+        path: "/tmp/wt",
+        head: "abc",
+        branch: "refs/heads/csm/my-feature-abc123",
+        isMainWorktree: false,
+      },
+      "dev",
+    );
+    expect(name).toBe("csm/my-feature-abc123");
+  });
+
+  it("handles empty string branchPrefix (no prefix stripping)", () => {
+    const name = deriveSessionName(
+      {
+        path: "/tmp/wt",
+        head: "abc",
+        branch: "refs/heads/my-feature-abc123",
+        isMainWorktree: false,
+      },
+      "",
+    );
+    expect(name).toBe("my-feature-abc123");
+  });
 });
 
 // ===========================================================================
@@ -836,5 +875,40 @@ describe("discoverAndImportWorktrees", () => {
       new Date(after).getTime(),
     );
     expect(imported.createdAt).toBe(imported.lastActivityAt);
+  });
+
+  it("strips custom branch prefix when branchPrefix is provided", async () => {
+    const customPorcelain = [
+      "worktree /home/user/repo",
+      "HEAD aaa111",
+      "branch refs/heads/main",
+      "",
+      "worktree /home/user/repo/.worktrees/my-feature-abc123",
+      "HEAD bbb222",
+      "branch refs/heads/dev/my-feature-abc123",
+      "",
+    ].join("\n");
+
+    mockGitSuccess(customPorcelain);
+    readStateMock.mockResolvedValue({
+      projects: {
+        [projectPath]: {
+          rootPath: projectPath,
+          sessions: {},
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    });
+
+    const result = await discoverAndImportWorktrees(
+      projectPath,
+      [],
+      makeDeps(),
+      "dev",
+    );
+
+    expect(result.imported).toHaveLength(1);
+    expect(result.imported[0]!.sessionName).toBe("my-feature");
   });
 });

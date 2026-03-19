@@ -50,6 +50,7 @@ export const globalConfigSchema = z.object({
   tailscaleEnabled: z.boolean().optional(),
   pushNotification: pushNotificationConfigSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
+  branchPrefix: z.string().optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -513,6 +514,7 @@ export const perRepoConfigSchema = z.object({
   preMergeCommand: z.string().nullable().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
   devServers: z.array(devServerConfigSchema).optional(),
+  branchPrefix: z.string().optional(),
 });
 export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 
