@@ -25,6 +25,7 @@ function makeConfig(
       waitingForInput: true,
       workflowCompleted: true,
       workflowHalted: true,
+      conversationIdle: true,
     },
     ...overrides,
   };
@@ -47,6 +48,20 @@ describe("shouldSendPush", () => {
     expect(shouldSendPush(config, "waiting-for-input")).toBe(true);
     expect(shouldSendPush(config, "workflow-completed")).toBe(true);
     expect(shouldSendPush(config, "workflow-halted")).toBe(true);
+    expect(shouldSendPush(config, "conversation-idle")).toBe(true);
+  });
+
+  it("returns false when conversationIdle trigger is disabled", () => {
+    const config = makeConfig({
+      triggers: {
+        jobCompleted: true,
+        waitingForInput: true,
+        workflowCompleted: true,
+        workflowHalted: true,
+        conversationIdle: false,
+      },
+    });
+    expect(shouldSendPush(config, "conversation-idle")).toBe(false);
   });
 
   it("returns false for disabled trigger", () => {
@@ -56,6 +71,7 @@ describe("shouldSendPush", () => {
         waitingForInput: true,
         workflowCompleted: true,
         workflowHalted: true,
+        conversationIdle: true,
       },
     });
     expect(shouldSendPush(config, "job-completed")).toBe(false);
@@ -117,6 +133,20 @@ describe("formatPushMessage", () => {
     };
     const result = formatPushMessage(event);
     expect(result.tags).toContain("tada");
+  });
+
+  it("formats a conversation-idle event", () => {
+    const event: PushEvent = {
+      trigger: "conversation-idle",
+      title: "Agent finished",
+      message: "Session my-session is now idle",
+      projectName: "my-project",
+      sessionName: "my-session",
+    };
+    const result = formatPushMessage(event);
+    expect(result.title).toBe("[my-project] Agent finished");
+    expect(result.body).toBe("Session my-session is now idle");
+    expect(result.tags).toBe("zzz");
   });
 });
 

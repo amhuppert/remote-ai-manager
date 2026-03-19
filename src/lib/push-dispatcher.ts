@@ -81,10 +81,17 @@ export async function pushForConversationStatus(
         sessionName: info.sessionName,
       });
       return;
+    case "awaiting":
+      await sendPushNotification(config, {
+        trigger: "conversation-idle",
+        title: "Agent finished",
+        message: `Session ${info.sessionName} is now idle`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
     case "new":
     case "running":
-    case "awaiting":
-      // No push notification for these statuses
       return;
     default:
       assertNever(info.status);

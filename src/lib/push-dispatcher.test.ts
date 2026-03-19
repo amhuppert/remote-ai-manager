@@ -23,6 +23,7 @@ const pushConfig: PushNotificationConfig = {
     waitingForInput: true,
     workflowCompleted: true,
     workflowHalted: true,
+    conversationIdle: true,
   },
 };
 
@@ -113,7 +114,7 @@ describe("pushForConversationStatus", () => {
     expect(sendPushNotification).not.toHaveBeenCalled();
   });
 
-  it("does not send push for awaiting status", async () => {
+  it("sends push for awaiting status (conversation idle)", async () => {
     await pushForConversationStatus(pushConfig, {
       projectName: "proj",
       sessionName: "sess",
@@ -121,7 +122,14 @@ describe("pushForConversationStatus", () => {
       status: "awaiting",
     });
 
-    expect(sendPushNotification).not.toHaveBeenCalled();
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "conversation-idle",
+      title: "Agent finished",
+      message: "Session sess is now idle",
+      projectName: "proj",
+      sessionName: "sess",
+    });
   });
 });
 

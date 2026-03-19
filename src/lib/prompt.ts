@@ -654,6 +654,13 @@ export async function executePromptStream(
       } catch {
         // fire-and-forget
       }
+
+      dispatchPushForConversationStatus({
+        projectName,
+        sessionName: session.sessionName,
+        conversationId,
+        status: "awaiting",
+      });
     }
 
     release();

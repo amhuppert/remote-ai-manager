@@ -11,7 +11,8 @@ export type PushTriggerType =
   | "job-completed"
   | "waiting-for-input"
   | "workflow-completed"
-  | "workflow-halted";
+  | "workflow-halted"
+  | "conversation-idle";
 
 export interface PushEvent {
   trigger: PushTriggerType;
@@ -39,6 +40,7 @@ const triggerToConfigKey: Record<
   "waiting-for-input": "waitingForInput",
   "workflow-completed": "workflowCompleted",
   "workflow-halted": "workflowHalted",
+  "conversation-idle": "conversationIdle",
 };
 
 const triggerToTag: Record<PushTriggerType, string> = {
@@ -46,6 +48,7 @@ const triggerToTag: Record<PushTriggerType, string> = {
   "waiting-for-input": "bell",
   "workflow-completed": "tada",
   "workflow-halted": "warning",
+  "conversation-idle": "zzz",
 };
 
 // ============================================================

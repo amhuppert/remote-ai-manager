@@ -16,6 +16,7 @@ export const pushTriggerSchema = z.object({
   waitingForInput: z.boolean().default(true),
   workflowCompleted: z.boolean().default(true),
   workflowHalted: z.boolean().default(true),
+  conversationIdle: z.boolean().default(true),
 });
 export type PushTriggers = z.infer<typeof pushTriggerSchema>;
 
@@ -29,6 +30,7 @@ export const pushNotificationConfigSchema = z.object({
     waitingForInput: true,
     workflowCompleted: true,
     workflowHalted: true,
+    conversationIdle: true,
   }),
 });
 export type PushNotificationConfig = z.infer<
