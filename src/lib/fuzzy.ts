@@ -2,68 +2,97 @@
 // Fuzzy Matching Utility
 // ============================================================
 
+export type MatchTier = "prefix" | "substring";
+
 export interface FuzzyResult {
   match: boolean;
-  score: number;
+  tier: MatchTier | null;
+  coverage: number;
   indices: number[];
 }
 
 /**
- * Score a query string against a target using a 3-tier fuzzy matching algorithm.
+ * Strip non-alphanumeric characters, returning the cleaned string
+ * and a map from stripped indices back to original indices.
+ */
+function stripSpecial(str: string): { stripped: string; indexMap: number[] } {
+  let stripped = "";
+  const indexMap: number[] = [];
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i]!;
+    if (/[a-z0-9]/i.test(ch)) {
+      stripped += ch;
+      indexMap.push(i);
+    }
+  }
+  return { stripped, indexMap };
+}
+
+const NO_MATCH: FuzzyResult = {
+  match: false,
+  tier: null,
+  coverage: 0,
+  indices: [],
+};
+
+/**
+ * Score a query string against a target using case-insensitive substring
+ * matching with special characters stripped.
  *
- * Tiers:
- * - Prefix match: score 100, indices from position 0
- * - Substring match: score 80, indices at the offset position
- * - Ordered character match: score = max(10, 60 - spread), indices at each char position
- * - No match: score 0, empty indices
+ * - Strips non-alphanumeric characters from both query and target
+ * - Matches consecutive characters only (no gaps)
+ * - Prefix matches rank above substring matches (expressed via `tier`)
+ * - `coverage` = matched length / stripped target length
  *
- * All matching is case-insensitive. Empty query matches everything with score 100.
+ * All matching is case-insensitive. Empty query matches everything
+ * with tier "prefix" and coverage 0.
  */
 export function fuzzyMatch(query: string, target: string): FuzzyResult {
-  if (query.length === 0) {
-    return { match: true, score: 100, indices: [] };
+  const { stripped: strippedQuery } = stripSpecial(query);
+
+  if (strippedQuery.length === 0) {
+    return { match: true, tier: "prefix", coverage: 0, indices: [] };
   }
 
-  const lowerQuery = query.toLowerCase();
-  const lowerTarget = target.toLowerCase();
+  const { stripped: strippedTarget, indexMap } = stripSpecial(target);
 
-  // Tier 1: Prefix match
-  if (lowerTarget.startsWith(lowerQuery)) {
-    const indices: number[] = [];
-    for (let i = 0; i < query.length; i++) {
-      indices.push(i);
-    }
-    return { match: true, score: 100, indices };
+  if (strippedQuery.length > strippedTarget.length) {
+    return NO_MATCH;
   }
 
-  // Tier 2: Substring match
-  const substringIdx = lowerTarget.indexOf(lowerQuery);
-  if (substringIdx !== -1) {
-    const indices: number[] = [];
-    for (let i = 0; i < query.length; i++) {
-      indices.push(substringIdx + i);
-    }
-    return { match: true, score: 80, indices };
+  const lowerQuery = strippedQuery.toLowerCase();
+  const lowerTarget = strippedTarget.toLowerCase();
+
+  const pos = lowerTarget.indexOf(lowerQuery);
+  if (pos === -1) {
+    return NO_MATCH;
   }
 
-  // Tier 3: Ordered character match
   const indices: number[] = [];
-  let targetPos = 0;
-
-  for (let i = 0; i < lowerQuery.length; i++) {
-    const charIdx = lowerTarget.indexOf(lowerQuery[i]!, targetPos);
-    if (charIdx === -1) {
-      return { match: false, score: 0, indices: [] };
-    }
-    indices.push(charIdx);
-    targetPos = charIdx + 1;
+  for (let i = 0; i < strippedQuery.length; i++) {
+    indices.push(indexMap[pos + i]!);
   }
 
-  // Score based on character spread: tighter grouping = higher score
-  const firstIdx = indices[0]!;
-  const lastIdx = indices[indices.length - 1]!;
-  const spread = lastIdx - firstIdx;
-  const score = Math.max(10, 60 - spread);
+  const tier: MatchTier = pos === 0 ? "prefix" : "substring";
+  const coverage = strippedQuery.length / strippedTarget.length;
 
-  return { match: true, score, indices };
+  return { match: true, tier, coverage, indices };
+}
+
+/**
+ * Compare two fuzzy results for sorting.
+ * Prefix always ranks above substring. Within the same tier,
+ * higher coverage (more of the target matched) ranks first.
+ *
+ * Returns negative if `a` should sort before `b`.
+ */
+export function compareFuzzyResults(
+  a: Pick<FuzzyResult, "tier" | "coverage">,
+  b: Pick<FuzzyResult, "tier" | "coverage">,
+): number {
+  const tierRank = { prefix: 0, substring: 1 };
+  if (a.tier !== b.tier) {
+    return tierRank[a.tier!] - tierRank[b.tier!];
+  }
+  return b.coverage - a.coverage;
 }

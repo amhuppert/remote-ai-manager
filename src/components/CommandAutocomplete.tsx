@@ -9,7 +9,8 @@ import {
   useImperativeHandle,
   forwardRef,
 } from "react";
-import { fuzzyMatch } from "@/lib/fuzzy";
+import { fuzzyMatch, compareFuzzyResults } from "@/lib/fuzzy";
+import type { MatchTier } from "@/lib/fuzzy";
 import {
   useCommandsQuery,
   useProjectCommandsQuery,
@@ -19,13 +20,15 @@ import type { CommandItem } from "@/types";
 
 interface ScoredItem {
   item: CommandItem;
-  score: number;
+  tier: MatchTier;
+  coverage: number;
   nameIndices: number[];
 }
 
 interface ScoredFeature {
   name: string;
-  score: number;
+  tier: MatchTier;
+  coverage: number;
   indices: number[];
 }
 
@@ -131,20 +134,20 @@ export const CommandAutocomplete = forwardRef<
 
     const results: ScoredFeature[] = [];
     for (const name of featureNames) {
-      if (query === "") {
-        results.push({ name, score: 100, indices: [] });
-        continue;
-      }
       const result = fuzzyMatch(query, name);
       if (result.match) {
-        results.push({ name, score: result.score, indices: result.indices });
+        results.push({
+          name,
+          tier: result.tier!,
+          coverage: result.coverage,
+          indices: result.indices,
+        });
       }
     }
 
-    results.sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.name.localeCompare(b.name);
-    });
+    results.sort(
+      (a, b) => compareFuzzyResults(a, b) || a.name.localeCompare(b.name),
+    );
 
     return results;
   }, [featureArg, featureNames, query]);
@@ -153,7 +156,8 @@ export const CommandAutocomplete = forwardRef<
   const filtered = useMemo((): ScoredItem[] => {
     if (!commandMode || items.length === 0) return [];
 
-    const results: ScoredItem[] = [];
+    const nameMatches: ScoredItem[] = [];
+    const descMatches: ScoredItem[] = [];
 
     for (const item of items) {
       // Match against name (strip leading /)
@@ -161,9 +165,10 @@ export const CommandAutocomplete = forwardRef<
       const nameResult = fuzzyMatch(query, nameTarget);
 
       if (nameResult.match) {
-        results.push({
+        nameMatches.push({
           item,
-          score: nameResult.score,
+          tier: nameResult.tier!,
+          coverage: nameResult.coverage,
           // Shift indices by 1 to account for the leading / in display
           nameIndices: nameResult.indices.map((i) => i + 1),
         });
@@ -174,20 +179,27 @@ export const CommandAutocomplete = forwardRef<
       if (query.length >= 3) {
         const descResult = fuzzyMatch(query, item.description);
         if (descResult.match) {
-          results.push({
+          descMatches.push({
             item,
-            score: 40,
+            tier: descResult.tier!,
+            coverage: descResult.coverage,
             nameIndices: [],
           });
         }
       }
     }
 
-    // Sort by score descending, then alphabetically for equal scores
-    results.sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.item.name.localeCompare(b.item.name);
-    });
+    // Name matches always rank above description matches
+    nameMatches.sort(
+      (a, b) =>
+        compareFuzzyResults(a, b) || a.item.name.localeCompare(b.item.name),
+    );
+    descMatches.sort(
+      (a, b) =>
+        compareFuzzyResults(a, b) || a.item.name.localeCompare(b.item.name),
+    );
+
+    const results: ScoredItem[] = [...nameMatches, ...descMatches];
 
     return results;
   }, [commandMode, items, query]);

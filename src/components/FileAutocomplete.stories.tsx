@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
-import { fuzzyMatch } from "@/lib/fuzzy";
+import { fuzzyMatch, compareFuzzyResults } from "@/lib/fuzzy";
 import {
   FileAutocomplete,
   type FileAutocompleteHandle,
@@ -62,21 +62,21 @@ function scoreFiles(query: string, files: string[]): ScoredFileItem[] {
   const results: ScoredFileItem[] = [];
 
   for (const path of files) {
-    // Match against full path
     const result = fuzzyMatch(query, path);
     if (result.match) {
       results.push({
         item: { path },
-        score: result.score,
+        tier: result.tier!,
+        coverage: result.coverage,
         indices: result.indices,
       });
     }
   }
 
-  results.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return a.item.path.localeCompare(b.item.path);
-  });
+  results.sort(
+    (a, b) =>
+      compareFuzzyResults(a, b) || a.item.path.localeCompare(b.item.path),
+  );
 
   return results;
 }

@@ -18,7 +18,8 @@ export interface FileItem {
 /** A file item scored and annotated by fuzzy matching */
 export interface ScoredFileItem {
   item: FileItem;
-  score: number;
+  tier: import("@/lib/fuzzy").MatchTier;
+  coverage: number;
   /** Character indices in the path that matched the query */
   indices: number[];
 }

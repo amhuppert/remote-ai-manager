@@ -3,7 +3,7 @@
 import { useMemo, useRef, useCallback, useState } from "react";
 import { useProjectFilesQuery } from "@/lib/queries";
 import { detectFileAutocompleteTrigger } from "@/lib/file-autocomplete-trigger";
-import { fuzzyMatch } from "@/lib/fuzzy";
+import { fuzzyMatch, compareFuzzyResults } from "@/lib/fuzzy";
 import type {
   ScoredFileItem,
   FileAutocompleteHandle,
@@ -91,17 +91,17 @@ export function useFileAutocomplete({
       if (result.match) {
         scored.push({
           item: file,
-          score: result.score,
+          tier: result.tier!,
+          coverage: result.coverage,
           indices: result.indices,
         });
       }
     }
 
-    // Sort by score descending, then alphabetically
-    scored.sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.item.path.localeCompare(b.item.path);
-    });
+    scored.sort(
+      (a, b) =>
+        compareFuzzyResults(a, b) || a.item.path.localeCompare(b.item.path),
+    );
 
     const total = scored.length;
     return {
