@@ -47,6 +47,7 @@ export const globalConfigSchema = z.object({
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
   pushNotification: pushNotificationConfigSchema.optional(),
+  idleQuerySessionTtlMs: z.number().int().positive().optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 

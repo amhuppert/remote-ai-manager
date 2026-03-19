@@ -1,5 +1,6 @@
 import { createLogger } from "./logging";
 import { getGlobalSingleton } from "./global-singleton";
+import { getSession } from "./query-session-registry";
 
 const logger = createLogger("abort-registry");
 
@@ -44,6 +45,15 @@ export function abortConversation(conversationId: string): boolean {
 
   registry.delete(conversationId);
   controller.abort();
+
+  // Also close the query session to terminate the subprocess
+  // The next prompt will create a fresh session with resume
+  try {
+    getSession(conversationId)?.close();
+  } catch {
+    // best-effort
+  }
+
   logger.info("abort.signaled", { conversationId });
   return true;
 }

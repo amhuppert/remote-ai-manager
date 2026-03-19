@@ -22,6 +22,7 @@ import { stopAllForSession } from "./dev-server-registry";
 import { getErrorMessage } from "@/lib/errors";
 import { getProjectDisplayName } from "./project-resolver";
 import { executeOptimisticWorkflow } from "./optimistic";
+import { getSession as getQuerySession } from "./query-session-registry";
 
 const logger = createLogger("sessions");
 
@@ -496,6 +497,15 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     const session = project.sessions[sessionName];
     if (!session) {
       throw new Error(`Session "${sessionName}" not found in project`);
+    }
+
+    // Close any active query sessions (subprocesses + MCP servers) before removal
+    for (const conv of session.conversations) {
+      try {
+        getQuerySession(conv.id)?.close();
+      } catch {
+        // best-effort: don't block deletion
+      }
     }
 
     // Stop all running dev servers before worktree removal (best-effort)

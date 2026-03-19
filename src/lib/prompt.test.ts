@@ -2,33 +2,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SessionState, ConversationState } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Only mock the SDK (legitimate external dependency) and sdk-env (side effect)
+// Mock sdk-env side effect
 // ---------------------------------------------------------------------------
-
-const queryMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: queryMock,
-  createSdkMcpServer: vi.fn(() => ({ __mock: true })),
-  tool: vi.fn(
-    (name: string, _desc: string, _schema: unknown, handler: unknown) => ({
-      name,
-      handler,
-    }),
-  ),
-}));
 
 vi.mock("@/lib/sdk-env", () => ({}));
 
 // ---------------------------------------------------------------------------
 // Import module under test — use factory for DI
 // ---------------------------------------------------------------------------
-import {
-  createPromptExecutor,
-  TDD_INSTRUCTIONS,
-  CC_CONTEXT,
-  type PromptDeps,
-} from "./prompt";
+import { createPromptExecutor, type PromptDeps } from "./prompt";
+import type { QuerySession, TurnResult, TurnEmit } from "./query-session";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -80,14 +63,49 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
   };
 }
 
-/** Create a mock async generator that yields the given SDK messages */
-function createMockQuery(messages: Record<string, unknown>[]) {
-  const generator = (async function* () {
-    for (const msg of messages) {
-      yield msg;
-    }
-  })();
-  return generator;
+/**
+ * Create a mock QuerySession whose sendPrompt processes messages via the emit
+ * callback and resolves with a TurnResult.
+ */
+function createMockQuerySession(
+  messages: Record<string, unknown>[],
+  turnResult?: Partial<TurnResult>,
+): QuerySession {
+  const defaultResult: TurnResult = {
+    sessionId: null,
+    costUsd: null,
+    durationMs: null,
+    numTurns: null,
+    contextTokens: null,
+    contextWindow: null,
+    contentBlocks: [],
+    aborted: false,
+    error: null,
+    ...turnResult,
+  };
+
+  const mockQuery = {
+    streamInput: vi.fn(),
+    close: vi.fn(),
+    [Symbol.asyncIterator]: vi.fn(),
+  };
+
+  return {
+    status: "alive" as const,
+    conversationId: "conv-123",
+    query: mockQuery as never,
+    currentTurnOptions: null,
+    sendPrompt: vi.fn(
+      async (_prompt: string, emit: TurnEmit): Promise<TurnResult> => {
+        // Deliver messages via emit so processMessage handles them
+        for (const msg of messages) {
+          await emit("__raw_message", msg);
+        }
+        return defaultResult;
+      },
+    ),
+    close: vi.fn(),
+  };
 }
 
 const defaultConfig = {
@@ -99,12 +117,12 @@ const defaultConfig = {
 };
 
 // ---------------------------------------------------------------------------
-// Test deps factory — replaces 10 vi.mock() calls with injected deps
+// Test deps factory
 // ---------------------------------------------------------------------------
 
 let updateSnapshots: SessionState[];
 
-function createTestDeps(): PromptDeps {
+function createTestDeps(mockQuerySession?: QuerySession): PromptDeps {
   const conversation = makeConversation();
   const session = makeSession();
   session.conversations = [conversation];
@@ -160,6 +178,12 @@ function createTestDeps(): PromptDeps {
     })) as unknown as PromptDeps["createNotificationToolServer"],
     getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
     buildChildEnv: vi.fn(() => ({})) as unknown as PromptDeps["buildChildEnv"],
+    getSessionFromRegistry: vi
+      .fn()
+      .mockReturnValue(mockQuerySession ?? undefined),
+    createQuerySession: vi
+      .fn()
+      .mockReturnValue(mockQuerySession ?? createMockQuerySession([])),
   };
 }
 
@@ -175,10 +199,6 @@ let executePromptStream: ReturnType<
 beforeEach(() => {
   vi.clearAllMocks();
   updateSnapshots = [];
-
-  deps = createTestDeps();
-  const executor = createPromptExecutor(deps);
-  executePromptStream = executor.executePromptStream;
 });
 
 // ===========================================================================
@@ -187,10 +207,20 @@ beforeEach(() => {
 
 describe("executePromptStream", () => {
   it("emits init event from system init message", async () => {
-    const mockQuery = createMockQuery([
-      { type: "system", subtype: "init", session_id: "sess-123", uuid: "u1" },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "sess-123",
+          uuid: "u1",
+        },
+      ],
+      { sessionId: "sess-123" },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const events: Array<[string, unknown]> = [];
     const emit = (event: string, data: unknown) => events.push([event, data]);
@@ -209,17 +239,22 @@ describe("executePromptStream", () => {
   });
 
   it("emits content events for text blocks", async () => {
-    const mockQuery = createMockQuery([
-      {
-        type: "assistant",
-        session_id: "sess-1",
-        uuid: "u1",
-        message: {
-          content: [{ type: "text", text: "Hello!" }],
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "assistant",
+          session_id: "sess-1",
+          uuid: "u1",
+          message: {
+            content: [{ type: "text", text: "Hello!" }],
+          },
         },
-      },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+      ],
+      { sessionId: "sess-1" },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const events: Array<[string, unknown]> = [];
     const emit = (event: string, data: unknown) => events.push([event, data]);
@@ -232,19 +267,24 @@ describe("executePromptStream", () => {
   });
 
   it("emits content events for tool_use blocks", async () => {
-    const mockQuery = createMockQuery([
-      {
-        type: "assistant",
-        session_id: "sess-1",
-        uuid: "u1",
-        message: {
-          content: [
-            { type: "tool_use", name: "Read", input: { file_path: "a.ts" } },
-          ],
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "assistant",
+          session_id: "sess-1",
+          uuid: "u1",
+          message: {
+            content: [
+              { type: "tool_use", name: "Read", input: { file_path: "a.ts" } },
+            ],
+          },
         },
-      },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+      ],
+      { sessionId: "sess-1" },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const events: Array<[string, unknown]> = [];
     const emit = (event: string, data: unknown) => events.push([event, data]);
@@ -266,26 +306,31 @@ describe("executePromptStream", () => {
   });
 
   it("emits result event for successful result", async () => {
-    const mockQuery = createMockQuery([
-      {
-        type: "assistant",
-        session_id: "sess-1",
-        uuid: "u1",
-        message: { content: [{ type: "text", text: "Done." }] },
-      },
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "sess-1",
-        uuid: "u2",
-        total_cost_usd: 0.05,
-        duration_ms: 1200,
-        num_turns: 3,
-        result: "Done.",
-        is_error: false,
-      },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "assistant",
+          session_id: "sess-1",
+          uuid: "u1",
+          message: { content: [{ type: "text", text: "Done." }] },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "sess-1",
+          uuid: "u2",
+          total_cost_usd: 0.05,
+          duration_ms: 1200,
+          num_turns: 3,
+          result: "Done.",
+          is_error: false,
+        },
+      ],
+      { sessionId: "sess-1", costUsd: 0.05, durationMs: 1200, numTurns: 3 },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const events: Array<[string, unknown]> = [];
     const emit = (event: string, data: unknown) => events.push([event, data]);
@@ -302,20 +347,25 @@ describe("executePromptStream", () => {
   });
 
   it("emits error event for error result", async () => {
-    const mockQuery = createMockQuery([
-      {
-        type: "result",
-        subtype: "error_max_turns",
-        session_id: "sess-1",
-        uuid: "u1",
-        total_cost_usd: 0.1,
-        duration_ms: 5000,
-        num_turns: 50,
-        is_error: true,
-        errors: [],
-      },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "result",
+          subtype: "error_max_turns",
+          session_id: "sess-1",
+          uuid: "u1",
+          total_cost_usd: 0.1,
+          duration_ms: 5000,
+          num_turns: 50,
+          is_error: true,
+          errors: [],
+        },
+      ],
+      { sessionId: "sess-1", costUsd: 0.1, numTurns: 50, error: "max turns" },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const events: Array<[string, unknown]> = [];
     const emit = (event: string, data: unknown) => events.push([event, data]);
@@ -330,20 +380,25 @@ describe("executePromptStream", () => {
   });
 
   it("emits error for error_during_execution with message", async () => {
-    const mockQuery = createMockQuery([
-      {
-        type: "result",
-        subtype: "error_during_execution",
-        session_id: "sess-1",
-        uuid: "u1",
-        total_cost_usd: 0.02,
-        duration_ms: 1000,
-        num_turns: 1,
-        is_error: true,
-        errors: ["Connection timeout", "Retry failed"],
-      },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "result",
+          subtype: "error_during_execution",
+          session_id: "sess-1",
+          uuid: "u1",
+          total_cost_usd: 0.02,
+          duration_ms: 1000,
+          num_turns: 1,
+          is_error: true,
+          errors: ["Connection timeout", "Retry failed"],
+        },
+      ],
+      { sessionId: "sess-1" },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const events: Array<[string, unknown]> = [];
     const emit = (event: string, data: unknown) => events.push([event, data]);
@@ -358,8 +413,10 @@ describe("executePromptStream", () => {
   });
 
   it("always emits done event", async () => {
-    const mockQuery = createMockQuery([]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession([]);
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const events: Array<[string, unknown]> = [];
     const emit = (event: string, data: unknown) => events.push([event, data]);
@@ -370,12 +427,14 @@ describe("executePromptStream", () => {
   });
 
   it("acquires and releases the session lock", async () => {
+    const qs = createMockQuerySession([]);
+    deps = createTestDeps(qs);
     const releaseMock = vi.fn();
     (deps.acquireSessionLock as ReturnType<typeof vi.fn>).mockReturnValue(
       releaseMock,
     );
-    const mockQuery = createMockQuery([]);
-    queryMock.mockReturnValue(mockQuery);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
@@ -387,8 +446,10 @@ describe("executePromptStream", () => {
   });
 
   it("resets conversation status to awaiting in finally block", async () => {
-    const mockQuery = createMockQuery([]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession([]);
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
@@ -397,8 +458,10 @@ describe("executePromptStream", () => {
   });
 
   it("returns conversationId", async () => {
-    const mockQuery = createMockQuery([]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession([]);
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const result = await executePromptStream(
       "/projects/repo",
@@ -410,9 +473,25 @@ describe("executePromptStream", () => {
     expect(result.conversationId).toBe("conv-123");
   });
 
-  it("passes correct SDK options for new conversation", async () => {
-    const mockQuery = createMockQuery([]);
-    queryMock.mockReturnValue(mockQuery);
+  it("creates new QuerySession on first prompt (no existing session)", async () => {
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "sess-1",
+          uuid: "u1",
+        },
+      ],
+      { sessionId: "sess-1" },
+    );
+    deps = createTestDeps(qs);
+    // No existing session in registry
+    (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+      undefined,
+    );
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     await executePromptStream(
       "/projects/repo",
@@ -421,66 +500,82 @@ describe("executePromptStream", () => {
       vi.fn(),
     );
 
-    expect(queryMock).toHaveBeenCalledTimes(1);
-    const call = queryMock.mock.calls[0]![0] as {
-      prompt: string;
-      options: Record<string, unknown>;
-    };
-    expect(call.prompt).toBe("Hello");
-    expect(call.options.cwd).toBe("/projects/repo/.worktrees/test-session");
-    expect(call.options.systemPrompt).toEqual({
-      type: "preset",
-      preset: "claude_code",
-      append: CC_CONTEXT + "\n\n" + TDD_INSTRUCTIONS,
-    });
-    expect(call.options.settingSources).toEqual(["user", "project", "local"]);
-    expect(call.options.permissionMode).toBe("bypassPermissions");
-    expect(call.options.allowDangerouslySkipPermissions).toBe(true);
-    expect(call.options.maxTurns).toBe(50);
-    expect(call.options.persistSession).toBe(true);
-    expect(call.options.resume).toBeUndefined();
+    expect(deps.createQuerySession).toHaveBeenCalledTimes(1);
+    const callArgs = (deps.createQuerySession as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as Record<string, unknown>;
+    expect(callArgs.cwd).toBe("/projects/repo/.worktrees/test-session");
   });
 
-  it("passes resume option for existing conversation with claudeSessionId", async () => {
-    const convo = makeConversation({ claudeSessionId: "existing-session-id" });
-    (deps.getConversation as ReturnType<typeof vi.fn>).mockResolvedValue(convo);
-
-    const session = makeSession();
-    session.conversations = [convo];
-
-    const mockQuery = createMockQuery([]);
-    queryMock.mockReturnValue(mockQuery);
+  it("reuses existing alive session (no new creation)", async () => {
+    const qs = createMockQuerySession([], { sessionId: "sess-1" });
+    deps = createTestDeps(qs);
+    // Existing alive session in registry
+    (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+      qs,
+    );
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     await executePromptStream(
       "/projects/repo",
-      session,
+      makeSession(),
       "follow-up",
       vi.fn(),
-      convo.id,
+      "conv-123",
     );
 
-    const call = queryMock.mock.calls[0]![0] as {
-      options: Record<string, unknown>;
-    };
-    expect(call.options.resume).toBe("existing-session-id");
+    // Should NOT create a new session
+    expect(deps.createQuerySession).not.toHaveBeenCalled();
+    // Should have called sendPrompt on the existing session
+    expect(qs.sendPrompt).toHaveBeenCalledTimes(1);
   });
 
-  it("sets claudeSessionId from init message", async () => {
-    const mockQuery = createMockQuery([
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "sess-abc-456",
-        uuid: "u1",
-      },
-      {
-        type: "assistant",
-        session_id: "sess-abc-456",
-        uuid: "u2",
-        message: { content: [{ type: "text", text: "response" }] },
-      },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+  it("creates fresh session when previous is dead", async () => {
+    const deadSession = createMockQuerySession([]);
+    (deadSession as { status: string }).status = "dead";
+
+    const newSession = createMockQuerySession([], { sessionId: "sess-new" });
+
+    deps = createTestDeps(newSession);
+    (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+      deadSession,
+    );
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "retry",
+      vi.fn(),
+      "conv-123",
+    );
+
+    // Should create a new session since the old one is dead
+    expect(deps.createQuerySession).toHaveBeenCalledTimes(1);
+  });
+
+  it("sets claudeSessionId from TurnResult", async () => {
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "sess-abc-456",
+          uuid: "u1",
+        },
+        {
+          type: "assistant",
+          session_id: "sess-abc-456",
+          uuid: "u2",
+          message: { content: [{ type: "text", text: "response" }] },
+        },
+      ],
+      { sessionId: "sess-abc-456" },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
@@ -490,27 +585,37 @@ describe("executePromptStream", () => {
     expect(metadataSnapshot).toBeTruthy();
   });
 
-  it("accumulates cost data from result message", async () => {
-    const mockQuery = createMockQuery([
+  it("accumulates cost data from TurnResult", async () => {
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "assistant",
+          session_id: "sess-1",
+          uuid: "u1",
+          message: { content: [{ type: "text", text: "Done." }] },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "sess-1",
+          uuid: "u2",
+          total_cost_usd: 0.05,
+          duration_ms: 1200,
+          num_turns: 3,
+          result: "Done.",
+          is_error: false,
+        },
+      ],
       {
-        type: "assistant",
-        session_id: "sess-1",
-        uuid: "u1",
-        message: { content: [{ type: "text", text: "Done." }] },
+        sessionId: "sess-1",
+        costUsd: 0.05,
+        durationMs: 1200,
+        numTurns: 3,
       },
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "sess-1",
-        uuid: "u2",
-        total_cost_usd: 0.05,
-        duration_ms: 1200,
-        num_turns: 3,
-        result: "Done.",
-        is_error: false,
-      },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
@@ -524,20 +629,24 @@ describe("executePromptStream", () => {
   });
 
   it("appends transcript entries for messages", async () => {
-    const mockQuery = createMockQuery([
-      { type: "system", subtype: "init", session_id: "sess-1", uuid: "u1" },
-      {
-        type: "assistant",
-        session_id: "sess-1",
-        uuid: "u2",
-        message: { content: [{ type: "text", text: "Hello" }] },
-      },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession(
+      [
+        { type: "system", subtype: "init", session_id: "sess-1", uuid: "u1" },
+        {
+          type: "assistant",
+          session_id: "sess-1",
+          uuid: "u2",
+          message: { content: [{ type: "text", text: "Hello" }] },
+        },
+      ],
+      { sessionId: "sess-1" },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
-    // Should have appended entries for system and assistant messages
     expect(deps.safeAppendTranscriptEntry).toHaveBeenCalled();
     const calls = (deps.safeAppendTranscriptEntry as ReturnType<typeof vi.fn>)
       .mock.calls as Array<[string, { type: string }]>;
@@ -547,8 +656,10 @@ describe("executePromptStream", () => {
   });
 
   it("broadcasts running and awaiting status", async () => {
-    const mockQuery = createMockQuery([]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession([]);
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
@@ -559,11 +670,14 @@ describe("executePromptStream", () => {
     expect(statuses).toContain("awaiting");
   });
 
-  it("emits error and done when SDK throws", async () => {
-    const mockQuery = (async function* () {
-      throw new Error("SDK process crashed");
-    })();
-    queryMock.mockReturnValue(mockQuery);
+  it("emits error and done when sendPrompt throws", async () => {
+    const qs = createMockQuerySession([]);
+    (qs.sendPrompt as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("SDK process crashed"),
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const events: Array<[string, unknown]> = [];
     const emit = (event: string, data: unknown) => events.push([event, data]);
@@ -579,36 +693,38 @@ describe("executePromptStream", () => {
   });
 
   it("emits result text as content when SDK returns result with no assistant messages", async () => {
-    // Simulates: user invokes unknown skill → SDK returns result:success with
-    // text in the `result` field but no assistant messages at all.
-    const mockQuery = createMockQuery([
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "sess-1",
-        uuid: "u1",
-      },
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "sess-1",
-        uuid: "u2",
-        total_cost_usd: 0,
-        duration_ms: 17,
-        duration_api_ms: 0,
-        num_turns: 1,
-        result: "Unknown skill: frontend-design:frontend-design",
-        is_error: false,
-      },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "sess-1",
+          uuid: "u1",
+        },
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "sess-1",
+          uuid: "u2",
+          total_cost_usd: 0,
+          duration_ms: 17,
+          duration_api_ms: 0,
+          num_turns: 1,
+          result: "Unknown skill: frontend-design:frontend-design",
+          is_error: false,
+        },
+      ],
+      { sessionId: "sess-1" },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     const events: Array<[string, unknown]> = [];
     const emit = (event: string, data: unknown) => events.push([event, data]);
 
     await executePromptStream("/projects/repo", makeSession(), "test", emit);
 
-    // The result text should appear as a content event so the client can display it
     const contentEvents = events.filter(([e]) => e === "content");
     expect(contentEvents).toHaveLength(1);
     expect(contentEvents[0]![1]).toEqual({
@@ -617,26 +733,50 @@ describe("executePromptStream", () => {
     });
   });
 
-  it("registers query in query-registry during execution", async () => {
-    const mockQuery = createMockQuery([
-      { type: "system", subtype: "init", session_id: "sess-1", uuid: "u1" },
-    ]);
-    queryMock.mockReturnValue(mockQuery);
+  it("registers raw Query in query-registry for queueMessage compat", async () => {
+    const qs = createMockQuerySession(
+      [{ type: "system", subtype: "init", session_id: "sess-1", uuid: "u1" }],
+      { sessionId: "sess-1" },
+    );
+    deps = createTestDeps(qs);
+    // No existing session — will create new
+    (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+      undefined,
+    );
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
 
     await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
 
-    expect(deps.registerQuery).toHaveBeenCalledWith("conv-123", mockQuery);
+    expect(deps.registerQuery).toHaveBeenCalledWith("conv-123", qs.query);
   });
 
-  it("unregisters query from query-registry in finally block", async () => {
-    const mockQuery = (async function* () {
-      throw new Error("SDK crash");
-    })();
-    queryMock.mockReturnValue(mockQuery);
+  it("passes resume option for existing conversation with claudeSessionId", async () => {
+    const convo = makeConversation({ claudeSessionId: "existing-session-id" });
+    const qs = createMockQuerySession([], { sessionId: "existing-session-id" });
+    deps = createTestDeps(qs);
+    // No existing session in registry — will create
+    (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+      undefined,
+    );
+    (deps.getConversation as ReturnType<typeof vi.fn>).mockResolvedValue(convo);
 
-    await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
+    const session = makeSession();
+    session.conversations = [convo];
 
-    // Should be unregistered even after an error
-    expect(deps.unregisterQuery).toHaveBeenCalledWith("conv-123");
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      session,
+      "follow-up",
+      vi.fn(),
+      convo.id,
+    );
+
+    const callArgs = (deps.createQuerySession as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as Record<string, unknown>;
+    expect(callArgs.resume).toBe("existing-session-id");
   });
 });

@@ -1,12 +1,9 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
   SDKMessage,
   SDKAssistantMessage,
   SDKResultSuccess,
   SDKResultError,
   SDKSystemMessage,
-  SDKUserMessage,
-  Query,
 } from "@anthropic-ai/claude-agent-sdk";
 import { buildChildEnv } from "./child-env";
 import type {
@@ -38,9 +35,10 @@ import { createRoadmapToolServer } from "./roadmap-tools";
 import { createNotificationToolServer } from "./agent-notification-tool";
 import { getProjectDisplayName } from "./project-resolver";
 import { safeAppendTranscriptEntry } from "./transcript";
-import { extractContextTokens, extractContextWindow } from "./context-fill";
 import { resolvePluginPaths } from "./commands";
 import { randomUUID } from "node:crypto";
+import { createQuerySession, type TurnResult } from "./query-session";
+import { getSession as getSessionFromRegistry } from "./query-session-registry";
 
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/sdk-env";
@@ -79,6 +77,8 @@ export interface PromptDeps {
   createNotificationToolServer: typeof createNotificationToolServer;
   getProjectDisplayName: typeof getProjectDisplayName;
   buildChildEnv: typeof buildChildEnv;
+  getSessionFromRegistry: typeof getSessionFromRegistry;
+  createQuerySession: typeof createQuerySession;
 }
 
 const defaultPromptDeps: PromptDeps = {
@@ -101,6 +101,8 @@ const defaultPromptDeps: PromptDeps = {
   createNotificationToolServer,
   getProjectDisplayName,
   buildChildEnv,
+  getSessionFromRegistry,
+  createQuerySession,
 };
 
 /**
@@ -134,11 +136,12 @@ export function createPromptExecutor(deps: PromptDeps = defaultPromptDeps) {
 }
 
 /**
- * Execute a prompt via the Agents SDK query() API,
+ * Execute a prompt via a long-lived QuerySession,
  * streaming output via SSE events.
  *
- * - New conversation:       creates a new SDK session
- * - Existing conversation:  resumes an existing SDK session via claudeSessionId
+ * - New conversation: creates a new QuerySession (SDK subprocess)
+ * - Existing conversation with alive session: reuses the existing subprocess
+ * - Existing conversation with dead/no session: creates a new one with resume
  *
  * If conversationId is not provided, creates a new conversation.
  * Emits SSE events via the `emit` callback as content arrives.
@@ -170,15 +173,13 @@ export async function executePromptStream(
     externalizeImageBlocks,
     broadcast,
     registerQuestion,
-    registerAbortController,
-    unregisterAbortController,
-    registerQuery,
-    unregisterQuery,
     acquireQuerySlot,
     createInitToolServer,
     createNotificationToolServer,
     getProjectDisplayName,
     buildChildEnv,
+    getSessionFromRegistry,
+    createQuerySession,
   } = deps;
 
   const config = await readConfig();
@@ -284,69 +285,164 @@ export async function executePromptStream(
 
     const promptStart = Date.now();
 
-    // Build SDK prompt: multi-modal async iterable when images present, plain string otherwise
-    const hasImages = images && images.length > 0;
-    const sdkPrompt:
-      | string
-      | AsyncIterable<import("@anthropic-ai/claude-agent-sdk").SDKUserMessage> =
-      hasImages ? buildMultiModalPrompt(promptText, images) : promptText;
+    // ---------------------------------------------------------------
+    // Get-or-create QuerySession
+    // ---------------------------------------------------------------
+    let querySession = getSessionFromRegistry(conversationId);
+    const isNewSession = !querySession || querySession.status === "dead";
 
-    // Conditionally register the Ralph Loop init tool when no workflow exists
-    const initToolServer =
-      session.workflow == null
-        ? createInitToolServer({
-            projectPath,
-            sessionName: session.sessionName,
-            projectName,
-          })
+    if (isNewSession) {
+      // Conditionally register the Ralph Loop init tool when no workflow exists
+      const initToolServer =
+        session.workflow == null
+          ? createInitToolServer({
+              projectPath,
+              sessionName: session.sessionName,
+              projectName,
+            })
+          : null;
+
+      // Conditionally register notification tool when push notifications are configured
+      const pushConfig = config.pushNotification;
+      const notificationToolEnabled = pushConfig?.enabled && pushConfig?.topic;
+      const notificationToolServer = notificationToolEnabled
+        ? createNotificationToolServer(
+            { projectName, sessionName: session.sessionName },
+            {
+              sendNotification: async (title, message, tags) => {
+                const { sendAgentNotification } =
+                  await import("./push-notification");
+                await sendAgentNotification(
+                  pushConfig,
+                  title,
+                  message,
+                  tags,
+                  projectName,
+                  session.sessionName,
+                );
+              },
+            },
+          )
         : null;
 
-    // Conditionally register notification tool when push notifications are configured
-    const pushConfig = config.pushNotification;
-    const notificationToolEnabled = pushConfig?.enabled && pushConfig?.topic;
-    const notificationToolServer = notificationToolEnabled
-      ? createNotificationToolServer(
-          { projectName, sessionName: session.sessionName },
-          {
-            sendNotification: async (title, message, tags) => {
-              const { sendAgentNotification } =
-                await import("./push-notification");
-              await sendAgentNotification(
-                pushConfig,
-                title,
-                message,
-                tags,
-                projectName,
-                session.sessionName,
-              );
+      // Detect ultrathink keyword for max reasoning effort
+      const ultrathinkDetected = /\bultrathink\b/i.test(promptText);
+      if (ultrathinkDetected) {
+        logger.info("prompt.ultrathink", {
+          sessionName: session.sessionName,
+        });
+      }
+
+      // Resolve enabled plugins for SDK skill loading
+      const pluginPaths = await resolvePluginPaths();
+      const sdkPlugins = pluginPaths.map((p) => ({
+        type: "local" as const,
+        path: p.path,
+      }));
+
+      // Build the canUseTool callback once per session.
+      // It reads the autonomous flag from the session's currentTurnOptions.
+      const canUseTool = async (
+        toolName: string,
+        input: Record<string, unknown>,
+      ) => {
+        if (toolName === "AskUserQuestion") {
+          // Read autonomous flag from the session's per-turn options
+          if (querySession?.currentTurnOptions?.autonomous) {
+            return {
+              behavior: "deny" as const,
+              message:
+                "Autonomous optimistic mode — make your best judgment and proceed without asking questions.",
+            };
+          }
+
+          const questions = input.questions;
+          if (!questions || !Array.isArray(questions)) {
+            return { behavior: "allow" as const, updatedInput: input };
+          }
+
+          const questionId = randomUUID();
+
+          // Set conversation status to waiting_for_input and persist question data
+          await mutateConversation(
+            projectPath,
+            session.sessionName,
+            conversationId!,
+            "prompt.setWaitingForInput",
+            (c) => {
+              c.status = "waiting_for_input";
+              c.pendingQuestionId = questionId;
+              c.pendingQuestions =
+                questions as ConversationState["pendingQuestions"];
             },
-          },
-        )
-      : null;
+          ).catch(() => {});
 
-    // Detect ultrathink keyword for max reasoning effort
-    const ultrathinkDetected = /\bultrathink\b/i.test(promptText);
-    if (ultrathinkDetected) {
-      logger.info("prompt.ultrathink", {
-        sessionName: session.sessionName,
-      });
-    }
+          try {
+            broadcast({
+              type: "conversation-status",
+              projectName,
+              sessionName: session.sessionName,
+              conversationId: conversationId!,
+              status: "waiting_for_input",
+            });
+          } catch {
+            /* fire-and-forget */
+          }
 
-    // Resolve enabled plugins for SDK skill loading
-    const pluginPaths = await resolvePluginPaths();
-    const sdkPlugins = pluginPaths.map((p) => ({
-      type: "local" as const,
-      path: p.path,
-    }));
+          // Push notification to phone
+          dispatchPushForConversationStatus({
+            projectName,
+            sessionName: session.sessionName,
+            conversationId: conversationId!,
+            status: "waiting_for_input",
+          });
 
-    // Create SDK query
-    const abortController = new AbortController();
-    registerAbortController(conversationId, abortController);
-    const q: Query = query({
-      prompt: sdkPrompt,
-      options: {
+          // Emit question data on the prompt SSE stream
+          emit("ask-question", { questionId, questions });
+
+          // Block until user answers via the answer API
+          const answers = await registerQuestion(questionId, conversationId!);
+
+          // Restore running status and clear persisted question data
+          await mutateConversation(
+            projectPath,
+            session.sessionName,
+            conversationId!,
+            "prompt.resumeRunning",
+            (c) => {
+              c.status = "running";
+              c.pendingQuestionId = null;
+              c.pendingQuestions = null;
+            },
+          ).catch(() => {});
+
+          try {
+            broadcast({
+              type: "conversation-status",
+              projectName,
+              sessionName: session.sessionName,
+              conversationId: conversationId!,
+              status: "running",
+            });
+          } catch {
+            /* fire-and-forget */
+          }
+
+          return {
+            behavior: "allow" as const,
+            updatedInput: { ...input, answers },
+          };
+        }
+
+        // Auto-approve all other tools (bypassPermissions mode)
+        return { behavior: "allow" as const, updatedInput: input };
+      };
+
+      querySession = createQuerySession({
+        conversationId: conversationId!,
+        cwd: session.worktreePath,
         model: effectiveModel ?? undefined,
-        ...(ultrathinkDetected ? { effort: "high" as const } : {}),
+        effort: ultrathinkDetected ? ("high" as const) : undefined,
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
@@ -361,13 +457,6 @@ export async function executePromptStream(
               .filter(Boolean)
               .join("\n\n") || undefined,
         },
-        settingSources: ["user", "project", "local"],
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
-        disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
-        ...(sdkPlugins.length > 0 ? { plugins: sdkPlugins } : {}),
-        cwd: session.worktreePath,
-        maxTurns: config.maxTurns,
         resume:
           conversation.claudeSessionId ??
           conversation.forkedFrom?.sourceClaudeSessionId ??
@@ -377,9 +466,6 @@ export async function executePromptStream(
           conversation.claudeSessionId == null
             ? true
             : undefined,
-        persistSession: true,
-        abortController,
-        env: { ...buildChildEnv(), CLAUDECODE: "" },
         mcpServers: {
           ...(initToolServer ? { "ralph-loop-init": initToolServer } : {}),
           ...(notificationToolServer
@@ -387,149 +473,63 @@ export async function executePromptStream(
             : {}),
           "roadmap-tools": createRoadmapToolServer({ projectPath }),
         },
-        canUseTool: async (
-          toolName: string,
-          input: Record<string, unknown>,
-        ) => {
-          if (toolName === "AskUserQuestion") {
-            // Autonomous mode: deny AskUserQuestion to prevent blocking
-            if (options?.autonomous) {
-              return {
-                behavior: "deny" as const,
-                message:
-                  "Autonomous optimistic mode — make your best judgment and proceed without asking questions.",
-              };
-            }
+        canUseTool: canUseTool as never,
+        env: { ...buildChildEnv(), CLAUDECODE: "" },
+        maxTurns: config.maxTurns,
+        plugins: sdkPlugins,
+        settingSources: ["user", "project", "local"],
+        disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
+        idleTtlMs: config.idleQuerySessionTtlMs,
+      });
 
-            const questions = input.questions;
-            if (!questions || !Array.isArray(questions)) {
-              return { behavior: "allow" as const, updatedInput: input };
-            }
+      // Register raw Query in query-registry for backward compat (queueMessage)
+      deps.registerQuery(conversationId, querySession.query);
+    }
 
-            const questionId = randomUUID();
+    // ---------------------------------------------------------------
+    // Safety-net timeout
+    // ---------------------------------------------------------------
+    const abortController = new AbortController();
+    deps.registerAbortController(conversationId, abortController);
 
-            // Set conversation status to waiting_for_input and persist question data
-            await mutateConversation(
-              projectPath,
-              session.sessionName,
-              conversationId!,
-              "prompt.setWaitingForInput",
-              (c) => {
-                c.status = "waiting_for_input";
-                c.pendingQuestionId = questionId;
-                c.pendingQuestions =
-                  questions as ConversationState["pendingQuestions"];
-              },
-            ).catch(() => {});
-
-            try {
-              broadcast({
-                type: "conversation-status",
-                projectName,
-                sessionName: session.sessionName,
-                conversationId: conversationId!,
-                status: "waiting_for_input",
-              });
-            } catch {
-              /* fire-and-forget */
-            }
-
-            // Push notification to phone
-            dispatchPushForConversationStatus({
-              projectName,
-              sessionName: session.sessionName,
-              conversationId: conversationId!,
-              status: "waiting_for_input",
-            });
-
-            // Emit question data on the prompt SSE stream
-            emit("ask-question", { questionId, questions });
-
-            // Block until user answers via the answer API
-            const answers = await registerQuestion(questionId, conversationId!);
-
-            // Restore running status and clear persisted question data
-            await mutateConversation(
-              projectPath,
-              session.sessionName,
-              conversationId!,
-              "prompt.resumeRunning",
-              (c) => {
-                c.status = "running";
-                c.pendingQuestionId = null;
-                c.pendingQuestions = null;
-              },
-            ).catch(() => {});
-
-            try {
-              broadcast({
-                type: "conversation-status",
-                projectName,
-                sessionName: session.sessionName,
-                conversationId: conversationId!,
-                status: "running",
-              });
-            } catch {
-              /* fire-and-forget */
-            }
-
-            return {
-              behavior: "allow" as const,
-              updatedInput: { ...input, answers },
-            };
-          }
-
-          // Auto-approve all other tools (bypassPermissions mode)
-          return { behavior: "allow" as const, updatedInput: input };
-        },
-      },
-    });
-
-    // Register query so queued messages can be delivered via streamInput()
-    registerQuery(conversationId, q);
-
-    // Safety-net timeout: abort if prompt exceeds configured max duration
     timeoutHandle = setTimeout(() => {
       logger.warn("prompt.timeout", {
         sessionName: session.sessionName,
         timeoutMs: config.claudeTimeoutMs,
       });
+      // Timeout aborts the session (SDK limitation: no turn-level abort)
+      querySession?.close();
       abortController.abort();
     }, config.claudeTimeoutMs);
 
-    // Track state across the message loop
-    let sessionId: string | null = null;
-    let resultCostUsd: number | null = null;
-    let resultDurationMs: number | null = null;
-    let resultNumTurns: number | null = null;
-    let resultContextTokens: number | null = null;
-    let resultContextWindow: number | null = null;
+    // ---------------------------------------------------------------
+    // Send prompt and process messages via emit wrapper
+    // ---------------------------------------------------------------
+
+    // Track contentBlocks emitted this turn for the "empty response" check
     const contentBlocks: MessageContentBlock[] = [];
 
-    try {
-      for await (const message of q) {
+    // Wrap the caller's emit to handle transcript writing and SSE emission
+    const turnEmit = async (event: string, data: unknown) => {
+      if (event === "__raw_message") {
+        // Raw SDK message — handle transcript and SSE
         await processMessage(
-          message,
-          conversationId,
+          data as SDKMessage,
+          conversationId!,
           emit,
           contentBlocks,
-          (id) => {
-            sessionId = id;
-          },
-          (cost, duration, turns) => {
-            resultCostUsd = cost;
-            resultDurationMs = duration;
-            resultNumTurns = turns;
-          },
-          (tokens) => {
-            resultContextTokens = tokens;
-          },
-          (windowMax) => {
-            resultContextWindow = windowMax;
-          },
           safeAppendTranscriptEntry,
         );
+        return;
       }
+      emit(event, data);
+    };
+
+    let turnResult: TurnResult | undefined;
+    try {
+      turnResult = await querySession!.sendPrompt(promptText, turnEmit, {
+        autonomous: options?.autonomous,
+      });
     } catch (err) {
       if (abortController.signal.aborted) {
         logger.info("prompt.aborted", {
@@ -552,11 +552,18 @@ export async function executePromptStream(
       sessionName: session.sessionName,
       durationMs,
       contentBlocks: contentBlocks.length,
-      costUsd: resultCostUsd,
-      numTurns: resultNumTurns,
+      costUsd: turnResult?.costUsd ?? null,
+      numTurns: turnResult?.numTurns ?? null,
     });
 
-    // Update conversation metadata
+    // Update conversation metadata from TurnResult
+    const sessionId = turnResult?.sessionId ?? null;
+    const resultCostUsd = turnResult?.costUsd ?? null;
+    const resultDurationMs = turnResult?.durationMs ?? null;
+    const resultNumTurns = turnResult?.numTurns ?? null;
+    const resultContextTokens = turnResult?.contextTokens ?? null;
+    const resultContextWindow = turnResult?.contextWindow ?? null;
+
     if (contentBlocks.length > 0 || sessionId) {
       await mutateConversation(
         projectPath,
@@ -611,11 +618,10 @@ export async function executePromptStream(
     // Release concurrency slot
     releaseQuerySlot?.();
 
-    // Clean up abort controller and query registrations (guard for early failures
+    // Clean up abort controller (guard for early failures
     // before conversationId is assigned — e.g. createConversation() throws)
     if (conversationId) {
-      unregisterAbortController(conversationId);
-      unregisterQuery(conversationId);
+      deps.unregisterAbortController(conversationId);
 
       // Always mark conversation as awaiting when done (even on error)
       await mutateConversation(
@@ -655,48 +661,14 @@ export async function executePromptStream(
 }
 
 /**
- * Build an async iterable that yields a single SDKUserMessage with image + text content blocks.
- */
-async function* buildMultiModalPrompt(
-  promptText: string,
-  images: ImagePayload[],
-): AsyncGenerator<SDKUserMessage> {
-  const content = [
-    ...images.map((img) => ({
-      type: "image" as const,
-      source: {
-        type: "base64" as const,
-        media_type: img.mediaType,
-        data: img.base64Data,
-      },
-    })),
-    ...(promptText ? [{ type: "text" as const, text: promptText }] : []),
-  ];
-
-  yield {
-    type: "user",
-    session_id: "",
-    message: { role: "user", content },
-    parent_tool_use_id: null,
-  } as SDKUserMessage;
-}
-
-/**
- * Process a single SDK message: emit SSE events, append to transcript, track state.
+ * Process a single SDK message: emit SSE events, append to transcript.
+ * Used by the turn emit wrapper in executePromptStream.
  */
 async function processMessage(
   message: SDKMessage,
   conversationId: string,
   emit: (event: string, data: unknown) => void,
   contentBlocks: MessageContentBlock[],
-  setSessionId: (id: string) => void,
-  setResultData: (
-    costUsd: number,
-    durationMs: number,
-    numTurns: number,
-  ) => void,
-  setContextTokens: (tokens: number) => void,
-  setContextWindow: (windowMax: number) => void,
   safeAppendTranscriptEntry: PromptDeps["safeAppendTranscriptEntry"],
 ): Promise<void> {
   const timestamp = new Date().toISOString();
@@ -705,7 +677,6 @@ async function processMessage(
     case "system": {
       const sysMsg = message as SDKSystemMessage;
       if (sysMsg.subtype === "init") {
-        setSessionId(sysMsg.session_id);
         emit("init", { sessionId: sysMsg.session_id });
         await safeAppendTranscriptEntry(conversationId, {
           timestamp,
@@ -726,7 +697,6 @@ async function processMessage(
 
     case "assistant": {
       const asstMsg = message as SDKAssistantMessage;
-      setSessionId(asstMsg.session_id);
 
       const blocks: MessageContentBlock[] = [];
       for (const block of asstMsg.message.content) {
@@ -756,18 +726,11 @@ async function processMessage(
         role: "assistant",
         content: blocks,
       });
-
-      // Track context window usage from assistant message
-      const contextTokens = extractContextTokens(asstMsg.message.usage);
-      if (contextTokens > 0) {
-        setContextTokens(contextTokens);
-      }
       break;
     }
 
     case "user": {
       // Internal tool_result messages — log to transcript for debugging only.
-      // No role field so readConversationMessages filters these out.
       await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: "tool_result",
@@ -778,19 +741,12 @@ async function processMessage(
 
     case "result": {
       const resultMsg = message as SDKResultSuccess | SDKResultError;
-      setSessionId(resultMsg.session_id);
 
       if (resultMsg.subtype === "success") {
         const success = resultMsg as SDKResultSuccess;
-        setResultData(
-          success.total_cost_usd,
-          success.duration_ms,
-          success.num_turns,
-        );
 
         // When the SDK returns result text but no assistant messages were
         // produced (e.g. "Unknown skill: X"), emit the result text as content
-        // so the client actually displays it.
         if (success.result && contentBlocks.length === 0) {
           const textBlock: MessageContentBlock = {
             type: "text",
@@ -807,15 +763,8 @@ async function processMessage(
         });
       } else {
         const error = resultMsg as SDKResultError;
-        setResultData(error.total_cost_usd, error.duration_ms, error.num_turns);
         const errorMessage = mapErrorSubtype(error);
         emit("error", { message: errorMessage });
-      }
-
-      // Extract context window max from model usage
-      const contextWindow = extractContextWindow(resultMsg.modelUsage);
-      if (contextWindow != null) {
-        setContextWindow(contextWindow);
       }
 
       await safeAppendTranscriptEntry(conversationId, {
@@ -828,7 +777,6 @@ async function processMessage(
 
     default: {
       // stream_event, tool_progress, hook_*, auth_status, etc.
-      // Append to transcript for debugging; no SSE emission
       await safeAppendTranscriptEntry(conversationId, {
         timestamp,
         type: message.type,
