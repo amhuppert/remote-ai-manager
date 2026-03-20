@@ -76,7 +76,17 @@ export default function MobileActionMenu({
 
       {/* Action sheet */}
       <div className={`mobile-action-sheet${open ? " visible" : ""}`}>
-        <div className="mobile-action-sheet-handle" />
+        <div className="mobile-action-sheet-header">
+          <div className="mobile-action-sheet-handle" />
+          <button
+            className="mobile-action-sheet-close"
+            onClick={handleClose}
+            aria-label="Close menu"
+            type="button"
+          >
+            {"\u2715"}
+          </button>
+        </div>
 
         {/* Settings section */}
         <div className="mobile-action-sheet-section">

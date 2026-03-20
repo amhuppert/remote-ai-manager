@@ -24,7 +24,7 @@ export default function CardContextMenu({
   useEffect(() => {
     if (!open) return;
 
-    function handleClickOutside(e: MouseEvent) {
+    function handleClickOutside(e: MouseEvent | TouchEvent) {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
         onToggle();
       }
@@ -37,9 +37,11 @@ export default function CardContextMenu({
     }
 
     document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
     document.addEventListener("keydown", handleEscape);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
       document.removeEventListener("keydown", handleEscape);
     };
   }, [open, onToggle]);

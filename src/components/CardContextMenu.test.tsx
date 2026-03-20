@@ -104,4 +104,13 @@ describe("CardContextMenu", () => {
     fireEvent.mouseDown(document);
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
+
+  it("closes on touch outside (mobile)", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardContextMenu items={baseItems} open={true} onToggle={onToggle} />,
+    );
+    fireEvent.touchStart(document);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
 });

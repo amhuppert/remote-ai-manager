@@ -98,8 +98,8 @@
 }
 
 html {
-  height: 100vh;
-  max-height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
   overflow: clip;
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
@@ -113,7 +113,7 @@ body {
   color: var(--text-primary);
   background-color: var(--bg-void);
   height: 100%;
-  max-height: 100vh;
+  max-height: 100dvh;
   overflow: clip;
 }
 
@@ -347,7 +347,7 @@ textarea {
 .app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh;
   overflow: clip;
 }
 
@@ -2247,7 +2247,7 @@ textarea {
   max-width: 800px;
   margin: 0 auto;
   padding: var(--space-lg);
-  min-height: calc(100vh - var(--topbar-height));
+  min-height: calc(100dvh - var(--topbar-height));
   padding-bottom: 80px;
 }
 
@@ -3250,7 +3250,7 @@ textarea {
   grid-template-columns: 1fr;
   grid-template-rows: auto 1fr;
   gap: var(--space-sm);
-  height: calc(100vh - var(--topbar-height) - var(--space-md) * 2);
+  height: calc(100dvh - var(--topbar-height) - var(--space-md) * 2);
   min-height: 500px;
 }
 
@@ -6207,13 +6207,45 @@ textarea {
   gap: var(--space-sm);
 }
 
+.mobile-action-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex-shrink: 0;
+  margin-bottom: var(--space-xs);
+}
+
 .mobile-action-sheet-handle {
   width: 36px;
   height: 4px;
   border-radius: 2px;
   background: var(--border-default);
-  margin: 0 auto var(--space-sm);
   flex-shrink: 0;
+}
+
+.mobile-action-sheet-close {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mobile-action-sheet-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .mobile-action-sheet-section {
@@ -6699,7 +6731,7 @@ textarea {
 
   /* Session detail layout: full bleed, account for topbar + bottom bar */
   .session-detail-layout {
-    height: calc(100vh - var(--topbar-height) - 48px);
+    height: calc(100dvh - var(--topbar-height) - 48px);
     min-height: 300px;
     gap: 0;
   }
@@ -6824,7 +6856,7 @@ textarea {
   }
 
   .session-diff-fullpage {
-    max-height: calc(100vh - 100px);
+    max-height: calc(100dvh - 100px);
   }
 
   .nav-btn {
@@ -7638,7 +7670,7 @@ textarea {
 .session-diff-fullpage {
   flex: 1;
   min-height: 0;
-  max-height: calc(100vh - 120px);
+  max-height: calc(100dvh - 120px);
 }
 
 /* ============================================================
@@ -10345,7 +10377,7 @@ textarea {
   position: fixed;
   z-index: 200;
   width: 320px;
-  max-height: calc(100vh - var(--topbar-height) - 80px);
+  max-height: calc(100dvh - var(--topbar-height) - 80px);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
