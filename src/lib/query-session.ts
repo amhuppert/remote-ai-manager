@@ -71,7 +71,7 @@ export interface QuerySession {
 
   /** Send a prompt and wait for the turn to complete */
   sendPrompt(
-    prompt: string | AsyncIterable<SDKUserMessage>,
+    prompt: string | MessageContentBlock[],
     emit: TurnEmit,
     options?: TurnOptions,
   ): Promise<TurnResult>;
@@ -84,7 +84,7 @@ export interface QuerySessionOptions {
   conversationId: string;
   cwd: string;
   model: string | undefined;
-  effort: "low" | "medium" | "high" | "max" | undefined;
+  effort: "low" | "medium" | "high" | undefined;
   systemPrompt: {
     type: "preset";
     preset: "claude_code";
@@ -223,7 +223,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // ------------------------------------------------------------------
 
   async function sendPrompt(
-    prompt: string | AsyncIterable<SDKUserMessage>,
+    prompt: string | MessageContentBlock[],
     emit: TurnEmit,
     turnOptions?: TurnOptions,
   ): Promise<TurnResult> {
@@ -492,7 +492,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 // ============================================================
 
 function buildUserMessage(
-  prompt: string | AsyncIterable<SDKUserMessage>,
+  prompt: string | MessageContentBlock[],
 ): SDKUserMessage {
   if (typeof prompt === "string") {
     return {
@@ -505,11 +505,31 @@ function buildUserMessage(
       parent_tool_use_id: null,
     } as SDKUserMessage;
   }
-  // For async iterables, we need to unwrap the first message.
-  // This is a simplification — the full implementation would iterate.
-  throw new Error(
-    "AsyncIterable prompt not yet supported in QuerySession.sendPrompt — use string prompts",
-  );
+
+  // Convert CC's MessageContentBlock[] to Anthropic API content format
+  const apiContent = prompt.map((block) => {
+    if (block.type === "image") {
+      return {
+        type: "image" as const,
+        source: {
+          type: "base64" as const,
+          media_type: block.mediaType,
+          data: block.base64Data,
+        },
+      };
+    }
+    return block;
+  });
+
+  return {
+    type: "user",
+    session_id: "",
+    message: {
+      role: "user",
+      content: apiContent,
+    },
+    parent_tool_use_id: null,
+  } as SDKUserMessage;
 }
 
 async function* wrapAsIterable(

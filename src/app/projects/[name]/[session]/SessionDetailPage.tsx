@@ -1334,7 +1334,9 @@ export default function SessionDetailPage({
                                         </span>
                                       )}
                                       {msg.effort && (
-                                        <span className="message-meta-effort">
+                                        <span
+                                          className={`message-meta-effort${msg.effort === "high" ? " rainbow-text" : ""}`}
+                                        >
                                           {msg.effort}
                                         </span>
                                       )}
@@ -1472,7 +1474,7 @@ export default function SessionDetailPage({
                     />
                     <textarea
                       ref={textareaRef}
-                      className={`prompt-textarea${/\bultrathink\b/i.test(promptText) ? " ultrathink-active" : ""}`}
+                      className="prompt-textarea"
                       placeholder={
                         isFinished
                           ? "Session is merged and read-only"

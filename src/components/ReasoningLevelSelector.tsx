@@ -9,7 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-export type EffortLevel = "low" | "medium" | "high" | "max";
+export type EffortLevel = "low" | "medium" | "high";
 
 interface EffortOption {
   id: EffortLevel;
@@ -21,7 +21,6 @@ const EFFORT_OPTIONS: EffortOption[] = [
   { id: "low", label: "Low", description: "Minimal" },
   { id: "medium", label: "Medium", description: "Moderate" },
   { id: "high", label: "High", description: "Default" },
-  { id: "max", label: "Max", description: "Maximum" },
 ];
 
 interface ReasoningLevelSelectorProps {
@@ -119,7 +118,7 @@ export default function ReasoningLevelSelector({
       <button
         ref={triggerRef}
         type="button"
-        className={`effort-selector-trigger${open ? " open" : ""}`}
+        className={`effort-selector-trigger${open ? " open" : ""}${value === "high" ? " rainbow-border" : ""}`}
         onClick={toggle}
         disabled={disabled}
         title={

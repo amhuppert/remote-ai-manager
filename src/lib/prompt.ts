@@ -228,17 +228,7 @@ export async function executePromptStream(
     // Resolve model: explicit parameter > config default
     const effectiveModel = modelId ?? config.defaultModel;
 
-    // Resolve effort: UltraThink keyword overrides to "high",
-    // otherwise use explicit effort from the request.
-    const ultrathinkDetected = /\bultrathink\b/i.test(promptText);
-    if (ultrathinkDetected) {
-      logger.info("prompt.ultrathink", {
-        sessionName: session.sessionName,
-      });
-    }
-    const effectiveEffort: EffortLevel | undefined = ultrathinkDetected
-      ? "high"
-      : options?.effort;
+    const effectiveEffort: EffortLevel | undefined = options?.effort;
 
     // Acquire concurrency slot (waits if at capacity)
     releaseQuerySlot = await acquireQuerySlot(`prompt:${session.sessionName}`);
@@ -555,9 +545,11 @@ export async function executePromptStream(
 
     let turnResult: TurnResult | undefined;
     try {
-      turnResult = await querySession!.sendPrompt(promptText, turnEmit, {
-        autonomous: options?.autonomous,
-      });
+      turnResult = await querySession!.sendPrompt(
+        images?.length ? userContentBlocks : promptText,
+        turnEmit,
+        { autonomous: options?.autonomous },
+      );
     } catch (err) {
       if (abortController.signal.aborted) {
         logger.info("prompt.aborted", {
