@@ -4379,11 +4379,13 @@ textarea {
 @keyframes rainbow-border-shift {
   0% {
     background-position:
+      0% 50%,
       0 0,
       0% 50%;
   }
   100% {
     background-position:
+      200% 50%,
       0 0,
       200% 50%;
   }
@@ -4408,9 +4410,22 @@ textarea {
   font-weight: 700;
 }
 
-.effort-selector-trigger.rainbow-border {
+.effort-selector-trigger.rainbow-border,
+.effort-selector-trigger.rainbow-border:hover,
+.effort-selector-trigger.rainbow-border.open {
   border: 1px solid transparent;
   background:
+    linear-gradient(
+        90deg,
+        rgba(255, 107, 107, 0.14),
+        rgba(255, 165, 0, 0.12),
+        rgba(255, 217, 61, 0.1),
+        rgba(107, 203, 119, 0.12),
+        rgba(77, 150, 255, 0.14),
+        rgba(155, 89, 182, 0.13),
+        rgba(255, 107, 107, 0.14)
+      )
+      padding-box,
     linear-gradient(var(--bg-surface), var(--bg-surface)) padding-box,
     linear-gradient(
         90deg,
@@ -4424,9 +4439,28 @@ textarea {
       )
       border-box;
   background-size:
+    200% auto,
     100% 100%,
     200% auto;
   animation: rainbow-border-shift 3s linear infinite;
+}
+
+.effort-selector-trigger.rainbow-border {
+  box-shadow:
+    0 0 8px rgba(155, 89, 182, 0.15),
+    0 0 20px rgba(77, 150, 255, 0.08);
+}
+
+.effort-selector-trigger.rainbow-border:hover {
+  box-shadow:
+    0 0 12px rgba(155, 89, 182, 0.25),
+    0 0 24px rgba(77, 150, 255, 0.15);
+}
+
+.effort-selector-trigger.rainbow-border.open {
+  box-shadow:
+    0 0 0 3px rgba(155, 89, 182, 0.15),
+    0 0 14px rgba(200, 180, 255, 0.15);
 }
 
 .effort-selector-trigger.rainbow-border .effort-selector-label,
