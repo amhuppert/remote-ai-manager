@@ -91,9 +91,12 @@ import {
 import { FileAutocomplete } from "@/components/FileAutocomplete";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import ModelSelector, { type ModelId } from "@/components/ModelSelector";
-import ReasoningLevelSelector, {
+import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
+import {
   type EffortLevel,
-} from "@/components/ReasoningLevelSelector";
+  getEffortLevelsForModel,
+  clampEffortToModel,
+} from "@/lib/schemas";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import FocusConfirmationBar from "@/components/FocusConfirmationBar";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
@@ -311,7 +314,20 @@ export default function SessionDetailPage({
   const [promptText, setPromptText] = useState("");
   const [selectedModel, setSelectedModel] = useState<ModelId>(defaultModel);
   const [selectedEffort, setSelectedEffort] = useState<EffortLevel>("high");
-  const effortSupported = selectedModel === "opus";
+  const availableEffortLevels = getEffortLevelsForModel(selectedModel);
+  const effortSupported = availableEffortLevels.length > 0;
+
+  const handleModelChange = useCallback(
+    (model: ModelId) => {
+      setSelectedModel(model);
+      const clamped = clampEffortToModel(selectedEffort, model);
+      if (clamped && clamped !== selectedEffort) {
+        setSelectedEffort(clamped);
+      }
+    },
+    [selectedEffort],
+  );
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const [cursorPosition, setCursorPosition] = useState(0);
@@ -1335,7 +1351,7 @@ export default function SessionDetailPage({
                                       )}
                                       {msg.effort && (
                                         <span
-                                          className={`message-meta-effort${msg.effort === "high" ? " rainbow-text" : ""}`}
+                                          className={`message-meta-effort${msg.effort === "max" ? " rainbow-text" : ""}`}
                                         >
                                           {msg.effort}
                                         </span>
@@ -1579,16 +1595,17 @@ export default function SessionDetailPage({
                         </button>
                         <ModelSelector
                           value={selectedModel}
-                          onChange={setSelectedModel}
+                          onChange={handleModelChange}
                           disabled={sending || isReadOnly}
                         />
                         <ReasoningLevelSelector
                           value={selectedEffort}
                           onChange={setSelectedEffort}
                           disabled={sending || isReadOnly || !effortSupported}
+                          availableLevels={availableEffortLevels}
                           disabledTooltip={
                             !effortSupported
-                              ? "Reasoning level is only available for Opus models"
+                              ? "Reasoning level is only available for Opus and Sonnet models"
                               : undefined
                           }
                         />

@@ -4366,7 +4366,7 @@ textarea {
   color: var(--text-tertiary);
 }
 
-/* Rainbow effect for high effort level */
+/* Rainbow effect for max effort level */
 @keyframes rainbow-shift {
   0% {
     background-position: 0% 50%;

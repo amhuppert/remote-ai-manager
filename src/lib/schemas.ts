@@ -7,8 +7,33 @@ import { z } from "zod";
 export const claudeModelSchema = z.enum(["opus", "sonnet", "haiku"]);
 export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 
-export const effortLevelSchema = z.enum(["low", "medium", "high"]);
+export const effortLevelSchema = z.enum(["low", "medium", "high", "max"]);
 export type EffortLevel = z.infer<typeof effortLevelSchema>;
+
+const MODEL_EFFORT_LEVELS: Record<ClaudeModel, EffortLevel[]> = {
+  opus: ["low", "medium", "high", "max"],
+  sonnet: ["low", "medium", "high"],
+  haiku: [],
+};
+
+/** Returns the effort levels supported by the given model. */
+export function getEffortLevelsForModel(model: ClaudeModel): EffortLevel[] {
+  return MODEL_EFFORT_LEVELS[model];
+}
+
+/**
+ * Clamps an effort level to the highest supported level for the given model.
+ * Returns undefined if the model doesn't support effort levels at all.
+ */
+export function clampEffortToModel(
+  effort: EffortLevel,
+  model: ClaudeModel,
+): EffortLevel | undefined {
+  const supported = MODEL_EFFORT_LEVELS[model];
+  if (supported.length === 0) return undefined;
+  if (supported.includes(effort)) return effort;
+  return supported[supported.length - 1];
+}
 
 // ============================================================
 // Push Notification Config

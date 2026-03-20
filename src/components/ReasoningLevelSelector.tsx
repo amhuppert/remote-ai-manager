@@ -9,7 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-export type EffortLevel = "low" | "medium" | "high";
+export type EffortLevel = "low" | "medium" | "high" | "max";
 
 interface EffortOption {
   id: EffortLevel;
@@ -21,6 +21,7 @@ const EFFORT_OPTIONS: EffortOption[] = [
   { id: "low", label: "Low", description: "Minimal" },
   { id: "medium", label: "Medium", description: "Moderate" },
   { id: "high", label: "High", description: "Default" },
+  { id: "max", label: "Max", description: "Maximum" },
 ];
 
 interface ReasoningLevelSelectorProps {
@@ -28,6 +29,8 @@ interface ReasoningLevelSelectorProps {
   onChange: (level: EffortLevel) => void;
   disabled?: boolean;
   disabledTooltip?: string;
+  /** When provided, only these levels are shown in the dropdown. */
+  availableLevels?: EffortLevel[];
 }
 
 export default function ReasoningLevelSelector({
@@ -35,6 +38,7 @@ export default function ReasoningLevelSelector({
   onChange,
   disabled = false,
   disabledTooltip,
+  availableLevels,
 }: ReasoningLevelSelectorProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -42,8 +46,13 @@ export default function ReasoningLevelSelector({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
+  const visibleOptions = availableLevels
+    ? EFFORT_OPTIONS.filter((o) => availableLevels.includes(o.id))
+    : EFFORT_OPTIONS;
+
   const selected =
-    EFFORT_OPTIONS.find((o) => o.id === value) ?? EFFORT_OPTIONS[2]!;
+    visibleOptions.find((o) => o.id === value) ??
+    visibleOptions[visibleOptions.length - 1]!;
 
   const toggle = useCallback(() => {
     if (!disabled) setOpen((prev) => !prev);
@@ -99,7 +108,7 @@ export default function ReasoningLevelSelector({
       className={`effort-selector-dropdown${open ? " open" : ""}`}
       style={dropdownStyle}
     >
-      {EFFORT_OPTIONS.map((option) => (
+      {visibleOptions.map((option) => (
         <button
           key={option.id}
           type="button"
@@ -118,7 +127,7 @@ export default function ReasoningLevelSelector({
       <button
         ref={triggerRef}
         type="button"
-        className={`effort-selector-trigger${open ? " open" : ""}${value === "high" ? " rainbow-border" : ""}`}
+        className={`effort-selector-trigger${open ? " open" : ""}${value === "max" ? " rainbow-border" : ""}`}
         onClick={toggle}
         disabled={disabled}
         title={

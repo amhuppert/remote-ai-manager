@@ -18,6 +18,7 @@ import type {
   Options,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { MessageContentBlock } from "@/types";
+import type { EffortLevel } from "./schemas";
 import { createLogger } from "./logging";
 import { registerSession, unregisterSession } from "./query-session-registry";
 import { extractContextTokens, extractContextWindow } from "./context-fill";
@@ -84,7 +85,7 @@ export interface QuerySessionOptions {
   conversationId: string;
   cwd: string;
   model: string | undefined;
-  effort: "low" | "medium" | "high" | undefined;
+  effort: EffortLevel | undefined;
   systemPrompt: {
     type: "preset";
     preset: "claude_code";
