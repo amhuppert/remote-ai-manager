@@ -1334,7 +1334,9 @@ export default function SessionDetailPage({
                                         </span>
                                       )}
                                       {msg.effort && (
-                                        <span className={`message-meta-effort${msg.effort === "high" ? " rainbow-text" : ""}`}>
+                                        <span
+                                          className={`message-meta-effort${msg.effort === "high" ? " rainbow-text" : ""}`}
+                                        >
                                           {msg.effort}
                                         </span>
                                       )}

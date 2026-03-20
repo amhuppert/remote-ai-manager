@@ -139,7 +139,6 @@ export const MessageMetadataDemo = {
               — so no effort label is shown.
             </div>
           </div>
-
         </div>
       </div>
     ),
