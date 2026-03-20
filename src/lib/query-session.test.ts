@@ -270,6 +270,76 @@ describe("QuerySession.sendPrompt", () => {
     session.close();
   });
 
+  it("includes image content blocks in the SDK message", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    // Complete first turn so second uses streamInput (easier to inspect)
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0.01,
+      duration_ms: 100,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Send second prompt with content blocks including an image
+    const turn2 = session.sendPrompt(
+      [
+        { type: "text" as const, text: "Check this screenshot" },
+        {
+          type: "image" as const,
+          mediaType: "image/png" as const,
+          base64Data: "iVBORw0KGgo=",
+        },
+      ],
+      emit,
+    );
+
+    // Inspect what streamInput received
+    expect(mock.query.streamInput).toHaveBeenCalled();
+    const iterable = mock.query.streamInput.mock.calls[0]![0];
+    const iterator = iterable[Symbol.asyncIterator]();
+    const { value: sdkMessage } = await iterator.next();
+
+    // Should be a properly formed SDKUserMessage with Anthropic API image format
+    expect(sdkMessage.message.content).toEqual([
+      { type: "text", text: "Check this screenshot" },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: "iVBORw0KGgo=",
+        },
+      },
+    ]);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u2",
+      total_cost_usd: 0.02,
+      duration_ms: 200,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn2;
+
+    session.close();
+  });
+
   it("feeds prompt via streamInput for subsequent prompts", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);

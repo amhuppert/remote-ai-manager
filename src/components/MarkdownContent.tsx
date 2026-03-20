@@ -13,10 +13,6 @@ interface Props {
   content: string;
 }
 
-/**
- * Rehype plugin that wraps occurrences of "ultrathink" in text nodes
- * with <span class="ultrathink-rainbow"> for rainbow gradient styling.
- */
 type HastNode = {
   type: string;
   value?: string;
@@ -24,42 +20,6 @@ type HastNode = {
   properties?: Record<string, unknown>;
   children?: HastNode[];
 };
-
-function rehypeUltrathink() {
-  return (tree: HastNode) => {
-    function visit(node: HastNode) {
-      if (!node.children) return;
-      const newChildren: HastNode[] = [];
-      for (const child of node.children) {
-        if (
-          child.type === "text" &&
-          child.value &&
-          /ultrathink/i.test(child.value)
-        ) {
-          const parts = child.value.split(/(ultrathink)/i);
-          for (const part of parts) {
-            if (!part) continue;
-            if (/^ultrathink$/i.test(part)) {
-              newChildren.push({
-                type: "element",
-                tagName: "span",
-                properties: { className: ["ultrathink-rainbow"] },
-                children: [{ type: "text", value: part }],
-              });
-            } else {
-              newChildren.push({ type: "text", value: part });
-            }
-          }
-        } else {
-          visit(child);
-          newChildren.push(child);
-        }
-      }
-      node.children = newChildren;
-    }
-    visit(tree);
-  };
-}
 
 /**
  * Rehype plugin that detects /kiro:* commands in text nodes
@@ -218,7 +178,7 @@ export default memo(function MarkdownContent({
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeUltrathink, rehypeKiroCommands]}
+      rehypePlugins={[rehypeKiroCommands]}
       components={{
         code({ className, children, ...props }) {
           const rawText = String(children);

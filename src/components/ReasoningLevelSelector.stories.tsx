@@ -46,12 +46,6 @@ export const Medium = {
   },
 } satisfies Story;
 
-export const Max = {
-  args: {
-    value: "max",
-  },
-} satisfies Story;
-
 export const Disabled = {
   args: {
     disabled: true,
@@ -115,7 +109,7 @@ export const MessageMetadataDemo = {
                 <span className="message-meta-sep">&middot;</span>
                 <span className="message-meta-model">Opus</span>
                 <span className="message-meta-sep">&middot;</span>
-                <span className="message-meta-effort">High</span>
+                <span className="message-meta-effort rainbow-text">High</span>
               </span>
             </div>
             <div className="message-content">
@@ -146,21 +140,6 @@ export const MessageMetadataDemo = {
             </div>
           </div>
 
-          {/* Assistant message with max effort */}
-          <div className="message assistant">
-            <div className="message-role">
-              Claude
-              <span className="message-meta">
-                <span className="message-meta-sep">&middot;</span>
-                <span className="message-meta-model">Opus</span>
-                <span className="message-meta-sep">&middot;</span>
-                <span className="message-meta-effort">Max</span>
-              </span>
-            </div>
-            <div className="message-content">
-              This response used maximum reasoning effort (Opus 4.6 only).
-            </div>
-          </div>
         </div>
       </div>
     ),

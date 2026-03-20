@@ -7,7 +7,7 @@ import { z } from "zod";
 export const claudeModelSchema = z.enum(["opus", "sonnet", "haiku"]);
 export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 
-export const effortLevelSchema = z.enum(["low", "medium", "high", "max"]);
+export const effortLevelSchema = z.enum(["low", "medium", "high"]);
 export type EffortLevel = z.infer<typeof effortLevelSchema>;
 
 // ============================================================
