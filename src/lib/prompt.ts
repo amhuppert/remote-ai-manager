@@ -567,9 +567,14 @@ export async function executePromptStream(
       } else {
         const errorMsg =
           err instanceof Error ? err.message : "Unknown SDK error";
+        const stderr =
+          err instanceof Error
+            ? (err as Error & { stderr?: string }).stderr
+            : undefined;
         logger.error("prompt.sdk_error", {
           sessionName: session.sessionName,
           error: errorMsg,
+          ...(stderr ? { stderr } : {}),
         });
         emit("error", { message: `SDK error: ${errorMsg}` });
       }

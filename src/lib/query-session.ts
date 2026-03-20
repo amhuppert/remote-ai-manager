@@ -140,6 +140,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let isFirstPrompt = true;
   let firstPromptResolve: ((msg: SDKUserMessage) => void) | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const stderrChunks: string[] = [];
 
   // The hanging generator: yields the first user message, then hangs forever.
   // This keeps the SDK subprocess alive indefinitely.
@@ -170,6 +171,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     env: options.env as Record<string, string>,
     mcpServers: options.mcpServers as Record<string, never>,
     canUseTool: options.canUseTool,
+    stderr: (data: string) => {
+      stderrChunks.push(data);
+    },
   };
 
   const q: Query = sdkQuery({
@@ -322,17 +326,25 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     } catch (err) {
       if (status === "alive") {
         const errorMsg = err instanceof Error ? err.message : String(err);
+        const stderr =
+          stderrChunks.length > 0 ? stderrChunks.join("") : undefined;
         logger.error("query-session.pump_error", {
           conversationId: options.conversationId,
           error: errorMsg,
+          ...(stderr ? { stderr } : {}),
         });
         markDead("pump_error");
 
-        // Reject pending turn
+        // Reject pending turn with stderr attached
         if (pendingTurn) {
           const turn = pendingTurn;
           pendingTurn = null;
-          turn.reject(err instanceof Error ? err : new Error(String(err)));
+          const rejectError =
+            err instanceof Error ? err : new Error(String(err));
+          if (stderr) {
+            (rejectError as Error & { stderr: string }).stderr = stderr;
+          }
+          turn.reject(rejectError);
         }
       }
     }

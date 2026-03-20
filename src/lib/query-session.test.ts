@@ -477,6 +477,37 @@ describe("QuerySession crash detection", () => {
 
     expect(unregisterSession).toHaveBeenCalledWith("conv-123");
   });
+
+  it("includes captured stderr in error when pump crashes", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    // Simulate stderr output arriving before the crash
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sdkOptions = (queryMock.mock.calls[0] as any)[0].options;
+    expect(sdkOptions.stderr).toBeTypeOf("function");
+    sdkOptions.stderr("Error: ENOENT: no such file or directory\n");
+    sdkOptions.stderr("Fatal: cannot initialize session\n");
+
+    // Now crash the pump
+    mock.crashPump(new Error("Claude Code process exited with code 1"));
+
+    let caughtError: Error | undefined;
+    try {
+      await turnPromise;
+    } catch (e) {
+      caughtError = e as Error;
+    }
+    expect(caughtError).toBeDefined();
+    expect(caughtError!.message).toBe("Claude Code process exited with code 1");
+    expect((caughtError as Error & { stderr: string }).stderr).toBe(
+      "Error: ENOENT: no such file or directory\nFatal: cannot initialize session\n",
+    );
+  });
 });
 
 describe("QuerySession idle TTL", () => {
