@@ -6765,14 +6765,66 @@ textarea {
   }
 
   .diff-nav-btn {
-    min-width: 44px;
-    height: 44px;
-    padding: 0 var(--space-sm);
+    min-width: 36px;
+    min-height: 36px;
+    height: 36px;
+    padding: 0 var(--space-xs);
+  }
+
+  .diff-nav-btn svg {
+    width: 14px;
+    height: 14px;
   }
 
   .diff-toolbar {
-    flex-wrap: wrap;
     padding: var(--space-xs) var(--space-sm);
+    flex-wrap: nowrap;
+  }
+
+  .diff-toolbar-label {
+    display: none;
+  }
+
+  .diff-toolbar-sep {
+    height: 16px;
+  }
+
+  /* Diff panel on mobile: full-bleed, no border-radius */
+  .sidebar-diff-panel {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+
+  /* Diff panel header: compact on mobile */
+  .sidebar-diff-panel .panel-header {
+    padding: var(--space-xs) var(--space-sm);
+    gap: var(--space-xs);
+    flex-wrap: wrap;
+  }
+
+  /* Diff file header: truncate long paths, keep stats visible */
+  .diff-file-header {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.7rem;
+  }
+
+  .diff-file-name {
+    min-width: 0;
+  }
+
+  /* Diff lines: allow horizontal scroll */
+  .diff-line {
+    padding: 0 var(--space-sm);
+  }
+
+  /* Full-page diff view: reduce padding on mobile */
+  .session-diff-page {
+    padding: var(--space-sm);
+  }
+
+  .session-diff-fullpage {
+    max-height: calc(100vh - 100px);
   }
 
   .nav-btn {
