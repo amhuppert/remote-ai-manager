@@ -111,6 +111,8 @@ export const transcriptMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   content: z.array(messageContentBlockSchema),
   timestamp: z.string().nullable(),
+  model: z.string().optional(),
+  effort: z.string().optional(),
 });
 
 // -- Content (focus doc, kiro doc file) --

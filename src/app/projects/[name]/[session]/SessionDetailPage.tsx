@@ -91,6 +91,9 @@ import {
 import { FileAutocomplete } from "@/components/FileAutocomplete";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import ModelSelector, { type ModelId } from "@/components/ModelSelector";
+import ReasoningLevelSelector, {
+  type EffortLevel,
+} from "@/components/ReasoningLevelSelector";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import FocusConfirmationBar from "@/components/FocusConfirmationBar";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
@@ -307,6 +310,8 @@ export default function SessionDetailPage({
   // --- Local state ---
   const [promptText, setPromptText] = useState("");
   const [selectedModel, setSelectedModel] = useState<ModelId>(defaultModel);
+  const [selectedEffort, setSelectedEffort] = useState<EffortLevel>("high");
+  const effortSupported = selectedModel === "opus";
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const [cursorPosition, setCursorPosition] = useState(0);
@@ -446,7 +451,13 @@ export default function SessionDetailPage({
     import("@/lib/prompt-templates").then(
       ({ getUnderstandObjectivePrompt }) => {
         const prompt = getUnderstandObjectivePrompt(session.objective!);
-        void sendPrompt(prompt, messages.length, selectedModel);
+        void sendPrompt(
+          prompt,
+          messages.length,
+          selectedModel,
+          undefined,
+          effortSupported ? selectedEffort : undefined,
+        );
       },
     );
   }, [
@@ -455,6 +466,8 @@ export default function SessionDetailPage({
     sendPrompt,
     messages.length,
     selectedModel,
+    selectedEffort,
+    effortSupported,
     router,
     projectName,
     sessionName,
@@ -644,12 +657,15 @@ export default function SessionDetailPage({
       messages.length,
       selectedModel,
       imagePayloads.length > 0 ? imagePayloads : undefined,
+      effortSupported ? selectedEffort : undefined,
     );
   }, [
     sending,
     messages.length,
     sendPrompt,
     selectedModel,
+    selectedEffort,
+    effortSupported,
     pendingImages,
     clearImages,
   ]);
@@ -710,10 +726,18 @@ export default function SessionDetailPage({
           getWriteFocusDocumentPrompt(),
           messages.length,
           selectedModel,
+          undefined,
+          effortSupported ? selectedEffort : undefined,
         );
       },
     );
-  }, [sendPrompt, messages.length, selectedModel]);
+  }, [
+    sendPrompt,
+    messages.length,
+    selectedModel,
+    selectedEffort,
+    effortSupported,
+  ]);
 
   // Step 2: Once the prompt finishes (session no longer busy), finalize
   useEffect(() => {
@@ -852,8 +876,21 @@ export default function SessionDetailPage({
     if (!pending) return;
     if (pending.conversationId !== conversationId) return;
     autoPromptFired.current = true;
-    void sendPrompt(pending.text, 0, selectedModel);
-  }, [conversationId, consumePendingForkPrompt, sendPrompt, selectedModel]);
+    void sendPrompt(
+      pending.text,
+      0,
+      selectedModel,
+      undefined,
+      effortSupported ? selectedEffort : undefined,
+    );
+  }, [
+    conversationId,
+    consumePendingForkPrompt,
+    sendPrompt,
+    selectedModel,
+    selectedEffort,
+    effortSupported,
+  ]);
 
   const handleVoiceResult = useCallback(
     (text: string) => {
@@ -1281,6 +1318,28 @@ export default function SessionDetailPage({
                               >
                                 <div className="message-role">
                                   {isUserMsg ? "You" : "Claude"}
+                                  {!isUserMsg && (msg.model || msg.effort) && (
+                                    <span className="message-meta">
+                                      <span className="message-meta-sep">
+                                        &middot;
+                                      </span>
+                                      {msg.model && (
+                                        <span className="message-meta-model">
+                                          {msg.model}
+                                        </span>
+                                      )}
+                                      {msg.model && msg.effort && (
+                                        <span className="message-meta-sep">
+                                          &middot;
+                                        </span>
+                                      )}
+                                      {msg.effort && (
+                                        <span className="message-meta-effort">
+                                          {msg.effort}
+                                        </span>
+                                      )}
+                                    </span>
+                                  )}
                                 </div>
                                 {isEditing ? (
                                   <MessageEditor
@@ -1520,6 +1579,16 @@ export default function SessionDetailPage({
                           value={selectedModel}
                           onChange={setSelectedModel}
                           disabled={sending || isReadOnly}
+                        />
+                        <ReasoningLevelSelector
+                          value={selectedEffort}
+                          onChange={setSelectedEffort}
+                          disabled={sending || isReadOnly || !effortSupported}
+                          disabledTooltip={
+                            !effortSupported
+                              ? "Reasoning level is only available for Opus models"
+                              : undefined
+                          }
                         />
                       </div>
                       <div className="prompt-toolbar-end">

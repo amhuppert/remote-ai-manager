@@ -12,6 +12,7 @@ import {
 import { tracedFetch } from "@/lib/traced-fetch";
 import type {
   ClaudeModel,
+  EffortLevel,
   ImagePayload,
   MessageContentBlock,
   AskQuestionItem,
@@ -29,6 +30,7 @@ export interface SendPromptHandle {
     currentMessageCount: number,
     modelId?: ClaudeModel,
     images?: ImagePayload[],
+    effort?: EffortLevel,
   ) => Promise<void>;
   /** Abort the in-flight SSE stream (client-side only). */
   abortClient: () => void;
@@ -65,6 +67,7 @@ export function useSendPrompt(
       currentMessageCount: number,
       modelId?: ClaudeModel,
       images?: ImagePayload[],
+      effort?: EffortLevel,
     ) => {
       const trimmed = text.trim();
       const hasImages = images && images.length > 0;
@@ -114,6 +117,7 @@ export function useSendPrompt(
           body: JSON.stringify({
             prompt: trimmed,
             modelId,
+            effort,
             images: hasImages ? images : undefined,
           }),
           signal: controller.signal,

@@ -609,6 +609,7 @@ export function createWorkflowRouteHandlers(
             conversationId,
             body.modelId,
             body.images,
+            { effort: body.effort },
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : "Prompt failed";

@@ -338,6 +338,111 @@ describe("readConversationMessages", () => {
     });
   });
 
+  it("propagates model and effort from user entries to assistant messages", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "model-effort.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+        model: "opus",
+        effort: "high",
+      }),
+      JSON.stringify({
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi there!" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.model).toBe("opus");
+    expect(result[0]!.effort).toBe("high");
+    // Assistant inherits model+effort from preceding user entry
+    expect(result[1]!.model).toBe("opus");
+    expect(result[1]!.effort).toBe("high");
+  });
+
+  it("tracks model/effort changes across turns", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "model-effort-change.jsonl",
+    );
+    const lines = [
+      JSON.stringify({
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+        model: "opus",
+        effort: "high",
+      }),
+      JSON.stringify({
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Response 1" }],
+      }),
+      JSON.stringify({
+        timestamp: "t2",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Try with sonnet" }],
+        model: "sonnet",
+      }),
+      JSON.stringify({
+        timestamp: "t3",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Response 2" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(4);
+    // First assistant inherits opus + high
+    expect(result[1]!.model).toBe("opus");
+    expect(result[1]!.effort).toBe("high");
+    // Second user has sonnet, no effort (model doesn't support it)
+    expect(result[2]!.model).toBe("sonnet");
+    expect(result[2]!.effort).toBeUndefined();
+    // Second assistant inherits sonnet, no effort
+    expect(result[3]!.model).toBe("sonnet");
+    expect(result[3]!.effort).toBeUndefined();
+  });
+
+  it("handles legacy transcripts without model/effort fields", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "legacy.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      }),
+      JSON.stringify({
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi!" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.model).toBeUndefined();
+    expect(result[0]!.effort).toBeUndefined();
+    expect(result[1]!.model).toBeUndefined();
+    expect(result[1]!.effort).toBeUndefined();
+  });
+
   it("detects plain text slash commands in user messages", async () => {
     const filePath = path.join(TEST_DIR, "transcripts", "plain-command.jsonl");
     const lines = [

@@ -100,6 +100,8 @@ function createMockQuerySession(
     conversationId: "conv-123",
     query: mockQuery as never,
     currentTurnOptions: null,
+    model: undefined,
+    effort: undefined,
     sendPrompt: vi.fn(
       async (_prompt: string, emit: TurnEmit): Promise<TurnResult> => {
         // Deliver messages via emit so processMessage handles them

@@ -63,6 +63,12 @@ export interface QuerySession {
   /** The current turn options (read by canUseTool) */
   readonly currentTurnOptions: TurnOptions | null;
 
+  /** Model this session was created with */
+  readonly model: string | undefined;
+
+  /** Effort level this session was created with */
+  readonly effort: string | undefined;
+
   /** Send a prompt and wait for the turn to complete */
   sendPrompt(
     prompt: string | AsyncIterable<SDKUserMessage>,
@@ -184,6 +190,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     },
     get currentTurnOptions() {
       return currentTurnOptions;
+    },
+    get model() {
+      return options.model;
+    },
+    get effort() {
+      return options.effort;
     },
     sendPrompt,
     close,

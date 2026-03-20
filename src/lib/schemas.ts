@@ -7,6 +7,9 @@ import { z } from "zod";
 export const claudeModelSchema = z.enum(["opus", "sonnet", "haiku"]);
 export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 
+export const effortLevelSchema = z.enum(["low", "medium", "high", "max"]);
+export type EffortLevel = z.infer<typeof effortLevelSchema>;
+
 // ============================================================
 // Push Notification Config
 // ============================================================
@@ -583,6 +586,7 @@ export const runPromptRequestSchema = z
   .object({
     prompt: z.string().trim(),
     modelId: claudeModelSchema.optional(),
+    effort: effortLevelSchema.optional(),
     images: z.array(imagePayloadSchema).max(5).optional(),
   })
   .refine(

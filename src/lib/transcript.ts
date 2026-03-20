@@ -24,6 +24,10 @@ export interface TranscriptEntry {
   content?: MessageContentBlock[];
   /** Full SDK message data (for debugging/future use) */
   raw?: unknown;
+  /** Model used for this turn (stored on user entries) */
+  model?: string;
+  /** Reasoning effort level used for this turn (stored on user entries) */
+  effort?: string;
 }
 
 // ============================================================
@@ -201,6 +205,11 @@ export async function readConversationMessages(
   const lines = raw.split("\n").filter((line) => line.trim().length > 0);
   const messages: TranscriptMessage[] = [];
 
+  // Track the most recent model/effort from user entries so assistant
+  // messages can inherit the settings that were active for their turn.
+  let currentModel: string | undefined;
+  let currentEffort: string | undefined;
+
   for (const line of lines) {
     let entry: TranscriptEntry;
     try {
@@ -212,6 +221,16 @@ export async function readConversationMessages(
     if (entry.role !== "user" && entry.role !== "assistant") continue;
     if (!entry.content || entry.content.length === 0) continue;
 
+    // Update tracking when we see a user entry with model/effort metadata
+    if (entry.role === "user") {
+      if (entry.model !== undefined) {
+        currentModel = entry.model;
+      }
+      // Always reset effort when we see a new user entry — if the entry
+      // has no effort field, the model didn't support it for this turn.
+      currentEffort = entry.effort;
+    }
+
     // Check for slash command invocations in user text messages
     if (entry.role === "user" && entry.content.length === 1) {
       const block = entry.content[0];
@@ -222,6 +241,8 @@ export async function readConversationMessages(
             role: "user",
             content: [commandBlock],
             timestamp: entry.timestamp ?? null,
+            model: entry.model,
+            effort: entry.effort,
           });
           continue;
         }
@@ -237,6 +258,9 @@ export async function readConversationMessages(
         role: entry.role,
         content: entry.content,
         timestamp: entry.timestamp ?? null,
+        // User entries carry their own metadata; assistant entries inherit
+        model: entry.role === "user" ? entry.model : currentModel,
+        effort: entry.role === "user" ? entry.effort : currentEffort,
       });
     }
   }

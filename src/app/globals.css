@@ -4850,6 +4850,147 @@ textarea {
   color: var(--cyan-dim);
 }
 
+/* Effort (reasoning level) selector */
+.effort-selector {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.effort-selector-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.effort-selector-trigger:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.effort-selector-trigger.open {
+  border-color: var(--cyan-dim);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--cyan-glow);
+}
+
+.effort-selector-trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.effort-selector-label {
+  letter-spacing: 0.02em;
+}
+
+.effort-selector-chevron {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  transition: color 0.15s ease;
+}
+
+.effort-selector-trigger:hover .effort-selector-chevron,
+.effort-selector-trigger.open .effort-selector-chevron {
+  color: var(--text-secondary);
+}
+
+.effort-selector-dropdown {
+  position: fixed;
+  z-index: 150;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 -8px 24px rgba(0, 0, 0, 0.35),
+    0 -2px 8px rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  transform: translateY(4px) scale(0.97);
+  pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.effort-selector-dropdown.open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.effort-selector-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.effort-selector-option:hover {
+  background: var(--bg-hover);
+}
+
+.effort-selector-option.active {
+  background: var(--cyan-glow);
+  color: var(--cyan);
+}
+
+.effort-option-name {
+  font-weight: 600;
+}
+
+.effort-option-desc {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
+.effort-selector-option.active .effort-option-desc {
+  color: var(--cyan-dim);
+}
+
+/* Message metadata (model + effort shown next to role label) */
+.message-meta {
+  display: inline;
+  font-weight: 500;
+  font-size: 0.7rem;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.message-meta-sep {
+  color: var(--text-tertiary);
+  margin: 0 5px;
+}
+
+.message-meta-model,
+.message-meta-effort {
+  color: var(--text-secondary);
+}
+
 /* ============================================================
    Diff Panel
    ============================================================ */

@@ -7,6 +7,7 @@ import type { MessageContentBlock as _MessageContentBlock } from "@/lib/schemas"
 
 export type {
   ClaudeModel,
+  EffortLevel,
   GlobalConfig,
   PushNotificationConfig,
   PushTriggers,
@@ -113,6 +114,10 @@ export interface TranscriptMessage {
   content: _MessageContentBlock[];
   /** ISO 8601 timestamp if available */
   timestamp: string | null;
+  /** Model used for this turn (e.g., "opus", "sonnet") */
+  model?: string;
+  /** Reasoning effort level used for this turn */
+  effort?: string;
 }
 
 /** Parsed diff for a single file */

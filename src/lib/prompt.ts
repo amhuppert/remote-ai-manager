@@ -8,6 +8,7 @@ import type {
 import { buildChildEnv } from "./child-env";
 import type {
   ClaudeModel,
+  EffortLevel,
   SessionState,
   ConversationState,
   MessageContentBlock,
@@ -158,7 +159,7 @@ export async function executePromptStream(
   conversationId?: string,
   modelId?: ClaudeModel,
   images?: ImagePayload[],
-  options?: { autonomous?: boolean },
+  options?: { autonomous?: boolean; effort?: EffortLevel },
   deps: PromptDeps = defaultPromptDeps,
 ): Promise<{ conversationId: string }> {
   // Destructure deps — shadows module-level imports within this function scope
@@ -227,6 +228,18 @@ export async function executePromptStream(
     // Resolve model: explicit parameter > config default
     const effectiveModel = modelId ?? config.defaultModel;
 
+    // Resolve effort: UltraThink keyword overrides to "high",
+    // otherwise use explicit effort from the request.
+    const ultrathinkDetected = /\bultrathink\b/i.test(promptText);
+    if (ultrathinkDetected) {
+      logger.info("prompt.ultrathink", {
+        sessionName: session.sessionName,
+      });
+    }
+    const effectiveEffort: EffortLevel | undefined = ultrathinkDetected
+      ? "high"
+      : options?.effort;
+
     // Acquire concurrency slot (waits if at capacity)
     releaseQuerySlot = await acquireQuerySlot(`prompt:${session.sessionName}`);
     // Mark conversation as running
@@ -275,12 +288,14 @@ export async function executePromptStream(
       ? await externalizeImageBlocks(conversationId, userContentBlocks)
       : userContentBlocks;
 
-    // Persist the user's prompt in the transcript
+    // Persist the user's prompt in the transcript (with model/effort metadata)
     await safeAppendTranscriptEntry(conversationId, {
       timestamp: new Date().toISOString(),
       type: "user",
       role: "user",
       content: transcriptBlocks,
+      model: effectiveModel ?? undefined,
+      effort: effectiveEffort,
     });
 
     const promptStart = Date.now();
@@ -289,6 +304,27 @@ export async function executePromptStream(
     // Get-or-create QuerySession
     // ---------------------------------------------------------------
     let querySession = getSessionFromRegistry(conversationId);
+
+    // Close the existing session if the model or effort changed since
+    // creation — these options are baked into the SDK subprocess and
+    // can only be updated by creating a new session with resume.
+    if (querySession && querySession.status === "alive") {
+      const modelChanged =
+        effectiveModel != null && querySession.model !== effectiveModel;
+      const effortChanged =
+        effectiveEffort != null && querySession.effort !== effectiveEffort;
+      if (modelChanged || effortChanged) {
+        logger.info("prompt.session_recreate", {
+          sessionName: session.sessionName,
+          reason: modelChanged ? "model_changed" : "effort_changed",
+          from: modelChanged ? querySession.model : querySession.effort,
+          to: modelChanged ? effectiveModel : effectiveEffort,
+        });
+        querySession.close();
+        querySession = undefined;
+      }
+    }
+
     const isNewSession = !querySession || querySession.status === "dead";
 
     if (isNewSession) {
@@ -324,14 +360,6 @@ export async function executePromptStream(
             },
           )
         : null;
-
-      // Detect ultrathink keyword for max reasoning effort
-      const ultrathinkDetected = /\bultrathink\b/i.test(promptText);
-      if (ultrathinkDetected) {
-        logger.info("prompt.ultrathink", {
-          sessionName: session.sessionName,
-        });
-      }
 
       // Resolve enabled plugins for SDK skill loading
       const pluginPaths = await resolvePluginPaths();
@@ -442,7 +470,7 @@ export async function executePromptStream(
         conversationId: conversationId!,
         cwd: session.worktreePath,
         model: effectiveModel ?? undefined,
-        effort: ultrathinkDetected ? ("high" as const) : undefined,
+        effort: effectiveEffort,
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
