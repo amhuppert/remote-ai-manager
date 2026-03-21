@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useMemo } from "react";
+import MarkdownContent from "@/components/MarkdownContent";
 import type { FixPlanTask } from "./types";
 
 interface TaskPlanEditorProps {
@@ -188,12 +189,12 @@ export default function TaskPlanEditor({
             />
           ) : (
             <>
-              <span
+              <div
                 className={`task-plan-item-description${task.status === "skipped" ? " skipped" : ""}`}
                 onDoubleClick={() => startEdit(task)}
               >
-                {task.description}
-              </span>
+                <MarkdownContent content={task.description} />
+              </div>
               {task.skipReason && (
                 <span className="task-plan-skip-reason">
                   Skipped: {task.skipReason}

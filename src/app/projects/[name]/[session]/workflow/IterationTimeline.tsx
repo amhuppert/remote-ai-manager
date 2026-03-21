@@ -36,8 +36,8 @@ export default function IterationTimeline({
   projectName,
   sessionName,
 }: IterationTimelineProps) {
-  const [expandedIteration, setExpandedIteration] = useState<number | null>(
-    null,
+  const [expandedIterations, setExpandedIterations] = useState<Set<number>>(
+    new Set(),
   );
 
   if (iterations.length === 0) return null;
@@ -45,9 +45,15 @@ export default function IterationTimeline({
   const sorted = [...iterations].reverse();
 
   function toggleExpand(iterationNumber: number) {
-    setExpandedIteration((prev) =>
-      prev === iterationNumber ? null : iterationNumber,
-    );
+    setExpandedIterations((prev) => {
+      const next = new Set(prev);
+      if (next.has(iterationNumber)) {
+        next.delete(iterationNumber);
+      } else {
+        next.add(iterationNumber);
+      }
+      return next;
+    });
   }
 
   return (
@@ -56,7 +62,7 @@ export default function IterationTimeline({
       <div className="iteration-timeline">
         {sorted.map((iter) => {
           const variant = getDotVariant(iter);
-          const isExpanded = expandedIteration === iter.iterationNumber;
+          const isExpanded = expandedIterations.has(iter.iterationNumber);
           return (
             <div
               key={iter.iterationNumber}

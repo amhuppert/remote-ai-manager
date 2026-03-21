@@ -572,10 +572,11 @@ export function useConfirmWorkflowMutation(
         { method: "POST" },
         workflowMutationResponseSchema,
       ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
+    onSuccess: (data) => {
+      queryClient.setQueryData(
+        workflowKeys.status(projectName, sessionName),
+        data.workflow,
+      );
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });

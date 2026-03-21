@@ -9090,6 +9090,15 @@ textarea {
   color: var(--cyan);
 }
 
+.workflow-panel-header.running {
+  border-bottom-color: var(--cyan-dim);
+  box-shadow: inset 0 -1px 0 var(--cyan-dim);
+}
+
+.workflow-panel-header.running .workflow-panel-icon {
+  animation: pulse-dot 2.5s ease-in-out infinite;
+}
+
 .workflow-panel-icon.paused {
   background: var(--amber-glow);
   color: var(--amber);
@@ -9133,6 +9142,11 @@ textarea {
   border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-base);
+  z-index: 10;
 }
 
 /* ---- Workflow Status Badge ---- */
@@ -9225,6 +9239,16 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+}
+
+.wf-section-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
 }
 
 .wf-section-label {
@@ -9424,10 +9448,44 @@ textarea {
 .task-plan-item-description {
   color: var(--text-primary);
   line-height: 1.4;
+  min-width: 0;
+}
+
+/* Compact markdown rendering within task descriptions */
+.task-plan-item-description .markdown-content {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.task-plan-item-description .markdown-content p {
+  margin: 0;
+}
+
+.task-plan-item-description .markdown-content p + p {
+  margin-top: var(--space-xs);
+}
+
+.task-plan-item-description .markdown-content code {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  background: var(--bg-raised);
+  color: var(--cyan);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.task-plan-item-description .markdown-content pre {
+  margin: var(--space-xs) 0;
+  font-size: 0.75rem;
 }
 
 .task-plan-item-description.skipped {
   text-decoration: line-through;
+  color: var(--text-tertiary);
+}
+
+.task-plan-item-description.skipped .markdown-content {
   color: var(--text-tertiary);
 }
 
@@ -9602,13 +9660,34 @@ textarea {
 }
 
 .workflow-config-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
   padding: var(--space-sm);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+}
+
+.workflow-config-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.workflow-config-group-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.workflow-config-group-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
 }
 
 .workflow-config-field {
@@ -9660,9 +9739,11 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-md);
-  padding: var(--space-sm) 0;
-  padding-bottom: var(--space-md);
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  animation: pulse-border 1.5s ease-in-out infinite;
 }
 
 .workflow-metric {
@@ -9859,39 +9940,25 @@ textarea {
 }
 
 .live-stream-content {
-  max-height: 360px;
+  max-height: 400px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 0 var(--space-md) var(--space-md);
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md) var(--space-md);
   border-top: 1px solid var(--border-subtle);
 }
 
-.stream-text {
-  white-space: pre-wrap;
-  word-break: break-word;
+.live-stream-messages {
+  border-left: 2px solid var(--border-default);
+  padding-left: var(--space-md);
 }
 
-.stream-tool {
-  color: var(--cyan-dim);
-  padding: 2px 0;
-}
-
-.stream-tool-name {
-  font-weight: 600;
-}
-
-.stream-tool-name::before {
-  content: "\25B6 ";
-  font-size: 0.7rem;
-}
-
-.stream-tool-result {
-  color: var(--text-tertiary);
-  font-size: 0.7rem;
-  padding-left: var(--space-sm);
-  border-left: 2px solid var(--border-subtle);
+/* Message content within live stream uses body font for prose */
+.live-stream-messages .markdown-content {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  line-height: 1.6;
 }
 
 .stream-done {
@@ -10291,6 +10358,13 @@ textarea {
   font-size: 0.92rem;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.workflow-stat-secondary {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  font-weight: 400;
 }
 
 /* Recovery panel */

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { MessageContentBlock, TranscriptMessage } from "@/types";
 import type { WorkflowStreamFrame } from "@/lib/ralph-loop/workflow-stream-registry";
+import MessageContent from "@/components/MessageContent";
 
 interface LiveIterationStreamProps {
   projectName: string;
@@ -15,31 +16,6 @@ interface LiveIterationStreamProps {
 interface StreamEntry {
   id: number;
   frame: WorkflowStreamFrame;
-}
-
-function renderContentBlock(block: MessageContentBlock, key: number) {
-  switch (block.type) {
-    case "text":
-      return (
-        <div key={key} className="stream-text">
-          {block.text}
-        </div>
-      );
-    case "tool_use":
-      return (
-        <div key={key} className="stream-tool">
-          <span className="stream-tool-name">{block.name}</span>
-        </div>
-      );
-    case "tool_result":
-      return (
-        <div key={key} className="stream-tool-result">
-          {block.content ?? ""}
-        </div>
-      );
-    default:
-      return null;
-  }
 }
 
 /**
@@ -73,6 +49,19 @@ function transcriptToEntries(
   }
 
   return { entries, blockCount };
+}
+
+/**
+ * Collect stream entries into MessageContentBlock[] for rendering via MessageContent.
+ */
+function entriesToContentBlocks(entries: StreamEntry[]): MessageContentBlock[] {
+  const blocks: MessageContentBlock[] = [];
+  for (const entry of entries) {
+    if (entry.frame.type === "content") {
+      blocks.push(entry.frame.content);
+    }
+  }
+  return blocks;
 }
 
 export default function LiveIterationStream({
@@ -308,6 +297,11 @@ export default function LiveIterationStream({
     (e) => e.frame.type === "content" && e.frame.content.type === "tool_use",
   ).length;
 
+  const contentBlocks = useMemo(
+    () => entriesToContentBlocks(entries),
+    [entries],
+  );
+
   return (
     <div className="workflow-live-output">
       <button
@@ -333,12 +327,11 @@ export default function LiveIterationStream({
       </button>
       {expanded && (
         <div className="live-stream-content" ref={scrollRef}>
-          {entries.map((entry) => {
-            if (entry.frame.type === "content") {
-              return renderContentBlock(entry.frame.content, entry.id);
-            }
-            return null;
-          })}
+          {contentBlocks.length > 0 && (
+            <div className="live-stream-messages">
+              <MessageContent content={contentBlocks} />
+            </div>
+          )}
           {isDone && <div className="stream-done">Iteration complete</div>}
           {entries.length === 0 && !isDone && (
             <div className="stream-waiting">Waiting for Claude output...</div>

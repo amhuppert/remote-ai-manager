@@ -38,7 +38,7 @@ describe("LiveIterationStream", () => {
     expect(container.textContent).toContain("Iteration 3");
   });
 
-  it("renders text content blocks from stream frames", async () => {
+  it("renders text content blocks via MessageContent", async () => {
     const frames: WorkflowStreamFrame[] = [
       {
         type: "content",
@@ -79,13 +79,14 @@ describe("LiveIterationStream", () => {
     const toggle = container!.querySelector(".live-output-toggle")!;
     fireEvent.click(toggle);
 
-    const textBlocks = container!.querySelectorAll(".stream-text");
-    expect(textBlocks.length).toBe(2);
-    expect(textBlocks[0]!.textContent).toBe("Analyzing the codebase...");
-    expect(textBlocks[1]!.textContent).toBe("Found 5 files to modify.");
+    // Content renders via MessageContent → MarkdownContent
+    const messages = container!.querySelector(".live-stream-messages");
+    expect(messages).not.toBeNull();
+    expect(messages!.textContent).toContain("Analyzing the codebase...");
+    expect(messages!.textContent).toContain("Found 5 files to modify.");
   });
 
-  it("renders tool use blocks with tool name", async () => {
+  it("renders tool use blocks via MessageContent", async () => {
     const frames: WorkflowStreamFrame[] = [
       {
         type: "content",
@@ -120,9 +121,10 @@ describe("LiveIterationStream", () => {
     const toggle = container!.querySelector(".live-output-toggle")!;
     fireEvent.click(toggle);
 
-    const toolBlocks = container!.querySelectorAll(".stream-tool");
-    expect(toolBlocks.length).toBe(1);
-    expect(toolBlocks[0]!.textContent).toContain("Edit");
+    // Tool use renders via MessageContent's tool indicator
+    const messages = container!.querySelector(".live-stream-messages");
+    expect(messages).not.toBeNull();
+    expect(messages!.textContent).toContain("Edit");
   });
 
   it("does not fetch when not running", () => {

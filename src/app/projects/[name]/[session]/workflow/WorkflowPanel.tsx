@@ -214,7 +214,9 @@ export default function WorkflowPanel({
   return (
     <div className="workflow-panel">
       {/* Header */}
-      <div className="workflow-panel-header">
+      <div
+        className={`workflow-panel-header${status === "running" ? " running" : ""}`}
+      >
         <div className={`workflow-panel-icon ${status}`}>
           {getStatusIcon(status)}
         </div>
@@ -343,7 +345,7 @@ function PlanningView({
   return (
     <>
       {/* Objective */}
-      <div className="wf-section">
+      <div className="wf-section-card">
         <label className="wf-section-label" htmlFor="wf-objective">
           Objective
         </label>
@@ -387,16 +389,17 @@ function PlanningView({
         )}
       </div>
 
-      {/* Confirm & Start */}
-      <button
-        type="button"
-        className="btn btn-primary"
-        style={{ alignSelf: "flex-end" }}
-        disabled={!canStart || isConfirming}
-        onClick={onConfirmStart}
-      >
-        {isConfirming ? "\u27F3 Starting\u2026" : "Confirm & Start \u25B6"}
-      </button>
+      {/* Sticky footer with start button */}
+      <div className="workflow-panel-footer">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={!canStart || isConfirming}
+          onClick={onConfirmStart}
+        >
+          {isConfirming ? "\u27F3 Starting\u2026" : "Confirm & Start \u25B6"}
+        </button>
+      </div>
     </>
   );
 }
@@ -548,6 +551,16 @@ function CompletionView({
     (t) => t.status === "pending" || t.status === "in_progress",
   ).length;
 
+  const iterationCount = workflow.iterations.length;
+  const avgDuration =
+    iterationCount > 0
+      ? formatDuration(Math.round(workflow.totalDurationMs / iterationCount))
+      : "\u2014";
+  const avgCost =
+    iterationCount > 0
+      ? formatCost(workflow.totalCostUsd / iterationCount)
+      : "\u2014";
+
   return (
     <>
       {/* Outcome banner */}
@@ -563,21 +576,21 @@ function CompletionView({
       <div className="workflow-stats-grid">
         <div className="workflow-stat">
           <span className="workflow-stat-label">Iterations</span>
-          <span className="workflow-stat-value">
-            {workflow.iterations.length}
-          </span>
+          <span className="workflow-stat-value">{iterationCount}</span>
         </div>
         <div className="workflow-stat">
           <span className="workflow-stat-label">Duration</span>
           <span className="workflow-stat-value">
             {formatDuration(workflow.totalDurationMs)}
           </span>
+          <span className="workflow-stat-secondary">{avgDuration} avg</span>
         </div>
         <div className="workflow-stat">
           <span className="workflow-stat-label">Cost</span>
           <span className="workflow-stat-value">
             {formatCost(workflow.totalCostUsd)}
           </span>
+          <span className="workflow-stat-secondary">{avgCost} avg</span>
         </div>
         <div className="workflow-stat">
           <span className="workflow-stat-label">Tasks</span>
