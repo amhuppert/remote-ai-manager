@@ -134,12 +134,16 @@ function createTestDeps(): OrchestratorDeps {
       () => "progress" as const,
     ) as unknown as OrchestratorDeps["classifyProgress"],
 
-    applyFixPlanUpdate: vi.fn((plan, _update, _iter) => ({
-      plan,
-      completedIds: [],
-      skippedIds: [],
-      addedIds: [],
-    })) as unknown as OrchestratorDeps["applyFixPlanUpdate"],
+    applyFixPlanUpdate: vi.fn((plan, update, iter) => {
+      void update;
+      void iter;
+      return {
+        plan,
+        completedIds: [],
+        skippedIds: [],
+        addedIds: [],
+      };
+    }) as unknown as OrchestratorDeps["applyFixPlanUpdate"],
 
     workflowStreamEmit:
       vi.fn() as unknown as OrchestratorDeps["workflowStreamEmit"],
@@ -147,6 +151,10 @@ function createTestDeps(): OrchestratorDeps {
     acquireQuerySlot: vi.fn(async () =>
       vi.fn(),
     ) as unknown as OrchestratorDeps["acquireQuerySlot"],
+
+    readConfig: vi.fn(
+      async () => ({}),
+    ) as unknown as OrchestratorDeps["readConfig"],
   };
 }
 
@@ -626,6 +634,72 @@ describe("orchestrator", () => {
       expect(result.status).toBe("error");
       // query should NOT have been called
       expect(deps.query).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Codex tool registration", () => {
+    it("includes codex-tool in mcpServers when config.codex.enabled is true", async () => {
+      const readConfig = vi.fn(async () => ({
+        codex: { enabled: true, model: "o3" },
+      }));
+      deps.readConfig = readConfig as unknown as OrchestratorDeps["readConfig"];
+
+      const orchestrator = createOrchestrator(deps);
+      const params = makeIterationParams();
+
+      await orchestrator.runIteration(params);
+
+      expect(readConfig).toHaveBeenCalledTimes(1);
+      const queryCallArgs = (deps.query as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as { options: { mcpServers: Record<string, unknown> } };
+      expect(queryCallArgs.options.mcpServers["codex-tool"]).toBeDefined();
+    });
+
+    it("does not include codex-tool when config.codex is disabled", async () => {
+      deps.readConfig = vi.fn(async () => ({
+        codex: { enabled: false },
+      })) as unknown as OrchestratorDeps["readConfig"];
+
+      const orchestrator = createOrchestrator(deps);
+      const params = makeIterationParams();
+
+      await orchestrator.runIteration(params);
+
+      const queryCallArgs = (deps.query as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as { options: { mcpServers: Record<string, unknown> } };
+      expect(queryCallArgs.options.mcpServers["codex-tool"]).toBeUndefined();
+    });
+
+    it("does not include codex-tool when config.codex is absent", async () => {
+      deps.readConfig = vi.fn(
+        async () => ({}),
+      ) as unknown as OrchestratorDeps["readConfig"];
+
+      const orchestrator = createOrchestrator(deps);
+      const params = makeIterationParams();
+
+      await orchestrator.runIteration(params);
+
+      const queryCallArgs = (deps.query as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as { options: { mcpServers: Record<string, unknown> } };
+      expect(queryCallArgs.options.mcpServers["codex-tool"]).toBeUndefined();
+    });
+
+    it("includes Codex hint in system prompt when enabled", async () => {
+      deps.readConfig = vi.fn(async () => ({
+        codex: { enabled: true },
+      })) as unknown as OrchestratorDeps["readConfig"];
+
+      const orchestrator = createOrchestrator(deps);
+      const params = makeIterationParams();
+
+      await orchestrator.runIteration(params);
+
+      const queryCallArgs = (deps.query as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as {
+        options: { systemPrompt: { append: string } };
+      };
+      expect(queryCallArgs.options.systemPrompt.append).toContain("run_codex");
     });
   });
 

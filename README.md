@@ -7,6 +7,7 @@ A web-based control plane for managing remote Claude Code coding sessions. Creat
 - Node.js 18+
 - [Tailscale](https://tailscale.com/) installed and connected to your tailnet
 - Claude Code CLI installed on the host machine
+- (Optional) [Codex CLI](https://github.com/openai/codex) installed and authenticated on the host machine if you want to enable the Codex delegation tool
 
 ## Setup
 
@@ -47,6 +48,26 @@ To stop exposing:
 ```bash
 tailscale serve off
 ```
+
+## Optional: Enable the Codex Tool
+
+CC can expose an MCP tool (`run_codex`) that lets Claude delegate tasks to OpenAI's Codex agent. To enable it, add a `codex` block to your global config file (`~/.config/cc/config.json` on Linux, `~/Library/Application Support/cc/config.json` on macOS):
+
+```json
+{
+  "codex": {
+    "enabled": true,
+    "model": "gpt-5-codex",
+    "reasoningEffort": "medium"
+  }
+}
+```
+
+- `model` and `reasoningEffort` are optional defaults — Claude can override them per invocation
+- Allowed reasoning effort values: `minimal`, `low`, `medium`, `high`, `xhigh`
+- CC forces Codex into autonomous `workspace-write` sandbox mode with no approval prompts
+- The tool is immediately available in new Ralph Loop runs and newly created interactive sessions
+- Long-lived interactive sessions do not hot-reload Codex config mid-session
 
 ## Development
 

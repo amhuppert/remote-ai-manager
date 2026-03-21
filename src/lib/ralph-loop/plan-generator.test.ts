@@ -92,6 +92,9 @@ function createTestDeps(): PlanGeneratorDeps {
         content: [{ type: "text", text: "I'll help with that" }],
       },
     ]) as unknown as PlanGeneratorDeps["readConversationMessages"],
+    readConfig: vi.fn(
+      async () => ({}),
+    ) as unknown as PlanGeneratorDeps["readConfig"],
   };
 }
 
@@ -327,6 +330,91 @@ describe("PlanGenerator", () => {
     await new Promise((r) => setTimeout(r, 200));
 
     expect(deps.readConversationMessages).toHaveBeenCalled();
+  });
+
+  describe("Codex tool registration", () => {
+    it("includes codex-tool in mcpServers when config.codex.enabled is true", async () => {
+      const { dispatchPlanGeneration } = await import("./plan-generator");
+      const { query } = await import("@anthropic-ai/claude-agent-sdk");
+      const session = sessions.get(`${PROJECT}::${SESSION_NAME}`)!;
+      const readConfig = vi.fn(async () => ({
+        codex: { enabled: true, model: "o3" },
+      }));
+
+      const depsWithConfig = {
+        ...deps,
+        readConfig: readConfig as unknown as PlanGeneratorDeps["readConfig"],
+      };
+
+      dispatchPlanGeneration({
+        projectPath: PROJECT,
+        session,
+        workflow: session.workflow!,
+        deps: depsWithConfig,
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+
+      expect(readConfig).toHaveBeenCalledTimes(1);
+      const callArgs = vi.mocked(query).mock.calls[0]?.[0] as {
+        options?: { mcpServers?: Record<string, unknown> };
+      };
+      expect(callArgs?.options?.mcpServers?.["codex-tool"]).toBeDefined();
+    });
+
+    it("does not include codex-tool when config.codex is disabled", async () => {
+      const { dispatchPlanGeneration } = await import("./plan-generator");
+      const { query } = await import("@anthropic-ai/claude-agent-sdk");
+      const session = sessions.get(`${PROJECT}::${SESSION_NAME}`)!;
+
+      const depsWithConfig = {
+        ...deps,
+        readConfig: vi.fn(async () => ({
+          codex: { enabled: false },
+        })) as unknown as PlanGeneratorDeps["readConfig"],
+      };
+
+      dispatchPlanGeneration({
+        projectPath: PROJECT,
+        session,
+        workflow: session.workflow!,
+        deps: depsWithConfig,
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+
+      const callArgs = vi.mocked(query).mock.calls[0]?.[0] as {
+        options?: { mcpServers?: Record<string, unknown> };
+      };
+      expect(callArgs?.options?.mcpServers?.["codex-tool"]).toBeUndefined();
+    });
+
+    it("includes Codex hint in system prompt when enabled", async () => {
+      const { dispatchPlanGeneration } = await import("./plan-generator");
+      const { query } = await import("@anthropic-ai/claude-agent-sdk");
+      const session = sessions.get(`${PROJECT}::${SESSION_NAME}`)!;
+
+      const depsWithConfig = {
+        ...deps,
+        readConfig: vi.fn(async () => ({
+          codex: { enabled: true },
+        })) as unknown as PlanGeneratorDeps["readConfig"],
+      };
+
+      dispatchPlanGeneration({
+        projectPath: PROJECT,
+        session,
+        workflow: session.workflow!,
+        deps: depsWithConfig,
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+
+      const callArgs = vi.mocked(query).mock.calls[0]?.[0] as {
+        options?: { systemPrompt?: { append?: string } };
+      };
+      expect(callArgs?.options?.systemPrompt?.append).toContain("run_codex");
+    });
   });
 
   it("denies AskUserQuestion tool during plan generation", async () => {

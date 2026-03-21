@@ -166,6 +166,72 @@ describe("schema: branchPrefix field", () => {
   });
 });
 
+describe("schema: codex config block", () => {
+  it("globalConfigSchema accepts valid codex block", () => {
+    const result = globalConfigSchema.partial().safeParse({
+      codex: {
+        enabled: true,
+        model: "o3",
+        reasoningEffort: "medium",
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.codex?.enabled).toBe(true);
+      expect(result.data.codex?.model).toBe("o3");
+      expect(result.data.codex?.reasoningEffort).toBe("medium");
+    }
+  });
+
+  it("globalConfigSchema rejects invalid reasoningEffort", () => {
+    const result = globalConfigSchema.partial().safeParse({
+      codex: {
+        enabled: true,
+        reasoningEffort: "turbo",
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("globalConfigSchema allows omitted codex block", () => {
+    const result = globalConfigSchema.partial().safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.codex).toBeUndefined();
+    }
+  });
+
+  it("enabled defaults to false when omitted inside the block", () => {
+    const result = globalConfigSchema.partial().safeParse({
+      codex: { model: "o3" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.codex?.enabled).toBe(false);
+    }
+  });
+
+  it("readConfig preserves codex block on round-trip", async () => {
+    const reader = createConfigReader(TEST_DIR);
+    const original = await reader.readConfig();
+
+    const modified = {
+      ...original,
+      codex: {
+        enabled: true,
+        model: "gpt-5-codex",
+        reasoningEffort: "high" as const,
+      },
+    };
+    await reader.writeConfig(modified);
+
+    const reread = await reader.readConfig();
+    expect(reread.codex?.enabled).toBe(true);
+    expect(reread.codex?.model).toBe("gpt-5-codex");
+    expect(reread.codex?.reasoningEffort).toBe("high");
+  });
+});
+
 describe("resolveBranchPrefix", () => {
   it("returns 'csm' when neither config has branchPrefix", () => {
     expect(resolveBranchPrefix({}, null)).toBe("csm");

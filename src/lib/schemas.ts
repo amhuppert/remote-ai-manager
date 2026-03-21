@@ -65,6 +65,26 @@ export type PushNotificationConfig = z.infer<
   typeof pushNotificationConfigSchema
 >;
 
+// ============================================================
+// Codex Config
+// ============================================================
+
+export const codexReasoningEffortSchema = z.enum([
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
+export type CodexReasoningEffort = z.infer<typeof codexReasoningEffortSchema>;
+
+export const codexConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.string().trim().min(1).optional(),
+  reasoningEffort: codexReasoningEffortSchema.optional(),
+});
+export type CodexConfig = z.infer<typeof codexConfigSchema>;
+
 export const globalConfigSchema = z.object({
   baseDir: z.string(),
   ignorePatterns: z.array(z.string()),
@@ -77,6 +97,7 @@ export const globalConfigSchema = z.object({
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
   pushNotification: pushNotificationConfigSchema.optional(),
+  codex: codexConfigSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
   branchPrefix: z.string().optional(),
 });

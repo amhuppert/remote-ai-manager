@@ -34,6 +34,10 @@ import { acquireQuerySlot } from "./query-semaphore";
 import { createInitToolServer } from "./ralph-loop/init-tool";
 import { createRoadmapToolServer } from "./roadmap-tools";
 import { createNotificationToolServer } from "./agent-notification-tool";
+import {
+  maybeCreateCodexToolServer,
+  getCodexToolPromptHint,
+} from "./codex-tool";
 import { getProjectDisplayName } from "./project-resolver";
 import { safeAppendTranscriptEntry } from "./transcript";
 import { resolvePluginPaths } from "./commands";
@@ -351,6 +355,12 @@ export async function executePromptStream(
           )
         : null;
 
+      // Conditionally register Codex tool when enabled in config
+      const codexToolServer = maybeCreateCodexToolServer(config.codex, {
+        worktreePath: session.worktreePath,
+        sessionName: session.sessionName,
+      });
+
       // Resolve enabled plugins for SDK skill loading
       const pluginPaths = await resolvePluginPaths();
       const sdkPlugins = pluginPaths.map((p) => ({
@@ -471,6 +481,7 @@ export async function executePromptStream(
                 ? `<objective>${session.objective}</objective>`
                 : null,
               session.tddEnabled ? TDD_INSTRUCTIONS : null,
+              getCodexToolPromptHint(codexToolServer != null),
             ]
               .filter(Boolean)
               .join("\n\n") || undefined,
@@ -495,6 +506,7 @@ export async function executePromptStream(
           ...(notificationToolServer
             ? { "agent-notification": notificationToolServer }
             : {}),
+          ...(codexToolServer ? { "codex-tool": codexToolServer } : {}),
           "roadmap-tools": createRoadmapToolServer({ projectPath }),
         },
         canUseTool: canUseTool as never,

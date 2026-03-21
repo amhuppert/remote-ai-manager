@@ -12,6 +12,11 @@ import { z } from "zod";
 import { getErrorMessage } from "@/lib/errors";
 import type { SessionState, RalphLoopWorkflow, FixPlanTask } from "@/types";
 import { buildChildEnv } from "../child-env";
+import { readConfig as defaultReadConfig } from "../config";
+import {
+  maybeCreateCodexToolServer,
+  getCodexToolPromptHint,
+} from "../codex-tool";
 import {
   getSession as defaultGetSession,
   mutateSession as defaultMutateSession,
@@ -45,12 +50,14 @@ export interface PlanGeneratorDeps {
   mutateSession: typeof defaultMutateSession;
   readConversationMessages: typeof defaultReadConversationMessages;
   getSession: typeof defaultGetSession;
+  readConfig: typeof defaultReadConfig;
 }
 
 const defaultDeps: PlanGeneratorDeps = {
   mutateSession: defaultMutateSession,
   readConversationMessages: defaultReadConversationMessages,
   getSession: defaultGetSession,
+  readConfig: defaultReadConfig,
 };
 
 /**
@@ -118,6 +125,12 @@ export async function generatePlanTasks(params: {
   const context = await gatherSessionContext(session, deps);
   const prompt = buildPlanningPrompt(objective, context);
 
+  const config = await deps.readConfig();
+  const codexToolServer = maybeCreateCodexToolServer(config.codex, {
+    worktreePath,
+    sessionName,
+  });
+
   let generatedTasks: Array<{ description: string; group: number }> = [];
 
   const planToolServer = createSdkMcpServer({
@@ -170,7 +183,12 @@ export async function generatePlanTasks(params: {
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: `<objective>${objective}</objective>`,
+          append: [
+            `<objective>${objective}</objective>`,
+            getCodexToolPromptHint(codexToolServer != null),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         },
         settingSources: ["user", "project", "local"],
         permissionMode: "bypassPermissions",
@@ -180,7 +198,10 @@ export async function generatePlanTasks(params: {
         persistSession: false,
         abortController,
         env: { ...buildChildEnv(), CLAUDECODE: "" },
-        mcpServers: { "ralph-plan-generator": planToolServer },
+        mcpServers: {
+          "ralph-plan-generator": planToolServer,
+          ...(codexToolServer ? { "codex-tool": codexToolServer } : {}),
+        },
         canUseTool: async (toolName: string) => {
           if (toolName === "AskUserQuestion") {
             return {
@@ -239,6 +260,13 @@ async function generatePlan(
   // Build the planning prompt
   const prompt = buildPlanningPrompt(workflow.objective, context);
 
+  // Read config for Codex registration
+  const config = await deps.readConfig();
+  const codexToolServer = maybeCreateCodexToolServer(config.codex, {
+    worktreePath: session.worktreePath,
+    sessionName,
+  });
+
   // Capture plan via MCP tool
   let generatedTasks: Array<{
     description: string;
@@ -296,7 +324,12 @@ async function generatePlan(
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: `<objective>${workflow.objective}</objective>`,
+          append: [
+            `<objective>${workflow.objective}</objective>`,
+            getCodexToolPromptHint(codexToolServer != null),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         },
         settingSources: ["user", "project", "local"],
         permissionMode: "bypassPermissions",
@@ -306,7 +339,10 @@ async function generatePlan(
         persistSession: false,
         abortController,
         env: { ...buildChildEnv(), CLAUDECODE: "" },
-        mcpServers: { "ralph-plan-generator": planToolServer },
+        mcpServers: {
+          "ralph-plan-generator": planToolServer,
+          ...(codexToolServer ? { "codex-tool": codexToolServer } : {}),
+        },
         canUseTool: async (toolName: string) => {
           if (toolName === "AskUserQuestion") {
             return {

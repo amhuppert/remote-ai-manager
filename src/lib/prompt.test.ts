@@ -802,4 +802,129 @@ describe("executePromptStream", () => {
       .calls[0]![0] as Record<string, unknown>;
     expect(callArgs.resume).toBe("existing-session-id");
   });
+
+  describe("Codex tool registration", () => {
+    it("does not include codex-tool when config.codex is absent", async () => {
+      const qs = createMockQuerySession([]);
+      deps = createTestDeps(qs);
+      (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+        undefined,
+      );
+      // Default config has no codex property
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "test",
+        vi.fn(),
+      );
+
+      const callArgs = (deps.createQuerySession as ReturnType<typeof vi.fn>)
+        .mock.calls[0]![0] as Record<string, unknown>;
+      const mcpServers = callArgs.mcpServers as Record<string, unknown>;
+      expect(mcpServers["codex-tool"]).toBeUndefined();
+    });
+
+    it("does not include codex-tool when config.codex.enabled is false", async () => {
+      const qs = createMockQuerySession([]);
+      deps = createTestDeps(qs);
+      (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+        undefined,
+      );
+      (deps.readConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...defaultConfig,
+        codex: { enabled: false },
+      });
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "test",
+        vi.fn(),
+      );
+
+      const callArgs = (deps.createQuerySession as ReturnType<typeof vi.fn>)
+        .mock.calls[0]![0] as Record<string, unknown>;
+      const mcpServers = callArgs.mcpServers as Record<string, unknown>;
+      expect(mcpServers["codex-tool"]).toBeUndefined();
+    });
+
+    it("includes codex-tool in mcpServers when config.codex.enabled is true", async () => {
+      const qs = createMockQuerySession([]);
+      deps = createTestDeps(qs);
+      (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+        undefined,
+      );
+      (deps.readConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...defaultConfig,
+        codex: { enabled: true, model: "o3" },
+      });
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "test",
+        vi.fn(),
+      );
+
+      const callArgs = (deps.createQuerySession as ReturnType<typeof vi.fn>)
+        .mock.calls[0]![0] as Record<string, unknown>;
+      const mcpServers = callArgs.mcpServers as Record<string, unknown>;
+      expect(mcpServers["codex-tool"]).toBeDefined();
+    });
+
+    it("includes Codex hint in system prompt when codex is enabled", async () => {
+      const qs = createMockQuerySession([]);
+      deps = createTestDeps(qs);
+      (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+        undefined,
+      );
+      (deps.readConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...defaultConfig,
+        codex: { enabled: true },
+      });
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "test",
+        vi.fn(),
+      );
+
+      const callArgs = (deps.createQuerySession as ReturnType<typeof vi.fn>)
+        .mock.calls[0]![0] as Record<string, unknown>;
+      const systemPrompt = callArgs.systemPrompt as { append?: string };
+      expect(systemPrompt.append).toContain("run_codex");
+    });
+
+    it("does not include Codex hint in system prompt when codex is disabled", async () => {
+      const qs = createMockQuerySession([]);
+      deps = createTestDeps(qs);
+      (deps.getSessionFromRegistry as ReturnType<typeof vi.fn>).mockReturnValue(
+        undefined,
+      );
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "test",
+        vi.fn(),
+      );
+
+      const callArgs = (deps.createQuerySession as ReturnType<typeof vi.fn>)
+        .mock.calls[0]![0] as Record<string, unknown>;
+      const systemPrompt = callArgs.systemPrompt as { append?: string };
+      expect(systemPrompt.append ?? "").not.toContain("run_codex");
+    });
+  });
 });

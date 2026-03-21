@@ -37,6 +37,11 @@ import {
 } from "../transcript";
 import { broadcast as defaultBroadcast } from "../sse-broadcaster";
 import { TDD_INSTRUCTIONS, CC_CONTEXT } from "../prompt";
+import { readConfig as defaultReadConfig } from "../config";
+import {
+  maybeCreateCodexToolServer,
+  getCodexToolPromptHint,
+} from "../codex-tool";
 
 import { buildIterationPrompt as defaultBuildIterationPrompt } from "./prompt-builder";
 import { createToolServer as defaultCreateToolServer } from "./mcp-tools";
@@ -77,6 +82,7 @@ export interface OrchestratorDeps {
   applyFixPlanUpdate: typeof defaultApplyFixPlanUpdate;
   workflowStreamEmit: typeof defaultWorkflowStream.emit;
   acquireQuerySlot: typeof defaultAcquireQuerySlot;
+  readConfig: typeof defaultReadConfig;
 }
 
 const defaultDeps: OrchestratorDeps = {
@@ -97,6 +103,7 @@ const defaultDeps: OrchestratorDeps = {
   applyFixPlanUpdate: defaultApplyFixPlanUpdate,
   workflowStreamEmit: defaultWorkflowStream.emit,
   acquireQuerySlot: defaultAcquireQuerySlot,
+  readConfig: defaultReadConfig,
 };
 
 /**
@@ -265,6 +272,13 @@ async function runIterationImpl(
     },
   });
 
+  // Read config for Codex registration
+  const config = await deps.readConfig();
+  const codexToolServer = maybeCreateCodexToolServer(config.codex, {
+    worktreePath: session.worktreePath,
+    sessionName,
+  });
+
   // Track SDK result data
   let resultCostUsd = 0;
   let resultNumTurns = 0;
@@ -312,6 +326,7 @@ async function runIterationImpl(
             CC_CONTEXT,
             `<objective>${workflow.objective}</objective>`,
             session.tddEnabled ? TDD_INSTRUCTIONS : null,
+            getCodexToolPromptHint(codexToolServer != null),
           ]
             .filter(Boolean)
             .join("\n\n"),
@@ -323,7 +338,10 @@ async function runIterationImpl(
         persistSession: false,
         abortController: iterationAbort,
         env: { ...deps.buildChildEnv(), CLAUDECODE: "" },
-        mcpServers: { "ralph-loop": toolServer },
+        mcpServers: {
+          "ralph-loop": toolServer,
+          ...(codexToolServer ? { "codex-tool": codexToolServer } : {}),
+        },
         canUseTool: async (toolName: string) => {
           if (toolName === "AskUserQuestion") {
             return {
