@@ -6,8 +6,12 @@ import {
   getSession as defaultGetSession,
 } from "./state";
 import { createLogger } from "./logging";
-import { copyTranscriptUpTo, getTranscriptPath } from "./transcript";
-import { readConversationMessages } from "./transcript";
+import {
+  copyTranscriptUpTo,
+  getTranscriptPath,
+  readConversationMessages,
+  findLastAssistantUuid,
+} from "./transcript";
 
 const logger = createLogger("conversations");
 
@@ -225,10 +229,16 @@ export function createConversationService(
     const sourceName = source.name ?? "Unnamed";
     const forkName = `Fork of ${sourceName} @ turn ${turnNumber}`;
 
+    const forkPointAssistantUuid = await findLastAssistantUuid(
+      source.transcriptPath,
+      messageIndex,
+    );
+
     const forkedFrom: ForkedFrom = {
       sourceConversationId,
       sourceClaudeSessionId,
       messageIndex,
+      forkPointAssistantUuid,
     };
 
     const transcriptPath = await getTranscriptPath(newId);

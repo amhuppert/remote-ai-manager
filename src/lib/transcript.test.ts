@@ -7,6 +7,7 @@ import {
   getTranscriptPath,
   parseCommandContent,
   copyTranscriptUpTo,
+  findLastAssistantUuid,
   type TranscriptEntry,
 } from "./transcript";
 
@@ -914,5 +915,194 @@ describe("copyTranscriptUpTo", () => {
     expect(target).toHaveLength(2);
     expect(target[0]!.content![0]).toEqual({ type: "text", text: "Hello" });
     expect(target[1]!.content![0]).toEqual({ type: "text", text: "Hi" });
+  });
+});
+
+// ==========================================================================
+// findLastAssistantUuid
+// ==========================================================================
+
+describe("findLastAssistantUuid", () => {
+  async function writeTranscript(
+    name: string,
+    entries: TranscriptEntry[],
+  ): Promise<string> {
+    const filePath = path.join(TEST_DIR, "transcripts", `${name}.jsonl`);
+    const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    await writeFile(filePath, content, "utf-8");
+    return filePath;
+  }
+
+  it("returns the uuid of the last assistant message before the fork point", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi there" }],
+        uuid: "uuid-asst-1",
+      },
+      {
+        timestamp: "t2",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Question" }],
+      },
+      {
+        timestamp: "t3",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Answer" }],
+        uuid: "uuid-asst-2",
+      },
+    ];
+
+    const sourcePath = await writeTranscript("uuid-basic", entries);
+
+    // Fork at message 2 (second user message) → last assistant before it is uuid-asst-1
+    const uuid = await findLastAssistantUuid(sourcePath, 2);
+    expect(uuid).toBe("uuid-asst-1");
+  });
+
+  it("returns the uuid of the last JSONL entry when assistant has multiple lines", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 1" }],
+        uuid: "uuid-part-1",
+      },
+      {
+        timestamp: "t2",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 2" }],
+        uuid: "uuid-part-2",
+      },
+      {
+        timestamp: "t3",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 3" }],
+        uuid: "uuid-part-3",
+      },
+      {
+        timestamp: "t4",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Follow-up" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("uuid-merged", entries);
+
+    // Fork at message 2 (Follow-up) → last assistant UUID is uuid-part-3
+    const uuid = await findLastAssistantUuid(sourcePath, 2);
+    expect(uuid).toBe("uuid-part-3");
+  });
+
+  it("returns null when transcript has no uuid fields (backward compat)", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi" }],
+      },
+      {
+        timestamp: "t2",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Question" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("uuid-legacy", entries);
+
+    const uuid = await findLastAssistantUuid(sourcePath, 2);
+    expect(uuid).toBeNull();
+  });
+
+  it("returns null when fork point is at the first message (no assistant before it)", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi" }],
+        uuid: "uuid-1",
+      },
+    ];
+
+    const sourcePath = await writeTranscript("uuid-first", entries);
+
+    // Fork at message 0 → no assistant before it
+    const uuid = await findLastAssistantUuid(sourcePath, 0);
+    expect(uuid).toBeNull();
+  });
+
+  it("skips non-visible entries when counting", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "system",
+        raw: { subtype: "init" },
+      } as TranscriptEntry,
+      {
+        timestamp: "t2",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi" }],
+        uuid: "uuid-1",
+      },
+      {
+        timestamp: "t3",
+        type: "result",
+        raw: { subtype: "success" },
+      } as TranscriptEntry,
+      {
+        timestamp: "t4",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Question" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("uuid-nonvisible", entries);
+
+    // Fork at message 2 (second user) → last assistant is uuid-1
+    const uuid = await findLastAssistantUuid(sourcePath, 2);
+    expect(uuid).toBe("uuid-1");
   });
 });

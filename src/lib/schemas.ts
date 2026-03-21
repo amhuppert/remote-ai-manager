@@ -155,6 +155,8 @@ export const forkedFromSchema = z
     sourceConversationId: z.string(),
     sourceClaudeSessionId: z.string(),
     messageIndex: z.number().int().min(0),
+    /** UUID of the last assistant message before the fork point, used for SDK resumeSessionAt */
+    forkPointAssistantUuid: z.string().nullable().default(null),
   })
   .nullable()
   .default(null);

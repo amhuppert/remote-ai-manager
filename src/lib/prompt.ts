@@ -484,6 +484,12 @@ export async function executePromptStream(
           conversation.claudeSessionId == null
             ? true
             : undefined,
+        resumeSessionAt:
+          conversation.forkedFrom != null &&
+          conversation.claudeSessionId == null &&
+          conversation.forkedFrom.forkPointAssistantUuid != null
+            ? conversation.forkedFrom.forkPointAssistantUuid
+            : undefined,
         mcpServers: {
           ...(initToolServer ? { "ralph-loop-init": initToolServer } : {}),
           ...(notificationToolServer
@@ -757,6 +763,7 @@ async function processMessage(
         type: "assistant",
         role: "assistant",
         content: blocks,
+        uuid: asstMsg.uuid,
       });
       break;
     }

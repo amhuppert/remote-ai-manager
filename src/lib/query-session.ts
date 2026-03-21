@@ -93,6 +93,7 @@ export interface QuerySessionOptions {
   };
   resume: string | undefined;
   forkSession: boolean | undefined;
+  resumeSessionAt?: string | undefined;
   mcpServers: Record<string, unknown>;
   canUseTool: CanUseTool;
   env: Record<string, string | undefined>;
@@ -168,6 +169,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     maxTurns: options.maxTurns,
     resume: options.resume,
     forkSession: options.forkSession,
+    resumeSessionAt: options.resumeSessionAt,
     persistSession: true,
     env: options.env as Record<string, string>,
     mcpServers: options.mcpServers as Record<string, never>,

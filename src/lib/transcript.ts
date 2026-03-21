@@ -28,6 +28,8 @@ export interface TranscriptEntry {
   model?: string;
   /** Reasoning effort level used for this turn (stored on user entries) */
   effort?: string;
+  /** SDK message UUID (stored on assistant entries for fork resumeSessionAt) */
+  uuid?: string;
 }
 
 // ============================================================
@@ -178,6 +180,61 @@ export async function copyTranscriptUpTo(
   const targetPath = await getTranscriptPath(targetConversationId, configDir);
   const content = copiedLines.length > 0 ? copiedLines.join("\n") + "\n" : "";
   await writeFile(targetPath, content, "utf-8");
+}
+
+// ============================================================
+// Fork UUID Lookup
+// ============================================================
+
+/**
+ * Find the UUID of the last assistant transcript entry before a given
+ * merged message index. Uses the same merged-message counting as
+ * copyTranscriptUpTo (role transitions define message boundaries).
+ *
+ * Returns null if no assistant UUID exists before the fork point
+ * (e.g., legacy transcripts without UUID fields, or fork at index 0).
+ */
+export async function findLastAssistantUuid(
+  transcriptPath: string,
+  upToMessageIndex: number,
+): Promise<string | null> {
+  const raw = await readFile(transcriptPath, "utf-8");
+  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+
+  let mergedIndex = -1;
+  let lastVisibleRole: string | null = null;
+  let lastAssistantUuid: string | null = null;
+
+  for (const line of lines) {
+    let entry: TranscriptEntry;
+    try {
+      entry = JSON.parse(line) as TranscriptEntry;
+    } catch {
+      continue;
+    }
+
+    const isVisible =
+      (entry.role === "user" || entry.role === "assistant") &&
+      entry.content &&
+      entry.content.length > 0;
+
+    if (!isVisible) continue;
+
+    if (entry.role !== lastVisibleRole) {
+      mergedIndex++;
+      lastVisibleRole = entry.role ?? null;
+    }
+
+    // Stop before the fork point (exclusive upper bound)
+    if (mergedIndex >= upToMessageIndex) break;
+
+    // Track the most recent assistant UUID within the included range
+    if (entry.role === "assistant" && entry.uuid) {
+      lastAssistantUuid = entry.uuid;
+    }
+  }
+
+  return lastAssistantUuid;
 }
 
 // ============================================================
