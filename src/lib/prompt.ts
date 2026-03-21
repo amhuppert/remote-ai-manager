@@ -548,9 +548,28 @@ export async function executePromptStream(
     // Wrap the caller's emit to handle transcript writing and SSE emission
     const turnEmit = async (event: string, data: unknown) => {
       if (event === "__raw_message") {
+        const msg = data as SDKMessage;
+
+        // Store claudeSessionId immediately on init so resume works even if
+        // the turn doesn't complete (e.g., blocked on AskUserQuestion).
+        if (msg.type === "system") {
+          const sysMsg = msg as SDKSystemMessage;
+          if (sysMsg.subtype === "init" && sysMsg.session_id) {
+            await mutateConversation(
+              projectPath,
+              session.sessionName,
+              conversationId!,
+              "prompt.storeSessionIdEarly",
+              (c) => {
+                c.claudeSessionId = sysMsg.session_id;
+              },
+            );
+          }
+        }
+
         // Raw SDK message — handle transcript and SSE
         await processMessage(
-          data as SDKMessage,
+          msg,
           conversationId!,
           emit,
           contentBlocks,

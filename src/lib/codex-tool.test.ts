@@ -242,6 +242,29 @@ describe("codex-tool", () => {
       });
       expect(args[args.length - 1]).toBe("do the thing");
     });
+
+    it("includes --output-schema when provided", async () => {
+      const { buildCodexExecArgs } = await import("./codex-tool");
+      const args = buildCodexExecArgs({
+        worktreePath: "/wt",
+        prompt: "hello",
+        outputSchemaPath: "/wt/memory-bank/codex/.output-schema.json",
+      });
+      const idx = args.indexOf("--output-schema");
+      expect(idx).toBeGreaterThan(-1);
+      expect(args[idx + 1]).toBe("/wt/memory-bank/codex/.output-schema.json");
+      // prompt is still last
+      expect(args[args.length - 1]).toBe("hello");
+    });
+
+    it("omits --output-schema when not provided", async () => {
+      const { buildCodexExecArgs } = await import("./codex-tool");
+      const args = buildCodexExecArgs({
+        worktreePath: "/wt",
+        prompt: "hello",
+      });
+      expect(args).not.toContain("--output-schema");
+    });
   });
 
   // ============================================================
@@ -513,7 +536,148 @@ describe("codex-tool", () => {
       ).toBe(true);
     });
 
-    it("returns plain final text on success", async () => {
+    it("ensures memory-bank/codex dir exists before invocation", async () => {
+      const { createCodexToolServer } = await import("./codex-tool");
+      const mockDeps = createMockDeps({
+        exitCode: 0,
+        parseState: {
+          lineCount: 1,
+          lastAgentMessage: "ok",
+          lastErrorMessage: null,
+        },
+      });
+
+      createCodexToolServer(
+        { worktreePath: "/wt", sessionName: "s1" },
+        mockDeps,
+      );
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "do it" });
+
+      expect(mockDeps.mockEnsureDir).toHaveBeenCalledWith(
+        "/wt/memory-bank/codex",
+      );
+    });
+
+    it("writes the output schema file before invocation", async () => {
+      const { createCodexToolServer, CODEX_OUTPUT_SCHEMA } =
+        await import("./codex-tool");
+      const mockDeps = createMockDeps({
+        exitCode: 0,
+        parseState: {
+          lineCount: 1,
+          lastAgentMessage: "ok",
+          lastErrorMessage: null,
+        },
+      });
+
+      createCodexToolServer(
+        { worktreePath: "/wt", sessionName: "s1" },
+        mockDeps,
+      );
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "do it" });
+
+      expect(mockDeps.mockWriteFile).toHaveBeenCalledWith(
+        "/wt/memory-bank/codex/.output-schema.json",
+        JSON.stringify(CODEX_OUTPUT_SCHEMA, null, 2),
+      );
+    });
+
+    it("wraps the user prompt with Codex instructions", async () => {
+      const { createCodexToolServer } = await import("./codex-tool");
+      const mockDeps = createMockDeps({
+        exitCode: 0,
+        parseState: {
+          lineCount: 1,
+          lastAgentMessage: "ok",
+          lastErrorMessage: null,
+        },
+      });
+
+      createCodexToolServer(
+        { worktreePath: "/wt", sessionName: "s1" },
+        mockDeps,
+      );
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "fix the login bug" });
+
+      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
+        args: string[];
+      };
+      const promptArg = callArgs.args[callArgs.args.length - 1]!;
+      expect(promptArg).toContain("memory-bank/codex/");
+      expect(promptArg).toContain("fix the login bug");
+      expect(promptArg).not.toBe("fix the login bug");
+    });
+
+    it("passes --output-schema pointing to the schema file", async () => {
+      const { createCodexToolServer } = await import("./codex-tool");
+      const mockDeps = createMockDeps({
+        exitCode: 0,
+        parseState: {
+          lineCount: 1,
+          lastAgentMessage: "ok",
+          lastErrorMessage: null,
+        },
+      });
+
+      createCodexToolServer(
+        { worktreePath: "/wt", sessionName: "s1" },
+        mockDeps,
+      );
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "do it" });
+
+      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
+        args: string[];
+      };
+      const idx = callArgs.args.indexOf("--output-schema");
+      expect(idx).toBeGreaterThan(-1);
+      expect(callArgs.args[idx + 1]).toBe(
+        "/wt/memory-bank/codex/.output-schema.json",
+      );
+    });
+
+    it("returns structured JSON when Codex produces valid structured response", async () => {
+      const { createCodexToolServer } = await import("./codex-tool");
+      const structured = JSON.stringify({
+        summary: "Fixed the bug",
+        referenceDocuments: [
+          { filePath: "memory-bank/codex/report.md", description: "Details" },
+        ],
+      });
+      const mockDeps = createMockDeps({
+        exitCode: 0,
+        parseState: {
+          lineCount: 3,
+          lastAgentMessage: structured,
+          lastErrorMessage: null,
+        },
+      });
+
+      createCodexToolServer(
+        { worktreePath: "/wt", sessionName: "s1" },
+        mockDeps,
+      );
+
+      const handler = getHandler("run_codex");
+      const result = (await handler({ prompt: "fix tests" })) as {
+        content: Array<{ type: string; text: string }>;
+        isError?: boolean;
+      };
+
+      const parsed = JSON.parse(result.content[0]!.text);
+      expect(parsed.summary).toBe("Fixed the bug");
+      expect(parsed.referenceDocuments).toHaveLength(1);
+      expect(result.isError).toBeUndefined();
+    });
+
+    it("falls back to raw text when response is not valid structured JSON", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps({
         exitCode: 0,
@@ -697,7 +861,103 @@ describe("codex-tool", () => {
   });
 
   // ============================================================
-  // 6. Prompt hint helper
+  // 6. Prompt wrapping
+  // ============================================================
+
+  describe("wrapCodexPrompt", () => {
+    it("prepends instructions and preserves the original prompt", async () => {
+      const { wrapCodexPrompt } = await import("./codex-tool");
+      const wrapped = wrapCodexPrompt("Fix the login bug");
+      expect(wrapped).toContain("memory-bank/codex/");
+      expect(wrapped).toContain("summary");
+      expect(wrapped).toContain("referenceDocuments");
+      expect(wrapped).toContain("Fix the login bug");
+    });
+
+    it("includes the 1000-character limit instruction", async () => {
+      const { wrapCodexPrompt } = await import("./codex-tool");
+      const wrapped = wrapCodexPrompt("Do something");
+      expect(wrapped).toContain("1000");
+    });
+
+    it("places the original prompt after the instructions", async () => {
+      const { wrapCodexPrompt } = await import("./codex-tool");
+      const wrapped = wrapCodexPrompt("Do something");
+      const instructionsEnd = wrapped.indexOf("Task:");
+      const promptStart = wrapped.indexOf("Do something");
+      expect(instructionsEnd).toBeGreaterThan(-1);
+      expect(promptStart).toBeGreaterThan(instructionsEnd);
+    });
+  });
+
+  // ============================================================
+  // 7. Structured response parsing
+  // ============================================================
+
+  describe("parseCodexStructuredResponse", () => {
+    it("parses valid structured JSON", async () => {
+      const { parseCodexStructuredResponse } = await import("./codex-tool");
+      const input = JSON.stringify({
+        summary: "Fixed the bug",
+        referenceDocuments: [
+          { filePath: "memory-bank/codex/report.md", description: "Details" },
+        ],
+      });
+      const result = parseCodexStructuredResponse(input);
+      expect(result).toEqual({
+        summary: "Fixed the bug",
+        referenceDocuments: [
+          { filePath: "memory-bank/codex/report.md", description: "Details" },
+        ],
+      });
+    });
+
+    it("returns null for non-JSON text", async () => {
+      const { parseCodexStructuredResponse } = await import("./codex-tool");
+      expect(parseCodexStructuredResponse("just plain text")).toBeNull();
+    });
+
+    it("returns null when summary is missing", async () => {
+      const { parseCodexStructuredResponse } = await import("./codex-tool");
+      const input = JSON.stringify({
+        referenceDocuments: [],
+      });
+      expect(parseCodexStructuredResponse(input)).toBeNull();
+    });
+
+    it("returns null when referenceDocuments is missing", async () => {
+      const { parseCodexStructuredResponse } = await import("./codex-tool");
+      const input = JSON.stringify({
+        summary: "done",
+      });
+      expect(parseCodexStructuredResponse(input)).toBeNull();
+    });
+
+    it("returns null when referenceDocuments items have wrong shape", async () => {
+      const { parseCodexStructuredResponse } = await import("./codex-tool");
+      const input = JSON.stringify({
+        summary: "done",
+        referenceDocuments: [{ path: "wrong-key" }],
+      });
+      expect(parseCodexStructuredResponse(input)).toBeNull();
+    });
+
+    it("accepts empty referenceDocuments array", async () => {
+      const { parseCodexStructuredResponse } = await import("./codex-tool");
+      const input = JSON.stringify({
+        summary: "No files needed",
+        referenceDocuments: [],
+      });
+      const result = parseCodexStructuredResponse(input);
+      expect(result).toEqual({
+        summary: "No files needed",
+        referenceDocuments: [],
+      });
+    });
+  });
+
+  // ============================================================
+  // 8. Prompt hint helper
   // ============================================================
 
   describe("getCodexToolPromptHint", () => {
@@ -711,6 +971,8 @@ describe("codex-tool", () => {
       const hint = getCodexToolPromptHint(true);
       expect(hint).not.toBeNull();
       expect(hint).toContain("run_codex");
+      expect(hint).toContain("summary");
+      expect(hint).toContain("referenceDocuments");
     });
   });
 });
@@ -724,7 +986,11 @@ function createMockDeps(runResult?: {
   stderr?: string;
   timedOut?: boolean;
   parseState?: CodexJsonParseState;
-}): CodexToolDeps & { mockRunCodexExec: ReturnType<typeof vi.fn> } {
+}): CodexToolDeps & {
+  mockRunCodexExec: ReturnType<typeof vi.fn>;
+  mockEnsureDir: ReturnType<typeof vi.fn>;
+  mockWriteFile: ReturnType<typeof vi.fn>;
+} {
   const mockRunCodexExec = vi.fn().mockResolvedValue({
     exitCode: runResult?.exitCode ?? 0,
     stderr: runResult?.stderr ?? "",
@@ -735,13 +1001,19 @@ function createMockDeps(runResult?: {
       lastErrorMessage: null,
     },
   });
+  const mockEnsureDir = vi.fn().mockResolvedValue(undefined);
+  const mockWriteFile = vi.fn().mockResolvedValue(undefined);
 
   return {
     buildChildEnv: vi.fn(
       () => ({}),
     ) as unknown as CodexToolDeps["buildChildEnv"],
+    ensureDir: mockEnsureDir,
+    writeFile: mockWriteFile,
     runCodexExec: mockRunCodexExec,
     mockRunCodexExec,
+    mockEnsureDir,
+    mockWriteFile,
   };
 }
 
@@ -760,6 +1032,10 @@ async function importCodexToolWithSpawn(spawnImpl: ReturnType<typeof vi.fn>) {
   getCapturedTools().clear();
   vi.doMock("node:child_process", () => ({
     spawn: spawnImpl,
+  }));
+  vi.doMock("node:fs/promises", () => ({
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    writeFile: vi.fn().mockResolvedValue(undefined),
   }));
   return import("./codex-tool");
 }

@@ -592,6 +592,37 @@ describe("executePromptStream", () => {
     expect(metadataSnapshot).toBeTruthy();
   });
 
+  it("stores claudeSessionId from init event even when TurnResult has no sessionId", async () => {
+    const qs = createMockQuerySession(
+      [
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "init-session-789",
+          uuid: "u1",
+        },
+        {
+          type: "assistant",
+          session_id: "init-session-789",
+          uuid: "u2",
+          message: { content: [{ type: "text", text: "response" }] },
+        },
+      ],
+      // TurnResult has NO sessionId — simulates an interrupted turn
+      { sessionId: null },
+    );
+    deps = createTestDeps(qs);
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream("/projects/repo", makeSession(), "test", vi.fn());
+
+    const metadataSnapshot = updateSnapshots.find(
+      (s) => s.conversations[0]!.claudeSessionId === "init-session-789",
+    );
+    expect(metadataSnapshot).toBeTruthy();
+  });
+
   it("accumulates cost data from TurnResult", async () => {
     const qs = createMockQuerySession(
       [

@@ -6,6 +6,8 @@
  */
 
 import { spawn } from "node:child_process";
+import { mkdir, writeFile as fsWriteFile } from "node:fs/promises";
+import path from "node:path";
 import { createInterface } from "node:readline";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
@@ -33,6 +35,8 @@ export interface CodexToolContext {
 
 export interface CodexToolDeps {
   buildChildEnv: typeof buildChildEnv;
+  ensureDir: (dirPath: string) => Promise<void>;
+  writeFile: (filePath: string, content: string) => Promise<void>;
   runCodexExec: (input: {
     args: string[];
     cwd: string;
@@ -45,6 +49,34 @@ export interface CodexToolDeps {
     parseState: CodexJsonParseState;
   }>;
 }
+
+// ============================================================
+// Output Schema
+// ============================================================
+
+const CODEX_OUTPUT_DIR = "memory-bank/codex";
+const CODEX_SCHEMA_FILENAME = ".output-schema.json";
+
+export const CODEX_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    referenceDocuments: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          filePath: { type: "string" },
+          description: { type: "string" },
+        },
+        required: ["filePath", "description"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["summary", "referenceDocuments"],
+  additionalProperties: false,
+} as const;
 
 export interface CodexJsonParseState {
   lineCount: number;
@@ -127,8 +159,10 @@ export function buildCodexExecArgs(input: {
   prompt: string;
   model?: string;
   reasoningEffort?: CodexReasoningEffort;
+  outputSchemaPath?: string;
 }): string[] {
-  const { worktreePath, prompt, model, reasoningEffort } = input;
+  const { worktreePath, prompt, model, reasoningEffort, outputSchemaPath } =
+    input;
   return [
     "exec",
     "--json",
@@ -150,6 +184,7 @@ export function buildCodexExecArgs(input: {
     ...(reasoningEffort
       ? ["-c", `model_reasoning_effort=${reasoningEffort}`]
       : []),
+    ...(outputSchemaPath ? ["--output-schema", outputSchemaPath] : []),
     prompt,
   ];
 }
@@ -264,6 +299,10 @@ function runCodexExecDefault(input: {
 
 export const defaultCodexToolDeps: CodexToolDeps = {
   buildChildEnv,
+  ensureDir: async (dirPath: string) => {
+    await mkdir(dirPath, { recursive: true });
+  },
+  writeFile: fsWriteFile,
   runCodexExec: runCodexExecDefault,
 };
 
@@ -289,12 +328,74 @@ export function maybeCreateCodexToolServer(
 }
 
 // ============================================================
+// Prompt Wrapping
+// ============================================================
+
+const CODEX_PROMPT_PREAMBLE = `You MUST write all detailed output as files in the \`memory-bank/codex/\` directory (relative to the workspace root). Use markdown files primarily, but other formats are acceptable when appropriate.
+
+Your response will be constrained to a JSON schema with two fields:
+- "summary": A concise summary of what you did and the results. Maximum 1000 characters. This is the only text the caller sees directly, so make it informative.
+- "referenceDocuments": An array of documents you created, each with "filePath" (path relative to workspace root) and "description" (what the file contains and when it should be read).
+
+Write detailed analysis, code examples, plans, and explanations to files — do NOT put them in the summary.`;
+
+export function wrapCodexPrompt(prompt: string): string {
+  return `${CODEX_PROMPT_PREAMBLE}\n\n---\n\nTask:\n${prompt}`;
+}
+
+// ============================================================
+// Structured Response Parsing
+// ============================================================
+
+export interface CodexStructuredResponse {
+  summary: string;
+  referenceDocuments: Array<{
+    filePath: string;
+    description: string;
+  }>;
+}
+
+export function parseCodexStructuredResponse(
+  text: string,
+): CodexStructuredResponse | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const obj = parsed as Record<string, unknown>;
+  if (typeof obj.summary !== "string") return null;
+  if (!Array.isArray(obj.referenceDocuments)) return null;
+
+  for (const doc of obj.referenceDocuments) {
+    if (typeof doc !== "object" || doc === null) return null;
+    const d = doc as Record<string, unknown>;
+    if (typeof d.filePath !== "string" || typeof d.description !== "string")
+      return null;
+  }
+
+  return {
+    summary: obj.summary,
+    referenceDocuments: (
+      obj.referenceDocuments as Array<Record<string, unknown>>
+    ).map((d) => ({
+      filePath: d.filePath as string,
+      description: d.description as string,
+    })),
+  };
+}
+
+// ============================================================
 // Prompt Hint Helper
 // ============================================================
 
 export function getCodexToolPromptHint(enabled: boolean): string | null {
   if (!enabled) return null;
-  return "The `run_codex` tool is available. It runs OpenAI Codex locally in the same worktree as a one-shot stateless invocation.";
+  return `The \`run_codex\` tool is available. It runs OpenAI Codex locally in the same worktree as a one-shot stateless invocation. The tool returns a JSON object with a \`summary\` field (concise result summary) and a \`referenceDocuments\` array (files Codex created with \`filePath\` and \`description\`). Use the Read tool to review any reference documents when the summary indicates relevant content.`;
 }
 
 // ============================================================
@@ -311,7 +412,7 @@ export function createCodexToolServer(
     tools: [
       tool(
         "run_codex",
-        "Run a one-shot OpenAI Codex task in the current session worktree. Codex operates autonomously in a sandboxed environment (workspace-write). It does not resume or persist conversation state. Returns the final Codex response text.",
+        "Run a one-shot OpenAI Codex task in the current session worktree. Codex operates autonomously in a sandboxed environment (workspace-write). It does not resume or persist conversation state. Returns a JSON object with `summary` (concise result summary) and `referenceDocuments` (array of files Codex created for detailed review, each with `filePath` and `description`). If Codex fails to produce structured output, falls back to returning raw text.",
         {
           prompt: z
             .string()
@@ -335,11 +436,21 @@ export function createCodexToolServer(
           const effectiveReasoningEffort =
             args.reasoning_effort ?? context.defaultReasoningEffort;
 
+          // Prepare output directory and schema file
+          const outputDir = path.join(context.worktreePath, CODEX_OUTPUT_DIR);
+          const schemaPath = path.join(outputDir, CODEX_SCHEMA_FILENAME);
+          await deps.ensureDir(outputDir);
+          await deps.writeFile(
+            schemaPath,
+            JSON.stringify(CODEX_OUTPUT_SCHEMA, null, 2),
+          );
+
           const execArgs = buildCodexExecArgs({
             worktreePath: context.worktreePath,
-            prompt: args.prompt,
+            prompt: wrapCodexPrompt(args.prompt),
             model: effectiveModel,
             reasoningEffort: effectiveReasoningEffort,
+            outputSchemaPath: schemaPath,
           });
 
           logger.info("codex.exec", {
@@ -394,6 +505,20 @@ export function createCodexToolServer(
               sessionName: context.sessionName,
               responseLength: text.length,
             });
+
+            // Try structured response; fall back to raw text
+            const structured = parseCodexStructuredResponse(text);
+            if (structured) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: JSON.stringify(structured),
+                  },
+                ],
+              };
+            }
+
             return {
               content: [{ type: "text" as const, text }],
             };
