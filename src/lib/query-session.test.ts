@@ -29,7 +29,7 @@ import { registerSession, unregisterSession } from "./query-session-registry";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Create a controllable mock Query (AsyncGenerator + close + streamInput) */
+/** Create a controllable mock Query (AsyncGenerator + close + streamInput + MCP methods) */
 function createControllableMockQuery() {
   const messages: SDKMessage[] = [];
   let resolveNext: ((value: IteratorResult<SDKMessage, void>) => void) | null =
@@ -48,6 +48,8 @@ function createControllableMockQuery() {
     }),
     streamInput: vi.fn(),
     interrupt: vi.fn(),
+    mcpServerStatus: vi.fn().mockResolvedValue([]),
+    reconnectMcpServer: vi.fn().mockResolvedValue(undefined),
     next() {
       if (messages.length > 0) {
         return Promise.resolve({
@@ -305,6 +307,9 @@ describe("QuerySession.sendPrompt", () => {
       emit,
     );
 
+    // Wait for MCP health check to complete before checking streamInput
+    await new Promise((r) => setTimeout(r, 10));
+
     // Inspect what streamInput received
     expect(mock.query.streamInput).toHaveBeenCalled();
     const iterable = mock.query.streamInput.mock.calls[0]![0];
@@ -364,6 +369,9 @@ describe("QuerySession.sendPrompt", () => {
 
     // Second prompt (via streamInput)
     const turn2 = session.sendPrompt("Second prompt", emit);
+
+    // Wait for MCP health check to complete before checking streamInput
+    await new Promise((r) => setTimeout(r, 10));
 
     // streamInput should have been called
     expect(mock.query.streamInput).toHaveBeenCalled();
@@ -665,5 +673,229 @@ describe("QuerySession idle TTL", () => {
     expect(session.status).toBe("dead");
 
     vi.useRealTimers();
+  });
+});
+
+describe("MCP server reconnection before prompt", () => {
+  it("reconnects failed MCP servers before sending a subsequent prompt", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    // Complete first turn
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Simulate a failed MCP server
+    mock.query.mcpServerStatus.mockResolvedValue([
+      { name: "codex-tool", status: "connected" },
+      { name: "roadmap-tools", status: "failed", error: "Stream closed" },
+    ]);
+
+    // Send second prompt — should trigger reconnection
+    const turn2 = session.sendPrompt("Second", emit);
+
+    // Wait a tick for the async reconnection to run
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mock.query.reconnectMcpServer).toHaveBeenCalledWith("roadmap-tools");
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u2",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn2;
+
+    session.close();
+  });
+
+  it("does not check MCP status on the first prompt", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    expect(mock.query.mcpServerStatus).not.toHaveBeenCalled();
+
+    session.close();
+  });
+
+  it("does not block prompt when reconnection fails", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    // Complete first turn
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Simulate failed MCP server with reconnection that throws
+    mock.query.mcpServerStatus.mockResolvedValue([
+      { name: "codex-tool", status: "failed", error: "Stream closed" },
+    ]);
+    mock.query.reconnectMcpServer.mockRejectedValue(
+      new Error("reconnect failed"),
+    );
+
+    // Send second prompt — should still proceed despite reconnection failure
+    const turn2 = session.sendPrompt("Second", emit);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u2",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn2;
+
+    session.close();
+  });
+
+  it("does not reconnect servers that are already connected", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    // Complete first turn
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // All servers connected
+    mock.query.mcpServerStatus.mockResolvedValue([
+      { name: "codex-tool", status: "connected" },
+      { name: "roadmap-tools", status: "connected" },
+    ]);
+
+    // Send second prompt
+    const turn2 = session.sendPrompt("Second", emit);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mock.query.reconnectMcpServer).not.toHaveBeenCalled();
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u2",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn2;
+
+    session.close();
+  });
+
+  it("does not block prompt when mcpServerStatus throws", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    // Complete first turn
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // mcpServerStatus itself throws
+    mock.query.mcpServerStatus.mockRejectedValue(new Error("status failed"));
+
+    // Send second prompt — should still proceed
+    const turn2 = session.sendPrompt("Second", emit);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u2",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn2;
+
+    session.close();
   });
 });

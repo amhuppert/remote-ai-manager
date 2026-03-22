@@ -53,6 +53,8 @@ function createControllableMockQuery() {
     }),
     streamInput: vi.fn(),
     interrupt: vi.fn(),
+    mcpServerStatus: vi.fn().mockResolvedValue([]),
+    reconnectMcpServer: vi.fn().mockResolvedValue(undefined),
     next() {
       if (messages.length > 0) {
         return Promise.resolve({
@@ -193,6 +195,9 @@ describe("Multi-turn subprocess reuse", () => {
 
     // Second prompt — same session, same subprocess
     const turn2 = session.sendPrompt("Second prompt", emit);
+
+    // Wait for MCP health check to complete before checking streamInput
+    await new Promise((r) => setTimeout(r, 10));
 
     // streamInput should have been called for the second prompt
     expect(mock.query.streamInput).toHaveBeenCalledTimes(1);

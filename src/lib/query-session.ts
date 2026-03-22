@@ -270,9 +270,11 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           firstPromptResolve = null;
         }
       } else {
-        // Deliver via streamInput
-        const userMessage = buildUserMessage(prompt);
-        void q.streamInput(wrapAsIterable(userMessage));
+        // Reconnect any failed MCP servers before sending the prompt
+        void reconnectFailedMcpServers().then(() => {
+          const userMessage = buildUserMessage(prompt);
+          void q.streamInput(wrapAsIterable(userMessage));
+        });
       }
     });
   }
@@ -361,6 +363,46 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       conversationId: options.conversationId,
       reason,
     });
+  }
+
+  // ------------------------------------------------------------------
+  // MCP server health check
+  // ------------------------------------------------------------------
+
+  async function reconnectFailedMcpServers(): Promise<void> {
+    try {
+      const statuses = await q.mcpServerStatus();
+      const failed = statuses.filter((s) => s.status === "failed");
+      if (failed.length === 0) return;
+
+      logger.info("query-session.mcp_reconnect", {
+        conversationId: options.conversationId,
+        servers: failed.map((s) => s.name),
+      });
+
+      await Promise.all(
+        failed.map(async (server) => {
+          try {
+            await q.reconnectMcpServer(server.name);
+            logger.info("query-session.mcp_reconnected", {
+              conversationId: options.conversationId,
+              server: server.name,
+            });
+          } catch (err) {
+            logger.warn("query-session.mcp_reconnect_failed", {
+              conversationId: options.conversationId,
+              server: server.name,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }),
+      );
+    } catch (err) {
+      logger.warn("query-session.mcp_status_check_failed", {
+        conversationId: options.conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // ------------------------------------------------------------------

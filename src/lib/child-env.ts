@@ -28,5 +28,12 @@ export function buildChildEnv(): NodeJS.ProcessEnv {
     }
   }
 
+  // Extend the SDK's MCP stream inactivity timeout from 60s (default) to 10 min.
+  // Without this, MCP server transports silently close during long turns where
+  // the agent doesn't use MCP tools, causing "Stream closed" errors on the next call.
+  if (!env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT) {
+    env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT = "600000";
+  }
+
   return env;
 }
