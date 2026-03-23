@@ -150,6 +150,85 @@ describe("codex-tool", () => {
       );
       expect(result).not.toBeNull();
     });
+
+    it("passes config timeout (seconds) as timeoutMs to context", async () => {
+      const { maybeCreateCodexToolServer } = await import("./codex-tool");
+      const mockDeps = createMockDeps({
+        exitCode: 0,
+        parseState: {
+          lineCount: 1,
+          lastAgentMessage: "ok",
+          lastErrorMessage: null,
+        },
+      });
+
+      maybeCreateCodexToolServer(
+        { enabled: true, timeout: 120 },
+        { worktreePath: "/wt", sessionName: "s1" },
+        mockDeps,
+      );
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "test" });
+
+      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
+        timeoutMs: number;
+      };
+      expect(callArgs.timeoutMs).toBe(120_000);
+    });
+
+    it("uses default timeout when config timeout is undefined", async () => {
+      const { maybeCreateCodexToolServer } = await import("./codex-tool");
+      const mockDeps = createMockDeps({
+        exitCode: 0,
+        parseState: {
+          lineCount: 1,
+          lastAgentMessage: "ok",
+          lastErrorMessage: null,
+        },
+      });
+
+      maybeCreateCodexToolServer(
+        { enabled: true },
+        { worktreePath: "/wt", sessionName: "s1" },
+        mockDeps,
+      );
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "test" });
+
+      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
+        timeoutMs: number;
+      };
+      expect(callArgs.timeoutMs).toBe(600_000);
+    });
+
+    it("disables timeout when config timeout is null", async () => {
+      const { maybeCreateCodexToolServer } = await import("./codex-tool");
+      const mockDeps = createMockDeps({
+        exitCode: 0,
+        parseState: {
+          lineCount: 1,
+          lastAgentMessage: "ok",
+          lastErrorMessage: null,
+        },
+      });
+
+      maybeCreateCodexToolServer(
+        { enabled: true, timeout: null },
+        { worktreePath: "/wt", sessionName: "s1" },
+        mockDeps,
+      );
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "test" });
+
+      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
+        timeoutMs: number;
+      };
+      // null means no timeout — pass 0 to signal "no timeout"
+      expect(callArgs.timeoutMs).toBe(0);
+    });
   });
 
   // ============================================================

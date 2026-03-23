@@ -31,6 +31,8 @@ export interface CodexToolContext {
   sessionName: string;
   defaultModel?: string;
   defaultReasoningEffort?: CodexReasoningEffort;
+  /** Timeout in ms. 0 means no timeout. Undefined falls back to CODEX_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 export interface CodexToolDeps {
@@ -273,12 +275,14 @@ function runCodexExecDefault(input: {
       stderrChunks += chunk.toString();
     });
 
-    // Timeout handling
-    timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      scheduleForceKill();
-    }, input.timeoutMs);
+    // Timeout handling (0 means no timeout)
+    if (input.timeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+        scheduleForceKill();
+      }, input.timeoutMs);
+    }
 
     child.on("close", (code) => {
       exited = true;
@@ -316,12 +320,21 @@ export function maybeCreateCodexToolServer(
   deps: CodexToolDeps = defaultCodexToolDeps,
 ): McpSdkServerConfigWithInstance | null {
   if (codexConfig?.enabled !== true) return null;
+
+  let timeoutMs: number | undefined;
+  if (codexConfig.timeout === null) {
+    timeoutMs = 0;
+  } else if (codexConfig.timeout !== undefined) {
+    timeoutMs = codexConfig.timeout * 1000;
+  }
+
   return createCodexToolServer(
     {
       ...context,
       defaultModel: context.defaultModel ?? codexConfig.model,
       defaultReasoningEffort:
         context.defaultReasoningEffort ?? codexConfig.reasoningEffort,
+      timeoutMs: context.timeoutMs ?? timeoutMs,
     },
     deps,
   );
@@ -459,13 +472,15 @@ export function createCodexToolServer(
             reasoningEffort: effectiveReasoningEffort ?? "default",
           });
 
+          const effectiveTimeoutMs = context.timeoutMs ?? CODEX_TIMEOUT_MS;
+
           let result: Awaited<ReturnType<CodexToolDeps["runCodexExec"]>>;
           try {
             result = await deps.runCodexExec({
               args: execArgs,
               cwd: context.worktreePath,
               env: { ...deps.buildChildEnv(), CLAUDECODE: "" },
-              timeoutMs: CODEX_TIMEOUT_MS,
+              timeoutMs: effectiveTimeoutMs,
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -484,7 +499,7 @@ export function createCodexToolServer(
 
           if (result.timedOut) {
             return errorResult(
-              `Codex execution timed out after ${CODEX_TIMEOUT_MS / 1000} seconds.`,
+              `Codex execution timed out after ${effectiveTimeoutMs / 1000} seconds.`,
             );
           }
 
