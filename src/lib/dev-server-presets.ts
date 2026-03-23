@@ -196,9 +196,15 @@ fi
 `
     : "";
 
+  // Next.js uses .next/dev/lock to prevent concurrent instances. When CC kills
+  // a dev server process group, the lock isn't cleaned up, causing subsequent
+  // starts to fail. By the time we reach exec, port checks already confirmed
+  // no server is running for this worktree, so any lock file is stale.
+  const lockCleanup = presetId === "nextjs" ? 'rm -f ".next/dev/lock"\n' : "";
+
   const execLine = hasSubdir
-    ? `cd "$APP_DIR" && exec ${frameworkCommand}`
-    : `exec ${frameworkCommand}`;
+    ? `cd "$APP_DIR" && ${lockCleanup}exec ${frameworkCommand}`
+    : `${lockCleanup}exec ${frameworkCommand}`;
 
   const comment = hasSubdir
     ? `# CC Dev Server — ${preset.name} (subdir: ${subdir}/)`

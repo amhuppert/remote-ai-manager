@@ -161,6 +161,31 @@ describe("PresetRegistry", () => {
       expect(script).toContain("2)");
     });
 
+    it("removes stale .next/dev/lock before starting Next.js", () => {
+      const script = generatePresetScript("nextjs");
+      const lines = script.split("\n");
+      const lockCleanup = lines.findIndex(
+        (l) => l.includes("rm -f") && l.includes(".next/dev/lock"),
+      );
+      const execLine = lines.findIndex((l) => l.startsWith("exec "));
+      expect(lockCleanup).toBeGreaterThan(-1);
+      expect(execLine).toBeGreaterThan(lockCleanup);
+    });
+
+    it("removes stale .next/dev/lock in subdir mode", () => {
+      const script = generatePresetScript("nextjs", "dashboard-ui");
+      const lines = script.split("\n");
+      const lockCleanup = lines.findIndex(
+        (l) => l.includes("rm -f") && l.includes(".next/dev/lock"),
+      );
+      expect(lockCleanup).toBeGreaterThan(-1);
+    });
+
+    it("does not remove .next/dev/lock for non-Next.js presets", () => {
+      const script = generatePresetScript("storybook");
+      expect(script).not.toContain(".next/dev/lock");
+    });
+
     it("throws for unknown preset ID", () => {
       expect(() => generatePresetScript("unknown")).toThrow();
     });

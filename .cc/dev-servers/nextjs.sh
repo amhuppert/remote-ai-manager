@@ -27,4 +27,5 @@ case $? in
 esac
 
 echo "CC_PORT=$PORT"
+rm -f ".next/dev/lock"
 exec npx next dev --port "$PORT"
