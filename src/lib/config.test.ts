@@ -211,6 +211,99 @@ describe("schema: codex config block", () => {
     }
   });
 
+  it("globalConfigSchema accepts codex timeout as positive number", () => {
+    const result = globalConfigSchema.partial().safeParse({
+      codex: {
+        enabled: true,
+        timeout: 120,
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.codex?.timeout).toBe(120);
+    }
+  });
+
+  it("globalConfigSchema accepts codex timeout as null", () => {
+    const result = globalConfigSchema.partial().safeParse({
+      codex: {
+        enabled: true,
+        timeout: null,
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.codex?.timeout).toBeNull();
+    }
+  });
+
+  it("globalConfigSchema allows omitted codex timeout", () => {
+    const result = globalConfigSchema.partial().safeParse({
+      codex: {
+        enabled: true,
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.codex?.timeout).toBeUndefined();
+    }
+  });
+
+  it("globalConfigSchema rejects non-positive codex timeout", () => {
+    const result = globalConfigSchema.partial().safeParse({
+      codex: {
+        enabled: true,
+        timeout: 0,
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("globalConfigSchema rejects negative codex timeout", () => {
+    const result = globalConfigSchema.partial().safeParse({
+      codex: {
+        enabled: true,
+        timeout: -10,
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("readConfig preserves codex timeout on round-trip", async () => {
+    const reader = createConfigReader(TEST_DIR);
+    const original = await reader.readConfig();
+
+    const modified = {
+      ...original,
+      codex: {
+        enabled: true,
+        model: "o3",
+        timeout: 300,
+      },
+    };
+    await reader.writeConfig(modified);
+
+    const reread = await reader.readConfig();
+    expect(reread.codex?.timeout).toBe(300);
+  });
+
+  it("readConfig preserves codex timeout null on round-trip", async () => {
+    const reader = createConfigReader(TEST_DIR);
+    const original = await reader.readConfig();
+
+    const modified = {
+      ...original,
+      codex: {
+        enabled: true,
+        timeout: null,
+      },
+    };
+    await reader.writeConfig(modified);
+
+    const reread = await reader.readConfig();
+    expect(reread.codex?.timeout).toBeNull();
+  });
+
   it("readConfig preserves codex block on round-trip", async () => {
     const reader = createConfigReader(TEST_DIR);
     const original = await reader.readConfig();

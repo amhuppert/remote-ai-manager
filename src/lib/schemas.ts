@@ -82,6 +82,7 @@ export const codexConfigSchema = z.object({
   enabled: z.boolean().default(false),
   model: z.string().trim().min(1).optional(),
   reasoningEffort: codexReasoningEffortSchema.optional(),
+  timeout: z.number().positive().nullable().optional(),
 });
 export type CodexConfig = z.infer<typeof codexConfigSchema>;
 
