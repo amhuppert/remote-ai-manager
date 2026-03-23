@@ -423,6 +423,17 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
               conversation.status === "running" ||
               conversation.status === "waiting_for_input"
             ) {
+              // Skip conversations with a persisted machine snapshot —
+              // rehydrateConversationActors() will restore these actors
+              if (conversation.machineSnapshot) {
+                logger.info("state.skip_snapshot_conversation", {
+                  sessionName: session.sessionName,
+                  conversationId: conversation.id,
+                  status: conversation.status,
+                });
+                continue;
+              }
+
               logger.warn("state.recover_stale_conversation", {
                 sessionName: session.sessionName,
                 conversationId: conversation.id,

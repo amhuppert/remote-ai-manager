@@ -549,6 +549,17 @@ textarea {
   border-color: var(--red-dim);
 }
 
+.btn-success {
+  background: transparent;
+  border-color: rgba(0, 230, 118, 0.3);
+  color: var(--green);
+}
+
+.btn-success:hover {
+  background: var(--green-glow);
+  border-color: var(--green-dim);
+}
+
 .btn-ghost {
   background: transparent;
   border-color: transparent;
@@ -11485,4 +11496,285 @@ nextjs-portal {
 
 html[data-dev-tools-enabled] nextjs-portal {
   display: block !important;
+}
+
+/* ============================================================
+   Debug Mode — Toggle, Status Strip, Action Card
+   ============================================================ */
+
+/* ---- Debug Toggle (prompt toolbar) ---- */
+
+.debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.debug-toggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.debug-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.debug-toggle__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.debug-toggle--on {
+  border-color: rgba(255, 179, 0, 0.4);
+  color: var(--amber);
+  background: var(--amber-glow);
+}
+
+.debug-toggle--on:hover {
+  border-color: var(--amber-dim);
+  background: rgba(255, 179, 0, 0.2);
+}
+
+.debug-toggle--on .debug-toggle__dot {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+}
+
+/* ---- Debug Status Strip (above textarea) ---- */
+
+.debug-status-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px var(--space-sm);
+  border: 1px solid rgba(255, 179, 0, 0.2);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 179, 0, 0.04);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.debug-status-strip__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.debug-status-strip__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.debug-status-strip__badge {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--amber);
+}
+
+.debug-status-strip__sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 179, 0, 0.2);
+  flex-shrink: 0;
+}
+
+.debug-status-strip__rec {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.debug-status-strip__rec:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.debug-status-strip__rec:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.debug-status-strip__rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.debug-status-strip__rec.recording {
+  color: var(--red);
+}
+
+.debug-status-strip__rec.recording .debug-status-strip__rec-dot {
+  background: var(--red);
+  box-shadow: 0 0 6px var(--red);
+  animation: debug-rec-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes debug-rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.debug-status-strip__clear {
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.debug-status-strip__clear:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+}
+
+.debug-status-strip__clear:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---- Debug Action Card (inside last assistant message) ---- */
+
+.debug-action-card {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid rgba(255, 179, 0, 0.2);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 179, 0, 0.04);
+}
+
+.debug-action-card__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.debug-action-card__primary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-left: auto;
+}
+
+/* Merge action card with preceding blockquote into one visual card */
+[data-debug-mode]
+  .message.assistant
+  .message-content:has(blockquote:last-child)
+  + .debug-action-card {
+  margin-top: 0;
+  border-top: none;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+[data-debug-mode]
+  .message.assistant:has(.debug-action-card)
+  .message-content
+  blockquote:last-child {
+  margin-bottom: 0;
+  border-bottom: none;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* ---- Debug Mode Reproduction Steps (in-message styling) ---- */
+
+[data-debug-mode] .message.assistant .message-content blockquote {
+  border: 1px solid rgba(255, 179, 0, 0.2);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 179, 0, 0.04);
+  padding: var(--space-md);
+  margin: var(--space-md) 0;
+}
+
+[data-debug-mode]
+  .message.assistant
+  .message-content
+  blockquote
+  strong:first-child {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+}
+
+[data-debug-mode] .message.assistant .message-content blockquote ol {
+  counter-reset: debug-step;
+  list-style: none;
+  padding-left: 0;
+  margin-top: var(--space-sm);
+}
+
+[data-debug-mode] .message.assistant .message-content blockquote ol li {
+  counter-increment: debug-step;
+  padding: 6px 0 6px 2em;
+  position: relative;
+  border-top: 1px solid rgba(255, 179, 0, 0.08);
+}
+
+[data-debug-mode]
+  .message.assistant
+  .message-content
+  blockquote
+  ol
+  li:first-child {
+  border-top: none;
+}
+
+[data-debug-mode] .message.assistant .message-content blockquote ol li::before {
+  content: counter(debug-step) ".";
+  position: absolute;
+  left: 0;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--amber);
 }

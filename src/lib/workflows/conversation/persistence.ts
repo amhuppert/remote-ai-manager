@@ -1,0 +1,210 @@
+/**
+ * Conversation machine snapshot persistence.
+ *
+ * Persists XState snapshots to the `machineSnapshot` field on each
+ * ConversationState record. Follows the same debounce pattern as the
+ * workflow-level persistence module.
+ */
+
+import type { Snapshot } from "xstate";
+import {
+  mutateConversation as defaultMutateConversation,
+  readState as defaultReadState,
+} from "@/lib/state";
+import { createLogger } from "@/lib/logging";
+import type { ConversationState, ManagerState } from "@/types";
+
+const logger = createLogger("conversation-persistence");
+
+// ============================================================
+// Dependency Injection
+// ============================================================
+
+export interface ConversationPersistenceDeps {
+  mutateConversation: typeof defaultMutateConversation;
+  readState: () => Promise<ManagerState>;
+}
+
+let _deps: ConversationPersistenceDeps | null = null;
+
+function getDeps(): ConversationPersistenceDeps {
+  if (!_deps) {
+    _deps = {
+      mutateConversation: defaultMutateConversation,
+      readState: defaultReadState,
+    };
+  }
+  return _deps;
+}
+
+export function setPersistenceDeps(deps: ConversationPersistenceDeps): void {
+  _deps = deps;
+}
+
+// ============================================================
+// Debounce
+// ============================================================
+
+const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const DEFAULT_DEBOUNCE_MS = 500;
+
+function debounceKey(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+): string {
+  return `${projectPath}::${sessionName}::${conversationId}`;
+}
+
+// ============================================================
+// Public API
+// ============================================================
+
+/**
+ * Persist a conversation machine snapshot.
+ * Debounced by default; use `immediate: true` for terminal states.
+ */
+export function persistConversationSnapshot(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+  snapshot: Snapshot<unknown>,
+  options?: { debounceMs?: number; immediate?: boolean },
+): void {
+  const key = debounceKey(projectPath, sessionName, conversationId);
+  const debounceMs = options?.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+
+  const existing = debounceTimers.get(key);
+  if (existing) {
+    clearTimeout(existing);
+  }
+
+  const doWrite = () => {
+    debounceTimers.delete(key);
+    void writeSnapshot(projectPath, sessionName, conversationId, snapshot);
+  };
+
+  if (options?.immediate) {
+    debounceTimers.delete(key);
+    doWrite();
+  } else {
+    debounceTimers.set(key, setTimeout(doWrite, debounceMs));
+  }
+}
+
+async function writeSnapshot(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+  snapshot: Snapshot<unknown>,
+): Promise<void> {
+  try {
+    await getDeps().mutateConversation(
+      projectPath,
+      sessionName,
+      conversationId,
+      "conversation-persistence.save",
+      (conversation: ConversationState) => {
+        conversation.machineSnapshot = snapshot;
+      },
+    );
+
+    logger.debug("conversation-persistence.snapshot_saved", {
+      conversationId,
+    });
+  } catch (err) {
+    logger.error("conversation-persistence.snapshot_save_failed", {
+      conversationId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Restore a conversation machine snapshot from persisted state.
+ * Returns the snapshot if found and schema version matches, null otherwise.
+ */
+export async function restoreConversationSnapshot(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+  expectedSchemaVersion: number,
+): Promise<Snapshot<unknown> | null> {
+  try {
+    const state = await getDeps().readState();
+    const project = state.projects[projectPath];
+    if (!project) return null;
+
+    const session = project.sessions[sessionName];
+    if (!session) return null;
+
+    const conversation = session.conversations.find(
+      (c) => c.id === conversationId,
+    );
+    if (!conversation) return null;
+
+    const snapshot = conversation.machineSnapshot as
+      | Snapshot<unknown>
+      | null
+      | undefined;
+    if (!snapshot) return null;
+
+    // Validate schema version
+    const context = (snapshot as { context?: { _schemaVersion?: number } })
+      .context;
+    if (context?._schemaVersion !== expectedSchemaVersion) {
+      logger.warn("conversation-persistence.schema_mismatch", {
+        conversationId,
+        expected: expectedSchemaVersion,
+        actual: context?._schemaVersion,
+      });
+      return null;
+    }
+
+    logger.info("conversation-persistence.snapshot_restored", {
+      conversationId,
+    });
+    return snapshot;
+  } catch (err) {
+    logger.error("conversation-persistence.snapshot_restore_failed", {
+      conversationId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
+ * Clear a conversation's persisted machine snapshot.
+ */
+export async function clearConversationSnapshot(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+): Promise<void> {
+  try {
+    await getDeps().mutateConversation(
+      projectPath,
+      sessionName,
+      conversationId,
+      "conversation-persistence.clear",
+      (conversation: ConversationState) => {
+        conversation.machineSnapshot = null;
+      },
+    );
+  } catch (err) {
+    logger.error("conversation-persistence.snapshot_clear_failed", {
+      conversationId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/** Reset state for testing — do not use in production. */
+export function _resetForTesting(): void {
+  for (const timer of debounceTimers.values()) {
+    clearTimeout(timer);
+  }
+  debounceTimers.clear();
+  _deps = null;
+}

@@ -56,6 +56,8 @@ function makeConvo(
     role: null,
     contextTokens: null,
     contextWindowMax: null,
+    debugMode: null,
+    machineSnapshot: null,
     ...overrides,
   };
 }

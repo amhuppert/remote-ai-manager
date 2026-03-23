@@ -44,6 +44,8 @@ const testSession: SessionState = {
       role: null,
       contextTokens: null,
       contextWindowMax: null,
+      debugMode: null,
+      machineSnapshot: null,
     },
   ],
   source: "cc",

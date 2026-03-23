@@ -61,6 +61,7 @@ interface SessionDetailActions {
   ) => void;
   completePrompt: () => void;
   failPrompt: (error: string) => void;
+  queueMessage: (userContent: MessageContentBlock[]) => void;
   dismissError: () => void;
   markCancelled: () => void;
   dismissCancelled: () => void;
@@ -196,6 +197,8 @@ const useSessionDetailStore = create<SessionDetailStore>()(
 
     receiveStreamContent: (userContent, allBlocks) =>
       set((state) => {
+        // Preserve any queued user messages appended after the initial pair
+        const queued = state.optimisticMessages.slice(2);
         state.optimisticMessages = [
           {
             role: "user",
@@ -207,6 +210,7 @@ const useSessionDetailStore = create<SessionDetailStore>()(
             content: [...allBlocks],
             timestamp: new Date().toISOString(),
           },
+          ...queued,
         ];
       }),
 
@@ -219,6 +223,15 @@ const useSessionDetailStore = create<SessionDetailStore>()(
       set((state) => {
         state.promptError = error;
         state.sending = false;
+      }),
+
+    queueMessage: (userContent) =>
+      set((state) => {
+        state.optimisticMessages.push({
+          role: "user",
+          content: userContent,
+          timestamp: new Date().toISOString(),
+        });
       }),
 
     dismissError: () =>
@@ -488,6 +501,8 @@ export const useReceiveStreamContent = () =>
 export const useCompletePrompt = () =>
   useSessionDetailStore((s) => s.completePrompt);
 export const useFailPrompt = () => useSessionDetailStore((s) => s.failPrompt);
+export const useQueueMessage = () =>
+  useSessionDetailStore((s) => s.queueMessage);
 export const useDismissError = () =>
   useSessionDetailStore((s) => s.dismissError);
 export const useMarkCancelled = () =>

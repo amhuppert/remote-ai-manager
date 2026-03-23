@@ -106,6 +106,17 @@ export type {
   DevServerStatusEvent,
   DevServerRuntimeState,
   DevServersStatusResponse,
+  // Debug Mode types
+  DebugHypothesis,
+  DebugModePhase,
+  DebugModeState,
+  DebugLogEntry,
+  DebugProbeEntry,
+  DebugInstrumentationManifest,
+  DebugModeStatusEvent,
+  DebugLogReceivedEvent,
+  DebugModeRequest,
+  DebugRecordingRequest,
 } from "@/lib/schemas";
 
 /** Parsed transcript message */

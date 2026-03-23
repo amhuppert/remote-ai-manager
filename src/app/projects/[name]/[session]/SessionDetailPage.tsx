@@ -73,6 +73,9 @@ import {
 } from "@/stores/session-detail.store";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
+import DebugModeToggle from "./DebugModeToggle";
+import DebugStatusStrip from "./DebugStatusStrip";
+import DebugActionCard from "./DebugActionCard";
 import RightPane from "./RightPane";
 import CommitDialog from "./CommitDialog";
 import SmartMergeDialog from "./SmartMergeDialog";
@@ -303,11 +306,11 @@ export default function SessionDetailPage({
   const tddMutation = useTddToggleMutation(projectName, sessionName);
 
   // --- Prompt streaming ---
-  const { send: sendPrompt, abortClient } = useSendPrompt(
-    projectName,
-    sessionName,
-    conversationId,
-  );
+  const {
+    send: sendPrompt,
+    queue: queueMessage,
+    abortClient,
+  } = useSendPrompt(projectName, sessionName, conversationId);
   const abortPrompt = useAbortPrompt(projectName, sessionName, conversationId);
 
   // --- Local state ---
@@ -656,7 +659,16 @@ export default function SessionDetailPage({
   const handleSendPrompt = useCallback(async () => {
     const currentText = promptTextRef.current;
     const hasImages = pendingImages.length > 0;
-    if ((!currentText.trim() && !hasImages) || sending) return;
+    if (!currentText.trim() && !hasImages) return;
+
+    // Queue into running conversation instead of starting a new prompt
+    if (sending && conversationId) {
+      setPromptText("");
+      await queueMessage(currentText.trim());
+      return;
+    }
+
+    if (sending) return;
 
     // Collect image payloads before clearing
     const imagePayloads: ImagePayload[] = hasImages
@@ -677,14 +689,23 @@ export default function SessionDetailPage({
     );
   }, [
     sending,
+    conversationId,
     messages.length,
     sendPrompt,
+    queueMessage,
     selectedModel,
     selectedEffort,
     effortSupported,
     pendingImages,
     clearImages,
   ]);
+
+  const handleDebugPrompt = useCallback(
+    (text: string) => {
+      void sendPrompt(text, messages.length, selectedModel);
+    },
+    [sendPrompt, messages.length, selectedModel],
+  );
 
   const handleAnswerSubmit = useCallback(
     async (questionId: string, answers: Record<string, string>) => {
@@ -1271,7 +1292,13 @@ export default function SessionDetailPage({
                   <ContextFillIndicator percentage={contextPercent} />
                 </div>
               )}
-              <div className="panel-body" ref={panelBodyRef}>
+              <div
+                className="panel-body"
+                ref={panelBodyRef}
+                {...(activeConversation?.debugMode?.active
+                  ? { "data-debug-mode": "" }
+                  : {})}
+              >
                 {promptError && (
                   <div className="prompt-error">
                     <span>{promptError}</span>
@@ -1379,6 +1406,18 @@ export default function SessionDetailPage({
                                     <MessageContent content={msg.content} />
                                   </div>
                                 )}
+                                {!isUserMsg &&
+                                  virtualRow.index ===
+                                    displayMessages.length - 1 &&
+                                  activeConversation && (
+                                    <DebugActionCard
+                                      projectName={projectName}
+                                      sessionName={sessionName}
+                                      conversation={activeConversation}
+                                      onSendPrompt={handleDebugPrompt}
+                                      isBusy={isBusy}
+                                    />
+                                  )}
                                 {isUserMsg && !isEditing && (
                                   <MessageActions
                                     messageIndex={virtualRow.index}
@@ -1464,6 +1503,13 @@ export default function SessionDetailPage({
               ) : (
                 <div className="prompt-input-area">
                   <div className="prompt-input-wrapper">
+                    {activeConversation && (
+                      <DebugStatusStrip
+                        projectName={projectName}
+                        sessionName={sessionName}
+                        conversation={activeConversation}
+                      />
+                    )}
                     <CommandAutocomplete
                       ref={autocompleteRef}
                       promptText={promptText}
@@ -1609,6 +1655,12 @@ export default function SessionDetailPage({
                               : undefined
                           }
                         />
+                        <DebugModeToggle
+                          projectName={projectName}
+                          sessionName={sessionName}
+                          conversation={activeConversation}
+                          disabled={sending || isReadOnly}
+                        />
                       </div>
                       <div className="prompt-toolbar-end">
                         <VoiceRecordButton
@@ -1620,11 +1672,11 @@ export default function SessionDetailPage({
                           disabled={sending}
                         />
                         <button
-                          className={`send-btn${sending ? " busy" : ""}`}
+                          className={`send-btn${sending && !conversationId ? " busy" : ""}`}
                           disabled={
                             (!promptText.trim() &&
                               pendingImages.length === 0) ||
-                            sending ||
+                            (sending && !conversationId) ||
                             isReadOnly ||
                             isRecording
                           }
@@ -1632,12 +1684,14 @@ export default function SessionDetailPage({
                           title={
                             isReadOnly
                               ? "Session is read-only"
-                              : sending
+                              : sending && !conversationId
                                 ? "Session is busy"
-                                : "Send prompt"
+                                : sending
+                                  ? "Queue message"
+                                  : "Send prompt"
                           }
                         >
-                          {sending ? (
+                          {sending && !conversationId ? (
                             <div
                               className="spinner"
                               style={{

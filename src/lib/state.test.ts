@@ -298,6 +298,147 @@ describe("archive helpers", () => {
   });
 });
 
+describe("recoverStaleConversations", () => {
+  function makeConversation(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "conv-1",
+      status: "running" as const,
+      createdAt: "2024-01-01T00:00:00Z",
+      lastActivityAt: "2024-01-01T00:00:00Z",
+      promptCount: 1,
+      pendingQuestionId: null,
+      pendingQuestions: null,
+      claudeSessionId: null,
+      transcriptPath: null,
+      totalCostUsd: 0,
+      totalDurationMs: 0,
+      totalTurns: 0,
+      forkedFrom: null,
+      role: null,
+      name: null,
+      source: "cc" as const,
+      summary: null,
+      archived: false,
+      contextTokens: null,
+      contextWindowMax: null,
+      debugMode: null,
+      machineSnapshot: null,
+      ...overrides,
+    };
+  }
+
+  function makeState(conversations: ReturnType<typeof makeConversation>[]) {
+    return {
+      projects: {
+        "/proj": {
+          rootPath: "/proj",
+          roadmapItems: [],
+          sessions: {
+            "test-session": {
+              sessionName: "test-session",
+              worktreePath: "/proj/.worktrees/test-session",
+              branchName: "csm/test-session",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations,
+              source: "cc" as const,
+              objective: null,
+              creationMode: "fast" as const,
+              tddEnabled: true,
+              workflow: null,
+              workflowHistory: [],
+            },
+          },
+        },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    };
+  }
+
+  it("resets stale 'running' conversations to 'awaiting'", async () => {
+    const { writeState, readState, recoverStaleConversations } =
+      createTestStateManager();
+    await writeState(makeState([makeConversation({ status: "running" })]));
+
+    const count = await recoverStaleConversations();
+    expect(count).toBe(1);
+
+    const state = await readState();
+    const conv =
+      state.projects["/proj"]!.sessions["test-session"]!.conversations[0]!;
+    expect(conv.status).toBe("awaiting");
+  });
+
+  it("resets stale 'waiting_for_input' conversations to 'awaiting'", async () => {
+    const { writeState, readState, recoverStaleConversations } =
+      createTestStateManager();
+    await writeState(
+      makeState([
+        makeConversation({
+          status: "waiting_for_input",
+          pendingQuestionId: "q1",
+          pendingQuestions: [
+            {
+              question: "?",
+              options: [
+                { value: "yes", label: "Yes" },
+                { value: "no", label: "No" },
+              ],
+            },
+          ],
+        }),
+      ]),
+    );
+
+    const count = await recoverStaleConversations();
+    expect(count).toBe(1);
+
+    const state = await readState();
+    const conv =
+      state.projects["/proj"]!.sessions["test-session"]!.conversations[0]!;
+    expect(conv.status).toBe("awaiting");
+    expect(conv.pendingQuestionId).toBeNull();
+    expect(conv.pendingQuestions).toBeNull();
+  });
+
+  it("skips conversations with machineSnapshot (actor will be rehydrated)", async () => {
+    const { writeState, readState, recoverStaleConversations } =
+      createTestStateManager();
+    await writeState(
+      makeState([
+        makeConversation({
+          status: "running",
+          machineSnapshot: { version: 1, snapshot: { some: "data" } },
+        }),
+      ]),
+    );
+
+    const count = await recoverStaleConversations();
+    expect(count).toBe(0);
+
+    const state = await readState();
+    const conv =
+      state.projects["/proj"]!.sessions["test-session"]!.conversations[0]!;
+    expect(conv.status).toBe("running");
+  });
+
+  it("does not touch 'awaiting' or 'new' conversations", async () => {
+    const { writeState, recoverStaleConversations } = createTestStateManager();
+    await writeState(
+      makeState([
+        makeConversation({ id: "c1", status: "awaiting" }),
+        makeConversation({ id: "c2", status: "new" }),
+      ]),
+    );
+
+    const count = await recoverStaleConversations();
+    expect(count).toBe(0);
+  });
+});
+
 describe("schema backwards compatibility", () => {
   it("readState handles sessions missing the archived field (pre-migration data)", async () => {
     const configReader = createConfigReader(TEST_DIR);

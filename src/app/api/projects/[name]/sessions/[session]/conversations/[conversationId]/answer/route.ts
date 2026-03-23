@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession, mutateConversation } from "@/lib/state";
-import { resolveQuestion } from "@/lib/question-registry";
 import { answerQuestionRequestSchema } from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
+import {
+  getConversationActor,
+  sendConversationEvent,
+} from "@/lib/workflows/conversation/manager";
+import {
+  conversationRuntimeKey,
+  getConversationRuntime,
+} from "@/lib/workflows/conversation/runtime-state";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -52,11 +59,28 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  const resolved = resolveQuestion(body.questionId, body.answers);
-  if (!resolved) {
-    // Question not in memory — server may have restarted.
-    // If the conversation still has matching persisted question data, return 410
-    // and clean up the stale state.
+  // Resolve via runtime state's deferred promise (used by actor-implementations.ts canUseTool)
+  const key = conversationRuntimeKey(projectPath, sessionName, conversationId);
+  const runtime = getConversationRuntime(key);
+  const actor = getConversationActor(projectPath, sessionName, conversationId);
+
+  if (runtime?.activeQuestionResolver) {
+    // Resolve the deferred promise so the SDK's canUseTool callback returns
+    runtime.activeQuestionResolver.resolve(body.answers);
+    runtime.activeQuestionResolver = undefined;
+
+    // Send ANSWER event to the machine for state tracking
+    sendConversationEvent(projectPath, sessionName, conversationId, {
+      type: "ANSWER",
+      questionId: body.questionId,
+      answers: body.answers,
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // No active resolver — check if this is a stale question
+  if (!actor) {
     if (
       conversation.pendingQuestionId === body.questionId &&
       conversation.status === "waiting_for_input"
@@ -81,24 +105,10 @@ export const POST = withTracing(async (request, { params }) => {
         { status: 410 },
       );
     }
-
-    return NextResponse.json(
-      { error: "No pending question found with that ID" } satisfies ApiError,
-      { status: 404 },
-    );
   }
 
-  // Clear persisted question data on successful resolution
-  await mutateConversation(
-    projectPath,
-    sessionName,
-    conversationId,
-    "answer.clearPending",
-    (c) => {
-      c.pendingQuestionId = null;
-      c.pendingQuestions = null;
-    },
-  ).catch(() => {});
-
-  return NextResponse.json({ ok: true });
+  return NextResponse.json(
+    { error: "No pending question found with that ID" } satisfies ApiError,
+    { status: 404 },
+  );
 });

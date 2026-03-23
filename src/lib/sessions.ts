@@ -249,6 +249,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       role: opts.mode === "focus" ? "initialization" : null,
       contextTokens: null,
       contextWindowMax: null,
+      debugMode: null,
+      machineSnapshot: null,
     };
     const session: SessionState = {
       sessionName,

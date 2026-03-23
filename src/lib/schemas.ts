@@ -190,6 +190,62 @@ export const conversationRoleSchema = z
   .default(null);
 export type ConversationRole = z.infer<typeof conversationRoleSchema>;
 
+// ============================================================
+// Debug Mode Schemas
+// ============================================================
+
+export const debugHypothesisSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+});
+export type DebugHypothesis = z.infer<typeof debugHypothesisSchema>;
+
+export const debugModePhaseSchema = z.enum([
+  "hypothesizing",
+  "awaiting_reproduction",
+  "analyzing_evidence",
+  "fixing",
+  "awaiting_verification",
+  "cleanup_instrumentation",
+]);
+export type DebugModePhase = z.infer<typeof debugModePhaseSchema>;
+
+export const debugModeStateSchema = z.object({
+  active: z.boolean(),
+  recording: z.boolean(),
+  logFilePath: z.string(),
+  enteredAt: z.string(),
+  hypotheses: z.array(debugHypothesisSchema).default([]),
+  instructionsDelivered: z.boolean().default(false),
+  phase: debugModePhaseSchema.default("hypothesizing"),
+});
+export type DebugModeState = z.infer<typeof debugModeStateSchema>;
+
+export const debugLogEntrySchema = z.object({
+  timestamp: z.string(),
+  hypothesisId: z.string().nullable().default(null),
+  location: z.string().nullable().default(null),
+  message: z.string(),
+  data: z.record(z.string(), z.unknown()).nullable().default(null),
+});
+export type DebugLogEntry = z.infer<typeof debugLogEntrySchema>;
+
+export const debugProbeEntrySchema = z.object({
+  id: z.string(),
+  file: z.string(),
+  description: z.string(),
+});
+export type DebugProbeEntry = z.infer<typeof debugProbeEntrySchema>;
+
+export const debugInstrumentationManifestSchema = z.object({
+  conversationId: z.string(),
+  createdAt: z.string(),
+  probes: z.array(debugProbeEntrySchema),
+});
+export type DebugInstrumentationManifest = z.infer<
+  typeof debugInstrumentationManifestSchema
+>;
+
 export const conversationStateSchema = z.object({
   id: z.string(),
   name: z.string().nullable().default(null),
@@ -211,6 +267,8 @@ export const conversationStateSchema = z.object({
   role: conversationRoleSchema,
   contextTokens: z.number().nullable().default(null),
   contextWindowMax: z.number().nullable().default(null),
+  debugMode: debugModeStateSchema.nullable().default(null),
+  machineSnapshot: z.unknown().nullable().default(null),
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
@@ -672,6 +730,16 @@ export const forkRequestSchema = z.object({
 });
 export type ForkRequest = z.infer<typeof forkRequestSchema>;
 
+export const debugModeRequestSchema = z.object({
+  action: z.enum(["enter", "exit", "mark_reproduced", "mark_fix_verified"]),
+});
+export type DebugModeRequest = z.infer<typeof debugModeRequestSchema>;
+
+export const debugRecordingRequestSchema = z.object({
+  recording: z.boolean(),
+});
+export type DebugRecordingRequest = z.infer<typeof debugRecordingRequestSchema>;
+
 // ============================================================
 // Git Operations Schemas
 // ============================================================
@@ -928,6 +996,29 @@ export const messageQueuedEventSchema = z.object({
 });
 export type MessageQueuedEvent = z.infer<typeof messageQueuedEventSchema>;
 
+// ============================================================
+// Debug Mode SSE Event Schemas
+// ============================================================
+
+export const debugModeStatusEventSchema = z.object({
+  type: z.literal("debug-mode-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  active: z.boolean(),
+  recording: z.boolean(),
+});
+export type DebugModeStatusEvent = z.infer<typeof debugModeStatusEventSchema>;
+
+export const debugLogReceivedEventSchema = z.object({
+  type: z.literal("debug-log-received"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  entryCount: z.number(),
+});
+export type DebugLogReceivedEvent = z.infer<typeof debugLogReceivedEventSchema>;
+
 /** SSE event type */
 export type SSEEvent =
   | ConversationStatusEvent
@@ -941,7 +1032,9 @@ export type SSEEvent =
   | WorkflowIterationCompleteEvent
   | WorkflowFixPlanUpdatedEvent
   | WorkflowCircuitBreakerEvent
-  | DevServerStatusEvent;
+  | DevServerStatusEvent
+  | DebugModeStatusEvent
+  | DebugLogReceivedEvent;
 
 // ============================================================
 // Command Autocomplete Schemas

@@ -18,6 +18,7 @@ build/
 
 # debug
 npm-debug.log*
+.debug/
 
 # misc
 .DS_Store

@@ -31,6 +31,7 @@ import type {
   RalphLoopConfig,
   RoadmapItemType,
   RoadmapItemStatus,
+  SessionState,
 } from "@/types";
 
 // Re-export ApiCallError for consumers
@@ -1008,6 +1009,141 @@ export function useResolveConflictsMutation(
         sessionName,
         jobId: data.jobId,
         branchName: data.branchName,
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Debug Mode Mutations
+// ---------------------------------------------------------------------------
+
+function debugModeUrl(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+): string {
+  return `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/debug-mode`;
+}
+
+export function useDebugModeToggleMutation(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (action: "enter" | "exit") =>
+      mutationFetch(
+        debugModeUrl(projectName, sessionName, conversationId),
+        "debug-mode-toggle",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.list(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function useDebugPhaseMutation(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (action: "mark_reproduced" | "mark_fix_verified") =>
+      mutationFetch(
+        debugModeUrl(projectName, sessionName, conversationId),
+        "debug-phase-transition",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function useDebugRecordingMutation(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+) {
+  const queryClient = useQueryClient();
+
+  const queryKey = sessionKeys.detail(projectName, sessionName);
+
+  return useMutation({
+    mutationFn: (recording: boolean) =>
+      mutationFetch(
+        `${debugModeUrl(projectName, sessionName, conversationId)}/recording`,
+        "debug-recording-toggle",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recording }),
+        },
+      ),
+    onMutate: async (recording) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<SessionState>(queryKey);
+      if (previous) {
+        queryClient.setQueryData<SessionState>(queryKey, {
+          ...previous,
+          conversations: previous.conversations.map((c) =>
+            c.id === conversationId && c.debugMode
+              ? { ...c, debugMode: { ...c.debugMode, recording } }
+              : c,
+          ),
+        });
+      }
+      return { previous };
+    },
+    onError: (_err, _recording, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData<SessionState>(queryKey, context.previous);
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey });
+    },
+  });
+}
+
+export function useClearDebugLogsMutation(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch(
+        `${debugModeUrl(projectName, sessionName, conversationId)}/logs`,
+        "clear-debug-logs",
+        { method: "DELETE" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
       });
     },
   });

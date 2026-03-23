@@ -228,7 +228,8 @@ export default memo(function MarkdownContent({
           );
         },
         // Custom span: render KiroCommandButton for rehype-tagged spans
-        span({ children, node: _node, ...props }) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        span({ children, node, ...props }) {
           const cmd = (props as Record<string, unknown>)["data-kiro-cmd"];
           if (typeof cmd === "string") {
             const args = (props as Record<string, unknown>)["data-kiro-args"];

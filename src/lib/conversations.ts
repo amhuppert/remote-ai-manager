@@ -78,6 +78,8 @@ export function createConversationService(
           role: opts?.role ?? null,
           contextTokens: null,
           contextWindowMax: null,
+          debugMode: null,
+          machineSnapshot: null,
         };
 
         session.conversations.push(conv);
@@ -278,6 +280,8 @@ export function createConversationService(
           role: null,
           contextTokens: null,
           contextWindowMax: null,
+          debugMode: null,
+          machineSnapshot: null,
         };
 
         sess.conversations.push(conversation);
@@ -340,6 +344,8 @@ export function createConversationService(
           role: null,
           contextTokens: null,
           contextWindowMax: null,
+          debugMode: null,
+          machineSnapshot: null,
         };
 
         session.conversations.push(newConvo);

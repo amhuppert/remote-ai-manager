@@ -27,6 +27,22 @@ export async function register() {
     });
   }
 
+  // Rehydrate conversation actors from persisted machine snapshots
+  try {
+    const { rehydrateConversationActors } =
+      await import("./lib/workflows/conversation/manager");
+    const rehydrated = await rehydrateConversationActors();
+    if (rehydrated > 0) {
+      logger.info("startup.rehydrated_conversation_actors", {
+        count: rehydrated,
+      });
+    }
+  } catch (err) {
+    logger.error("startup.conversation_rehydration_failed", {
+      error: getErrorMessage(err),
+    });
+  }
+
   try {
     initNotificationDb();
     logger.info("startup.notification_db_initialized");

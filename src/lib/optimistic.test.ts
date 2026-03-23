@@ -37,6 +37,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
         role: null,
         contextTokens: null,
         contextWindowMax: null,
+        debugMode: null,
+        machineSnapshot: null,
       },
     ],
     source: "cc",

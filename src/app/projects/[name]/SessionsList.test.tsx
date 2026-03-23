@@ -141,6 +141,8 @@ const makeSessions = (count: number): SessionState[] =>
         role: null,
         contextTokens: null,
         contextWindowMax: null,
+        debugMode: null,
+        machineSnapshot: null,
       },
     ],
     source: "cc" as const,

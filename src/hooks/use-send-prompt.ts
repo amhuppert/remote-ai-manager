@@ -8,6 +8,8 @@ import {
   useCompletePrompt,
   useFailPrompt,
   useShowQuestions,
+  useQueueMessage,
+  useSending,
 } from "@/stores/session-detail.store";
 import { tracedFetch } from "@/lib/traced-fetch";
 import type {
@@ -32,6 +34,8 @@ export interface SendPromptHandle {
     images?: ImagePayload[],
     effort?: EffortLevel,
   ) => Promise<void>;
+  /** Queue a message into a running conversation. */
+  queue: (text: string) => Promise<void>;
   /** Abort the in-flight SSE stream (client-side only). */
   abortClient: () => void;
 }
@@ -47,6 +51,8 @@ export function useSendPrompt(
   const completePrompt = useCompletePrompt();
   const failPrompt = useFailPrompt();
   const showQuestions = useShowQuestions();
+  const queueMessageStore = useQueueMessage();
+  const sending = useSending();
 
   // Abort in-flight streams when session context changes or on unmount
   const abortRef = useRef<AbortController | null>(null);
@@ -245,5 +251,43 @@ export function useSendPrompt(
     ],
   );
 
-  return { send, abortClient };
+  const queue = useCallback(
+    async (text: string) => {
+      if (!conversationId || !sending) return;
+
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      // Show optimistic user message immediately
+      queueMessageStore([{ type: "text" as const, text: trimmed }]);
+
+      // Fire-and-forget POST to queue endpoint
+      const queueUrl = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/queue`;
+      try {
+        const res = await tracedFetch(queueUrl, "queue-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: trimmed }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          failPrompt(data.error ?? "Failed to queue message");
+        }
+      } catch {
+        failPrompt("Failed to queue message");
+      }
+    },
+    [
+      projectName,
+      sessionName,
+      conversationId,
+      sending,
+      queueMessageStore,
+      failPrompt,
+    ],
+  );
+
+  return { send, queue, abortClient };
 }

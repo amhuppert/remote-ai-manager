@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
-import { abortConversation } from "@/lib/abort-registry";
-import { rejectQuestionsForConversation } from "@/lib/question-registry";
-import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
+import { clearDebugLog } from "@/lib/debug-log";
 import { withTracing } from "@/lib/logging";
+import { broadcast } from "@/lib/sse-broadcaster";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-/** POST /api/projects/[name]/sessions/[session]/conversations/[conversationId]/abort — abort a running prompt */
-export const POST = withTracing(async (_request, { params }) => {
+/** DELETE .../debug-mode/logs — clear the debug log file */
+export const DELETE = withTracing(async (_request, { params }) => {
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
   const sessionSlug = resolvedParams["session"] ?? "";
@@ -43,24 +42,28 @@ export const POST = withTracing(async (_request, { params }) => {
     );
   }
 
-  // Reject any pending AskUserQuestion for this conversation
-  rejectQuestionsForConversation(conversationId, "Prompt aborted by user");
-
-  // Signal the AbortController to stop SDK execution
-  const aborted = abortConversation(conversationId);
-
-  // Send ABORT_TURN to the machine for a clean state transition
-  sendConversationEvent(projectPath, sessionName, conversationId, {
-    type: "ABORT_TURN",
-    reason: "user",
-  });
-
-  if (!aborted) {
+  if (!conversation.debugMode?.active) {
     return NextResponse.json(
-      { error: "No running prompt to abort" } satisfies ApiError,
+      { error: "Conversation is not in debug mode" } satisfies ApiError,
       { status: 409 },
     );
   }
 
-  return NextResponse.json({ ok: true });
+  try {
+    clearDebugLog(conversation.debugMode.logFilePath);
+    broadcast({
+      type: "debug-log-received",
+      projectName: name,
+      sessionName,
+      conversationId,
+      entryCount: 0,
+    });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Failed to clear debug logs";
+    return NextResponse.json({ error: message } satisfies ApiError, {
+      status: 500,
+    });
+  }
 });

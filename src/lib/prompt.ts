@@ -1,120 +1,232 @@
-import type {
-  SDKMessage,
-  SDKAssistantMessage,
-  SDKResultSuccess,
-  SDKResultError,
-  SDKSystemMessage,
-} from "@anthropic-ai/claude-agent-sdk";
-import { buildChildEnv } from "./child-env";
+/**
+ * Prompt execution facade — delegates to the conversation XState machine.
+ *
+ * Keeps the same export signatures (`executePromptStream`, `createPromptExecutor`)
+ * so callers (prompt-route-handlers.ts, ralph-loop workflow-route-handlers.ts)
+ * don't need changes. Internally replaces inline orchestration with the
+ * conversation manager lifecycle.
+ */
+
 import type {
   ClaudeModel,
   EffortLevel,
   SessionState,
-  ConversationState,
-  MessageContentBlock,
   ImagePayload,
 } from "@/types";
-import { readConfig } from "./config";
-import { mutateConversation } from "./state";
-import { acquireSessionLock } from "./lock";
-import { getErrorMessage } from "@/lib/errors";
+import type { ConversationActorRef } from "./workflows/conversation/machine";
+import type { ConversationEvent } from "./workflows/conversation/types";
 import { createLogger } from "./logging";
 import { getConversation, createConversation } from "./conversations";
-import { getTranscriptPath } from "./transcript";
-import { externalizeImageBlocks } from "./transcript-images";
-import { broadcast } from "./sse-broadcaster";
-import { dispatchPushForConversationStatus } from "./push-dispatcher";
-import { registerQuestion } from "./question-registry";
-import {
-  registerAbortController,
-  unregisterAbortController,
-} from "./abort-registry";
-import { registerQuery, unregisterQuery } from "./query-registry";
-import { acquireQuerySlot } from "./query-semaphore";
-import { createInitToolServer } from "./ralph-loop/init-tool";
-import { createRoadmapToolServer } from "./roadmap-tools";
-import { createNotificationToolServer } from "./agent-notification-tool";
-import {
-  maybeCreateCodexToolServer,
-  getCodexToolPromptHint,
-} from "./codex-tool";
 import { getProjectDisplayName } from "./project-resolver";
-import { safeAppendTranscriptEntry } from "./transcript";
-import { resolvePluginPaths } from "./commands";
 import { randomUUID } from "node:crypto";
-import { createQuerySession, type TurnResult } from "./query-session";
-import { getSession as getSessionFromRegistry } from "./query-session-registry";
-
-// Prevent nested session detection when CC runs inside Claude Code
-import "@/lib/sdk-env";
 
 const logger = createLogger("prompt");
+
+// ============================================================
+// Constants (imported by actor-implementations.ts)
+// ============================================================
 
 /** Appended to the system prompt when session.tddEnabled is true. */
 export const TDD_INSTRUCTIONS =
   "<methodology>Use red-green TDD. Write a failing test first, run it to confirm it fails, then write the minimum code to make it pass.</methodology>";
+
+/** Appended to the system prompt when a conversation is in debug mode. Placeholders are replaced at runtime. */
+export const DEBUG_MODE_INSTRUCTIONS = `<debug-mode>
+You are in Debug Mode. Debug with runtime evidence, not static guesswork.
+
+## Workflow
+1. **Hypothesize + Instrument (same turn)**: Form 3-5 plausible root-cause hypotheses labeled H1, H2, etc., and immediately add the minimum instrumentation needed to test them in the same response. Explain what each hypothesis predicts and where you instrumented. Do not stop after listing hypotheses.
+2. **Wait for Reproduction**: Provide clear numbered reproduction steps using a blockquote. The UI renders blockquotes as a styled card when in debug mode. Format exactly like this:
+
+> **Reproduction Steps**
+> 1. First step the user should take
+> 2. Second step
+> 3. What to observe
+
+Do not continue until the user says reproduction is complete.
+3. **Analyze Evidence**: Read \`{DEBUG_LOG_FILE_PATH}\` and determine which hypotheses are supported, refuted, or still inconclusive.
+4. **Fix**: Make the smallest change justified by the evidence.
+5. **Verify**: Ask the user to verify the fix.
+6. **Clean Up**: After the user confirms the fix, remove all instrumentation you added.
+
+## Debug Log API
+POST logs to: {DEBUG_LOG_URL}
+
+Each log entry must be a JSON object with:
+- \`timestamp\`: ISO 8601 string
+- \`hypothesisId\`: \`"H1"\`, \`"H2"\`, etc.
+- \`location\`: \`"file/path.ts:lineNumber"\`
+- \`message\`: human-readable description
+- \`data\`: object with the runtime values needed to test the hypothesis
+
+Keep logs narrowly targeted to decision points, inputs, outputs, state transitions, and invariants that distinguish between hypotheses. Instrumentation must be fire-and-forget and must never break the app.
+
+## Instrumentation Markers
+
+Every instrumentation block MUST be wrapped with structured comment markers so it can be reliably found and removed during cleanup.
+
+**Multi-line blocks** — use START/END delimiters:
+\`\`\`
+// @debug-probe:{hypothesisId}:{slug} START
+...instrumentation code...
+// @debug-probe:{hypothesisId}:{slug} END
+\`\`\`
+
+**Single-line additions** (imports, variable declarations needed only for instrumentation):
+\`\`\`
+import { useRef } from "react"; // @debug-probe:{hypothesisId}:{slug}
+\`\`\`
+
+Format: \`@debug-probe:{hypothesisId}:{slug}\` where:
+- \`{hypothesisId}\` is the hypothesis being tested (e.g., \`H1\`, \`H2\`)
+- \`{slug}\` is a short kebab-case label (e.g., \`pre-dispatch\`, \`token-check\`)
+
+Example instrumentation with markers:
+\`\`\`typescript
+// @debug-probe:H1:token-validation START
+void fetch("{DEBUG_LOG_URL}", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    timestamp: new Date().toISOString(),
+    hypothesisId: "H1",
+    location: "src/lib/auth.ts:42",
+    message: "Token validation result",
+    data: { tokenPrefix: token?.slice(0, 8), isValid, userId }
+  })
+}).catch(() => {});
+// @debug-probe:H1:token-validation END
+\`\`\`
+
+## Instrumentation Manifest
+
+After adding instrumentation, write a manifest to \`.debug/instrumentation.json\` that tracks every probe. This manifest is the source of truth for cleanup.
+
+\`\`\`json
+{
+  "conversationId": "the-conversation-id",
+  "createdAt": "ISO 8601 timestamp",
+  "probes": [
+    {
+      "id": "H1:token-validation",
+      "file": "src/lib/auth.ts",
+      "description": "Logs token validation result to test H1"
+    },
+    {
+      "id": "H2:state-before-dispatch",
+      "file": "src/app/api/route.ts",
+      "description": "Captures actor state before event dispatch"
+    }
+  ]
+}
+\`\`\`
+
+Each probe entry has:
+- \`id\`: matches the \`{hypothesisId}:{slug}\` in the comment marker
+- \`file\`: relative path to the instrumented file
+- \`description\`: what this probe captures
+
+Update the manifest whenever you add or remove probes during additional instrumentation passes.
+
+## Cleanup Verification
+
+During cleanup, after removing all instrumentation:
+1. Read \`.debug/instrumentation.json\` to get the list of probed files
+2. Remove all \`@debug-probe\` markers from those files
+3. Run \`grep -r "@debug-probe" src/\` to verify zero results — if any remain, remove them
+4. Delete \`.debug/instrumentation.json\`
+5. Check each modified file for orphaned imports or variables that were only needed by removed probes
+
+## Rules
+- Never propose or implement a fix before reviewing runtime evidence from \`{DEBUG_LOG_FILE_PATH}\`.
+- Prefer a few high-signal logs over broad tracing.
+- If the evidence is incomplete, add another targeted instrumentation pass instead of guessing.
+- NEVER remove instrumentation until the user clicks "Mark Fix". The user controls when cleanup happens, not you.
+- ALL instrumentation MUST use \`@debug-probe\` comment markers and be tracked in \`.debug/instrumentation.json\`.
+</debug-mode>`;
+
+/**
+ * Phase-specific context snippets prepended to every debug turn after the
+ * initial instructions have been delivered. Keeps the agent focused on the
+ * current phase without repeating the full workflow.
+ */
+export const DEBUG_PHASE_CONTEXT: Record<string, string> = {
+  hypothesizing:
+    "<debug-phase>Phase: HYPOTHESIZING. Form hypotheses, add instrumentation, and provide reproduction steps. Return structured JSON output.</debug-phase>",
+  awaiting_reproduction:
+    "<debug-phase>Phase: AWAITING REPRODUCTION. The user has not yet confirmed reproduction. Answer follow-up questions but do NOT analyze evidence or propose fixes yet.</debug-phase>",
+  analyzing_evidence:
+    "<debug-phase>Phase: ANALYZING EVIDENCE. Read the debug log file, classify hypotheses, and return structured JSON output. Do NOT implement fixes in this step.</debug-phase>",
+  fixing:
+    '<debug-phase>Phase: FIXING. Implement the minimal fix justified by the evidence. Return structured JSON with fixSummary and verificationSteps. Do NOT remove any instrumentation — cleanup only happens when the user clicks "Mark Fix".</debug-phase>',
+  awaiting_verification:
+    '<debug-phase>Phase: AWAITING VERIFICATION. The user is verifying the fix. Answer questions but do NOT remove instrumentation — cleanup only happens when the user clicks "Mark Fix".</debug-phase>',
+  cleanup_instrumentation:
+    '<debug-phase>Phase: CLEANUP. Remove ALL debug instrumentation you added (logging statements, fetch calls to the debug log API, etc.). Follow the cleanup procedure: read .debug/instrumentation.json for the probe manifest, remove all @debug-probe markers from listed files, run `grep -r "@debug-probe" src/` to verify none remain, delete .debug/instrumentation.json, and check for orphaned imports. Return structured JSON confirming removal.</debug-phase>',
+};
 
 /** Appended to every system prompt to orient the agent about its CC environment. */
 export const CC_CONTEXT =
   "<command-center>You are running inside Command Center (CC), a web-based control plane for managing remote Claude Code sessions. Your session runs in an isolated git worktree with its own branch. CC provides custom MCP tools: roadmap tools for tracking bugs/features/ideas, Ralph Loop tools for autonomous multi-iteration workflows, and a notification tool to send push notifications to the user's phone when warranted (e.g., long tasks complete, user asked to be notified). Stay within your worktree — CC manages merging, dev servers, and session lifecycle.</command-center>";
 
 // ============================================================
-// Dependency Injection
+// Dependency Injection (simplified — facade only needs conversation CRUD)
 // ============================================================
 
 export interface PromptDeps {
-  readConfig: typeof readConfig;
-  mutateConversation: typeof mutateConversation;
-  acquireSessionLock: typeof acquireSessionLock;
   getConversation: typeof getConversation;
   createConversation: typeof createConversation;
-  safeAppendTranscriptEntry: typeof safeAppendTranscriptEntry;
-  getTranscriptPath: typeof getTranscriptPath;
-  externalizeImageBlocks: typeof externalizeImageBlocks;
-  broadcast: typeof broadcast;
-  registerQuestion: typeof registerQuestion;
-  registerAbortController: typeof registerAbortController;
-  unregisterAbortController: typeof unregisterAbortController;
-  registerQuery: typeof registerQuery;
-  unregisterQuery: typeof unregisterQuery;
-  acquireQuerySlot: typeof acquireQuerySlot;
-  createInitToolServer: typeof createInitToolServer;
-  createNotificationToolServer: typeof createNotificationToolServer;
   getProjectDisplayName: typeof getProjectDisplayName;
-  buildChildEnv: typeof buildChildEnv;
-  getSessionFromRegistry: typeof getSessionFromRegistry;
-  createQuerySession: typeof createQuerySession;
+
+  // Manager operations — injected to avoid vi.mock() on the manager module
+  ensureConversationActor(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<ConversationActorRef>;
+  attachPromptStream(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    streamId: string,
+    emit: (event: string, data: unknown) => void,
+  ): void;
+  detachPromptStream(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    streamId: string,
+  ): void;
+  sendConversationEvent(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    event: ConversationEvent,
+  ): boolean;
 }
 
-const defaultPromptDeps: PromptDeps = {
-  readConfig,
-  mutateConversation,
-  acquireSessionLock,
-  getConversation,
-  createConversation,
-  safeAppendTranscriptEntry,
-  getTranscriptPath,
-  externalizeImageBlocks,
-  broadcast,
-  registerQuestion,
-  registerAbortController,
-  unregisterAbortController,
-  registerQuery,
-  unregisterQuery,
-  acquireQuerySlot,
-  createInitToolServer,
-  createNotificationToolServer,
-  getProjectDisplayName,
-  buildChildEnv,
-  getSessionFromRegistry,
-  createQuerySession,
-};
+let _defaultPromptDeps: PromptDeps | null = null;
+
+async function getDefaultPromptDeps(): Promise<PromptDeps> {
+  if (_defaultPromptDeps) return _defaultPromptDeps;
+  const manager = await import("./workflows/conversation/manager");
+  _defaultPromptDeps = {
+    getConversation,
+    createConversation,
+    getProjectDisplayName,
+    ensureConversationActor: manager.ensureConversationActor,
+    attachPromptStream: manager.attachPromptStream,
+    detachPromptStream: manager.detachPromptStream,
+    sendConversationEvent: manager.sendConversationEvent,
+  };
+  return _defaultPromptDeps;
+}
 
 /**
  * Create a prompt executor with injected dependencies.
  * Tests use this to inject mocks; production uses the default singleton export.
  */
-export function createPromptExecutor(deps: PromptDeps = defaultPromptDeps) {
+export function createPromptExecutor(deps: PromptDeps) {
   return {
     executePromptStream: (
       projectPath: string,
@@ -124,7 +236,7 @@ export function createPromptExecutor(deps: PromptDeps = defaultPromptDeps) {
       conversationId?: string,
       modelId?: ClaudeModel,
       images?: ImagePayload[],
-      options?: { autonomous?: boolean },
+      options?: { autonomous?: boolean; effort?: EffortLevel },
     ) =>
       executePromptStream(
         projectPath,
@@ -141,19 +253,14 @@ export function createPromptExecutor(deps: PromptDeps = defaultPromptDeps) {
 }
 
 /**
- * Execute a prompt via a long-lived QuerySession,
- * streaming output via SSE events.
+ * Execute a prompt by delegating to the conversation XState machine.
  *
- * - New conversation: creates a new QuerySession (SDK subprocess)
- * - Existing conversation with alive session: reuses the existing subprocess
- * - Existing conversation with dead/no session: creates a new one with resume
- *
- * If conversationId is not provided, creates a new conversation.
- * Emits SSE events via the `emit` callback as content arrives.
- * Appends all messages to our own JSONL transcript.
- *
- * Acquires a single-flight lock so only one prompt runs per session.
- * Updates conversation status (running -> awaiting) and prompt count.
+ * 1. Get-or-create conversation
+ * 2. Ensure a conversation actor is running
+ * 3. Attach the SSE emit callback
+ * 4. Send SUBMIT_PROMPT event
+ * 5. Wait for the actor to complete the turn (returns to idle/debug/done)
+ * 6. Detach stream
  */
 export async function executePromptStream(
   projectPath: string,
@@ -164,713 +271,165 @@ export async function executePromptStream(
   modelId?: ClaudeModel,
   images?: ImagePayload[],
   options?: { autonomous?: boolean; effort?: EffortLevel },
-  deps: PromptDeps = defaultPromptDeps,
+  deps?: PromptDeps,
 ): Promise<{ conversationId: string }> {
-  // Destructure deps — shadows module-level imports within this function scope
-  const {
-    readConfig,
-    mutateConversation,
-    acquireSessionLock,
-    getConversation,
-    createConversation,
-    safeAppendTranscriptEntry,
-    getTranscriptPath,
-    externalizeImageBlocks,
-    broadcast,
-    registerQuestion,
-    acquireQuerySlot,
-    createInitToolServer,
-    createNotificationToolServer,
-    getProjectDisplayName,
-    buildChildEnv,
-    getSessionFromRegistry,
-    createQuerySession,
-  } = deps;
+  const resolvedDeps = deps ?? (await getDefaultPromptDeps());
 
-  const config = await readConfig();
-  const release = acquireSessionLock(projectPath, session.sessionName);
-
-  const projectName = getProjectDisplayName(projectPath);
-
-  // Declared here so `finally` can clear it
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  let releaseQuerySlot: (() => void) | undefined;
-
-  try {
-    // Get or create conversation
-    let conversation: ConversationState;
-    if (conversationId) {
-      const existingConv = await getConversation(
-        projectPath,
-        session.sessionName,
-        conversationId,
-      );
-      if (!existingConv) {
-        throw new Error(`Conversation not found: ${conversationId}`);
-      }
-      conversation = existingConv;
-    } else {
-      conversation = await createConversation(projectPath, session.sessionName);
-      conversationId = conversation.id;
-    }
-
-    // Set transcript path eagerly so messages are readable immediately
-    const transcriptPath = await getTranscriptPath(conversationId);
-    if (!conversation.transcriptPath) {
-      await mutateConversation(
-        projectPath,
-        session.sessionName,
-        conversationId,
-        "prompt.setTranscriptPath",
-        (c) => {
-          c.transcriptPath = transcriptPath;
-        },
-      );
-      conversation.transcriptPath = transcriptPath;
-    }
-
-    // Resolve model: explicit parameter > config default
-    const effectiveModel = modelId ?? config.defaultModel;
-
-    const effectiveEffort: EffortLevel | undefined = options?.effort;
-
-    // Acquire concurrency slot (waits if at capacity)
-    releaseQuerySlot = await acquireQuerySlot(`prompt:${session.sessionName}`);
-    // Mark conversation as running
-    await mutateConversation(
+  // Get or create conversation
+  if (conversationId) {
+    const existing = await resolvedDeps.getConversation(
       projectPath,
       session.sessionName,
       conversationId,
-      "prompt.setRunning",
-      (c) => {
-        c.status = "running";
+    );
+    if (!existing) {
+      throw new Error(`Conversation not found: ${conversationId}`);
+    }
+  } else {
+    const conversation = await resolvedDeps.createConversation(
+      projectPath,
+      session.sessionName,
+    );
+    conversationId = conversation.id;
+  }
+
+  const streamId = randomUUID();
+
+  logger.info("prompt.submit", {
+    sessionName: session.sessionName,
+    promptLength: promptText.length,
+    model: modelId ?? "default",
+    conversationId,
+  });
+
+  // Ensure actor exists (creates if needed, loading from state)
+  const actor = await resolvedDeps.ensureConversationActor(
+    projectPath,
+    session.sessionName,
+    conversationId,
+  );
+
+  // Attach SSE stream
+  resolvedDeps.attachPromptStream(
+    projectPath,
+    session.sessionName,
+    conversationId,
+    streamId,
+    emit,
+  );
+
+  try {
+    // Send the prompt event to the machine
+    resolvedDeps.sendConversationEvent(
+      projectPath,
+      session.sessionName,
+      conversationId,
+      {
+        type: "SUBMIT_PROMPT",
+        promptText,
+        images,
+        modelId,
+        effort: options?.effort,
+        autonomous: options?.autonomous,
+        streamId,
       },
     );
 
-    // Broadcast running status
-    try {
-      broadcast({
-        type: "conversation-status",
-        projectName,
-        sessionName: session.sessionName,
-        conversationId,
-        status: "running",
-      });
-    } catch {
-      // fire-and-forget
-    }
+    // Wait for the turn to complete: actor reaches idle, debug.*, or done
+    await waitForTurnCompletion(actor);
 
-    logger.info("prompt.submit", {
-      sessionName: session.sessionName,
-      promptLength: promptText.length,
-      model: effectiveModel ?? "default",
-      resume: !!conversation.claudeSessionId,
-    });
-
-    // Build user content blocks (inline base64 for SDK use)
-    const userContentBlocks: MessageContentBlock[] = [
-      ...(promptText ? [{ type: "text" as const, text: promptText }] : []),
-      ...(images ?? []).map((img) => ({
-        type: "image" as const,
-        mediaType: img.mediaType,
-        base64Data: img.base64Data,
-      })),
-    ];
-
-    // Externalize images to disk for transcript storage (base64 → file refs)
-    const transcriptBlocks = images?.length
-      ? await externalizeImageBlocks(conversationId, userContentBlocks)
-      : userContentBlocks;
-
-    // Persist the user's prompt in the transcript (with model/effort metadata)
-    await safeAppendTranscriptEntry(conversationId, {
-      timestamp: new Date().toISOString(),
-      type: "user",
-      role: "user",
-      content: transcriptBlocks,
-      model: effectiveModel ?? undefined,
-      effort: effectiveEffort,
-    });
-
-    const promptStart = Date.now();
-
-    // ---------------------------------------------------------------
-    // Get-or-create QuerySession
-    // ---------------------------------------------------------------
-    let querySession = getSessionFromRegistry(conversationId);
-
-    // Close the existing session if the model or effort changed since
-    // creation — these options are baked into the SDK subprocess and
-    // can only be updated by creating a new session with resume.
-    if (querySession && querySession.status === "alive") {
-      const modelChanged =
-        effectiveModel != null && querySession.model !== effectiveModel;
-      const effortChanged =
-        effectiveEffort != null && querySession.effort !== effectiveEffort;
-      if (modelChanged || effortChanged) {
-        logger.info("prompt.session_recreate", {
-          sessionName: session.sessionName,
-          reason: modelChanged ? "model_changed" : "effort_changed",
-          from: modelChanged ? querySession.model : querySession.effort,
-          to: modelChanged ? effectiveModel : effectiveEffort,
-        });
-        querySession.close();
-        querySession = undefined;
-      }
-    }
-
-    const isNewSession = !querySession || querySession.status === "dead";
-
-    if (isNewSession) {
-      // Conditionally register the Ralph Loop init tool when no workflow exists
-      const initToolServer =
-        session.workflow == null
-          ? createInitToolServer({
-              projectPath,
-              sessionName: session.sessionName,
-              projectName,
-            })
-          : null;
-
-      // Conditionally register notification tool when push notifications are configured
-      const pushConfig = config.pushNotification;
-      const notificationToolEnabled = pushConfig?.enabled && pushConfig?.topic;
-      const notificationToolServer = notificationToolEnabled
-        ? createNotificationToolServer(
-            { projectName, sessionName: session.sessionName },
-            {
-              sendNotification: async (title, message, tags) => {
-                const { sendAgentNotification } =
-                  await import("./push-notification");
-                await sendAgentNotification(
-                  pushConfig,
-                  title,
-                  message,
-                  tags,
-                  projectName,
-                  session.sessionName,
-                );
-              },
-            },
-          )
-        : null;
-
-      // Conditionally register Codex tool when enabled in config
-      const codexToolServer = maybeCreateCodexToolServer(config.codex, {
-        worktreePath: session.worktreePath,
-        sessionName: session.sessionName,
-      });
-
-      // Resolve enabled plugins for SDK skill loading
-      const pluginPaths = await resolvePluginPaths();
-      const sdkPlugins = pluginPaths.map((p) => ({
-        type: "local" as const,
-        path: p.path,
-      }));
-
-      // Build the canUseTool callback once per session.
-      // It reads the autonomous flag from the session's currentTurnOptions.
-      const canUseTool = async (
-        toolName: string,
-        input: Record<string, unknown>,
-      ) => {
-        if (toolName === "AskUserQuestion") {
-          // Read autonomous flag from the session's per-turn options
-          if (querySession?.currentTurnOptions?.autonomous) {
-            return {
-              behavior: "deny" as const,
-              message:
-                "Autonomous optimistic mode — make your best judgment and proceed without asking questions.",
-            };
-          }
-
-          const questions = input.questions;
-          if (!questions || !Array.isArray(questions)) {
-            return { behavior: "allow" as const, updatedInput: input };
-          }
-
-          const questionId = randomUUID();
-
-          // Set conversation status to waiting_for_input and persist question data
-          await mutateConversation(
-            projectPath,
-            session.sessionName,
-            conversationId!,
-            "prompt.setWaitingForInput",
-            (c) => {
-              c.status = "waiting_for_input";
-              c.pendingQuestionId = questionId;
-              c.pendingQuestions =
-                questions as ConversationState["pendingQuestions"];
-            },
-          ).catch(() => {});
-
-          try {
-            broadcast({
-              type: "conversation-status",
-              projectName,
-              sessionName: session.sessionName,
-              conversationId: conversationId!,
-              status: "waiting_for_input",
-            });
-          } catch {
-            /* fire-and-forget */
-          }
-
-          // Push notification to phone
-          dispatchPushForConversationStatus({
-            projectName,
-            sessionName: session.sessionName,
-            conversationId: conversationId!,
-            status: "waiting_for_input",
-          });
-
-          // Emit question data on the prompt SSE stream
-          emit("ask-question", { questionId, questions });
-
-          // Block until user answers via the answer API
-          const answers = await registerQuestion(questionId, conversationId!);
-
-          // Restore running status and clear persisted question data
-          await mutateConversation(
-            projectPath,
-            session.sessionName,
-            conversationId!,
-            "prompt.resumeRunning",
-            (c) => {
-              c.status = "running";
-              c.pendingQuestionId = null;
-              c.pendingQuestions = null;
-            },
-          ).catch(() => {});
-
-          try {
-            broadcast({
-              type: "conversation-status",
-              projectName,
-              sessionName: session.sessionName,
-              conversationId: conversationId!,
-              status: "running",
-            });
-          } catch {
-            /* fire-and-forget */
-          }
-
-          return {
-            behavior: "allow" as const,
-            updatedInput: { ...input, answers },
-          };
-        }
-
-        // Auto-approve all other tools (bypassPermissions mode)
-        return { behavior: "allow" as const, updatedInput: input };
-      };
-
-      querySession = createQuerySession({
-        conversationId: conversationId!,
-        cwd: session.worktreePath,
-        model: effectiveModel ?? undefined,
-        effort: effectiveEffort,
-        systemPrompt: {
-          type: "preset",
-          preset: "claude_code",
-          append:
-            [
-              CC_CONTEXT,
-              session.objective
-                ? `<objective>${session.objective}</objective>`
-                : null,
-              session.tddEnabled ? TDD_INSTRUCTIONS : null,
-              getCodexToolPromptHint(codexToolServer != null),
-            ]
-              .filter(Boolean)
-              .join("\n\n") || undefined,
-        },
-        resume:
-          conversation.claudeSessionId ??
-          conversation.forkedFrom?.sourceClaudeSessionId ??
-          undefined,
-        forkSession:
-          conversation.forkedFrom != null &&
-          conversation.claudeSessionId == null
-            ? true
-            : undefined,
-        resumeSessionAt:
-          conversation.forkedFrom != null &&
-          conversation.claudeSessionId == null &&
-          conversation.forkedFrom.forkPointAssistantUuid != null
-            ? conversation.forkedFrom.forkPointAssistantUuid
-            : undefined,
-        mcpServers: {
-          ...(initToolServer ? { "ralph-loop-init": initToolServer } : {}),
-          ...(notificationToolServer
-            ? { "agent-notification": notificationToolServer }
-            : {}),
-          ...(codexToolServer ? { "codex-tool": codexToolServer } : {}),
-          "roadmap-tools": createRoadmapToolServer({ projectPath }),
-        },
-        canUseTool: canUseTool as never,
-        env: { ...buildChildEnv(), CLAUDECODE: "" },
-        maxTurns: config.maxTurns,
-        plugins: sdkPlugins,
-        settingSources: ["user", "project", "local"],
-        disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
-        idleTtlMs: config.idleQuerySessionTtlMs,
-      });
-
-      // Register raw Query in query-registry for backward compat (queueMessage)
-      deps.registerQuery(conversationId, querySession.query);
-    }
-
-    // ---------------------------------------------------------------
-    // Safety-net timeout
-    // ---------------------------------------------------------------
-    const abortController = new AbortController();
-    deps.registerAbortController(conversationId, abortController);
-
-    timeoutHandle = setTimeout(() => {
-      logger.warn("prompt.timeout", {
-        sessionName: session.sessionName,
-        timeoutMs: config.claudeTimeoutMs,
-      });
-      // Timeout aborts the session (SDK limitation: no turn-level abort)
-      querySession?.close();
-      abortController.abort();
-    }, config.claudeTimeoutMs);
-
-    // ---------------------------------------------------------------
-    // Send prompt and process messages via emit wrapper
-    // ---------------------------------------------------------------
-
-    // Track contentBlocks emitted this turn for the "empty response" check
-    const contentBlocks: MessageContentBlock[] = [];
-
-    // Wrap the caller's emit to handle transcript writing and SSE emission
-    const turnEmit = async (event: string, data: unknown) => {
-      if (event === "__raw_message") {
-        const msg = data as SDKMessage;
-
-        // Store claudeSessionId immediately on init so resume works even if
-        // the turn doesn't complete (e.g., blocked on AskUserQuestion).
-        if (msg.type === "system") {
-          const sysMsg = msg as SDKSystemMessage;
-          if (sysMsg.subtype === "init" && sysMsg.session_id) {
-            await mutateConversation(
-              projectPath,
-              session.sessionName,
-              conversationId!,
-              "prompt.storeSessionIdEarly",
-              (c) => {
-                c.claudeSessionId = sysMsg.session_id;
-              },
-            );
-          }
-        }
-
-        // Raw SDK message — handle transcript and SSE
-        await processMessage(
-          msg,
-          conversationId!,
-          emit,
-          contentBlocks,
-          safeAppendTranscriptEntry,
-        );
-        return;
-      }
-      emit(event, data);
-    };
-
-    let turnResult: TurnResult | undefined;
-    try {
-      turnResult = await querySession!.sendPrompt(
-        images?.length ? userContentBlocks : promptText,
-        turnEmit,
-        { autonomous: options?.autonomous },
-      );
-    } catch (err) {
-      if (abortController.signal.aborted) {
-        logger.info("prompt.aborted", {
-          sessionName: session.sessionName,
-        });
-        emit("aborted", { message: "Prompt execution was cancelled" });
-      } else {
-        const errorMsg =
-          err instanceof Error ? err.message : "Unknown SDK error";
-        const stderr =
-          err instanceof Error
-            ? (err as Error & { stderr?: string }).stderr
-            : undefined;
-        logger.error("prompt.sdk_error", {
-          sessionName: session.sessionName,
-          error: errorMsg,
-          ...(stderr ? { stderr } : {}),
-        });
-        emit("error", { message: `SDK error: ${errorMsg}` });
-      }
-    }
-
-    const durationMs = Date.now() - promptStart;
     logger.info("prompt.complete", {
       sessionName: session.sessionName,
-      durationMs,
-      contentBlocks: contentBlocks.length,
-      costUsd: turnResult?.costUsd ?? null,
-      numTurns: turnResult?.numTurns ?? null,
+      conversationId,
     });
-
-    // Update conversation metadata from TurnResult
-    const sessionId = turnResult?.sessionId ?? null;
-    const resultCostUsd = turnResult?.costUsd ?? null;
-    const resultDurationMs = turnResult?.durationMs ?? null;
-    const resultNumTurns = turnResult?.numTurns ?? null;
-    const resultContextTokens = turnResult?.contextTokens ?? null;
-    const resultContextWindow = turnResult?.contextWindow ?? null;
-
-    if (contentBlocks.length > 0 || sessionId) {
-      await mutateConversation(
-        projectPath,
-        session.sessionName,
-        conversationId,
-        "prompt.storeResponse",
-        (c) => {
-          c.promptCount++;
-          if (sessionId) {
-            c.claudeSessionId = sessionId;
-          }
-          // Accumulate cost/duration/turns
-          if (resultCostUsd != null) {
-            c.totalCostUsd = (c.totalCostUsd ?? 0) + resultCostUsd;
-          }
-          if (resultDurationMs != null) {
-            c.totalDurationMs = (c.totalDurationMs ?? 0) + resultDurationMs;
-          }
-          if (resultNumTurns != null) {
-            c.totalTurns = (c.totalTurns ?? 0) + resultNumTurns;
-          }
-          // Store latest context window usage
-          if (resultContextTokens != null) {
-            c.contextTokens = resultContextTokens;
-          }
-          if (resultContextWindow != null) {
-            c.contextWindowMax = resultContextWindow;
-          }
-        },
-      ).catch((storeErr) => {
-        logger.error("prompt.store_response_failed", {
-          sessionName: session.sessionName,
-          error: getErrorMessage(storeErr),
-        });
-      });
-    } else {
-      // No content and no session — likely a startup failure
-      emit("error", {
-        message: "Claude exited without producing a response",
-      });
-      logger.warn("prompt.empty_response", {
-        sessionName: session.sessionName,
-      });
-    }
 
     emit("done", {});
     return { conversationId };
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "Prompt failed";
+    logger.error("prompt.facade_error", {
+      sessionName: session.sessionName,
+      conversationId,
+      error: errorMsg,
+    });
+    emit("error", { message: errorMsg });
+    emit("done", {});
+    return { conversationId };
   } finally {
-    // Clear safety-net timeout
-    clearTimeout(timeoutHandle);
-
-    // Release concurrency slot
-    releaseQuerySlot?.();
-
-    // Clean up abort controller (guard for early failures
-    // before conversationId is assigned — e.g. createConversation() throws)
-    if (conversationId) {
-      deps.unregisterAbortController(conversationId);
-
-      // Always mark conversation as awaiting when done (even on error)
-      await mutateConversation(
-        projectPath,
-        session.sessionName,
-        conversationId,
-        "prompt.setAwaiting",
-        (c) => {
-          c.status = "awaiting";
-          c.pendingQuestionId = null;
-          c.pendingQuestions = null;
-        },
-      ).catch((err) => {
-        logger.error("prompt.status_reset_failed", {
-          sessionName: session.sessionName,
-          conversationId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-
-      // Broadcast awaiting status
-      try {
-        broadcast({
-          type: "conversation-status",
-          projectName,
-          sessionName: session.sessionName,
-          conversationId,
-          status: "awaiting",
-        });
-      } catch {
-        // fire-and-forget
-      }
-
-      dispatchPushForConversationStatus({
-        projectName,
-        sessionName: session.sessionName,
-        conversationId,
-        status: "awaiting",
-      });
-    }
-
-    release();
+    resolvedDeps.detachPromptStream(
+      projectPath,
+      session.sessionName,
+      conversationId,
+      streamId,
+    );
   }
 }
 
 /**
- * Process a single SDK message: emit SSE events, append to transcript.
- * Used by the turn emit wrapper in executePromptStream.
+ * Wait for the conversation actor to finish the current turn.
+ * Resolves when the actor returns to idle/debug/done state.
+ * Rejects if the actor errors.
  */
-async function processMessage(
-  message: SDKMessage,
-  conversationId: string,
-  emit: (event: string, data: unknown) => void,
-  contentBlocks: MessageContentBlock[],
-  safeAppendTranscriptEntry: PromptDeps["safeAppendTranscriptEntry"],
-): Promise<void> {
-  const timestamp = new Date().toISOString();
-
-  switch (message.type) {
-    case "system": {
-      const sysMsg = message as SDKSystemMessage;
-      if (sysMsg.subtype === "init") {
-        emit("init", { sessionId: sysMsg.session_id });
-        await safeAppendTranscriptEntry(conversationId, {
-          timestamp,
-          type: "system",
-          raw: { subtype: "init", session_id: sysMsg.session_id },
-        });
-      }
-      // Other system subtypes (status, compact_boundary, task_*) — log to transcript only
-      else {
-        await safeAppendTranscriptEntry(conversationId, {
-          timestamp,
-          type: "system",
-          raw: message,
-        });
-      }
-      break;
+function waitForTurnCompletion(actor: ConversationActorRef): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    // Check if already idle (no active turn)
+    const snap = actor.getSnapshot();
+    if (snap.status === "done") {
+      resolve();
+      return;
     }
 
-    case "assistant": {
-      const asstMsg = message as SDKAssistantMessage;
+    const isSettled = (stateValue: unknown): boolean => {
+      if (stateValue === "idle") return true;
+      if (
+        typeof stateValue === "object" &&
+        stateValue !== null &&
+        "debug" in stateValue
+      )
+        return true;
+      return false;
+    };
 
-      const blocks: MessageContentBlock[] = [];
-      for (const block of asstMsg.message.content) {
-        if (block.type === "text" && "text" in block) {
-          const textBlock: MessageContentBlock = {
-            type: "text",
-            text: block.text,
-          };
-          blocks.push(textBlock);
-          contentBlocks.push(textBlock);
-          emit("content", textBlock);
-        } else if (block.type === "tool_use" && "name" in block) {
-          const toolBlock: MessageContentBlock = {
-            type: "tool_use",
-            name: block.name,
-            input: block.input as Record<string, unknown> | undefined,
-          };
-          blocks.push(toolBlock);
-          contentBlocks.push(toolBlock);
-          emit("content", toolBlock);
+    // If the machine hasn't started acquiring resources yet, we need to wait
+    // for the SUBMIT_PROMPT to take effect first
+    const initialValue = snap.value;
+    let sawTransition = false;
+
+    const sub = actor.subscribe((snapshot) => {
+      // Track that a state transition occurred (machine left idle/debug)
+      if (!sawTransition && !isSettled(snapshot.value)) {
+        sawTransition = true;
+      }
+
+      if (snapshot.status === "done") {
+        sub.unsubscribe();
+        resolve();
+        return;
+      }
+
+      if (snapshot.status === "error") {
+        sub.unsubscribe();
+        reject(new Error("Conversation actor errored"));
+        return;
+      }
+
+      // Only resolve when we've seen a transition AND come back to settled
+      if (sawTransition && isSettled(snapshot.value)) {
+        sub.unsubscribe();
+        resolve();
+      }
+    });
+
+    // If the actor is already settled and hasn't transitioned,
+    // check after a microtask to allow the SUBMIT_PROMPT event to be processed
+    if (isSettled(initialValue)) {
+      queueMicrotask(() => {
+        const current = actor.getSnapshot();
+        if (current.status === "done") {
+          sub.unsubscribe();
+          resolve();
         }
-      }
-
-      await safeAppendTranscriptEntry(conversationId, {
-        timestamp,
-        type: "assistant",
-        role: "assistant",
-        content: blocks,
-        uuid: asstMsg.uuid,
       });
-      break;
     }
-
-    case "user": {
-      // Internal tool_result messages — log to transcript for debugging only.
-      await safeAppendTranscriptEntry(conversationId, {
-        timestamp,
-        type: "tool_result",
-        raw: message,
-      });
-      break;
-    }
-
-    case "result": {
-      const resultMsg = message as SDKResultSuccess | SDKResultError;
-
-      if (resultMsg.subtype === "success") {
-        const success = resultMsg as SDKResultSuccess;
-
-        // When the SDK returns result text but no assistant messages were
-        // produced (e.g. "Unknown skill: X"), emit the result text as content
-        if (success.result && contentBlocks.length === 0) {
-          const textBlock: MessageContentBlock = {
-            type: "text",
-            text: success.result,
-          };
-          contentBlocks.push(textBlock);
-          emit("content", textBlock);
-        }
-
-        emit("result", {
-          sessionId: success.session_id,
-          costUsd: success.total_cost_usd,
-          numTurns: success.num_turns,
-        });
-      } else {
-        const error = resultMsg as SDKResultError;
-        const errorMessage = mapErrorSubtype(error);
-        emit("error", { message: errorMessage });
-      }
-
-      await safeAppendTranscriptEntry(conversationId, {
-        timestamp,
-        type: "result",
-        raw: resultMsg,
-      });
-      break;
-    }
-
-    default: {
-      // stream_event, tool_progress, hook_*, auth_status, etc.
-      await safeAppendTranscriptEntry(conversationId, {
-        timestamp,
-        type: message.type,
-        raw: message,
-      });
-      break;
-    }
-  }
-}
-
-/** Map SDK error result subtypes to human-readable messages */
-function mapErrorSubtype(error: SDKResultError): string {
-  switch (error.subtype) {
-    case "error_max_turns":
-      return `Agent reached maximum turns (${error.num_turns})`;
-    case "error_max_budget_usd":
-      return `Agent exceeded budget limit ($${error.total_cost_usd.toFixed(2)})`;
-    case "error_max_structured_output_retries":
-      return "Agent exceeded structured output retry limit";
-    case "error_during_execution":
-      return error.errors.length > 0
-        ? error.errors.join("; ")
-        : "Error during execution";
-    default:
-      return "Unknown error";
-  }
+  });
 }

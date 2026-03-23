@@ -135,6 +135,9 @@ vi.mock("@/lib/mutations", () => ({
     isPending: false,
   }),
   useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useDebugModeToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useDebugRecordingMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useClearDebugLogsMutation: () => ({ mutate: vi.fn(), isPending: false }),
   ApiCallError: class extends Error {
     code?: string;
   },
@@ -174,6 +177,8 @@ const baseSession: SessionState = {
       role: null,
       contextTokens: null,
       contextWindowMax: null,
+      debugMode: null,
+      machineSnapshot: null,
     },
   ],
   source: "cc" as const,

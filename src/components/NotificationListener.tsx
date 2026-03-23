@@ -152,6 +152,20 @@ export default function NotificationListener(): null {
       }
     });
 
+    // --- Debug Mode SSE events ---
+    es.addEventListener("debug-mode-status", () => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active,
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    });
+
+    es.addEventListener("debug-log-received", () => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active,
+      });
+    });
+
     // --- Dev Server SSE events ---
     es.addEventListener("dev-server-status", () => {
       void queryClient.invalidateQueries({ queryKey: devServerKeys.all });
