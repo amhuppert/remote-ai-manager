@@ -174,6 +174,11 @@ export const roadmapItemMutationResponseSchema = z.object({
   item: roadmapItemSchema,
 });
 
+// -- Debug log stats --
+export const debugLogStatsResponseSchema = z.object({
+  entryCount: z.number(),
+});
+
 // -- Session mutations --
 export const finalizeInitResponseSchema = z.object({
   conversationId: z.string(),

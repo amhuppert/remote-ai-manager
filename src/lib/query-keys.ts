@@ -88,6 +88,18 @@ export const roadmapItemKeys = {
     [...roadmapItemKeys.all, "list", projectName] as const,
 };
 
+export const debugLogKeys = {
+  all: ["debug-logs"] as const,
+  stats: (projectName: string, sessionName: string, conversationId: string) =>
+    [
+      ...debugLogKeys.all,
+      "stats",
+      projectName,
+      sessionName,
+      conversationId,
+    ] as const,
+};
+
 export const kiroDocKeys = {
   all: ["kiro-docs"] as const,
   tree: (projectName: string, sessionName?: string) =>

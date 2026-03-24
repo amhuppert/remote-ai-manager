@@ -12,6 +12,7 @@ import {
   notificationKeys,
   presetKeys,
   roadmapItemKeys,
+  debugLogKeys,
 } from "@/lib/query-keys";
 import {
   apiFetch,
@@ -30,6 +31,7 @@ import {
   workflowResponseSchema,
   workflowIterationsResponseSchema,
   roadmapItemsResponseSchema,
+  debugLogStatsResponseSchema,
 } from "@/lib/api-client";
 import { sessionStateSchema, conversationStateSchema } from "@/lib/schemas";
 import {
@@ -406,5 +408,26 @@ export function useRoadmapItemsQuery(projectName: string) {
         roadmapItemsResponseSchema,
       ).then((r) => r.items),
     refetchInterval: 30_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Debug Log Queries
+// ---------------------------------------------------------------------------
+
+export function useDebugLogEntryCountQuery(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: debugLogKeys.stats(projectName, sessionName, conversationId),
+    queryFn: () =>
+      apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/debug-mode/logs`,
+        debugLogStatsResponseSchema,
+      ).then((r) => r.entryCount),
+    enabled,
   });
 }

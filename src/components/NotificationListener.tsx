@@ -9,6 +9,7 @@ import {
   notificationKeys,
   workflowKeys,
   devServerKeys,
+  debugLogKeys,
 } from "@/lib/query-keys";
 import {
   conversationStatusEventSchema,
@@ -19,6 +20,7 @@ import {
   workflowIterationCompleteEventSchema,
   workflowFixPlanUpdatedEventSchema,
   workflowCircuitBreakerEventSchema,
+  debugLogReceivedEventSchema,
 } from "@/lib/schemas";
 import {
   useAddOrUpdateJob,
@@ -160,10 +162,25 @@ export default function NotificationListener(): null {
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     });
 
-    es.addEventListener("debug-log-received", () => {
+    es.addEventListener("debug-log-received", (event) => {
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active,
       });
+      try {
+        const parsed = debugLogReceivedEventSchema.parse(
+          JSON.parse(event.data),
+        );
+        queryClient.setQueryData(
+          debugLogKeys.stats(
+            parsed.projectName,
+            parsed.sessionName,
+            parsed.conversationId,
+          ),
+          parsed.entryCount,
+        );
+      } catch {
+        // Fall back to invalidation if parse fails
+      }
     });
 
     // --- Dev Server SSE events ---

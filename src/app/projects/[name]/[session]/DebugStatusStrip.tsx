@@ -4,6 +4,7 @@ import {
   useDebugRecordingMutation,
   useClearDebugLogsMutation,
 } from "@/lib/mutations";
+import { useDebugLogEntryCountQuery } from "@/lib/queries";
 import type { ConversationState } from "@/types";
 
 interface DebugStatusStripProps {
@@ -30,10 +31,19 @@ export default function DebugStatusStrip({
 
   const debugMode = conversation.debugMode;
   const isRecording = debugMode?.recording ?? false;
+  const isActive = debugMode?.active ?? false;
 
-  if (!debugMode?.active) return null;
+  const entryCountQuery = useDebugLogEntryCountQuery(
+    projectName,
+    sessionName,
+    conversation.id,
+    isActive,
+  );
+
+  if (!isActive) return null;
 
   const anyPending = recordingMutation.isPending || clearLogsMutation.isPending;
+  const entryCount = entryCountQuery.data ?? 0;
 
   return (
     <div className="debug-status-strip">
@@ -52,6 +62,10 @@ export default function DebugStatusStrip({
         </button>
       </div>
       <div className="debug-status-strip__right">
+        <span className="debug-status-strip__entry-count">
+          {entryCount} {entryCount === 1 ? "entry" : "entries"}
+        </span>
+        <div className="debug-status-strip__sep" />
         <button
           type="button"
           className="debug-status-strip__clear"

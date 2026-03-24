@@ -4,9 +4,13 @@ import { getSession } from "@/lib/state";
 import { clearDebugLog } from "@/lib/debug-log";
 import { withTracing } from "@/lib/logging";
 import { broadcast } from "@/lib/sse-broadcaster";
+import { createDebugLogStatsHandlers } from "@/lib/debug-log-stats-route-handlers";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
+
+/** GET .../debug-mode/logs — return debug log entry count */
+export const GET = createDebugLogStatsHandlers().GET;
 
 /** DELETE .../debug-mode/logs — clear the debug log file */
 export const DELETE = withTracing(async (_request, { params }) => {

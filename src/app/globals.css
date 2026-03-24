@@ -11654,6 +11654,11 @@ html[data-dev-tools-enabled] nextjs-portal {
   }
 }
 
+.debug-status-strip__entry-count {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 .debug-status-strip__clear {
   padding: 2px 8px;
   border: 1px solid var(--border-subtle);

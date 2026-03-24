@@ -120,6 +120,7 @@ vi.mock("@/lib/queries", () => ({
     isLoading: false,
     error: null,
   }),
+  useDebugLogEntryCountQuery: () => ({ data: 0, isPending: false }),
 }));
 
 vi.mock("@/lib/mutations", () => ({
