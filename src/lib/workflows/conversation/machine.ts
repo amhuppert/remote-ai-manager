@@ -215,9 +215,12 @@ export const conversationMachine = setup({
         }),
         onDone: {
           target: "executing",
-          actions: assign({
-            transcriptPath: ({ event }) => event.output.transcriptPath,
-          }),
+          actions: [
+            assign({
+              transcriptPath: ({ event }) => event.output.transcriptPath,
+            }),
+            "syncDerivedFields",
+          ],
         },
         onError: {
           target: "finalizingTurn",
