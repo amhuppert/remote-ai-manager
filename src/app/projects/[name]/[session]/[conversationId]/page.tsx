@@ -19,6 +19,7 @@ export default async function ConversationPage({
       sessionName={decodeURIComponent(session)}
       conversationId={conversationId}
       defaultModel={config.defaultModel}
+      defaultEffort={config.defaultEffort}
       autoFocus={autoFocus === "true"}
     />
   );

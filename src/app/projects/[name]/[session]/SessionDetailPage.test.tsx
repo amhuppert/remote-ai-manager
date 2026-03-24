@@ -243,13 +243,16 @@ beforeEach(() => {
   });
 });
 
-function renderPage() {
+function renderPage(props?: {
+  defaultEffort?: "low" | "medium" | "high" | "max";
+}) {
   return renderWithQuery(
     <SessionDetailPage
       projectName="repo"
       sessionName="test-session"
       conversationId="conv-1"
       defaultModel="sonnet"
+      {...props}
     />,
   );
 }
@@ -457,7 +460,7 @@ describe("SessionDetailPage", () => {
       expect(sendPromptMock).toHaveBeenCalled();
     });
 
-    it("does NOT auto-submit in normal voice mode", () => {
+    it("does NOT auto-submit in normal voice mode (control)", () => {
       let capturedOnResult: ((text: string) => void) | undefined;
       vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
         onResult: (text: string) => void;
@@ -484,6 +487,22 @@ describe("SessionDetailPage", () => {
 
       capturedOnResult!("Hello from voice");
       expect(sendPromptMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("defaultEffort prop", () => {
+    it("uses 'high' as initial effort when no defaultEffort is provided", () => {
+      renderPage();
+      const effortTrigger = document.querySelector(".effort-selector-trigger");
+      expect(effortTrigger).toBeTruthy();
+      expect(effortTrigger!.getAttribute("title")).toContain("High");
+    });
+
+    it("uses defaultEffort prop as initial effort when provided", () => {
+      renderPage({ defaultEffort: "low" });
+      const effortTrigger = document.querySelector(".effort-selector-trigger");
+      expect(effortTrigger).toBeTruthy();
+      expect(effortTrigger!.getAttribute("title")).toContain("Low");
     });
   });
 });

@@ -88,6 +88,13 @@ const mockCreateInitialCircuitBreakerState = vi.fn().mockReturnValue({
   lastErrorPattern: null,
   lastProgressIteration: 0,
 });
+const mockReadConfig = vi.fn().mockResolvedValue({
+  defaultModel: "opus",
+  baseDir: "/tmp",
+  ignorePatterns: [],
+  stateFilePath: "/tmp/state.json",
+  claudeTimeoutMs: 3_600_000,
+});
 
 function createTestDeps(): InitToolDeps {
   return {
@@ -95,6 +102,7 @@ function createTestDeps(): InitToolDeps {
     mutateSession: mockMutateSession,
     dispatchPlanGeneration: mockDispatchPlanGeneration,
     createInitialCircuitBreakerState: mockCreateInitialCircuitBreakerState,
+    readConfig: mockReadConfig,
   };
 }
 
@@ -529,6 +537,148 @@ describe("init-tool", () => {
         description: "DI audit findings — read when implementing DI changes",
       },
     ]);
+  });
+
+  it("uses global config defaultModel and defaultEffort when args omit model/effort", async () => {
+    const { createInitToolServer } = await import("./init-tool");
+
+    mockReadConfig.mockResolvedValue({
+      defaultModel: "sonnet",
+      defaultEffort: "medium",
+      baseDir: "/tmp",
+      ignorePatterns: [],
+      stateFilePath: "/tmp/state.json",
+      claudeTimeoutMs: 3_600_000,
+    });
+
+    const session = makeSession({ tddEnabled: true, workflow: null });
+    mockGetSession.mockResolvedValue(session);
+
+    let capturedWorkflow: RalphLoopWorkflow | null = null;
+    mockMutateSession.mockImplementation(
+      async (
+        _path: string,
+        _name: string,
+        _label: string,
+        mutator: (s: SessionState) => unknown,
+      ) => {
+        mutator(session);
+        capturedWorkflow = session.workflow ?? null;
+        return capturedWorkflow;
+      },
+    );
+
+    createInitToolServer({
+      projectPath: "/projects/test",
+      sessionName: "test-session",
+      projectName: "test",
+      broadcast: mockBroadcast,
+      deps: createTestDeps(),
+    });
+
+    const handler = getHandler("initialize_ralph_loop");
+    await handler({
+      objective: "Test objective",
+      tasks: [{ description: "Task 1", group: 1 }],
+    });
+
+    expect(capturedWorkflow!.config.model).toBe("sonnet");
+    expect(capturedWorkflow!.config.effort).toBe("medium");
+  });
+
+  it("uses explicit model/effort args over global config defaults", async () => {
+    const { createInitToolServer } = await import("./init-tool");
+
+    mockReadConfig.mockResolvedValue({
+      defaultModel: "sonnet",
+      defaultEffort: "medium",
+      baseDir: "/tmp",
+      ignorePatterns: [],
+      stateFilePath: "/tmp/state.json",
+      claudeTimeoutMs: 3_600_000,
+    });
+
+    const session = makeSession({ tddEnabled: true, workflow: null });
+    mockGetSession.mockResolvedValue(session);
+
+    let capturedWorkflow: RalphLoopWorkflow | null = null;
+    mockMutateSession.mockImplementation(
+      async (
+        _path: string,
+        _name: string,
+        _label: string,
+        mutator: (s: SessionState) => unknown,
+      ) => {
+        mutator(session);
+        capturedWorkflow = session.workflow ?? null;
+        return capturedWorkflow;
+      },
+    );
+
+    createInitToolServer({
+      projectPath: "/projects/test",
+      sessionName: "test-session",
+      projectName: "test",
+      broadcast: mockBroadcast,
+      deps: createTestDeps(),
+    });
+
+    const handler = getHandler("initialize_ralph_loop");
+    await handler({
+      objective: "Test objective",
+      tasks: [{ description: "Task 1", group: 1 }],
+      model: "opus",
+      effort: "max",
+    });
+
+    expect(capturedWorkflow!.config.model).toBe("opus");
+    expect(capturedWorkflow!.config.effort).toBe("max");
+  });
+
+  it("falls back to 'high' effort when global config has no defaultEffort", async () => {
+    const { createInitToolServer } = await import("./init-tool");
+
+    mockReadConfig.mockResolvedValue({
+      defaultModel: "opus",
+      baseDir: "/tmp",
+      ignorePatterns: [],
+      stateFilePath: "/tmp/state.json",
+      claudeTimeoutMs: 3_600_000,
+    });
+
+    const session = makeSession({ tddEnabled: true, workflow: null });
+    mockGetSession.mockResolvedValue(session);
+
+    let capturedWorkflow: RalphLoopWorkflow | null = null;
+    mockMutateSession.mockImplementation(
+      async (
+        _path: string,
+        _name: string,
+        _label: string,
+        mutator: (s: SessionState) => unknown,
+      ) => {
+        mutator(session);
+        capturedWorkflow = session.workflow ?? null;
+        return capturedWorkflow;
+      },
+    );
+
+    createInitToolServer({
+      projectPath: "/projects/test",
+      sessionName: "test-session",
+      projectName: "test",
+      broadcast: mockBroadcast,
+      deps: createTestDeps(),
+    });
+
+    const handler = getHandler("initialize_ralph_loop");
+    await handler({
+      objective: "Test objective",
+      tasks: [{ description: "Task 1", group: 1 }],
+    });
+
+    expect(capturedWorkflow!.config.model).toBe("opus");
+    expect(capturedWorkflow!.config.effort).toBe("high");
   });
 
   it("defaults references to empty array when omitted", async () => {

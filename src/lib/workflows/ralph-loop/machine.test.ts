@@ -164,6 +164,8 @@ const defaultInput: RalphLoopInput = {
       noProgressThreshold: 3,
       sameErrorThreshold: 5,
     },
+    model: "opus",
+    effort: "high",
   },
   fixPlan: [makeTask({ id: "task-1" }), makeTask({ id: "task-2" })],
   worktreePath: "/projects/app/.worktrees/test-session",

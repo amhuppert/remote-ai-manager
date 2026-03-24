@@ -92,6 +92,7 @@ export const globalConfigSchema = z.object({
   stateFilePath: z.string(),
   claudeTimeoutMs: z.number(),
   defaultModel: claudeModelSchema.default("opus"),
+  defaultEffort: effortLevelSchema.optional(),
   maxTurns: z.number().int().positive().optional(),
   mergeCheckIntervalMs: z.number().int().positive().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
@@ -379,6 +380,8 @@ export const ralphLoopConfigSchema = z.object({
     noProgressThreshold: 3,
     sameErrorThreshold: 5,
   }),
+  model: claudeModelSchema.default("opus"),
+  effort: effortLevelSchema.default("high"),
 });
 export type RalphLoopConfig = z.infer<typeof ralphLoopConfigSchema>;
 

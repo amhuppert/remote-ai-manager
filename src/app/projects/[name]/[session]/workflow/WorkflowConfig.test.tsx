@@ -13,6 +13,8 @@ const defaultConfig: RalphLoopConfig = {
     noProgressThreshold: 3,
     sameErrorThreshold: 5,
   },
+  model: "opus",
+  effort: "high",
 };
 
 function getInputs(container: HTMLElement) {
@@ -196,16 +198,112 @@ describe("WorkflowConfigPanel", () => {
     }
   });
 
-  it("organizes fields into labeled groups", () => {
+  it("organizes fields into labeled groups including Model & Effort", () => {
     const { container } = render(
       <WorkflowConfigPanel config={defaultConfig} onConfigChange={vi.fn()} />,
     );
     const groupLabels = container.querySelectorAll(
       ".workflow-config-group-label",
     );
-    expect(groupLabels.length).toBe(3);
-    expect(groupLabels[0]!.textContent).toBe("Execution Limits");
-    expect(groupLabels[1]!.textContent).toBe("Circuit Breakers");
-    expect(groupLabels[2]!.textContent).toBe("Context Management");
+    expect(groupLabels.length).toBe(4);
+    expect(groupLabels[0]!.textContent).toBe("Model & Effort");
+    expect(groupLabels[1]!.textContent).toBe("Execution Limits");
+    expect(groupLabels[2]!.textContent).toBe("Circuit Breakers");
+    expect(groupLabels[3]!.textContent).toBe("Context Management");
+  });
+
+  it("renders model and effort selectors", () => {
+    const { container } = render(
+      <WorkflowConfigPanel config={defaultConfig} onConfigChange={vi.fn()} />,
+    );
+    expect(container.querySelector(".model-selector")).toBeTruthy();
+    expect(container.querySelector(".effort-selector")).toBeTruthy();
+  });
+
+  it("calls onConfigChange when model selector value changes", () => {
+    const onConfigChange = vi.fn();
+    const { container } = render(
+      <WorkflowConfigPanel
+        config={defaultConfig}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    // Open model dropdown and select sonnet
+    const modelTrigger = container.querySelector(".model-selector-trigger");
+    expect(modelTrigger).toBeTruthy();
+    fireEvent.click(modelTrigger!);
+    const options = document.querySelectorAll(".model-selector-option");
+    const sonnetOption = Array.from(options).find(
+      (o) => o.querySelector(".model-option-name")?.textContent === "Sonnet",
+    );
+    expect(sonnetOption).toBeTruthy();
+    fireEvent.click(sonnetOption!);
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "sonnet" }),
+    );
+  });
+
+  it("clamps effort to 'high' when switching from opus (max selected) to sonnet", () => {
+    const onConfigChange = vi.fn();
+    const { container } = render(
+      <WorkflowConfigPanel
+        config={{ ...defaultConfig, effort: "max" }}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    // Open model dropdown and select sonnet
+    const modelTrigger = container.querySelector(".model-selector-trigger");
+    fireEvent.click(modelTrigger!);
+    const options = document.querySelectorAll(".model-selector-option");
+    const sonnetOption = Array.from(options).find(
+      (o) => o.querySelector(".model-option-name")?.textContent === "Sonnet",
+    );
+    fireEvent.click(sonnetOption!);
+    // Sonnet doesn't support "max" — should clamp to "high"
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "sonnet", effort: "high" }),
+    );
+  });
+
+  it("applies rainbow-border class when effort is max", () => {
+    const { container } = render(
+      <WorkflowConfigPanel
+        config={{ ...defaultConfig, effort: "max" }}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const effortTrigger = container.querySelector(".effort-selector-trigger");
+    expect(effortTrigger?.classList.contains("rainbow-border")).toBe(true);
+  });
+
+  it("disables effort selector for haiku model", () => {
+    const { container } = render(
+      <WorkflowConfigPanel
+        config={{ ...defaultConfig, model: "haiku" }}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const effortTrigger = container.querySelector(
+      ".effort-selector-trigger",
+    ) as HTMLButtonElement | null;
+    expect(effortTrigger?.disabled).toBe(true);
+  });
+
+  it("disables model and effort selectors in readOnly mode", () => {
+    const { container } = render(
+      <WorkflowConfigPanel
+        config={defaultConfig}
+        readOnly
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const modelTrigger = container.querySelector(
+      ".model-selector-trigger",
+    ) as HTMLButtonElement | null;
+    const effortTrigger = container.querySelector(
+      ".effort-selector-trigger",
+    ) as HTMLButtonElement | null;
+    expect(modelTrigger?.disabled).toBe(true);
+    expect(effortTrigger?.disabled).toBe(true);
   });
 });

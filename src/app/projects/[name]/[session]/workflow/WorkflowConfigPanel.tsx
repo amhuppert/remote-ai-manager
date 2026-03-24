@@ -1,6 +1,10 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import ModelSelector from "@/components/ModelSelector";
+import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
+import { getEffortLevelsForModel, clampEffortToModel } from "@/lib/schemas";
+import type { ClaudeModel, EffortLevel } from "@/lib/schemas";
 import type { RalphLoopConfig } from "./types";
 
 interface WorkflowConfigPanelProps {
@@ -201,6 +205,29 @@ export default function WorkflowConfigPanel({
   const fields = getFieldDefs(config);
   const grouped = groupFields(fields);
 
+  const availableEffortLevels = getEffortLevelsForModel(config.model);
+  const effortSupported = availableEffortLevels.length > 0;
+
+  const handleModelChange = useCallback(
+    (newModel: ClaudeModel) => {
+      const supported = getEffortLevelsForModel(newModel);
+      let newEffort = config.effort;
+      if (supported.length > 0) {
+        const clamped = clampEffortToModel(config.effort, newModel);
+        newEffort = clamped ?? supported[supported.length - 1]!;
+      }
+      onConfigChange?.({ ...config, model: newModel, effort: newEffort });
+    },
+    [config, onConfigChange],
+  );
+
+  const handleEffortChange = useCallback(
+    (newEffort: EffortLevel) => {
+      onConfigChange?.({ ...config, effort: newEffort });
+    },
+    [config, onConfigChange],
+  );
+
   const handleCommit = useCallback(
     (field: FieldDef, value: number) => {
       const patch = field.toConfig(value);
@@ -211,6 +238,38 @@ export default function WorkflowConfigPanel({
 
   return (
     <div className="workflow-config-fields">
+      {/* Model & Effort group */}
+      <div className="workflow-config-group">
+        <span className="workflow-config-group-label">Model &amp; Effort</span>
+        <div className="workflow-config-group-fields">
+          <div className="workflow-config-field">
+            <label>Model</label>
+            <ModelSelector
+              value={config.model}
+              onChange={handleModelChange}
+              disabled={readOnly}
+            />
+          </div>
+          <div className="workflow-config-field">
+            <label>Effort</label>
+            <ReasoningLevelSelector
+              value={config.effort}
+              onChange={handleEffortChange}
+              disabled={readOnly || !effortSupported}
+              disabledTooltip={
+                !effortSupported
+                  ? "Haiku does not support reasoning effort"
+                  : undefined
+              }
+              availableLevels={
+                effortSupported ? availableEffortLevels : undefined
+              }
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Numeric field groups */}
       {[...grouped.entries()].map(([groupName, groupFields]) => (
         <div key={groupName} className="workflow-config-group">
           <span className="workflow-config-group-label">{groupName}</span>

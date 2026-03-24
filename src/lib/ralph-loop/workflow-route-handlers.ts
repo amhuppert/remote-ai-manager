@@ -23,6 +23,7 @@ import { getConversation as defaultGetConversation } from "@/lib/conversations";
 import { executePromptStream as defaultExecutePromptStream } from "@/lib/prompt";
 import { isSessionBusy as defaultIsSessionBusy } from "@/lib/lock";
 import { createInitialCircuitBreakerState } from "@/lib/ralph-loop/circuit-breaker";
+import { readConfig as defaultReadConfig } from "@/lib/config";
 import { fixPlanTaskSchema, runPromptRequestSchema } from "@/lib/schemas";
 import { broadcast as defaultBroadcast } from "@/lib/sse-broadcaster";
 import type {
@@ -56,6 +57,7 @@ export interface WorkflowRouteDeps {
   executePromptStream: typeof defaultExecutePromptStream;
   isSessionBusy: (projectPath: string, sessionName: string) => boolean;
   broadcast: typeof defaultBroadcast;
+  readConfig: typeof defaultReadConfig;
 }
 
 const defaultDeps: WorkflowRouteDeps = {
@@ -71,6 +73,7 @@ const defaultDeps: WorkflowRouteDeps = {
   executePromptStream: defaultExecutePromptStream,
   isSessionBusy: defaultIsSessionBusy,
   broadcast: defaultBroadcast,
+  readConfig: defaultReadConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -171,6 +174,8 @@ export function createWorkflowRouteHandlers(
       body = {};
     }
 
+    const globalConfig = await deps.readConfig();
+
     const workflow = await deps.mutateSession(
       projectPath,
       sessionName,
@@ -191,6 +196,8 @@ export function createWorkflowRouteHandlers(
               noProgressThreshold: 3,
               sameErrorThreshold: 5,
             },
+            model: globalConfig.defaultModel,
+            effort: globalConfig.defaultEffort ?? "high",
           },
           currentIterationConversationId: null,
           circuitBreaker: createInitialCircuitBreakerState(),

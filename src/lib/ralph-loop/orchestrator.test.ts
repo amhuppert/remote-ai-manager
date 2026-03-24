@@ -172,6 +172,8 @@ function makeWorkflow(
       contextSoftLimitTokens: 160_000,
       contextHardLimitTokens: 180_000,
       circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
+      model: "opus",
+      effort: "high",
     },
     circuitBreaker: {
       state: "closed" as const,
@@ -313,6 +315,30 @@ describe("orchestrator", () => {
             permissionMode: "bypassPermissions",
             persistSession: false,
             cwd: params.session.worktreePath,
+          }),
+        }),
+      );
+    });
+
+    it("passes model and effort from workflow config to SDK query", async () => {
+      const orchestrator = createOrchestrator(deps);
+      const params = makeIterationParams({
+        workflow: makeWorkflow({
+          config: {
+            ...makeWorkflow().config,
+            model: "sonnet",
+            effort: "max",
+          },
+        }),
+      });
+
+      await orchestrator.runIteration(params);
+
+      expect(deps.query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: expect.objectContaining({
+            model: "sonnet",
+            effort: "max",
           }),
         }),
       );
@@ -497,6 +523,8 @@ describe("orchestrator", () => {
             contextSoftLimitTokens: 160_000,
             contextHardLimitTokens: 180_000,
             circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
+            model: "opus",
+            effort: "high",
           },
         }),
       });

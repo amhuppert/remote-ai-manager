@@ -334,6 +334,8 @@ async function runIterationImpl(
         settingSources: ["user", "project", "local"],
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
+        model: workflow.config.model,
+        effort: workflow.config.effort,
         cwd: session.worktreePath,
         persistSession: false,
         abortController: iterationAbort,

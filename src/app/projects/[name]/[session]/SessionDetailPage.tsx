@@ -124,6 +124,7 @@ interface Props {
   sessionName: string;
   conversationId: string;
   defaultModel: ModelId;
+  defaultEffort?: EffortLevel;
   autoFocus?: boolean;
 }
 
@@ -165,6 +166,7 @@ export default function SessionDetailPage({
   sessionName,
   conversationId,
   defaultModel,
+  defaultEffort = "high",
   autoFocus,
 }: Props): React.JSX.Element {
   const router = useRouter();
@@ -316,7 +318,8 @@ export default function SessionDetailPage({
   // --- Local state ---
   const [promptText, setPromptText] = useState("");
   const [selectedModel, setSelectedModel] = useState<ModelId>(defaultModel);
-  const [selectedEffort, setSelectedEffort] = useState<EffortLevel>("high");
+  const [selectedEffort, setSelectedEffort] =
+    useState<EffortLevel>(defaultEffort);
   const availableEffortLevels = getEffortLevelsForModel(selectedModel);
   const effortSupported = availableEffortLevels.length > 0;
 

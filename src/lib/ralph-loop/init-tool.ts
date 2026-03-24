@@ -11,6 +11,8 @@ import {
 } from "@/lib/sse-broadcaster";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
+import { readConfig as defaultReadConfig } from "@/lib/config";
+import { claudeModelSchema, effortLevelSchema } from "@/lib/schemas";
 import { createInitialCircuitBreakerState as defaultCreateInitialCircuitBreakerState } from "./circuit-breaker";
 import { dispatchPlanGeneration as defaultDispatchPlanGeneration } from "./plan-generator";
 import { createTask } from "./fix-plan-manager";
@@ -26,6 +28,7 @@ export interface InitToolDeps {
   mutateSession: typeof defaultMutateSession;
   createInitialCircuitBreakerState: typeof defaultCreateInitialCircuitBreakerState;
   dispatchPlanGeneration: typeof defaultDispatchPlanGeneration;
+  readConfig: typeof defaultReadConfig;
 }
 
 const defaultInitToolDeps: InitToolDeps = {
@@ -33,6 +36,7 @@ const defaultInitToolDeps: InitToolDeps = {
   mutateSession: defaultMutateSession,
   createInitialCircuitBreakerState: defaultCreateInitialCircuitBreakerState,
   dispatchPlanGeneration: defaultDispatchPlanGeneration,
+  readConfig: defaultReadConfig,
 };
 
 export interface InitToolContext {
@@ -119,6 +123,16 @@ Analyze the user's request and break it into discrete, actionable tasks:
             .describe(
               "Optional reference documents providing additional context. Create files in memory-bank/ralph-reference/ before calling this tool. Executing agents see file paths and descriptions in their iteration prompt and can read them on demand.",
             ),
+          model: claudeModelSchema
+            .optional()
+            .describe(
+              "Claude model for iterations. Defaults to the CC global config defaultModel.",
+            ),
+          effort: effortLevelSchema
+            .optional()
+            .describe(
+              "Reasoning effort for iterations. Defaults to the CC global config defaultEffort, then 'high'.",
+            ),
         },
         async (args) => {
           const { objective, tasks, references } = args;
@@ -134,6 +148,7 @@ Analyze the user's request and break it into discrete, actionable tasks:
             getSession,
             mutateSession,
             createInitialCircuitBreakerState,
+            readConfig,
           } = { ...defaultInitToolDeps, ...depsOverride };
 
           try {
@@ -164,6 +179,12 @@ Analyze the user's request and break it into discrete, actionable tasks:
               };
             }
 
+            // Resolve model and effort from args, falling back to global config
+            const globalConfig = await readConfig();
+            const resolvedModel = args.model ?? globalConfig.defaultModel;
+            const resolvedEffort =
+              args.effort ?? globalConfig.defaultEffort ?? "high";
+
             // Convert submitted tasks to FixPlanTask entries
             const fixPlan = tasks.map((t) =>
               createTask({ description: t.description, group: t.group }),
@@ -190,6 +211,8 @@ Analyze the user's request and break it into discrete, actionable tasks:
                       noProgressThreshold: 3,
                       sameErrorThreshold: 5,
                     },
+                    model: resolvedModel,
+                    effort: resolvedEffort,
                   },
                   circuitBreaker: createInitialCircuitBreakerState(),
                   iterations: [],

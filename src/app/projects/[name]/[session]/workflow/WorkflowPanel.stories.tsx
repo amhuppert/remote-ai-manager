@@ -19,6 +19,8 @@ const defaultConfig: RalphLoopConfig = {
   contextSoftLimitTokens: 160_000,
   contextHardLimitTokens: 180_000,
   circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
+  model: "opus",
+  effort: "high",
 };
 
 const closedCB: CircuitBreakerState = {

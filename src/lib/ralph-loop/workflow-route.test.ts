@@ -30,6 +30,7 @@ function makeDeps(
     executePromptStream: vi.fn().mockResolvedValue(undefined),
     isSessionBusy: vi.fn().mockReturnValue(false),
     broadcast: vi.fn(),
+    readConfig: vi.fn().mockResolvedValue({ defaultModel: "opus" }),
     ...overrides,
   };
 }
@@ -71,6 +72,8 @@ function makeWorkflow(
       contextSoftLimitTokens: 160_000,
       contextHardLimitTokens: 180_000,
       circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
+      model: "opus",
+      effort: "high",
     },
     circuitBreaker: createInitialCircuitBreakerState(),
     iterations: [],
@@ -137,6 +140,65 @@ describe("workflow lifecycle", () => {
     expect(body.workflow.status).toBe("planning");
     expect(body.workflow.objective).toBe("Build the feature");
     expect(deps.mutateSession).toHaveBeenCalled();
+  });
+
+  it("uses global config defaults for model and effort when creating workflow", async () => {
+    const session = makeSession(null);
+    deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue(session),
+      mutateSession: vi
+        .fn()
+        .mockImplementation(async (_p, _n, _l, mutate) =>
+          mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
+        ),
+      readConfig: vi.fn().mockResolvedValue({
+        defaultModel: "sonnet",
+        defaultEffort: "low",
+      }),
+    });
+
+    const { workflowPOST } = createWorkflowRouteHandlers(deps);
+
+    const response = await workflowPOST(
+      makeRequest("/api/workflow", "POST", {
+        objective: "Use config defaults",
+      }),
+      { params: routeParams },
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.workflow.config.model).toBe("sonnet");
+    expect(body.workflow.config.effort).toBe("low");
+  });
+
+  it("falls back to opus/high when global config has no effort", async () => {
+    const session = makeSession(null);
+    deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue(session),
+      mutateSession: vi
+        .fn()
+        .mockImplementation(async (_p, _n, _l, mutate) =>
+          mutate(session, { rootPath: _p, roadmapItems: [], sessions: {} }),
+        ),
+      readConfig: vi.fn().mockResolvedValue({
+        defaultModel: "opus",
+      }),
+    });
+
+    const { workflowPOST } = createWorkflowRouteHandlers(deps);
+
+    const response = await workflowPOST(
+      makeRequest("/api/workflow", "POST", {
+        objective: "Fallback defaults",
+      }),
+      { params: routeParams },
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.workflow.config.model).toBe("opus");
+    expect(body.workflow.config.effort).toBe("high");
   });
 
   it("rejects duplicate workflow creation", async () => {
