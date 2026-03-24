@@ -52,7 +52,12 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
     return { projects: {}, archivedProjects: [], pinnedProjects: [] };
   }
 
-  /** Read the manager state from disk, returning empty state if file missing */
+  /**
+   * Read the manager state from disk.
+   * Returns empty state only when the file does not exist (first-time setup).
+   * Throws on read errors or schema validation failures to prevent
+   * mutateState from writing empty state over a valid file.
+   */
   async function readState(): Promise<ManagerState> {
     const config = await readConfig();
     const statePath = config.stateFilePath;
@@ -61,11 +66,9 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
       return emptyState();
     }
 
+    let raw: string;
     try {
-      const raw = await readFile(statePath, "utf-8");
-      const parsed: unknown = JSON.parse(raw);
-      const result = managerStateSchema.safeParse(parsed);
-      return result.success ? result.data : emptyState();
+      raw = await readFile(statePath, "utf-8");
     } catch (err) {
       logger.error("state.read_failure", {
         errorType: err instanceof Error ? err.constructor.name : typeof err,
@@ -73,8 +76,39 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
         error: getErrorMessage(err),
         stack: err instanceof Error ? err.stack : undefined,
       });
-      return emptyState();
+      throw new Error(
+        `Failed to read state file ${statePath}: ${getErrorMessage(err)}`,
+      );
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      logger.error("state.parse_failure", {
+        filePath: statePath,
+        error: getErrorMessage(err),
+        fileSize: raw.length,
+        preview: raw.slice(0, 200),
+      });
+      throw new Error(
+        `State file contains invalid JSON (${raw.length} bytes): ${getErrorMessage(err)}`,
+      );
+    }
+
+    const result = managerStateSchema.safeParse(parsed);
+    if (!result.success) {
+      logger.error("state.schema_validation_failure", {
+        filePath: statePath,
+        issues: result.error.issues,
+        issueCount: result.error.issues.length,
+      });
+      throw new Error(
+        `State file failed schema validation (${result.error.issues.length} issues): ${result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+      );
+    }
+
+    return result.data;
   }
 
   /**

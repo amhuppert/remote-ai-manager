@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "./config";
 import { createStateManager } from "./state";
@@ -572,5 +572,61 @@ describe("pin helpers", () => {
 
     const state = await readState();
     expect(state.pinnedProjects.filter((p) => p === "/proj")).toHaveLength(1);
+  });
+});
+
+describe("readState error handling", () => {
+  it("throws when state file contains invalid JSON", async () => {
+    const configReader = createConfigReader(TEST_DIR);
+    const config = await configReader.readConfig();
+    await writeFile(config.stateFilePath, "not valid json{{{", "utf-8");
+
+    const { readState } = createTestStateManager();
+    await expect(readState()).rejects.toThrow();
+  });
+
+  it("throws when state file fails schema validation", async () => {
+    const configReader = createConfigReader(TEST_DIR);
+    const config = await configReader.readConfig();
+    // Valid JSON but doesn't match managerStateSchema
+    await writeFile(
+      config.stateFilePath,
+      JSON.stringify({ projects: "not-an-object" }),
+      "utf-8",
+    );
+
+    const { readState } = createTestStateManager();
+    await expect(readState()).rejects.toThrow();
+  });
+
+  it("mutateState does not overwrite corrupted file with empty state", async () => {
+    const configReader = createConfigReader(TEST_DIR);
+    const config = await configReader.readConfig();
+
+    // Write valid state with real data
+    const validState = {
+      projects: {
+        "/proj": { rootPath: "/proj", sessions: {}, roadmapItems: [] },
+      },
+      archivedProjects: [],
+      pinnedProjects: [],
+    };
+    await writeFile(config.stateFilePath, JSON.stringify(validState), "utf-8");
+
+    // Corrupt the file
+    await writeFile(config.stateFilePath, "corrupted!", "utf-8");
+
+    const { mutateState } = createTestStateManager();
+
+    // mutateState should propagate the readState error
+    await expect(
+      mutateState("test", (state) => {
+        state.pinnedProjects.push("/foo");
+      }),
+    ).rejects.toThrow();
+
+    // File must still contain corrupted content — NOT overwritten with empty state
+    const fileContent = await readFile(config.stateFilePath, "utf-8");
+    expect(fileContent).toBe("corrupted!");
   });
 });
