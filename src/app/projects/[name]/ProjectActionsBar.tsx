@@ -38,7 +38,7 @@ export default function ProjectActionsBar({
       </div>
       <button
         className="btn btn-primary btn-sm project-actions-primary"
-        onClick={onNewSession}
+        onClick={() => onNewSession()}
       >
         <span className="btn-icon">+</span> New Session
       </button>
