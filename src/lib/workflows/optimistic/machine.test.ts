@@ -52,6 +52,8 @@ const testSession: SessionState = {
   objective: "Build a feature",
   creationMode: "optimistic",
   tddEnabled: true,
+  targetBranch: "main",
+  parentSessionName: null,
   workflow: null,
   workflowHistory: [],
 };

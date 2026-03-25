@@ -286,6 +286,8 @@ export async function discoverAndImportWorktrees(
       objective: null,
       creationMode: "fast",
       tddEnabled: true,
+      targetBranch: "main",
+      parentSessionName: null,
       workflow: null,
       workflowHistory: [],
     });

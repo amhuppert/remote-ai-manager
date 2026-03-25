@@ -1,17 +1,20 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useCreateSessionMutation } from "@/lib/mutations";
+import { useSessionsQuery } from "@/lib/queries";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import { FileAutocomplete } from "@/components/FileAutocomplete";
+import BranchSelector from "@/components/BranchSelector";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import ImageAttachmentPreview from "@/app/projects/[name]/[session]/ImageAttachmentPreview";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
+import { useBranchFromParent } from "@/stores/sessions.store";
 import TddToggle from "@/components/TddToggle";
-import type { SessionCreationMode, ImagePayload } from "@/types";
+import type { SessionCreationMode, SessionState, ImagePayload } from "@/types";
 
 /** Derive a git-safe branch suffix from an arbitrary session name */
 function sanitizeBranchName(sessionName: string): string {
@@ -34,8 +37,12 @@ export default function CreateSessionModal({
   onClose,
 }: CreateSessionModalProps): React.JSX.Element | null {
   const router = useRouter();
+  const branchFromParent = useBranchFromParent();
   const [mode, setMode] = useState<SessionCreationMode>("fast");
   const [tddEnabled, setTddEnabled] = useState(true);
+  const [parentSessionName, setParentSessionName] = useState<string | null>(
+    null,
+  );
   const [sessionName, setSessionName] = useState("");
   const [objective, setObjective] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -56,6 +63,27 @@ export default function CreateSessionModal({
   });
 
   const createMutation = useCreateSessionMutation(projectName);
+
+  // Sessions query for BranchSelector
+  const sessionsQuery = useSessionsQuery(projectName);
+  const branchOptions = useMemo(() => {
+    if (!sessionsQuery.data) return [];
+    return sessionsQuery.data
+      .filter((s: SessionState) => !s.finished && !s.archived)
+      .map((s: SessionState) => ({
+        sessionName: s.sessionName,
+        branchName: s.branchName,
+      }));
+  }, [sessionsQuery.data]);
+
+  // Find the selected parent session's branch for hint text
+  const selectedParentBranch = useMemo(() => {
+    if (!parentSessionName || !sessionsQuery.data) return null;
+    const parent = sessionsQuery.data.find(
+      (s: SessionState) => s.sessionName === parentSessionName,
+    );
+    return parent?.branchName ?? null;
+  }, [parentSessionName, sessionsQuery.data]);
 
   // File autocomplete for focus/optimistic textarea
   const currentTextareaValue = mode === "optimistic" ? instructions : objective;
@@ -155,6 +183,7 @@ export default function CreateSessionModal({
       setObjective("");
       setInstructions("");
       setMode("fast");
+      setParentSessionName(branchFromParent);
       setError(null);
       clearImages();
       fireAndForgetRef.current = false;
@@ -213,6 +242,7 @@ export default function CreateSessionModal({
             mode: "fast",
             sessionName: sessionName.trim(),
             tddEnabled,
+            parentSessionName: parentSessionName ?? undefined,
           } as const)
         : mode === "optimistic"
           ? ({
@@ -220,11 +250,13 @@ export default function CreateSessionModal({
               instructions: instructions.trim(),
               images: imagePayloads.length > 0 ? imagePayloads : undefined,
               tddEnabled,
+              parentSessionName: parentSessionName ?? undefined,
             } as const)
           : ({
               mode: "focus",
               objective: objective.trim(),
               tddEnabled,
+              parentSessionName: parentSessionName ?? undefined,
             } as const);
 
     createMutation.mutate(params, {
@@ -275,9 +307,10 @@ export default function CreateSessionModal({
     mode === "optimistic"
       ? "e.g. Fix the typo in the login page header"
       : "e.g. Add user authentication with JWT tokens";
+  const mergeTargetLabel = selectedParentBranch ?? "main";
   const textareaHint =
     mode === "optimistic"
-      ? "Claude will complete this task and merge the result into main"
+      ? `Claude will complete this task and merge the result into ${mergeTargetLabel}`
       : "Agent will research the codebase and clarify the objective first";
 
   return (
@@ -312,6 +345,23 @@ export default function CreateSessionModal({
             </button>
           </div>
 
+          {branchOptions.length > 0 && (
+            <>
+              <label
+                className="form-label"
+                style={{ marginTop: "var(--space-sm)" }}
+              >
+                Branch from
+              </label>
+              <BranchSelector
+                sessions={branchOptions}
+                selectedParent={parentSessionName}
+                onSelect={setParentSessionName}
+                disabled={createMutation.isPending}
+              />
+            </>
+          )}
+
           {mode === "fast" ? (
             <>
               <label
@@ -343,6 +393,12 @@ export default function CreateSessionModal({
                 {sessionName.trim() && sanitizeBranchName(sessionName) ? (
                   <>
                     Branch: <code>csm/{sanitizeBranchName(sessionName)}</code>
+                    {selectedParentBranch && (
+                      <>
+                        {" "}
+                        · Merges into: <code>{selectedParentBranch}</code>
+                      </>
+                    )}
                   </>
                 ) : (
                   "Branch name will be derived from the session name"

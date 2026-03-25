@@ -550,6 +550,8 @@ export const sessionStateSchema = z.object({
   objective: z.string().nullable().default(null),
   creationMode: sessionCreationModeSchema.default("fast"),
   tddEnabled: z.boolean().default(true),
+  targetBranch: z.string().default("main"),
+  parentSessionName: z.string().nullable().default(null),
   workflow: ralphLoopWorkflowSchema.nullable().default(null),
   workflowHistory: z.array(ralphLoopWorkflowSchema).default([]),
 });
@@ -677,17 +679,20 @@ export const createSessionRequestSchema = z.discriminatedUnion("mode", [
     mode: z.literal("fast"),
     sessionName: z.string().trim().min(1),
     tddEnabled: z.boolean().optional(),
+    parentSessionName: z.string().trim().min(1).optional(),
   }),
   z.object({
     mode: z.literal("focus"),
     objective: z.string().trim().min(1),
     tddEnabled: z.boolean().optional(),
+    parentSessionName: z.string().trim().min(1).optional(),
   }),
   z.object({
     mode: z.literal("optimistic"),
     instructions: z.string().trim().min(1),
     images: z.array(imagePayloadSchema).max(5).optional(),
     tddEnabled: z.boolean().optional(),
+    parentSessionName: z.string().trim().min(1).optional(),
   }),
 ]);
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;

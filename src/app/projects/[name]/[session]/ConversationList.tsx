@@ -118,6 +118,7 @@ export default function ConversationList({
   const commits = commitsQuery.data ?? [];
   const decodedProjectName = decodeURIComponent(projectName);
   const isFinished = session?.finished ?? false;
+  const targetBranch = session?.targetBranch ?? "main";
   const hasWorkflow = session?.workflow != null;
 
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
@@ -274,7 +275,7 @@ export default function ConversationList({
                 </button>
                 <button
                   className="btn btn-sm btn-primary"
-                  data-tooltip="Merge into main"
+                  data-tooltip={`Merge into ${targetBranch}`}
                   disabled={mergeDisabled}
                   onClick={() => setShowMergeDialog(true)}
                 >
@@ -388,7 +389,8 @@ export default function ConversationList({
             {/* Finished banner */}
             {isFinished && (
               <div className="finished-banner">
-                This session has been merged into main and is read-only.
+                This session has been merged into {targetBranch} and is
+                read-only.
               </div>
             )}
 

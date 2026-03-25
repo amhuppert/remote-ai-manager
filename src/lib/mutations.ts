@@ -47,13 +47,24 @@ export function useCreateSessionMutation(projectName: string) {
   return useMutation({
     mutationFn: (
       params:
-        | { mode: "fast"; sessionName: string; tddEnabled?: boolean }
-        | { mode: "focus"; objective: string; tddEnabled?: boolean }
+        | {
+            mode: "fast";
+            sessionName: string;
+            tddEnabled?: boolean;
+            parentSessionName?: string;
+          }
+        | {
+            mode: "focus";
+            objective: string;
+            tddEnabled?: boolean;
+            parentSessionName?: string;
+          }
         | {
             mode: "optimistic";
             instructions: string;
             images?: ImagePayload[];
             tddEnabled?: boolean;
+            parentSessionName?: string;
           },
     ) =>
       mutationFetch(

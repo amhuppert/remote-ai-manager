@@ -81,6 +81,7 @@ let storeShowArchived = false;
 
 vi.mock("@/stores/sessions.store", () => ({
   useShowCreateModal: () => storeShowCreateModal,
+  useBranchFromParent: () => null,
   useDeleteTarget: () => storeDeleteTarget,
   useShowArchivedSessions: () => storeShowArchived,
   useOpenCreateModal: () => () => {
@@ -149,6 +150,8 @@ const makeSessions = (count: number): SessionState[] =>
     objective: null,
     creationMode: "fast" as const,
     tddEnabled: true,
+    targetBranch: "main",
+    parentSessionName: null,
     workflow: null,
     workflowHistory: [],
   }));
@@ -220,7 +223,9 @@ describe("SessionsList", () => {
     mockSessionsData.data = makeSessions(1);
     renderWithQuery(<SessionsList projectName="my-project" />);
     expect(screen.getByText("Session")).toBeInTheDocument();
-    expect(screen.getByText("Branch")).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: /Branch/ }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Status")).toBeInTheDocument();
     expect(screen.getByText("Last Activity")).toBeInTheDocument();
     expect(screen.getByText("Prompts")).toBeInTheDocument();

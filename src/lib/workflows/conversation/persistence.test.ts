@@ -57,6 +57,8 @@ function makeState(conversation: ConversationState): ManagerState {
             objective: null,
             creationMode: "fast",
             tddEnabled: true,
+            targetBranch: "main",
+            parentSessionName: null,
             workflow: null,
             workflowHistory: [],
           },

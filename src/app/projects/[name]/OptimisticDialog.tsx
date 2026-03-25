@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useCreateSessionMutation } from "@/lib/mutations";
+import { useSessionsQuery } from "@/lib/queries";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
+import BranchSelector from "@/components/BranchSelector";
 import ImageAttachmentPreview from "@/app/projects/[name]/[session]/ImageAttachmentPreview";
 import {
   CommandAutocomplete,
@@ -14,7 +16,7 @@ import {
 import { FileAutocomplete } from "@/components/FileAutocomplete";
 import TddToggle from "@/components/TddToggle";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
-import type { ImagePayload } from "@/types";
+import type { SessionState, ImagePayload } from "@/types";
 
 interface OptimisticDialogProps {
   projectName: string;
@@ -30,6 +32,9 @@ export default function OptimisticDialog({
   const [instructions, setInstructions] = useState("");
   const [cursorPosition, setCursorPosition] = useState(0);
   const [tddEnabled, setTddEnabled] = useState(true);
+  const [parentSessionName, setParentSessionName] = useState<string | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [promptPlaceholder, setPromptPlaceholder] = useState<string | null>(
     null,
@@ -45,6 +50,26 @@ export default function OptimisticDialog({
   });
 
   const createMutation = useCreateSessionMutation(projectName);
+
+  // Sessions query for BranchSelector
+  const sessionsQuery = useSessionsQuery(projectName);
+  const branchOptions = useMemo(() => {
+    if (!sessionsQuery.data) return [];
+    return sessionsQuery.data
+      .filter((s: SessionState) => !s.finished && !s.archived)
+      .map((s: SessionState) => ({
+        sessionName: s.sessionName,
+        branchName: s.branchName,
+      }));
+  }, [sessionsQuery.data]);
+
+  const selectedParentBranch = useMemo(() => {
+    if (!parentSessionName || !sessionsQuery.data) return null;
+    const parent = sessionsQuery.data.find(
+      (s: SessionState) => s.sessionName === parentSessionName,
+    );
+    return parent?.branchName ?? null;
+  }, [parentSessionName, sessionsQuery.data]);
 
   const fileAutocomplete = useFileAutocomplete({
     projectName,
@@ -91,6 +116,7 @@ export default function OptimisticDialog({
     setPrevOpen(open);
     if (open) {
       setInstructions("");
+      setParentSessionName(null);
       setError(null);
       setPromptPlaceholder(null);
       clearImages();
@@ -142,6 +168,7 @@ export default function OptimisticDialog({
         instructions: instructions.trim(),
         images: imagePayloads.length > 0 ? imagePayloads : undefined,
         tddEnabled,
+        parentSessionName: parentSessionName ?? undefined,
       },
       {
         onSuccess: () => {
@@ -206,7 +233,26 @@ export default function OptimisticDialog({
       <div className="modal">
         <div className="modal-title">Quick Task</div>
         <div className="form-group">
-          <label className="form-label" htmlFor="optimistic-instructions-input">
+          {branchOptions.length > 0 && (
+            <>
+              <label className="form-label">Branch from</label>
+              <BranchSelector
+                sessions={branchOptions}
+                selectedParent={parentSessionName}
+                onSelect={setParentSessionName}
+                disabled={createMutation.isPending}
+              />
+            </>
+          )}
+          <label
+            className="form-label"
+            htmlFor="optimistic-instructions-input"
+            style={
+              branchOptions.length > 0
+                ? { marginTop: "var(--space-sm)" }
+                : undefined
+            }
+          >
             What should Claude do?
           </label>
           <div style={{ position: "relative" }}>
@@ -351,7 +397,8 @@ export default function OptimisticDialog({
             </div>
           </div>
           <div className="form-hint">
-            Claude will complete this task and merge the result into main
+            Claude will complete this task and merge the result into{" "}
+            {selectedParentBranch ?? "main"}
           </div>
           {error && <div className="form-error">{error}</div>}
           <TddToggle

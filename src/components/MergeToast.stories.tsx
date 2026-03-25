@@ -56,3 +56,23 @@ export const LongBranchName = {
     mergeHash: "b4e8d1f",
   },
 } satisfies Story;
+
+/** Merged into a non-main target branch (child session) */
+export const ChildSessionSuccess = {
+  args: {
+    variant: "success",
+    branchName: "csm/auth-tests",
+    targetBranch: "csm/implement-auth",
+    mergeHash: "c5d9e3a",
+  },
+} satisfies Story;
+
+/** Conflicts with a non-main target branch */
+export const ChildSessionConflicts = {
+  args: {
+    variant: "conflicts",
+    branchName: "csm/auth-tests",
+    targetBranch: "csm/implement-auth",
+    conflictCount: 2,
+  },
+} satisfies Story;

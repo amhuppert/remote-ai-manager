@@ -12,12 +12,14 @@ interface DeleteTarget {
 
 interface SessionsState {
   showCreateModal: boolean;
+  /** Pre-filled parent session name when branching from a session */
+  branchFromParent: string | null;
   deleteTarget: DeleteTarget | null;
   showArchived: boolean;
 }
 
 interface SessionsActions {
-  openCreateModal: () => void;
+  openCreateModal: (parentSessionName?: string) => void;
   closeCreateModal: () => void;
   confirmDeleteSession: (target: DeleteTarget) => void;
   cancelDeleteSession: () => void;
@@ -33,17 +35,20 @@ type SessionsStore = SessionsState & SessionsActions;
 const useSessionsStore = create<SessionsStore>()(
   immer((set) => ({
     showCreateModal: false,
+    branchFromParent: null,
     deleteTarget: null,
     showArchived: false,
 
-    openCreateModal: () =>
+    openCreateModal: (parentSessionName) =>
       set((state) => {
         state.showCreateModal = true;
+        state.branchFromParent = parentSessionName ?? null;
       }),
 
     closeCreateModal: () =>
       set((state) => {
         state.showCreateModal = false;
+        state.branchFromParent = null;
       }),
 
     confirmDeleteSession: (target) =>
@@ -69,6 +74,8 @@ const useSessionsStore = create<SessionsStore>()(
 
 export const useShowCreateModal = () =>
   useSessionsStore((s) => s.showCreateModal);
+export const useBranchFromParent = () =>
+  useSessionsStore((s) => s.branchFromParent);
 export const useDeleteTarget = () => useSessionsStore((s) => s.deleteTarget);
 export const useShowArchivedSessions = () =>
   useSessionsStore((s) => s.showArchived);

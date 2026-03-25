@@ -9,6 +9,8 @@ type MergeToastVariant = "success" | "conflicts" | "error";
 interface MergeToastProps {
   variant: MergeToastVariant;
   branchName: string;
+  /** Branch this session merges into */
+  targetBranch?: string;
   /** Number of conflicts (for conflicts variant) */
   conflictCount?: number;
   /** Merge hash (for success variant) */
@@ -97,6 +99,7 @@ function CloseIcon() {
 export default function MergeToast({
   variant,
   branchName,
+  targetBranch = "main",
   conflictCount,
   mergeHash,
   errorMessage,
@@ -133,7 +136,7 @@ export default function MergeToast({
       title: "Merge complete",
       detail: (
         <>
-          <code>{branchName}</code> merged into <code>main</code>
+          <code>{branchName}</code> merged into <code>{targetBranch}</code>
           {mergeHash && (
             <>
               {" "}
@@ -149,7 +152,8 @@ export default function MergeToast({
       title: `${conflictCount ?? 0} conflict${(conflictCount ?? 0) !== 1 ? "s" : ""} found`,
       detail: (
         <>
-          <code>{branchName}</code> has conflicts with <code>main</code>
+          <code>{branchName}</code> has conflicts with{" "}
+          <code>{targetBranch}</code>
         </>
       ),
       actionLabel: "Review",

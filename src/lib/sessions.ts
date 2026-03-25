@@ -265,6 +265,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       objective: opts.objective,
       creationMode: opts.mode,
       tddEnabled: opts.tddEnabled ?? true,
+      targetBranch: "main",
+      parentSessionName: null,
       workflow: null,
       workflowHistory: [],
     };

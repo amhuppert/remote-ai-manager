@@ -45,6 +45,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     objective: "Fix the login bug",
     creationMode: "optimistic",
     tddEnabled: true,
+    targetBranch: "main",
+    parentSessionName: null,
     workflow: null,
     workflowHistory: [],
     ...overrides,

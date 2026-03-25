@@ -200,3 +200,14 @@ export const CommitsOnly = {
     sessionName: "implement-auth",
   },
 } satisfies Story;
+
+/** Child session — diff vs non-main target branch */
+export const ChildSession = {
+  args: {
+    diff: multiFileDiff,
+    commits: sampleCommits,
+    projectName: "my-app",
+    sessionName: "auth-tests",
+    targetBranch: "csm/implement-auth",
+  },
+} satisfies Story;

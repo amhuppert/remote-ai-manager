@@ -55,6 +55,8 @@ const BASE_SESSION: SessionState = {
   objective: null,
   creationMode: "fast",
   tddEnabled: false,
+  targetBranch: "main",
+  parentSessionName: null,
   workflow: null,
   workflowHistory: [],
 };

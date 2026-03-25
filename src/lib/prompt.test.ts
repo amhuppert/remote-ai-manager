@@ -93,6 +93,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     objective: null,
     creationMode: "fast" as const,
     tddEnabled: true,
+    targetBranch: "main",
+    parentSessionName: null,
     workflow: null,
     workflowHistory: [],
     ...overrides,

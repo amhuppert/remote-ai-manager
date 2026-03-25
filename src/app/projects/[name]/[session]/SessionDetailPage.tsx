@@ -252,6 +252,7 @@ export default function SessionDetailPage({
   const conversations = conversationsQuery.data;
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
   const isFinished = session?.finished ?? false;
+  const targetBranch = session?.targetBranch ?? "main";
   const workflowActive = session?.workflow?.status === "running";
   const isIterationConversation =
     session?.conversations.find((c) => c.id === conversationId)?.role ===
@@ -1145,7 +1146,7 @@ export default function SessionDetailPage({
             </button>
             <button
               className="btn btn-sm btn-primary"
-              data-tooltip="Merge into main"
+              data-tooltip={`Merge into ${targetBranch}`}
               disabled={mergeDisabled}
               onClick={requestMerge}
             >
@@ -1241,7 +1242,7 @@ export default function SessionDetailPage({
           {/* Finished banner */}
           {isFinished && (
             <div className="finished-banner">
-              This session has been merged into main and is read-only.
+              This session has been merged into {targetBranch} and is read-only.
             </div>
           )}
           {workflowActive && !isFinished && (

@@ -14,6 +14,8 @@ interface MobileActionMenuProps {
   commitDisabled: boolean;
   /** Whether merge is disabled */
   mergeDisabled: boolean;
+  /** Branch this session merges into */
+  targetBranch?: string;
   /** Commit handler */
   onCommit: () => void;
   /** Merge handler */
@@ -32,6 +34,7 @@ export default function MobileActionMenu({
   tddDisabled = false,
   commitDisabled,
   mergeDisabled,
+  targetBranch = "main",
   onCommit,
   onMerge,
   onDelete,
@@ -136,7 +139,7 @@ export default function MobileActionMenu({
             type="button"
           >
             <span>{"\u2192"}</span>
-            <span>Merge into Main</span>
+            <span>Merge into {targetBranch}</span>
           </button>
         </div>
 

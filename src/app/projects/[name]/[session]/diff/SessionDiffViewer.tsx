@@ -409,6 +409,7 @@ export default function SessionDiffViewer({
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const session = sessionQuery.data;
 
+  const targetBranch = session?.targetBranch ?? "main";
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
   const isBusy =
     sessionStatus === "running" || sessionStatus === "waiting_for_input";
@@ -484,7 +485,7 @@ export default function SessionDiffViewer({
         <div className="session-diff-page stagger-in">
           <div className="sidebar-diff-panel session-diff-fullpage">
             <div className="panel-header">
-              <span className="panel-title">Diff vs main</span>
+              <span className="panel-title">Diff vs {targetBranch}</span>
               <span
                 style={{
                   fontFamily: "var(--font-mono)",

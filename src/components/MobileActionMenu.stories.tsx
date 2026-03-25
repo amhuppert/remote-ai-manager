@@ -73,3 +73,10 @@ export const NoDevServers: Story = {
     devServerCounts: { running: 0, total: 0 },
   },
 };
+
+/** Child session merging into a non-main target */
+export const ChildSession: Story = {
+  args: {
+    targetBranch: "csm/implement-auth",
+  },
+};

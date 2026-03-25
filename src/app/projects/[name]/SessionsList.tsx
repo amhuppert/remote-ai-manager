@@ -133,6 +133,7 @@ export default function SessionsList({
                   projectName={projectName}
                   nameFilter={nameFilter}
                   onNameFilterChange={setNameFilter}
+                  onBranch={openCreateModal}
                 />
               ) : (
                 <div className="empty-state">

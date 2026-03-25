@@ -431,6 +431,8 @@ describe("discoverAndImportWorktrees", () => {
     objective: null,
     creationMode: "fast" as const,
     tddEnabled: true,
+    targetBranch: "main",
+    parentSessionName: null,
     workflow: null,
     workflowHistory: [],
   };
@@ -515,6 +517,8 @@ describe("discoverAndImportWorktrees", () => {
       objective: null,
       creationMode: "fast" as const,
       tddEnabled: true,
+      targetBranch: "main",
+      parentSessionName: null,
       workflow: null,
       workflowHistory: [],
     };
@@ -571,6 +575,8 @@ describe("discoverAndImportWorktrees", () => {
       objective: null,
       creationMode: "fast" as const,
       tddEnabled: true,
+      targetBranch: "main",
+      parentSessionName: null,
       workflow: null,
       workflowHistory: [],
     };
@@ -794,6 +800,8 @@ describe("discoverAndImportWorktrees", () => {
       objective: "Polish the activity panel",
       creationMode: "optimistic" as const,
       tddEnabled: true,
+      targetBranch: "main",
+      parentSessionName: null,
       workflow: null,
       workflowHistory: [],
     };

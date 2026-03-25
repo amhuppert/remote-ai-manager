@@ -12,6 +12,8 @@ interface DiffPanelProps {
   commits?: CommitLogEntry[];
   projectName?: string;
   sessionName?: string;
+  /** Branch this session merges into — used for diff label */
+  targetBranch?: string;
   hotkeysEnabled?: boolean;
 }
 
@@ -20,6 +22,7 @@ export default function DiffPanel({
   commits = [],
   projectName = "",
   sessionName = "",
+  targetBranch = "main",
   hotkeysEnabled = true,
 }: DiffPanelProps): React.JSX.Element {
   const defaultTab: DiffTab = diff.files.length > 0 ? "uncommitted" : "commits";
@@ -130,7 +133,7 @@ export default function DiffPanel({
   return (
     <div className="sidebar-diff-panel">
       <div className="panel-header">
-        <span className="panel-title">Diff vs main</span>
+        <span className="panel-title">Diff vs {targetBranch}</span>
         <span
           style={{
             fontFamily: "var(--font-mono)",

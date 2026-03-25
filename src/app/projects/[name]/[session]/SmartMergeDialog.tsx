@@ -11,6 +11,8 @@ interface SmartMergeDialogProps {
   projectName: string;
   sessionName: string;
   branchName: string;
+  /** Branch this session merges into */
+  targetBranch?: string;
   commitCount: number;
   hasUncommittedChanges: boolean;
   /** Override initial submitted state (for Storybook) */
@@ -51,6 +53,7 @@ export default function SmartMergeDialog({
   projectName,
   sessionName,
   branchName,
+  targetBranch = "main",
   commitCount,
   hasUncommittedChanges,
   initialSubmitted,
@@ -127,15 +130,19 @@ export default function SmartMergeDialog({
             {/* ── Configure form ── */}
             <div className="smart-merge-body">
               <p className="smart-merge-desc">
-                Safely merge <code>{branchName}</code> into <code>main</code>{" "}
-                using a three-step process: sync with main, commit any changes,
-                then squash merge.
+                Safely merge <code>{branchName}</code> into{" "}
+                <code>{targetBranch}</code> using a three-step process: sync
+                with {targetBranch}, commit any changes, then squash merge.
               </p>
 
               <div className="merge-info">
                 <div className="merge-info-row">
                   <span className="merge-info-label">Branch</span>
                   <span className="merge-info-value">{branchName}</span>
+                </div>
+                <div className="merge-info-row">
+                  <span className="merge-info-label">Target</span>
+                  <span className="merge-info-value">{targetBranch}</span>
                 </div>
                 <div className="merge-info-row">
                   <span className="merge-info-label">Commits</span>
@@ -219,7 +226,8 @@ export default function SmartMergeDialog({
                   Merge job started
                 </span>
                 <span className="smart-merge-submitted-detail">
-                  Merging <code>{branchName}</code> into <code>main</code>
+                  Merging <code>{branchName}</code> into{" "}
+                  <code>{targetBranch}</code>
                   {autoResolve
                     ? " with auto-resolve enabled"
                     : " — you\u2019ll be notified if conflicts are found"}

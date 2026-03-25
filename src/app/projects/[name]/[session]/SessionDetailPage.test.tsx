@@ -156,6 +156,8 @@ const baseSession: SessionState = {
   lastActivityAt: "2024-06-15T12:00:00Z",
   archived: false,
   finished: false,
+  targetBranch: "main",
+  parentSessionName: null,
   conversations: [
     {
       id: "conv-1",

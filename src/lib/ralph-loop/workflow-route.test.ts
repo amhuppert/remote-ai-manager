@@ -53,6 +53,8 @@ function makeSession(workflow: RalphLoopWorkflow | null = null): SessionState {
     objective: null,
     creationMode: "fast",
     tddEnabled: true,
+    targetBranch: "main",
+    parentSessionName: null,
     workflow,
     workflowHistory: [],
   };

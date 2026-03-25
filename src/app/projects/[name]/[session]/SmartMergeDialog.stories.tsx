@@ -55,6 +55,27 @@ export const SubmittedManualReview = {
   },
 } satisfies Story;
 
+/** Merging into a non-main target branch (child session) */
+export const ChildSession = {
+  args: {
+    branchName: "csm/auth-tests",
+    sessionName: "auth-tests",
+    targetBranch: "csm/implement-auth",
+    commitCount: 3,
+  },
+} satisfies Story;
+
+/** Child session — submitted confirmation */
+export const ChildSessionSubmitted = {
+  args: {
+    branchName: "csm/auth-tests",
+    sessionName: "auth-tests",
+    targetBranch: "csm/implement-auth",
+    commitCount: 3,
+    initialSubmitted: true,
+  },
+} satisfies Story;
+
 /** Dialog closed */
 export const Closed = {
   args: { open: false },

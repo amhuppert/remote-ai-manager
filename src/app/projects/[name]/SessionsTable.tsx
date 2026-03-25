@@ -131,6 +131,8 @@ interface SessionsTableProps {
   projectName: string;
   nameFilter: string;
   onNameFilterChange: (value: string) => void;
+  /** Called when user clicks the Branch button on a session */
+  onBranch?: (sessionName: string) => void;
 }
 
 export default function SessionsTable({
@@ -138,6 +140,7 @@ export default function SessionsTable({
   projectName,
   nameFilter,
   onNameFilterChange,
+  onBranch,
 }: SessionsTableProps): React.JSX.Element {
   const confirmDelete = useConfirmDeleteSession();
 
@@ -199,6 +202,26 @@ export default function SessionsTable({
           <span className="session-branch">{getValue()}</span>
         ),
       }),
+      columnHelper.accessor("targetBranch", {
+        header: "Target",
+        sortingFn: "alphanumeric",
+        enableColumnFilter: false,
+        cell: ({ getValue }) => {
+          const target = getValue();
+          const isDefault = target === "main";
+          return (
+            <span
+              className="session-target"
+              style={{
+                color: isDefault ? "var(--text-tertiary)" : "var(--cyan)",
+              }}
+              data-tooltip={target}
+            >
+              {target}
+            </span>
+          );
+        },
+      }),
       columnHelper.accessor(
         (row) => (row.finished ? "merged" : deriveSessionStatus(row)),
         {
@@ -241,6 +264,17 @@ export default function SessionsTable({
               }}
             >
               <SessionTddToggle projectName={projectName} session={session} />
+              {!session.finished && onBranch && (
+                <button
+                  className="btn btn-sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onBranch(session.sessionName);
+                  }}
+                >
+                  Branch
+                </button>
+              )}
               <ArchiveButton projectName={projectName} session={session} />
               <button
                 className="btn btn-danger btn-sm"
@@ -259,7 +293,7 @@ export default function SessionsTable({
         },
       }),
     ],
-    [projectName, confirmDelete],
+    [projectName, confirmDelete, onBranch],
   );
 
   const [sorting, setSorting] = useState<SortingState>([
