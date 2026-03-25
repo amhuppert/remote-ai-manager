@@ -93,6 +93,14 @@ function initializeSchema(db: InstanceType<typeof Database>): void {
 
     CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
   `);
+
+  // Migration: add target_branch column if missing
+  const cols = db.prepare("PRAGMA table_info(notifications)").all() as {
+    name: string;
+  }[];
+  if (!cols.some((c) => c.name === "target_branch")) {
+    db.exec(`ALTER TABLE notifications ADD COLUMN target_branch TEXT`);
+  }
 }
 
 // ============================================================
@@ -114,6 +122,7 @@ interface NotificationRow {
   commit_hash: string | null;
   conflict_count: number | null;
   conflict_files: string | null;
+  target_branch: string | null;
   error_message: string | null;
   created_at: string;
 }
@@ -136,6 +145,7 @@ function rowToNotification(row: NotificationRow): Notification {
     ...(row.conflict_files != null && {
       conflictFiles: JSON.parse(row.conflict_files) as string[],
     }),
+    ...(row.target_branch != null && { targetBranch: row.target_branch }),
     ...(row.error_message != null && { errorMessage: row.error_message }),
     createdAt: row.created_at,
   };
@@ -158,6 +168,7 @@ export interface CreateNotificationInput {
   commitHash?: string;
   conflictCount?: number;
   conflictFiles?: string[];
+  targetBranch?: string;
   errorMessage?: string;
 }
 
@@ -168,8 +179,8 @@ export function createNotification(
   const db = getDb();
   const id = randomUUID();
   const stmt = db.prepare(`
-    INSERT INTO notifications (id, type, title, message, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, error_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO notifications (id, type, title, message, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, target_branch, error_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     id,
@@ -185,6 +196,7 @@ export function createNotification(
     input.commitHash ?? null,
     input.conflictCount ?? null,
     input.conflictFiles ? JSON.stringify(input.conflictFiles) : null,
+    input.targetBranch ?? null,
     input.errorMessage ?? null,
   );
 

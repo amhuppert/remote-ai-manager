@@ -42,10 +42,18 @@ export async function executeOptimisticWorkflow(
     session: SessionState;
     instructions: string;
     images?: ImagePayload[];
+    targetWorktreePath?: string;
   },
   deps: OptimisticDeps = defaultOptimisticDeps,
 ): Promise<void> {
-  const { projectPath, projectName, session, instructions, images } = params;
+  const {
+    projectPath,
+    projectName,
+    session,
+    instructions,
+    images,
+    targetWorktreePath,
+  } = params;
   const conversationId = session.conversations[0]?.id;
 
   logger.info("optimistic.workflow_start", {
@@ -89,6 +97,8 @@ export async function executeOptimisticWorkflow(
       branchName: session.branchName,
       message: `Optimistic: ${instructions}`,
       autoResolve: true,
+      targetBranch: session.targetBranch,
+      targetWorktreePath,
     });
 
     logger.info("optimistic.merge_dispatched", {

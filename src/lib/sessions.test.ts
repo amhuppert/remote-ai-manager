@@ -931,9 +931,9 @@ describe("deleteSession", () => {
       "/projects/repo",
     );
 
-    // Verify session removed from state
-    expect(writeStateMock).toHaveBeenCalledTimes(1);
-    const savedState = writeStateMock.mock.calls[0]![0];
+    // Verify session removed from state (2 calls: retarget + delete)
+    expect(writeStateMock).toHaveBeenCalledTimes(2);
+    const savedState = writeStateMock.mock.calls[1]![0];
     expect(
       savedState.projects["/projects/repo"].sessions["to-delete"],
     ).toBeUndefined();
@@ -950,9 +950,9 @@ describe("deleteSession", () => {
     // Git should NOT be called since worktree doesn't exist
     expect(gitMock).not.toHaveBeenCalled();
 
-    // Session should still be removed from state
-    expect(writeStateMock).toHaveBeenCalledTimes(1);
-    const savedState = writeStateMock.mock.calls[0]![0];
+    // Session should still be removed from state (2 calls: retarget + delete)
+    expect(writeStateMock).toHaveBeenCalledTimes(2);
+    const savedState = writeStateMock.mock.calls[1]![0];
     expect(
       savedState.projects["/projects/repo"].sessions["no-worktree"],
     ).toBeUndefined();
@@ -973,8 +973,8 @@ describe("deleteSession", () => {
       { recursive: true, force: true },
     );
 
-    // Session still removed from state
-    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    // Session still removed from state (2 calls: retarget + delete)
+    expect(writeStateMock).toHaveBeenCalledTimes(2);
   });
 
   it("throws error for non-existent project", async () => {
@@ -1014,8 +1014,8 @@ describe("deleteSession", () => {
 
     expect(result.worktreeRemoved).toBe(true);
     expect(gitMock).toHaveBeenCalled();
-    expect(writeStateMock).toHaveBeenCalledTimes(1);
-    const savedState = writeStateMock.mock.calls[0]![0];
+    expect(writeStateMock).toHaveBeenCalledTimes(2);
+    const savedState = writeStateMock.mock.calls[1]![0];
     expect(
       savedState.projects["/projects/repo"].sessions["imported-session"],
     ).toBeUndefined();
@@ -1252,5 +1252,419 @@ describe("createSessionOptimistic", () => {
     // Session returned even though orchestrator hasn't finished
     expect(session.sessionName).toBe("Fast Return");
     expect(session.creationMode).toBe("optimistic");
+  });
+});
+
+// ===========================================================================
+// Task 3.1 – Child session provisioning from a parent branch
+// ===========================================================================
+
+describe("provisionSession — child session branching", () => {
+  it("uses baseBranch in git worktree add instead of main", async () => {
+    mockGitSuccess();
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "child-session",
+      {
+        mode: "fast",
+        objective: null,
+        baseBranch: "csm/parent-branch-abc123",
+      },
+    );
+
+    expect(gitMock).toHaveBeenCalledWith(
+      [
+        "worktree",
+        "add",
+        "-b",
+        session.branchName,
+        session.worktreePath,
+        "csm/parent-branch-abc123",
+      ],
+      "/projects/repo",
+    );
+  });
+
+  it("defaults baseBranch to main when not provided", async () => {
+    mockGitSuccess();
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "regular-session",
+      {
+        mode: "fast",
+        objective: null,
+      },
+    );
+
+    expect(gitMock).toHaveBeenCalledWith(
+      [
+        "worktree",
+        "add",
+        "-b",
+        session.branchName,
+        session.worktreePath,
+        "main",
+      ],
+      "/projects/repo",
+    );
+  });
+
+  it("stores targetBranch on session state", async () => {
+    mockGitSuccess();
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "child-target",
+      {
+        mode: "fast",
+        objective: null,
+        targetBranch: "csm/parent-branch-abc123",
+      },
+    );
+
+    expect(session.targetBranch).toBe("csm/parent-branch-abc123");
+  });
+
+  it("stores parentSessionName on session state", async () => {
+    mockGitSuccess();
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "child-parent",
+      {
+        mode: "fast",
+        objective: null,
+        parentSessionName: "Parent Session",
+      },
+    );
+
+    expect(session.parentSessionName).toBe("Parent Session");
+  });
+
+  it("defaults targetBranch to main and parentSessionName to null", async () => {
+    mockGitSuccess();
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "default-session",
+      {
+        mode: "fast",
+        objective: null,
+      },
+    );
+
+    expect(session.targetBranch).toBe("main");
+    expect(session.parentSessionName).toBeNull();
+  });
+
+  it("persists targetBranch and parentSessionName in state", async () => {
+    mockGitSuccess();
+    await service.provisionSession("/projects/repo", "persisted-child", {
+      mode: "fast",
+      objective: null,
+      targetBranch: "csm/parent-abc",
+      parentSessionName: "Parent",
+    });
+
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const session =
+      savedState.projects["/projects/repo"].sessions["persisted-child"];
+    expect(session.targetBranch).toBe("csm/parent-abc");
+    expect(session.parentSessionName).toBe("Parent");
+  });
+});
+
+// ===========================================================================
+// Task 3.1 – Threading branching opts through creation modes
+// ===========================================================================
+
+describe("createSessionFast — branching opts", () => {
+  it("threads baseBranch, targetBranch, parentSessionName to provisionSession", async () => {
+    mockGitSuccess();
+    const session = await service.createSessionFast(
+      "/projects/repo",
+      "Child Fast",
+      undefined,
+      {
+        baseBranch: "csm/parent-abc",
+        targetBranch: "csm/parent-abc",
+        parentSessionName: "Parent",
+      },
+    );
+
+    expect(gitMock).toHaveBeenCalledWith(
+      expect.arrayContaining(["csm/parent-abc"]),
+      "/projects/repo",
+    );
+    expect(session.targetBranch).toBe("csm/parent-abc");
+    expect(session.parentSessionName).toBe("Parent");
+  });
+});
+
+describe("createSessionFocus — branching opts", () => {
+  it("threads baseBranch, targetBranch, parentSessionName to provisionSession", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("Child Focus"));
+    mockGitSuccess();
+    const session = await service.createSessionFocus(
+      "/projects/repo",
+      "Build child feature",
+      undefined,
+      {
+        baseBranch: "csm/parent-abc",
+        targetBranch: "csm/parent-abc",
+        parentSessionName: "Parent",
+      },
+    );
+
+    expect(gitMock).toHaveBeenCalledWith(
+      expect.arrayContaining(["csm/parent-abc"]),
+      "/projects/repo",
+    );
+    expect(session.targetBranch).toBe("csm/parent-abc");
+    expect(session.parentSessionName).toBe("Parent");
+  });
+});
+
+describe("createSessionOptimistic — branching opts", () => {
+  it("threads baseBranch, targetBranch, parentSessionName to provisionSession", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("Child Opt"));
+    mockGitSuccess();
+    const session = await service.createSessionOptimistic(
+      "/projects/repo",
+      "Build child optimistic",
+      undefined,
+      undefined,
+      {
+        baseBranch: "csm/parent-abc",
+        targetBranch: "csm/parent-abc",
+        parentSessionName: "Parent",
+      },
+    );
+
+    expect(gitMock).toHaveBeenCalledWith(
+      expect.arrayContaining(["csm/parent-abc"]),
+      "/projects/repo",
+    );
+    expect(session.targetBranch).toBe("csm/parent-abc");
+    expect(session.parentSessionName).toBe("Parent");
+  });
+});
+
+// ===========================================================================
+// Task 3.2 – retargetOrphanedChildren
+// ===========================================================================
+
+describe("retargetOrphanedChildren", () => {
+  function stateWithChildren(
+    parentName: string,
+    children: Array<{
+      name: string;
+      targetBranch: string;
+      parentSessionName: string | null;
+    }>,
+  ) {
+    const sessions: Record<string, Record<string, unknown>> = {
+      [parentName]: {
+        sessionName: parentName,
+        worktreePath: `/projects/repo/.worktrees/${parentName}`,
+        branchName: `csm/${parentName}`,
+        createdAt: "2024-01-01T00:00:00Z",
+        lastActivityAt: "2024-01-01T00:00:00Z",
+        archived: false,
+        finished: false,
+        conversations: [],
+        source: "cc",
+        objective: null,
+        creationMode: "fast",
+        tddEnabled: true,
+        targetBranch: "main",
+        parentSessionName: null,
+        workflow: null,
+      },
+    };
+    for (const child of children) {
+      sessions[child.name] = {
+        sessionName: child.name,
+        worktreePath: `/projects/repo/.worktrees/${child.name}`,
+        branchName: `csm/${child.name}`,
+        createdAt: "2024-01-01T00:00:00Z",
+        lastActivityAt: "2024-01-01T00:00:00Z",
+        archived: false,
+        finished: false,
+        conversations: [],
+        source: "cc",
+        objective: null,
+        creationMode: "fast",
+        tddEnabled: true,
+        targetBranch: child.targetBranch,
+        parentSessionName: child.parentSessionName,
+        workflow: null,
+      };
+    }
+    return {
+      projects: {
+        "/projects/repo": {
+          rootPath: "/projects/repo",
+          sessions,
+          roadmapItems: [],
+        },
+      },
+      archivedProjects: [] as string[],
+      pinnedProjects: [] as string[],
+    };
+  }
+
+  it("resets direct children targetBranch to main and parentSessionName to null", async () => {
+    const state = stateWithChildren("Parent", [
+      {
+        name: "Child1",
+        targetBranch: "csm/Parent",
+        parentSessionName: "Parent",
+      },
+      {
+        name: "Child2",
+        targetBranch: "csm/Parent",
+        parentSessionName: "Parent",
+      },
+    ]);
+    readStateMock.mockResolvedValue(state);
+
+    await service.retargetOrphanedChildren("/projects/repo", "Parent");
+
+    expect(writeStateMock).toHaveBeenCalled();
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const child1 = savedState.projects["/projects/repo"].sessions["Child1"];
+    const child2 = savedState.projects["/projects/repo"].sessions["Child2"];
+    expect(child1.targetBranch).toBe("main");
+    expect(child1.parentSessionName).toBeNull();
+    expect(child2.targetBranch).toBe("main");
+    expect(child2.parentSessionName).toBeNull();
+  });
+
+  it("does not affect sessions that are not children of the parent", async () => {
+    const state = stateWithChildren("Parent", [
+      {
+        name: "Child",
+        targetBranch: "csm/Parent",
+        parentSessionName: "Parent",
+      },
+      { name: "Unrelated", targetBranch: "main", parentSessionName: null },
+    ]);
+    readStateMock.mockResolvedValue(state);
+
+    await service.retargetOrphanedChildren("/projects/repo", "Parent");
+
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const unrelated =
+      savedState.projects["/projects/repo"].sessions["Unrelated"];
+    expect(unrelated.targetBranch).toBe("main");
+    expect(unrelated.parentSessionName).toBeNull();
+  });
+
+  it("does not cascade to transitive descendants (grandchildren)", async () => {
+    const state = stateWithChildren("Parent", [
+      {
+        name: "Child",
+        targetBranch: "csm/Parent",
+        parentSessionName: "Parent",
+      },
+      {
+        name: "Grandchild",
+        targetBranch: "csm/Child",
+        parentSessionName: "Child",
+      },
+    ]);
+    readStateMock.mockResolvedValue(state);
+
+    await service.retargetOrphanedChildren("/projects/repo", "Parent");
+
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const grandchild =
+      savedState.projects["/projects/repo"].sessions["Grandchild"];
+    // Grandchild still points to Child — not retargeted
+    expect(grandchild.targetBranch).toBe("csm/Child");
+    expect(grandchild.parentSessionName).toBe("Child");
+  });
+
+  it("is a no-op when no children exist", async () => {
+    const state = stateWithChildren("Parent", []);
+    readStateMock.mockResolvedValue(state);
+
+    await service.retargetOrphanedChildren("/projects/repo", "Parent");
+
+    // mutateState still called but no sessions changed
+    expect(deps.mutateState).toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// Task 3.2 – deleteSession calls retargetOrphanedChildren before removal
+// ===========================================================================
+
+describe("deleteSession — orphan retargeting", () => {
+  it("retargets children before removing parent from state", async () => {
+    const state = {
+      projects: {
+        "/projects/repo": {
+          rootPath: "/projects/repo",
+          sessions: {
+            Parent: {
+              sessionName: "Parent",
+              worktreePath: "/projects/repo/.worktrees/parent",
+              branchName: "csm/parent",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+              source: "cc",
+              objective: null,
+              creationMode: "fast",
+              tddEnabled: true,
+              targetBranch: "main",
+              parentSessionName: null,
+              workflow: null,
+            },
+            Child: {
+              sessionName: "Child",
+              worktreePath: "/projects/repo/.worktrees/child",
+              branchName: "csm/child",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+              source: "cc",
+              objective: null,
+              creationMode: "fast",
+              tddEnabled: true,
+              targetBranch: "csm/parent",
+              parentSessionName: "Parent",
+              workflow: null,
+            },
+          },
+          roadmapItems: [],
+        },
+      },
+      archivedProjects: [] as string[],
+      pinnedProjects: [] as string[],
+    };
+    readStateMock.mockResolvedValue(state);
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    await service.deleteSession("/projects/repo", "Parent");
+
+    // mutateState called 3 times: retarget children, then delete session
+    // First call: retarget children (retargetOrphanedChildren)
+    // Second call: delete session
+    const mutateLabels = (deps.mutateState as Mock).mock.calls.map(
+      (call: unknown[]) => call[0],
+    );
+    expect(mutateLabels).toContain("retargetOrphanedChildren");
+    expect(mutateLabels).toContain("deleteSession");
+
+    // retargetOrphanedChildren must be called BEFORE deleteSession
+    const retargetIdx = mutateLabels.indexOf("retargetOrphanedChildren");
+    const deleteIdx = mutateLabels.indexOf("deleteSession");
+    expect(retargetIdx).toBeLessThan(deleteIdx);
   });
 });

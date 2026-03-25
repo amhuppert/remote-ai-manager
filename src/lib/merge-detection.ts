@@ -12,10 +12,11 @@ import {
 } from "./state";
 import { readConfig as defaultReadConfig } from "./config";
 import {
-  isBranchAncestorOfMain as defaultIsBranchAncestorOfMain,
-  isBranchMentionedInMainLog as defaultIsBranchMentionedInMainLog,
+  isBranchAncestorOfTarget as defaultIsBranchAncestorOfTarget,
+  isBranchMentionedInTargetLog as defaultIsBranchMentionedInTargetLog,
 } from "./git-operations";
 import { stopAllForSession as defaultStopAllForSession } from "./dev-server-registry";
+import { retargetOrphanedChildren as defaultRetargetOrphanedChildren } from "./sessions";
 import {
   broadcast as defaultBroadcast,
   type BroadcastFn,
@@ -49,17 +50,23 @@ function setIntervalRef(ref: ReturnType<typeof setInterval> | null): void {
 export interface MergeDetectionDeps {
   readState: () => Promise<ManagerState>;
   readConfig: typeof defaultReadConfig;
-  isBranchAncestorOfMain: (
+  isBranchAncestorOfTarget: (
     projectPath: string,
     branchName: string,
+    targetBranch?: string,
   ) => Promise<boolean>;
-  isBranchMentionedInMainLog: (
+  isBranchMentionedInTargetLog: (
     projectPath: string,
     branchName: string,
+    targetBranch?: string,
   ) => Promise<boolean>;
   setSessionFinished: (
     projectPath: string,
     sessionName: string,
+  ) => Promise<void>;
+  retargetOrphanedChildren: (
+    projectPath: string,
+    parentSessionName: string,
   ) => Promise<void>;
   stopAllForSession: (params: {
     projectPath: string;
@@ -71,9 +78,10 @@ export interface MergeDetectionDeps {
 const defaultDeps: MergeDetectionDeps = {
   readState: defaultReadState,
   readConfig: defaultReadConfig,
-  isBranchAncestorOfMain: defaultIsBranchAncestorOfMain,
-  isBranchMentionedInMainLog: defaultIsBranchMentionedInMainLog,
+  isBranchAncestorOfTarget: defaultIsBranchAncestorOfTarget,
+  isBranchMentionedInTargetLog: defaultIsBranchMentionedInTargetLog,
   setSessionFinished: defaultSetSessionFinished,
+  retargetOrphanedChildren: defaultRetargetOrphanedChildren,
   stopAllForSession: defaultStopAllForSession,
   broadcast: defaultBroadcast,
 };
@@ -102,12 +110,14 @@ export async function checkAllSessionsForMerge(
       if (session.finished) continue;
 
       const { branchName, sessionName } = session;
+      const targetBranch = session.targetBranch ?? "main";
 
       try {
         // Strategy 1: ancestor check (regular merge)
-        const isAncestor = await d.isBranchAncestorOfMain(
+        const isAncestor = await d.isBranchAncestorOfTarget(
           projectPath,
           branchName,
+          targetBranch,
         );
 
         if (isAncestor) {
@@ -126,6 +136,7 @@ export async function checkAllSessionsForMerge(
           }
 
           await d.setSessionFinished(projectPath, sessionName);
+          await d.retargetOrphanedChildren(projectPath, sessionName);
           logger.info("merge-detection.persisted", {
             sessionName,
             branchName,
@@ -143,9 +154,10 @@ export async function checkAllSessionsForMerge(
         }
 
         // Strategy 2: commit message search (squash/rebase merge)
-        const isMentioned = await d.isBranchMentionedInMainLog(
+        const isMentioned = await d.isBranchMentionedInTargetLog(
           projectPath,
           branchName,
+          targetBranch,
         );
 
         if (isMentioned) {
@@ -164,6 +176,7 @@ export async function checkAllSessionsForMerge(
           }
 
           await d.setSessionFinished(projectPath, sessionName);
+          await d.retargetOrphanedChildren(projectPath, sessionName);
           logger.info("merge-detection.persisted", {
             sessionName,
             branchName,

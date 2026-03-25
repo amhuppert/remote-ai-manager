@@ -30,6 +30,7 @@ export interface CommitChangesOutput {
 
 export interface MergeMainInput {
   worktreePath: string;
+  targetBranch: string;
 }
 export interface MergeMainOutput {
   status: "clean" | "conflicts";
@@ -82,6 +83,8 @@ export interface SquashMergeInput {
   branchName: string;
   message: string;
   sessionName: string;
+  targetBranch: string;
+  targetWorktreePath: string | null;
 }
 export interface SquashMergeOutput {
   mergeHash: string;
@@ -113,11 +116,14 @@ export const commitChangesActor = fromPromise<
   return { hash };
 });
 
-/** Merge main branch into the feature branch. */
+/** Merge target branch into the feature branch. */
 export const mergeMain = fromPromise<MergeMainOutput, MergeMainInput>(
   async ({ input }) => {
-    const { mergeMainIntoFeature } = await import("@/lib/git-operations");
-    const result = await mergeMainIntoFeature(input.worktreePath);
+    const { mergeTargetIntoFeature } = await import("@/lib/git-operations");
+    const result = await mergeTargetIntoFeature(
+      input.worktreePath,
+      input.targetBranch,
+    );
     return {
       status: result.status,
       conflictFiles: result.status === "conflicts" ? result.conflictFiles : [],
@@ -225,7 +231,7 @@ export const fixValidation = fromPromise<
   };
 });
 
-/** Squash merge into main, with project lock and session cleanup. */
+/** Squash merge into target branch, with project lock and session cleanup. */
 export const squashMergeActor = fromPromise<
   SquashMergeOutput,
   SquashMergeInput
@@ -234,6 +240,7 @@ export const squashMergeActor = fromPromise<
   const { acquireProjectLock } = await import("@/lib/lock");
   const { setSessionFinished } = await import("@/lib/state");
   const { stopAllForSession } = await import("@/lib/dev-server-registry");
+  const { retargetOrphanedChildren } = await import("@/lib/sessions");
 
   // Acquire project lock with retry
   const MAX_WAIT_MS = 30_000;
@@ -257,10 +264,13 @@ export const squashMergeActor = fromPromise<
   }
 
   try {
+    // When targeting a non-main branch, merge into the parent's worktree
+    const mergePath = input.targetWorktreePath ?? input.projectPath;
     const { mergeHash } = await squashMerge(
-      input.projectPath,
+      mergePath,
       input.branchName,
       input.message,
+      input.targetBranch,
     );
 
     // Stop dev servers (best-effort)
@@ -274,6 +284,7 @@ export const squashMergeActor = fromPromise<
     }
 
     await setSessionFinished(input.projectPath, input.sessionName);
+    await retargetOrphanedChildren(input.projectPath, input.sessionName);
 
     return { mergeHash };
   } finally {

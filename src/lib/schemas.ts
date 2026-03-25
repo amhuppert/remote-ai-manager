@@ -955,6 +955,7 @@ export const notificationSchema = z.object({
   commitHash: z.string().optional(),
   conflictCount: z.number().optional(),
   conflictFiles: z.array(z.string()).optional(),
+  targetBranch: z.string().optional(),
   errorMessage: z.string().optional(),
   createdAt: z.string(),
 });

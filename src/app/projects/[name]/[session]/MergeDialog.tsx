@@ -12,6 +12,7 @@ interface MergeDialogProps {
   sessionName: string;
   branchName: string;
   commitCount: number;
+  targetBranch?: string;
   /** Pre-populate error state (for Storybook / testing) */
   defaultError?: string;
   /** Pre-populate terminal output (for Storybook / testing) */
@@ -25,6 +26,7 @@ export default function MergeDialog({
   sessionName,
   branchName,
   commitCount,
+  targetBranch = "main",
   defaultError,
   defaultOutput,
 }: MergeDialogProps): React.JSX.Element | null {
@@ -83,11 +85,11 @@ export default function MergeDialog({
   return (
     <div className="modal-overlay">
       <div className="modal">
-        <h2 className="modal-title">Merge into Main</h2>
+        <h2 className="modal-title">Merge into {targetBranch}</h2>
         <p className="modal-desc">
           Squash merge all commits from this session branch into{" "}
-          <code>main</code>. The session will be marked as finished and
-          archived.
+          <code>{targetBranch}</code>. The session will be marked as finished
+          and archived.
         </p>
 
         <div className="merge-info">

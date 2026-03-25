@@ -159,6 +159,8 @@ export const mergeMachine = setup({
     maxFixAttempts: input.maxFixAttempts ?? 2,
     fixSessionId: null,
     finalStatus: null,
+    targetBranch: input.targetBranch ?? "main",
+    targetWorktreePath: input.targetWorktreePath ?? null,
   }),
   initial: "routing",
   states: {
@@ -215,7 +217,10 @@ export const mergeMachine = setup({
       entry: assign({ phase: "merging-main" as const }),
       invoke: {
         src: "mergeMain",
-        input: ({ context }) => ({ worktreePath: context.worktreePath }),
+        input: ({ context }) => ({
+          worktreePath: context.worktreePath,
+          targetBranch: context.targetBranch,
+        }),
         onDone: [
           {
             guard: "mergeHadConflicts",
@@ -468,6 +473,8 @@ export const mergeMachine = setup({
           branchName: context.branchName,
           message: context.message,
           sessionName: context.sessionName,
+          targetBranch: context.targetBranch,
+          targetWorktreePath: context.targetWorktreePath,
         }),
         onDone: {
           target: "completed",

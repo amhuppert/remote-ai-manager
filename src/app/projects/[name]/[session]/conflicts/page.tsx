@@ -19,6 +19,7 @@ export default function ConflictsPage() {
 
   const [conflicts, setConflicts] = useState<ConflictEntry[]>([]);
   const [branchName, setBranchName] = useState("");
+  const [targetBranch, setTargetBranch] = useState("main");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +55,7 @@ export default function ConflictsPage() {
         if (sessionRes.ok) {
           const sessionData = (await sessionRes.json()) as SessionState;
           setBranchName(sessionData.branchName);
+          setTargetBranch(sessionData.targetBranch ?? "main");
         }
       } catch {
         setError("Failed to load conflicts");
@@ -143,6 +145,7 @@ export default function ConflictsPage() {
       projectName={projectName}
       sessionName={sessionName}
       branchName={branchName}
+      targetBranch={targetBranch}
       conflicts={conflicts}
       onAcceptAll={handleAcceptAll}
       onFixApproved={handleFixApproved}

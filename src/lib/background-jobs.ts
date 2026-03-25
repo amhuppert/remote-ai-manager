@@ -196,6 +196,7 @@ function persistTerminalState(job: BackgroundJob): void {
       commitHash: job.commitHash,
       conflictCount: job.conflictCount,
       conflictFiles: job.conflictFiles,
+      targetBranch: job.targetBranch,
       errorMessage: job.errorMessage,
     });
   } catch (err) {
@@ -208,15 +209,16 @@ function persistTerminalState(job: BackgroundJob): void {
 
 function buildNotificationMessage(job: BackgroundJob): string {
   const branch = job.branchName;
+  const target = job.targetBranch ?? "main";
   switch (job.status) {
     case "completed":
       if (job.jobType === "merge")
-        return `Branch ${branch} merged successfully${job.mergeHash ? ` (${job.mergeHash.slice(0, 7)})` : ""}`;
+        return `Branch ${branch} merged into ${target}${job.mergeHash ? ` (${job.mergeHash.slice(0, 7)})` : ""}`;
       if (job.jobType === "commit")
         return `Changes committed${job.commitHash ? ` (${job.commitHash.slice(0, 7)})` : ""}`;
-      return `Conflicts on ${branch} resolved successfully`;
+      return `Conflicts on ${branch} resolved successfully (target: ${target})`;
     case "conflicts":
-      return `${job.conflictCount ?? 0} conflict${(job.conflictCount ?? 0) !== 1 ? "s" : ""} detected during merge of ${branch}`;
+      return `${job.conflictCount ?? 0} conflict${(job.conflictCount ?? 0) !== 1 ? "s" : ""} detected merging ${branch} into ${target}`;
     case "failed":
       return job.errorMessage ?? `${job.jobType} failed on ${branch}`;
     case "running":
@@ -272,6 +274,7 @@ function prepareDispatch(params: {
   sessionName: string;
   branchName: string;
   jobType: BackgroundJob["jobType"];
+  targetBranch?: string;
   broadcast?: BroadcastFn;
   acquireSessionLock?: AcquireSessionLockFn;
 }): Result<{ job: BackgroundJob; release: () => void }, JobDispatchError> {
@@ -281,6 +284,7 @@ function prepareDispatch(params: {
     sessionName,
     branchName,
     jobType,
+    targetBranch,
     broadcast = defaultBroadcast,
     acquireSessionLock = defaultAcquireSessionLock,
   } = params;
@@ -312,6 +316,7 @@ function prepareDispatch(params: {
     projectName,
     sessionName,
     branchName,
+    ...(targetBranch && { targetBranch }),
     startedAt: new Date().toISOString(),
   };
 
@@ -411,6 +416,8 @@ export function dispatchMergeJob(params: {
   branchName: string;
   message: string;
   autoResolve: boolean;
+  targetBranch?: string;
+  targetWorktreePath?: string;
   broadcast?: BroadcastFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
@@ -423,6 +430,8 @@ export function dispatchMergeJob(params: {
     branchName,
     message,
     autoResolve,
+    targetBranch,
+    targetWorktreePath,
     broadcast = defaultBroadcast,
     acquireSessionLock,
     machine = mergeMachine,
@@ -434,6 +443,7 @@ export function dispatchMergeJob(params: {
     sessionName,
     branchName,
     jobType: "merge",
+    targetBranch,
     broadcast,
     acquireSessionLock,
   });
@@ -460,6 +470,8 @@ export function dispatchMergeJob(params: {
     message,
     autoResolve,
     jobType: "merge",
+    targetBranch,
+    targetWorktreePath,
   };
 
   const actor = createActor(
@@ -585,6 +597,8 @@ export function dispatchResolveConflictsJob(params: {
   branchName: string;
   mergeMessage: string;
   decisions?: ConflictDecisionInput[];
+  targetBranch?: string;
+  targetWorktreePath?: string;
   broadcast?: BroadcastFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
@@ -597,6 +611,8 @@ export function dispatchResolveConflictsJob(params: {
     branchName,
     mergeMessage,
     decisions,
+    targetBranch,
+    targetWorktreePath,
     broadcast = defaultBroadcast,
     acquireSessionLock,
     machine = mergeMachine,
@@ -608,6 +624,7 @@ export function dispatchResolveConflictsJob(params: {
     sessionName,
     branchName,
     jobType: "resolve-conflicts",
+    targetBranch,
     broadcast,
     acquireSessionLock,
   });
@@ -632,6 +649,8 @@ export function dispatchResolveConflictsJob(params: {
     autoResolve: false,
     jobType: "resolve-conflicts",
     decisions,
+    targetBranch,
+    targetWorktreePath,
   };
 
   const actor = createActor(

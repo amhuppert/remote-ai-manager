@@ -215,7 +215,7 @@ export default function SessionsTable({
               style={{
                 color: isDefault ? "var(--text-tertiary)" : "var(--cyan)",
               }}
-              data-tooltip={target}
+              title={target}
             >
               {target}
             </span>

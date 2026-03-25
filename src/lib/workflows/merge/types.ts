@@ -77,6 +77,12 @@ export interface MergeContext extends BaseWorkflowContext {
 
   /** Explicit terminal status set by final state entry actions. */
   finalStatus: "completed" | "failed" | "conflicts" | null;
+
+  /** Target branch for merge operations (default "main"). */
+  targetBranch: string;
+
+  /** Parent worktree path for non-main squash merges (null when targeting main). */
+  targetWorktreePath: string | null;
 }
 
 /** Input required to create a merge workflow actor. */
@@ -93,6 +99,8 @@ export interface MergeInput {
   decisions?: ConflictDecisionInput[];
   validationTimeoutMs?: number;
   maxFixAttempts?: number;
+  targetBranch?: string;
+  targetWorktreePath?: string;
 }
 
 /** Events the merge machine can receive. */

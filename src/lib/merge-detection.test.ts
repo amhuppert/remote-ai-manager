@@ -15,7 +15,13 @@ import type { ManagerState, SessionFinishedEvent } from "@/types";
 function makeState(
   sessions: Record<
     string,
-    { sessionName: string; branchName: string; finished: boolean }
+    {
+      sessionName: string;
+      branchName: string;
+      finished: boolean;
+      targetBranch?: string;
+      parentSessionName?: string | null;
+    }
   >,
   projectPath = "/projects/foo",
 ): ManagerState {
@@ -37,8 +43,8 @@ function makeState(
       objective: null,
       creationMode: "fast",
       tddEnabled: true,
-      targetBranch: "main",
-      parentSessionName: null,
+      targetBranch: s.targetBranch ?? "main",
+      parentSessionName: s.parentSessionName ?? null,
       workflow: null,
       workflowHistory: [],
     };
@@ -63,9 +69,10 @@ function makeState(
 let mockBroadcast: ReturnType<typeof vi.fn>;
 let mockReadState: ReturnType<typeof vi.fn>;
 let mockReadConfig: ReturnType<typeof vi.fn>;
-let mockIsBranchAncestorOfMain: ReturnType<typeof vi.fn>;
-let mockIsBranchMentionedInMainLog: ReturnType<typeof vi.fn>;
+let mockIsBranchAncestorOfTarget: ReturnType<typeof vi.fn>;
+let mockIsBranchMentionedInTargetLog: ReturnType<typeof vi.fn>;
 let mockSetSessionFinished: ReturnType<typeof vi.fn>;
+let mockRetargetOrphanedChildren: ReturnType<typeof vi.fn>;
 let mockStopAllForSession: ReturnType<typeof vi.fn>;
 let deps: MergeDetectionDeps;
 
@@ -92,18 +99,20 @@ beforeEach(() => {
     defaultModel: "opus",
     mergeCheckIntervalMs: 5 * 60 * 1000,
   });
-  mockIsBranchAncestorOfMain = vi.fn().mockResolvedValue(false);
-  mockIsBranchMentionedInMainLog = vi.fn().mockResolvedValue(false);
+  mockIsBranchAncestorOfTarget = vi.fn().mockResolvedValue(false);
+  mockIsBranchMentionedInTargetLog = vi.fn().mockResolvedValue(false);
   mockSetSessionFinished = vi.fn().mockResolvedValue(undefined);
+  mockRetargetOrphanedChildren = vi.fn().mockResolvedValue(undefined);
   mockStopAllForSession = vi.fn().mockResolvedValue(undefined);
 
   deps = {
     broadcast: mockBroadcast,
     readState: mockReadState,
     readConfig: mockReadConfig,
-    isBranchAncestorOfMain: mockIsBranchAncestorOfMain,
-    isBranchMentionedInMainLog: mockIsBranchMentionedInMainLog,
+    isBranchAncestorOfTarget: mockIsBranchAncestorOfTarget,
+    isBranchMentionedInTargetLog: mockIsBranchMentionedInTargetLog,
     setSessionFinished: mockSetSessionFinished,
+    retargetOrphanedChildren: mockRetargetOrphanedChildren,
     stopAllForSession: mockStopAllForSession,
   };
 });
@@ -127,7 +136,7 @@ describe("checkAllSessionsForMerge", () => {
         },
       }),
     );
-    mockIsBranchAncestorOfMain.mockResolvedValue(true);
+    mockIsBranchAncestorOfTarget.mockResolvedValue(true);
 
     const count = await checkAllSessionsForMerge(deps);
 
@@ -159,8 +168,8 @@ describe("checkAllSessionsForMerge", () => {
         },
       }),
     );
-    mockIsBranchAncestorOfMain.mockResolvedValue(false);
-    mockIsBranchMentionedInMainLog.mockResolvedValue(true);
+    mockIsBranchAncestorOfTarget.mockResolvedValue(false);
+    mockIsBranchMentionedInTargetLog.mockResolvedValue(true);
 
     const count = await checkAllSessionsForMerge(deps);
 
@@ -192,8 +201,8 @@ describe("checkAllSessionsForMerge", () => {
     const count = await checkAllSessionsForMerge(deps);
 
     expect(count).toBe(0);
-    expect(mockIsBranchAncestorOfMain).not.toHaveBeenCalled();
-    expect(mockIsBranchMentionedInMainLog).not.toHaveBeenCalled();
+    expect(mockIsBranchAncestorOfTarget).not.toHaveBeenCalled();
+    expect(mockIsBranchMentionedInTargetLog).not.toHaveBeenCalled();
     expect(mockSetSessionFinished).not.toHaveBeenCalled();
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
@@ -208,7 +217,7 @@ describe("checkAllSessionsForMerge", () => {
         },
       }),
     );
-    mockIsBranchAncestorOfMain.mockResolvedValue(true);
+    mockIsBranchAncestorOfTarget.mockResolvedValue(true);
     mockStopAllForSession.mockRejectedValue(new Error("kill failed"));
 
     const count = await checkAllSessionsForMerge(deps);
@@ -250,9 +259,9 @@ describe("checkAllSessionsForMerge", () => {
       }),
     );
 
-    // isBranchAncestorOfMain returns false for non-diverged branches now
-    mockIsBranchAncestorOfMain.mockResolvedValue(false);
-    mockIsBranchMentionedInMainLog.mockResolvedValue(false);
+    // isBranchAncestorOfTarget returns false for non-diverged branches
+    mockIsBranchAncestorOfTarget.mockResolvedValue(false);
+    mockIsBranchMentionedInTargetLog.mockResolvedValue(false);
 
     const count = await checkAllSessionsForMerge(deps);
 
@@ -278,7 +287,7 @@ describe("checkAllSessionsForMerge", () => {
     );
 
     // First session throws, second detects merge
-    mockIsBranchAncestorOfMain
+    mockIsBranchAncestorOfTarget
       .mockRejectedValueOnce(new Error("git failed"))
       .mockResolvedValueOnce(true);
 
@@ -298,11 +307,11 @@ describe("checkAllSessionsForMerge", () => {
         },
       }),
     );
-    mockIsBranchAncestorOfMain.mockResolvedValue(true);
+    mockIsBranchAncestorOfTarget.mockResolvedValue(true);
 
     await checkAllSessionsForMerge(deps);
 
-    expect(mockIsBranchMentionedInMainLog).not.toHaveBeenCalled();
+    expect(mockIsBranchMentionedInTargetLog).not.toHaveBeenCalled();
   });
 
   it("returns correct count with multiple projects and sessions", async () => {
@@ -361,7 +370,7 @@ describe("checkAllSessionsForMerge", () => {
       pinnedProjects: [],
     };
     mockReadState.mockResolvedValue(state);
-    mockIsBranchAncestorOfMain.mockResolvedValue(true);
+    mockIsBranchAncestorOfTarget.mockResolvedValue(true);
 
     const count = await checkAllSessionsForMerge(deps);
 
@@ -420,5 +429,121 @@ describe("startMergeDetection / stopMergeDetection", () => {
     expect(mockReadConfig).toHaveBeenCalled();
 
     stopMergeDetection();
+  });
+});
+
+// ============================================================
+// Task 3.3 — targetBranch and retargetOrphanedChildren
+// ============================================================
+
+describe("checkAllSessionsForMerge — targetBranch", () => {
+  it("passes session targetBranch to detection functions", async () => {
+    mockReadState.mockResolvedValue(
+      makeState({
+        "child-session": {
+          sessionName: "child-session",
+          branchName: "csm/child-session",
+          finished: false,
+          targetBranch: "csm/parent-branch",
+        },
+      }),
+    );
+    mockIsBranchAncestorOfTarget.mockResolvedValue(false);
+    mockIsBranchMentionedInTargetLog.mockResolvedValue(false);
+
+    await checkAllSessionsForMerge(deps);
+
+    expect(mockIsBranchAncestorOfTarget).toHaveBeenCalledWith(
+      "/projects/foo",
+      "csm/child-session",
+      "csm/parent-branch",
+    );
+    expect(mockIsBranchMentionedInTargetLog).toHaveBeenCalledWith(
+      "/projects/foo",
+      "csm/child-session",
+      "csm/parent-branch",
+    );
+  });
+
+  it("defaults targetBranch to main when not set on session", async () => {
+    mockReadState.mockResolvedValue(
+      makeState({
+        "main-session": {
+          sessionName: "main-session",
+          branchName: "csm/main-session",
+          finished: false,
+        },
+      }),
+    );
+    mockIsBranchAncestorOfTarget.mockResolvedValue(false);
+
+    await checkAllSessionsForMerge(deps);
+
+    expect(mockIsBranchAncestorOfTarget).toHaveBeenCalledWith(
+      "/projects/foo",
+      "csm/main-session",
+      "main",
+    );
+  });
+
+  it("calls retargetOrphanedChildren after marking session finished via ancestor", async () => {
+    mockReadState.mockResolvedValue(
+      makeState({
+        "parent-session": {
+          sessionName: "parent-session",
+          branchName: "csm/parent-session",
+          finished: false,
+        },
+      }),
+    );
+    mockIsBranchAncestorOfTarget.mockResolvedValue(true);
+
+    await checkAllSessionsForMerge(deps);
+
+    expect(mockSetSessionFinished).toHaveBeenCalledWith(
+      "/projects/foo",
+      "parent-session",
+    );
+    expect(mockRetargetOrphanedChildren).toHaveBeenCalledWith(
+      "/projects/foo",
+      "parent-session",
+    );
+  });
+
+  it("calls retargetOrphanedChildren after marking session finished via commit-message", async () => {
+    mockReadState.mockResolvedValue(
+      makeState({
+        "squash-session": {
+          sessionName: "squash-session",
+          branchName: "csm/squash-session",
+          finished: false,
+        },
+      }),
+    );
+    mockIsBranchAncestorOfTarget.mockResolvedValue(false);
+    mockIsBranchMentionedInTargetLog.mockResolvedValue(true);
+
+    await checkAllSessionsForMerge(deps);
+
+    expect(mockRetargetOrphanedChildren).toHaveBeenCalledWith(
+      "/projects/foo",
+      "squash-session",
+    );
+  });
+
+  it("does not call retargetOrphanedChildren for non-merged sessions", async () => {
+    mockReadState.mockResolvedValue(
+      makeState({
+        active: {
+          sessionName: "active",
+          branchName: "csm/active",
+          finished: false,
+        },
+      }),
+    );
+
+    await checkAllSessionsForMerge(deps);
+
+    expect(mockRetargetOrphanedChildren).not.toHaveBeenCalled();
   });
 });

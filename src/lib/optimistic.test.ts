@@ -141,6 +141,7 @@ describe("executeOptimisticWorkflow", () => {
       branchName: "csm/fix-login-bug",
       message: "Optimistic: Fix the login bug",
       autoResolve: true,
+      targetBranch: "main",
     });
   });
 

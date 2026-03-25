@@ -31,7 +31,10 @@ export const GET = withTracing(async (_request, { params }) => {
   }
 
   try {
-    const commits = await getCommitLog(session.worktreePath);
+    const commits = await getCommitLog(
+      session.worktreePath,
+      session.targetBranch,
+    );
     return NextResponse.json({ commits });
   } catch (err) {
     const message =

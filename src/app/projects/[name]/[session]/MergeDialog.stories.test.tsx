@@ -22,7 +22,7 @@ const { Default, SingleCommit, ManyCommits, Closed } = composeStories(stories);
 describe("MergeDialog stories", () => {
   it("Default renders branch info and merge form", async () => {
     await Default.run();
-    expect(screen.getByText("Merge into Main")).toBeInTheDocument();
+    expect(screen.getByText("Merge into main")).toBeInTheDocument();
     expect(screen.getByText("csm/implement-auth")).toBeInTheDocument();
     expect(screen.getByText("5")).toBeInTheDocument();
     expect(screen.getByText("Merge")).toBeInTheDocument();

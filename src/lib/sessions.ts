@@ -206,6 +206,9 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       mode: SessionCreationMode;
       objective: string | null;
       tddEnabled?: boolean;
+      baseBranch?: string;
+      targetBranch?: string;
+      parentSessionName?: string;
     },
   ): Promise<SessionState> {
     const sanitized = sanitizeBranchName(sessionName);
@@ -265,8 +268,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       objective: opts.objective,
       creationMode: opts.mode,
       tddEnabled: opts.tddEnabled ?? true,
-      targetBranch: "main",
-      parentSessionName: null,
+      targetBranch: opts.targetBranch ?? "main",
+      parentSessionName: opts.parentSessionName ?? null,
       workflow: null,
       workflowHistory: [],
     };
@@ -300,7 +303,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
         "-b",
         branchName,
         worktreePath,
-        "main",
+        opts.baseBranch ?? "main",
       ]);
 
       // Write memory-bank/focus.md
@@ -404,6 +407,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     projectPath: string,
     sessionName: string,
     tddEnabled?: boolean,
+    branchOpts?: {
+      baseBranch?: string;
+      targetBranch?: string;
+      parentSessionName?: string;
+    },
   ): Promise<SessionState> {
     const validationError = validateSessionName(sessionName);
     if (validationError) {
@@ -424,6 +432,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       mode: "fast",
       objective: null,
       tddEnabled,
+      ...branchOpts,
     });
   }
 
@@ -435,6 +444,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     projectPath: string,
     objective: string,
     tddEnabled?: boolean,
+    branchOpts?: {
+      baseBranch?: string;
+      targetBranch?: string;
+      parentSessionName?: string;
+    },
   ): Promise<SessionState> {
     const baseName = await generateSessionName(objective, projectPath);
 
@@ -448,6 +462,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       mode: "focus",
       objective,
       tddEnabled,
+      ...branchOpts,
     });
   }
 
@@ -461,6 +476,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     instructions: string,
     images?: ImagePayload[],
     tddEnabled?: boolean,
+    branchOpts?: {
+      baseBranch?: string;
+      targetBranch?: string;
+      parentSessionName?: string;
+    },
   ): Promise<SessionState> {
     const baseName = await generateSessionName(instructions, projectPath);
 
@@ -474,9 +494,18 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       mode: "optimistic",
       objective: instructions,
       tddEnabled,
+      ...branchOpts,
     });
 
     const projectName = getProjectDisplayName(projectPath);
+
+    // Resolve parent worktree path when targeting a non-main branch
+    let targetWorktreePath: string | undefined;
+    const targetBranch = session.targetBranch ?? "main";
+    if (targetBranch !== "main" && session.parentSessionName) {
+      const parentSession = project?.sessions[session.parentSessionName];
+      targetWorktreePath = parentSession?.worktreePath;
+    }
 
     // Launch orchestrator as fire-and-forget (not awaited)
     void executeOptimisticWorkflow({
@@ -485,9 +514,31 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       session,
       instructions,
       images,
+      targetWorktreePath,
     });
 
     return session;
+  }
+
+  /**
+   * Retarget all direct child sessions to main when their parent is
+   * merged or deleted. Only affects direct children — no cascading.
+   */
+  async function retargetOrphanedChildren(
+    projectPath: string,
+    parentSessionName: string,
+  ): Promise<void> {
+    await mutateState("retargetOrphanedChildren", (state) => {
+      const project = state.projects[projectPath];
+      if (!project) return;
+
+      for (const session of Object.values(project.sessions)) {
+        if (session.parentSessionName === parentSessionName) {
+          session.targetBranch = "main";
+          session.parentSessionName = null;
+        }
+      }
+    });
   }
 
   /**
@@ -560,6 +611,9 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       worktreeCleanup,
     });
 
+    // Retarget any child sessions before removing parent from state
+    await retargetOrphanedChildren(projectPath, sessionName);
+
     // Remove from state
     await mutateState("deleteSession", (state) => {
       const proj = state.projects[projectPath];
@@ -577,6 +631,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     createSessionFast,
     createSessionFocus,
     createSessionOptimistic,
+    retargetOrphanedChildren,
     deleteSession,
   };
 }
@@ -592,4 +647,5 @@ export const provisionSession = defaultService.provisionSession;
 export const createSessionFast = defaultService.createSessionFast;
 export const createSessionFocus = defaultService.createSessionFocus;
 export const createSessionOptimistic = defaultService.createSessionOptimistic;
+export const retargetOrphanedChildren = defaultService.retargetOrphanedChildren;
 export const deleteSession = defaultService.deleteSession;

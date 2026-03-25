@@ -1727,6 +1727,7 @@ export default function SessionDetailPage({
                 commits={commits}
                 projectName={projectName}
                 sessionName={session.sessionName}
+                targetBranch={targetBranch}
               />
             )}
 
@@ -1835,6 +1836,7 @@ export default function SessionDetailPage({
           tddDisabled={tddMutation.isPending}
           commitDisabled={commitDisabled}
           mergeDisabled={mergeDisabled}
+          targetBranch={targetBranch}
           onCommit={requestCommit}
           onMerge={requestMerge}
           onDelete={requestDelete}
@@ -1870,6 +1872,7 @@ export default function SessionDetailPage({
         projectName={projectName}
         sessionName={session.sessionName}
         branchName={session.branchName}
+        targetBranch={targetBranch}
         commitCount={commits.length}
         hasUncommittedChanges={hasUncommittedChanges}
       />

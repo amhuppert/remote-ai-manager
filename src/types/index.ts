@@ -184,6 +184,7 @@ export interface BackgroundJob {
   projectName: string;
   sessionName: string;
   branchName: string;
+  targetBranch?: string;
   startedAt: string;
   completedAt?: string;
   mergeHash?: string;

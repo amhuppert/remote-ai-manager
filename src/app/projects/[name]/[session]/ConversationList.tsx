@@ -538,6 +538,7 @@ export default function ConversationList({
           projectName={projectName}
           sessionName={sessionName}
           branchName={session.branchName}
+          targetBranch={targetBranch}
           commitCount={commits.length}
           hasUncommittedChanges={diff.files.length > 0}
         />

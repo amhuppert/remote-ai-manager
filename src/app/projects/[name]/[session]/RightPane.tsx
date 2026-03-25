@@ -16,6 +16,7 @@ interface RightPaneProps {
   commits: CommitLogEntry[];
   projectName: string;
   sessionName: string;
+  targetBranch?: string;
 }
 
 export default function RightPane({
@@ -24,6 +25,7 @@ export default function RightPane({
   commits,
   projectName,
   sessionName,
+  targetBranch,
 }: RightPaneProps): React.JSX.Element {
   const rightPaneTab = useRightPaneTab();
   const switchRightPaneTab = useSwitchRightPaneTab();
@@ -73,6 +75,7 @@ export default function RightPane({
             commits={commits}
             projectName={projectName}
             sessionName={sessionName}
+            targetBranch={targetBranch}
             hotkeysEnabled={rightPaneTab === "diff"}
           />
         </div>

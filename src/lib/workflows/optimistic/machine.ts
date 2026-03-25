@@ -61,6 +61,7 @@ export const optimisticMachine = setup({
     session: input.session,
     branchName: input.session.branchName,
     worktreePath: input.session.worktreePath,
+    targetWorktreePath: input.targetWorktreePath,
     error: null,
     conversationId: null,
     mergeJobId: null,
@@ -119,6 +120,8 @@ export const optimisticMachine = setup({
           worktreePath: context.worktreePath,
           branchName: context.branchName,
           instructions: context.instructions,
+          targetBranch: context.session.targetBranch,
+          targetWorktreePath: context.targetWorktreePath,
         }),
         onDone: {
           target: "completed",

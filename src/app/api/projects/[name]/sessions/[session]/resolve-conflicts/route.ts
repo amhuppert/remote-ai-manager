@@ -47,7 +47,18 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  const mergeMessage = `Merge ${session.branchName} into main`;
+  const targetBranch = session.targetBranch ?? "main";
+  const mergeMessage = `Merge ${session.branchName} into ${targetBranch}`;
+
+  // Resolve parent worktree path when targeting a non-main branch
+  let targetWorktreePath: string | undefined;
+  if (targetBranch !== "main" && session.parentSessionName) {
+    const parentSession = await getSession(
+      projectPath,
+      session.parentSessionName,
+    );
+    targetWorktreePath = parentSession?.worktreePath;
+  }
 
   const result = dispatchResolveConflictsJob({
     projectPath,
@@ -57,6 +68,8 @@ export const POST = withTracing(async (request, { params }) => {
     branchName: session.branchName,
     mergeMessage,
     decisions: body.decisions,
+    targetBranch,
+    targetWorktreePath,
   });
 
   if (!result.ok) {

@@ -22,6 +22,7 @@ interface MergeConflictsPageProps {
   projectName: string;
   sessionName: string;
   branchName: string;
+  targetBranch?: string;
   conflicts: ConflictEntry[];
   /** Callback when user clicks "Accept All and Fix" — fires async job */
   onAcceptAll?: () => void;
@@ -208,6 +209,7 @@ export default function MergeConflictsPage({
   projectName,
   sessionName,
   branchName,
+  targetBranch = "main",
   conflicts,
   onAcceptAll,
   onFixApproved,
@@ -317,8 +319,9 @@ export default function MergeConflictsPage({
             {conflicts.length !== 1 ? "s" : ""} found
           </span>
           <span className="cr-summary-desc">
-            Main has diverged from <code>{branchName}</code>. Review each
-            conflict below, then approve or reject the proposed resolutions.
+            {targetBranch} has diverged from <code>{branchName}</code>. Review
+            each conflict below, then approve or reject the proposed
+            resolutions.
           </span>
         </div>
         <div className="cr-summary-stats">

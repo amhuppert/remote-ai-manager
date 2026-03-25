@@ -26,6 +26,9 @@ export interface OptimisticContext extends BaseWorkflowContext {
   /** Worktree path for merge job dispatch. */
   worktreePath: string;
 
+  /** Parent worktree path for non-main target branch merges. */
+  targetWorktreePath: string | undefined;
+
   /** Error message if the workflow failed. */
   error: string | null;
 
@@ -44,6 +47,7 @@ export interface OptimisticInput {
   session: SessionState;
   instructions: string;
   images?: ImagePayload[];
+  targetWorktreePath?: string;
 }
 
 /** Events the optimistic machine can receive. */

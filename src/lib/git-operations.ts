@@ -115,18 +115,21 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
   // Commit Log & Diff
   // ----------------------------------------------------------
 
-  /** Get the list of commits since the branch diverged from main */
-  async function getCommitLog(worktreePath: string): Promise<CommitLogEntry[]> {
+  /** Get the list of commits since the branch diverged from the target branch */
+  async function getCommitLog(
+    worktreePath: string,
+    targetBranch = "main",
+  ): Promise<CommitLogEntry[]> {
     let stdout: string;
     try {
       const result = await git(worktreePath, [
         "log",
-        "main..HEAD",
+        `${targetBranch}..HEAD`,
         `--format=${LOG_FORMAT}`,
       ]);
       stdout = result.stdout;
     } catch {
-      // If main doesn't exist or no commits, return empty
+      // If target branch doesn't exist or no commits, return empty
       return [];
     }
 
@@ -145,7 +148,7 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
     try {
       const { stdout: statOutput } = await git(worktreePath, [
         "log",
-        "main..HEAD",
+        `${targetBranch}..HEAD`,
         "--format=%H",
         "--numstat",
       ]);
@@ -188,8 +191,9 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
   async function getCommitDiff(
     worktreePath: string,
     commitHash: string,
+    targetBranch = "main",
   ): Promise<SessionDiff> {
-    // Check if the commit's parent is reachable from main — if not,
+    // Check if the commit's parent is reachable from the target branch — if not,
     // this is the first commit after divergence and we diff against merge-base
     let diffArgs: string[];
 
@@ -201,18 +205,18 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
         `${commitHash}^`,
       ]);
 
-      // Check if the parent is an ancestor of main (i.e., the commit IS the first divergence)
+      // Check if the parent is an ancestor of the target branch (i.e., the commit IS the first divergence)
       try {
         await git(worktreePath, [
           "merge-base",
           "--is-ancestor",
           parentHash.trim(),
-          "main",
+          targetBranch,
         ]);
-        // Parent IS an ancestor of main → first commit after divergence, diff against merge-base
+        // Parent IS an ancestor of target → first commit after divergence, diff against merge-base
         const { stdout: mergeBase } = await git(worktreePath, [
           "merge-base",
-          "main",
+          targetBranch,
           commitHash,
         ]);
         diffArgs = [
@@ -221,14 +225,14 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
           "--unified=3",
         ];
       } catch {
-        // Parent is NOT an ancestor of main → normal diff against parent
+        // Parent is NOT an ancestor of target → normal diff against parent
         diffArgs = ["diff", `${commitHash}~1..${commitHash}`, "--unified=3"];
       }
     } catch {
       // No parent (shouldn't normally happen) — diff against merge-base
       const { stdout: mergeBase } = await git(worktreePath, [
         "merge-base",
-        "main",
+        targetBranch,
         commitHash,
       ]);
       diffArgs = ["diff", `${mergeBase.trim()}..${commitHash}`, "--unified=3"];
@@ -248,25 +252,26 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
   // ----------------------------------------------------------
 
   /**
-   * Check if a branch has been merged into main via regular merge commit.
-   * Returns true if the branch tip is an ancestor of main AND the branch
-   * actually has commits beyond the merge base (i.e., it diverged from main
+   * Check if a branch has been merged into the target branch via regular merge commit.
+   * Returns true if the branch tip is an ancestor of the target AND the branch
+   * actually has commits beyond the merge base (i.e., it diverged from the target
    * at some point). Branches that never diverged (tip == merge-base) are
    * not considered merged — they just never had any unique commits.
    */
-  async function isBranchAncestorOfMain(
+  async function isBranchAncestorOfTarget(
     projectPath: string,
     branchName: string,
+    targetBranch = "main",
   ): Promise<boolean> {
     try {
       await git(projectPath, [
         "merge-base",
         "--is-ancestor",
         branchName,
-        "main",
+        targetBranch,
       ]);
 
-      // Branch is ancestor of main — but did it ever diverge?
+      // Branch is ancestor of target — but did it ever diverge?
       // Compare the branch tip to the merge base. If they're identical,
       // the branch never had unique commits and shouldn't be considered merged.
       const { stdout: branchTip } = await git(projectPath, [
@@ -276,7 +281,7 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
       const { stdout: mergeBase } = await git(projectPath, [
         "merge-base",
         branchName,
-        "main",
+        targetBranch,
       ]);
 
       if (branchTip.trim() === mergeBase.trim()) {
@@ -290,17 +295,18 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
   }
 
   /**
-   * Check if main's recent commit log mentions the branch name.
+   * Check if the target branch's recent commit log mentions the branch name.
    * Catches squash/rebase merges where the commit message references the branch.
    */
-  async function isBranchMentionedInMainLog(
+  async function isBranchMentionedInTargetLog(
     projectPath: string,
     branchName: string,
+    targetBranch = "main",
   ): Promise<boolean> {
     try {
       const { stdout } = await git(projectPath, [
         "log",
-        "main",
+        targetBranch,
         "--oneline",
         "-100",
         `--grep=${branchName}`,
@@ -312,16 +318,17 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
   }
 
   // ----------------------------------------------------------
-  // Merge Main into Feature Branch
+  // Merge Target into Feature Branch
   // ----------------------------------------------------------
 
-  /** Merge main into the current feature branch in the given worktree.
+  /** Merge the target branch into the current feature branch in the given worktree.
    *  On conflict the worktree is left in conflict state (merge is NOT aborted). */
-  async function mergeMainIntoFeature(
+  async function mergeTargetIntoFeature(
     worktreePath: string,
+    targetBranch = "main",
   ): Promise<MergeMainResult> {
     try {
-      await git(worktreePath, ["merge", "main"]);
+      await git(worktreePath, ["merge", targetBranch]);
       return { status: "clean" };
     } catch (err) {
       const errObj = err as Error & { stderr?: string; stdout?: string };
@@ -349,7 +356,7 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
         .map((f) => f.trim())
         .filter(Boolean);
 
-      logger.info("git.mergeMain.conflicts", { worktreePath, conflictFiles });
+      logger.info("git.mergeTarget.conflicts", { worktreePath, conflictFiles });
 
       return { status: "conflicts", conflictFiles };
     }
@@ -359,43 +366,47 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
   // Squash Merge
   // ----------------------------------------------------------
 
-  /** Squash merge a session branch into main, executed in the project root */
+  /** Squash merge a session branch into the target, executed in the merge path
+   *  (project root for main, parent worktree for non-main targets). */
   async function squashMerge(
-    projectPath: string,
+    mergePath: string,
     branchName: string,
     message: string,
+    targetBranch = "main",
   ): Promise<{ mergeHash: string }> {
     if (!message.trim()) {
       throw new Error("Merge message cannot be empty");
     }
 
-    // Pre-check: project root must be clean
-    const { stdout: rootStatus } = await git(projectPath, [
+    // Pre-check: merge path must be clean
+    const { stdout: rootStatus } = await git(mergePath, [
       "status",
       "--porcelain",
     ]);
     if (rootStatus.trim().length > 0) {
-      throw new Error("Main branch has uncommitted changes");
+      throw new Error(
+        `Target branch '${targetBranch}' has uncommitted changes`,
+      );
     }
 
-    logger.info("git.merge", { projectPath, branchName });
+    logger.info("git.merge", { mergePath, branchName, targetBranch });
 
     // Execute squash merge
     try {
-      await git(projectPath, ["merge", "--squash", branchName]);
+      await git(mergePath, ["merge", "--squash", branchName]);
     } catch (err) {
       const stderr = getErrorMessage(err);
       const isConflict =
         stderr.includes("CONFLICT") || stderr.includes("merge conflict");
 
-      // Abort the failed merge to leave the project root clean
-      await git(projectPath, ["merge", "--abort"]).catch(() => {});
+      // Abort the failed merge to leave the merge path clean
+      await git(mergePath, ["merge", "--abort"]).catch(() => {});
       // Reset any staged changes from the failed squash
-      await git(projectPath, ["reset", "--hard", "HEAD"]).catch(() => {});
+      await git(mergePath, ["reset", "--hard", "HEAD"]).catch(() => {});
 
       if (isConflict) {
         throw new Error(
-          "Merge conflicts detected between this session and main. Resolve the conflicts in the worktree and try again.",
+          `Merge conflicts detected between this session and ${targetBranch}. Resolve the conflicts in the worktree and try again.`,
         );
       }
       throw err;
@@ -404,7 +415,7 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
     // Commit the squash merge
     let commitOutput: string;
     try {
-      const result = await git(projectPath, [
+      const result = await git(mergePath, [
         "commit",
         "--no-verify",
         "-m",
@@ -412,8 +423,8 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
       ]);
       commitOutput = result.stdout;
     } catch (err) {
-      // Clean up: reset staged squash changes so project root stays clean
-      await git(projectPath, ["reset", "--hard", "HEAD"]).catch(() => {});
+      // Clean up: reset staged squash changes so merge path stays clean
+      await git(mergePath, ["reset", "--hard", "HEAD"]).catch(() => {});
 
       if (err instanceof Error) {
         // Capture stderr/stdout from the failed commit (e.g. pre-commit hook output)
@@ -434,7 +445,7 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
     const hashMatch = /\[[\w/.-]+ ([a-f0-9]+)\]/.exec(commitOutput);
     const mergeHash = hashMatch?.[1] ?? "";
 
-    logger.info("git.merge.success", { projectPath, branchName, mergeHash });
+    logger.info("git.merge.success", { mergePath, branchName, mergeHash });
 
     return { mergeHash };
   }
@@ -444,9 +455,9 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
     commitChanges,
     getCommitLog,
     getCommitDiff,
-    isBranchAncestorOfMain,
-    isBranchMentionedInMainLog,
-    mergeMainIntoFeature,
+    isBranchAncestorOfTarget,
+    isBranchMentionedInTargetLog,
+    mergeTargetIntoFeature,
     squashMerge,
   };
 }
@@ -461,7 +472,8 @@ export const hasUncommittedChanges = defaultOps.hasUncommittedChanges;
 export const commitChanges = defaultOps.commitChanges;
 export const getCommitLog = defaultOps.getCommitLog;
 export const getCommitDiff = defaultOps.getCommitDiff;
-export const isBranchAncestorOfMain = defaultOps.isBranchAncestorOfMain;
-export const isBranchMentionedInMainLog = defaultOps.isBranchMentionedInMainLog;
-export const mergeMainIntoFeature = defaultOps.mergeMainIntoFeature;
+export const isBranchAncestorOfTarget = defaultOps.isBranchAncestorOfTarget;
+export const isBranchMentionedInTargetLog =
+  defaultOps.isBranchMentionedInTargetLog;
+export const mergeTargetIntoFeature = defaultOps.mergeTargetIntoFeature;
 export const squashMerge = defaultOps.squashMerge;

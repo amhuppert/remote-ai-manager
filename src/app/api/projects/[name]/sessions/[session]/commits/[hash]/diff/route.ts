@@ -39,7 +39,11 @@ export const GET = withTracing(async (_request, { params }) => {
   }
 
   try {
-    const diff = await getCommitDiff(session.worktreePath, hash);
+    const diff = await getCommitDiff(
+      session.worktreePath,
+      hash,
+      session.targetBranch,
+    );
     return NextResponse.json(diff);
   } catch (err) {
     const message =

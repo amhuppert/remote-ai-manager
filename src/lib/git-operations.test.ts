@@ -397,11 +397,11 @@ describe("squashMerge", () => {
     ).rejects.toThrow("Merge message cannot be empty");
   });
 
-  it("throws when project root has uncommitted changes", async () => {
+  it("throws when merge path has uncommitted changes", async () => {
     mockGitSuccess(" M dirty-file.ts\n");
     await expect(
       ops.squashMerge("/project", "csm/branch", "Merge"),
-    ).rejects.toThrow("Main branch has uncommitted changes");
+    ).rejects.toThrow("Target branch 'main' has uncommitted changes");
   });
 
   it("returns empty hash when commit output format is unexpected", async () => {
@@ -470,14 +470,14 @@ describe("squashMerge", () => {
 });
 
 // ===========================================================================
-// mergeMainIntoFeature
+// mergeTargetIntoFeature
 // ===========================================================================
 
-describe("mergeMainIntoFeature", () => {
+describe("mergeTargetIntoFeature", () => {
   it("returns clean status when git merge main succeeds", async () => {
     mockGitSuccess("Already up to date.\n");
 
-    const result = await ops.mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeTargetIntoFeature("/worktree");
     expect(result).toEqual({ status: "clean" });
 
     expect(gitMock).toHaveBeenCalledWith(
@@ -503,7 +503,7 @@ describe("mergeMainIntoFeature", () => {
       { stdout: "src/index.ts\nsrc/utils.ts\n" },
     ]);
 
-    const result = await ops.mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeTargetIntoFeature("/worktree");
     expect(result).toEqual({
       status: "conflicts",
       conflictFiles: ["src/index.ts", "src/utils.ts"],
@@ -526,7 +526,7 @@ describe("mergeMainIntoFeature", () => {
       { stdout: "file.ts\n" },
     ]);
 
-    const result = await ops.mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeTargetIntoFeature("/worktree");
     expect(result).toEqual({
       status: "conflicts",
       conflictFiles: ["file.ts"],
@@ -543,7 +543,7 @@ describe("mergeMainIntoFeature", () => {
       { stdout: "src/app.ts\n" },
     ]);
 
-    const result = await ops.mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeTargetIntoFeature("/worktree");
     expect(result).toEqual({
       status: "conflicts",
       conflictFiles: ["src/app.ts"],
@@ -553,7 +553,7 @@ describe("mergeMainIntoFeature", () => {
   it("rethrows non-conflict errors", async () => {
     mockGitFailure(new Error("fatal: not something we can merge"));
 
-    await expect(ops.mergeMainIntoFeature("/worktree")).rejects.toThrow(
+    await expect(ops.mergeTargetIntoFeature("/worktree")).rejects.toThrow(
       "fatal: not something we can merge",
     );
 
@@ -571,7 +571,7 @@ describe("mergeMainIntoFeature", () => {
       { stdout: "src/index.ts\n" },
     ]);
 
-    await ops.mergeMainIntoFeature("/worktree");
+    await ops.mergeTargetIntoFeature("/worktree");
 
     expect(gitMock).toHaveBeenCalledTimes(2);
 
@@ -592,7 +592,7 @@ describe("mergeMainIntoFeature", () => {
       { stdout: "src/a.ts\n\nsrc/b.ts\n\n" },
     ]);
 
-    const result = await ops.mergeMainIntoFeature("/worktree");
+    const result = await ops.mergeTargetIntoFeature("/worktree");
     expect(result).toEqual({
       status: "conflicts",
       conflictFiles: ["src/a.ts", "src/b.ts"],
@@ -601,10 +601,10 @@ describe("mergeMainIntoFeature", () => {
 });
 
 // ===========================================================================
-// isBranchAncestorOfMain
+// isBranchAncestorOfTarget
 // ===========================================================================
 
-describe("isBranchAncestorOfMain", () => {
+describe("isBranchAncestorOfTarget", () => {
   it("returns true when branch is ancestor and has diverged from merge base", async () => {
     mockGitSequence([
       { stdout: "" },
@@ -612,7 +612,7 @@ describe("isBranchAncestorOfMain", () => {
       { stdout: "def5678\n" },
     ]);
 
-    const result = await ops.isBranchAncestorOfMain(
+    const result = await ops.isBranchAncestorOfTarget(
       "/project",
       "csm/my-session",
     );
@@ -626,17 +626,46 @@ describe("isBranchAncestorOfMain", () => {
       { stdout: "abc1234\n" },
     ]);
 
-    const result = await ops.isBranchAncestorOfMain(
+    const result = await ops.isBranchAncestorOfTarget(
       "/project",
       "csm/my-session",
     );
     expect(result).toBe(false);
   });
 
-  it("returns false when branch is not ancestor of main", async () => {
+  it("checks against non-main target branch when specified", async () => {
+    mockGitSequence([
+      { stdout: "" },
+      { stdout: "abc1234\n" },
+      { stdout: "def5678\n" },
+    ]);
+
+    const result = await ops.isBranchAncestorOfTarget(
+      "/project",
+      "csm/child",
+      "csm/parent",
+    );
+    expect(result).toBe(true);
+
+    // Verify the target branch was used in merge-base --is-ancestor
+    expect(gitMock.mock.calls[0]![0]).toEqual([
+      "merge-base",
+      "--is-ancestor",
+      "csm/child",
+      "csm/parent",
+    ]);
+    // Verify merge-base uses target branch
+    expect(gitMock.mock.calls[2]![0]).toEqual([
+      "merge-base",
+      "csm/child",
+      "csm/parent",
+    ]);
+  });
+
+  it("returns false when branch is not ancestor of target", async () => {
     mockGitSequence([{ error: new Error("not ancestor") }]);
 
-    const result = await ops.isBranchAncestorOfMain(
+    const result = await ops.isBranchAncestorOfTarget(
       "/project",
       "csm/my-session",
     );
@@ -646,10 +675,95 @@ describe("isBranchAncestorOfMain", () => {
   it("returns false when git commands fail", async () => {
     mockGitSequence([{ stdout: "" }, { error: new Error("fatal: bad ref") }]);
 
-    const result = await ops.isBranchAncestorOfMain(
+    const result = await ops.isBranchAncestorOfTarget(
       "/project",
       "csm/my-session",
     );
     expect(result).toBe(false);
+  });
+});
+
+// ===========================================================================
+// targetBranch parameter — cross-cutting tests
+// ===========================================================================
+
+describe("targetBranch parameter", () => {
+  it("getCommitLog uses custom targetBranch in git log range", async () => {
+    mockGitSequence([
+      { stdout: "" }, // empty log
+    ]);
+
+    await ops.getCommitLog("/worktree", "csm/parent");
+
+    expect(gitMock.mock.calls[0]![0]).toEqual([
+      "log",
+      "csm/parent..HEAD",
+      expect.stringContaining("%h"),
+    ]);
+  });
+
+  it("getCommitDiff uses custom targetBranch in merge-base", async () => {
+    mockGitSequence([
+      { stdout: "parenthash\n" },
+      { stdout: "" }, // is-ancestor succeeds
+      { stdout: "mergebase789\n" },
+      { stdout: "diff output" },
+    ]);
+    parseDiffMock.mockReturnValue({
+      files: [],
+      totalAdditions: 0,
+      totalDeletions: 0,
+    });
+
+    await ops.getCommitDiff("/worktree", "abc123", "csm/parent");
+
+    // merge-base --is-ancestor should use csm/parent
+    expect(gitMock.mock.calls[1]![0]).toEqual([
+      "merge-base",
+      "--is-ancestor",
+      "parenthash",
+      "csm/parent",
+    ]);
+    // merge-base should use csm/parent
+    expect(gitMock.mock.calls[2]![0]).toEqual([
+      "merge-base",
+      "csm/parent",
+      "abc123",
+    ]);
+  });
+
+  it("isBranchMentionedInTargetLog uses custom targetBranch", async () => {
+    mockGitSuccess("abc1234 Merge csm/child\n");
+
+    const result = await ops.isBranchMentionedInTargetLog(
+      "/project",
+      "csm/child",
+      "csm/parent",
+    );
+    expect(result).toBe(true);
+
+    expect(gitMock.mock.calls[0]![0]).toEqual([
+      "log",
+      "csm/parent",
+      "--oneline",
+      "-100",
+      "--grep=csm/child",
+    ]);
+  });
+
+  it("mergeTargetIntoFeature uses custom targetBranch", async () => {
+    mockGitSuccess("Already up to date.\n");
+
+    await ops.mergeTargetIntoFeature("/worktree", "csm/parent");
+
+    expect(gitMock.mock.calls[0]![0]).toEqual(["merge", "csm/parent"]);
+  });
+
+  it("squashMerge uses custom targetBranch in error message", async () => {
+    mockGitSuccess(" M dirty.ts\n");
+
+    await expect(
+      ops.squashMerge("/parent-worktree", "csm/child", "Merge", "csm/parent"),
+    ).rejects.toThrow("Target branch 'csm/parent' has uncommitted changes");
   });
 });

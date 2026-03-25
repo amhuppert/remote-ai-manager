@@ -30,6 +30,8 @@ export interface DispatchMergeInput {
   worktreePath: string;
   branchName: string;
   instructions: string;
+  targetBranch?: string;
+  targetWorktreePath?: string;
 }
 
 export interface DispatchMergeOutput {
@@ -94,6 +96,8 @@ export const dispatchMerge = fromPromise<
     branchName: input.branchName,
     message: `Optimistic: ${input.instructions}`,
     autoResolve: true,
+    targetBranch: input.targetBranch,
+    targetWorktreePath: input.targetWorktreePath,
   });
 
   if (!result.ok) {

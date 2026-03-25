@@ -47,6 +47,7 @@ export default function MergeToastContainer() {
     <MergeToast
       variant={variant}
       branchName={currentToast.branchName}
+      targetBranch={currentToast.targetBranch}
       conflictCount={currentToast.conflictCount}
       mergeHash={currentToast.mergeHash}
       errorMessage={currentToast.errorMessage}

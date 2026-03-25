@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
-import { getProjectSessions } from "@/lib/state";
+import { getProjectSessions, getSession } from "@/lib/state";
 import {
   createSessionFast,
   createSessionFocus,
@@ -79,6 +79,38 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
+  // Resolve parent session branch opts when parentSessionName is provided
+  let branchOpts:
+    | { baseBranch: string; targetBranch: string; parentSessionName: string }
+    | undefined;
+
+  if (body.parentSessionName) {
+    const parent = await getSession(projectPath, body.parentSessionName);
+    if (!parent) {
+      return NextResponse.json(
+        { error: "Parent session not found" } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+    if (parent.finished) {
+      return NextResponse.json(
+        { error: "Parent session is finished" } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+    if (parent.archived) {
+      return NextResponse.json(
+        { error: "Parent session is archived" } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+    branchOpts = {
+      baseBranch: parent.branchName,
+      targetBranch: parent.branchName,
+      parentSessionName: body.parentSessionName,
+    };
+  }
+
   try {
     let session;
     if (body.mode === "fast") {
@@ -86,6 +118,7 @@ export const POST = withTracing(async (request, { params }) => {
         projectPath,
         body.sessionName,
         body.tddEnabled,
+        branchOpts,
       );
     } else if (body.mode === "optimistic") {
       session = await createSessionOptimistic(
@@ -93,12 +126,14 @@ export const POST = withTracing(async (request, { params }) => {
         body.instructions,
         body.images,
         body.tddEnabled,
+        branchOpts,
       );
     } else {
       session = await createSessionFocus(
         projectPath,
         body.objective,
         body.tddEnabled,
+        branchOpts,
       );
     }
     return NextResponse.json(session, { status: 201 });

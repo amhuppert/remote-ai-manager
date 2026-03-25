@@ -868,6 +868,134 @@ describe("background-jobs", () => {
   });
 
   // ----------------------------------------------------------
+  // targetBranch threading
+  // ----------------------------------------------------------
+  describe("targetBranch threading", () => {
+    it("dispatchMergeJob passes targetBranch and targetWorktreePath to MergeInput", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        targetBranch: "csm/parent-branch",
+        targetWorktreePath: "/projects/foo/.worktrees/parent",
+      });
+      expect(result.ok).toBe(true);
+
+      await settle();
+
+      // mergeMain actor should receive targetBranch
+      expect(mockMergeMain).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetBranch: "csm/parent-branch",
+        }),
+      );
+      // squashMerge actor should receive targetBranch and targetWorktreePath
+      expect(mockSquashMergeActor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetBranch: "csm/parent-branch",
+          targetWorktreePath: "/projects/foo/.worktrees/parent",
+        }),
+      );
+    });
+
+    it("dispatchResolveConflictsJob passes targetBranch and targetWorktreePath to MergeInput", async () => {
+      mockResolveConflictsActor.mockResolvedValue({
+        status: "resolved",
+        conflicts: [],
+      });
+      mockCommitChangesActor.mockResolvedValue({ hash: "h" });
+      mockSquashMergeActor.mockResolvedValue({ mergeHash: "m" });
+
+      const result = dispatchResolveConflictsJob({
+        ...BASE_RESOLVE_PARAMS,
+        targetBranch: "csm/parent-branch",
+        targetWorktreePath: "/projects/foo/.worktrees/parent",
+      });
+      expect(result.ok).toBe(true);
+
+      await settle();
+
+      expect(mockSquashMergeActor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetBranch: "csm/parent-branch",
+          targetWorktreePath: "/projects/foo/.worktrees/parent",
+        }),
+      );
+    });
+
+    it("stores targetBranch on the registered BackgroundJob", () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc" });
+
+      dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        targetBranch: "csm/parent-branch",
+      });
+
+      const job = getJob(
+        BASE_MERGE_PARAMS.projectPath,
+        BASE_MERGE_PARAMS.sessionName,
+      );
+      expect(job?.targetBranch).toBe("csm/parent-branch");
+    });
+
+    it("defaults targetBranch to undefined on job when not provided", () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc" });
+
+      dispatchMergeJob(BASE_MERGE_PARAMS);
+
+      const job = getJob(
+        BASE_MERGE_PARAMS.projectPath,
+        BASE_MERGE_PARAMS.sessionName,
+      );
+      expect(job?.targetBranch).toBeUndefined();
+    });
+
+    it("notification message includes target branch for merge completion", async () => {
+      const { createNotification: mockCreateNotification } =
+        await import("./notification-db");
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+
+      dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        targetBranch: "csm/parent-branch",
+      });
+      await settle();
+
+      expect(mockCreateNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("csm/parent-branch"),
+        }),
+      );
+    });
+
+    it("notification message includes target branch for conflicts", async () => {
+      const { createNotification: mockCreateNotification } =
+        await import("./notification-db");
+      mockMergeMain.mockResolvedValue({
+        status: "conflicts",
+        conflictFiles: ["file1.ts"],
+      });
+
+      dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        autoResolve: false,
+        targetBranch: "csm/parent-branch",
+      });
+      await settle();
+
+      expect(mockCreateNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("csm/parent-branch"),
+        }),
+      );
+    });
+  });
+
+  // ----------------------------------------------------------
   // _resetForTesting
   // ----------------------------------------------------------
   describe("_resetForTesting", () => {
