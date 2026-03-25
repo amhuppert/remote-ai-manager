@@ -7,6 +7,7 @@ import TooltipProvider from "@/components/TooltipProvider";
 import NotificationsPanelContainer from "@/components/NotificationsPanelContainer";
 import MergeToastContainer from "@/components/MergeToastContainer";
 import InputNeededToastContainer from "@/components/InputNeededToastContainer";
+import PromptErrorToastContainer from "@/components/PromptErrorToastContainer";
 import DevToolsGate from "@/components/DevToolsGate";
 import "./globals.css";
 
@@ -73,6 +74,7 @@ export default function RootLayout({
           <NotificationsPanelContainer />
           <MergeToastContainer />
           <InputNeededToastContainer />
+          <PromptErrorToastContainer />
 
           <DevToolsGate />
           <GlobalHotkeyHelp />

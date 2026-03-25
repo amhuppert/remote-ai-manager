@@ -16,6 +16,13 @@ export interface InputNeededItem {
   conversationId: string;
 }
 
+export interface PromptErrorItem {
+  projectName: string;
+  sessionName: string;
+  conversationId: string;
+  error: string;
+}
+
 interface NotificationState {
   /** Running jobs only — removed on terminal state */
   jobs: Map<string, BackgroundJob>;
@@ -23,6 +30,8 @@ interface NotificationState {
   toastQueue: Notification[];
   /** Toast queue for "waiting for input" conversation events */
   inputToastQueue: InputNeededItem[];
+  /** Toast queue for prompt execution errors */
+  promptErrorQueue: PromptErrorItem[];
 }
 
 interface NotificationActions {
@@ -31,6 +40,8 @@ interface NotificationActions {
   dismissToast: () => void;
   enqueueInputToast: (item: InputNeededItem) => void;
   dismissInputToast: () => void;
+  enqueuePromptErrorToast: (item: PromptErrorItem) => void;
+  dismissPromptErrorToast: () => void;
 }
 
 type NotificationStore = NotificationState & NotificationActions;
@@ -44,6 +55,7 @@ export const useNotificationStore = create<NotificationStore>()(
     jobs: new Map<string, BackgroundJob>(),
     toastQueue: [],
     inputToastQueue: [],
+    promptErrorQueue: [],
 
     addOrUpdateJob: (event: JobStatusEvent) =>
       set((state) => {
@@ -96,6 +108,16 @@ export const useNotificationStore = create<NotificationStore>()(
       set((state) => {
         state.inputToastQueue.shift();
       }),
+
+    enqueuePromptErrorToast: (item: PromptErrorItem) =>
+      set((state) => {
+        state.promptErrorQueue.push(item);
+      }),
+
+    dismissPromptErrorToast: () =>
+      set((state) => {
+        state.promptErrorQueue.shift();
+      }),
   })),
 );
 
@@ -143,3 +165,9 @@ export const useDismissInputToast = () =>
   useNotificationStore((s) => s.dismissInputToast);
 export const useInputToastQueue = () =>
   useNotificationStore((s) => s.inputToastQueue);
+export const useEnqueuePromptErrorToast = () =>
+  useNotificationStore((s) => s.enqueuePromptErrorToast);
+export const useDismissPromptErrorToast = () =>
+  useNotificationStore((s) => s.dismissPromptErrorToast);
+export const usePromptErrorQueue = () =>
+  useNotificationStore((s) => s.promptErrorQueue);

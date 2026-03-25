@@ -26,6 +26,7 @@ import {
   useAddOrUpdateJob,
   useEnqueueToast,
   useEnqueueInputToast,
+  useEnqueuePromptErrorToast,
 } from "@/stores/notification.store";
 import {
   useHandleWorkflowStatusEvent,
@@ -39,6 +40,7 @@ export default function NotificationListener(): null {
   const addOrUpdateJob = useAddOrUpdateJob();
   const enqueueToast = useEnqueueToast();
   const enqueueInputToast = useEnqueueInputToast();
+  const enqueuePromptErrorToast = useEnqueuePromptErrorToast();
   const hadErrorRef = useRef(false);
   const handleWorkflowStatus = useHandleWorkflowStatusEvent();
   const handleIterationComplete = useHandleWorkflowIterationComplete();
@@ -84,6 +86,15 @@ export default function NotificationListener(): null {
               void Notification.requestPermission();
             }
           }
+        }
+
+        if (data.error) {
+          enqueuePromptErrorToast({
+            projectName: data.projectName,
+            sessionName: data.sessionName,
+            conversationId: data.conversationId,
+            error: data.error,
+          });
         }
       } catch {
         // best-effort
@@ -302,6 +313,7 @@ export default function NotificationListener(): null {
     addOrUpdateJob,
     enqueueToast,
     enqueueInputToast,
+    enqueuePromptErrorToast,
     handleWorkflowStatus,
     handleIterationComplete,
     handleFixPlanUpdated,

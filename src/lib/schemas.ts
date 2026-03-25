@@ -771,6 +771,7 @@ export const conversationStatusEventSchema = z.object({
   sessionName: z.string(),
   conversationId: z.string(),
   status: z.enum(["running", "awaiting", "waiting_for_input"]),
+  error: z.string().optional(),
 });
 export type ConversationStatusEvent = z.infer<
   typeof conversationStatusEventSchema

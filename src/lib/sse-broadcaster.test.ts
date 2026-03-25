@@ -7,6 +7,7 @@ import {
   _resetForTesting,
 } from "./sse-broadcaster";
 import type { ConversationStatusEvent } from "@/types";
+import { conversationStatusEventSchema } from "./schemas";
 
 const TEST_EVENT: ConversationStatusEvent = {
   type: "conversation-status",
@@ -122,5 +123,36 @@ describe("sse-broadcaster", () => {
     removeClient(c1.controller);
     removeClient(c3.controller);
     expect(getClientCount()).toBe(0);
+  });
+});
+
+describe("conversationStatusEventSchema", () => {
+  it("accepts event without error", () => {
+    const event = {
+      type: "conversation-status",
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c",
+      status: "awaiting",
+    };
+    expect(conversationStatusEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it("accepts event with optional error field", () => {
+    const event = {
+      type: "conversation-status",
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c",
+      status: "awaiting",
+      error: "Fork failed: the fork point was compacted",
+    };
+    const result = conversationStatusEventSchema.safeParse(event);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.error).toBe(
+        "Fork failed: the fork point was compacted",
+      );
+    }
   });
 });

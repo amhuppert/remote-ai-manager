@@ -159,6 +159,9 @@ function createProvidedMachine() {
         type SSEStatus = (typeof sseStatuses)[number];
         if (!sseStatuses.includes(context.status as SSEStatus)) return;
 
+        const promptError =
+          context.lastResult?.error ?? context.lastError ?? undefined;
+
         void (async () => {
           const { broadcast } = await import("@/lib/sse-broadcaster");
           try {
@@ -168,6 +171,7 @@ function createProvidedMachine() {
               sessionName: context.sessionName,
               conversationId: context.conversationId,
               status: context.status as SSEStatus,
+              ...(promptError ? { error: promptError } : {}),
             });
           } catch (err) {
             logger.warn("conversation-manager.broadcast_status_failed", {
