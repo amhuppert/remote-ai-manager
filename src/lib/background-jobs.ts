@@ -4,7 +4,7 @@
  *
  * Jobs are dispatched synchronously (fire-and-forget) using XState actors.
  * Merge and resolve-conflicts jobs use the mergeMachine (Smart Merge pipeline).
- * Commit jobs use a simple fromPromise actor.
+ * Commit jobs use the commitMachine (Smart Commit pipeline with validation).
  *
  * Status changes are broadcast via SSE so the UI can track progress in real
  * time. Storage uses globalThis Maps (HMR-safe singleton pattern) keyed by
@@ -12,7 +12,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createActor, fromPromise } from "xstate";
+import { createActor } from "xstate";
 import { acquireSessionLock as defaultAcquireSessionLock } from "./lock";
 import {
   broadcast as defaultBroadcast,
@@ -32,6 +32,15 @@ import type {
   MergeContext,
   MergeOutput,
 } from "./workflows/merge/types";
+import {
+  commitMachine,
+  type CommitMachineType,
+} from "./workflows/commit/machine";
+import type {
+  CommitInput,
+  CommitContext,
+  CommitOutput,
+} from "./workflows/commit/types";
 import { getErrorMessage } from "@/lib/errors";
 import { assertNever } from "./assert-never";
 import type { BackgroundJob, ConflictAnalysis, JobStatusEvent } from "@/types";
@@ -58,15 +67,6 @@ export type AcquireSessionLockFn = (
   projectPath: string,
   sessionName: string,
 ) => () => void;
-
-/** Default commit function — uses dynamic import for tree-shaking */
-const defaultCommitFn = async (
-  worktreePath: string,
-  message: string,
-): Promise<{ hash: string }> => {
-  const { commitChanges } = await import("@/lib/git-operations");
-  return commitChanges(worktreePath, message);
-};
 
 // ============================================================
 // globalThis Singleton Registries (HMR-safe)
@@ -399,6 +399,56 @@ function subscribeMergeActor(
   });
 }
 
+/**
+ * Subscribe to a commit machine actor and update the BackgroundJob registry
+ * on state changes and completion. Releases the session lock on terminal state.
+ */
+function subscribeCommitActor(
+  actor: ReturnType<typeof createActor<CommitMachineType>>,
+  job: BackgroundJob,
+  release: () => void,
+  broadcast: BroadcastFn = defaultBroadcast,
+): void {
+  let lastPhase: string | undefined = undefined;
+
+  actor.subscribe({
+    next(snapshot) {
+      if (snapshot.status === "active") {
+        const phase = (snapshot.context as CommitContext).phase ?? undefined;
+        if (phase !== lastPhase) {
+          lastPhase = phase;
+          job.phase = phase;
+          broadcastJobStatus(job, broadcast);
+        }
+      }
+    },
+    complete() {
+      const snapshot = actor.getSnapshot();
+      const output = snapshot.output as CommitOutput;
+
+      // Map output → BackgroundJob
+      job.status = output.status;
+      job.commitHash = output.commitHash ?? undefined;
+      job.errorMessage = output.error ?? undefined;
+      job.phase = undefined;
+      job.completedAt = new Date().toISOString();
+
+      broadcastJobStatus(job, broadcast);
+      release();
+    },
+    error(err) {
+      // Shouldn't happen — machine handles errors internally as "failed" state.
+      // But handle defensively.
+      job.status = "failed";
+      job.errorMessage = err instanceof Error ? err.message : "Unknown error";
+      job.phase = undefined;
+      job.completedAt = new Date().toISOString();
+      broadcastJobStatus(job, broadcast);
+      release();
+    },
+  });
+}
+
 // ============================================================
 // Public API — Dispatch
 // ============================================================
@@ -488,7 +538,8 @@ export function dispatchMergeJob(params: {
 }
 
 /**
- * Dispatch a commit job using a fromPromise XState actor.
+ * Dispatch a commit job using the Smart Commit XState machine.
+ * The machine handles: commit → validate → auto-fix validation → re-validate.
  */
 export function dispatchCommitJob(params: {
   projectPath: string;
@@ -499,10 +550,7 @@ export function dispatchCommitJob(params: {
   message: string;
   broadcast?: BroadcastFn;
   acquireSessionLock?: AcquireSessionLockFn;
-  commitFn?: (
-    worktreePath: string,
-    message: string,
-  ) => Promise<{ hash: string }>;
+  machine?: CommitMachineType;
 }): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
@@ -513,7 +561,7 @@ export function dispatchCommitJob(params: {
     message,
     broadcast = defaultBroadcast,
     acquireSessionLock,
-    commitFn = defaultCommitFn,
+    machine = commitMachine,
   } = params;
 
   const prepared = prepareDispatch({
@@ -535,50 +583,25 @@ export function dispatchCommitJob(params: {
     worktreePath,
   });
 
-  // Create a simple fromPromise actor for the commit operation
-  const commitLogic = fromPromise<
-    { hash: string },
-    { worktreePath: string; message: string }
-  >(async ({ input: commitInput }) => {
-    return commitFn(commitInput.worktreePath, commitInput.message);
-  });
+  // Create and start the commit machine actor
+  const input: CommitInput = {
+    jobId: job.jobId,
+    projectPath,
+    projectName,
+    sessionName,
+    worktreePath,
+    branchName,
+    message,
+  };
 
-  const actor = createActor(commitLogic, {
-    input: { worktreePath, message },
-  });
+  const actor = createActor(
+    machine.provide({
+      actions: { onTerminal: () => {} },
+    }),
+    { input },
+  );
 
-  actor.subscribe({
-    next() {
-      // No intermediate states for commit
-    },
-    complete() {
-      const snapshot = actor.getSnapshot();
-      const output = snapshot.output as { hash: string };
-      job.status = "completed";
-      job.commitHash = output.hash;
-      job.completedAt = new Date().toISOString();
-      logger.info("commit.completed", { jobId: job.jobId, hash: output.hash });
-      broadcastJobStatus(job, broadcast);
-      release();
-    },
-    error(err) {
-      job.status = "failed";
-      const errObj = err as Error & { gitOutput?: string };
-      const parts: string[] = [errObj.message ?? "Unknown error"];
-      if (errObj.gitOutput) {
-        parts.push(errObj.gitOutput);
-      }
-      job.errorMessage = parts.join("\n");
-      job.completedAt = new Date().toISOString();
-      logger.error("commit.failed", {
-        jobId: job.jobId,
-        error: job.errorMessage,
-      });
-      broadcastJobStatus(job, broadcast);
-      release();
-    },
-  });
-
+  subscribeCommitActor(actor, job, release, broadcast);
   actor.start();
 
   return { ok: true, value: { jobId: job.jobId } };

@@ -9,6 +9,7 @@ import {
   _resetForTesting,
 } from "./background-jobs";
 import { mergeMachine } from "./workflows/merge/machine";
+import { commitMachine } from "./workflows/commit/machine";
 import type {
   CheckUncommittedInput,
   CheckUncommittedOutput,
@@ -21,6 +22,7 @@ import type {
   AnalyzeConflictsInput,
   AnalyzeConflictsOutput,
   RunValidationInput,
+  RunValidationOutput,
   FixValidationInput,
   FixValidationOutput,
   SquashMergeInput,
@@ -80,13 +82,31 @@ const testMachine = mergeMachine.provide({
   },
 });
 
+/** Test machine: real commit machine with mock actors */
+const testCommitMachine = commitMachine.provide({
+  actors: {
+    commitChanges: fromPromise<CommitChangesOutput, CommitChangesInput>(
+      async ({ input }) => mockCommitChangesActor(input),
+    ),
+    runValidation: fromPromise<RunValidationOutput, RunValidationInput>(
+      async ({ input }) => mockRunValidation(input),
+    ),
+    fixValidation: fromPromise<FixValidationOutput, FixValidationInput>(
+      async ({ input }) => mockFixValidation(input),
+    ),
+    checkUncommitted: fromPromise<
+      CheckUncommittedOutput,
+      CheckUncommittedInput
+    >(async ({ input }) => mockCheckUncommitted(input)),
+  },
+});
+
 // ============================================================
 // Injected deps — no vi.mock needed
 // ============================================================
 
 const mockBroadcast = vi.fn();
 const mockAcquireSessionLock = vi.fn();
-const mockCommitFn = vi.fn();
 
 // ============================================================
 // Helpers
@@ -119,7 +139,7 @@ const BASE_COMMIT_PARAMS = {
   message: "chore: update deps",
   broadcast: mockBroadcast,
   acquireSessionLock: mockAcquireSessionLock,
-  commitFn: mockCommitFn,
+  machine: testCommitMachine,
 };
 
 const BASE_RESOLVE_PARAMS = {
@@ -553,16 +573,18 @@ describe("background-jobs", () => {
   // ----------------------------------------------------------
   describe("dispatchCommitJob", () => {
     it("successful commit → completed broadcast", async () => {
-      mockCommitFn.mockResolvedValue({ hash: "commit789" });
+      mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
 
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
 
       await settle();
 
-      expect(mockCommitFn).toHaveBeenCalledWith(
-        BASE_COMMIT_PARAMS.worktreePath,
-        BASE_COMMIT_PARAMS.message,
+      expect(mockCommitChangesActor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          worktreePath: BASE_COMMIT_PARAMS.worktreePath,
+          message: BASE_COMMIT_PARAMS.message,
+        }),
       );
 
       const last = lastBroadcast();
@@ -582,7 +604,7 @@ describe("background-jobs", () => {
 
     it("failed commit → failed broadcast", async () => {
       const err = new Error("No uncommitted changes to commit");
-      mockCommitFn.mockRejectedValue(err);
+      mockCommitChangesActor.mockRejectedValue(err);
 
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
@@ -601,7 +623,7 @@ describe("background-jobs", () => {
         gitOutput?: string;
       };
       err.gitOutput = "pre-commit hook failed: lint errors";
-      mockCommitFn.mockRejectedValue(err);
+      mockCommitChangesActor.mockRejectedValue(err);
 
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
       expect(result.ok).toBe(true);
@@ -613,6 +635,103 @@ describe("background-jobs", () => {
         BASE_COMMIT_PARAMS.sessionName,
       );
       expect(job?.errorMessage).toContain("pre-commit hook failed");
+    });
+
+    it("commit + validation passes → completed with phases", async () => {
+      mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
+      // mockRunValidation already defaults to resolving (undefined)
+
+      const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
+      expect(result.ok).toBe(true);
+
+      await settle();
+
+      // Verify both commit and validation actors were called
+      expect(mockCommitChangesActor).toHaveBeenCalled();
+      expect(mockRunValidation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: BASE_COMMIT_PARAMS.projectPath,
+          worktreePath: BASE_COMMIT_PARAMS.worktreePath,
+        }),
+      );
+
+      // Verify phases were broadcast (committing, validating)
+      const phaseEvents = mockBroadcast.mock.calls
+        .map((c) => (c[0] as JobStatusEvent).phase)
+        .filter(Boolean);
+      expect(phaseEvents).toContain("committing");
+      expect(phaseEvents).toContain("validating");
+
+      const last = lastBroadcast();
+      expect(last.status).toBe("completed");
+      expect(last.commitHash).toBe("commit789");
+    });
+
+    it("validation fails → fix → re-validate → completed", async () => {
+      mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
+      mockRunValidation
+        .mockRejectedValueOnce(new Error("lint errors"))
+        .mockResolvedValueOnce(undefined);
+      mockFixValidation.mockResolvedValue({
+        status: "fixed" as const,
+        claudeSessionId: "session-1",
+      });
+      mockCheckUncommitted.mockResolvedValue({ hasChanges: true });
+
+      const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
+      expect(result.ok).toBe(true);
+
+      await settle();
+
+      expect(mockFixValidation).toHaveBeenCalled();
+      expect(mockCheckUncommitted).toHaveBeenCalled();
+
+      // commitChanges called twice: user commit + fix commit
+      expect(mockCommitChangesActor).toHaveBeenCalledTimes(2);
+      // runValidation called twice: initial + re-validate
+      expect(mockRunValidation).toHaveBeenCalledTimes(2);
+
+      const last = lastBroadcast();
+      expect(last.status).toBe("completed");
+      expect(last.commitHash).toBe("commit789");
+    });
+
+    it("validation fails → max retries → failed", async () => {
+      mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
+      mockRunValidation.mockRejectedValue(new Error("lint errors"));
+      mockFixValidation.mockResolvedValue({
+        status: "fixed" as const,
+        claudeSessionId: "session-1",
+      });
+      mockCheckUncommitted.mockResolvedValue({ hasChanges: true });
+
+      const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
+      expect(result.ok).toBe(true);
+
+      await settle();
+
+      const last = lastBroadcast();
+      expect(last.status).toBe("failed");
+    });
+
+    it("commitHash present even when validation fails permanently", async () => {
+      mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
+      mockRunValidation.mockRejectedValue(new Error("lint errors"));
+      mockFixValidation.mockResolvedValue({
+        status: "failed" as const,
+      });
+
+      const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
+      expect(result.ok).toBe(true);
+
+      await settle();
+
+      const job = getJob(
+        BASE_COMMIT_PARAMS.projectPath,
+        BASE_COMMIT_PARAMS.sessionName,
+      );
+      expect(job?.status).toBe("failed");
+      expect(job?.commitHash).toBe("commit789");
     });
   });
 
@@ -630,7 +749,7 @@ describe("background-jobs", () => {
     });
 
     it("session lock is always released on commit failure", async () => {
-      mockCommitFn.mockRejectedValue(new Error("commit failed"));
+      mockCommitChangesActor.mockRejectedValue(new Error("commit failed"));
 
       dispatchCommitJob(BASE_COMMIT_PARAMS);
       await settle();
