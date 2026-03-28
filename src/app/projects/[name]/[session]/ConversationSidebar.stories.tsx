@@ -77,6 +77,9 @@ function SidebarShell({
 }: SidebarShellProps) {
   const [activeTab, setActiveTab] = useState<"session" | "active">(initialTab);
   const [showArchived, setShowArchived] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    new Set(),
+  );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -105,11 +108,47 @@ function SidebarShell({
     setEditingId(null);
   };
 
+  const toggleGroup = (project: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(project)) {
+        next.delete(project);
+      } else {
+        next.add(project);
+      }
+      return next;
+    });
+  };
+
+  const statusPriority = ["running", "waiting_for_input", "new", "awaiting"];
+  const getUniqueStatuses = (convos: ActiveConversation[]): string[] => {
+    const present: Set<string> = new Set(convos.map((c) => c.status));
+    return statusPriority.filter((s) => present.has(s));
+  };
+
+  // Group active conversations by project
+  const groupedByProject = new Map<string, ActiveConversation[]>();
+  for (const convo of activeConversations) {
+    const existing = groupedByProject.get(convo.projectName);
+    if (existing) {
+      existing.push(convo);
+    } else {
+      groupedByProject.set(convo.projectName, [convo]);
+    }
+  }
+
   return (
     <div className="convo-sidebar" style={{ height: "100%" }}>
       <div className="cc-section-header convo-sidebar-header">
         <span className="cc-section-label">Conversations</span>
         <div className="cc-section-actions">
+          <button
+            className="btn-icon-only convo-sidebar-header-new"
+            onClick={onNewConversation}
+            data-tooltip="New conversation"
+          >
+            +
+          </button>
           <button
             className="btn-icon-only convo-sidebar-toggle"
             onClick={onToggleCollapse}
@@ -209,8 +248,8 @@ function SidebarShell({
               </Link>
             ))}
           </div>
-          <div className="convo-sidebar-footer">
-            {archivedCount > 0 && (
+          {archivedCount > 0 && (
+            <div className="convo-sidebar-footer">
               <button
                 className={`convo-sidebar-archive-toggle${showArchived ? " active" : ""}`}
                 onClick={() => setShowArchived((v) => !v)}
@@ -218,14 +257,8 @@ function SidebarShell({
               >
                 Archived ({archivedCount})
               </button>
-            )}
-            <button
-              className="btn btn-sm convo-sidebar-new"
-              onClick={onNewConversation}
-            >
-              + New
-            </button>
-          </div>
+            </div>
+          )}
         </>
       ) : (
         <div className="convo-sidebar-list">
@@ -237,100 +270,107 @@ function SidebarShell({
               </span>
             </div>
           ) : (
-            activeConversations.map((convo) => (
-              <Link
-                key={convo.id}
-                href={`/projects/${encodeURIComponent(convo.projectName)}/${encodeURIComponent(convo.sessionName)}/${convo.id}`}
-                className="convo-sidebar-item"
-              >
-                <span className={`sidebar-dot ${convo.status}`} />
-                <div className="convo-sidebar-item-body">
-                  <div className="convo-sidebar-item-name-row">
-                    {editingId === convo.id ? (
-                      <input
-                        ref={editInputRef}
-                        className="convo-rename-input"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            handleRenameSubmit(convo.id);
-                          } else if (e.key === "Escape") {
-                            setEditingId(null);
-                          }
-                        }}
-                        onBlur={() => handleRenameSubmit(convo.id)}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        maxLength={200}
-                        style={{ flex: 1 }}
-                      />
-                    ) : (
-                      <>
-                        <div className="convo-sidebar-item-summary">
-                          {convo.name ?? "Unnamed conversation"}
-                        </div>
-                        <span className="convo-sidebar-active-time">
-                          {formatRelativeTime(convo.lastActivityAt)}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                  {editingId !== convo.id && (
-                    <div className="convo-sidebar-active-meta">
-                      <span
-                        className="convo-sidebar-meta-chip"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        role="link"
-                        tabIndex={0}
-                      >
-                        {convo.projectName}
-                      </span>
-                      <span className="convo-sidebar-meta-sep">/</span>
-                      <span
-                        className="convo-sidebar-meta-chip"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        role="link"
-                        tabIndex={0}
-                      >
-                        {convo.sessionName}
-                      </span>
+            Array.from(groupedByProject.entries()).map(([project, convos]) => {
+              const isGroupCollapsed = collapsedGroups.has(project);
+              const statuses = getUniqueStatuses(convos);
+              return (
+                <div key={project} className="convo-sidebar-project-group">
+                  <div
+                    className="cc-section-header convo-sidebar-group-header"
+                    onClick={() => toggleGroup(project)}
+                  >
+                    <span
+                      className={`convo-sidebar-group-chevron${isGroupCollapsed ? " collapsed" : ""}`}
+                    >
+                      &#9660;
+                    </span>
+                    <span className="cc-section-label">{project}</span>
+                    <div className="convo-sidebar-group-status">
+                      {statuses.map((s) => (
+                        <span
+                          key={s}
+                          className={`convo-sidebar-group-dot ${s}`}
+                        />
+                      ))}
                     </div>
-                  )}
+                    <span className="cc-section-count">{convos.length}</span>
+                  </div>
+                  {!isGroupCollapsed &&
+                    convos.map((convo) => (
+                      <Link
+                        key={convo.id}
+                        href={`/projects/${encodeURIComponent(convo.projectName)}/${encodeURIComponent(convo.sessionName)}/${convo.id}`}
+                        className="convo-sidebar-item"
+                      >
+                        <span className={`sidebar-dot ${convo.status}`} />
+                        <div className="convo-sidebar-item-body">
+                          <div className="convo-sidebar-item-name-row">
+                            {editingId === convo.id ? (
+                              <input
+                                ref={editInputRef}
+                                className="convo-rename-input"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleRenameSubmit(convo.id);
+                                  } else if (e.key === "Escape") {
+                                    setEditingId(null);
+                                  }
+                                }}
+                                onBlur={() => handleRenameSubmit(convo.id)}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                                maxLength={200}
+                                style={{ flex: 1 }}
+                              />
+                            ) : (
+                              <>
+                                <div className="convo-sidebar-item-summary">
+                                  {convo.name ?? "Unnamed conversation"}
+                                </div>
+                                <span className="convo-sidebar-active-time">
+                                  {formatRelativeTime(convo.lastActivityAt)}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          {editingId !== convo.id && (
+                            <span className="convo-sidebar-session-label">
+                              {convo.sessionName}
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          className="btn-icon-only convo-sidebar-item-action"
+                          data-tooltip="Rename"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleRenameStart(convo.id, convo.name ?? "");
+                          }}
+                        >
+                          &#9998;
+                        </button>
+                        <button
+                          className="btn-icon-only convo-sidebar-item-action"
+                          data-tooltip="Archive"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onArchive(convo.id, true);
+                          }}
+                        >
+                          {"\u2913"}
+                        </button>
+                      </Link>
+                    ))}
                 </div>
-                <button
-                  className="btn-icon-only convo-sidebar-item-action"
-                  data-tooltip="Rename"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleRenameStart(convo.id, convo.name ?? "");
-                  }}
-                >
-                  &#9998;
-                </button>
-                <button
-                  className="btn-icon-only convo-sidebar-item-action"
-                  data-tooltip="Archive"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onArchive(convo.id, true);
-                  }}
-                >
-                  {"\u2913"}
-                </button>
-              </Link>
-            ))
+              );
+            })
           )}
         </div>
       )}
@@ -358,7 +398,7 @@ const meta = {
       <div
         style={{
           height: 600,
-          width: 260,
+          width: 320,
           position: "relative",
           background: "var(--bg-void)",
         }}

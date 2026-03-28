@@ -70,6 +70,8 @@ import {
   useSetPendingForkPrompt,
   useConsumePendingForkPrompt,
   useSwitchRightPaneTab,
+  useSidebarCollapsed,
+  useToggleSidebar,
 } from "@/stores/session-detail.store";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
@@ -178,6 +180,8 @@ export default function SessionDetailPage({
 
   // --- Zustand: state ---
   const layout = useLayout();
+  const sidebarCollapsed = useSidebarCollapsed();
+  const toggleSidebar = useToggleSidebar();
   const mobilePanel = useMobilePanel();
   const sending = useSending();
   const promptPlaceholder = usePromptPlaceholder();
@@ -1249,6 +1253,17 @@ export default function SessionDetailPage({
             <div className="finished-banner">
               Workflow is active — prompts are blocked during execution.
             </div>
+          )}
+
+          {/* Sidebar expand button — rendered outside session-content-area to avoid overflow:hidden clipping */}
+          {conversations && sidebarCollapsed && (
+            <button
+              className="convo-sidebar-expand-float"
+              onClick={toggleSidebar}
+              data-tooltip="Expand sidebar"
+            >
+              {"\u25B6"}
+            </button>
           )}
 
           {/* Content area */}
