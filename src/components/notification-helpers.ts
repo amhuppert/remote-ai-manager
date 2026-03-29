@@ -41,6 +41,9 @@ export function getItemLabel(item: NotificationItem): string {
       const status = item.status;
       switch (status) {
         case "running":
+          if (item.phase === "validating" || item.phase === "re-validating")
+            return "Validating...";
+          if (item.phase === "fixing-validation") return "Fixing errors...";
           return "Committing...";
         case "success":
           return "Committed";

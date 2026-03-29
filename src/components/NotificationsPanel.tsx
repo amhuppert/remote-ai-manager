@@ -39,6 +39,7 @@ export interface CommitNotification extends ServerNotificationBase {
   status: "running" | "success" | "error";
   commitHash?: string;
   errorMessage?: string;
+  phase?: string;
 }
 
 export interface ResolveConflictsNotification extends ServerNotificationBase {

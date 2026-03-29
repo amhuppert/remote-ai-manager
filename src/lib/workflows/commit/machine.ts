@@ -113,6 +113,7 @@ export const commitMachine = setup({
         input: ({ context }) => ({
           worktreePath: context.worktreePath,
           message: context.message,
+          skipHooks: true,
         }),
         onDone: {
           target: "validating",

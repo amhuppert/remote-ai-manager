@@ -584,6 +584,7 @@ describe("background-jobs", () => {
         expect.objectContaining({
           worktreePath: BASE_COMMIT_PARAMS.worktreePath,
           message: BASE_COMMIT_PARAMS.message,
+          skipHooks: true,
         }),
       );
 

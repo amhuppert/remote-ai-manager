@@ -115,6 +115,7 @@ export default function NotificationsPanelContainer() {
           branchName: job.branchName,
           status: "running",
           read: true,
+          phase: job.phase,
         } satisfies CommitNotification);
       } else if (job.jobType === "resolve-conflicts") {
         result.push({

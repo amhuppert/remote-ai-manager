@@ -115,6 +115,23 @@ describe("commitMachine", () => {
       expect(states).toContain("validating");
       expect(states).toContain("completed");
     });
+
+    it("initial commit skips hooks so pre-commit linters do not block", async () => {
+      const commitInputs: CommitChangesInput[] = [];
+      const machine = createTestMachine({
+        commitChanges: mockCommitChanges(async (input) => {
+          commitInputs.push(input);
+          return { hash: "abc123" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(commitInputs).toHaveLength(1);
+      expect(commitInputs[0]!.skipHooks).toBe(true);
+    });
   });
 
   describe("commit failure", () => {
