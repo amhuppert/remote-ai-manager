@@ -34,15 +34,24 @@ export default function HotkeyHelpModal({
 }: HotkeyHelpModalProps): React.JSX.Element | null {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        // Stop propagation so bubble-phase listeners (e.g. react-hotkeys-hook
+        // abort handler) don't also fire when closing the modal
+        e.stopPropagation();
+        onClose();
+      }
     },
     [onClose],
   );
 
   useEffect(() => {
     if (open) {
-      document.addEventListener("keydown", handleKeyDown);
-      return () => document.removeEventListener("keydown", handleKeyDown);
+      // Use capture phase so this fires before bubble-phase hotkey listeners
+      document.addEventListener("keydown", handleKeyDown, { capture: true });
+      return () =>
+        document.removeEventListener("keydown", handleKeyDown, {
+          capture: true,
+        });
     }
   }, [open, handleKeyDown]);
 
