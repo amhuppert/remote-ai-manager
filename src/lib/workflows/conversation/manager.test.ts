@@ -19,6 +19,7 @@ import {
   setMachineFactory,
   _resetMachineFactoryForTesting,
   _resetForTesting,
+  applySyncDerivedFields,
 } from "./manager";
 import { _resetForTesting as resetRuntime } from "./runtime-state";
 
@@ -339,6 +340,75 @@ describe("conversation manager", () => {
       // Actor started successfully with provided actions — no stub errors
       expect(snap.status).toBe("active");
       expect(snap.value).toBe("idle");
+    });
+  });
+
+  describe("applySyncDerivedFields", () => {
+    it("syncs contextTokens and contextWindowMax from machine context", () => {
+      const context = {
+        _schemaVersion: 1 as const,
+        projectPath: "/repo",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/repo/.worktrees/sess",
+        conversationId: "conv-1",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:01:00Z",
+        status: "awaiting" as const,
+        promptCount: 3,
+        transcriptPath: "/tmp/t.jsonl",
+        claudeSessionId: "sdk-1",
+        forkedFrom: null,
+        role: null,
+        activeTurn: null,
+        pendingQuestion: null,
+        debugMode: null,
+        totals: {
+          totalCostUsd: 0.15,
+          totalDurationMs: 3000,
+          totalTurns: 5,
+          contextTokens: 150000,
+          contextWindowMax: 200000,
+        },
+        lastResult: null,
+        lastError: null,
+      };
+
+      const conv = {
+        id: "conv-1",
+        name: null,
+        claudeSessionId: null,
+        transcriptPath: null,
+        status: "new" as const,
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        source: "cc" as const,
+        summary: null,
+        archived: false,
+        totalCostUsd: null,
+        totalDurationMs: null,
+        totalTurns: null,
+        pendingQuestionId: null,
+        pendingQuestions: null,
+        forkedFrom: null,
+        role: null,
+        contextTokens: null as number | null,
+        contextWindowMax: null as number | null,
+        debugMode: null,
+        machineSnapshot: null,
+      };
+
+      applySyncDerivedFields(context, conv);
+
+      expect(conv.contextTokens).toBe(150000);
+      expect(conv.contextWindowMax).toBe(200000);
+      // Verify existing fields still work
+      expect(conv.totalCostUsd).toBe(0.15);
+      expect(conv.totalDurationMs).toBe(3000);
+      expect(conv.totalTurns).toBe(5);
+      expect(conv.status).toBe("awaiting");
+      expect(conv.promptCount).toBe(3);
     });
   });
 });

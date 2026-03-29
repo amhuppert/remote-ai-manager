@@ -14,6 +14,7 @@
 import { createActor, fromPromise, type Snapshot } from "xstate";
 import { conversationMachine, type ConversationActorRef } from "./machine";
 import type {
+  ConversationContext,
   ConversationInput,
   ConversationEvent,
   PrepareTurnInput,
@@ -29,6 +30,7 @@ import {
 } from "./runtime-state";
 import { persistConversationSnapshot } from "./persistence";
 import { createLogger } from "@/lib/logging";
+import type { ConversationState } from "@/types";
 
 const logger = createLogger("conversation-manager");
 
@@ -69,6 +71,40 @@ function getActorRegistry(): Map<string, ConversationActorRef> {
 // ============================================================
 // Machine Provider (injects production actors + actions)
 // ============================================================
+
+/**
+ * Apply machine context fields to a mutable ConversationState.
+ * Extracted as a pure function for testability.
+ */
+export function applySyncDerivedFields(
+  context: ConversationContext,
+  c: ConversationState,
+): void {
+  c.status = context.status;
+  c.pendingQuestionId = context.pendingQuestion?.questionId ?? null;
+  c.pendingQuestions = context.pendingQuestion?.questions ?? null;
+  c.claudeSessionId = context.claudeSessionId;
+  c.transcriptPath = context.transcriptPath;
+  c.totalCostUsd = context.totals.totalCostUsd;
+  c.totalDurationMs = context.totals.totalDurationMs;
+  c.totalTurns = context.totals.totalTurns;
+  c.contextTokens = context.totals.contextTokens;
+  c.contextWindowMax = context.totals.contextWindowMax;
+  c.promptCount = context.promptCount;
+  if (context.debugMode) {
+    c.debugMode = {
+      active: context.debugMode.active,
+      recording: context.debugMode.recording,
+      logFilePath: context.debugMode.logFilePath,
+      enteredAt: context.debugMode.enteredAt,
+      hypotheses: context.debugMode.hypotheses,
+      instructionsDelivered: context.debugMode.instructionsDelivered,
+      phase: context.debugMode.phase,
+    };
+  } else {
+    c.debugMode = null;
+  }
+}
 
 function createProvidedMachine() {
   return conversationMachine.provide({
@@ -113,32 +149,7 @@ function createProvidedMachine() {
               context.sessionName,
               context.conversationId,
               "conversation-manager.syncDerived",
-              (c) => {
-                c.status = context.status;
-                c.pendingQuestionId =
-                  context.pendingQuestion?.questionId ?? null;
-                c.pendingQuestions = context.pendingQuestion?.questions ?? null;
-                c.claudeSessionId = context.claudeSessionId;
-                c.transcriptPath = context.transcriptPath;
-                c.totalCostUsd = context.totals.totalCostUsd;
-                c.totalDurationMs = context.totals.totalDurationMs;
-                c.totalTurns = context.totals.totalTurns;
-                c.promptCount = context.promptCount;
-                if (context.debugMode) {
-                  c.debugMode = {
-                    active: context.debugMode.active,
-                    recording: context.debugMode.recording,
-                    logFilePath: context.debugMode.logFilePath,
-                    enteredAt: context.debugMode.enteredAt,
-                    hypotheses: context.debugMode.hypotheses,
-                    instructionsDelivered:
-                      context.debugMode.instructionsDelivered,
-                    phase: context.debugMode.phase,
-                  };
-                } else {
-                  c.debugMode = null;
-                }
-              },
+              (c) => applySyncDerivedFields(context, c),
             );
           } catch (err) {
             logger.warn("conversation-manager.sync_derived_failed", {
