@@ -15,6 +15,7 @@
 import { appendFileSync, mkdirSync, existsSync } from "node:fs";
 import path from "node:path";
 import { getTraceContext } from "./context";
+import { resolveConfigDir } from "../config";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -45,9 +46,6 @@ function resolveLogLevel(): LogLevel {
 /**
  * Resolve the log file path.
  * Uses CC_LOG_FILE env var if set, otherwise derives from config directory.
- *
- * Since readConfig() is async and we need sync file writes,
- * we resolve the config directory path directly (same logic as config.ts).
  */
 function resolveLogFilePath(): string {
   const envPath = process.env["CC_LOG_FILE"];
@@ -55,24 +53,7 @@ function resolveLogFilePath(): string {
     return envPath;
   }
 
-  // Derive config dir using same logic as config.ts
-  const platform = process.platform;
-  let configDir: string;
-  if (platform === "darwin") {
-    configDir = path.join(
-      process.env["HOME"] ?? "/tmp",
-      "Library",
-      "Application Support",
-      "cc",
-    );
-  } else {
-    const xdg = process.env["XDG_CONFIG_HOME"];
-    configDir = xdg
-      ? path.join(xdg, "cc")
-      : path.join(process.env["HOME"] ?? "/tmp", ".config", "cc");
-  }
-
-  return path.join(configDir, "cc-debug.log");
+  return path.join(resolveConfigDir(), "cc-debug.log");
 }
 
 // Lazy-initialized state (resolved on first log call)

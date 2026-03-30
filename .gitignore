@@ -24,6 +24,9 @@ npm-debug.log*
 .DS_Store
 *.tsbuildinfo
 
+# local dev state (CC_CONFIG_DIR)
+.config/
+
 # voice/prompt (local dev)
 .voice-last.json
 PROMPT.md

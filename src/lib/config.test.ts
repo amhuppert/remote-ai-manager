@@ -1,7 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { createConfigReader, resolveBranchPrefix } from "./config";
+import os from "node:os";
+import {
+  createConfigReader,
+  resolveBranchPrefix,
+  resolveConfigDir,
+} from "./config";
 import { globalConfigSchema, perRepoConfigSchema } from "./schemas";
 
 const TEST_DIR = path.join("/tmp", "cc-config-test-" + Date.now());
@@ -322,6 +327,69 @@ describe("schema: codex config block", () => {
     expect(reread.codex?.enabled).toBe(true);
     expect(reread.codex?.model).toBe("gpt-5-codex");
     expect(reread.codex?.reasoningEffort).toBe("high");
+  });
+});
+
+describe("resolveConfigDir", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("returns CC_CONFIG_DIR when set", () => {
+    vi.stubEnv("CC_CONFIG_DIR", "/custom/cc-dir");
+    expect(resolveConfigDir()).toBe("/custom/cc-dir");
+  });
+
+  it("CC_CONFIG_DIR takes priority over NODE_ENV=development", () => {
+    vi.stubEnv("CC_CONFIG_DIR", "/custom/cc-dir");
+    vi.stubEnv("NODE_ENV", "development");
+    expect(resolveConfigDir()).toBe("/custom/cc-dir");
+  });
+
+  it("uses cc-dev directory name when NODE_ENV=development", () => {
+    vi.stubEnv("CC_CONFIG_DIR", "");
+    delete process.env["CC_CONFIG_DIR"];
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("XDG_CONFIG_HOME", "");
+    delete process.env["XDG_CONFIG_HOME"];
+
+    const result = resolveConfigDir();
+    expect(result).toMatch(/cc-dev$/);
+  });
+
+  it("uses cc directory name when NODE_ENV=production", () => {
+    vi.stubEnv("CC_CONFIG_DIR", "");
+    delete process.env["CC_CONFIG_DIR"];
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("XDG_CONFIG_HOME", "");
+    delete process.env["XDG_CONFIG_HOME"];
+
+    const result = resolveConfigDir();
+    expect(result).toMatch(/[/\\]cc$/);
+    expect(result).not.toMatch(/cc-dev$/);
+  });
+
+  it("uses cc directory name when NODE_ENV is test", () => {
+    vi.stubEnv("CC_CONFIG_DIR", "");
+    delete process.env["CC_CONFIG_DIR"];
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("XDG_CONFIG_HOME", "");
+    delete process.env["XDG_CONFIG_HOME"];
+
+    const result = resolveConfigDir();
+    expect(result).toMatch(/[/\\]cc$/);
+  });
+
+  it("respects XDG_CONFIG_HOME on Linux in dev mode", () => {
+    vi.stubEnv("CC_CONFIG_DIR", "");
+    delete process.env["CC_CONFIG_DIR"];
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("XDG_CONFIG_HOME", "/custom/xdg");
+
+    const result = resolveConfigDir();
+    if (os.platform() !== "darwin") {
+      expect(result).toBe("/custom/xdg/cc-dev");
+    }
   });
 });
 

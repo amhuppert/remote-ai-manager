@@ -5,21 +5,35 @@ import os from "node:os";
 import { globalConfigSchema } from "./schemas";
 import type { GlobalConfig, PerRepoConfig } from "@/types";
 
-/** Returns the OS-appropriate config directory for Command Center */
-function getConfigDir(): string {
+/**
+ * Resolve the config directory for Command Center.
+ *
+ * Priority:
+ * 1. CC_CONFIG_DIR env var (explicit override)
+ * 2. OS-appropriate default, with "cc-dev" suffix when NODE_ENV=development
+ *    to isolate dev server state from production
+ */
+export function resolveConfigDir(): string {
+  const override = process.env["CC_CONFIG_DIR"];
+  if (override) {
+    return override;
+  }
+
+  const dirName = process.env["NODE_ENV"] === "development" ? "cc-dev" : "cc";
+
   const platform = os.platform();
   if (platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "cc");
+    return path.join(os.homedir(), "Library", "Application Support", dirName);
   }
   // Linux / other: use XDG_CONFIG_HOME or ~/.config
   const xdg = process.env["XDG_CONFIG_HOME"];
   if (xdg) {
-    return path.join(xdg, "cc");
+    return path.join(xdg, dirName);
   }
-  return path.join(os.homedir(), ".config", "cc");
+  return path.join(os.homedir(), ".config", dirName);
 }
 
-const CONFIG_DIR = getConfigDir();
+const CONFIG_DIR = resolveConfigDir();
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
 /** Default global config values */
