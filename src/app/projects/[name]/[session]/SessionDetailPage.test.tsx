@@ -52,6 +52,7 @@ vi.mock("@/components/MarkdownViewer", () => ({
 }));
 
 // JSDOM has no layout engine — virtualizer needs a stub
+const scrollToIndexMock = vi.fn();
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getVirtualItems: () =>
@@ -63,7 +64,7 @@ vi.mock("@tanstack/react-virtual", () => ({
       })),
     getTotalSize: () => count * 120,
     measureElement: vi.fn(),
-    scrollToIndex: vi.fn(),
+    scrollToIndex: scrollToIndexMock,
   }),
 }));
 
@@ -489,6 +490,32 @@ describe("SessionDetailPage", () => {
 
       capturedOnResult!("Hello from voice");
       expect(sendPromptMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("scroll navigation", () => {
+    it("scrolls to last message via virtualizer on initial load", () => {
+      scrollToIndexMock.mockClear();
+      renderPage();
+      // Should use virtualizer.scrollToIndex to reach the last message (index 2)
+      // with align: "end" and no animation
+      expect(scrollToIndexMock).toHaveBeenCalledWith(2, {
+        align: "end",
+        behavior: "auto",
+      });
+    });
+
+    it("navigate-to-end button scrolls to last message via virtualizer", () => {
+      renderPage();
+      scrollToIndexMock.mockClear();
+
+      const lastBtn = screen.getByTitle("Last message");
+      fireEvent.click(lastBtn);
+
+      expect(scrollToIndexMock).toHaveBeenCalledWith(2, {
+        align: "end",
+        behavior: "auto",
+      });
     });
   });
 

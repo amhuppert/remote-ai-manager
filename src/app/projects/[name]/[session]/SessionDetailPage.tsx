@@ -567,9 +567,12 @@ export default function SessionDetailPage({
   useEffect(() => {
     if (!initialScrollDone.current && displayMessages.length > 0) {
       initialScrollDone.current = true;
-      scrollPanelToBottom("instant");
+      virtualizer.scrollToIndex(displayMessages.length - 1, {
+        align: "end",
+        behavior: "auto",
+      });
     }
-  }, [displayMessages.length, scrollPanelToBottom]);
+  }, [displayMessages.length, virtualizer]);
 
   // Auto-scroll to bottom when new messages arrive
   const prevMessageCountRef = useRef(displayMessages.length);
@@ -604,11 +607,14 @@ export default function SessionDetailPage({
   );
 
   const scrollToEnd = useCallback(() => {
-    scrollPanelToBottom();
     if (displayMessages.length > 0) {
+      virtualizer.scrollToIndex(displayMessages.length - 1, {
+        align: "end",
+        behavior: "auto",
+      });
       navigateToMessage(displayMessages.length - 1);
     }
-  }, [displayMessages.length, navigateToMessage, scrollPanelToBottom]);
+  }, [displayMessages.length, navigateToMessage, virtualizer]);
 
   const handlePrevMessage = useCallback(() => {
     const prevTurnStart = turnStartIndices[currentTurnIndex - 1];
