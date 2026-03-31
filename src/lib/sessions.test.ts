@@ -755,18 +755,16 @@ describe("createSessionFast", () => {
     );
   });
 
-  it("writes focus.md with session name as fallback objective", async () => {
+  it("does not write focus.md (only focus mode writes it)", async () => {
     mockGitSuccess(); // git worktree add
-    const session = await service.createSessionFast(
-      "/projects/repo",
-      "Quick Fix",
-    );
+    await service.createSessionFast("/projects/repo", "Quick Fix");
 
-    expect(deps.writeFile).toHaveBeenCalledWith(
-      `${session.worktreePath}/memory-bank/focus.md`,
-      "# Session Focus\n\n## Objective\n\nQuick Fix\n",
-      "utf-8",
+    const writeFileMock = deps.writeFile as ReturnType<typeof vi.fn>;
+    const focusWrites = writeFileMock.mock.calls.filter(
+      (call: unknown[]) =>
+        typeof call[0] === "string" && call[0].includes("focus.md"),
     );
+    expect(focusWrites).toHaveLength(0);
   });
 
   it("throws for empty session name", async () => {
@@ -1078,22 +1076,19 @@ describe("deleteSession", () => {
 // ===========================================================================
 
 describe("provisionSession — optimistic mode gets fast-mode treatment", () => {
-  it("writes fast-mode focus.md content for optimistic sessions", async () => {
+  it("does not write focus.md for optimistic sessions", async () => {
     mockGitSuccess();
-    const session = await service.provisionSession(
-      "/projects/repo",
-      "opt-task",
-      {
-        mode: "optimistic",
-        objective: "Fix the bug in login",
-      },
-    );
+    await service.provisionSession("/projects/repo", "opt-task", {
+      mode: "optimistic",
+      objective: "Fix the bug in login",
+    });
 
-    expect(deps.writeFile).toHaveBeenCalledWith(
-      `${session.worktreePath}/memory-bank/focus.md`,
-      "# Session Focus\n\n## Objective\n\nFix the bug in login\n",
-      "utf-8",
+    const writeFileMock = deps.writeFile as ReturnType<typeof vi.fn>;
+    const focusWrites = writeFileMock.mock.calls.filter(
+      (call: unknown[]) =>
+        typeof call[0] === "string" && call[0].includes("focus.md"),
     );
+    expect(focusWrites).toHaveLength(0);
   });
 
   it("sets conversation role to null for optimistic sessions (no initialization)", async () => {

@@ -307,18 +307,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
         opts.baseBranch ?? "main",
       ]);
 
-      // Write memory-bank/focus.md
-      const memoryBankDir = path.join(worktreePath, "memory-bank");
-      await mkdir(memoryBankDir, { recursive: true });
-      if (opts.mode !== "focus") {
-        // Fast and optimistic modes: direct objective content
-        await writeFile(
-          path.join(memoryBankDir, "focus.md"),
-          `# Session Focus\n\n## Objective\n\n${opts.objective ?? sessionName}\n`,
-          "utf-8",
-        );
-      } else {
-        // Focus mode: placeholder — agent will overwrite after research
+      // Focus mode writes a placeholder focus.md that the agent enriches after research.
+      // Fast and optimistic modes skip this — focus.md is only for the Focus Mode workflow.
+      if (opts.mode === "focus") {
+        const memoryBankDir = path.join(worktreePath, "memory-bank");
+        await mkdir(memoryBankDir, { recursive: true });
         await writeFile(
           path.join(memoryBankDir, "focus.md"),
           `# Session Focus\n\n## Objective\n\n${opts.objective}\n\n> This focus document will be enriched after objective analysis.\n`,
