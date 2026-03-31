@@ -24,6 +24,7 @@ import {
 } from "@/lib/schemas";
 import {
   useAddOrUpdateJob,
+  useReconcileJobs,
   useEnqueueToast,
   useEnqueueInputToast,
   useEnqueuePromptErrorToast,
@@ -38,6 +39,7 @@ import {
 export default function NotificationListener(): null {
   const queryClient = useQueryClient();
   const addOrUpdateJob = useAddOrUpdateJob();
+  const reconcileJobs = useReconcileJobs();
   const enqueueToast = useEnqueueToast();
   const enqueueInputToast = useEnqueueInputToast();
   const enqueuePromptErrorToast = useEnqueuePromptErrorToast();
@@ -302,6 +304,14 @@ export default function NotificationListener(): null {
         void queryClient.invalidateQueries({
           queryKey: workflowKeys.all,
         });
+
+        // Reconcile stale running jobs with server-side truth
+        void fetch("/api/jobs")
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data?.jobs) reconcileJobs(data.jobs);
+          })
+          .catch(() => {});
       }
     };
 
@@ -311,6 +321,7 @@ export default function NotificationListener(): null {
   }, [
     queryClient,
     addOrUpdateJob,
+    reconcileJobs,
     enqueueToast,
     enqueueInputToast,
     enqueuePromptErrorToast,

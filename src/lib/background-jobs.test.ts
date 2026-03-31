@@ -5,6 +5,7 @@ import {
   dispatchCommitJob,
   dispatchResolveConflictsJob,
   getJob,
+  getActiveJobs,
   getConflictAnalysis,
   _resetForTesting,
 } from "./background-jobs";
@@ -1133,6 +1134,33 @@ describe("background-jobs", () => {
       expect(
         getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
       ).toBeUndefined();
+    });
+  });
+
+  describe("getActiveJobs", () => {
+    it("returns only running jobs from the registry", async () => {
+      // Dispatch a merge job (stays running because actors block)
+      let resolveActor: (() => void) | undefined;
+      mockCheckUncommitted.mockReturnValue(
+        new Promise<{ hasChanges: boolean }>((resolve) => {
+          resolveActor = () => resolve({ hasChanges: false });
+        }),
+      );
+      mockAcquireSessionLock.mockReturnValue(() => {});
+
+      dispatchMergeJob(BASE_MERGE_PARAMS);
+
+      const active = getActiveJobs();
+      expect(active).toHaveLength(1);
+      expect(active[0]?.status).toBe("running");
+
+      // Clean up — resolve the blocked actor
+      resolveActor?.();
+      await settle();
+    });
+
+    it("returns empty array when no jobs are running", () => {
+      expect(getActiveJobs()).toHaveLength(0);
     });
   });
 });

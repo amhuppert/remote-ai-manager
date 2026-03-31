@@ -36,6 +36,9 @@ interface NotificationState {
 
 interface NotificationActions {
   addOrUpdateJob: (event: JobStatusEvent) => void;
+  /** Replace the jobs map with the server's authoritative list of active jobs.
+   *  Removes stale client-side "running" entries missed by SSE. */
+  reconcileJobs: (serverJobs: BackgroundJob[]) => void;
   enqueueToast: (notification: Notification) => void;
   dismissToast: () => void;
   enqueueInputToast: (item: InputNeededItem) => void;
@@ -87,6 +90,18 @@ export const useNotificationStore = create<NotificationStore>()(
         };
 
         state.jobs.set(event.jobId, job);
+      }),
+
+    reconcileJobs: (serverJobs: BackgroundJob[]) =>
+      set((state) => {
+        const serverMap = new Map(serverJobs.map((j) => [j.jobId, j]));
+        // Replace the entire jobs map with server-authoritative data
+        state.jobs.clear();
+        for (const [id, job] of serverMap) {
+          if (job.status === "running") {
+            state.jobs.set(id, job);
+          }
+        }
       }),
 
     enqueueToast: (notification: Notification) =>
@@ -155,6 +170,8 @@ export const useJobsBySession = (projectName: string, sessionName: string) => {
 
 export const useAddOrUpdateJob = () =>
   useNotificationStore((s) => s.addOrUpdateJob);
+export const useReconcileJobs = () =>
+  useNotificationStore((s) => s.reconcileJobs);
 export const useEnqueueToast = () =>
   useNotificationStore((s) => s.enqueueToast);
 export const useDismissToast = () =>

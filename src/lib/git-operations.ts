@@ -378,12 +378,15 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
       throw new Error("Merge message cannot be empty");
     }
 
-    // Pre-check: merge path must be clean
+    // Pre-check: merge path must be clean (ignore untracked files)
     const { stdout: rootStatus } = await git(mergePath, [
       "status",
       "--porcelain",
     ]);
-    if (rootStatus.trim().length > 0) {
+    const hasTrackedChanges = rootStatus
+      .split("\n")
+      .some((line) => line.length > 0 && !line.startsWith("??"));
+    if (hasTrackedChanges) {
       throw new Error(
         `Target branch '${targetBranch}' has uncommitted changes`,
       );

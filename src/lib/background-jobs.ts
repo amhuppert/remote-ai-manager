@@ -106,6 +106,12 @@ export function getJob(
   return getJobRegistry().get(sessionKey(projectPath, sessionName));
 }
 
+/** Get all active (running) jobs from the in-memory registry */
+export function getActiveJobs(): BackgroundJob[] {
+  const registry = getJobRegistry();
+  return Array.from(registry.values()).filter((j) => j.status === "running");
+}
+
 /** Get the stored conflict analysis for a session, if any */
 export function getConflictAnalysis(
   projectPath: string,

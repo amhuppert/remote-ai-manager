@@ -404,6 +404,25 @@ describe("squashMerge", () => {
     ).rejects.toThrow("Target branch 'main' has uncommitted changes");
   });
 
+  it("ignores untracked files in merge path cleanliness check", async () => {
+    // Untracked files (prefix "??") should not block squash merge
+    mockGitSequence([
+      { stdout: "?? some-untracked-file.html\n" }, // status --porcelain
+      { stdout: "" }, // merge --squash
+      { stdout: "[main abc1234] Merge\n" }, // commit
+    ]);
+
+    const result = await ops.squashMerge("/project", "csm/branch", "Merge");
+    expect(result.mergeHash).toBe("abc1234");
+  });
+
+  it("throws when merge path has tracked changes alongside untracked files", async () => {
+    mockGitSequence([{ stdout: "?? untracked.html\n M dirty-file.ts\n" }]);
+    await expect(
+      ops.squashMerge("/project", "csm/branch", "Merge"),
+    ).rejects.toThrow("Target branch 'main' has uncommitted changes");
+  });
+
   it("returns empty hash when commit output format is unexpected", async () => {
     mockGitSequence([
       { stdout: "" },

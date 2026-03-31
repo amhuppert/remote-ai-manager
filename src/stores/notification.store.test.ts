@@ -200,3 +200,78 @@ describe("notification.store — input toast queue", () => {
     expect(useNotificationStore.getState().inputToastQueue).toEqual([]);
   });
 });
+
+// ============================================================
+// reconcileJobs Tests
+// ============================================================
+
+describe("notification.store — reconcileJobs", () => {
+  beforeEach(resetStore);
+
+  it("removes stale running jobs not present on server", () => {
+    // Client has a "running" job from a mutation onSuccess
+    useNotificationStore.getState().addOrUpdateJob(makeRunningEvent());
+    expect(useNotificationStore.getState().jobs.size).toBe(1);
+
+    // Server reports no active jobs → stale job should be removed
+    useNotificationStore.getState().reconcileJobs([]);
+    expect(useNotificationStore.getState().jobs.size).toBe(0);
+  });
+
+  it("keeps jobs that are still active on server", () => {
+    useNotificationStore.getState().addOrUpdateJob(makeRunningEvent());
+
+    // Server confirms the job is still running
+    useNotificationStore.getState().reconcileJobs([
+      {
+        jobId: "job-123",
+        jobType: "merge",
+        status: "running",
+        projectName: "my-project",
+        sessionName: "my-session",
+        branchName: "csm/my-session",
+        startedAt: "2026-01-01T00:00:00Z",
+        phase: "validating",
+      },
+    ]);
+
+    const jobs = useNotificationStore.getState().jobs;
+    expect(jobs.size).toBe(1);
+    // Phase should be updated from server
+    expect(jobs.get("job-123")?.phase).toBe("validating");
+  });
+
+  it("adds server-side running jobs not present on client", () => {
+    // Client has no jobs, but server has one (e.g. page refreshed mid-job)
+    useNotificationStore.getState().reconcileJobs([
+      {
+        jobId: "job-new",
+        jobType: "commit",
+        status: "running",
+        projectName: "proj",
+        sessionName: "sess",
+        branchName: "csm/sess",
+        startedAt: "2026-01-01T00:00:00Z",
+      },
+    ]);
+
+    const jobs = useNotificationStore.getState().jobs;
+    expect(jobs.size).toBe(1);
+    expect(jobs.get("job-new")?.jobType).toBe("commit");
+  });
+
+  it("preserves non-job state (toasts, queues)", () => {
+    useNotificationStore.getState().enqueueInputToast({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c",
+    });
+    useNotificationStore.getState().addOrUpdateJob(makeRunningEvent());
+
+    useNotificationStore.getState().reconcileJobs([]);
+
+    // Jobs cleared, but toast queue preserved
+    expect(useNotificationStore.getState().jobs.size).toBe(0);
+    expect(useNotificationStore.getState().inputToastQueue).toHaveLength(1);
+  });
+});
