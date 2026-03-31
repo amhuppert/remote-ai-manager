@@ -57,6 +57,7 @@ function makeSession(workflow: RalphLoopWorkflow | null = null): SessionState {
     parentSessionName: null,
     workflow,
     workflowHistory: [],
+    referenceDocuments: [],
   };
 }
 

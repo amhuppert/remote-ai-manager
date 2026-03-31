@@ -56,6 +56,7 @@ const testSession: SessionState = {
   parentSessionName: null,
   workflow: null,
   workflowHistory: [],
+  referenceDocuments: [],
 };
 
 const defaultInput: OptimisticInput = {

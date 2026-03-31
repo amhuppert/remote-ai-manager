@@ -272,6 +272,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       parentSessionName: opts.parentSessionName ?? null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
     };
 
     // Persist to state first — reconciliation will see this session and skip

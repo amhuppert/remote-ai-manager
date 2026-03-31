@@ -61,6 +61,7 @@ function makeState(conversation: ConversationState): ManagerState {
             parentSessionName: null,
             workflow: null,
             workflowHistory: [],
+            referenceDocuments: [],
           },
         },
         roadmapItems: [],

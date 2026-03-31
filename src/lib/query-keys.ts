@@ -20,8 +20,20 @@ export const sessionKeys = {
     [...sessionKeys.all, "commits", projectName, sessionName] as const,
   commitDiff: (projectName: string, sessionName: string, hash: string) =>
     [...sessionKeys.all, "commitDiff", projectName, sessionName, hash] as const,
-  focusDoc: (projectName: string, sessionName: string) =>
-    [...sessionKeys.all, "focusDoc", projectName, sessionName] as const,
+};
+
+export const referenceDocumentKeys = {
+  all: ["reference-documents"] as const,
+  list: (projectName: string, sessionName: string) =>
+    [...referenceDocumentKeys.all, "list", projectName, sessionName] as const,
+  content: (projectName: string, sessionName: string, documentId: string) =>
+    [
+      ...referenceDocumentKeys.all,
+      "content",
+      projectName,
+      sessionName,
+      documentId,
+    ] as const,
 };
 
 export const conversationKeys = {

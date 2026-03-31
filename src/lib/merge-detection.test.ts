@@ -47,6 +47,7 @@ function makeState(
       parentSessionName: s.parentSessionName ?? null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
     };
   }
   return {
@@ -338,6 +339,7 @@ describe("checkAllSessionsForMerge", () => {
               parentSessionName: null,
               workflow: null,
               workflowHistory: [],
+              referenceDocuments: [],
             },
           },
         },
@@ -362,6 +364,7 @@ describe("checkAllSessionsForMerge", () => {
               parentSessionName: null,
               workflow: null,
               workflowHistory: [],
+              referenceDocuments: [],
             },
           },
         },

@@ -10,6 +10,7 @@ import type {
   RoadmapItem,
   RoadmapItemType,
   RoadmapItemStatus,
+  ReferenceDocument,
 } from "@/types";
 import { getErrorMessage } from "@/lib/errors";
 import { managerStateSchema } from "./schemas";
@@ -664,6 +665,74 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
     });
   }
 
+  // ============================================================
+  // Reference Document Operations
+  // ============================================================
+
+  /** Create a reference document or update its description if filePath already exists */
+  async function createReferenceDocument(
+    projectPath: string,
+    sessionName: string,
+    filePath: string,
+    description: string,
+  ): Promise<ReferenceDocument> {
+    return mutateSession<ReferenceDocument>(
+      projectPath,
+      sessionName,
+      "createReferenceDocument",
+      (session) => {
+        const existing = session.referenceDocuments.find(
+          (d) => d.filePath === filePath,
+        );
+        if (existing) {
+          existing.description = description;
+          return existing;
+        }
+
+        const doc: ReferenceDocument = {
+          id: randomUUID(),
+          filePath,
+          description,
+          createdAt: new Date().toISOString(),
+        };
+        session.referenceDocuments.push(doc);
+        return doc;
+      },
+    );
+  }
+
+  /** Remove a reference document from session state, returns the removed doc or null */
+  async function deleteReferenceDocument(
+    projectPath: string,
+    sessionName: string,
+    documentId: string,
+  ): Promise<ReferenceDocument | null> {
+    return mutateSession<ReferenceDocument | null>(
+      projectPath,
+      sessionName,
+      "deleteReferenceDocument",
+      (session) => {
+        const index = session.referenceDocuments.findIndex(
+          (d) => d.id === documentId,
+        );
+        if (index === -1) return null;
+        const [removed] = session.referenceDocuments.splice(index, 1);
+        return removed!;
+      },
+    );
+  }
+
+  /** Get all reference documents for a session (read-only, no mutex) */
+  async function getReferenceDocuments(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<ReferenceDocument[]> {
+    const state = await readState();
+    const project = state.projects[projectPath];
+    const session = project?.sessions[sessionName];
+    return session?.referenceDocuments ?? [];
+  }
+
   return {
     readState,
     writeState,
@@ -689,6 +758,9 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
     createRoadmapItem,
     updateRoadmapItem,
     deleteRoadmapItem,
+    createReferenceDocument,
+    deleteReferenceDocument,
+    getReferenceDocuments,
   };
 }
 
@@ -724,3 +796,6 @@ export const getRoadmapItems = defaultManager.getRoadmapItems;
 export const createRoadmapItem = defaultManager.createRoadmapItem;
 export const updateRoadmapItem = defaultManager.updateRoadmapItem;
 export const deleteRoadmapItem = defaultManager.deleteRoadmapItem;
+export const createReferenceDocument = defaultManager.createReferenceDocument;
+export const deleteReferenceDocument = defaultManager.deleteReferenceDocument;
+export const getReferenceDocuments = defaultManager.getReferenceDocuments;

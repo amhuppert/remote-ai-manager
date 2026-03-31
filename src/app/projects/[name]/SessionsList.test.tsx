@@ -154,6 +154,7 @@ const makeSessions = (count: number): SessionState[] =>
     parentSessionName: null,
     workflow: null,
     workflowHistory: [],
+    referenceDocuments: [],
   }));
 
 // ===========================================================================

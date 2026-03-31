@@ -23,6 +23,7 @@ export type {
   ConversationState,
   ForkedFrom,
   MessageContentBlock,
+  ReferenceDocument,
 } from "@/lib/schemas";
 
 // ============================================================

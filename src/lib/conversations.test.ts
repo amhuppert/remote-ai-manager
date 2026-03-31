@@ -83,6 +83,7 @@ function makeSessionWith(
     parentSessionName: null,
     workflow: null,
     workflowHistory: [],
+    referenceDocuments: [],
     ...overrides,
   };
 }
@@ -114,6 +115,7 @@ async function seedSession(
             parentSessionName: null,
             workflow: null,
             workflowHistory: [],
+            referenceDocuments: [],
             ...sessionOverrides,
           },
         },

@@ -1,17 +1,15 @@
 "use client";
 
-import type { SessionDiff, CommitLogEntry, SessionCreationMode } from "@/types";
+import type { SessionDiff, CommitLogEntry } from "@/types";
 import DiffPanel from "./DiffPanel";
 import SpecBrowser from "./SpecBrowser";
-import MarkdownViewer from "@/components/MarkdownViewer";
-import { useFocusDocQuery } from "@/lib/queries";
+import DocsPanel from "./DocsPanel";
 import {
   useRightPaneTab,
   useSwitchRightPaneTab,
 } from "@/stores/session-detail.store";
 
 interface RightPaneProps {
-  creationMode: SessionCreationMode;
   diff: SessionDiff;
   commits: CommitLogEntry[];
   projectName: string;
@@ -20,7 +18,6 @@ interface RightPaneProps {
 }
 
 export default function RightPane({
-  creationMode,
   diff,
   commits,
   projectName,
@@ -29,12 +26,6 @@ export default function RightPane({
 }: RightPaneProps): React.JSX.Element {
   const rightPaneTab = useRightPaneTab();
   const switchRightPaneTab = useSwitchRightPaneTab();
-
-  const isFocusMode = creationMode === "focus";
-
-  const focusDocQuery = useFocusDocQuery(projectName, sessionName, {
-    enabled: isFocusMode,
-  });
 
   return (
     <div className="right-pane sidebar-diff-panel">
@@ -48,15 +39,13 @@ export default function RightPane({
           >
             Diff
           </button>
-          {isFocusMode && (
-            <button
-              className={`cc-tab${rightPaneTab === "focus" ? " active" : ""}`}
-              onClick={() => switchRightPaneTab("focus")}
-              type="button"
-            >
-              Focus
-            </button>
-          )}
+          <button
+            className={`cc-tab${rightPaneTab === "docs" ? " active" : ""}`}
+            onClick={() => switchRightPaneTab("docs")}
+            type="button"
+          >
+            Docs
+          </button>
           <button
             className={`cc-tab${rightPaneTab === "specs" ? " active" : ""}`}
             onClick={() => switchRightPaneTab("specs")}
@@ -79,22 +68,16 @@ export default function RightPane({
             hotkeysEnabled={rightPaneTab === "diff"}
           />
         </div>
-        {isFocusMode && (
-          <div
-            style={{
-              display: rightPaneTab === "focus" ? "flex" : "none",
-              flexDirection: "column",
-              flex: 1,
-              minHeight: 0,
-            }}
-          >
-            <MarkdownViewer
-              content={focusDocQuery.data ?? null}
-              isLoading={focusDocQuery.isPending}
-              emptyMessage="Focus document not yet available. It will appear once the agent has analyzed the session objective."
-            />
-          </div>
-        )}
+        <div
+          style={{
+            display: rightPaneTab === "docs" ? "flex" : "none",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          <DocsPanel projectName={projectName} sessionName={sessionName} />
+        </div>
         <div
           style={{
             display: rightPaneTab === "specs" ? "flex" : "none",

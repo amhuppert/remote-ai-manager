@@ -26,6 +26,7 @@ function makeSession(
     parentSessionName: null,
     workflow: null,
     workflowHistory: [],
+    referenceDocuments: [],
     ...overrides,
   };
 }

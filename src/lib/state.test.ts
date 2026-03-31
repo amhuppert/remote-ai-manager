@@ -84,6 +84,7 @@ describe("state", () => {
               parentSessionName: null,
               workflow: null,
               workflowHistory: [],
+              referenceDocuments: [],
             },
           },
         },
@@ -115,6 +116,7 @@ describe("state", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -148,6 +150,7 @@ describe("state", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -180,6 +183,7 @@ describe("state", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
       claudeSessionId: null,
       transcriptPath: null,
       status: "new" as const,
@@ -273,6 +277,7 @@ describe("archive helpers", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
     };
 
     await writeState({
@@ -361,6 +366,7 @@ describe("recoverStaleConversations", () => {
               parentSessionName: null,
               workflow: null,
               workflowHistory: [],
+              referenceDocuments: [],
             },
           },
         },
@@ -554,6 +560,7 @@ describe("pin helpers", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
     };
 
     await writeState({

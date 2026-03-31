@@ -59,6 +59,7 @@ const BASE_SESSION: SessionState = {
   parentSessionName: null,
   workflow: null,
   workflowHistory: [],
+  referenceDocuments: [],
 };
 
 function createTestDeps(

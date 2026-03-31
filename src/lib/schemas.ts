@@ -534,6 +534,18 @@ export const roadmapItemSchema = z.object({
 export type RoadmapItem = z.infer<typeof roadmapItemSchema>;
 
 // ============================================================
+// Reference Documents
+// ============================================================
+
+export const referenceDocumentSchema = z.object({
+  id: z.string(),
+  filePath: z.string(),
+  description: z.string(),
+  createdAt: z.string(),
+});
+export type ReferenceDocument = z.infer<typeof referenceDocumentSchema>;
+
+// ============================================================
 // Session & Project State
 // ============================================================
 
@@ -554,6 +566,7 @@ export const sessionStateSchema = z.object({
   parentSessionName: z.string().nullable().default(null),
   workflow: ralphLoopWorkflowSchema.nullable().default(null),
   workflowHistory: z.array(ralphLoopWorkflowSchema).default([]),
+  referenceDocuments: z.array(referenceDocumentSchema).default([]),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 

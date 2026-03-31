@@ -6995,7 +6995,7 @@ textarea {
     display: none;
   }
 
-  .app[data-mobile-panel="focus"] .prompt-panel {
+  .app[data-mobile-panel="docs"] .prompt-panel {
     display: none;
   }
 
@@ -8488,7 +8488,7 @@ textarea {
     > .sidebar-diff-panel {
     display: flex;
   }
-  .app[data-mobile-panel="focus"]
+  .app[data-mobile-panel="docs"]
     .session-content-area.with-sidebar
     > .sidebar-diff-panel {
     display: flex;

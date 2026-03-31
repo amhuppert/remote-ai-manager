@@ -127,6 +127,7 @@ export interface ActorImplementationDeps {
     deps: Record<string, unknown>,
   ): unknown;
   createRoadmapToolServer(context: Record<string, unknown>): unknown;
+  createReferenceDocumentToolServer(context: Record<string, unknown>): unknown;
   maybeCreateCodexToolServer(
     config: unknown,
     context: Record<string, unknown>,
@@ -145,6 +146,19 @@ export interface ActorImplementationDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
+
+  // Reference documents
+  createReferenceDocument(
+    projectPath: string,
+    sessionName: string,
+    filePath: string,
+    description: string,
+  ): Promise<unknown>;
+  getReferenceDocuments(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<Array<{ filePath: string; description: string }>>;
+  fileExists(filePath: string): boolean;
 
   // Lifecycle registries
   registerAbortController(
@@ -181,6 +195,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     initToolMod,
     notificationToolMod,
     roadmapToolsMod,
+    referenceDocumentToolsMod,
     codexToolMod,
     projectResolverMod,
     debugLogMod,
@@ -200,6 +215,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/ralph-loop/init-tool"),
     import("@/lib/agent-notification-tool"),
     import("@/lib/roadmap-tools"),
+    import("@/lib/reference-document-tools"),
     import("@/lib/codex-tool"),
     import("@/lib/project-resolver"),
     import("@/lib/debug-log"),
@@ -223,6 +239,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     createNotificationToolServer:
       notificationToolMod.createNotificationToolServer,
     createRoadmapToolServer: roadmapToolsMod.createRoadmapToolServer,
+    createReferenceDocumentToolServer:
+      referenceDocumentToolsMod.createReferenceDocumentToolServer,
     maybeCreateCodexToolServer: codexToolMod.maybeCreateCodexToolServer,
     getCodexToolPromptHint: codexToolMod.getCodexToolPromptHint,
     getProjectDisplayName: projectResolverMod.getProjectDisplayName,
@@ -230,6 +248,9 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     registerQuery: queryRegistryMod.registerQuery,
     mutateConversation: stateMod.mutateConversation,
     getSessionState: stateMod.getSession,
+    createReferenceDocument: stateMod.createReferenceDocument,
+    getReferenceDocuments: stateMod.getReferenceDocuments,
+    fileExists: (await import("node:fs")).existsSync,
     registerAbortController: abortRegistryMod.registerAbortController,
     unregisterAbortController: abortRegistryMod.unregisterAbortController,
   } as unknown as ActorImplementationDeps;
@@ -726,6 +747,34 @@ export async function executePromptForMachine(
       deps.mutateConversation,
     );
 
+    // Auto-register focus.md as a reference document
+    const focusPath = `${input.worktreePath}/memory-bank/focus.md`;
+    if (deps.fileExists(focusPath)) {
+      await deps.createReferenceDocument(
+        input.projectPath,
+        input.sessionName,
+        "memory-bank/focus.md",
+        "Current work-in-progress and remaining tasks for this session",
+      );
+    }
+
+    // Build reference documents system prompt section
+    const referenceDocs = await deps.getReferenceDocuments(
+      input.projectPath,
+      input.sessionName,
+    );
+    const referenceDocsPrompt =
+      referenceDocs.length > 0
+        ? [
+            "## Reference Documents",
+            "The following reference documents provide additional context. Read them when relevant to your current task.",
+            "",
+            ...referenceDocs.map(
+              (d) => `- **${d.filePath}**: ${d.description}`,
+            ),
+          ].join("\n")
+        : null;
+
     // Build system prompt append
     const systemPromptParts =
       [
@@ -735,6 +784,7 @@ export async function executePromptForMachine(
           : null,
         sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
         deps.getCodexToolPromptHint(codexToolServer != null),
+        referenceDocsPrompt,
       ]
         .filter(Boolean)
         .join("\n\n") || undefined;
@@ -771,6 +821,11 @@ export async function executePromptForMachine(
         ...(codexToolServer ? { "codex-tool": codexToolServer } : {}),
         "roadmap-tools": deps.createRoadmapToolServer({
           projectPath: input.projectPath,
+        }),
+        "reference-document-tools": deps.createReferenceDocumentToolServer({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          worktreePath: input.worktreePath,
         }),
       },
       canUseTool: canUseTool as never,

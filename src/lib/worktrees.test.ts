@@ -435,6 +435,7 @@ describe("discoverAndImportWorktrees", () => {
     parentSessionName: null,
     workflow: null,
     workflowHistory: [],
+    referenceDocuments: [],
   };
 
   it("imports untracked worktrees as sessions with source=imported", async () => {
@@ -521,6 +522,7 @@ describe("discoverAndImportWorktrees", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
     };
 
     // Git returns only main worktree — orphan's path doesn't exist on disk
@@ -579,6 +581,7 @@ describe("discoverAndImportWorktrees", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
     };
 
     mockGitSuccess(
@@ -804,6 +807,7 @@ describe("discoverAndImportWorktrees", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      referenceDocuments: [],
     };
 
     // Git discovers a worktree at a DIFFERENT path but with the SAME branch

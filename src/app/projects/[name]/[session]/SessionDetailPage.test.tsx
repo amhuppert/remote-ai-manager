@@ -113,7 +113,8 @@ vi.mock("@/lib/queries", () => ({
   }),
   useActiveConversationsQuery: () => ({ data: undefined }),
   useNotificationsQuery: () => ({ data: undefined }),
-  useFocusDocQuery: () => ({ data: undefined, isPending: false }),
+  useReferenceDocumentsQuery: () => ({ data: [], isPending: false }),
+  useReferenceDocumentContentQuery: () => ({ data: null, isPending: false }),
   useKiroDocTreeQuery: () => ({ data: undefined, isPending: false }),
   useKiroDocFileQuery: () => ({ data: undefined, isPending: false }),
   useProjectFilesQuery: () => ({
@@ -191,6 +192,7 @@ const baseSession: SessionState = {
   tddEnabled: true,
   workflow: null,
   workflowHistory: [],
+  referenceDocuments: [],
 };
 
 const emptyDiff: SessionDiff = {

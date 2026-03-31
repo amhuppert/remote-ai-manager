@@ -202,10 +202,10 @@ export default function SessionDetailPage({
   const switchMobilePanelRaw = useSwitchMobilePanel();
   const switchRightPaneTab = useSwitchRightPaneTab();
   const switchMobilePanel = useCallback(
-    (panel: "chat" | "diff" | "focus" | "specs" | "info") => {
+    (panel: "chat" | "diff" | "docs" | "specs" | "info") => {
       switchMobilePanelRaw(panel);
-      // Sync right pane tab when switching to diff, focus, or specs via mobile tabs
-      if (panel === "focus") switchRightPaneTab("focus");
+      // Sync right pane tab when switching to diff, docs, or specs via mobile tabs
+      if (panel === "docs") switchRightPaneTab("docs");
       if (panel === "diff") switchRightPaneTab("diff");
       if (panel === "specs") switchRightPaneTab("specs");
     },
@@ -1737,13 +1737,12 @@ export default function SessionDetailPage({
               )}
             </div>
 
-            {/* Right pane (diff + optional focus doc + specs) — mounted when layout shows it OR mobile panel is "diff"/"focus"/"specs" */}
+            {/* Right pane (diff + docs + specs) — mounted when layout shows it OR mobile panel is "diff"/"docs"/"specs" */}
             {(layout !== "conversation" ||
               mobilePanel === "diff" ||
-              mobilePanel === "focus" ||
+              mobilePanel === "docs" ||
               mobilePanel === "specs") && (
               <RightPane
-                creationMode={session.creationMode}
                 diff={diff}
                 commits={commits}
                 projectName={projectName}
@@ -1830,14 +1829,12 @@ export default function SessionDetailPage({
           >
             Diff
           </button>
-          {session.creationMode === "focus" && (
-            <button
-              className={`cc-tab${mobilePanel === "focus" ? " active" : ""}`}
-              onClick={() => switchMobilePanel("focus")}
-            >
-              Focus
-            </button>
-          )}
+          <button
+            className={`cc-tab${mobilePanel === "docs" ? " active" : ""}`}
+            onClick={() => switchMobilePanel("docs")}
+          >
+            Docs
+          </button>
           <button
             className={`cc-tab${mobilePanel === "specs" ? " active" : ""}`}
             onClick={() => switchMobilePanel("specs")}
