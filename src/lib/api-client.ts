@@ -15,6 +15,8 @@ import {
   messageContentBlockSchema,
   fixPlanTaskSchema,
   ralphLoopConfigSchema,
+  workflowDefinitionRecordSchema,
+  workflowGeneratedDraftSchema,
 } from "@/lib/schemas";
 import { tracedFetch } from "@/lib/traced-fetch";
 
@@ -173,6 +175,27 @@ export const roadmapItemsResponseSchema = z.object({
 export const roadmapItemMutationResponseSchema = z.object({
   item: roadmapItemSchema,
 });
+
+// -- Graph workflow definitions --
+export const workflowDefinitionSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  revision: z.number(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const workflowDefinitionsResponseSchema = z.object({
+  items: z.array(workflowDefinitionSummarySchema),
+});
+
+export const workflowDefinitionMutationResponseSchema = z.object({
+  item: workflowDefinitionRecordSchema,
+});
+
+export const workflowGeneratedDraftResponseSchema =
+  workflowGeneratedDraftSchema;
 
 // -- Debug log stats --
 export const debugLogStatsResponseSchema = z.object({

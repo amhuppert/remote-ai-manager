@@ -1,0 +1,436 @@
+import type {
+  GraphWorkflowExecution,
+  WorkflowAgentValidatorResult,
+  WorkflowGraphValidationError,
+  WorkflowRuntimeEditRequest,
+  WorkflowSemanticDefinition,
+} from "@/types";
+
+export type { WorkflowGraphValidationError } from "@/types";
+
+export interface WorkflowGraphValidationResult {
+  ok: boolean;
+  errors: WorkflowGraphValidationError[];
+}
+
+function resultFromErrors(
+  errors: WorkflowGraphValidationError[],
+): WorkflowGraphValidationResult {
+  return {
+    ok: errors.length === 0,
+    errors,
+  };
+}
+
+function createContextIdSet(
+  definition: WorkflowSemanticDefinition,
+): Set<string> {
+  return new Set(definition.executionContexts.map((context) => context.id));
+}
+
+function createTaskMap(definition: WorkflowSemanticDefinition) {
+  return new Map(definition.tasks.map((task) => [task.id, task]));
+}
+
+function isRuntimeEditTaskLocked(
+  execution: GraphWorkflowExecution,
+  taskId: string,
+): boolean {
+  const status = execution.taskStates[taskId]?.status;
+  return (
+    status === "completed" || status === "running" || status === "interrupted"
+  );
+}
+
+export function validateWorkflowDefinition(
+  definition: WorkflowSemanticDefinition,
+): WorkflowGraphValidationResult {
+  const errors: WorkflowGraphValidationError[] = [];
+  const seenContextIds = new Set<string>();
+  const seenTaskIds = new Set<string>();
+  const contextIds = createContextIdSet(definition);
+  const ordersByContext = new Map<string, Set<number>>();
+
+  for (const context of definition.executionContexts) {
+    if (seenContextIds.has(context.id)) {
+      errors.push({
+        code: "duplicate-context-id",
+        message: `Execution context "${context.id}" is duplicated`,
+        contextId: context.id,
+      });
+      continue;
+    }
+    seenContextIds.add(context.id);
+
+    if (!context.title.trim()) {
+      errors.push({
+        code: "empty-context-title",
+        message: `Context "${context.id}" has an empty title`,
+        contextId: context.id,
+      });
+    }
+
+    if (
+      context.taskValidation?.enabled &&
+      !context.taskValidation.instructions.trim()
+    ) {
+      errors.push({
+        code: "empty-task-validator-instructions",
+        message: `Task validator on "${context.id}" is enabled but has no instructions`,
+        contextId: context.id,
+      });
+    }
+
+    if (
+      context.contextValidation?.agentValidator?.enabled &&
+      !context.contextValidation.agentValidator.instructions.trim()
+    ) {
+      errors.push({
+        code: "empty-context-validator-instructions",
+        message: `Context validator on "${context.id}" is enabled but has no instructions`,
+        contextId: context.id,
+      });
+    }
+  }
+
+  for (const task of definition.tasks) {
+    if (seenTaskIds.has(task.id)) {
+      errors.push({
+        code: "duplicate-task-id",
+        message: `Task "${task.id}" is duplicated`,
+        taskId: task.id,
+        contextId: task.contextId,
+      });
+    } else {
+      seenTaskIds.add(task.id);
+    }
+
+    if (!contextIds.has(task.contextId)) {
+      errors.push({
+        code: "unknown-task-context",
+        message: `Task "${task.id}" references missing context "${task.contextId}"`,
+        taskId: task.id,
+        contextId: task.contextId,
+      });
+    }
+
+    if (!task.title.trim()) {
+      errors.push({
+        code: "empty-task-title",
+        message: `Task "${task.id}" has an empty title`,
+        taskId: task.id,
+        contextId: task.contextId,
+      });
+    }
+
+    if (!task.instructions.trim()) {
+      errors.push({
+        code: "empty-task-instructions",
+        message: `Task "${task.id}" has empty instructions`,
+        taskId: task.id,
+        contextId: task.contextId,
+      });
+    }
+
+    const seenOrders = ordersByContext.get(task.contextId) ?? new Set<number>();
+    if (seenOrders.has(task.order)) {
+      errors.push({
+        code: "duplicate-task-order",
+        message: `Context "${task.contextId}" reuses task order ${task.order}`,
+        taskId: task.id,
+        contextId: task.contextId,
+      });
+    }
+    seenOrders.add(task.order);
+    ordersByContext.set(task.contextId, seenOrders);
+  }
+
+  const adjacency = new Map<string, string[]>();
+  const indegree = new Map<string, number>();
+  for (const context of definition.executionContexts) {
+    adjacency.set(context.id, []);
+    indegree.set(context.id, 0);
+  }
+
+  for (const edge of definition.edges) {
+    if (!contextIds.has(edge.sourceContextId)) {
+      errors.push({
+        code: "unknown-edge-source",
+        message: `Edge "${edge.id}" references missing source "${edge.sourceContextId}"`,
+        edgeId: edge.id,
+        contextId: edge.sourceContextId,
+      });
+      continue;
+    }
+
+    if (!contextIds.has(edge.targetContextId)) {
+      errors.push({
+        code: "unknown-edge-target",
+        message: `Edge "${edge.id}" references missing target "${edge.targetContextId}"`,
+        edgeId: edge.id,
+        contextId: edge.targetContextId,
+      });
+      continue;
+    }
+
+    adjacency.get(edge.sourceContextId)!.push(edge.targetContextId);
+    indegree.set(
+      edge.targetContextId,
+      (indegree.get(edge.targetContextId) ?? 0) + 1,
+    );
+  }
+
+  const queue = [...indegree.entries()]
+    .filter(([, count]) => count === 0)
+    .map(([contextId]) => contextId);
+  let visited = 0;
+
+  while (queue.length > 0) {
+    const contextId = queue.shift()!;
+    visited += 1;
+    for (const nextContextId of adjacency.get(contextId) ?? []) {
+      const nextCount = (indegree.get(nextContextId) ?? 0) - 1;
+      indegree.set(nextContextId, nextCount);
+      if (nextCount === 0) {
+        queue.push(nextContextId);
+      }
+    }
+  }
+
+  if (visited !== definition.executionContexts.length) {
+    errors.push({
+      code: "cycle-detected",
+      message: "Execution-context dependency graph must be acyclic",
+    });
+  }
+
+  return resultFromErrors(errors);
+}
+
+export function getEntryContextIds(
+  definition: WorkflowSemanticDefinition,
+): string[] {
+  const targets = new Set(definition.edges.map((edge) => edge.targetContextId));
+  return definition.executionContexts
+    .map((context) => context.id)
+    .filter((contextId) => !targets.has(contextId));
+}
+
+export function getTerminalContextIds(
+  definition: WorkflowSemanticDefinition,
+): string[] {
+  const sources = new Set(definition.edges.map((edge) => edge.sourceContextId));
+  return definition.executionContexts
+    .map((context) => context.id)
+    .filter((contextId) => !sources.has(contextId));
+}
+
+export function getEligibleContextIds(
+  definition: WorkflowSemanticDefinition,
+  execution: GraphWorkflowExecution,
+): string[] {
+  const prerequisites = new Map<string, string[]>();
+  for (const context of definition.executionContexts) {
+    prerequisites.set(context.id, []);
+  }
+  for (const edge of definition.edges) {
+    prerequisites.get(edge.targetContextId)?.push(edge.sourceContextId);
+  }
+
+  return definition.executionContexts
+    .map((context) => context.id)
+    .filter((contextId) => {
+      const state = execution.contextStates[contextId];
+      if (!state) return false;
+      if (state.status !== "pending" && state.status !== "ready") return false;
+
+      return (prerequisites.get(contextId) ?? []).every((upstreamId) => {
+        const upstream = execution.contextStates[upstreamId];
+        return (
+          upstream?.status === "completed" &&
+          upstream.lastValidationPass === true
+        );
+      });
+    });
+}
+
+export function validateWorkflowRuntimeEdit(
+  definition: WorkflowSemanticDefinition,
+  execution: GraphWorkflowExecution,
+  request: WorkflowRuntimeEditRequest,
+): WorkflowGraphValidationResult {
+  const errors: WorkflowGraphValidationError[] = [];
+  const taskMap = createTaskMap(definition);
+  const contextIds = createContextIdSet(definition);
+
+  request.operations.forEach((operation, index) => {
+    if (operation.type === "add") {
+      const contextState = execution.contextStates[operation.contextId];
+      if (!contextIds.has(operation.contextId)) {
+        errors.push({
+          code: "runtime-edit-unknown-context",
+          message: `Operation references missing context "${operation.contextId}"`,
+          contextId: operation.contextId,
+          operationIndex: index,
+        });
+        return;
+      }
+      if (
+        contextState?.status === "completed" ||
+        contextState?.status === "halted"
+      ) {
+        errors.push({
+          code: "runtime-edit-context-locked",
+          message: `Context "${operation.contextId}" cannot be edited in status "${contextState.status}"`,
+          contextId: operation.contextId,
+          operationIndex: index,
+        });
+      }
+      return;
+    }
+
+    if (operation.type === "reorder") {
+      const contextState = execution.contextStates[operation.contextId];
+      if (!contextIds.has(operation.contextId)) {
+        errors.push({
+          code: "runtime-edit-unknown-context",
+          message: `Operation references missing context "${operation.contextId}"`,
+          contextId: operation.contextId,
+          operationIndex: index,
+        });
+        return;
+      }
+      if (
+        contextState?.status === "completed" ||
+        contextState?.status === "halted"
+      ) {
+        errors.push({
+          code: "runtime-edit-context-locked",
+          message: `Context "${operation.contextId}" cannot be reordered in status "${contextState.status}"`,
+          contextId: operation.contextId,
+          operationIndex: index,
+        });
+      }
+
+      const contextTasks = definition.tasks
+        .filter((task) => task.contextId === operation.contextId)
+        .sort((left, right) => left.order - right.order);
+      const editableTaskIds = contextTasks
+        .filter((task) => !isRuntimeEditTaskLocked(execution, task.id))
+        .map((task) => task.id);
+      const orderedSet = new Set(operation.orderedTaskIds);
+
+      if (
+        orderedSet.size !== operation.orderedTaskIds.length ||
+        orderedSet.size !== editableTaskIds.length ||
+        editableTaskIds.some((taskId) => !orderedSet.has(taskId))
+      ) {
+        errors.push({
+          code: "runtime-edit-reorder-mismatch",
+          message: `Reorder for context "${operation.contextId}" must include each editable task exactly once`,
+          contextId: operation.contextId,
+          operationIndex: index,
+        });
+      }
+      return;
+    }
+
+    const task = taskMap.get(operation.taskId);
+    if (!task) {
+      errors.push({
+        code: "runtime-edit-unknown-task",
+        message: `Operation references missing task "${operation.taskId}"`,
+        taskId: operation.taskId,
+        operationIndex: index,
+      });
+      return;
+    }
+
+    const taskState = execution.taskStates[task.id];
+    if (isRuntimeEditTaskLocked(execution, task.id)) {
+      errors.push({
+        code: "runtime-edit-task-locked",
+        message: `Task "${task.id}" cannot be changed in status "${taskState?.status ?? "unknown"}"`,
+        taskId: task.id,
+        contextId: task.contextId,
+        operationIndex: index,
+      });
+      return;
+    }
+
+    if (operation.type !== "move") {
+      return;
+    }
+
+    const destinationState = execution.contextStates[operation.targetContextId];
+    if (!contextIds.has(operation.targetContextId)) {
+      errors.push({
+        code: "runtime-edit-unknown-target-context",
+        message: `Move target "${operation.targetContextId}" does not exist`,
+        taskId: task.id,
+        contextId: operation.targetContextId,
+        operationIndex: index,
+      });
+      return;
+    }
+
+    if (
+      destinationState?.status === "running" ||
+      destinationState?.status === "validating" ||
+      destinationState?.status === "completed" ||
+      destinationState?.status === "halted"
+    ) {
+      errors.push({
+        code: "runtime-edit-target-context-locked",
+        message: `Move target "${operation.targetContextId}" is not editable in status "${destinationState.status}"`,
+        taskId: task.id,
+        contextId: operation.targetContextId,
+        operationIndex: index,
+      });
+    }
+  });
+
+  return resultFromErrors(errors);
+}
+
+export function validateWorkflowValidatorRemediation(
+  contextId: string,
+  execution: GraphWorkflowExecution,
+  remediation: WorkflowAgentValidatorResult,
+): WorkflowGraphValidationResult {
+  const errors: WorkflowGraphValidationError[] = [];
+
+  for (const taskId of remediation.reopenTaskIds) {
+    const taskState = execution.taskStates[taskId];
+    if (!taskState) {
+      errors.push({
+        code: "remediation-unknown-task",
+        message: `Remediation references missing task "${taskId}"`,
+        taskId,
+        contextId,
+      });
+      continue;
+    }
+
+    if (taskState.contextId !== contextId) {
+      errors.push({
+        code: "remediation-task-out-of-scope",
+        message: `Task "${taskId}" is outside context "${contextId}"`,
+        taskId,
+        contextId,
+      });
+      continue;
+    }
+
+    if (taskState.status !== "completed") {
+      errors.push({
+        code: "remediation-task-not-completed",
+        message: `Task "${taskId}" is not completed and cannot be reopened`,
+        taskId,
+        contextId,
+      });
+    }
+  }
+
+  return resultFromErrors(errors);
+}

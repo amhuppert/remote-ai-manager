@@ -1,0 +1,589 @@
+import { describe, expect, it } from "vitest";
+import { createWorkflowExecution } from "./test-fixtures";
+import {
+  GraphWorkflowRuntimeEditValidationError,
+  createGraphWorkflowRuntimeEditService,
+} from "./runtime-edits";
+
+describe("graph workflow runtime edit service", () => {
+  it("appends agent-created tasks to the active execution context", () => {
+    const service = createGraphWorkflowRuntimeEditService({
+      createTaskId() {
+        return "task-agent-1";
+      },
+    });
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextId: "context-plan",
+      contextStates: {
+        "context-plan": {
+          contextId: "context-plan",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+        "context-implement": {
+          contextId: "context-implement",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+        "context-verify": {
+          contextId: "context-verify",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+      },
+    });
+
+    const updated = service.applyAgentTaskAdd(execution, "context-plan", {
+      title: "Capture open questions",
+      instructions: "Document the unknowns discovered during planning.",
+    });
+
+    expect(
+      updated.workingDefinition.tasks
+        .filter((task) => task.contextId === "context-plan")
+        .map((task) => ({
+          id: task.id,
+          order: task.order,
+          source: task.source,
+        })),
+    ).toEqual([
+      {
+        id: "task-plan-1",
+        order: 1,
+        source: "user",
+      },
+      {
+        id: "task-agent-1",
+        order: 2,
+        source: "agent",
+      },
+    ]);
+    expect(updated.taskStates["task-agent-1"]).toMatchObject({
+      taskId: "task-agent-1",
+      contextId: "context-plan",
+      order: 2,
+      status: "pending",
+    });
+    expect(updated.contextStates["context-plan"]?.totalTaskCount).toBe(2);
+  });
+
+  it("rejects agent task creation outside the currently executing context", () => {
+    const service = createGraphWorkflowRuntimeEditService();
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextId: "context-plan",
+      contextStates: {
+        "context-plan": {
+          contextId: "context-plan",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+        "context-implement": {
+          contextId: "context-implement",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+        "context-verify": {
+          contextId: "context-verify",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+      },
+    });
+
+    expect(() =>
+      service.applyAgentTaskAdd(execution, "context-implement", {
+        title: "Sneak in implementation work",
+        instructions: "This should not be allowed.",
+      }),
+    ).toThrow(
+      'Agents can add tasks only to the currently executing context "context-plan"',
+    );
+  });
+
+  it("reopens completed tasks and appends validator fix tasks deterministically", () => {
+    let taskIdCounter = 0;
+    const service = createGraphWorkflowRuntimeEditService({
+      createTaskId() {
+        taskIdCounter += 1;
+        return `task-validator-${taskIdCounter}`;
+      },
+      now() {
+        return "2026-03-27T17:00:00.000Z";
+      },
+    });
+    const execution = createWorkflowExecution({
+      contextStates: {
+        ...createWorkflowExecution().contextStates,
+        "context-plan": {
+          ...createWorkflowExecution().contextStates["context-plan"]!,
+          status: "validating",
+          totalTaskCount: 2,
+          completedTaskCount: 2,
+        },
+      },
+      taskStates: {
+        ...createWorkflowExecution().taskStates,
+        "task-plan-1": {
+          ...createWorkflowExecution().taskStates["task-plan-1"]!,
+          status: "completed",
+          completedAt: "2026-03-27T16:40:00.000Z",
+        },
+        "task-plan-2": {
+          taskId: "task-plan-2",
+          contextId: "context-plan",
+          order: 2,
+          status: "completed",
+          summary: "Drafted the implementation plan",
+          startedAt: "2026-03-27T16:30:00.000Z",
+          completedAt: "2026-03-27T16:45:00.000Z",
+          lastConversationId: "conversation-1",
+          reopenedCount: 0,
+          lastReopenedAt: null,
+          failureMessage: null,
+        },
+        "task-implement-1": {
+          ...createWorkflowExecution().taskStates["task-implement-1"]!,
+        },
+        "task-verify-1": {
+          ...createWorkflowExecution().taskStates["task-verify-1"]!,
+        },
+      },
+      workingDefinition: {
+        ...createWorkflowExecution().workingDefinition,
+        tasks: [
+          {
+            id: "task-plan-1",
+            contextId: "context-plan",
+            order: 1,
+            title: "Inspect code",
+            instructions: "Read the relevant files.",
+            source: "user",
+          },
+          {
+            id: "task-plan-2",
+            contextId: "context-plan",
+            order: 2,
+            title: "Write plan",
+            instructions: "Document the plan.",
+            source: "user",
+          },
+          ...createWorkflowExecution().workingDefinition.tasks.filter(
+            (task) => task.contextId !== "context-plan",
+          ),
+        ],
+      },
+    });
+
+    const updated = service.applyValidatorRemediation(
+      execution,
+      "context-plan",
+      {
+        pass: false,
+        summary: "Validator found missing follow-up work",
+        reopenTaskIds: ["task-plan-2"],
+        issues: [
+          {
+            title: "Missing regression coverage",
+            description: "Add tests that cover the new validation path.",
+          },
+        ],
+      },
+      {
+        autoCreateFixTasks: true,
+      },
+    );
+
+    expect(updated.taskStates["task-plan-2"]).toMatchObject({
+      status: "pending",
+      reopenedCount: 1,
+      lastReopenedAt: "2026-03-27T17:00:00.000Z",
+      completedAt: null,
+    });
+    expect(
+      updated.workingDefinition.tasks
+        .filter((task) => task.contextId === "context-plan")
+        .map((task) => ({
+          id: task.id,
+          order: task.order,
+          source: task.source,
+          metadata: task.metadata,
+        })),
+    ).toEqual([
+      {
+        id: "task-plan-1",
+        order: 1,
+        source: "user",
+        metadata: undefined,
+      },
+      {
+        id: "task-plan-2",
+        order: 2,
+        source: "user",
+        metadata: undefined,
+      },
+      {
+        id: "task-validator-1",
+        order: 3,
+        source: "validator",
+        metadata: {
+          validatorIssueFingerprint:
+            "missing regression coverage::add tests that cover the new validation path.",
+          validatorIssueTitle: "Missing regression coverage",
+        },
+      },
+    ]);
+    expect(updated.taskStates["task-validator-1"]).toMatchObject({
+      status: "pending",
+      contextId: "context-plan",
+      order: 3,
+    });
+    expect(updated.contextStates["context-plan"]).toMatchObject({
+      totalTaskCount: 3,
+      completedTaskCount: 1,
+    });
+  });
+
+  it("suppresses duplicate validator fix tasks while equivalent work is still open", () => {
+    const service = createGraphWorkflowRuntimeEditService({
+      createTaskId() {
+        return "task-validator-new";
+      },
+      now() {
+        return "2026-03-27T17:05:00.000Z";
+      },
+    });
+    const execution = createWorkflowExecution({
+      contextStates: {
+        ...createWorkflowExecution().contextStates,
+        "context-plan": {
+          ...createWorkflowExecution().contextStates["context-plan"]!,
+          totalTaskCount: 2,
+          completedTaskCount: 1,
+        },
+      },
+      taskStates: {
+        ...createWorkflowExecution().taskStates,
+        "task-plan-1": {
+          ...createWorkflowExecution().taskStates["task-plan-1"]!,
+          status: "completed",
+          completedAt: "2026-03-27T16:40:00.000Z",
+        },
+        "task-validator-existing": {
+          taskId: "task-validator-existing",
+          contextId: "context-plan",
+          order: 2,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          reopenedCount: 0,
+          lastReopenedAt: null,
+          failureMessage: null,
+        },
+      },
+      workingDefinition: {
+        ...createWorkflowExecution().workingDefinition,
+        tasks: [
+          {
+            id: "task-plan-1",
+            contextId: "context-plan",
+            order: 1,
+            title: "Inspect code",
+            instructions: "Read the relevant files.",
+            source: "user",
+          },
+          {
+            id: "task-validator-existing",
+            contextId: "context-plan",
+            order: 2,
+            title: "Fix validation issue: Missing regression coverage",
+            instructions: "Add tests that cover the new validation path.",
+            metadata: {
+              validatorIssueFingerprint:
+                "missing regression coverage::add tests that cover the new validation path.",
+              validatorIssueTitle: "Missing regression coverage",
+            },
+            source: "validator",
+          },
+          ...createWorkflowExecution().workingDefinition.tasks.filter(
+            (task) => task.contextId !== "context-plan",
+          ),
+        ],
+      },
+    });
+
+    const updated = service.applyValidatorRemediation(
+      execution,
+      "context-plan",
+      {
+        pass: false,
+        summary: "Validator found duplicate follow-up work",
+        reopenTaskIds: [],
+        issues: [
+          {
+            title: "Missing regression coverage",
+            description: "Add tests that cover the new validation path.",
+          },
+        ],
+      },
+      {
+        autoCreateFixTasks: true,
+      },
+    );
+
+    expect(updated.workingDefinition.tasks).toHaveLength(
+      execution.workingDefinition.tasks.length,
+    );
+    expect(updated.taskStates["task-validator-new"]).toBeUndefined();
+    expect(updated.contextStates["context-plan"]?.totalTaskCount).toBe(2);
+  });
+
+  it("applies user add, update, reorder, move, and remove edits atomically", () => {
+    let taskIdCounter = 0;
+    const service = createGraphWorkflowRuntimeEditService({
+      createTaskId() {
+        taskIdCounter += 1;
+        return `task-user-${taskIdCounter}`;
+      },
+    });
+    const execution = createWorkflowExecution({
+      status: "running",
+      contextStates: {
+        ...createWorkflowExecution().contextStates,
+        "context-plan": {
+          ...createWorkflowExecution().contextStates["context-plan"]!,
+          totalTaskCount: 2,
+          completedTaskCount: 1,
+        },
+        "context-implement": {
+          ...createWorkflowExecution().contextStates["context-implement"]!,
+          status: "pending",
+          totalTaskCount: 2,
+        },
+      },
+      workingDefinition: {
+        ...createWorkflowExecution().workingDefinition,
+        tasks: [
+          {
+            id: "task-plan-1",
+            contextId: "context-plan",
+            order: 1,
+            title: "Inspect code",
+            instructions: "Read the relevant files.",
+            source: "user",
+          },
+          {
+            id: "task-plan-2",
+            contextId: "context-plan",
+            order: 2,
+            title: "Write plan",
+            instructions: "Document the plan.",
+            source: "user",
+          },
+          {
+            id: "task-implement-1",
+            contextId: "context-implement",
+            order: 1,
+            title: "Write code",
+            instructions: "Implement the feature.",
+            source: "user",
+          },
+          {
+            id: "task-implement-2",
+            contextId: "context-implement",
+            order: 2,
+            title: "Add tests",
+            instructions: "Cover the new behavior.",
+            source: "user",
+          },
+          {
+            id: "task-verify-1",
+            contextId: "context-verify",
+            order: 1,
+            title: "Run checks",
+            instructions: "Verify behavior.",
+            source: "user",
+          },
+        ],
+      },
+      taskStates: {
+        ...createWorkflowExecution().taskStates,
+        "task-plan-1": {
+          ...createWorkflowExecution().taskStates["task-plan-1"]!,
+          status: "completed",
+          completedAt: "2026-03-27T16:40:00.000Z",
+        },
+        "task-plan-2": {
+          taskId: "task-plan-2",
+          contextId: "context-plan",
+          order: 2,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          reopenedCount: 0,
+          lastReopenedAt: null,
+          failureMessage: null,
+        },
+        "task-implement-1": {
+          ...createWorkflowExecution().taskStates["task-implement-1"]!,
+        },
+        "task-implement-2": {
+          taskId: "task-implement-2",
+          contextId: "context-implement",
+          order: 2,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          reopenedCount: 0,
+          lastReopenedAt: null,
+          failureMessage: null,
+        },
+      },
+    });
+
+    const updated = service.applyUserEdits(execution, {
+      operations: [
+        {
+          type: "add",
+          contextId: "context-plan",
+          title: "Capture unresolved questions",
+          instructions: "List the open questions before implementation.",
+          metadata: {
+            source: "user",
+          },
+        },
+        {
+          type: "update",
+          taskId: "task-implement-1",
+          title: "Implement the feature carefully",
+          metadata: {
+            area: "backend",
+          },
+        },
+        {
+          type: "reorder",
+          contextId: "context-implement",
+          orderedTaskIds: ["task-implement-2", "task-implement-1"],
+        },
+        {
+          type: "move",
+          taskId: "task-plan-2",
+          targetContextId: "context-implement",
+          targetOrder: 2,
+        },
+        {
+          type: "remove",
+          taskId: "task-verify-1",
+        },
+      ],
+    });
+
+    expect(
+      updated.workingDefinition.tasks
+        .filter((task) => task.contextId === "context-plan")
+        .map((task) => ({ id: task.id, order: task.order })),
+    ).toEqual([
+      { id: "task-plan-1", order: 1 },
+      { id: "task-user-1", order: 2 },
+    ]);
+    expect(
+      updated.workingDefinition.tasks
+        .filter((task) => task.contextId === "context-implement")
+        .sort((left, right) => left.order - right.order)
+        .map((task) => ({ id: task.id, order: task.order })),
+    ).toEqual([
+      { id: "task-implement-2", order: 1 },
+      { id: "task-plan-2", order: 2 },
+      { id: "task-implement-1", order: 3 },
+    ]);
+    expect(
+      updated.workingDefinition.tasks.find(
+        (task) => task.id === "task-verify-1",
+      ),
+    ).toBeUndefined();
+    expect(updated.taskStates["task-user-1"]).toMatchObject({
+      contextId: "context-plan",
+      order: 2,
+      status: "pending",
+    });
+    expect(updated.taskStates["task-plan-2"]).toMatchObject({
+      contextId: "context-implement",
+      order: 2,
+    });
+    expect(updated.taskStates["task-verify-1"]).toBeUndefined();
+    expect(
+      updated.workingDefinition.tasks.find(
+        (task) => task.id === "task-implement-1",
+      ),
+    ).toMatchObject({
+      title: "Implement the feature carefully",
+      metadata: {
+        area: "backend",
+      },
+    });
+  });
+
+  it("rejects user runtime edits that try to change locked tasks", () => {
+    const service = createGraphWorkflowRuntimeEditService();
+    const execution = createWorkflowExecution({
+      status: "running",
+      taskStates: {
+        ...createWorkflowExecution().taskStates,
+        "task-plan-1": {
+          ...createWorkflowExecution().taskStates["task-plan-1"]!,
+          status: "completed",
+          completedAt: "2026-03-27T16:40:00.000Z",
+        },
+      },
+    });
+
+    expect(() =>
+      service.applyUserEdits(execution, {
+        operations: [
+          {
+            type: "update",
+            taskId: "task-plan-1",
+            title: "Illegally edited task",
+          },
+        ],
+      }),
+    ).toThrow(GraphWorkflowRuntimeEditValidationError);
+  });
+});

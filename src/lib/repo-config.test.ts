@@ -58,6 +58,21 @@ describe("readRepoConfig", () => {
     });
   });
 
+  it("parses config with only preMergeCommand (no initScriptPath)", async () => {
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({ preMergeCommand: "scripts/validate.sh" }),
+    );
+    const { readRepoConfig } = createRepoConfig(deps);
+
+    const result = await readRepoConfig("/projects/foo");
+    expect(result).toEqual({
+      preMergeCommand: "scripts/validate.sh",
+    });
+    expect(result?.initScriptPath).toBeUndefined();
+  });
+
   it("backward compat: parses config without preMergeCommand", async () => {
     const deps = createTestDeps();
     (deps.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
@@ -301,6 +316,42 @@ describe("runPreMergeValidation", () => {
 
     await runPreMergeValidation(BASE_PARAMS);
 
+    expect(deps.commitChanges).not.toHaveBeenCalled();
+  });
+});
+
+describe("executeRepoValidationCommand", () => {
+  it("returns the raw script result without auto-committing changes", async () => {
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        if (String(p).includes("validate.sh")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({
+        initScriptPath: null,
+        preMergeCommand: "./validate.sh",
+      }),
+    );
+    (deps.hasUncommittedChanges as ReturnType<typeof vi.fn>).mockResolvedValue(
+      true,
+    );
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
+
+    const result = await executeRepoValidationCommand(BASE_PARAMS);
+
+    expect(result).toEqual({
+      executed: true,
+      pass: true,
+      stdout: "",
+      stderr: "",
+      output: "",
+      timedOut: false,
+      message: null,
+    });
     expect(deps.commitChanges).not.toHaveBeenCalled();
   });
 });

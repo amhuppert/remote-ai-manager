@@ -49,6 +49,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     parentSessionName: null,
     workflow: null,
     workflowHistory: [],
+    graphWorkflowExecution: null,
+    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
     ...overrides,
   };

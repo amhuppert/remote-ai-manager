@@ -26,6 +26,8 @@ function makeSession(
     parentSessionName: null,
     workflow: null,
     workflowHistory: [],
+    graphWorkflowExecution: null,
+    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
     ...overrides,
   };

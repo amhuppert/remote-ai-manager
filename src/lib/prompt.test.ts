@@ -97,6 +97,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     parentSessionName: null,
     workflow: null,
     workflowHistory: [],
+    graphWorkflowExecution: null,
+    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
     ...overrides,
   };
@@ -371,6 +373,126 @@ describe("executePromptStream (facade)", () => {
         "conv-123",
       ),
     ).rejects.toThrow("Actor creation failed");
+  });
+
+  it("forwards additionalMcpServers to deps.setAdditionalMcpServers after actor creation", async () => {
+    const setAdditionalMcpServers = vi.fn();
+    deps = createTestDeps({ setAdditionalMcpServers });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    const mockToolServer = { name: "graph-workflow" };
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      undefined,
+      undefined,
+      { additionalMcpServers: { "graph-workflow": mockToolServer } },
+    );
+
+    expect(setAdditionalMcpServers).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      "conv-123",
+      { "graph-workflow": mockToolServer },
+    );
+  });
+
+  it("does not call setAdditionalMcpServers when no additional servers provided", async () => {
+    const setAdditionalMcpServers = vi.fn();
+    deps = createTestDeps({ setAdditionalMcpServers });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(setAdditionalMcpServers).not.toHaveBeenCalled();
+  });
+
+  it("forwards skipSessionLock to deps.setSkipSessionLock after actor creation", async () => {
+    const setSkipSessionLock = vi.fn();
+    deps = createTestDeps({ setSkipSessionLock });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      undefined,
+      undefined,
+      { skipSessionLock: true },
+    );
+
+    expect(setSkipSessionLock).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      "conv-123",
+      true,
+    );
+  });
+
+  it("does not call setSkipSessionLock when option not provided", async () => {
+    const setSkipSessionLock = vi.fn();
+    deps = createTestDeps({ setSkipSessionLock });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(setSkipSessionLock).not.toHaveBeenCalled();
+  });
+
+  it("returns contextTokens and contextWindowMax from actor snapshot", async () => {
+    mockActor.getSnapshot
+      .mockReturnValueOnce({
+        value: "idle",
+        status: "active" as const,
+        context: {},
+      })
+      .mockReturnValue({
+        value: "idle",
+        status: "active" as const,
+        context: {
+          totals: {
+            contextTokens: 50_000,
+            contextWindowMax: 200_000,
+          },
+        },
+      });
+
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    const result = await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(result.contextTokens).toBe(50_000);
+    expect(result.contextWindowMax).toBe(200_000);
   });
 
   it("passes images in the SUBMIT_PROMPT event", async () => {

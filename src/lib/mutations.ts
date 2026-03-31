@@ -5,6 +5,7 @@ import {
   sessionKeys,
   conversationKeys,
   workflowKeys,
+  workflowDefinitionKeys,
   presetKeys,
   roadmapItemKeys,
   notificationKeys,
@@ -24,6 +25,8 @@ import {
   finalizeInitResponseSchema,
   installPresetResponseSchema,
   roadmapItemMutationResponseSchema,
+  workflowDefinitionMutationResponseSchema,
+  workflowGeneratedDraftResponseSchema,
 } from "@/lib/api-client";
 import type {
   ImagePayload,
@@ -32,6 +35,9 @@ import type {
   RoadmapItemType,
   RoadmapItemStatus,
   SessionState,
+  WorkflowPlanRequest,
+  WorkflowDefinitionRecord,
+  WorkflowRuntimeEditRequest,
 } from "@/types";
 
 // Re-export ApiCallError for consumers
@@ -209,6 +215,247 @@ export function usePinProjectMutation() {
       void queryClient.invalidateQueries({
         queryKey: projectKeys.preferences(),
       });
+    },
+  });
+}
+
+export function useCreateWorkflowDefinitionMutation(projectName: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (draft: {
+      name: string;
+      description?: string | null;
+      definition: WorkflowDefinitionRecord["definition"];
+      layout: WorkflowDefinitionRecord["layout"];
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/workflows`,
+        "create-workflow-definition",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(draft),
+        },
+        workflowDefinitionMutationResponseSchema,
+      ),
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowDefinitionKeys.list(projectName),
+      });
+      void queryClient.setQueryData(
+        workflowDefinitionKeys.detail(projectName, data.item.id),
+        data.item,
+      );
+    },
+  });
+}
+
+export function useUpdateWorkflowDefinitionMutation(
+  projectName: string,
+  workflowId: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (draft: {
+      name: string;
+      description?: string | null;
+      definition: WorkflowDefinitionRecord["definition"];
+      layout: WorkflowDefinitionRecord["layout"];
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/workflows/${encodeURIComponent(workflowId)}`,
+        "update-workflow-definition",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(draft),
+        },
+        workflowDefinitionMutationResponseSchema,
+      ),
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowDefinitionKeys.list(projectName),
+      });
+      void queryClient.setQueryData(
+        workflowDefinitionKeys.detail(projectName, workflowId),
+        data.item,
+      );
+    },
+  });
+}
+
+export function useDeleteWorkflowDefinitionMutation(projectName: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (workflowId: string) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/workflows/${encodeURIComponent(workflowId)}`,
+        "delete-workflow-definition",
+        { method: "DELETE" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowDefinitionKeys.list(projectName),
+      });
+    },
+  });
+}
+
+export function useGenerateWorkflowDraftMutation(projectName: string) {
+  return useMutation({
+    mutationFn: (request: WorkflowPlanRequest) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/workflows/generate`,
+        "generate-workflow-draft",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+        },
+        workflowGeneratedDraftResponseSchema,
+      ),
+  });
+}
+
+export function useStartGraphWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (definitionId: string) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow`,
+        "start-graph-workflow",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ definitionId }),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    },
+  });
+}
+
+export function usePauseGraphWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/pause`,
+        "pause-graph-workflow",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    },
+  });
+}
+
+export function useResumeGraphWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/resume`,
+        "resume-graph-workflow",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    },
+  });
+}
+
+export function useAbortGraphWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/abort`,
+        "abort-graph-workflow",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    },
+  });
+}
+
+export function useClearGraphWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/clear`,
+        "clear-graph-workflow",
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    },
+  });
+}
+
+export function useRuntimeEditGraphWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (request: WorkflowRuntimeEditRequest) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/runtime-edits`,
+        "runtime-edit-graph-workflow",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     },
   });
 }

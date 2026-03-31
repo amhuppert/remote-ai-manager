@@ -28,6 +28,16 @@ export interface RepoConfigDeps {
   commitChanges: typeof defaultCommitChanges;
 }
 
+export interface RepoValidationCommandResult {
+  executed: boolean;
+  pass: boolean;
+  stdout: string;
+  stderr: string;
+  output: string;
+  timedOut: boolean;
+  message: string | null;
+}
+
 const defaultDeps: RepoConfigDeps = {
   existsSync: defaultExistsSync,
   readFile: defaultReadFile,
@@ -50,6 +60,106 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
     hasUncommittedChanges,
     commitChanges,
   } = deps;
+
+  function resolveValidationScriptPath(
+    projectPath: string,
+    preMergeCommand: string,
+  ): string {
+    return path.isAbsolute(preMergeCommand)
+      ? preMergeCommand
+      : path.join(projectPath, preMergeCommand);
+  }
+
+  async function executeRepoValidationCommand(params: {
+    projectPath: string;
+    worktreePath: string;
+    sessionName: string;
+    branchName: string;
+    timeoutMs?: number;
+  }): Promise<RepoValidationCommandResult> {
+    const { projectPath, worktreePath, sessionName, branchName, timeoutMs } =
+      params;
+
+    const repoConfig = await readRepoConfig(projectPath);
+    if (!repoConfig?.preMergeCommand) {
+      return {
+        executed: false,
+        pass: true,
+        stdout: "",
+        stderr: "",
+        output: "",
+        timedOut: false,
+        message: null,
+      };
+    }
+
+    const scriptPath = resolveValidationScriptPath(
+      projectPath,
+      repoConfig.preMergeCommand,
+    );
+
+    if (!existsSync(scriptPath)) {
+      throw new Error(`Pre-merge validation script not found: ${scriptPath}`);
+    }
+
+    logger.info("pre-merge.validation_start", {
+      sessionName,
+      scriptPath,
+      worktreePath,
+    });
+
+    try {
+      const result = await execFileAsync(scriptPath, [], {
+        cwd: worktreePath,
+        env: {
+          ...buildChildEnv(),
+          PROJECT_ROOT: worktreePath,
+          CLAUDE_PROJECT_DIR: projectPath,
+          WORKTREE_PATH: worktreePath,
+          SESSION_NAME: sessionName,
+          BRANCH_NAME: branchName,
+        },
+        timeout: timeoutMs,
+      });
+
+      const stdout = result.stdout?.trim() ?? "";
+      const stderr = result.stderr?.trim() ?? "";
+      const output = [stderr, stdout].filter(Boolean).join("\n").trim();
+
+      return {
+        executed: true,
+        pass: true,
+        stdout,
+        stderr,
+        output,
+        timedOut: false,
+        message: null,
+      };
+    } catch (err) {
+      const childErr = err as Error & {
+        stderr?: string;
+        stdout?: string;
+        killed?: boolean;
+      };
+      const stderr = childErr.stderr?.trim() ?? "";
+      const stdout = childErr.stdout?.trim() ?? "";
+      const output = [stderr, stdout].filter(Boolean).join("\n").trim();
+      const timedOut = childErr.killed === true;
+      const timeoutSec = Math.round((timeoutMs ?? 0) / 1000);
+
+      return {
+        executed: true,
+        pass: false,
+        stdout,
+        stderr,
+        output,
+        timedOut,
+        message: timedOut
+          ? `Pre-merge validation timed out after ${timeoutSec}s`
+          : "Pre-merge validation failed",
+      };
+    }
+  }
 
   /** Read optional per-repo config */
   async function readRepoConfig(
@@ -75,77 +185,43 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
     branchName: string;
     timeoutMs: number;
   }): Promise<void> {
-    const { projectPath, worktreePath, sessionName, branchName, timeoutMs } =
-      params;
-
-    const repoConfig = await readRepoConfig(projectPath);
-    if (!repoConfig?.preMergeCommand) return;
-
-    const scriptPath = path.isAbsolute(repoConfig.preMergeCommand)
-      ? repoConfig.preMergeCommand
-      : path.join(projectPath, repoConfig.preMergeCommand);
-
-    if (!existsSync(scriptPath)) {
-      throw new Error(`Pre-merge validation script not found: ${scriptPath}`);
+    const result = await executeRepoValidationCommand(params);
+    if (!result.executed) {
+      return;
     }
 
-    logger.info("pre-merge.validation_start", {
-      sessionName,
-      scriptPath,
-      worktreePath,
-    });
-
-    try {
-      await execFileAsync(scriptPath, [], {
-        cwd: worktreePath,
-        env: {
-          ...buildChildEnv(),
-          PROJECT_ROOT: worktreePath,
-          CLAUDE_PROJECT_DIR: projectPath,
-          WORKTREE_PATH: worktreePath,
-          SESSION_NAME: sessionName,
-          BRANCH_NAME: branchName,
-        },
-        timeout: timeoutMs,
-      });
-    } catch (err) {
-      const childErr = err as Error & {
-        stderr?: string;
-        stdout?: string;
-        killed?: boolean;
-      };
-      const rawOutput = [childErr.stderr?.trim(), childErr.stdout?.trim()]
-        .filter(Boolean)
-        .join("\n")
-        .trim();
-
-      const isTimeout = childErr.killed === true;
-      const timeoutSec = Math.round(timeoutMs / 1000);
-      const message = isTimeout
-        ? `Pre-merge validation timed out after ${timeoutSec}s`
-        : "Pre-merge validation failed";
-
-      const newErr = new Error(message);
+    if (!result.pass) {
+      const newErr = new Error(result.message ?? "Pre-merge validation failed");
       (newErr as Error & { gitOutput?: string }).gitOutput =
-        rawOutput || undefined;
+        result.output || undefined;
       throw newErr;
     }
 
     // Auto-commit any changes the script made (e.g. prettier/eslint auto-fixes)
-    if (await hasUncommittedChanges(worktreePath)) {
+    if (await hasUncommittedChanges(params.worktreePath)) {
       logger.info("pre-merge.auto_commit_fixes", {
-        sessionName,
-        worktreePath,
+        sessionName: params.sessionName,
+        worktreePath: params.worktreePath,
       });
-      await commitChanges(worktreePath, "auto-fix: pre-merge validation", {
-        skipHooks: true,
-      });
+      await commitChanges(
+        params.worktreePath,
+        "auto-fix: pre-merge validation",
+        {
+          skipHooks: true,
+        },
+      );
     }
 
-    logger.info("pre-merge.validation_complete", { sessionName });
+    logger.info("pre-merge.validation_complete", {
+      sessionName: params.sessionName,
+    });
   }
 
-  return { readRepoConfig, runPreMergeValidation };
+  return {
+    readRepoConfig,
+    executeRepoValidationCommand,
+    runPreMergeValidation,
+  };
 }
 
 // ============================================================
@@ -155,4 +231,6 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
 const defaultInstance = createRepoConfig();
 
 export const readRepoConfig = defaultInstance.readRepoConfig;
+export const executeRepoValidationCommand =
+  defaultInstance.executeRepoValidationCommand;
 export const runPreMergeValidation = defaultInstance.runPreMergeValidation;

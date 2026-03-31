@@ -63,6 +63,14 @@ export const workflowKeys = {
     [...workflowKeys.all, "iterations", projectName, sessionName] as const,
 };
 
+export const workflowDefinitionKeys = {
+  all: ["workflow-definitions"] as const,
+  list: (projectName: string) =>
+    [...workflowDefinitionKeys.all, "list", projectName] as const,
+  detail: (projectName: string, workflowId: string) =>
+    [...workflowDefinitionKeys.all, "detail", projectName, workflowId] as const,
+};
+
 export const fileKeys = {
   all: ["files"] as const,
   list: (projectName: string) =>

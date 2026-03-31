@@ -192,6 +192,8 @@ const baseSession: SessionState = {
   tddEnabled: true,
   workflow: null,
   workflowHistory: [],
+  graphWorkflowExecution: null,
+  graphWorkflowExecutionHistory: [],
   referenceDocuments: [],
 };
 

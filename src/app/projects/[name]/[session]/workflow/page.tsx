@@ -1,9 +1,11 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useWorkflowQuery } from "@/lib/queries";
+import "@/components/workflow-graph/workflow-graph.css";
+import { useSessionQuery, useWorkflowQuery } from "@/lib/queries";
 import Topbar from "@/components/Topbar";
 import ConnectedWorkflowPanel from "./ConnectedWorkflowPanel";
+import ConnectedGraphWorkflowPanel from "./ConnectedGraphWorkflowPanel";
 
 export default function WorkflowPage() {
   const params = useParams<{ name: string; session: string }>();
@@ -13,6 +15,11 @@ export default function WorkflowPage() {
 
   const workflowQuery = useWorkflowQuery(projectName, sessionName);
   const workflow = workflowQuery.data ?? null;
+  const sessionQuery = useSessionQuery(projectName, sessionName);
+  const session = sessionQuery.data ?? null;
+  const hasGraphWorkflow =
+    session?.graphWorkflowExecution != null ||
+    (session?.graphWorkflowExecutionHistory.length ?? 0) > 0;
 
   return (
     <div className="app" data-page="workflow">
@@ -37,32 +44,32 @@ export default function WorkflowPage() {
       />
 
       <main className="main">
-        {workflowQuery.isPending ? (
+        {workflowQuery.isPending || sessionQuery.isPending ? (
           <div className="empty-state">
             <div className="empty-state-title">Loading workflow...</div>
           </div>
-        ) : workflow == null ? (
+        ) : workflow == null && !hasGraphWorkflow ? (
           <div className="empty-state">
             <div className="empty-state-title">No workflow configured</div>
             <div className="empty-state-desc">
-              Start a Ralph Loop workflow from any conversation by asking
-              Claude.
+              Start a Ralph Loop or graph workflow for this session to monitor
+              it here.
             </div>
           </div>
         ) : (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              flex: 1,
-              minHeight: 0,
-              overflow: "auto",
-            }}
-          >
-            <ConnectedWorkflowPanel
-              projectName={projectName}
-              sessionName={sessionName}
-            />
+          <div className="wb-execution-container">
+            {workflow ? (
+              <ConnectedWorkflowPanel
+                projectName={projectName}
+                sessionName={sessionName}
+              />
+            ) : null}
+            {hasGraphWorkflow ? (
+              <ConnectedGraphWorkflowPanel
+                projectName={projectName}
+                sessionName={sessionName}
+              />
+            ) : null}
           </div>
         )}
       </main>

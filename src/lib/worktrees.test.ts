@@ -435,6 +435,8 @@ describe("discoverAndImportWorktrees", () => {
     parentSessionName: null,
     workflow: null,
     workflowHistory: [],
+    graphWorkflowExecution: null,
+    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
   };
 
@@ -522,6 +524,8 @@ describe("discoverAndImportWorktrees", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      graphWorkflowExecution: null,
+      graphWorkflowExecutionHistory: [],
       referenceDocuments: [],
     };
 
@@ -581,6 +585,8 @@ describe("discoverAndImportWorktrees", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      graphWorkflowExecution: null,
+      graphWorkflowExecutionHistory: [],
       referenceDocuments: [],
     };
 
@@ -807,6 +813,8 @@ describe("discoverAndImportWorktrees", () => {
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      graphWorkflowExecution: null,
+      graphWorkflowExecutionHistory: [],
       referenceDocuments: [],
     };
 

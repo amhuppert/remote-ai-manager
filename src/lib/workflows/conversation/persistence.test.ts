@@ -61,6 +61,8 @@ function makeState(conversation: ConversationState): ManagerState {
             parentSessionName: null,
             workflow: null,
             workflowHistory: [],
+            graphWorkflowExecution: null,
+            graphWorkflowExecutionHistory: [],
             referenceDocuments: [],
           },
         },

@@ -290,6 +290,8 @@ export async function discoverAndImportWorktrees(
       parentSessionName: null,
       workflow: null,
       workflowHistory: [],
+      graphWorkflowExecution: null,
+      graphWorkflowExecutionHistory: [],
       referenceDocuments: [],
     });
   }

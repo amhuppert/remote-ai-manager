@@ -127,6 +127,10 @@ export interface ActorImplementationDeps {
     deps: Record<string, unknown>,
   ): unknown;
   createRoadmapToolServer(context: Record<string, unknown>): unknown;
+  createWiredPlannerToolServer(
+    context: Record<string, unknown>,
+    wireDeps: Record<string, unknown>,
+  ): unknown;
   createReferenceDocumentToolServer(context: Record<string, unknown>): unknown;
   maybeCreateCodexToolServer(
     config: unknown,
@@ -197,6 +201,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     roadmapToolsMod,
     referenceDocumentToolsMod,
     codexToolMod,
+    plannerToolsMod,
     projectResolverMod,
     debugLogMod,
     queryRegistryMod,
@@ -217,6 +222,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/roadmap-tools"),
     import("@/lib/reference-document-tools"),
     import("@/lib/codex-tool"),
+    import("@/lib/workflow-graph/planner-tools"),
     import("@/lib/project-resolver"),
     import("@/lib/debug-log"),
     import("@/lib/query-registry"),
@@ -239,6 +245,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     createNotificationToolServer:
       notificationToolMod.createNotificationToolServer,
     createRoadmapToolServer: roadmapToolsMod.createRoadmapToolServer,
+    createWiredPlannerToolServer: plannerToolsMod.createWiredPlannerToolServer,
     createReferenceDocumentToolServer:
       referenceDocumentToolsMod.createReferenceDocumentToolServer,
     maybeCreateCodexToolServer: codexToolMod.maybeCreateCodexToolServer,
@@ -582,12 +589,15 @@ export async function prepareTurnForMachine(
     );
   }
 
-  // Acquire session lock (throws if already busy)
-  const releaseSessionLock = deps.acquireSessionLock(
-    input.projectPath,
-    input.sessionName,
-  );
-  runtime.releaseSessionLock = releaseSessionLock;
+  // Acquire session lock (throws if already busy) — skip for validator
+  // conversations that run within an already-locked session
+  if (!runtime.skipSessionLock) {
+    const releaseSessionLock = deps.acquireSessionLock(
+      input.projectPath,
+      input.sessionName,
+    );
+    runtime.releaseSessionLock = releaseSessionLock;
+  }
 
   // Acquire concurrency slot (waits if at capacity)
   const releaseQuerySlot = await deps.acquireQuerySlot(
@@ -822,11 +832,22 @@ export async function executePromptForMachine(
         "roadmap-tools": deps.createRoadmapToolServer({
           projectPath: input.projectPath,
         }),
+        "graph-workflow-planner": deps.createWiredPlannerToolServer(
+          {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+          },
+          {
+            readConfig: deps.readConfig,
+            getSession: deps.getSessionState,
+          },
+        ),
         "reference-document-tools": deps.createReferenceDocumentToolServer({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           worktreePath: input.worktreePath,
         }),
+        ...(runtime.additionalMcpServers ?? {}),
       },
       canUseTool: canUseTool as never,
       env: { ...deps.buildChildEnv(), CLAUDECODE: "" },

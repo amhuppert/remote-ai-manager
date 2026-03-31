@@ -21,6 +21,13 @@ import {
   workflowFixPlanUpdatedEventSchema,
   workflowCircuitBreakerEventSchema,
   debugLogReceivedEventSchema,
+  graphWorkflowStatusEventSchema,
+  graphWorkflowContextStatusEventSchema,
+  graphWorkflowTaskStatusEventSchema,
+  graphWorkflowValidationResultEventSchema,
+  graphWorkflowRetryEventSchema,
+  graphWorkflowCircuitBreakerEventSchema,
+  graphWorkflowSharedDocumentsUpdatedEventSchema,
 } from "@/lib/schemas";
 import {
   useAddOrUpdateJob,
@@ -283,6 +290,121 @@ export default function NotificationListener(): null {
       }
     });
 
+    const invalidateGraphWorkflow = (
+      projectName: string,
+      sessionName: string,
+    ) => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    };
+
+    es.addEventListener("graph-workflow-status", (event) => {
+      try {
+        const parsed = graphWorkflowStatusEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-context-status", (event) => {
+      try {
+        const parsed = graphWorkflowContextStatusEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-task-status", (event) => {
+      try {
+        const parsed = graphWorkflowTaskStatusEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-validation-result", (event) => {
+      try {
+        const parsed = graphWorkflowValidationResultEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-retry", (event) => {
+      try {
+        const parsed = graphWorkflowRetryEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-circuit-breaker", (event) => {
+      try {
+        const parsed = graphWorkflowCircuitBreakerEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-shared-documents-updated", (event) => {
+      try {
+        const parsed = graphWorkflowSharedDocumentsUpdatedEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
     // SSE reconnection recovery: refetch notifications on reconnect after error
     es.onerror = () => {
       hadErrorRef.current = true;
@@ -303,6 +425,9 @@ export default function NotificationListener(): null {
         });
         void queryClient.invalidateQueries({
           queryKey: workflowKeys.all,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: sessionKeys.all,
         });
 
         // Reconcile stale running jobs with server-side truth

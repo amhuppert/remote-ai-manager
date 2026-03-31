@@ -119,6 +119,7 @@ export default function SessionsList({
               <RoadmapItemsPanel projectName={projectName} />
 
               <ProjectActionsBar
+                projectName={projectName}
                 archivedCount={archivedCount}
                 showArchived={showArchived}
                 onToggleArchived={toggleArchived}

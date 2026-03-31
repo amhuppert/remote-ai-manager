@@ -8,6 +8,7 @@ import {
   deriveSessionStatus,
   deriveSessionPromptCount,
 } from "@/lib/session-derived";
+import { buildSessionContext } from "@/lib/copy-context";
 import {
   useSessionQuery,
   useConversationsQuery,
@@ -28,6 +29,7 @@ import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import CopyableId from "@/components/CopyableId";
 import WorkflowCard from "./WorkflowCard";
+import GraphWorkflowCard from "./GraphWorkflowCard";
 import SessionGitPanel from "./SessionGitPanel";
 import CommitDialog from "./CommitDialog";
 import SmartMergeDialog from "./SmartMergeDialog";
@@ -144,24 +146,9 @@ export default function ConversationList({
   const handleCopyContext = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      const lines = [
-        "```xml",
-        "<session-context>",
-        `  <project>${projectName}</project>`,
-        `  <session>${sessionName}</session>`,
-        `  <branch>${session?.branchName ?? ""}</branch>`,
-        `  <worktree>${session?.worktreePath ?? ""}</worktree>`,
-        `  <created>${session?.createdAt ?? ""}</created>`,
-        `  <status>${session ? deriveSessionStatus(session) : ""}</status>`,
-        `  <conversation-count>${session?.conversations.length ?? 0}</conversation-count>`,
-        `  <total-prompts>${session ? deriveSessionPromptCount(session) : 0}</total-prompts>`,
-        `  <source>${session?.source ?? ""}</source>`,
-        `  <creation-mode>${session?.creationMode ?? ""}</creation-mode>`,
-        `  <finished>${session?.finished ?? false}</finished>`,
-        "</session-context>",
-        "```",
-      ];
-      void navigator.clipboard.writeText(lines.join("\n")).then(() => {
+      if (!session) return;
+      const text = buildSessionContext({ projectName, sessionName, session });
+      void navigator.clipboard.writeText(text).then(() => {
         setContextCopied(true);
         setTimeout(() => setContextCopied(false), 1500);
       });
@@ -377,13 +364,22 @@ export default function ConversationList({
               </div>
             )}
 
-            {/* Workflow Card */}
-            {hasWorkflow && session?.workflow && (
+            {/* Workflow Card — Ralph Loop and Graph Workflow are mutually exclusive */}
+            {hasWorkflow && session?.workflow ? (
               <WorkflowCard
                 projectName={projectName}
                 sessionName={sessionName}
                 workflow={session.workflow}
               />
+            ) : (
+              session && (
+                <GraphWorkflowCard
+                  projectName={projectName}
+                  sessionName={sessionName}
+                  execution={session.graphWorkflowExecution ?? null}
+                  isFinished={isFinished}
+                />
+              )
             )}
 
             {/* Finished banner */}

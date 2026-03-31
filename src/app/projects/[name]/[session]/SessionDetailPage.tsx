@@ -6,6 +6,7 @@ import {
   deriveSessionStatus,
   deriveSessionPromptCount,
 } from "@/lib/session-derived";
+import { buildConversationContext } from "@/lib/copy-context";
 import {
   useSessionQuery,
   useConversationMessagesQuery,
@@ -258,10 +259,13 @@ export default function SessionDetailPage({
   const isFinished = session?.finished ?? false;
   const targetBranch = session?.targetBranch ?? "main";
   const workflowActive = session?.workflow?.status === "running";
-  const isIterationConversation =
-    session?.conversations.find((c) => c.id === conversationId)?.role ===
-    "iteration";
-  const isReadOnly = isFinished || workflowActive || isIterationConversation;
+  const conversationRole = session?.conversations.find(
+    (c) => c.id === conversationId,
+  )?.role;
+  const isWorkflowManagedConversation =
+    conversationRole === "iteration" || conversationRole === "validator";
+  const isReadOnly =
+    isFinished || workflowActive || isWorkflowManagedConversation;
   const isBusy =
     sending ||
     sessionStatus === "running" ||
@@ -970,31 +974,14 @@ export default function SessionDetailPage({
   const handleCopyContext = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      const conv = session?.conversations.find((c) => c.id === conversationId);
-      const lines = [
-        "```xml",
-        "<conversation-context>",
-        `  <project>${projectName}</project>`,
-        `  <session>${sessionName}</session>`,
-        `  <branch>${session?.branchName ?? ""}</branch>`,
-        `  <worktree>${session?.worktreePath ?? ""}</worktree>`,
-        `  <created>${session?.createdAt ?? ""}</created>`,
-        `  <conversation-id>${conversationId}</conversation-id>`,
-        `  <claude-session-id>${conv?.claudeSessionId ?? ""}</claude-session-id>`,
-        `  <status>${conv?.status ?? ""}</status>`,
-        `  <prompt-count>${conv?.promptCount ?? 0}</prompt-count>`,
-        `  <last-activity>${conv?.lastActivityAt ?? ""}</last-activity>`,
-        `  <transcript-path>${conv?.transcriptPath ?? ""}</transcript-path>`,
-        `  <total-cost-usd>${conv?.totalCostUsd ?? ""}</total-cost-usd>`,
-        `  <total-duration-ms>${conv?.totalDurationMs ?? ""}</total-duration-ms>`,
-        `  <total-turns>${conv?.totalTurns ?? ""}</total-turns>`,
-        `  <source>${conv?.source ?? ""}</source>`,
-        `  <session-source>${session?.source ?? ""}</session-source>`,
-        `  <creation-mode>${session?.creationMode ?? ""}</creation-mode>`,
-        "</conversation-context>",
-        "```",
-      ];
-      void navigator.clipboard.writeText(lines.join("\n")).then(() => {
+      if (!session) return;
+      const text = buildConversationContext({
+        projectName,
+        sessionName,
+        session,
+        conversationId,
+      });
+      void navigator.clipboard.writeText(text).then(() => {
         setContextCopied(true);
         setTimeout(() => setContextCopied(false), 1500);
       });
@@ -1512,10 +1499,10 @@ export default function SessionDetailPage({
                 )}
 
               {/* Prompt input OR question panel OR read-only indicator */}
-              {isIterationConversation ? (
+              {isWorkflowManagedConversation ? (
                 <div className="iteration-readonly-banner">
-                  {"\u27F3"} This conversation is part of a Ralph Loop iteration
-                  and is read-only.
+                  {"\u27F3"} This conversation is managed by a workflow
+                  execution and is read-only.
                 </div>
               ) : pendingQuestions && pendingQuestionId ? (
                 <AskQuestionPanel

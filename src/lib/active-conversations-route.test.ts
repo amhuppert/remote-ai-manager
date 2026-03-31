@@ -71,6 +71,8 @@ function makeState(
       tddEnabled: true,
       workflow: null,
       workflowHistory: [],
+      graphWorkflowExecution: null,
+      graphWorkflowExecutionHistory: [],
     };
   }
 

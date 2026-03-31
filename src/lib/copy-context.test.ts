@@ -1,0 +1,612 @@
+import { describe, it, expect } from "vitest";
+import { buildSessionContext, buildConversationContext } from "./copy-context";
+import type {
+  SessionState,
+  GraphWorkflowExecution,
+  RalphLoopWorkflow,
+} from "@/types";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeConversation(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "conv-1",
+    name: null,
+    claudeSessionId: "claude-sess-1",
+    transcriptPath: "/tmp/transcripts/conv-1.jsonl",
+    status: "awaiting" as const,
+    promptCount: 3,
+    createdAt: "2026-03-28T10:00:00Z",
+    lastActivityAt: "2026-03-28T12:00:00Z",
+    source: "cc" as const,
+    summary: null,
+    archived: false,
+    totalCostUsd: 0.42,
+    totalDurationMs: 60000,
+    totalTurns: 5,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    forkedFrom: null,
+    role: null,
+    contextTokens: 80000,
+    contextWindowMax: 200000,
+    debugMode: null,
+    machineSnapshot: null,
+    ...overrides,
+  };
+}
+
+function makeSession(overrides: Record<string, unknown> = {}): SessionState {
+  return {
+    sessionName: "my-session",
+    worktreePath: "/home/user/project/.worktrees/my-session",
+    branchName: "csm/my-session",
+    createdAt: "2026-03-28T09:00:00Z",
+    lastActivityAt: "2026-03-28T12:00:00Z",
+    archived: false,
+    finished: false,
+    conversations: [makeConversation()],
+    source: "cc",
+    objective: null,
+    creationMode: "fast",
+    tddEnabled: true,
+    targetBranch: "main",
+    parentSessionName: null,
+    workflow: null,
+    workflowHistory: [],
+    graphWorkflowExecution: null,
+    graphWorkflowExecutionHistory: [],
+    referenceDocuments: [],
+    ...overrides,
+  } as SessionState;
+}
+
+function makeGraphWorkflowExecution(
+  overrides: Record<string, unknown> = {},
+): GraphWorkflowExecution {
+  return {
+    id: "exec-1",
+    seedDefinitionId: "def-abc",
+    seedDefinitionRevision: 3,
+    workingDefinition: {
+      schemaVersion: 1,
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "Implementation",
+          description: "Implement the feature",
+          agent: { model: "sonnet", reasoningEffort: "medium" },
+          mutability: { allowAgentTaskAdd: false },
+          circuitBreaker: {},
+          iterationPolicy: { maxIterations: 10 },
+        },
+        {
+          id: "ctx-2",
+          title: "Testing",
+          agent: { model: "sonnet", reasoningEffort: "medium" },
+          mutability: { allowAgentTaskAdd: false },
+          circuitBreaker: {},
+          iterationPolicy: { maxIterations: 5 },
+        },
+      ],
+      tasks: [
+        {
+          id: "task-1",
+          contextId: "ctx-1",
+          order: 1,
+          title: "Build the widget",
+          instructions: "...",
+          source: "user",
+        },
+        {
+          id: "task-2",
+          contextId: "ctx-1",
+          order: 2,
+          title: "Wire up events",
+          instructions: "...",
+          source: "user",
+        },
+        {
+          id: "task-3",
+          contextId: "ctx-2",
+          order: 1,
+          title: "Write unit tests",
+          instructions: "...",
+          source: "user",
+        },
+      ],
+      edges: [
+        { id: "e-1", sourceContextId: "ctx-1", targetContextId: "ctx-2" },
+      ],
+    },
+    status: "running",
+    activeContextId: "ctx-1",
+    contextStates: {
+      "ctx-1": {
+        contextId: "ctx-1",
+        status: "running",
+        totalTaskCount: 2,
+        completedTaskCount: 1,
+        iterationCount: 2,
+        consecutiveFailureCount: 0,
+        lastValidationAt: null,
+        lastValidationPass: null,
+      },
+      "ctx-2": {
+        contextId: "ctx-2",
+        status: "pending",
+        totalTaskCount: 1,
+        completedTaskCount: 0,
+        iterationCount: 0,
+        consecutiveFailureCount: 0,
+        lastValidationAt: null,
+        lastValidationPass: null,
+      },
+    },
+    taskStates: {
+      "task-1": {
+        taskId: "task-1",
+        contextId: "ctx-1",
+        order: 1,
+        status: "completed",
+        summary: "Built widget component",
+        startedAt: "2026-03-28T10:00:00Z",
+        completedAt: "2026-03-28T10:30:00Z",
+        lastConversationId: "conv-iter-1",
+        reopenedCount: 0,
+        lastReopenedAt: null,
+        failureMessage: null,
+      },
+      "task-2": {
+        taskId: "task-2",
+        contextId: "ctx-1",
+        order: 2,
+        status: "running",
+        summary: null,
+        startedAt: "2026-03-28T10:30:00Z",
+        completedAt: null,
+        lastConversationId: "conv-iter-2",
+        reopenedCount: 0,
+        lastReopenedAt: null,
+        failureMessage: null,
+      },
+      "task-3": {
+        taskId: "task-3",
+        contextId: "ctx-2",
+        order: 1,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        reopenedCount: 0,
+        lastReopenedAt: null,
+        failureMessage: null,
+      },
+    },
+    retryState: {},
+    sharedDocuments: [],
+    machineSnapshot: null,
+    history: [],
+    startedAt: "2026-03-28T10:00:00Z",
+    completedAt: null,
+    haltReason: null,
+    ...overrides,
+  } as GraphWorkflowExecution;
+}
+
+function makeRalphLoopWorkflow(
+  overrides: Record<string, unknown> = {},
+): RalphLoopWorkflow {
+  return {
+    status: "running",
+    objective: "Implement dark mode",
+    fixPlan: [
+      {
+        id: "fp-1",
+        description: "Add theme provider",
+        group: 1,
+        status: "completed" as const,
+        createdAt: "2026-03-28T09:30:00Z",
+        completedAt: "2026-03-28T10:15:00Z",
+        skipReason: null,
+        addedByIteration: null,
+      },
+      {
+        id: "fp-2",
+        description: "Update components",
+        group: 1,
+        status: "pending" as const,
+        createdAt: "2026-03-28T09:30:00Z",
+        completedAt: null,
+        skipReason: null,
+        addedByIteration: null,
+      },
+    ],
+    references: [],
+    config: {
+      maxIterations: 20,
+      iterationTimeoutMs: 900000,
+      contextSoftLimitTokens: 160000,
+      contextHardLimitTokens: 180000,
+      circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
+      model: "sonnet" as const,
+      effort: "high" as const,
+    },
+    circuitBreaker: {
+      state: "closed" as const,
+      consecutiveNoProgress: 0,
+      consecutiveSameError: 0,
+      lastErrorPattern: null,
+      lastProgressIteration: 0,
+    },
+    iterations: [
+      {
+        iterationNumber: 1,
+        conversationId: "conv-iter-1",
+        status: "completed",
+        startedAt: "2026-03-28T10:00:00Z",
+        completedAt: "2026-03-28T10:15:00Z",
+        durationMs: 900000,
+        costUsd: 0.15,
+        turns: 8,
+        gitMetrics: {
+          filesChanged: 3,
+          linesAdded: 50,
+          linesRemoved: 10,
+          changedFiles: ["a.ts", "b.ts", "c.ts"],
+        },
+        statusReport: null,
+        tasksCompleted: ["Add theme provider"],
+        tasksSkipped: [],
+        tasksAdded: [],
+        progressClassification: "progress",
+        peakContextTokens: 50000,
+      },
+    ],
+    haltReason: null,
+    generatingPlan: false,
+    createdAt: "2026-03-28T09:30:00Z",
+    startedAt: "2026-03-28T10:00:00Z",
+    completedAt: null,
+    totalCostUsd: 0.15,
+    totalDurationMs: 900000,
+    currentIterationConversationId: "conv-iter-2",
+    ...overrides,
+  } as RalphLoopWorkflow;
+}
+
+// ---------------------------------------------------------------------------
+// Tests: buildSessionContext
+// ---------------------------------------------------------------------------
+
+describe("buildSessionContext", () => {
+  it("includes basic session fields", () => {
+    const session = makeSession();
+    const result = buildSessionContext({
+      projectName: "my-project",
+      sessionName: "my-session",
+      session,
+    });
+
+    expect(result).toContain("<project>my-project</project>");
+    expect(result).toContain("<session>my-session</session>");
+    expect(result).toContain("<branch>csm/my-session</branch>");
+    expect(result).toContain(
+      "<worktree>/home/user/project/.worktrees/my-session</worktree>",
+    );
+    expect(result).toContain("<created>2026-03-28T09:00:00Z</created>");
+    expect(result).toContain("<conversation-count>1</conversation-count>");
+    expect(result).toContain("<total-prompts>3</total-prompts>");
+    expect(result).toContain("<source>cc</source>");
+    expect(result).toContain("<creation-mode>fast</creation-mode>");
+    expect(result).toContain("<finished>false</finished>");
+  });
+
+  it("includes session status", () => {
+    const session = makeSession();
+    const result = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+    });
+    expect(result).toContain("<status>awaiting</status>");
+  });
+
+  it("wraps output in xml code block", () => {
+    const session = makeSession();
+    const result = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+    });
+    expect(result).toMatch(/^```xml\n/);
+    expect(result).toMatch(/\n```$/);
+    expect(result).toContain("<session-context>");
+    expect(result).toContain("</session-context>");
+  });
+
+  it("omits workflow section when no workflow is active", () => {
+    const session = makeSession();
+    const result = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+    });
+    expect(result).not.toContain("<ralph-loop>");
+    expect(result).not.toContain("<graph-workflow>");
+  });
+
+  it("includes ralph loop workflow info when active", () => {
+    const workflow = makeRalphLoopWorkflow();
+    const session = makeSession({ workflow });
+    const result = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+    });
+
+    expect(result).toContain("<ralph-loop>");
+    expect(result).toContain("<workflow-status>running</workflow-status>");
+    expect(result).toContain("<objective>Implement dark mode</objective>");
+    expect(result).toContain("<iteration-count>1</iteration-count>");
+    expect(result).toContain("<max-iterations>20</max-iterations>");
+    expect(result).toContain(
+      "<current-iteration-conversation-id>conv-iter-2</current-iteration-conversation-id>",
+    );
+    expect(result).toContain("<total-cost-usd>0.15</total-cost-usd>");
+    expect(result).toContain("<total-duration-ms>900000</total-duration-ms>");
+    expect(result).toContain("</ralph-loop>");
+  });
+
+  it("includes ralph loop halt reason when halted", () => {
+    const workflow = makeRalphLoopWorkflow({
+      status: "halted",
+      haltReason: {
+        type: "circuit_breaker",
+        reason: "no_progress",
+      },
+    });
+    const session = makeSession({ workflow });
+    const result = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+    });
+
+    expect(result).toContain("<halt-reason>circuit_breaker</halt-reason>");
+  });
+
+  it("includes graph workflow execution info when active", () => {
+    const execution = makeGraphWorkflowExecution();
+    const session = makeSession({ graphWorkflowExecution: execution });
+    const result = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+    });
+
+    expect(result).toContain("<graph-workflow>");
+    expect(result).toContain("<execution-id>exec-1</execution-id>");
+    expect(result).toContain("<workflow-status>running</workflow-status>");
+    expect(result).toContain(
+      "<seed-definition-id>def-abc</seed-definition-id>",
+    );
+    expect(result).toContain(
+      "<seed-definition-revision>3</seed-definition-revision>",
+    );
+    expect(result).toContain("<active-context-id>ctx-1</active-context-id>");
+    expect(result).toContain(
+      "<active-context-title>Implementation</active-context-title>",
+    );
+    expect(result).toContain(
+      "<context-iteration-count>2</context-iteration-count>",
+    );
+    expect(result).toContain(
+      "<context-completed-tasks>1</context-completed-tasks>",
+    );
+    expect(result).toContain("<context-total-tasks>2</context-total-tasks>");
+    expect(result).toContain("<total-contexts>2</total-contexts>");
+    expect(result).toContain("<completed-contexts>0</completed-contexts>");
+    expect(result).toContain("</graph-workflow>");
+  });
+
+  it("includes graph workflow halt reason when halted", () => {
+    const execution = makeGraphWorkflowExecution({
+      status: "halted",
+      haltReason: {
+        type: "circuit_breaker",
+        contextId: "ctx-1",
+        failureCount: 3,
+      },
+    });
+    const session = makeSession({ graphWorkflowExecution: execution });
+    const result = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+    });
+
+    expect(result).toContain("<halt-reason>circuit_breaker</halt-reason>");
+  });
+
+  it("includes graph workflow retry state when retrying", () => {
+    const execution = makeGraphWorkflowExecution({
+      retryState: {
+        "ctx-1": { contextId: "ctx-1", attempt: 2, maxAttempts: 3 },
+      },
+    });
+    const session = makeSession({ graphWorkflowExecution: execution });
+    const result = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+    });
+
+    expect(result).toContain("<retry-attempt>2</retry-attempt>");
+    expect(result).toContain("<retry-max-attempts>3</retry-max-attempts>");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: buildConversationContext
+// ---------------------------------------------------------------------------
+
+describe("buildConversationContext", () => {
+  it("includes basic conversation fields", () => {
+    const session = makeSession();
+    const result = buildConversationContext({
+      projectName: "my-project",
+      sessionName: "my-session",
+      session,
+      conversationId: "conv-1",
+    });
+
+    expect(result).toContain("<project>my-project</project>");
+    expect(result).toContain("<session>my-session</session>");
+    expect(result).toContain("<branch>csm/my-session</branch>");
+    expect(result).toContain(
+      "<worktree>/home/user/project/.worktrees/my-session</worktree>",
+    );
+    expect(result).toContain("<conversation-id>conv-1</conversation-id>");
+    expect(result).toContain(
+      "<claude-session-id>claude-sess-1</claude-session-id>",
+    );
+    expect(result).toContain("<status>awaiting</status>");
+    expect(result).toContain("<prompt-count>3</prompt-count>");
+    expect(result).toContain(
+      "<last-activity>2026-03-28T12:00:00Z</last-activity>",
+    );
+    expect(result).toContain(
+      "<transcript-path>/tmp/transcripts/conv-1.jsonl</transcript-path>",
+    );
+    expect(result).toContain("<total-cost-usd>0.42</total-cost-usd>");
+    expect(result).toContain("<total-duration-ms>60000</total-duration-ms>");
+    expect(result).toContain("<total-turns>5</total-turns>");
+    expect(result).toContain("<source>cc</source>");
+    expect(result).toContain("<session-source>cc</session-source>");
+    expect(result).toContain("<creation-mode>fast</creation-mode>");
+  });
+
+  it("wraps output in xml code block", () => {
+    const session = makeSession();
+    const result = buildConversationContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+      conversationId: "conv-1",
+    });
+    expect(result).toMatch(/^```xml\n/);
+    expect(result).toMatch(/\n```$/);
+    expect(result).toContain("<conversation-context>");
+    expect(result).toContain("</conversation-context>");
+  });
+
+  it("includes conversation role when set", () => {
+    const session = makeSession({
+      conversations: [makeConversation({ role: "iteration" })],
+    });
+    const result = buildConversationContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+      conversationId: "conv-1",
+    });
+
+    expect(result).toContain("<role>iteration</role>");
+  });
+
+  it("includes context token info when available", () => {
+    const session = makeSession({
+      conversations: [
+        makeConversation({ contextTokens: 80000, contextWindowMax: 200000 }),
+      ],
+    });
+    const result = buildConversationContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+      conversationId: "conv-1",
+    });
+
+    expect(result).toContain("<context-tokens>80000</context-tokens>");
+    expect(result).toContain("<context-window-max>200000</context-window-max>");
+  });
+
+  it("omits workflow section when no workflow is active", () => {
+    const session = makeSession();
+    const result = buildConversationContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+      conversationId: "conv-1",
+    });
+    expect(result).not.toContain("<ralph-loop>");
+    expect(result).not.toContain("<graph-workflow>");
+  });
+
+  it("includes graph workflow info with task linkage for iteration conversation", () => {
+    const execution = makeGraphWorkflowExecution();
+    const session = makeSession({
+      graphWorkflowExecution: execution,
+      conversations: [
+        makeConversation({ id: "conv-iter-2", role: "iteration" }),
+      ],
+    });
+    const result = buildConversationContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+      conversationId: "conv-iter-2",
+    });
+
+    expect(result).toContain("<graph-workflow>");
+    expect(result).toContain("<execution-id>exec-1</execution-id>");
+    expect(result).toContain(
+      "<active-context-title>Implementation</active-context-title>",
+    );
+    // Should include which task this conversation is linked to
+    expect(result).toContain("<linked-task-id>task-2</linked-task-id>");
+    expect(result).toContain(
+      "<linked-task-title>Wire up events</linked-task-title>",
+    );
+  });
+
+  it("includes ralph loop info on conversation page", () => {
+    const workflow = makeRalphLoopWorkflow();
+    const session = makeSession({
+      workflow,
+      conversations: [
+        makeConversation({ id: "conv-iter-2", role: "iteration" }),
+      ],
+    });
+    const result = buildConversationContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+      conversationId: "conv-iter-2",
+    });
+
+    expect(result).toContain("<ralph-loop>");
+    expect(result).toContain("<workflow-status>running</workflow-status>");
+    expect(result).toContain("<objective>Implement dark mode</objective>");
+    expect(result).toContain("<iteration-count>1</iteration-count>");
+  });
+
+  it("handles missing conversation gracefully", () => {
+    const session = makeSession();
+    const result = buildConversationContext({
+      projectName: "p",
+      sessionName: "s",
+      session,
+      conversationId: "nonexistent",
+    });
+
+    // Should still produce valid output with empty values
+    expect(result).toContain("<conversation-context>");
+    expect(result).toContain("<conversation-id>nonexistent</conversation-id>");
+    expect(result).toContain("<status></status>");
+  });
+});

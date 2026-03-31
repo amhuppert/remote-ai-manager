@@ -38,6 +38,12 @@ export interface ConversationRuntimeState {
 
   /** Callback to send intermediate events to the conversation machine. Registered by the manager before invoking actors. */
   sendToMachine?: (event: Record<string, unknown>) => void;
+
+  /** Per-conversation MCP servers injected by callers (e.g., graph workflow execution tools). Merged into QuerySession on creation. */
+  additionalMcpServers?: Record<string, unknown>;
+
+  /** When true, prepareTurnForMachine skips session lock acquisition. Used by validator agents that run within an already-locked session. */
+  skipSessionLock?: boolean;
 }
 
 const GLOBAL_KEY = "__cc_conversation_runtime_state" as const;

@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
+
 interface ProjectActionsBarProps {
+  projectName: string;
   archivedCount: number;
   showArchived: boolean;
   onToggleArchived: () => void;
@@ -10,6 +13,7 @@ interface ProjectActionsBarProps {
 }
 
 export default function ProjectActionsBar({
+  projectName,
   archivedCount,
   showArchived,
   onToggleArchived,
@@ -35,6 +39,12 @@ export default function ProjectActionsBar({
         <button className="btn btn-sm" onClick={onQuickTask}>
           Quick Task
         </button>
+        <Link
+          className="btn btn-sm"
+          href={`/projects/${encodeURIComponent(projectName)}/workflows`}
+        >
+          Workflow Builder
+        </Link>
       </div>
       <button
         className="btn btn-primary btn-sm project-actions-primary"

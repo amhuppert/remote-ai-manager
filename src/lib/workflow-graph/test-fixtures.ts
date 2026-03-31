@@ -1,0 +1,242 @@
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowVisualLayout,
+  WorkflowDefinitionRecord,
+  WorkflowSemanticDefinition,
+} from "@/types";
+
+const timestamp = "2026-03-27T12:00:00.000Z";
+
+export function createWorkflowDefinition(
+  overrides: Partial<WorkflowSemanticDefinition> = {},
+): WorkflowSemanticDefinition {
+  return {
+    schemaVersion: 1,
+    executionContexts: [
+      {
+        id: "context-plan",
+        title: "Plan",
+        description: "Plan the implementation",
+        agent: {
+          model: "opus",
+          reasoningEffort: "high",
+        },
+        mutability: {
+          allowAgentTaskAdd: true,
+        },
+        circuitBreaker: {},
+        iterationPolicy: {
+          maxIterations: 4,
+        },
+        contextValidation: {
+          onFail: {
+            mode: "retry",
+            retryScope: "same_context",
+            maxAttempts: 2,
+          },
+        },
+      },
+      {
+        id: "context-implement",
+        title: "Implement",
+        description: "Implement the feature",
+        agent: {
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        mutability: {
+          allowAgentTaskAdd: false,
+        },
+        circuitBreaker: {},
+        iterationPolicy: {
+          maxIterations: 3,
+        },
+      },
+      {
+        id: "context-verify",
+        title: "Verify",
+        description: "Verify the result",
+        agent: {
+          model: "opus",
+          reasoningEffort: "medium",
+        },
+        mutability: {
+          allowAgentTaskAdd: false,
+        },
+        circuitBreaker: {},
+        iterationPolicy: {
+          maxIterations: 2,
+        },
+      },
+    ],
+    tasks: [
+      {
+        id: "task-plan-1",
+        contextId: "context-plan",
+        order: 1,
+        title: "Inspect code",
+        instructions: "Read the relevant files.",
+        source: "user",
+      },
+      {
+        id: "task-implement-1",
+        contextId: "context-implement",
+        order: 1,
+        title: "Write code",
+        instructions: "Implement the feature.",
+        source: "user",
+      },
+      {
+        id: "task-verify-1",
+        contextId: "context-verify",
+        order: 1,
+        title: "Run checks",
+        instructions: "Verify behavior.",
+        source: "user",
+      },
+    ],
+    edges: [
+      {
+        id: "edge-plan-implement",
+        sourceContextId: "context-plan",
+        targetContextId: "context-implement",
+      },
+      {
+        id: "edge-implement-verify",
+        sourceContextId: "context-implement",
+        targetContextId: "context-verify",
+      },
+    ],
+    ...overrides,
+  };
+}
+
+export function createWorkflowLayout(
+  overrides: Partial<GraphWorkflowVisualLayout> = {},
+): GraphWorkflowVisualLayout {
+  return {
+    workflowId: "workflow-1",
+    contextPositions: {
+      "context-plan": { x: 0, y: 0 },
+      "context-implement": { x: 360, y: 0 },
+      "context-verify": { x: 720, y: 0 },
+    },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    ...overrides,
+  };
+}
+
+export function createWorkflowDefinitionRecord(
+  overrides: Partial<WorkflowDefinitionRecord> = {},
+): WorkflowDefinitionRecord {
+  return {
+    id: "workflow-1",
+    name: "Workflow Graph Builder",
+    description: "Foundational workflow",
+    schemaVersion: 1,
+    revision: 1,
+    definition: createWorkflowDefinition(),
+    layout: createWorkflowLayout(),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    ...overrides,
+  };
+}
+
+export function createWorkflowExecution(
+  overrides: Partial<GraphWorkflowExecution> = {},
+): GraphWorkflowExecution {
+  const definition = overrides.workingDefinition ?? createWorkflowDefinition();
+
+  return {
+    id: "execution-1",
+    seedDefinitionId: "workflow-1",
+    seedDefinitionRevision: 1,
+    workingDefinition: definition,
+    status: "pending",
+    activeContextId: null,
+    contextStates: {
+      "context-plan": {
+        contextId: "context-plan",
+        status: "pending",
+        totalTaskCount: 1,
+        completedTaskCount: 0,
+        iterationCount: 0,
+        consecutiveFailureCount: 0,
+        lastValidationAt: null,
+        lastValidationPass: null,
+      },
+      "context-implement": {
+        contextId: "context-implement",
+        status: "pending",
+        totalTaskCount: 1,
+        completedTaskCount: 0,
+        iterationCount: 0,
+        consecutiveFailureCount: 0,
+        lastValidationAt: null,
+        lastValidationPass: null,
+      },
+      "context-verify": {
+        contextId: "context-verify",
+        status: "pending",
+        totalTaskCount: 1,
+        completedTaskCount: 0,
+        iterationCount: 0,
+        consecutiveFailureCount: 0,
+        lastValidationAt: null,
+        lastValidationPass: null,
+      },
+    },
+    taskStates: {
+      "task-plan-1": {
+        taskId: "task-plan-1",
+        contextId: "context-plan",
+        order: 1,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        reopenedCount: 0,
+        lastReopenedAt: null,
+        failureMessage: null,
+      },
+      "task-implement-1": {
+        taskId: "task-implement-1",
+        contextId: "context-implement",
+        order: 1,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        reopenedCount: 0,
+        lastReopenedAt: null,
+        failureMessage: null,
+      },
+      "task-verify-1": {
+        taskId: "task-verify-1",
+        contextId: "context-verify",
+        order: 1,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        reopenedCount: 0,
+        lastReopenedAt: null,
+        failureMessage: null,
+      },
+    },
+    retryState: {},
+    sharedDocuments: [],
+    machineSnapshot: null,
+    history: [],
+    startedAt: timestamp,
+    completedAt: null,
+    haltReason: null,
+    ...overrides,
+  };
+}
+
+export { timestamp as workflowFixtureTimestamp };

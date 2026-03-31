@@ -203,6 +203,20 @@ export interface PromptDeps {
     conversationId: string,
     event: ConversationEvent,
   ): boolean;
+
+  setAdditionalMcpServers?(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    servers: Record<string, unknown>,
+  ): void;
+
+  setSkipSessionLock?(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    skip: boolean,
+  ): void;
 }
 
 let _defaultPromptDeps: PromptDeps | null = null;
@@ -210,6 +224,7 @@ let _defaultPromptDeps: PromptDeps | null = null;
 async function getDefaultPromptDeps(): Promise<PromptDeps> {
   if (_defaultPromptDeps) return _defaultPromptDeps;
   const manager = await import("./workflows/conversation/manager");
+  const runtimeState = await import("./workflows/conversation/runtime-state");
   _defaultPromptDeps = {
     getConversation,
     createConversation,
@@ -218,6 +233,33 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
     attachPromptStream: manager.attachPromptStream,
     detachPromptStream: manager.detachPromptStream,
     sendConversationEvent: manager.sendConversationEvent,
+    setAdditionalMcpServers: (
+      projectPath,
+      sessionName,
+      conversationId,
+      servers,
+    ) => {
+      const key = runtimeState.conversationRuntimeKey(
+        projectPath,
+        sessionName,
+        conversationId,
+      );
+      const runtime = runtimeState.getConversationRuntime(key);
+      if (runtime) {
+        runtime.additionalMcpServers = servers;
+      }
+    },
+    setSkipSessionLock: (projectPath, sessionName, conversationId, skip) => {
+      const key = runtimeState.conversationRuntimeKey(
+        projectPath,
+        sessionName,
+        conversationId,
+      );
+      const runtime = runtimeState.getConversationRuntime(key);
+      if (runtime) {
+        runtime.skipSessionLock = skip;
+      }
+    },
   };
   return _defaultPromptDeps;
 }
@@ -236,7 +278,7 @@ export function createPromptExecutor(deps: PromptDeps) {
       conversationId?: string,
       modelId?: ClaudeModel,
       images?: ImagePayload[],
-      options?: { autonomous?: boolean; effort?: EffortLevel },
+      options?: PromptStreamOptions,
     ) =>
       executePromptStream(
         projectPath,
@@ -250,6 +292,19 @@ export function createPromptExecutor(deps: PromptDeps) {
         deps,
       ),
   };
+}
+
+export interface PromptStreamOptions {
+  autonomous?: boolean;
+  effort?: EffortLevel;
+  additionalMcpServers?: Record<string, unknown>;
+  skipSessionLock?: boolean;
+}
+
+export interface PromptStreamResult {
+  conversationId: string;
+  contextTokens: number | null;
+  contextWindowMax: number | null;
 }
 
 /**
@@ -270,9 +325,9 @@ export async function executePromptStream(
   conversationId?: string,
   modelId?: ClaudeModel,
   images?: ImagePayload[],
-  options?: { autonomous?: boolean; effort?: EffortLevel },
+  options?: PromptStreamOptions,
   deps?: PromptDeps,
-): Promise<{ conversationId: string }> {
+): Promise<PromptStreamResult> {
   const resolvedDeps = deps ?? (await getDefaultPromptDeps());
 
   // Get or create conversation
@@ -309,6 +364,26 @@ export async function executePromptStream(
     conversationId,
   );
 
+  // Register per-invocation MCP servers on the conversation runtime state
+  if (options?.additionalMcpServers) {
+    resolvedDeps.setAdditionalMcpServers?.(
+      projectPath,
+      session.sessionName,
+      conversationId,
+      options.additionalMcpServers,
+    );
+  }
+
+  // Allow validator conversations to bypass the session lock
+  if (options?.skipSessionLock) {
+    resolvedDeps.setSkipSessionLock?.(
+      projectPath,
+      session.sessionName,
+      conversationId,
+      true,
+    );
+  }
+
   // Attach SSE stream
   resolvedDeps.attachPromptStream(
     projectPath,
@@ -344,7 +419,7 @@ export async function executePromptStream(
     });
 
     emit("done", {});
-    return { conversationId };
+    return readContextFromActor(actor, conversationId);
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Prompt failed";
     logger.error("prompt.facade_error", {
@@ -354,7 +429,7 @@ export async function executePromptStream(
     });
     emit("error", { message: errorMsg });
     emit("done", {});
-    return { conversationId };
+    return readContextFromActor(actor, conversationId);
   } finally {
     resolvedDeps.detachPromptStream(
       projectPath,
@@ -363,6 +438,25 @@ export async function executePromptStream(
       streamId,
     );
   }
+}
+
+/**
+ * Read context token usage from the actor snapshot after a turn completes.
+ */
+function readContextFromActor(
+  actor: ConversationActorRef,
+  conversationId: string,
+): PromptStreamResult {
+  const snap = actor.getSnapshot();
+  const totals = (snap.context as unknown as Record<string, unknown>)
+    ?.totals as
+    | { contextTokens?: number | null; contextWindowMax?: number | null }
+    | undefined;
+  return {
+    conversationId,
+    contextTokens: totals?.contextTokens ?? null,
+    contextWindowMax: totals?.contextWindowMax ?? null,
+  };
 }
 
 /**

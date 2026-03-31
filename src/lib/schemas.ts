@@ -186,7 +186,7 @@ export const forkedFromSchema = z
 export type ForkedFrom = z.infer<typeof forkedFromSchema>;
 
 export const conversationRoleSchema = z
-  .enum(["initialization", "iteration"])
+  .enum(["initialization", "iteration", "validator"])
   .nullable()
   .default(null);
 export type ConversationRole = z.infer<typeof conversationRoleSchema>;
@@ -512,6 +512,571 @@ export const ralphLoopWorkflowSchema = z
 export type RalphLoopWorkflow = z.infer<typeof ralphLoopWorkflowSchema>;
 
 // ============================================================
+// Graph Workflow Schemas
+// (defined before sessionStateSchema so it can reference graphWorkflowExecutionSchema)
+// ============================================================
+
+export const graphWorkflowAgentConfigSchema = z.object({
+  model: claudeModelSchema,
+  reasoningEffort: effortLevelSchema,
+});
+export type GraphWorkflowAgentConfig = z.infer<
+  typeof graphWorkflowAgentConfigSchema
+>;
+
+export const graphWorkflowMutabilityPolicySchema = z.object({
+  allowAgentTaskAdd: z.boolean().default(false),
+});
+export type GraphWorkflowMutabilityPolicy = z.infer<
+  typeof graphWorkflowMutabilityPolicySchema
+>;
+
+export const graphWorkflowCircuitBreakerConditionSchema = z.enum([
+  "retry_exhaustion",
+]);
+export type GraphWorkflowCircuitBreakerCondition = z.infer<
+  typeof graphWorkflowCircuitBreakerConditionSchema
+>;
+
+export const graphWorkflowCircuitBreakerPolicySchema = z.object({});
+export type GraphWorkflowCircuitBreakerPolicy = z.infer<
+  typeof graphWorkflowCircuitBreakerPolicySchema
+>;
+
+export const graphWorkflowIterationPolicySchema = z
+  .object({
+    maxIterations: z.number().int().min(1),
+    contextSoftLimitTokens: z.number().int().positive().optional(),
+    contextHardLimitTokens: z.number().int().positive().optional(),
+  })
+  .refine(
+    (value) =>
+      value.contextSoftLimitTokens === undefined ||
+      value.contextHardLimitTokens === undefined ||
+      value.contextSoftLimitTokens <= value.contextHardLimitTokens,
+    {
+      message: "contextSoftLimitTokens cannot exceed contextHardLimitTokens",
+      path: ["contextSoftLimitTokens"],
+    },
+  );
+export type GraphWorkflowIterationPolicy = z.infer<
+  typeof graphWorkflowIterationPolicySchema
+>;
+
+export const graphWorkflowAgentValidatorConfigSchema = z.object({
+  enabled: z.boolean(),
+  autoCreateFixTasks: z.boolean().default(false),
+  agent: graphWorkflowAgentConfigSchema,
+  instructions: z.string().trim().min(1),
+});
+export type GraphWorkflowAgentValidatorConfig = z.infer<
+  typeof graphWorkflowAgentValidatorConfigSchema
+>;
+
+export const graphWorkflowScriptValidatorConfigSchema = z.object({
+  enabled: z.boolean(),
+});
+export type GraphWorkflowScriptValidatorConfig = z.infer<
+  typeof graphWorkflowScriptValidatorConfigSchema
+>;
+
+export const graphWorkflowValidationFailurePolicySchema = z.object({
+  mode: z.enum(["halt", "retry"]),
+  retryScope: z.literal("same_context"),
+  maxAttempts: z.number().int().min(1),
+});
+export type GraphWorkflowValidationFailurePolicy = z.infer<
+  typeof graphWorkflowValidationFailurePolicySchema
+>;
+
+export const graphWorkflowTaskValidationSchema =
+  graphWorkflowAgentValidatorConfigSchema;
+export type GraphWorkflowTaskValidation = z.infer<
+  typeof graphWorkflowTaskValidationSchema
+>;
+
+export const graphWorkflowContextValidationSchema = z.object({
+  agentValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
+  onFail: graphWorkflowValidationFailurePolicySchema,
+});
+export type GraphWorkflowContextValidation = z.infer<
+  typeof graphWorkflowContextValidationSchema
+>;
+
+export const graphWorkflowExecutionContextDefinitionSchema = z.object({
+  id: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  description: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+    z.string().trim().min(1).optional(),
+  ),
+  agent: graphWorkflowAgentConfigSchema,
+  mutability: graphWorkflowMutabilityPolicySchema,
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
+  iterationPolicy: graphWorkflowIterationPolicySchema,
+  taskValidation: graphWorkflowTaskValidationSchema.optional(),
+  contextValidation: graphWorkflowContextValidationSchema.optional(),
+});
+export type GraphWorkflowExecutionContextDefinition = z.infer<
+  typeof graphWorkflowExecutionContextDefinitionSchema
+>;
+
+export const graphWorkflowTaskSourceSchema = z.enum([
+  "user",
+  "agent",
+  "validator",
+]);
+export type GraphWorkflowTaskSource = z.infer<
+  typeof graphWorkflowTaskSourceSchema
+>;
+
+export const graphWorkflowTaskDefinitionSchema = z.object({
+  id: z.string().trim().min(1),
+  contextId: z.string().trim().min(1),
+  order: z.number().int().min(1),
+  title: z.string().trim().min(1),
+  instructions: z.string().trim().min(1),
+  metadata: z.record(z.string(), z.string()).optional(),
+  source: graphWorkflowTaskSourceSchema.default("user"),
+});
+export type GraphWorkflowTaskDefinition = z.infer<
+  typeof graphWorkflowTaskDefinitionSchema
+>;
+
+export const graphWorkflowContextEdgeSchema = z.object({
+  id: z.string().trim().min(1),
+  sourceContextId: z.string().trim().min(1),
+  targetContextId: z.string().trim().min(1),
+});
+export type GraphWorkflowContextEdge = z.infer<
+  typeof graphWorkflowContextEdgeSchema
+>;
+
+export const workflowSemanticDefinitionSchema = z.object({
+  schemaVersion: z.number().int().positive().default(1),
+  executionContexts: z
+    .array(graphWorkflowExecutionContextDefinitionSchema)
+    .default([]),
+  tasks: z.array(graphWorkflowTaskDefinitionSchema).default([]),
+  edges: z.array(graphWorkflowContextEdgeSchema).default([]),
+});
+export type WorkflowSemanticDefinition = z.infer<
+  typeof workflowSemanticDefinitionSchema
+>;
+
+export const graphWorkflowPositionSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+});
+export type GraphWorkflowPosition = z.infer<typeof graphWorkflowPositionSchema>;
+
+export const graphWorkflowViewportSchema = z.object({
+  x: z.number().default(0),
+  y: z.number().default(0),
+  zoom: z.number().positive().default(1),
+});
+export type GraphWorkflowViewport = z.infer<typeof graphWorkflowViewportSchema>;
+
+export const graphWorkflowVisualLayoutSchema = z.object({
+  workflowId: z.string().trim().min(1),
+  contextPositions: z
+    .record(z.string(), graphWorkflowPositionSchema)
+    .default({}),
+  viewport: graphWorkflowViewportSchema.default({ x: 0, y: 0, zoom: 1 }),
+});
+export type GraphWorkflowVisualLayout = z.infer<
+  typeof graphWorkflowVisualLayoutSchema
+>;
+
+export const workflowDefinitionRecordSchema = z.object({
+  id: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  description: z.string().trim().min(1).nullable().default(null),
+  schemaVersion: z.number().int().positive().default(1),
+  revision: z.number().int().min(1),
+  definition: workflowSemanticDefinitionSchema,
+  layout: graphWorkflowVisualLayoutSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type WorkflowDefinitionRecord = z.infer<
+  typeof workflowDefinitionRecordSchema
+>;
+
+export const workflowValidatorIssueSchema = z.object({
+  title: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+});
+export type WorkflowValidatorIssue = z.infer<
+  typeof workflowValidatorIssueSchema
+>;
+
+export const workflowAgentValidatorResultSchema = z.object({
+  pass: z.boolean(),
+  summary: z.string(),
+  reopenTaskIds: z.array(z.string()).default([]),
+  issues: z.array(workflowValidatorIssueSchema).default([]),
+});
+export type WorkflowAgentValidatorResult = z.infer<
+  typeof workflowAgentValidatorResultSchema
+>;
+
+export const graphWorkflowSharedDocumentEntrySchema = z.object({
+  id: z.string().trim().min(1),
+  relativePath: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+  readWhen: z.string().trim().min(1),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  lastUpdatedByConversationId: z.string().nullable().default(null),
+});
+export type GraphWorkflowSharedDocumentEntry = z.infer<
+  typeof graphWorkflowSharedDocumentEntrySchema
+>;
+
+export const graphWorkflowStatusSchema = z.enum([
+  "pending",
+  "running",
+  "paused",
+  "completed",
+  "halted",
+  "aborted",
+]);
+export type GraphWorkflowStatus = z.infer<typeof graphWorkflowStatusSchema>;
+
+export const graphWorkflowContextStatusSchema = z.enum([
+  "pending",
+  "ready",
+  "running",
+  "validating",
+  "completed",
+  "halted",
+]);
+export type GraphWorkflowContextStatus = z.infer<
+  typeof graphWorkflowContextStatusSchema
+>;
+
+export const graphWorkflowTaskStatusSchema = z.enum([
+  "pending",
+  "running",
+  "interrupted",
+  "completed",
+  "failed",
+]);
+export type GraphWorkflowTaskStatus = z.infer<
+  typeof graphWorkflowTaskStatusSchema
+>;
+
+export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("circuit_breaker"),
+    contextId: z.string().trim().min(1),
+    condition: graphWorkflowCircuitBreakerConditionSchema,
+    failureCount: z.number().int().min(0).optional(),
+    summary: z.string().nullable().default(null),
+  }),
+  z.object({
+    type: z.literal("max_iterations"),
+    contextId: z.string().trim().min(1),
+    iterationCount: z.number().int().min(0),
+  }),
+  z.object({
+    type: z.literal("recovery_error"),
+    message: z.string().trim().min(1),
+  }),
+  z.object({
+    type: z.literal("aborted"),
+  }),
+]);
+export type GraphWorkflowHaltReason = z.infer<
+  typeof graphWorkflowHaltReasonSchema
+>;
+
+export const graphWorkflowExecutionContextStateSchema = z.object({
+  contextId: z.string().trim().min(1),
+  status: graphWorkflowContextStatusSchema,
+  totalTaskCount: z.number().int().min(0),
+  completedTaskCount: z.number().int().min(0).default(0),
+  iterationCount: z.number().int().min(0).default(0),
+  consecutiveFailureCount: z.number().int().min(0).default(0),
+  lastValidationAt: z.string().nullable().default(null),
+  lastValidationPass: z.boolean().nullable().default(null),
+});
+export type GraphWorkflowExecutionContextState = z.infer<
+  typeof graphWorkflowExecutionContextStateSchema
+>;
+
+export const graphWorkflowTaskStateSchema = z.object({
+  taskId: z.string().trim().min(1),
+  contextId: z.string().trim().min(1),
+  order: z.number().int().min(1),
+  status: graphWorkflowTaskStatusSchema,
+  summary: z.string().nullable().default(null),
+  startedAt: z.string().nullable().default(null),
+  completedAt: z.string().nullable().default(null),
+  lastConversationId: z.string().nullable().default(null),
+  reopenedCount: z.number().int().min(0).default(0),
+  lastReopenedAt: z.string().nullable().default(null),
+  failureMessage: z.string().nullable().default(null),
+});
+export type GraphWorkflowTaskState = z.infer<
+  typeof graphWorkflowTaskStateSchema
+>;
+
+export const graphWorkflowRetryStateSchema = z.object({
+  contextId: z.string().trim().min(1),
+  attempt: z.number().int().min(0),
+  maxAttempts: z.number().int().min(1),
+});
+export type GraphWorkflowRetryState = z.infer<
+  typeof graphWorkflowRetryStateSchema
+>;
+
+export const graphWorkflowValidatorTypeSchema = z.enum([
+  "task",
+  "context",
+  "script",
+]);
+export type GraphWorkflowValidatorType = z.infer<
+  typeof graphWorkflowValidatorTypeSchema
+>;
+
+export const graphWorkflowStatusEventSchema = z.object({
+  type: z.literal("graph-workflow-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  workflowStatus: graphWorkflowStatusSchema,
+  activeContextId: z.string().nullable().default(null),
+  haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
+});
+export type GraphWorkflowStatusEvent = z.infer<
+  typeof graphWorkflowStatusEventSchema
+>;
+
+export const graphWorkflowContextStatusEventSchema = z.object({
+  type: z.literal("graph-workflow-context-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  status: graphWorkflowContextStatusSchema,
+  remainingTaskCount: z.number().int().min(0),
+  iterationCount: z.number().int().min(0),
+});
+export type GraphWorkflowContextStatusEvent = z.infer<
+  typeof graphWorkflowContextStatusEventSchema
+>;
+
+export const graphWorkflowTaskStatusEventSchema = z.object({
+  type: z.literal("graph-workflow-task-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  taskId: z.string(),
+  contextId: z.string(),
+  status: graphWorkflowTaskStatusSchema,
+  source: graphWorkflowTaskSourceSchema,
+  order: z.number().int().min(1),
+});
+export type GraphWorkflowTaskStatusEvent = z.infer<
+  typeof graphWorkflowTaskStatusEventSchema
+>;
+
+export const graphWorkflowValidationResultEventSchema = z.object({
+  type: z.literal("graph-workflow-validation-result"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  validatorType: graphWorkflowValidatorTypeSchema,
+  pass: z.boolean(),
+  summary: z.string(),
+  issues: z.array(workflowValidatorIssueSchema).default([]),
+  reopenTaskIds: z.array(z.string()).default([]),
+});
+export type GraphWorkflowValidationResultEvent = z.infer<
+  typeof graphWorkflowValidationResultEventSchema
+>;
+
+export const graphWorkflowRetryEventSchema = z.object({
+  type: z.literal("graph-workflow-retry"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  attempt: z.number().int().min(0),
+  maxAttempts: z.number().int().min(1),
+});
+export type GraphWorkflowRetryEvent = z.infer<
+  typeof graphWorkflowRetryEventSchema
+>;
+
+export const graphWorkflowCircuitBreakerEventSchema = z.object({
+  type: z.literal("graph-workflow-circuit-breaker"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  condition: graphWorkflowCircuitBreakerConditionSchema,
+  failureCount: z.number().int().min(0),
+  summary: z.string().nullable().default(null),
+});
+export type GraphWorkflowCircuitBreakerEvent = z.infer<
+  typeof graphWorkflowCircuitBreakerEventSchema
+>;
+
+export const graphWorkflowSharedDocumentsUpdatedEventSchema = z.object({
+  type: z.literal("graph-workflow-shared-documents-updated"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  documents: z.array(graphWorkflowSharedDocumentEntrySchema),
+});
+export type GraphWorkflowSharedDocumentsUpdatedEvent = z.infer<
+  typeof graphWorkflowSharedDocumentsUpdatedEventSchema
+>;
+
+export const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
+  graphWorkflowStatusEventSchema,
+  graphWorkflowContextStatusEventSchema,
+  graphWorkflowTaskStatusEventSchema,
+  graphWorkflowValidationResultEventSchema,
+  graphWorkflowRetryEventSchema,
+  graphWorkflowCircuitBreakerEventSchema,
+  graphWorkflowSharedDocumentsUpdatedEventSchema,
+]);
+export type GraphWorkflowSSEEvent = z.infer<typeof graphWorkflowSseEventSchema>;
+
+export const graphWorkflowExecutionEventSchema = z.object({
+  occurredAt: z.string(),
+  event: graphWorkflowSseEventSchema,
+});
+export type GraphWorkflowExecutionEvent = z.infer<
+  typeof graphWorkflowExecutionEventSchema
+>;
+
+export const graphWorkflowExecutionSchema = z.object({
+  id: z.string().trim().min(1),
+  seedDefinitionId: z.string().trim().min(1),
+  seedDefinitionRevision: z.number().int().min(1),
+  workingDefinition: workflowSemanticDefinitionSchema,
+  status: graphWorkflowStatusSchema,
+  activeContextId: z.string().nullable().default(null),
+  contextStates: z
+    .record(z.string(), graphWorkflowExecutionContextStateSchema)
+    .default({}),
+  taskStates: z.record(z.string(), graphWorkflowTaskStateSchema).default({}),
+  retryState: z.record(z.string(), graphWorkflowRetryStateSchema).default({}),
+  sharedDocuments: z.array(graphWorkflowSharedDocumentEntrySchema).default([]),
+  machineSnapshot: z.unknown().nullable().default(null),
+  history: z.array(graphWorkflowExecutionEventSchema).default([]),
+  startedAt: z.string(),
+  completedAt: z.string().nullable().default(null),
+  haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
+});
+export type GraphWorkflowExecution = z.infer<
+  typeof graphWorkflowExecutionSchema
+>;
+
+const workflowRuntimeEditAddOperationSchema = z.object({
+  type: z.literal("add"),
+  contextId: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  instructions: z.string().trim().min(1),
+  metadata: z.record(z.string(), z.string()).optional(),
+});
+
+const workflowRuntimeEditUpdateOperationSchema = z
+  .object({
+    type: z.literal("update"),
+    taskId: z.string().trim().min(1),
+    title: z.string().trim().min(1).optional(),
+    instructions: z.string().trim().min(1).optional(),
+    metadata: z.record(z.string(), z.string()).nullable().optional(),
+  })
+  .refine(
+    (value) =>
+      value.title !== undefined ||
+      value.instructions !== undefined ||
+      value.metadata !== undefined,
+    {
+      message: "At least one of title, instructions, or metadata is required",
+    },
+  );
+
+const workflowRuntimeEditRemoveOperationSchema = z.object({
+  type: z.literal("remove"),
+  taskId: z.string().trim().min(1),
+});
+
+const workflowRuntimeEditReorderOperationSchema = z.object({
+  type: z.literal("reorder"),
+  contextId: z.string().trim().min(1),
+  orderedTaskIds: z.array(z.string()).min(1),
+});
+
+const workflowRuntimeEditMoveOperationSchema = z.object({
+  type: z.literal("move"),
+  taskId: z.string().trim().min(1),
+  targetContextId: z.string().trim().min(1),
+  targetOrder: z.number().int().min(1),
+});
+
+export const workflowRuntimeEditOperationSchema = z.discriminatedUnion("type", [
+  workflowRuntimeEditAddOperationSchema,
+  workflowRuntimeEditUpdateOperationSchema,
+  workflowRuntimeEditRemoveOperationSchema,
+  workflowRuntimeEditReorderOperationSchema,
+  workflowRuntimeEditMoveOperationSchema,
+]);
+export type WorkflowRuntimeEditOperation = z.infer<
+  typeof workflowRuntimeEditOperationSchema
+>;
+
+export const workflowRuntimeEditRequestSchema = z.object({
+  operations: z.array(workflowRuntimeEditOperationSchema).min(1),
+});
+export type WorkflowRuntimeEditRequest = z.infer<
+  typeof workflowRuntimeEditRequestSchema
+>;
+
+export const workflowGraphValidationErrorSchema = z.object({
+  code: z.string().trim().min(1),
+  message: z.string().trim().min(1),
+  contextId: z.string().trim().min(1).optional(),
+  taskId: z.string().trim().min(1).optional(),
+  edgeId: z.string().trim().min(1).optional(),
+  operationIndex: z.number().int().min(0).optional(),
+});
+export type WorkflowGraphValidationError = z.infer<
+  typeof workflowGraphValidationErrorSchema
+>;
+
+export const workflowPlanReferenceSchema = z.object({
+  filePath: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+});
+export type WorkflowPlanReference = z.infer<typeof workflowPlanReferenceSchema>;
+
+export const workflowPlanRequestSchema = z.object({
+  objective: z.string().trim().min(1),
+  references: z.array(workflowPlanReferenceSchema).default([]),
+  seedDefinitionId: z.string().trim().min(1).optional(),
+});
+export type WorkflowPlanRequest = z.infer<typeof workflowPlanRequestSchema>;
+
+export const workflowGeneratedDraftSchema = z.object({
+  definition: workflowSemanticDefinitionSchema,
+  layout: graphWorkflowVisualLayoutSchema,
+  validationErrors: z.array(workflowGraphValidationErrorSchema).default([]),
+});
+export type WorkflowGeneratedDraft = z.infer<
+  typeof workflowGeneratedDraftSchema
+>;
+
+// ============================================================
 // Roadmap Item Schemas
 // ============================================================
 
@@ -566,6 +1131,10 @@ export const sessionStateSchema = z.object({
   parentSessionName: z.string().nullable().default(null),
   workflow: ralphLoopWorkflowSchema.nullable().default(null),
   workflowHistory: z.array(ralphLoopWorkflowSchema).default([]),
+  graphWorkflowExecution: graphWorkflowExecutionSchema.nullable().default(null),
+  graphWorkflowExecutionHistory: z
+    .array(graphWorkflowExecutionSchema)
+    .default([]),
   referenceDocuments: z.array(referenceDocumentSchema).default([]),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
@@ -638,7 +1207,7 @@ export type DevServersStatusResponse = z.infer<
 // ============================================================
 
 export const perRepoConfigSchema = z.object({
-  initScriptPath: z.string().nullable(),
+  initScriptPath: z.string().nullable().optional(),
   preMergeCommand: z.string().nullable().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
   devServers: z.array(devServerConfigSchema).optional(),
@@ -1055,6 +1624,13 @@ export type SSEEvent =
   | WorkflowIterationCompleteEvent
   | WorkflowFixPlanUpdatedEvent
   | WorkflowCircuitBreakerEvent
+  | GraphWorkflowStatusEvent
+  | GraphWorkflowContextStatusEvent
+  | GraphWorkflowTaskStatusEvent
+  | GraphWorkflowValidationResultEvent
+  | GraphWorkflowRetryEvent
+  | GraphWorkflowCircuitBreakerEvent
+  | GraphWorkflowSharedDocumentsUpdatedEvent
   | DevServerStatusEvent
   | DebugModeStatusEvent
   | DebugLogReceivedEvent;

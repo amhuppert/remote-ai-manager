@@ -6,6 +6,7 @@ const meta = {
   title: "Projects/ProjectActionsBar",
   component: ProjectActionsBar,
   args: {
+    projectName: "remote-ai-manager",
     archivedCount: 11,
     showArchived: false,
     onToggleArchived: fn(),

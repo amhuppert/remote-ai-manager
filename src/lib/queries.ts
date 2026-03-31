@@ -8,6 +8,7 @@ import {
   commandKeys,
   fileKeys,
   workflowKeys,
+  workflowDefinitionKeys,
   kiroDocKeys,
   notificationKeys,
   presetKeys,
@@ -31,6 +32,8 @@ import {
   presetsResponseSchema,
   workflowResponseSchema,
   workflowIterationsResponseSchema,
+  workflowDefinitionsResponseSchema,
+  workflowDefinitionMutationResponseSchema,
   roadmapItemsResponseSchema,
   debugLogStatsResponseSchema,
 } from "@/lib/api-client";
@@ -86,6 +89,36 @@ export function useSessionsQuery(projectName: string) {
       return data.sessions;
     },
     refetchInterval: 10_000,
+  });
+}
+
+export function useWorkflowDefinitionsQuery(projectName: string) {
+  return useQuery({
+    queryKey: workflowDefinitionKeys.list(projectName),
+    queryFn: async () => {
+      const data = await apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/workflows`,
+        workflowDefinitionsResponseSchema,
+      );
+      return data.items;
+    },
+  });
+}
+
+export function useWorkflowDefinitionQuery(
+  projectName: string,
+  workflowId: string | null,
+) {
+  return useQuery({
+    queryKey: workflowDefinitionKeys.detail(projectName, workflowId ?? ""),
+    queryFn: async () => {
+      const data = await apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/workflows/${encodeURIComponent(workflowId!)}`,
+        workflowDefinitionMutationResponseSchema,
+      );
+      return data.item;
+    },
+    enabled: workflowId != null,
   });
 }
 

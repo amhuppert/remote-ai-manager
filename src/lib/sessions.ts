@@ -272,6 +272,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       parentSessionName: opts.parentSessionName ?? null,
       workflow: null,
       workflowHistory: [],
+      graphWorkflowExecution: null,
+      graphWorkflowExecutionHistory: [],
       referenceDocuments: [],
     };
 

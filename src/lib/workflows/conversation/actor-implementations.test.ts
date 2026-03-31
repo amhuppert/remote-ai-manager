@@ -88,6 +88,7 @@ function createMockDeps(
     createInitToolServer: vi.fn(() => null),
     createNotificationToolServer: vi.fn(() => null),
     createRoadmapToolServer: vi.fn(() => ({})),
+    createWiredPlannerToolServer: vi.fn(() => ({})),
     createReferenceDocumentToolServer: vi.fn(() => ({})),
     maybeCreateCodexToolServer: vi.fn(() => null),
     getCodexToolPromptHint: vi.fn(() => ""),
@@ -698,6 +699,37 @@ describe("prepareTurnForMachine", () => {
       /No runtime state/,
     );
   });
+
+  it("skips session lock acquisition when skipSessionLock is set on runtime", async () => {
+    const releaseSlot = vi.fn();
+    vi.mocked(mockDeps.acquireQuerySlot).mockResolvedValue(releaseSlot);
+
+    const input = makePrepareTurnInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      skipSessionLock: true,
+    });
+
+    const result = await prepareTurnForMachine(input);
+
+    // Session lock should NOT be acquired
+    expect(mockDeps.acquireSessionLock).not.toHaveBeenCalled();
+    // Query slot should still be acquired
+    expect(mockDeps.acquireQuerySlot).toHaveBeenCalledWith(
+      `prompt:${input.sessionName}`,
+    );
+    expect(result.transcriptPath).toBe("/transcripts/conv-1.jsonl");
+
+    // Runtime should NOT have a releaseSessionLock
+    const runtime = getConversationRuntime(key);
+    expect(runtime?.releaseSessionLock).toBeUndefined();
+    expect(runtime?.releaseQuerySlot).toBe(releaseSlot);
+  });
 });
 
 // ===========================================================================
@@ -913,6 +945,53 @@ describe("executePromptForMachine", () => {
     const result = await executePromptForMachine(input);
 
     expect(result.aborted).toBe(true);
+  });
+
+  it("merges additionalMcpServers from runtime state into createQuerySession", async () => {
+    const mockToolServer = { name: "graph-workflow", tools: [] };
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      additionalMcpServers: { "graph-workflow": mockToolServer },
+    });
+
+    await executePromptForMachine(input);
+
+    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
+    const createCall = vi.mocked(mockDeps.createQuerySession).mock
+      .calls[0]![0] as Record<string, unknown>;
+    const mcpServers = createCall["mcpServers"] as Record<string, unknown>;
+    expect(mcpServers["graph-workflow"]).toBe(mockToolServer);
+    // Standard servers should still be present
+    expect(mcpServers["roadmap-tools"]).toBeDefined();
+    expect(mcpServers["graph-workflow-planner"]).toBeDefined();
+  });
+
+  it("does not include additionalMcpServers when not set on runtime", async () => {
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
+    const createCall = vi.mocked(mockDeps.createQuerySession).mock
+      .calls[0]![0] as Record<string, unknown>;
+    const mcpServers = createCall["mcpServers"] as Record<string, unknown>;
+    expect(mcpServers["graph-workflow"]).toBeUndefined();
+    // Standard servers still present
+    expect(mcpServers["roadmap-tools"]).toBeDefined();
   });
 
   it("prepends debug instructions on first debug turn", async () => {
