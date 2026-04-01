@@ -15,6 +15,8 @@ import {
 } from "@/lib/workflow-graph/builder-draft";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import type {
+  CodexConfig,
+  CodexReasoningEffort,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
   WorkflowGraphValidationError,
@@ -26,6 +28,7 @@ interface WorkflowInspectorPanelProps {
   onDelete: (contextId: string) => void;
   saving: boolean;
   defaultModel?: ModelId;
+  codexConfig?: CodexConfig;
 }
 
 type InspectorTab = "config" | "tasks";
@@ -68,8 +71,23 @@ function createDefaultAgentConfig(
 
 function createDefaultTaskValidation(
   model?: ModelId,
+  validatorType: "claude" | "codex" = "claude",
+  codexCfg?: CodexConfig,
 ): NonNullable<GraphWorkflowExecutionContextDefinition["taskValidation"]> {
+  if (validatorType === "codex") {
+    return {
+      type: "codex",
+      enabled: false,
+      autoCreateFixTasks: false,
+      codex: {
+        model: codexCfg?.model,
+        reasoningEffort: codexCfg?.reasoningEffort,
+      },
+      instructions: "",
+    };
+  }
   return {
+    type: "claude",
     enabled: false,
     autoCreateFixTasks: false,
     agent: createDefaultAgentConfig(model),
@@ -79,12 +97,27 @@ function createDefaultTaskValidation(
 
 function createDefaultContextAgentValidator(
   model?: ModelId,
+  validatorType: "claude" | "codex" = "claude",
+  codexCfg?: CodexConfig,
 ): NonNullable<
   NonNullable<
     GraphWorkflowExecutionContextDefinition["contextValidation"]
   >["agentValidator"]
 > {
+  if (validatorType === "codex") {
+    return {
+      type: "codex",
+      enabled: false,
+      autoCreateFixTasks: false,
+      codex: {
+        model: codexCfg?.model,
+        reasoningEffort: codexCfg?.reasoningEffort,
+      },
+      instructions: "",
+    };
+  }
   return {
+    type: "claude",
     enabled: false,
     autoCreateFixTasks: false,
     agent: createDefaultAgentConfig(model),
@@ -193,12 +226,97 @@ function AgentConfigFields({
   );
 }
 
+const CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
+
+function ValidatorTypeSelector({
+  value,
+  onChange,
+  codexEnabled,
+  disabled = false,
+}: {
+  value: "claude" | "codex";
+  onChange: (type: "claude" | "codex") => void;
+  codexEnabled: boolean;
+  disabled?: boolean;
+}): React.JSX.Element | null {
+  if (!codexEnabled) return null;
+  return (
+    <div className="wb-inline-field">
+      <span className="wb-inline-field-label">Validator Type</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as "claude" | "codex")}
+        disabled={disabled}
+      >
+        <option value="claude">Claude</option>
+        <option value="codex">Codex</option>
+      </select>
+    </div>
+  );
+}
+
+function CodexValidatorFields({
+  model,
+  reasoningEffort,
+  onModelChange,
+  onReasoningChange,
+  disabled = false,
+}: {
+  model?: string;
+  reasoningEffort?: CodexReasoningEffort;
+  onModelChange: (model: string | undefined) => void;
+  onReasoningChange: (effort: CodexReasoningEffort | undefined) => void;
+  disabled?: boolean;
+}): React.JSX.Element {
+  return (
+    <>
+      <div className="wb-inline-field">
+        <span className="wb-inline-field-label">Model</span>
+        <input
+          type="text"
+          value={model ?? ""}
+          onChange={(e) => onModelChange(e.target.value.trim() || undefined)}
+          placeholder="Default from config"
+          disabled={disabled}
+        />
+      </div>
+      <div className="wb-inline-field">
+        <span className="wb-inline-field-label">Reasoning</span>
+        <select
+          value={reasoningEffort ?? ""}
+          onChange={(e) =>
+            onReasoningChange(
+              (e.target.value || undefined) as CodexReasoningEffort | undefined,
+            )
+          }
+          disabled={disabled}
+        >
+          <option value="">Default from config</option>
+          {CODEX_REASONING_EFFORTS.map((effort) => (
+            <option key={effort} value={effort}>
+              {effort}
+            </option>
+          ))}
+        </select>
+      </div>
+    </>
+  );
+}
+
 export default function WorkflowInspectorPanel({
   onSave,
   onDelete,
   saving,
   defaultModel = "sonnet",
+  codexConfig,
 }: WorkflowInspectorPanelProps): React.JSX.Element {
+  const codexEnabled = codexConfig?.enabled === true;
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (state) => state.draftDefinition,
   );
@@ -726,36 +844,125 @@ export default function WorkflowInspectorPanel({
                   );
                 })()}
                 <div className="wb-subsection-label">Validator Agent</div>
-                <AgentConfigFields
-                  model={taskValidation.agent.model as ModelId}
-                  reasoningEffort={
-                    taskValidation.agent.reasoningEffort as EffortLevel
-                  }
-                  disabled={!taskValidation.enabled}
-                  onModelChange={(model) => {
-                    const clamped = clampEffortToModel(
-                      taskValidation.agent.reasoningEffort as EffortLevel,
-                      model,
-                    );
-                    applyContextUpdate({
-                      taskValidation: {
-                        ...taskValidation,
-                        agent: { model, reasoningEffort: clamped ?? "medium" },
-                      },
-                    });
-                  }}
-                  onReasoningChange={(effort) =>
-                    applyContextUpdate({
-                      taskValidation: {
-                        ...taskValidation,
-                        agent: {
-                          ...taskValidation.agent,
-                          reasoningEffort: effort,
+                <ValidatorTypeSelector
+                  value={taskValidation.type ?? "claude"}
+                  onChange={(type) => {
+                    const preserved = {
+                      enabled: taskValidation.enabled,
+                      autoCreateFixTasks: taskValidation.autoCreateFixTasks,
+                      instructions: taskValidation.instructions,
+                    };
+                    if (type === "codex") {
+                      applyContextUpdate({
+                        taskValidation: {
+                          ...createDefaultTaskValidation(
+                            defaultModel,
+                            "codex",
+                            codexConfig,
+                          ),
+                          ...preserved,
                         },
-                      },
-                    })
-                  }
+                      });
+                    } else {
+                      applyContextUpdate({
+                        taskValidation: {
+                          ...createDefaultTaskValidation(
+                            defaultModel,
+                            "claude",
+                          ),
+                          ...preserved,
+                        },
+                      });
+                    }
+                  }}
+                  codexEnabled={codexEnabled}
+                  disabled={!taskValidation.enabled}
                 />
+                {taskValidation.type === "codex" ? (
+                  <CodexValidatorFields
+                    model={
+                      (taskValidation as { codex?: { model?: string } }).codex
+                        ?.model
+                    }
+                    reasoningEffort={
+                      (
+                        taskValidation as {
+                          codex?: { reasoningEffort?: CodexReasoningEffort };
+                        }
+                      ).codex?.reasoningEffort
+                    }
+                    disabled={!taskValidation.enabled}
+                    onModelChange={(model) =>
+                      applyContextUpdate({
+                        taskValidation: {
+                          ...taskValidation,
+                          codex: {
+                            ...(
+                              taskValidation as {
+                                codex?: Record<string, unknown>;
+                              }
+                            ).codex,
+                            model,
+                          },
+                        },
+                      })
+                    }
+                    onReasoningChange={(effort) =>
+                      applyContextUpdate({
+                        taskValidation: {
+                          ...taskValidation,
+                          codex: {
+                            ...(
+                              taskValidation as {
+                                codex?: Record<string, unknown>;
+                              }
+                            ).codex,
+                            reasoningEffort: effort,
+                          },
+                        },
+                      })
+                    }
+                  />
+                ) : (
+                  <AgentConfigFields
+                    model={
+                      (taskValidation as { agent: { model: string } }).agent
+                        .model as ModelId
+                    }
+                    reasoningEffort={
+                      (taskValidation as { agent: { reasoningEffort: string } })
+                        .agent.reasoningEffort as EffortLevel
+                    }
+                    disabled={!taskValidation.enabled}
+                    onModelChange={(model) => {
+                      const currentEffort = (
+                        taskValidation as { agent: { reasoningEffort: string } }
+                      ).agent.reasoningEffort as EffortLevel;
+                      const clamped = clampEffortToModel(currentEffort, model);
+                      applyContextUpdate({
+                        taskValidation: {
+                          ...taskValidation,
+                          agent: {
+                            model,
+                            reasoningEffort: clamped ?? "medium",
+                          },
+                        },
+                      });
+                    }}
+                    onReasoningChange={(effort) => {
+                      const tv = taskValidation as {
+                        type: "claude";
+                        agent: { model: ModelId; reasoningEffort: EffortLevel };
+                      };
+                      applyContextUpdate({
+                        taskValidation: {
+                          ...taskValidation,
+                          agent: { ...tv.agent, reasoningEffort: effort },
+                        },
+                      });
+                    }}
+                  />
+                )}
               </>,
             )}
 
@@ -855,45 +1062,128 @@ export default function WorkflowInspectorPanel({
                   );
                 })()}
                 <div className="wb-subsection-label">Validator Agent</div>
-                <AgentConfigFields
-                  model={agentValidator.agent.model as ModelId}
-                  reasoningEffort={
-                    agentValidator.agent.reasoningEffort as EffortLevel
-                  }
-                  disabled={!agentValidator.enabled}
-                  onModelChange={(model) => {
-                    const clamped = clampEffortToModel(
-                      agentValidator.agent.reasoningEffort as EffortLevel,
-                      model,
-                    );
+                <ValidatorTypeSelector
+                  value={agentValidator.type ?? "claude"}
+                  onChange={(type) => {
+                    const preserved = {
+                      enabled: agentValidator.enabled,
+                      autoCreateFixTasks: agentValidator.autoCreateFixTasks,
+                      instructions: agentValidator.instructions,
+                    };
                     applyContextUpdate({
                       contextValidation: {
                         ...contextValidation,
                         agentValidator: {
-                          ...agentValidator,
-                          agent: {
-                            model,
-                            reasoningEffort: clamped ?? "medium",
-                          },
+                          ...createDefaultContextAgentValidator(
+                            defaultModel,
+                            type,
+                            codexConfig,
+                          ),
+                          ...preserved,
                         },
                       },
                     });
                   }}
-                  onReasoningChange={(effort) =>
-                    applyContextUpdate({
-                      contextValidation: {
-                        ...contextValidation,
-                        agentValidator: {
-                          ...agentValidator,
-                          agent: {
-                            ...agentValidator.agent,
-                            reasoningEffort: effort,
+                  codexEnabled={codexEnabled}
+                  disabled={!agentValidator.enabled}
+                />
+                {agentValidator.type === "codex" ? (
+                  <CodexValidatorFields
+                    model={
+                      (agentValidator as { codex?: { model?: string } }).codex
+                        ?.model
+                    }
+                    reasoningEffort={
+                      (
+                        agentValidator as {
+                          codex?: { reasoningEffort?: CodexReasoningEffort };
+                        }
+                      ).codex?.reasoningEffort
+                    }
+                    disabled={!agentValidator.enabled}
+                    onModelChange={(model) =>
+                      applyContextUpdate({
+                        contextValidation: {
+                          ...contextValidation,
+                          agentValidator: {
+                            ...agentValidator,
+                            codex: {
+                              ...(
+                                agentValidator as {
+                                  codex?: Record<string, unknown>;
+                                }
+                              ).codex,
+                              model,
+                            },
                           },
                         },
-                      },
-                    })
-                  }
-                />
+                      })
+                    }
+                    onReasoningChange={(effort) =>
+                      applyContextUpdate({
+                        contextValidation: {
+                          ...contextValidation,
+                          agentValidator: {
+                            ...agentValidator,
+                            codex: {
+                              ...(
+                                agentValidator as {
+                                  codex?: Record<string, unknown>;
+                                }
+                              ).codex,
+                              reasoningEffort: effort,
+                            },
+                          },
+                        },
+                      })
+                    }
+                  />
+                ) : (
+                  <AgentConfigFields
+                    model={
+                      (agentValidator as { agent: { model: string } }).agent
+                        .model as ModelId
+                    }
+                    reasoningEffort={
+                      (agentValidator as { agent: { reasoningEffort: string } })
+                        .agent.reasoningEffort as EffortLevel
+                    }
+                    disabled={!agentValidator.enabled}
+                    onModelChange={(model) => {
+                      const currentEffort = (
+                        agentValidator as { agent: { reasoningEffort: string } }
+                      ).agent.reasoningEffort as EffortLevel;
+                      const clamped = clampEffortToModel(currentEffort, model);
+                      applyContextUpdate({
+                        contextValidation: {
+                          ...contextValidation,
+                          agentValidator: {
+                            ...agentValidator,
+                            agent: {
+                              model,
+                              reasoningEffort: clamped ?? "medium",
+                            },
+                          },
+                        },
+                      });
+                    }}
+                    onReasoningChange={(effort) => {
+                      const av = agentValidator as {
+                        type: "claude";
+                        agent: { model: ModelId; reasoningEffort: EffortLevel };
+                      };
+                      applyContextUpdate({
+                        contextValidation: {
+                          ...contextValidation,
+                          agentValidator: {
+                            ...agentValidator,
+                            agent: { ...av.agent, reasoningEffort: effort },
+                          },
+                        },
+                      });
+                    }}
+                  />
+                )}
                 <div className="wb-inline-field">
                   <span className="wb-inline-field-label">
                     Script Validator

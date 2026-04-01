@@ -14,6 +14,7 @@ export default async function WorkflowBuilderPage({
     <ConnectedWorkflowBuilderPage
       projectName={name}
       defaultModel={config.defaultModel}
+      codexConfig={config.codex}
     />
   );
 }

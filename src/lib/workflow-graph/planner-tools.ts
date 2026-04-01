@@ -291,6 +291,7 @@ function inflateToSemanticDefinition(
     ...(ctx.taskValidation
       ? {
           taskValidation: {
+            type: "claude" as const,
             enabled: true,
             autoCreateFixTasks: false,
             agent: {
@@ -308,6 +309,7 @@ function inflateToSemanticDefinition(
             ...(ctx.contextValidation.agentValidator
               ? {
                   agentValidator: {
+                    type: "claude" as const,
                     enabled: true,
                     autoCreateFixTasks: false,
                     agent: {

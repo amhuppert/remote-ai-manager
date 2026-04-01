@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
-import type { ClaudeModel, WorkflowDefinitionRecord } from "@/types";
+import type {
+  ClaudeModel,
+  CodexConfig,
+  WorkflowDefinitionRecord,
+} from "@/types";
 import {
   addExecutionContext,
   deleteExecutionContext,
@@ -28,6 +32,7 @@ interface WorkflowBuilderEditorProps {
   }) => void | Promise<void>;
   saveError?: string | null;
   defaultModel?: ClaudeModel;
+  codexConfig?: CodexConfig;
 }
 
 export default function WorkflowBuilderEditor({
@@ -39,6 +44,7 @@ export default function WorkflowBuilderEditor({
   onSave,
   saveError,
   defaultModel,
+  codexConfig,
 }: WorkflowBuilderEditorProps): React.JSX.Element {
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (s) => s.draftDefinition,
@@ -171,6 +177,7 @@ export default function WorkflowBuilderEditor({
             onDelete={handleDeleteContext}
             saving={isSaving}
             defaultModel={defaultModel}
+            codexConfig={codexConfig}
           />
         </div>
       </div>

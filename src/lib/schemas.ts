@@ -563,14 +563,54 @@ export type GraphWorkflowIterationPolicy = z.infer<
   typeof graphWorkflowIterationPolicySchema
 >;
 
-export const graphWorkflowAgentValidatorConfigSchema = z.object({
+const graphWorkflowValidatorBaseSchema = z.object({
   enabled: z.boolean(),
   autoCreateFixTasks: z.boolean().default(false),
-  agent: graphWorkflowAgentConfigSchema,
   instructions: z.string().trim().min(1),
 });
+
+export const graphWorkflowClaudeValidatorConfigSchema =
+  graphWorkflowValidatorBaseSchema.extend({
+    type: z.literal("claude"),
+    agent: graphWorkflowAgentConfigSchema,
+  });
+
+export const graphWorkflowCodexValidatorConfigSchema =
+  graphWorkflowValidatorBaseSchema.extend({
+    type: z.literal("codex"),
+    codex: z
+      .object({
+        model: z.string().trim().min(1).optional(),
+        reasoningEffort: codexReasoningEffortSchema.optional(),
+      })
+      .default({}),
+  });
+
+export const graphWorkflowAgentValidatorConfigSchema = z.preprocess(
+  (val) => {
+    if (
+      typeof val === "object" &&
+      val !== null &&
+      !("type" in val) &&
+      "agent" in val
+    ) {
+      return { ...val, type: "claude" };
+    }
+    return val;
+  },
+  z.discriminatedUnion("type", [
+    graphWorkflowClaudeValidatorConfigSchema,
+    graphWorkflowCodexValidatorConfigSchema,
+  ]),
+);
 export type GraphWorkflowAgentValidatorConfig = z.infer<
   typeof graphWorkflowAgentValidatorConfigSchema
+>;
+export type GraphWorkflowClaudeValidatorConfig = z.infer<
+  typeof graphWorkflowClaudeValidatorConfigSchema
+>;
+export type GraphWorkflowCodexValidatorConfig = z.infer<
+  typeof graphWorkflowCodexValidatorConfigSchema
 >;
 
 export const graphWorkflowScriptValidatorConfigSchema = z.object({

@@ -24,6 +24,7 @@ function makeExecution(
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 5 },
           taskValidation: {
+            type: "claude",
             enabled: true,
             autoCreateFixTasks: false,
             agent: { model: "sonnet", reasoningEffort: "medium" },
@@ -36,6 +37,7 @@ function makeExecution(
               maxAttempts: 3,
             },
             agentValidator: {
+              type: "claude",
               enabled: true,
               autoCreateFixTasks: true,
               agent: { model: "sonnet", reasoningEffort: "medium" },

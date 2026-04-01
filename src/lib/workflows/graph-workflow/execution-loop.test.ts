@@ -406,6 +406,7 @@ describe("execution loop", () => {
             iterationPolicy: { maxIterations: 3 },
             contextValidation: {
               agentValidator: {
+                type: "claude",
                 enabled: true,
                 autoCreateFixTasks: true,
                 agent: { model: "opus", reasoningEffort: "medium" },

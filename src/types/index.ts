@@ -108,6 +108,8 @@ export type {
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
   GraphWorkflowAgentValidatorConfig,
+  GraphWorkflowClaudeValidatorConfig,
+  GraphWorkflowCodexValidatorConfig,
   GraphWorkflowScriptValidatorConfig,
   GraphWorkflowValidationFailurePolicy,
   GraphWorkflowTaskValidation,

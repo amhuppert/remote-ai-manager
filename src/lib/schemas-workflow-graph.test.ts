@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  graphWorkflowAgentValidatorConfigSchema,
   graphWorkflowExecutionSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
@@ -340,6 +341,73 @@ describe("workflow graph validator and request schemas", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+});
+
+describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
+  it("parses a claude validator config with explicit type", () => {
+    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
+      type: "claude",
+      enabled: true,
+      autoCreateFixTasks: true,
+      agent: { model: "sonnet", reasoningEffort: "medium" },
+      instructions: "Validate each task.",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("claude");
+      expect(result.data).toHaveProperty("agent");
+    }
+  });
+
+  it("parses a codex validator config", () => {
+    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
+      type: "codex",
+      enabled: true,
+      autoCreateFixTasks: false,
+      codex: { model: "o3", reasoningEffort: "high" },
+      instructions: "Validate with Codex.",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("codex");
+      expect(result.data).toHaveProperty("codex");
+    }
+  });
+
+  it("parses legacy format without type as claude (backward compat)", () => {
+    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
+      enabled: true,
+      autoCreateFixTasks: false,
+      agent: { model: "opus", reasoningEffort: "high" },
+      instructions: "Review the context.",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("claude");
+    }
+  });
+
+  it("defaults codex field to empty object when omitted", () => {
+    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
+      type: "codex",
+      enabled: false,
+      instructions: "Check it.",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("codex");
+      expect((result.data as { codex: object }).codex).toEqual({});
+    }
+  });
+
+  it("rejects invalid type value", () => {
+    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
+      type: "gpt",
+      enabled: true,
+      instructions: "Nope.",
+    });
+    expect(result.success).toBe(false);
   });
 });
 

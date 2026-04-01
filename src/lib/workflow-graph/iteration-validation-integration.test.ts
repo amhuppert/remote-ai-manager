@@ -48,6 +48,7 @@ describe("graph workflow iteration validation integration", () => {
             ? {
                 ...context,
                 taskValidation: {
+                  type: "claude",
                   enabled: true,
                   autoCreateFixTasks: false,
                   agent: {

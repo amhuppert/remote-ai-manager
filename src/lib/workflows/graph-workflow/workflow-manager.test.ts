@@ -1047,6 +1047,7 @@ describe("graph workflow manager", () => {
           iterationPolicy: { maxIterations: 4 },
           contextValidation: {
             agentValidator: {
+              type: "claude",
               enabled: true,
               autoCreateFixTasks: true,
               agent: { model: "opus", reasoningEffort: "medium" },

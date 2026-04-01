@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { buildChildEnv } from "@/lib/child-env";
+import { runCodexDefault, toStringEnv } from "@/lib/codex-tool";
 import { readConfig } from "@/lib/config";
 import { createConversation } from "@/lib/conversations";
 import { createLogger } from "@/lib/logging";
@@ -18,7 +20,10 @@ import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
 import { createGraphWorkflowValidationService } from "./execution-validation";
-import { createValidatorRunner } from "./validator-runner";
+import {
+  createValidatorRunner,
+  VALIDATOR_OUTPUT_SCHEMA,
+} from "./validator-runner";
 import { emit as emitGraphWorkflowStreamFrame } from "./stream-registry";
 import { createWorkflowStorageService } from "./storage";
 import { createGraphWorkflowToolServer } from "@/lib/workflows/graph-workflow/tool-server";
@@ -55,6 +60,8 @@ const workflowManager = createGraphWorkflowManager({
 const runtimeEditService = createGraphWorkflowRuntimeEditService();
 const sharedDocumentRegistry =
   createGraphWorkflowSharedDocumentRegistryService();
+const CODEX_VALIDATOR_TIMEOUT_MS = 300_000;
+
 const validatorRunner = createValidatorRunner({
   async executeValidatorAgent(input) {
     const session = await defaultGetSession(
@@ -72,7 +79,7 @@ const validatorRunner = createValidatorRunner({
     );
 
     const textParts: string[] = [];
-    await executePromptStream(
+    const result = await executePromptStream(
       input.projectPath,
       session,
       input.prompt,
@@ -95,10 +102,66 @@ const validatorRunner = createValidatorRunner({
         autonomous: true,
         effort: input.reasoningEffort,
         skipSessionLock: true,
+        outputFormat: input.outputFormat,
       },
     );
 
-    return textParts.join("");
+    return {
+      text: textParts.join(""),
+      structuredOutput: result.structuredOutput,
+    };
+  },
+
+  async executeValidatorCodex(input) {
+    const session = await defaultGetSession(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    const config = await readConfig();
+    const codexConfig = config.codex;
+
+    if (codexConfig?.enabled !== true) {
+      throw new Error(
+        "Codex validator is configured for this workflow, but Codex is disabled in global config",
+      );
+    }
+
+    const effectiveModel = input.model ?? codexConfig.model;
+    const effectiveReasoning =
+      input.reasoningEffort ?? codexConfig.reasoningEffort;
+
+    const timeoutMs =
+      codexConfig.timeout === null
+        ? 0
+        : codexConfig.timeout !== undefined
+          ? codexConfig.timeout * 1000
+          : CODEX_VALIDATOR_TIMEOUT_MS;
+
+    const env = toStringEnv({ ...buildChildEnv(), CLAUDECODE: "" });
+    const codexResult = await runCodexDefault({
+      prompt: input.prompt,
+      workingDirectory: session.worktreePath,
+      env,
+      model: effectiveModel,
+      reasoningEffort: effectiveReasoning,
+      outputSchema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
+        string,
+        unknown
+      >,
+      timeoutMs,
+    });
+
+    if (codexResult.timedOut) throw new Error("Codex validator timed out");
+    if (codexResult.error)
+      throw new Error(`Codex validator failed: ${codexResult.error}`);
+    if (!codexResult.response)
+      throw new Error("Codex validator produced no response");
+
+    return codexResult.response;
   },
 });
 const validationService = createGraphWorkflowValidationService({

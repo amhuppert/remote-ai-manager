@@ -93,7 +93,7 @@ function toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return result;
 }
 
-async function runCodexDefault(input: {
+export async function runCodexDefault(input: {
   prompt: string;
   workingDirectory: string;
   env: Record<string, string>;

@@ -299,12 +299,14 @@ export interface PromptStreamOptions {
   effort?: EffortLevel;
   additionalMcpServers?: Record<string, unknown>;
   skipSessionLock?: boolean;
+  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
 }
 
 export interface PromptStreamResult {
   conversationId: string;
   contextTokens: number | null;
   contextWindowMax: number | null;
+  structuredOutput?: unknown;
 }
 
 /**
@@ -407,6 +409,7 @@ export async function executePromptStream(
         effort: options?.effort,
         autonomous: options?.autonomous,
         streamId,
+        outputFormat: options?.outputFormat,
       },
     );
 
@@ -448,14 +451,18 @@ function readContextFromActor(
   conversationId: string,
 ): PromptStreamResult {
   const snap = actor.getSnapshot();
-  const totals = (snap.context as unknown as Record<string, unknown>)
-    ?.totals as
+  const ctx = snap.context as unknown as Record<string, unknown>;
+  const totals = ctx?.totals as
     | { contextTokens?: number | null; contextWindowMax?: number | null }
+    | undefined;
+  const lastResult = ctx?.lastResult as
+    | { structuredOutput?: unknown }
     | undefined;
   return {
     conversationId,
     contextTokens: totals?.contextTokens ?? null,
     contextWindowMax: totals?.contextWindowMax ?? null,
+    structuredOutput: lastResult?.structuredOutput,
   };
 }
 

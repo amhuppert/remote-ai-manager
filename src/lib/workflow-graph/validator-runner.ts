@@ -1,6 +1,7 @@
 import { workflowAgentValidatorResultSchema } from "@/lib/schemas";
 import type {
   ClaudeModel,
+  CodexReasoningEffort,
   EffortLevel,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecutionContextDefinition,
@@ -12,18 +13,35 @@ import type {
   GraphWorkflowContextAgentValidatorInput,
 } from "./execution-validation";
 
-// -- Prompt builders ----------------------------------------------------------
+// -- JSON Schema for structured output (used by both Claude and Codex) --------
 
-const OUTPUT_SCHEMA_EXAMPLE = `\`\`\`json
-{
-  "pass": true,
-  "summary": "Brief explanation of your assessment",
-  "issues": [
-    { "title": "Issue title", "description": "What is wrong and how to fix it." }
-  ],
-  "reopenTaskIds": ["task-id-to-reopen"]
-}
-\`\`\``;
+export const VALIDATOR_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    pass: { type: "boolean" },
+    summary: { type: "string" },
+    issues: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          description: { type: "string" },
+        },
+        required: ["title", "description"],
+        additionalProperties: false,
+      },
+    },
+    reopenTaskIds: {
+      type: "array",
+      items: { type: "string" },
+    },
+  },
+  required: ["pass", "summary", "issues", "reopenTaskIds"],
+  additionalProperties: false,
+} as const;
+
+// -- Prompt builders ----------------------------------------------------------
 
 export interface BuildTaskValidationPromptInput {
   context: GraphWorkflowExecutionContextDefinition;
@@ -71,15 +89,12 @@ export function buildTaskValidationPrompt(
     "## Required Output",
     "",
     "You MUST review the work the agent did — read files, check for correctness, verify the agent's claims.",
-    "Then output your assessment as a JSON object in a ```json fenced block:",
+    "Then output your assessment as a JSON object with these fields:",
     "",
-    OUTPUT_SCHEMA_EXAMPLE,
-    "",
-    "Fields:",
-    "- `pass`: `true` if the task meets all validation criteria, `false` otherwise",
-    "- `summary`: Brief explanation of your assessment",
-    "- `issues`: Specific problems found (empty array if pass is true)",
-    "- `reopenTaskIds`: IDs of previously completed tasks that need rework (only from the task list above, empty array if none)",
+    "- `pass` (boolean): `true` if the task meets all validation criteria, `false` otherwise",
+    "- `summary` (string): Brief explanation of your assessment",
+    "- `issues` (array of `{ title, description }`): Specific problems found (empty array if pass is true)",
+    "- `reopenTaskIds` (array of strings): IDs of previously completed tasks that need rework (only from the task list above, empty array if none)",
   ].join("\n");
 }
 
@@ -120,19 +135,16 @@ export function buildContextValidationPrompt(
     "## Required Output",
     "",
     "Review the combined work across all tasks — read files, run checks, verify correctness.",
-    "Then output your assessment as a JSON object in a ```json fenced block:",
+    "Then output your assessment as a JSON object with these fields:",
     "",
-    OUTPUT_SCHEMA_EXAMPLE,
-    "",
-    "Fields:",
-    "- `pass`: `true` if the execution context goal has been fully met, `false` otherwise",
-    "- `summary`: Brief explanation of your assessment",
-    "- `issues`: Specific problems found (empty array if pass is true)",
-    "- `reopenTaskIds`: IDs of tasks that need rework (only from the task list above, empty array if none)",
+    "- `pass` (boolean): `true` if the execution context goal has been fully met, `false` otherwise",
+    "- `summary` (string): Brief explanation of your assessment",
+    "- `issues` (array of `{ title, description }`): Specific problems found (empty array if pass is true)",
+    "- `reopenTaskIds` (array of strings): IDs of tasks that need rework (only from the task list above, empty array if none)",
   ].join("\n");
 }
 
-// -- Result extraction --------------------------------------------------------
+// -- Result parsing -----------------------------------------------------------
 
 /**
  * Extract and parse a WorkflowAgentValidatorResult from agent text output.
@@ -180,7 +192,40 @@ export function extractValidatorResult(
   return result.data;
 }
 
+/**
+ * Parse a validator response, trying structured output first, then raw JSON,
+ * then fenced ```json block extraction as a fallback.
+ */
+export function parseValidatorResponse(
+  text: string,
+  structuredOutput?: unknown,
+): WorkflowAgentValidatorResult {
+  // Path 1: structured output from SDK (both Claude and Codex)
+  if (structuredOutput != null) {
+    const result =
+      workflowAgentValidatorResultSchema.safeParse(structuredOutput);
+    if (result.success) return result.data;
+  }
+
+  // Path 2: raw JSON string (Codex outputSchema response)
+  try {
+    const parsed = JSON.parse(text);
+    const result = workflowAgentValidatorResultSchema.safeParse(parsed);
+    if (result.success) return result.data;
+  } catch {
+    /* not raw JSON, try fenced block */
+  }
+
+  // Path 3: fenced ```json block (legacy fallback)
+  return extractValidatorResult(text);
+}
+
 // -- Validator runner ---------------------------------------------------------
+
+export interface ValidatorExecutionResult {
+  text: string;
+  structuredOutput?: unknown;
+}
 
 export interface ExecuteValidatorAgentInput {
   projectPath: string;
@@ -188,10 +233,22 @@ export interface ExecuteValidatorAgentInput {
   prompt: string;
   model: ClaudeModel;
   reasoningEffort: EffortLevel;
+  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
+}
+
+export interface ExecuteValidatorCodexInput {
+  projectPath: string;
+  sessionName: string;
+  prompt: string;
+  model?: string;
+  reasoningEffort?: CodexReasoningEffort;
 }
 
 export interface ValidatorRunnerDeps {
-  executeValidatorAgent(input: ExecuteValidatorAgentInput): Promise<string>;
+  executeValidatorAgent(
+    input: ExecuteValidatorAgentInput,
+  ): Promise<ValidatorExecutionResult>;
+  executeValidatorCodex(input: ExecuteValidatorCodexInput): Promise<string>;
 }
 
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
@@ -210,15 +267,30 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       validator: input.validator,
     });
 
-    let text: string;
     try {
-      text = await deps.executeValidatorAgent({
+      if (input.validator.type === "codex") {
+        const text = await deps.executeValidatorCodex({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          prompt,
+          model: input.validator.codex.model,
+          reasoningEffort: input.validator.codex.reasoningEffort,
+        });
+        return parseValidatorResponse(text);
+      }
+
+      const result = await deps.executeValidatorAgent({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         prompt,
         model: input.validator.agent.model,
         reasoningEffort: input.validator.agent.reasoningEffort,
+        outputFormat: {
+          type: "json_schema",
+          schema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+        },
       });
+      return parseValidatorResponse(result.text, result.structuredOutput);
     } catch (error) {
       return {
         pass: false,
@@ -227,8 +299,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         reopenTaskIds: [],
       };
     }
-
-    return extractValidatorResult(text);
   }
 
   async function runContextAgentValidator(
@@ -244,15 +314,30 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       validator: input.validator,
     });
 
-    let text: string;
     try {
-      text = await deps.executeValidatorAgent({
+      if (input.validator.type === "codex") {
+        const text = await deps.executeValidatorCodex({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          prompt,
+          model: input.validator.codex.model,
+          reasoningEffort: input.validator.codex.reasoningEffort,
+        });
+        return parseValidatorResponse(text);
+      }
+
+      const result = await deps.executeValidatorAgent({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         prompt,
         model: input.validator.agent.model,
         reasoningEffort: input.validator.agent.reasoningEffort,
+        outputFormat: {
+          type: "json_schema",
+          schema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+        },
       });
+      return parseValidatorResponse(result.text, result.structuredOutput);
     } catch (error) {
       return {
         pass: false,
@@ -261,8 +346,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         reopenTaskIds: [],
       };
     }
-
-    return extractValidatorResult(text);
   }
 
   return { runTaskValidator, runContextAgentValidator };

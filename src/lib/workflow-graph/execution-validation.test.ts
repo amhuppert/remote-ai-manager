@@ -14,6 +14,7 @@ describe("graph workflow execution validation service", () => {
             ? {
                 ...context,
                 taskValidation: {
+                  type: "claude",
                   enabled: true,
                   autoCreateFixTasks: true,
                   agent: {
@@ -138,6 +139,7 @@ describe("graph workflow execution validation service", () => {
                 ...context,
                 contextValidation: {
                   agentValidator: {
+                    type: "claude",
                     enabled: true,
                     autoCreateFixTasks: true,
                     agent: {

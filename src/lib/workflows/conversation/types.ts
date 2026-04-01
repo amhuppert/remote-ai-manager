@@ -51,6 +51,7 @@ export interface ConversationContext {
     autonomous: boolean;
     startedAt: string | null;
     streamId: string | null;
+    outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   } | null;
 
   // Pending question (AskUserQuestion)
@@ -97,6 +98,7 @@ export type ConversationEvent =
       effort?: EffortLevel;
       autonomous?: boolean;
       streamId: string;
+      outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
     }
   | { type: "RESOURCES_ACQUIRED"; transcriptPath: string }
   | { type: "RESOURCES_FAILED"; error: string }

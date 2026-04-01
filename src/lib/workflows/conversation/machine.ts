@@ -166,6 +166,7 @@ export const conversationMachine = setup({
               autonomous: event.autonomous ?? false,
               startedAt: new Date().toISOString(),
               streamId: event.streamId,
+              outputFormat: event.outputFormat,
             }),
             lastError: null,
           }),
@@ -241,35 +242,43 @@ export const conversationMachine = setup({
       invoke: {
         src: "executePrompt",
         input: ({ context }): ExecutePromptInput => {
-          // Compute outputFormat based on debug phase
-          const outputFormat = (() => {
-            const phase = context.debugMode?.phase;
-            if (phase === "hypothesizing") {
-              return {
-                type: "json_schema" as const,
-                schema: debugHypothesisOutputSchema as Record<string, unknown>,
-              };
-            }
-            if (phase === "analyzing_evidence") {
-              return {
-                type: "json_schema" as const,
-                schema: debugEvidenceAnalysisSchema as Record<string, unknown>,
-              };
-            }
-            if (phase === "fixing") {
-              return {
-                type: "json_schema" as const,
-                schema: debugFixResultSchema as Record<string, unknown>,
-              };
-            }
-            if (phase === "cleanup_instrumentation") {
-              return {
-                type: "json_schema" as const,
-                schema: debugCleanupResultSchema as Record<string, unknown>,
-              };
-            }
-            return undefined;
-          })();
+          // Explicit outputFormat (e.g. from validator) takes priority over debug-phase-derived
+          const outputFormat =
+            context.activeTurn?.outputFormat ??
+            (() => {
+              const phase = context.debugMode?.phase;
+              if (phase === "hypothesizing") {
+                return {
+                  type: "json_schema" as const,
+                  schema: debugHypothesisOutputSchema as Record<
+                    string,
+                    unknown
+                  >,
+                };
+              }
+              if (phase === "analyzing_evidence") {
+                return {
+                  type: "json_schema" as const,
+                  schema: debugEvidenceAnalysisSchema as Record<
+                    string,
+                    unknown
+                  >,
+                };
+              }
+              if (phase === "fixing") {
+                return {
+                  type: "json_schema" as const,
+                  schema: debugFixResultSchema as Record<string, unknown>,
+                };
+              }
+              if (phase === "cleanup_instrumentation") {
+                return {
+                  type: "json_schema" as const,
+                  schema: debugCleanupResultSchema as Record<string, unknown>,
+                };
+              }
+              return undefined;
+            })();
 
           return {
             projectPath: context.projectPath,
@@ -651,6 +660,7 @@ export const conversationMachine = setup({
                   autonomous: event.autonomous ?? false,
                   startedAt: new Date().toISOString(),
                   streamId: event.streamId,
+                  outputFormat: event.outputFormat,
                 }),
                 lastError: null,
               }),
@@ -687,6 +697,7 @@ export const conversationMachine = setup({
                   autonomous: event.autonomous ?? false,
                   startedAt: new Date().toISOString(),
                   streamId: event.streamId,
+                  outputFormat: event.outputFormat,
                 }),
                 lastError: null,
               }),
@@ -707,6 +718,7 @@ export const conversationMachine = setup({
                   autonomous: event.autonomous ?? false,
                   startedAt: new Date().toISOString(),
                   streamId: event.streamId,
+                  outputFormat: event.outputFormat,
                 }),
                 lastError: null,
               }),
@@ -727,6 +739,7 @@ export const conversationMachine = setup({
                   autonomous: event.autonomous ?? false,
                   startedAt: new Date().toISOString(),
                   streamId: event.streamId,
+                  outputFormat: event.outputFormat,
                 }),
                 lastError: null,
               }),
@@ -763,6 +776,7 @@ export const conversationMachine = setup({
                   autonomous: event.autonomous ?? false,
                   startedAt: new Date().toISOString(),
                   streamId: event.streamId,
+                  outputFormat: event.outputFormat,
                 }),
                 lastError: null,
               }),
@@ -783,6 +797,7 @@ export const conversationMachine = setup({
                   autonomous: event.autonomous ?? false,
                   startedAt: new Date().toISOString(),
                   streamId: event.streamId,
+                  outputFormat: event.outputFormat,
                 }),
                 lastError: null,
               }),

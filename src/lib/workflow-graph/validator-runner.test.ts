@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   extractValidatorResult,
+  parseValidatorResponse,
   buildTaskValidationPrompt,
   buildContextValidationPrompt,
   createValidatorRunner,
+  VALIDATOR_OUTPUT_SCHEMA,
 } from "./validator-runner";
 import type {
   GraphWorkflowAgentValidatorConfig,
@@ -108,6 +110,7 @@ describe("extractValidatorResult", () => {
 });
 
 const validatorConfig: GraphWorkflowAgentValidatorConfig = {
+  type: "claude",
   enabled: true,
   autoCreateFixTasks: false,
   agent: { model: "sonnet", reasoningEffort: "medium" },
@@ -185,7 +188,7 @@ describe("buildTaskValidationPrompt", () => {
     expect(prompt).toContain("task-2");
   });
 
-  it("includes the required JSON output schema", () => {
+  it("includes the required output field descriptions", () => {
     const prompt = buildTaskValidationPrompt({
       context,
       task: tasks[0]!,
@@ -194,11 +197,10 @@ describe("buildTaskValidationPrompt", () => {
       validator: validatorConfig,
     });
 
-    expect(prompt).toContain("```json");
-    expect(prompt).toContain('"pass"');
-    expect(prompt).toContain('"summary"');
-    expect(prompt).toContain('"issues"');
-    expect(prompt).toContain('"reopenTaskIds"');
+    expect(prompt).toContain("`pass`");
+    expect(prompt).toContain("`summary`");
+    expect(prompt).toContain("`issues`");
+    expect(prompt).toContain("`reopenTaskIds`");
   });
 });
 
@@ -226,16 +228,15 @@ describe("buildContextValidationPrompt", () => {
     expect(prompt).toContain("Add tests");
   });
 
-  it("includes the required JSON output schema", () => {
+  it("includes the required output field descriptions", () => {
     const prompt = buildContextValidationPrompt({
       context,
       tasks,
       validator: validatorConfig,
     });
 
-    expect(prompt).toContain("```json");
-    expect(prompt).toContain('"pass"');
-    expect(prompt).toContain('"reopenTaskIds"');
+    expect(prompt).toContain("`pass`");
+    expect(prompt).toContain("`reopenTaskIds`");
   });
 });
 
@@ -249,9 +250,13 @@ function buildExecutionWithTaskValidation(): GraphWorkflowExecution {
           ? {
               ...ctx,
               taskValidation: {
+                type: "claude" as const,
                 enabled: true,
                 autoCreateFixTasks: false,
-                agent: { model: "sonnet", reasoningEffort: "medium" },
+                agent: {
+                  model: "sonnet" as const,
+                  reasoningEffort: "medium" as const,
+                },
                 instructions: "Check for correctness.",
               },
             }
@@ -274,9 +279,13 @@ function buildExecutionWithContextValidation(): GraphWorkflowExecution {
               ...ctx,
               contextValidation: {
                 agentValidator: {
+                  type: "claude" as const,
                   enabled: true,
                   autoCreateFixTasks: false,
-                  agent: { model: "opus", reasoningEffort: "high" },
+                  agent: {
+                    model: "opus" as const,
+                    reasoningEffort: "high" as const,
+                  },
                   instructions: "Validate the overall plan quality.",
                 },
                 onFail: {
@@ -310,8 +319,15 @@ describe("createValidatorRunner", () => {
       "```",
     ].join("\n");
 
-    const executeValidatorAgent = vi.fn(async () => agentResponse);
-    const runner = createValidatorRunner({ executeValidatorAgent });
+    const executeValidatorAgent = vi.fn(async () => ({
+      text: agentResponse,
+      structuredOutput: undefined,
+    }));
+    const executeValidatorCodex = vi.fn();
+    const runner = createValidatorRunner({
+      executeValidatorAgent,
+      executeValidatorCodex,
+    });
 
     const execution = buildExecutionWithTaskValidation();
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -345,10 +361,15 @@ describe("createValidatorRunner", () => {
   });
 
   it("runTaskValidator returns a failing result when the agent produces no JSON", async () => {
-    const executeValidatorAgent = vi.fn(
-      async () => "I could not find anything to review.",
-    );
-    const runner = createValidatorRunner({ executeValidatorAgent });
+    const executeValidatorAgent = vi.fn(async () => ({
+      text: "I could not find anything to review.",
+      structuredOutput: undefined,
+    }));
+    const executeValidatorCodex = vi.fn();
+    const runner = createValidatorRunner({
+      executeValidatorAgent,
+      executeValidatorCodex,
+    });
 
     const execution = buildExecutionWithTaskValidation();
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -390,8 +411,15 @@ describe("createValidatorRunner", () => {
       "```",
     ].join("\n");
 
-    const executeValidatorAgent = vi.fn(async () => agentResponse);
-    const runner = createValidatorRunner({ executeValidatorAgent });
+    const executeValidatorAgent = vi.fn(async () => ({
+      text: agentResponse,
+      structuredOutput: undefined,
+    }));
+    const executeValidatorCodex = vi.fn();
+    const runner = createValidatorRunner({
+      executeValidatorAgent,
+      executeValidatorCodex,
+    });
 
     const execution = buildExecutionWithContextValidation();
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -421,7 +449,11 @@ describe("createValidatorRunner", () => {
     const executeValidatorAgent = vi.fn(async () => {
       throw new Error("SDK connection failed");
     });
-    const runner = createValidatorRunner({ executeValidatorAgent });
+    const executeValidatorCodex = vi.fn();
+    const runner = createValidatorRunner({
+      executeValidatorAgent,
+      executeValidatorCodex,
+    });
 
     const execution = buildExecutionWithTaskValidation();
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -444,5 +476,208 @@ describe("createValidatorRunner", () => {
 
     expect(result.pass).toBe(false);
     expect(result.summary).toContain("SDK connection failed");
+  });
+
+  it("runTaskValidator calls executeValidatorAgent with outputFormat for claude type", async () => {
+    const agentResponse = [
+      "```json",
+      JSON.stringify({
+        pass: true,
+        summary: "OK",
+        issues: [],
+        reopenTaskIds: [],
+      }),
+      "```",
+    ].join("\n");
+
+    const executeValidatorAgent = vi.fn(async () => ({
+      text: agentResponse,
+      structuredOutput: undefined,
+    }));
+    const executeValidatorCodex = vi.fn();
+    const runner = createValidatorRunner({
+      executeValidatorAgent,
+      executeValidatorCodex,
+    });
+
+    const execution = buildExecutionWithTaskValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const taskDef = execution.workingDefinition.tasks.find(
+      (t) => t.id === "task-plan-1",
+    )!;
+
+    await runner.runTaskValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      task: taskDef,
+      conversationId: "conversation-1",
+      summary: "Done.",
+      validator: contextDef.taskValidation!,
+    });
+
+    expect(executeValidatorAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputFormat: { type: "json_schema", schema: VALIDATOR_OUTPUT_SCHEMA },
+      }),
+    );
+    expect(executeValidatorCodex).not.toHaveBeenCalled();
+  });
+
+  it("runTaskValidator calls executeValidatorCodex for codex type", async () => {
+    const executeValidatorAgent = vi.fn();
+    const executeValidatorCodex = vi.fn(async () =>
+      JSON.stringify({
+        pass: true,
+        summary: "Codex OK",
+        issues: [],
+        reopenTaskIds: [],
+      }),
+    );
+    const runner = createValidatorRunner({
+      executeValidatorAgent,
+      executeValidatorCodex,
+    });
+
+    const execution = buildExecutionWithTaskValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const taskDef = execution.workingDefinition.tasks.find(
+      (t) => t.id === "task-plan-1",
+    )!;
+
+    const codexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      autoCreateFixTasks: false,
+      codex: { model: "o3", reasoningEffort: "high" },
+      instructions: "Check for correctness.",
+    };
+
+    const result = await runner.runTaskValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      task: taskDef,
+      conversationId: "conversation-1",
+      summary: "Done.",
+      validator: codexValidator,
+    });
+
+    expect(executeValidatorCodex).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "o3",
+        reasoningEffort: "high",
+      }),
+    );
+    expect(executeValidatorAgent).not.toHaveBeenCalled();
+    expect(result.pass).toBe(true);
+    expect(result.summary).toBe("Codex OK");
+  });
+
+  it("runContextAgentValidator dispatches to Codex when type is codex", async () => {
+    const executeValidatorAgent = vi.fn();
+    const executeValidatorCodex = vi.fn(async () =>
+      JSON.stringify({
+        pass: false,
+        summary: "Issues found",
+        issues: [{ title: "Bug", description: "Fix it" }],
+        reopenTaskIds: [],
+      }),
+    );
+    const runner = createValidatorRunner({
+      executeValidatorAgent,
+      executeValidatorCodex,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+
+    const codexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      autoCreateFixTasks: false,
+      codex: { reasoningEffort: "medium" },
+      instructions: "Validate the overall plan quality.",
+    };
+
+    const result = await runner.runContextAgentValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: codexValidator,
+    });
+
+    expect(executeValidatorCodex).toHaveBeenCalled();
+    expect(executeValidatorAgent).not.toHaveBeenCalled();
+    expect(result.pass).toBe(false);
+    expect(result.issues).toHaveLength(1);
+  });
+});
+
+describe("parseValidatorResponse", () => {
+  it("prefers structuredOutput when available", () => {
+    const structured = {
+      pass: true,
+      summary: "All good",
+      issues: [],
+      reopenTaskIds: [],
+    };
+    const result = parseValidatorResponse("some text", structured);
+    expect(result).toEqual(structured);
+  });
+
+  it("parses raw JSON string when no structuredOutput", () => {
+    const json = JSON.stringify({
+      pass: false,
+      summary: "Needs work",
+      issues: [{ title: "Bug", description: "Fix" }],
+      reopenTaskIds: ["task-1"],
+    });
+    const result = parseValidatorResponse(json);
+    expect(result.pass).toBe(false);
+    expect(result.issues).toHaveLength(1);
+  });
+
+  it("falls back to fenced block extraction", () => {
+    const text = [
+      "Here is my review:",
+      "```json",
+      JSON.stringify({
+        pass: true,
+        summary: "OK",
+        issues: [],
+        reopenTaskIds: [],
+      }),
+      "```",
+    ].join("\n");
+    const result = parseValidatorResponse(text);
+    expect(result.pass).toBe(true);
+  });
+
+  it("returns failing result when all parsing paths fail", () => {
+    const result = parseValidatorResponse("no json here");
+    expect(result.pass).toBe(false);
+    expect(result.summary).toContain("did not return structured output");
+  });
+
+  it("ignores invalid structuredOutput and falls back to text", () => {
+    const json = JSON.stringify({
+      pass: true,
+      summary: "Text parse",
+      issues: [],
+      reopenTaskIds: [],
+    });
+    const result = parseValidatorResponse(json, { invalid: true });
+    expect(result.pass).toBe(true);
+    expect(result.summary).toBe("Text parse");
   });
 });

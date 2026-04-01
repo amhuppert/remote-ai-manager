@@ -17,6 +17,7 @@ import {
 } from "@/lib/queries";
 import type {
   ClaudeModel,
+  CodexConfig,
   GraphWorkflowVisualLayout,
   WorkflowSemanticDefinition,
 } from "@/types";
@@ -26,6 +27,7 @@ import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
 interface ConnectedWorkflowBuilderPageProps {
   projectName: string;
   defaultModel: ClaudeModel;
+  codexConfig?: CodexConfig;
 }
 
 const emptyDefinition: WorkflowSemanticDefinition = {
@@ -44,6 +46,7 @@ const emptyLayout: GraphWorkflowVisualLayout = {
 export default function ConnectedWorkflowBuilderPage({
   projectName,
   defaultModel,
+  codexConfig,
 }: ConnectedWorkflowBuilderPageProps): React.JSX.Element {
   const definitionsQuery = useWorkflowDefinitionsQuery(projectName);
   const [requestedWorkflowId, setRequestedWorkflowId] = useState<string | null>(
@@ -207,6 +210,7 @@ export default function ConnectedWorkflowBuilderPage({
                 onDelete={() => void handleDeleteWorkflow()}
                 saveError={saveError}
                 defaultModel={defaultModel}
+                codexConfig={codexConfig}
               />
             ) : (
               <div className="wb-empty-state">
