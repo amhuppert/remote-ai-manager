@@ -45,6 +45,7 @@ export interface TurnResult {
   contextTokens: number | null;
   contextWindow: number | null;
   contentBlocks: MessageContentBlock[];
+  structuredOutput?: unknown;
   aborted: boolean;
   error: string | null;
 }
@@ -69,6 +70,11 @@ export interface QuerySession {
 
   /** Effort level this session was created with */
   readonly effort: string | undefined;
+
+  /** Output format this session was created with (for structured output) */
+  readonly outputFormat:
+    | { type: "json_schema"; schema: Record<string, unknown> }
+    | undefined;
 
   /** Send a prompt and wait for the turn to complete */
   sendPrompt(
@@ -103,6 +109,11 @@ export interface QuerySessionOptions {
   disallowedTools: string[];
   /** Idle TTL in ms — session is closed after this much inactivity (default: 5 min) */
   idleTtlMs?: number;
+  /** Structured output format — enforced by the SDK at generation time */
+  outputFormat?: {
+    type: "json_schema";
+    schema: Record<string, unknown>;
+  };
 }
 
 // ============================================================
@@ -120,6 +131,7 @@ interface PendingTurn {
   contextTokens: number | null;
   contextWindow: number | null;
   contentBlocks: MessageContentBlock[];
+  structuredOutput?: unknown;
 }
 
 // ============================================================
@@ -166,6 +178,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     allowDangerouslySkipPermissions: true,
     disallowedTools: options.disallowedTools,
     ...(options.plugins.length > 0 ? { plugins: options.plugins } : {}),
+    ...(options.outputFormat ? { outputFormat: options.outputFormat } : {}),
     maxTurns: options.maxTurns,
     resume: options.resume,
     forkSession: options.forkSession,
@@ -203,6 +216,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     },
     get effort() {
       return options.effort;
+    },
+    get outputFormat() {
+      return options.outputFormat;
     },
     sendPrompt,
     close,
@@ -475,7 +491,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         }
 
         let error: string | null = null;
-        if (resultMsg.subtype !== "success") {
+        if (resultMsg.subtype === "success") {
+          const success = resultMsg as SDKResultSuccess;
+          turn.structuredOutput = success.structured_output;
+        } else {
           const errMsg = resultMsg as SDKResultError;
           error =
             errMsg.errors?.length > 0
@@ -492,6 +511,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           contextTokens: turn.contextTokens,
           contextWindow: turn.contextWindow,
           contentBlocks: turn.contentBlocks,
+          structuredOutput: turn.structuredOutput,
           aborted: false,
           error,
         };

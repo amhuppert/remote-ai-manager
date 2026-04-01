@@ -202,6 +202,79 @@ describe("shouldRecreateSession", () => {
       ),
     ).toBe(false);
   });
+
+  it("returns true when outputFormat changes from undefined to defined", () => {
+    const schema = { type: "object", properties: { name: { type: "string" } } };
+    expect(
+      shouldRecreateSession(
+        { status: "alive", model: "a", effort: "low", outputFormat: undefined },
+        "a",
+        "low",
+        { type: "json_schema", schema },
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when outputFormat changes from defined to undefined", () => {
+    const schema = { type: "object", properties: { name: { type: "string" } } };
+    expect(
+      shouldRecreateSession(
+        {
+          status: "alive",
+          model: "a",
+          effort: "low",
+          outputFormat: { type: "json_schema", schema },
+        },
+        "a",
+        "low",
+        undefined,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when outputFormat schema changes", () => {
+    const schema1 = { type: "object", properties: { a: { type: "string" } } };
+    const schema2 = { type: "object", properties: { b: { type: "number" } } };
+    expect(
+      shouldRecreateSession(
+        {
+          status: "alive",
+          model: "a",
+          effort: "low",
+          outputFormat: { type: "json_schema", schema: schema1 },
+        },
+        "a",
+        "low",
+        { type: "json_schema", schema: schema2 },
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when outputFormat is the same object reference", () => {
+    const format = {
+      type: "json_schema" as const,
+      schema: { type: "object", properties: { a: { type: "string" } } },
+    };
+    expect(
+      shouldRecreateSession(
+        { status: "alive", model: "a", effort: "low", outputFormat: format },
+        "a",
+        "low",
+        format,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false when both outputFormats are undefined", () => {
+    expect(
+      shouldRecreateSession(
+        { status: "alive", model: "a", effort: "low", outputFormat: undefined },
+        "a",
+        "low",
+        undefined,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("buildEffectivePrompt", () => {
@@ -877,6 +950,60 @@ describe("executePromptForMachine", () => {
     );
   });
 
+  it("recreates session when outputFormat changes", async () => {
+    const existingSession = {
+      ...mockQuerySession,
+      outputFormat: undefined,
+      close: vi.fn(),
+    };
+    vi.mocked(mockDeps.getSessionFromRegistry).mockReturnValue(existingSession);
+
+    const schema = { type: "object", properties: { name: { type: "string" } } };
+    const input = makeExecutePromptInput({
+      outputFormat: { type: "json_schema", schema },
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(existingSession.close).toHaveBeenCalled();
+    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
+  });
+
+  it("recreates session when outputFormat is removed", async () => {
+    const schema = { type: "object", properties: { name: { type: "string" } } };
+    const existingSession = {
+      ...mockQuerySession,
+      outputFormat: { type: "json_schema" as const, schema },
+      close: vi.fn(),
+    };
+    vi.mocked(mockDeps.getSessionFromRegistry).mockReturnValue(existingSession);
+
+    const input = makeExecutePromptInput({
+      outputFormat: undefined,
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(existingSession.close).toHaveBeenCalled();
+    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
+  });
+
   it("passes outputFormat to createQuerySession for debug phases", async () => {
     const input = makeExecutePromptInput({
       debugMode: {
@@ -992,6 +1119,47 @@ describe("executePromptForMachine", () => {
     expect(mcpServers["graph-workflow"]).toBeUndefined();
     // Standard servers still present
     expect(mcpServers["roadmap-tools"]).toBeDefined();
+  });
+
+  it("propagates structuredOutput from TurnResult to PromptActorResult", async () => {
+    const structuredData = {
+      hypotheses: [
+        { id: "H1", description: "test", instrumentationPlan: "add log" },
+      ],
+      reproductionSteps: ["step 1", "step 2"],
+    };
+
+    mockSendPrompt.mockResolvedValue({
+      sessionId: "sess-1",
+      costUsd: 0.05,
+      durationMs: 1000,
+      numTurns: 2,
+      contextTokens: 100,
+      contextWindow: 200000,
+      contentBlocks: [],
+      structuredOutput: structuredData,
+      aborted: false,
+      error: null,
+    });
+
+    const input = makeExecutePromptInput({
+      outputFormat: {
+        type: "json_schema",
+        schema: { type: "object" },
+      },
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    const result = await executePromptForMachine(input);
+
+    expect(result.structuredOutput).toEqual(structuredData);
   });
 
   it("prepends debug instructions on first debug turn", async () => {

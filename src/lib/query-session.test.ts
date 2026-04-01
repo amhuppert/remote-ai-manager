@@ -466,6 +466,110 @@ describe("QuerySession.sendPrompt", () => {
   });
 });
 
+describe("structured output extraction", () => {
+  it("includes structuredOutput from SDKResultSuccess in TurnResult", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        outputFormat: {
+          type: "json_schema",
+          schema: { type: "object", properties: { name: { type: "string" } } },
+        },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-abc",
+      uuid: "u1",
+      total_cost_usd: 0.05,
+      duration_ms: 1200,
+      num_turns: 3,
+      result: '{"name":"test"}',
+      is_error: false,
+      structured_output: { name: "test" },
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+    expect(result.structuredOutput).toEqual({ name: "test" });
+
+    session.close();
+  });
+
+  it("sets structuredOutput to undefined when not present in result", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-abc",
+      uuid: "u1",
+      total_cost_usd: 0.05,
+      duration_ms: 1200,
+      num_turns: 3,
+      result: "Normal text response",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+    expect(result.structuredOutput).toBeUndefined();
+
+    session.close();
+  });
+});
+
+describe("structured output error handling", () => {
+  it("surfaces error_max_structured_output_retries as a specific error", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        outputFormat: {
+          type: "json_schema",
+          schema: { type: "object", properties: { name: { type: "string" } } },
+        },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "error_max_structured_output_retries",
+      session_id: "sess-abc",
+      uuid: "u1",
+      total_cost_usd: 0.1,
+      duration_ms: 5000,
+      num_turns: 5,
+      result: "",
+      is_error: true,
+      errors: [
+        "Failed to produce valid structured output after maximum retries",
+      ],
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+    expect(result.error).toContain("structured output");
+    expect(result.structuredOutput).toBeUndefined();
+
+    session.close();
+  });
+});
+
 describe("QuerySession.close", () => {
   it("transitions status to dead", () => {
     const mock = createControllableMockQuery();
@@ -673,6 +777,82 @@ describe("QuerySession idle TTL", () => {
     expect(session.status).toBe("dead");
 
     vi.useRealTimers();
+  });
+});
+
+describe("outputFormat passthrough", () => {
+  it("passes outputFormat to SDK Options when provided", () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const schema = {
+      type: "object",
+      properties: { result: { type: "string" } },
+      required: ["result"],
+    };
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        outputFormat: { type: "json_schema", schema },
+      }),
+    );
+
+    // Check that the SDK query() was called with outputFormat in options
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sdkOptions = (queryMock.mock.calls[0] as any)[0].options;
+    expect(sdkOptions.outputFormat).toEqual({
+      type: "json_schema",
+      schema,
+    });
+
+    session.close();
+  });
+
+  it("does not include outputFormat in SDK Options when not provided", () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sdkOptions = (queryMock.mock.calls[0] as any)[0].options;
+    expect(sdkOptions.outputFormat).toBeUndefined();
+
+    session.close();
+  });
+
+  it("exposes outputFormat as a readonly property", () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const schema = {
+      type: "object",
+      properties: { name: { type: "string" } },
+    };
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        outputFormat: { type: "json_schema", schema },
+      }),
+    );
+
+    expect(session.outputFormat).toEqual({
+      type: "json_schema",
+      schema,
+    });
+
+    session.close();
+  });
+
+  it("exposes undefined outputFormat when not provided", () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    expect(session.outputFormat).toBeUndefined();
+
+    session.close();
   });
 });
 
