@@ -53,6 +53,7 @@ export interface QuerySessionLike {
   status: "alive" | "dead";
   model: unknown;
   effort: unknown;
+  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   close(): void;
   sendPrompt(
     prompt: string | MessageContentBlock[],
@@ -67,6 +68,7 @@ export interface QuerySessionLike {
         contextTokens: number | null;
         contextWindow: number | null;
         contentBlocks: MessageContentBlock[];
+        structuredOutput?: unknown;
         aborted: boolean;
         error: string | null;
       }
@@ -279,19 +281,31 @@ export function _resetActorDepsForTesting(): void {
 
 /**
  * Determine whether an existing QuerySession should be closed and recreated
- * because the model or effort level changed.
+ * because the model, effort level, or outputFormat changed.
  */
 export function shouldRecreateSession(
-  session: { status: string; model: unknown; effort: unknown } | undefined,
+  session:
+    | {
+        status: string;
+        model: unknown;
+        effort: unknown;
+        outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
+      }
+    | undefined,
   effectiveModel: string | undefined,
   effectiveEffort: string | undefined,
+  desiredOutputFormat?: {
+    type: "json_schema";
+    schema: Record<string, unknown>;
+  },
 ): boolean {
   if (!session || session.status !== "alive") return false;
   const modelChanged =
     effectiveModel != null && session.model !== effectiveModel;
   const effortChanged =
     effectiveEffort != null && session.effort !== effectiveEffort;
-  return modelChanged || effortChanged;
+  const outputFormatChanged = session.outputFormat !== desiredOutputFormat;
+  return modelChanged || effortChanged || outputFormatChanged;
 }
 
 /**
@@ -673,17 +687,25 @@ export async function executePromptForMachine(
   // ---------------------------------------------------------------
   let querySession = deps.getSessionFromRegistry(input.conversationId);
 
-  // Close existing session if model or effort changed
+  // Close existing session if model, effort, or outputFormat changed
   if (
     querySession &&
-    shouldRecreateSession(querySession, effectiveModel, effectiveEffort)
+    shouldRecreateSession(
+      querySession,
+      effectiveModel,
+      effectiveEffort,
+      input.outputFormat,
+    )
   ) {
+    const reason =
+      effectiveModel != null && querySession.model !== effectiveModel
+        ? "model_changed"
+        : effectiveEffort != null && querySession.effort !== effectiveEffort
+          ? "effort_changed"
+          : "output_format_changed";
     logger.info("prompt.session_recreate", {
       sessionName: input.sessionName,
-      reason:
-        effectiveModel != null && querySession.model !== effectiveModel
-          ? "model_changed"
-          : "effort_changed",
+      reason,
     });
     querySession.close();
     querySession = undefined;
@@ -856,6 +878,7 @@ export async function executePromptForMachine(
       settingSources: ["user", "project", "local"],
       disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
       idleTtlMs: config.idleQuerySessionTtlMs,
+      ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
     });
 
     // Register raw Query for backward compat (queueMessage)
@@ -930,6 +953,7 @@ export async function executePromptForMachine(
         contextTokens: number | null;
         contextWindow: number | null;
         contentBlocks: MessageContentBlock[];
+        structuredOutput?: unknown;
         aborted: boolean;
         error: string | null;
       }
@@ -994,6 +1018,7 @@ export async function executePromptForMachine(
     contextTokens: turnResult?.contextTokens ?? null,
     contextWindow: turnResult?.contextWindow ?? null,
     contentBlocks: turnResult?.contentBlocks ?? contentBlocks,
+    structuredOutput: turnResult?.structuredOutput,
     aborted: false,
     error: turnResult?.error ?? null,
   };

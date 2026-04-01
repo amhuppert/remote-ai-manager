@@ -804,6 +804,92 @@ describe("conversationMachine", () => {
       expect(spies.persistSnapshot).toHaveBeenCalled();
     });
 
+    it("loops back to debug.hypothesizing when evidence analysis recommends more_instrumentation", async () => {
+      let callCount = 0;
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async () => {
+          await new Promise((r) => setTimeout(r, 0));
+          callCount++;
+          if (callCount === 1) {
+            // First call: hypothesizing phase
+            return successResult({
+              structuredOutput: {
+                hypotheses: [
+                  {
+                    id: "H1",
+                    description: "A",
+                    instrumentationPlan: "Log",
+                  },
+                  {
+                    id: "H2",
+                    description: "B",
+                    instrumentationPlan: "Log",
+                  },
+                  {
+                    id: "H3",
+                    description: "C",
+                    instrumentationPlan: "Log",
+                  },
+                ],
+                reproductionSteps: ["Step 1", "Step 2"],
+              },
+            });
+          }
+          // Second call: evidence analysis → more_instrumentation
+          return successResult({
+            structuredOutput: {
+              supportedHypotheses: [],
+              refutedHypotheses: ["H1"],
+              inconclusiveHypotheses: ["H2", "H3"],
+              recommendedNextStep: "more_instrumentation",
+              evidenceSummary: "Insufficient data",
+            },
+          });
+        },
+      );
+
+      const machine = makeTestMachine({ executePrompt });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      // Enter debug → hypothesizing
+      actor.send({
+        type: "ENTER_DEBUG_MODE",
+        logFilePath: "/tmp/.debug/logs.jsonl",
+      });
+
+      // Submit hypothesis prompt → awaitingReproduction
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Debug this",
+        streamId: "s1",
+      });
+      await waitForState(actor, "awaitingReproduction");
+
+      // Mark reproduced → analyzingEvidence
+      actor.send({ type: "MARK_REPRODUCED" });
+      expect(actor.getSnapshot().value).toEqual({
+        debug: "analyzingEvidence",
+      });
+
+      // Submit analysis prompt → should loop back to hypothesizing
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Analyze logs",
+        streamId: "s2",
+      });
+      await waitForState(actor, "hypothesizing");
+
+      // Machine state should be debug.hypothesizing (not debug.fixing)
+      expect(actor.getSnapshot().value).toEqual({
+        debug: "hypothesizing",
+      });
+      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
+        "hypothesizing",
+      );
+    });
+
     it("runs full debug lifecycle: hypothesize → reproduce → analyze → fix → verify → cleanup", async () => {
       const machine = makeTestMachine({
         executePrompt: makeMockExecutePrompt({
