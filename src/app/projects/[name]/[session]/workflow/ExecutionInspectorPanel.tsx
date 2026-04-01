@@ -19,6 +19,8 @@ interface ExecutionInspectorPanelProps {
   ) => void;
   onRemoveTask: (taskId: string) => void;
   onReorderTask: (contextId: string, orderedTaskIds: string[]) => void;
+  onViewTask: (taskId: string) => void;
+  viewingTaskId: string | null;
   isMutating: boolean;
 }
 
@@ -274,6 +276,8 @@ function DetailView({
   onUpdateTask,
   onRemoveTask,
   onReorderTask,
+  onViewTask,
+  viewingTaskId,
   isMutating,
 }: {
   execution: GraphWorkflowExecution;
@@ -286,6 +290,8 @@ function DetailView({
   ) => void;
   onRemoveTask: (taskId: string) => void;
   onReorderTask: (contextId: string, orderedTaskIds: string[]) => void;
+  onViewTask: (taskId: string) => void;
+  viewingTaskId: string | null;
   isMutating: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<DetailTab>("tasks");
@@ -408,9 +414,13 @@ function DetailView({
                   const taskState = execution.taskStates[task.id];
                   const isExpanded = expandedTaskId === task.id;
                   const isEditable = taskState?.status !== "completed";
+                  const hasConversation = !!taskState?.lastConversationId;
+                  const isRunning = taskState?.status === "running";
+                  const isViewing = viewingTaskId === task.id;
                   const itemClassName = [
                     "wb-task-item",
                     isExpanded && "expanded",
+                    isViewing && "viewing",
                     taskState?.failureMessage && "has-errors",
                   ]
                     .filter(Boolean)
@@ -432,6 +442,18 @@ function DetailView({
                       >
                         <span className="wb-task-order">{index + 1}</span>
                         <span className="wb-task-title">{task.title}</span>
+                        {hasConversation && (
+                          <button
+                            className={`wb-task-view-btn${isRunning ? " live" : ""}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onViewTask(task.id);
+                            }}
+                            type="button"
+                          >
+                            {isRunning ? "Watch" : "View"}
+                          </button>
+                        )}
                         {taskState?.failureMessage && (
                           <span className="wb-task-error-dot" />
                         )}
@@ -661,6 +683,8 @@ export default function ExecutionInspectorPanel({
   onUpdateTask,
   onRemoveTask,
   onReorderTask,
+  onViewTask,
+  viewingTaskId,
   isMutating,
 }: ExecutionInspectorPanelProps) {
   const selectedContext = selectedContextId
@@ -682,6 +706,8 @@ export default function ExecutionInspectorPanel({
       onUpdateTask={onUpdateTask}
       onRemoveTask={onRemoveTask}
       onReorderTask={onReorderTask}
+      onViewTask={onViewTask}
+      viewingTaskId={viewingTaskId}
       isMutating={isMutating}
     />
   );

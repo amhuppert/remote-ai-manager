@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
@@ -12,8 +12,11 @@ import type {
 import ExecutionStatusBar from "./ExecutionStatusBar";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
+import IterationTranscriptViewer from "./IterationTranscriptViewer";
 
 interface GraphWorkflowPanelProps {
+  projectName: string;
+  sessionName: string;
   execution: GraphWorkflowExecution | null;
   archivedExecutions: GraphWorkflowExecution[];
   layout: GraphWorkflowVisualLayout | null;
@@ -36,7 +39,37 @@ interface GraphWorkflowPanelProps {
   isMutating: boolean;
 }
 
+/** Resolve task info needed by the transcript viewer. */
+function resolveViewingTask(
+  execution: GraphWorkflowExecution,
+  taskId: string,
+): {
+  conversationId: string;
+  contextTitle: string;
+  taskTitle: string;
+  isLive: boolean;
+} | null {
+  const taskDef = execution.workingDefinition.tasks.find(
+    (t) => t.id === taskId,
+  );
+  const taskState = execution.taskStates[taskId];
+  if (!taskDef || !taskState?.lastConversationId) return null;
+
+  const context = execution.workingDefinition.executionContexts.find(
+    (ctx) => ctx.id === taskDef.contextId,
+  );
+
+  return {
+    conversationId: taskState.lastConversationId,
+    contextTitle: context?.title ?? taskDef.contextId,
+    taskTitle: taskDef.title,
+    isLive: taskState.status === "running",
+  };
+}
+
 export default function GraphWorkflowPanel({
+  projectName,
+  sessionName,
   execution,
   layout,
   onPause,
@@ -52,11 +85,30 @@ export default function GraphWorkflowPanel({
   const [selectedContextId, setSelectedContextId] = useState<string | null>(
     null,
   );
+  const [viewingTaskId, setViewingTaskId] = useState<string | null>(null);
+
+  const handleSelectContext = useCallback((contextId: string | null) => {
+    setSelectedContextId(contextId);
+    setViewingTaskId(null);
+  }, []);
+
+  const handleViewTask = useCallback((taskId: string) => {
+    setViewingTaskId(taskId);
+  }, []);
+
+  const handleCloseTranscript = useCallback(() => {
+    setViewingTaskId(null);
+  }, []);
 
   const mergedLayout = useMemo(() => {
     if (!execution) return null;
     return generateWorkflowLayout(execution.workingDefinition, layout ?? null);
   }, [execution, layout]);
+
+  const viewingTask =
+    execution && viewingTaskId
+      ? resolveViewingTask(execution, viewingTaskId)
+      : null;
 
   if (!execution) {
     return (
@@ -88,19 +140,33 @@ export default function GraphWorkflowPanel({
           isMutating={isMutating}
         />
         <div className="wb-execution-body">
-          <WorkflowExecutionCanvas
-            execution={execution}
-            layout={mergedLayout}
-            onSelectContext={setSelectedContextId}
-          />
+          {viewingTask ? (
+            <IterationTranscriptViewer
+              projectName={projectName}
+              sessionName={sessionName}
+              conversationId={viewingTask.conversationId}
+              isLive={viewingTask.isLive}
+              contextTitle={viewingTask.contextTitle}
+              taskTitle={viewingTask.taskTitle}
+              onClose={handleCloseTranscript}
+            />
+          ) : (
+            <WorkflowExecutionCanvas
+              execution={execution}
+              layout={mergedLayout}
+              onSelectContext={handleSelectContext}
+            />
+          )}
           <ExecutionInspectorPanel
             execution={execution}
             selectedContextId={selectedContextId}
-            onDeselectContext={() => setSelectedContextId(null)}
+            onDeselectContext={() => handleSelectContext(null)}
             onAddTask={onAddTask}
             onUpdateTask={onUpdateTask}
             onRemoveTask={onRemoveTask}
             onReorderTask={onReorderTask}
+            onViewTask={handleViewTask}
+            viewingTaskId={viewingTaskId}
             isMutating={isMutating}
           />
         </div>

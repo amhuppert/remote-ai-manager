@@ -5,6 +5,8 @@ import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
 
 const noopCallbacks = {
+  projectName: "test-project",
+  sessionName: "test-session",
   onPause: vi.fn(),
   onResume: vi.fn(),
   onAbort: vi.fn(),

@@ -486,6 +486,8 @@ const sharedHandlers = {
   onUpdateTask: fn(),
   onRemoveTask: fn(),
   onReorderTask: fn(),
+  onViewTask: fn(),
+  viewingTaskId: null,
   isMutating: false,
 };
 

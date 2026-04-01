@@ -116,6 +116,8 @@ export default function ConnectedGraphWorkflowPanel({
 
   return (
     <GraphWorkflowPanel
+      projectName={projectName}
+      sessionName={sessionName}
       execution={session?.graphWorkflowExecution ?? null}
       archivedExecutions={session?.graphWorkflowExecutionHistory ?? []}
       layout={seedDefinitionQuery.data?.layout ?? null}
