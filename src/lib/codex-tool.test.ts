@@ -1,6 +1,4 @@
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 /**
  * Tests for the Codex MCP tool server.
@@ -89,17 +87,12 @@ function getHandler(name: string): (args: unknown) => Promise<unknown> {
 // Imports — after mocks
 // ============================================================
 
-import type { CodexToolDeps, CodexJsonParseState } from "./codex-tool";
+import type { CodexToolDeps } from "./codex-tool";
 
 describe("codex-tool", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getCapturedTools().clear();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.doUnmock("node:child_process");
   });
 
   // ============================================================
@@ -153,14 +146,7 @@ describe("codex-tool", () => {
 
     it("passes config timeout (seconds) as timeoutMs to context", async () => {
       const { maybeCreateCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 1,
-          lastAgentMessage: "ok",
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps();
 
       maybeCreateCodexToolServer(
         { enabled: true, timeout: 120 },
@@ -171,7 +157,7 @@ describe("codex-tool", () => {
       const handler = getHandler("run_codex");
       await handler({ prompt: "test" });
 
-      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
         timeoutMs: number;
       };
       expect(callArgs.timeoutMs).toBe(120_000);
@@ -179,14 +165,7 @@ describe("codex-tool", () => {
 
     it("uses default timeout when config timeout is undefined", async () => {
       const { maybeCreateCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 1,
-          lastAgentMessage: "ok",
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps();
 
       maybeCreateCodexToolServer(
         { enabled: true },
@@ -197,7 +176,7 @@ describe("codex-tool", () => {
       const handler = getHandler("run_codex");
       await handler({ prompt: "test" });
 
-      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
         timeoutMs: number;
       };
       expect(callArgs.timeoutMs).toBe(600_000);
@@ -205,14 +184,7 @@ describe("codex-tool", () => {
 
     it("disables timeout when config timeout is null", async () => {
       const { maybeCreateCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 1,
-          lastAgentMessage: "ok",
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps();
 
       maybeCreateCodexToolServer(
         { enabled: true, timeout: null },
@@ -223,7 +195,7 @@ describe("codex-tool", () => {
       const handler = getHandler("run_codex");
       await handler({ prompt: "test" });
 
-      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
         timeoutMs: number;
       };
       // null means no timeout — pass 0 to signal "no timeout"
@@ -232,324 +204,13 @@ describe("codex-tool", () => {
   });
 
   // ============================================================
-  // 3. Arg construction
+  // 3. Handler behavior
   // ============================================================
-
-  describe("buildCodexExecArgs", () => {
-    it("uses --sandbox workspace-write (not --full-auto)", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "hello",
-      });
-      expect(args).toContain("--sandbox");
-      expect(args).toContain("workspace-write");
-      expect(args).not.toContain("--full-auto");
-    });
-
-    it("does not include --ask-for-approval (flag removed in v0.116)", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "hello",
-      });
-      expect(args).not.toContain("--ask-for-approval");
-    });
-
-    it("includes the four sandbox override -c args", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "hello",
-      });
-      expect(args).toContain("sandbox_workspace_write.exclude_slash_tmp=true");
-      expect(args).toContain(
-        "sandbox_workspace_write.exclude_tmpdir_env_var=true",
-      );
-      expect(args).toContain("sandbox_workspace_write.writable_roots=[]");
-      expect(args).toContain("sandbox_workspace_write.network_access=true");
-    });
-
-    it("includes model when provided", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "hello",
-        model: "o4-mini",
-      });
-      const mIdx = args.indexOf("-m");
-      expect(mIdx).toBeGreaterThan(-1);
-      expect(args[mIdx + 1]).toBe("o4-mini");
-    });
-
-    it("omits model when not provided", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "hello",
-      });
-      expect(args).not.toContain("-m");
-    });
-
-    it("includes reasoning effort when provided", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "hello",
-        reasoningEffort: "high",
-      });
-      expect(args).toContain("model_reasoning_effort=high");
-    });
-
-    it("omits reasoning effort when not provided", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "hello",
-      });
-      const hasReasoning = args.some((a) =>
-        a.includes("model_reasoning_effort"),
-      );
-      expect(hasReasoning).toBe(false);
-    });
-
-    it("places prompt as the last argument", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "do the thing",
-      });
-      expect(args[args.length - 1]).toBe("do the thing");
-    });
-
-    it("includes --output-schema when provided", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "hello",
-        outputSchemaPath: "/wt/memory-bank/codex/.output-schema.json",
-      });
-      const idx = args.indexOf("--output-schema");
-      expect(idx).toBeGreaterThan(-1);
-      expect(args[idx + 1]).toBe("/wt/memory-bank/codex/.output-schema.json");
-      // prompt is still last
-      expect(args[args.length - 1]).toBe("hello");
-    });
-
-    it("omits --output-schema when not provided", async () => {
-      const { buildCodexExecArgs } = await import("./codex-tool");
-      const args = buildCodexExecArgs({
-        worktreePath: "/wt",
-        prompt: "hello",
-      });
-      expect(args).not.toContain("--output-schema");
-    });
-  });
-
-  // ============================================================
-  // 4. Parser behavior
-  // ============================================================
-
-  describe("consumeCodexJsonLine / finalizeCodexJsonParse", () => {
-    it("captures final text from item.completed agent_message", async () => {
-      const { consumeCodexJsonLine, finalizeCodexJsonParse } =
-        await import("./codex-tool");
-      const state: CodexJsonParseState = {
-        lineCount: 0,
-        lastAgentMessage: null,
-        lastErrorMessage: null,
-      };
-      consumeCodexJsonLine(
-        state,
-        JSON.stringify({
-          type: "item.completed",
-          item: { type: "agent_message", text: "I fixed the bug." },
-        }),
-      );
-      expect(finalizeCodexJsonParse(state)).toBe("I fixed the bug.");
-    });
-
-    it("uses the last agent_message when multiple appear", async () => {
-      const { consumeCodexJsonLine, finalizeCodexJsonParse } =
-        await import("./codex-tool");
-      const state: CodexJsonParseState = {
-        lineCount: 0,
-        lastAgentMessage: null,
-        lastErrorMessage: null,
-      };
-      consumeCodexJsonLine(
-        state,
-        JSON.stringify({
-          type: "item.completed",
-          item: { type: "agent_message", text: "first" },
-        }),
-      );
-      consumeCodexJsonLine(
-        state,
-        JSON.stringify({
-          type: "item.completed",
-          item: { type: "agent_message", text: "second" },
-        }),
-      );
-      expect(finalizeCodexJsonParse(state)).toBe("second");
-    });
-
-    it("ignores non-agent items", async () => {
-      const { consumeCodexJsonLine } = await import("./codex-tool");
-      const state: CodexJsonParseState = {
-        lineCount: 0,
-        lastAgentMessage: null,
-        lastErrorMessage: null,
-      };
-      consumeCodexJsonLine(
-        state,
-        JSON.stringify({
-          type: "item.completed",
-          item: { type: "tool_call", name: "Read" },
-        }),
-      );
-      expect(state.lastAgentMessage).toBeNull();
-    });
-
-    it("ignores blank lines", async () => {
-      const { consumeCodexJsonLine } = await import("./codex-tool");
-      const state: CodexJsonParseState = {
-        lineCount: 0,
-        lastAgentMessage: null,
-        lastErrorMessage: null,
-      };
-      consumeCodexJsonLine(state, "");
-      consumeCodexJsonLine(state, "  ");
-      expect(state.lineCount).toBe(0);
-    });
-
-    it("throws line-numbered JSON parse errors", async () => {
-      const { consumeCodexJsonLine } = await import("./codex-tool");
-      const state: CodexJsonParseState = {
-        lineCount: 0,
-        lastAgentMessage: null,
-        lastErrorMessage: null,
-      };
-      expect(() => consumeCodexJsonLine(state, "not json")).toThrow(/line 1/);
-    });
-
-    it("captures error event messages", async () => {
-      const { consumeCodexJsonLine, finalizeCodexJsonParse } =
-        await import("./codex-tool");
-      const state: CodexJsonParseState = {
-        lineCount: 0,
-        lastAgentMessage: null,
-        lastErrorMessage: null,
-      };
-      consumeCodexJsonLine(
-        state,
-        JSON.stringify({ type: "error", message: "rate limit hit" }),
-      );
-      expect(state.lastErrorMessage).toBe("rate limit hit");
-      expect(() => finalizeCodexJsonParse(state)).toThrow("rate limit hit");
-    });
-
-    it("captures turn.failed messages", async () => {
-      const { consumeCodexJsonLine, finalizeCodexJsonParse } =
-        await import("./codex-tool");
-      const state: CodexJsonParseState = {
-        lineCount: 0,
-        lastAgentMessage: null,
-        lastErrorMessage: null,
-      };
-      consumeCodexJsonLine(
-        state,
-        JSON.stringify({
-          type: "turn.failed",
-          error: { message: "context overflow" },
-        }),
-      );
-      expect(() => finalizeCodexJsonParse(state)).toThrow("context overflow");
-    });
-
-    it("throws generic message when no agent_message or error", async () => {
-      const { finalizeCodexJsonParse } = await import("./codex-tool");
-      const state: CodexJsonParseState = {
-        lineCount: 0,
-        lastAgentMessage: null,
-        lastErrorMessage: null,
-      };
-      expect(() => finalizeCodexJsonParse(state)).toThrow(
-        "Codex completed without emitting a final agent_message event",
-      );
-    });
-  });
-
-  // ============================================================
-  // 5. Handler behavior
-  // ============================================================
-
-  describe("default subprocess runner", () => {
-    it("returns an invalid JSONL error when Codex emits malformed JSON", async () => {
-      const child = new FakeCodexChild();
-      const { createCodexToolServer } = await importCodexToolWithSpawn(
-        vi.fn(() => child),
-      );
-
-      createCodexToolServer({ worktreePath: "/wt", sessionName: "s1" });
-
-      const handler = getHandler("run_codex");
-      const resultPromise = handler({ prompt: "fix tests" }) as Promise<{
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      }>;
-
-      child.stdout.write("not json\n");
-      child.stdout.end();
-      child.emit("close", 0);
-
-      const result = await resultPromise;
-      expect(result.isError).toBe(true);
-      expect(result.content[0]!.text).toContain(
-        "Codex produced invalid JSONL output at line 1",
-      );
-    });
-
-    it("sends SIGKILL if Codex does not exit after SIGTERM", async () => {
-      vi.useFakeTimers();
-
-      const child = new FakeCodexChild();
-      const { defaultCodexToolDeps } = await importCodexToolWithSpawn(
-        vi.fn(() => child),
-      );
-
-      const runPromise = defaultCodexToolDeps.runCodexExec({
-        args: ["exec", "prompt"],
-        cwd: "/wt",
-        env: { NODE_ENV: "test" },
-        timeoutMs: 10_000,
-      });
-
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
-
-      child.emit("close", null);
-      await expect(runPromise).resolves.toMatchObject({
-        timedOut: true,
-        exitCode: null,
-      });
-    });
-  });
 
   describe("run_codex handler", () => {
     it("uses context defaults when tool args omit them", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 1,
-          lastAgentMessage: "done",
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps();
 
       createCodexToolServer(
         {
@@ -564,27 +225,17 @@ describe("codex-tool", () => {
       const handler = getHandler("run_codex");
       await handler({ prompt: "fix tests" });
 
-      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
-        args: string[];
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
+        model?: string;
+        reasoningEffort?: string;
       };
-      expect(callArgs.args).toContain("o3");
-      expect(
-        callArgs.args.some((a: string) =>
-          a.includes("model_reasoning_effort=medium"),
-        ),
-      ).toBe(true);
+      expect(callArgs.model).toBe("o3");
+      expect(callArgs.reasoningEffort).toBe("medium");
     });
 
     it("tool args override context defaults", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 1,
-          lastAgentMessage: "done",
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps();
 
       createCodexToolServer(
         {
@@ -603,28 +254,17 @@ describe("codex-tool", () => {
         reasoning_effort: "xhigh",
       });
 
-      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
-        args: string[];
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
+        model?: string;
+        reasoningEffort?: string;
       };
-      expect(callArgs.args).toContain("gpt-5-codex");
-      expect(callArgs.args).not.toContain("o3");
-      expect(
-        callArgs.args.some((a: string) =>
-          a.includes("model_reasoning_effort=xhigh"),
-        ),
-      ).toBe(true);
+      expect(callArgs.model).toBe("gpt-5-codex");
+      expect(callArgs.reasoningEffort).toBe("xhigh");
     });
 
     it("ensures memory-bank/codex dir exists before invocation", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 1,
-          lastAgentMessage: "ok",
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps();
 
       createCodexToolServer(
         { worktreePath: "/wt", sessionName: "s1" },
@@ -639,42 +279,9 @@ describe("codex-tool", () => {
       );
     });
 
-    it("writes the output schema file before invocation", async () => {
-      const { createCodexToolServer, CODEX_OUTPUT_SCHEMA } =
-        await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 1,
-          lastAgentMessage: "ok",
-          lastErrorMessage: null,
-        },
-      });
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
-
-      const handler = getHandler("run_codex");
-      await handler({ prompt: "do it" });
-
-      expect(mockDeps.mockWriteFile).toHaveBeenCalledWith(
-        "/wt/memory-bank/codex/.output-schema.json",
-        JSON.stringify(CODEX_OUTPUT_SCHEMA, null, 2),
-      );
-    });
-
     it("wraps the user prompt with Codex instructions", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 1,
-          lastAgentMessage: "ok",
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps();
 
       createCodexToolServer(
         { worktreePath: "/wt", sessionName: "s1" },
@@ -684,25 +291,18 @@ describe("codex-tool", () => {
       const handler = getHandler("run_codex");
       await handler({ prompt: "fix the login bug" });
 
-      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
-        args: string[];
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
+        prompt: string;
       };
-      const promptArg = callArgs.args[callArgs.args.length - 1]!;
-      expect(promptArg).toContain("memory-bank/codex/");
-      expect(promptArg).toContain("fix the login bug");
-      expect(promptArg).not.toBe("fix the login bug");
+      expect(callArgs.prompt).toContain("memory-bank/codex/");
+      expect(callArgs.prompt).toContain("fix the login bug");
+      expect(callArgs.prompt).not.toBe("fix the login bug");
     });
 
-    it("passes --output-schema pointing to the schema file", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 1,
-          lastAgentMessage: "ok",
-          lastErrorMessage: null,
-        },
-      });
+    it("passes outputSchema to runCodex", async () => {
+      const { createCodexToolServer, CODEX_OUTPUT_SCHEMA } =
+        await import("./codex-tool");
+      const mockDeps = createMockDeps();
 
       createCodexToolServer(
         { worktreePath: "/wt", sessionName: "s1" },
@@ -712,14 +312,28 @@ describe("codex-tool", () => {
       const handler = getHandler("run_codex");
       await handler({ prompt: "do it" });
 
-      const callArgs = mockDeps.mockRunCodexExec.mock.calls[0]![0] as {
-        args: string[];
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
+        outputSchema: unknown;
       };
-      const idx = callArgs.args.indexOf("--output-schema");
-      expect(idx).toBeGreaterThan(-1);
-      expect(callArgs.args[idx + 1]).toBe(
-        "/wt/memory-bank/codex/.output-schema.json",
+      expect(callArgs.outputSchema).toEqual(CODEX_OUTPUT_SCHEMA);
+    });
+
+    it("passes workingDirectory to runCodex", async () => {
+      const { createCodexToolServer } = await import("./codex-tool");
+      const mockDeps = createMockDeps();
+
+      createCodexToolServer(
+        { worktreePath: "/wt", sessionName: "s1" },
+        mockDeps,
       );
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "do it" });
+
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
+        workingDirectory: string;
+      };
+      expect(callArgs.workingDirectory).toBe("/wt");
     });
 
     it("returns structured JSON when Codex produces valid structured response", async () => {
@@ -730,14 +344,7 @@ describe("codex-tool", () => {
           { filePath: "memory-bank/codex/report.md", description: "Details" },
         ],
       });
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 3,
-          lastAgentMessage: structured,
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps({ response: structured });
 
       createCodexToolServer(
         { worktreePath: "/wt", sessionName: "s1" },
@@ -758,14 +365,7 @@ describe("codex-tool", () => {
 
     it("falls back to raw text when response is not valid structured JSON", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 3,
-          lastAgentMessage: "All tests pass now.",
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps({ response: "All tests pass now." });
 
       createCodexToolServer(
         { worktreePath: "/wt", sessionName: "s1" },
@@ -785,13 +385,8 @@ describe("codex-tool", () => {
     it("returns isError for timeout", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps({
-        exitCode: null,
+        response: null,
         timedOut: true,
-        parseState: {
-          lineCount: 0,
-          lastAgentMessage: null,
-          lastErrorMessage: null,
-        },
       });
 
       createCodexToolServer(
@@ -811,10 +406,10 @@ describe("codex-tool", () => {
 
     it("returns isError when CLI is not found", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps();
-      mockDeps.mockRunCodexExec.mockRejectedValue(
-        new Error("Codex CLI not found"),
-      );
+      const mockDeps = createMockDeps({
+        response: null,
+        error: "spawn codex ENOENT: not found",
+      });
 
       createCodexToolServer(
         { worktreePath: "/wt", sessionName: "s1" },
@@ -831,16 +426,11 @@ describe("codex-tool", () => {
       expect(result.content[0]!.text).toContain("not installed");
     });
 
-    it("returns isError for non-zero exit with error message", async () => {
+    it("returns isError for execution errors", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps({
-        exitCode: 1,
-        stderr: "authentication failed",
-        parseState: {
-          lineCount: 0,
-          lastAgentMessage: null,
-          lastErrorMessage: "auth error from event",
-        },
+        response: null,
+        error: "authentication failed",
       });
 
       createCodexToolServer(
@@ -855,20 +445,14 @@ describe("codex-tool", () => {
       };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]!.text).toContain("exited with code 1");
-      expect(result.content[0]!.text).toContain("auth error from event");
+      expect(result.content[0]!.text).toContain("authentication failed");
     });
 
-    it("returns isError for non-zero exit with stderr fallback", async () => {
+    it("returns isError when no response is returned", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps({
-        exitCode: 1,
-        stderr: "process killed",
-        parseState: {
-          lineCount: 0,
-          lastAgentMessage: null,
-          lastErrorMessage: null,
-        },
+        response: null,
+        error: null,
       });
 
       createCodexToolServer(
@@ -883,19 +467,14 @@ describe("codex-tool", () => {
       };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]!.text).toContain("process killed");
+      expect(result.content[0]!.text).toContain(
+        "without emitting a final response",
+      );
     });
 
-    it("returns isError for zero exit with no final message", async () => {
+    it("sets CLAUDECODE env var to empty string", async () => {
       const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 2,
-          lastAgentMessage: null,
-          lastErrorMessage: null,
-        },
-      });
+      const mockDeps = createMockDeps();
 
       createCodexToolServer(
         { worktreePath: "/wt", sessionName: "s1" },
@@ -903,44 +482,17 @@ describe("codex-tool", () => {
       );
 
       const handler = getHandler("run_codex");
-      const result = (await handler({ prompt: "fix" })) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
+      await handler({ prompt: "do it" });
+
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
+        env: Record<string, string>;
       };
-
-      expect(result.isError).toBe(true);
-      expect(result.content[0]!.text).toContain("without emitting");
-    });
-
-    it("returns parser-derived errors on zero exit instead of collapsing them", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps({
-        exitCode: 0,
-        parseState: {
-          lineCount: 2,
-          lastAgentMessage: null,
-          lastErrorMessage: "context overflow",
-        },
-      });
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
-
-      const handler = getHandler("run_codex");
-      const result = (await handler({ prompt: "fix" })) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      };
-
-      expect(result.isError).toBe(true);
-      expect(result.content[0]!.text).toContain("context overflow");
+      expect(callArgs.env.CLAUDECODE).toBe("");
     });
   });
 
   // ============================================================
-  // 6. Prompt wrapping
+  // 4. Prompt wrapping
   // ============================================================
 
   describe("wrapCodexPrompt", () => {
@@ -970,7 +522,7 @@ describe("codex-tool", () => {
   });
 
   // ============================================================
-  // 7. Structured response parsing
+  // 5. Structured response parsing
   // ============================================================
 
   describe("parseCodexStructuredResponse", () => {
@@ -1036,7 +588,7 @@ describe("codex-tool", () => {
   });
 
   // ============================================================
-  // 8. Prompt hint helper
+  // 6. Prompt hint helper
   // ============================================================
 
   describe("getCodexToolPromptHint", () => {
@@ -1054,6 +606,23 @@ describe("codex-tool", () => {
       expect(hint).toContain("referenceDocuments");
     });
   });
+
+  // ============================================================
+  // 7. toStringEnv helper
+  // ============================================================
+
+  describe("toStringEnv", () => {
+    it("strips undefined values from env", async () => {
+      const { toStringEnv } = await import("./codex-tool");
+      const result = toStringEnv({
+        FOO: "bar",
+        BAZ: undefined,
+        QUX: "quux",
+      } as unknown as NodeJS.ProcessEnv);
+      expect(result).toEqual({ FOO: "bar", QUX: "quux" });
+      expect("BAZ" in result).toBe(false);
+    });
+  });
 });
 
 // ============================================================
@@ -1061,60 +630,27 @@ describe("codex-tool", () => {
 // ============================================================
 
 function createMockDeps(runResult?: {
-  exitCode?: number | null;
-  stderr?: string;
+  response?: string | null;
+  error?: string | null;
   timedOut?: boolean;
-  parseState?: CodexJsonParseState;
 }): CodexToolDeps & {
-  mockRunCodexExec: ReturnType<typeof vi.fn>;
+  mockRunCodex: ReturnType<typeof vi.fn>;
   mockEnsureDir: ReturnType<typeof vi.fn>;
-  mockWriteFile: ReturnType<typeof vi.fn>;
 } {
-  const mockRunCodexExec = vi.fn().mockResolvedValue({
-    exitCode: runResult?.exitCode ?? 0,
-    stderr: runResult?.stderr ?? "",
+  const mockRunCodex = vi.fn().mockResolvedValue({
+    response: "response" in (runResult ?? {}) ? runResult!.response : "ok",
+    error: "error" in (runResult ?? {}) ? runResult!.error : null,
     timedOut: runResult?.timedOut ?? false,
-    parseState: runResult?.parseState ?? {
-      lineCount: 1,
-      lastAgentMessage: "ok",
-      lastErrorMessage: null,
-    },
   });
   const mockEnsureDir = vi.fn().mockResolvedValue(undefined);
-  const mockWriteFile = vi.fn().mockResolvedValue(undefined);
 
   return {
     buildChildEnv: vi.fn(
       () => ({}),
     ) as unknown as CodexToolDeps["buildChildEnv"],
     ensureDir: mockEnsureDir,
-    writeFile: mockWriteFile,
-    runCodexExec: mockRunCodexExec,
-    mockRunCodexExec,
+    runCodex: mockRunCodex,
+    mockRunCodex,
     mockEnsureDir,
-    mockWriteFile,
   };
-}
-
-class FakeCodexChild extends EventEmitter {
-  stdout = new PassThrough();
-  stderr = new PassThrough();
-  killed = false;
-  kill = vi.fn((signal?: NodeJS.Signals) => {
-    this.killed = true;
-    return signal !== undefined;
-  });
-}
-
-async function importCodexToolWithSpawn(spawnImpl: ReturnType<typeof vi.fn>) {
-  vi.resetModules();
-  getCapturedTools().clear();
-  vi.doMock("node:child_process", () => ({
-    spawn: spawnImpl,
-  }));
-  vi.doMock("node:fs/promises", () => ({
-    mkdir: vi.fn().mockResolvedValue(undefined),
-    writeFile: vi.fn().mockResolvedValue(undefined),
-  }));
-  return import("./codex-tool");
 }
