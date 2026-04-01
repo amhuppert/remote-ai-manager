@@ -27,7 +27,7 @@
  *                                      idle / debug.*
  */
 
-import { setup, assign, type ActorRefFrom } from "xstate";
+import { setup, assign, and, type ActorRefFrom } from "xstate";
 import type {
   ConversationContext,
   ConversationEvent,
@@ -414,20 +414,13 @@ export const conversationMachine = setup({
             "persistSnapshot",
           ],
         },
+        // Evidence analysis: loop back to hypothesizing if more instrumentation needed
         {
-          guard: "isDebugAnalyzing",
-          target: "debug.fixing",
+          guard: and(["isDebugAnalyzing", "shouldLoopBackToHypothesizing"]),
+          target: "debug.hypothesizing",
           actions: [
             assign(({ context }) => {
               const result = context.lastResult;
-              // Check if we should loop back to hypothesizing
-              const structured = result?.structuredOutput as
-                | DebugEvidenceAnalysisOutput
-                | undefined;
-              const nextPhase =
-                structured?.recommendedNextStep === "more_instrumentation"
-                  ? ("hypothesizing" as const)
-                  : ("fixing" as const);
               return {
                 promptCount: context.promptCount + 1,
                 totals: result
@@ -437,7 +430,39 @@ export const conversationMachine = setup({
                 status: "awaiting" as const,
                 lastActivityAt: new Date().toISOString(),
                 debugMode: context.debugMode
-                  ? { ...context.debugMode, phase: nextPhase }
+                  ? {
+                      ...context.debugMode,
+                      phase: "hypothesizing" as const,
+                    }
+                  : null,
+              };
+            }),
+            "syncDerivedFields",
+            "releaseResources",
+            "broadcastConversationStatus",
+            "persistSnapshot",
+          ],
+        },
+        // Evidence analysis: proceed to fixing (default path)
+        {
+          guard: "isDebugAnalyzing",
+          target: "debug.fixing",
+          actions: [
+            assign(({ context }) => {
+              const result = context.lastResult;
+              return {
+                promptCount: context.promptCount + 1,
+                totals: result
+                  ? accumulateTotals(context.totals, result)
+                  : context.totals,
+                activeTurn: null,
+                status: "awaiting" as const,
+                lastActivityAt: new Date().toISOString(),
+                debugMode: context.debugMode
+                  ? {
+                      ...context.debugMode,
+                      phase: "fixing" as const,
+                    }
                   : null,
               };
             }),
