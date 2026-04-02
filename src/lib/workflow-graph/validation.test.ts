@@ -186,7 +186,7 @@ describe("workflow-graph validation", () => {
               taskValidation: {
                 type: "claude",
                 enabled: true,
-                autoCreateFixTasks: false,
+
                 agent: { model: "sonnet", reasoningEffort: "medium" },
                 instructions: "",
               },
@@ -212,7 +212,7 @@ describe("workflow-graph validation", () => {
               taskValidation: {
                 type: "claude",
                 enabled: false,
-                autoCreateFixTasks: false,
+
                 agent: { model: "sonnet", reasoningEffort: "medium" },
                 instructions: "",
               },

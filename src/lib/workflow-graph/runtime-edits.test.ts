@@ -220,9 +220,6 @@ describe("graph workflow runtime edit service", () => {
           },
         ],
       },
-      {
-        autoCreateFixTasks: true,
-      },
     );
 
     expect(updated.taskStates["task-plan-2"]).toMatchObject({
@@ -358,9 +355,6 @@ describe("graph workflow runtime edit service", () => {
             description: "Add tests that cover the new validation path.",
           },
         ],
-      },
-      {
-        autoCreateFixTasks: true,
       },
     );
 

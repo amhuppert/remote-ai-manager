@@ -1034,7 +1034,7 @@ describe("graph workflow manager", () => {
     });
   });
 
-  it("creates fix tasks from validator issues when autoCreateFixTasks is enabled", async () => {
+  it("creates fix tasks from validator issues on validation failure", async () => {
     const definition = createWorkflowDefinition({
       executionContexts: [
         {
@@ -1049,7 +1049,6 @@ describe("graph workflow manager", () => {
             agentValidator: {
               type: "claude",
               enabled: true,
-              autoCreateFixTasks: true,
               agent: { model: "opus", reasoningEffort: "medium" },
               instructions: "Validate the work.",
             },
@@ -1135,7 +1134,6 @@ describe("graph workflow manager", () => {
         contextId: "context-plan",
         pass: false,
         summary: "Two issues found",
-        autoCreateFixTasks: true,
         issues: [
           {
             title: "Missing error handling",
@@ -1174,6 +1172,143 @@ describe("graph workflow manager", () => {
     expect(execution.contextStates["context-plan"]).toMatchObject({
       status: "ready",
       totalTaskCount: 3,
+      completedTaskCount: 1,
+    });
+  });
+
+  it("creates fallback fix task when validation fails with empty issues and reopenTaskIds", async () => {
+    const definition = createWorkflowDefinition({
+      executionContexts: [
+        {
+          id: "context-plan",
+          title: "Plan",
+          description: "Plan the implementation",
+          agent: { model: "opus", reasoningEffort: "high" },
+          mutability: { allowAgentTaskAdd: true },
+          circuitBreaker: {},
+          iterationPolicy: { maxIterations: 4 },
+          contextValidation: {
+            onFail: {
+              mode: "retry",
+              retryScope: "same_context" as const,
+              maxAttempts: 3,
+            },
+          },
+        },
+      ],
+      tasks: [
+        {
+          id: "task-plan-1",
+          contextId: "context-plan",
+          order: 1,
+          title: "Implement feature",
+          instructions: "Do the thing.",
+          source: "user" as const,
+        },
+      ],
+      edges: [],
+    });
+    const baseExecution = createWorkflowExecution({
+      workingDefinition: definition,
+    });
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "running",
+        activeContextId: "context-plan",
+        contextStates: {
+          "context-plan": {
+            contextId: "context-plan",
+            status: "running",
+            totalTaskCount: 1,
+            completedTaskCount: 1,
+            iterationCount: 1,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+        },
+        taskStates: {
+          "task-plan-1": {
+            taskId: "task-plan-1",
+            contextId: "context-plan",
+            order: 1,
+            status: "completed",
+            summary: "Done",
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: "2026-03-27T15:05:00.000Z",
+            lastConversationId: "conversation-1",
+            reopenedCount: 0,
+            lastReopenedAt: null,
+            failureMessage: null,
+          },
+        },
+        retryState: {
+          "context-plan": {
+            contextId: "context-plan",
+            attempt: 0,
+            maxAttempts: 3,
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      now() {
+        return "2026-03-27T15:15:00.000Z";
+      },
+    });
+
+    const execution = await manager.recordContextValidationResult(
+      "/repo",
+      "session-1",
+      {
+        contextId: "context-plan",
+        pass: false,
+        summary: "Pre-merge validation failed",
+        issues: [],
+        reopenTaskIds: [],
+        scriptOutput: "Error: tests failed\nexit code 1",
+        scriptOutputDocumentPath:
+          ".cc/graph-workflow-docs/validation-output-context-plan.txt",
+      },
+    );
+
+    // Retry should be authorized (not halted)
+    expect(execution.status).toBe("running");
+    expect(execution.contextStates["context-plan"]?.status).toBe("ready");
+
+    // A fallback fix task must exist so the retry has something to iterate on
+    const contextTasks = execution.workingDefinition.tasks.filter(
+      (t) => t.contextId === "context-plan",
+    );
+    const fixTasks = contextTasks.filter((t) => t.source === "validator");
+    expect(fixTasks).toHaveLength(1);
+    expect(fixTasks[0]!.title).toBe("Fix: Fix validation failures");
+    expect(fixTasks[0]!.instructions).toContain(
+      ".cc/graph-workflow-docs/validation-output-context-plan.txt",
+    );
+
+    // Fix task should have a pending task state
+    const fixTaskState = execution.taskStates[fixTasks[0]!.id];
+    expect(fixTaskState).toBeDefined();
+    expect(fixTaskState!.status).toBe("pending");
+
+    // Shared document should be registered
+    expect(execution.sharedDocuments).toHaveLength(1);
+    expect(execution.sharedDocuments[0]).toMatchObject({
+      id: "validation-output-context-plan",
+      relativePath:
+        ".cc/graph-workflow-docs/validation-output-context-plan.txt",
+    });
+
+    // Context counts should reflect the new task
+    expect(execution.contextStates["context-plan"]).toMatchObject({
+      totalTaskCount: 2,
       completedTaskCount: 1,
     });
   });

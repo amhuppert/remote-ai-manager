@@ -78,7 +78,7 @@ function createDefaultTaskValidation(
     return {
       type: "codex",
       enabled: false,
-      autoCreateFixTasks: false,
+
       codex: {
         model: codexCfg?.model,
         reasoningEffort: codexCfg?.reasoningEffort,
@@ -89,7 +89,7 @@ function createDefaultTaskValidation(
   return {
     type: "claude",
     enabled: false,
-    autoCreateFixTasks: false,
+
     agent: createDefaultAgentConfig(model),
     instructions: "",
   };
@@ -108,7 +108,7 @@ function createDefaultContextAgentValidator(
     return {
       type: "codex",
       enabled: false,
-      autoCreateFixTasks: false,
+
       codex: {
         model: codexCfg?.model,
         reasoningEffort: codexCfg?.reasoningEffort,
@@ -119,7 +119,7 @@ function createDefaultContextAgentValidator(
   return {
     type: "claude",
     enabled: false,
-    autoCreateFixTasks: false,
+
     agent: createDefaultAgentConfig(model),
     instructions: "",
   };
@@ -849,7 +849,6 @@ export default function WorkflowInspectorPanel({
                   onChange={(type) => {
                     const preserved = {
                       enabled: taskValidation.enabled,
-                      autoCreateFixTasks: taskValidation.autoCreateFixTasks,
                       instructions: taskValidation.instructions,
                     };
                     if (type === "codex") {
@@ -1067,7 +1066,6 @@ export default function WorkflowInspectorPanel({
                   onChange={(type) => {
                     const preserved = {
                       enabled: agentValidator.enabled,
-                      autoCreateFixTasks: agentValidator.autoCreateFixTasks,
                       instructions: agentValidator.instructions,
                     };
                     applyContextUpdate({
@@ -1210,46 +1208,6 @@ export default function WorkflowInspectorPanel({
                             ...contextValidation,
                             scriptValidator: {
                               enabled: !scriptValidatorEnabled,
-                            },
-                          },
-                        });
-                      }
-                    }}
-                  />
-                </div>
-                <div className="wb-inline-field">
-                  <span className="wb-inline-field-label">
-                    Auto-create Fix Tasks
-                  </span>
-                  <div
-                    className={`wb-toggle${agentValidator.autoCreateFixTasks ? " on" : ""}${!agentValidator.enabled ? " disabled" : ""}`}
-                    onClick={() => {
-                      if (!agentValidator.enabled) return;
-                      applyContextUpdate({
-                        contextValidation: {
-                          ...contextValidation,
-                          agentValidator: {
-                            ...agentValidator,
-                            autoCreateFixTasks:
-                              !agentValidator.autoCreateFixTasks,
-                          },
-                        },
-                      });
-                    }}
-                    role="button"
-                    tabIndex={agentValidator.enabled ? 0 : -1}
-                    aria-disabled={!agentValidator.enabled}
-                    onKeyDown={(event) => {
-                      if (!agentValidator.enabled) return;
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        applyContextUpdate({
-                          contextValidation: {
-                            ...contextValidation,
-                            agentValidator: {
-                              ...agentValidator,
-                              autoCreateFixTasks:
-                                !agentValidator.autoCreateFixTasks,
                             },
                           },
                         });

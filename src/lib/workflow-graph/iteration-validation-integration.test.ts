@@ -50,7 +50,7 @@ describe("graph workflow iteration validation integration", () => {
                 taskValidation: {
                   type: "claude",
                   enabled: true,
-                  autoCreateFixTasks: false,
+
                   agent: {
                     model: "sonnet",
                     reasoningEffort: "medium",

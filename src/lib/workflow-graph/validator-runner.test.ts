@@ -112,7 +112,7 @@ describe("extractValidatorResult", () => {
 const validatorConfig: GraphWorkflowAgentValidatorConfig = {
   type: "claude",
   enabled: true,
-  autoCreateFixTasks: false,
+
   agent: { model: "sonnet", reasoningEffort: "medium" },
   instructions: "Verify that all files have proper error handling.",
 };
@@ -252,7 +252,7 @@ function buildExecutionWithTaskValidation(): GraphWorkflowExecution {
               taskValidation: {
                 type: "claude" as const,
                 enabled: true,
-                autoCreateFixTasks: false,
+
                 agent: {
                   model: "sonnet" as const,
                   reasoningEffort: "medium" as const,
@@ -281,7 +281,7 @@ function buildExecutionWithContextValidation(): GraphWorkflowExecution {
                 agentValidator: {
                   type: "claude" as const,
                   enabled: true,
-                  autoCreateFixTasks: false,
+
                   agent: {
                     model: "opus" as const,
                     reasoningEffort: "high" as const,
@@ -553,7 +553,7 @@ describe("createValidatorRunner", () => {
     const codexValidator: GraphWorkflowAgentValidatorConfig = {
       type: "codex",
       enabled: true,
-      autoCreateFixTasks: false,
+
       codex: { model: "o3", reasoningEffort: "high" },
       instructions: "Check for correctness.",
     };
@@ -603,7 +603,7 @@ describe("createValidatorRunner", () => {
     const codexValidator: GraphWorkflowAgentValidatorConfig = {
       type: "codex",
       enabled: true,
-      autoCreateFixTasks: false,
+
       codex: { reasoningEffort: "medium" },
       instructions: "Validate the overall plan quality.",
     };

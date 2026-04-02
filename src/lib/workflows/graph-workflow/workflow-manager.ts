@@ -4,6 +4,7 @@ import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+  GraphWorkflowSharedDocumentEntry,
   GraphWorkflowStatus,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
@@ -61,7 +62,8 @@ export interface GraphWorkflowContextValidationResultInput {
   summary?: string | null;
   issues?: WorkflowValidatorIssue[];
   reopenTaskIds?: string[];
-  autoCreateFixTasks?: boolean;
+  scriptOutput?: string;
+  scriptOutputDocumentPath?: string;
 }
 
 export type GraphWorkflowManagerEvent =
@@ -274,6 +276,63 @@ function recomputeContextCounts(
   ).length;
 }
 
+function registerScriptOutputDocument(
+  execution: GraphWorkflowExecution,
+  result: GraphWorkflowContextValidationResultInput,
+  now: string,
+): void {
+  const docPath = result.scriptOutputDocumentPath!;
+  const existingIndex = execution.sharedDocuments.findIndex(
+    (entry) => entry.relativePath === docPath,
+  );
+
+  const entry: GraphWorkflowSharedDocumentEntry = {
+    id:
+      existingIndex >= 0
+        ? execution.sharedDocuments[existingIndex]!.id
+        : `validation-output-${result.contextId}`,
+    relativePath: docPath,
+    description: "Output from failed pre-merge validation script",
+    readWhen: "When fixing validation failures for this execution context",
+    createdAt:
+      existingIndex >= 0
+        ? execution.sharedDocuments[existingIndex]!.createdAt
+        : now,
+    updatedAt: now,
+    lastUpdatedByConversationId: null,
+  };
+
+  if (existingIndex >= 0) {
+    execution.sharedDocuments[existingIndex] = entry;
+  } else {
+    execution.sharedDocuments.push(entry);
+  }
+}
+
+function buildFallbackFixInstructions(
+  result: GraphWorkflowContextValidationResultInput,
+): string {
+  const parts: string[] = [];
+
+  if (result.scriptOutputDocumentPath) {
+    parts.push(
+      `The pre-merge validation script failed. Read the validation output at \`${result.scriptOutputDocumentPath}\` for details on what failed.`,
+    );
+  }
+
+  if (result.summary) {
+    parts.push(`Summary: ${result.summary}`);
+  }
+
+  if (result.scriptOutput && !result.scriptOutputDocumentPath) {
+    parts.push("Validation output:", "```", result.scriptOutput, "```");
+  }
+
+  parts.push("Fix all validation errors and verify the fix passes validation.");
+
+  return parts.join("\n\n");
+}
+
 function applyValidationRemediations(
   execution: GraphWorkflowExecution,
   result: GraphWorkflowContextValidationResultInput,
@@ -285,13 +344,29 @@ function applyValidationRemediations(
   }
 
   const issues = result.issues ?? [];
-  if (result.autoCreateFixTasks && issues.length > 0) {
+  if (issues.length > 0) {
     createFixTasks(execution, result.contextId, issues);
   }
 
-  if (taskIds.length > 0 || (result.autoCreateFixTasks && issues.length > 0)) {
-    recomputeContextCounts(execution, result.contextId);
+  if (result.scriptOutputDocumentPath) {
+    registerScriptOutputDocument(execution, result, now);
   }
+
+  // Fallback guarantee: if no incomplete tasks exist after remediations,
+  // create a fix task to prevent the retry deadlock
+  const hasIncompleteTask = execution.workingDefinition.tasks
+    .filter((t) => t.contextId === result.contextId)
+    .some((t) => execution.taskStates[t.id]?.status !== "completed");
+
+  if (!hasIncompleteTask) {
+    const fallbackIssue: WorkflowValidatorIssue = {
+      title: "Fix validation failures",
+      description: buildFallbackFixInstructions(result),
+    };
+    createFixTasks(execution, result.contextId, [fallbackIssue]);
+  }
+
+  recomputeContextCounts(execution, result.contextId);
 }
 
 export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {

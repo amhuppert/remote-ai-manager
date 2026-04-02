@@ -390,7 +390,7 @@ describe("execution loop", () => {
   );
 
   it(
-    "passes validation issues, reopenTaskIds, and autoCreateFixTasks to recordContextValidationResult",
+    "passes validation issues, reopenTaskIds, and script output to recordContextValidationResult",
     { timeout: 5000 },
     async () => {
       const definition: WorkflowSemanticDefinition = {
@@ -408,7 +408,6 @@ describe("execution loop", () => {
               agentValidator: {
                 type: "claude",
                 enabled: true,
-                autoCreateFixTasks: true,
                 agent: { model: "opus", reasoningEffort: "medium" },
                 instructions: "Validate the work.",
               },
@@ -439,7 +438,8 @@ describe("execution loop", () => {
         pass: boolean;
         issues?: unknown[];
         reopenTaskIds?: string[];
-        autoCreateFixTasks?: boolean;
+        scriptOutput?: string;
+        scriptOutputDocumentPath?: string;
       }> = [];
 
       const deps: GraphWorkflowExecutionLoopDeps = {
@@ -458,7 +458,6 @@ describe("execution loop", () => {
           ) {
             recordedResults.push(structuredClone(result));
             const next = structuredClone(currentExecution);
-            // Simulate halt after recording (not the point of this test)
             next.status = "halted";
             next.haltReason = {
               type: "circuit_breaker",
@@ -502,7 +501,15 @@ describe("execution loop", () => {
               ],
               reopenTaskIds: ["task-1"],
               agentResult: null,
-              scriptResult: null,
+              scriptResult: {
+                executed: true,
+                pass: false,
+                stdout: "FAIL: 3 tests failed",
+                stderr: "",
+                output: "FAIL: 3 tests failed",
+                timedOut: false,
+                message: "Tests failed",
+              },
             };
           },
         },
@@ -510,6 +517,9 @@ describe("execution loop", () => {
           return { worktreePath: "/repo", branchName: "main" } as SessionState;
         },
         emitStreamFrame: vi.fn(),
+        async persistScriptOutput(_worktreePath, _contextId, _output) {
+          return ".cc/graph-workflow-docs/validation-output-ctx-1.txt";
+        },
       };
 
       const loop = createGraphWorkflowExecutionLoop(deps);
@@ -527,7 +537,9 @@ describe("execution loop", () => {
         summary: "Found issues",
         issues: [{ title: "Missing tests", description: "Add unit tests." }],
         reopenTaskIds: ["task-1"],
-        autoCreateFixTasks: true,
+        scriptOutput: "FAIL: 3 tests failed",
+        scriptOutputDocumentPath:
+          ".cc/graph-workflow-docs/validation-output-ctx-1.txt",
       });
     },
   );

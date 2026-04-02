@@ -16,7 +16,7 @@ describe("graph workflow execution validation service", () => {
                 taskValidation: {
                   type: "claude",
                   enabled: true,
-                  autoCreateFixTasks: true,
+
                   agent: {
                     model: "sonnet",
                     reasoningEffort: "medium",
@@ -141,7 +141,7 @@ describe("graph workflow execution validation service", () => {
                   agentValidator: {
                     type: "claude",
                     enabled: true,
-                    autoCreateFixTasks: true,
+
                     agent: {
                       model: "opus",
                       reasoningEffort: "high",

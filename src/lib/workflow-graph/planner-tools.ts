@@ -293,7 +293,6 @@ function inflateToSemanticDefinition(
           taskValidation: {
             type: "claude" as const,
             enabled: true,
-            autoCreateFixTasks: false,
             agent: {
               model: ctx.agentConfig?.model ?? DEFAULT_MODEL,
               reasoningEffort:
@@ -311,7 +310,6 @@ function inflateToSemanticDefinition(
                   agentValidator: {
                     type: "claude" as const,
                     enabled: true,
-                    autoCreateFixTasks: false,
                     agent: {
                       model: ctx.agentConfig?.model ?? DEFAULT_MODEL,
                       reasoningEffort:

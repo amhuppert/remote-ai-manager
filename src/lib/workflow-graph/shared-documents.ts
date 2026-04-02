@@ -5,7 +5,10 @@ import type {
   GraphWorkflowSharedDocumentEntry,
 } from "@/types";
 
-const SHARED_DOCUMENT_DIRECTORY = path.join(".cc", "graph-workflow-docs");
+export const SHARED_DOCUMENT_DIRECTORY = path.join(
+  ".cc",
+  "graph-workflow-docs",
+);
 
 export interface SharedDocumentUpsertInput {
   relativePath: string;

@@ -26,7 +26,7 @@ function makeExecution(
           taskValidation: {
             type: "claude",
             enabled: true,
-            autoCreateFixTasks: false,
+
             agent: { model: "sonnet", reasoningEffort: "medium" },
             instructions: "Validate task output",
           },
@@ -39,7 +39,7 @@ function makeExecution(
             agentValidator: {
               type: "claude",
               enabled: true,
-              autoCreateFixTasks: true,
+
               agent: { model: "sonnet", reasoningEffort: "medium" },
               instructions: "Validate all endpoints work",
             },

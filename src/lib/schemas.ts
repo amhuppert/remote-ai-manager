@@ -565,7 +565,6 @@ export type GraphWorkflowIterationPolicy = z.infer<
 
 const graphWorkflowValidatorBaseSchema = z.object({
   enabled: z.boolean(),
-  autoCreateFixTasks: z.boolean().default(false),
   instructions: z.string().trim().min(1),
 });
 

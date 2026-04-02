@@ -37,7 +37,6 @@ function createSemanticDefinition() {
         },
         taskValidation: {
           enabled: true,
-          autoCreateFixTasks: true,
           instructions: "Validate each completed task.",
           agent: {
             model: "sonnet",
@@ -47,7 +46,6 @@ function createSemanticDefinition() {
         contextValidation: {
           agentValidator: {
             enabled: true,
-            autoCreateFixTasks: true,
             instructions: "Review the whole context before unlock.",
             agent: {
               model: "opus",
@@ -349,7 +347,6 @@ describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
     const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
       type: "claude",
       enabled: true,
-      autoCreateFixTasks: true,
       agent: { model: "sonnet", reasoningEffort: "medium" },
       instructions: "Validate each task.",
     });
@@ -364,7 +361,6 @@ describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
     const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
       type: "codex",
       enabled: true,
-      autoCreateFixTasks: false,
       codex: { model: "o3", reasoningEffort: "high" },
       instructions: "Validate with Codex.",
     });
@@ -378,7 +374,6 @@ describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
   it("parses legacy format without type as claude (backward compat)", () => {
     const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
       enabled: true,
-      autoCreateFixTasks: false,
       agent: { model: "opus", reasoningEffort: "high" },
       instructions: "Review the context.",
     });

@@ -290,7 +290,6 @@ export function createGraphWorkflowRuntimeEditService(
     execution: GraphWorkflowExecution,
     contextId: string,
     remediation: WorkflowAgentValidatorResult,
-    options: { autoCreateFixTasks: boolean },
   ): GraphWorkflowExecution {
     const validation = validateWorkflowValidatorRemediation(
       contextId,
@@ -319,44 +318,42 @@ export function createGraphWorkflowRuntimeEditService(
       taskState.failureMessage = remediation.summary;
     }
 
-    if (options.autoCreateFixTasks) {
-      const nextOrder = getContextTaskOrder(nextExecution, contextId);
-      let order = nextOrder;
+    const nextOrder = getContextTaskOrder(nextExecution, contextId);
+    let order = nextOrder;
 
-      for (const issue of remediation.issues) {
-        const fingerprint = normalizeIssueFingerprint(issue);
-        if (findOpenEquivalentFixTask(nextExecution, contextId, fingerprint)) {
-          continue;
-        }
-
-        order += 1;
-        const taskId = resolvedDeps.createTaskId();
-        nextExecution.workingDefinition.tasks.push({
-          id: taskId,
-          contextId,
-          order,
-          title: `Fix validation issue: ${issue.title}`,
-          instructions: issue.description,
-          metadata: {
-            validatorIssueFingerprint: fingerprint,
-            validatorIssueTitle: issue.title,
-          },
-          source: "validator",
-        });
-        nextExecution.taskStates[taskId] = {
-          taskId,
-          contextId,
-          order,
-          status: "pending",
-          summary: null,
-          startedAt: null,
-          completedAt: null,
-          lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
-          failureMessage: null,
-        };
+    for (const issue of remediation.issues) {
+      const fingerprint = normalizeIssueFingerprint(issue);
+      if (findOpenEquivalentFixTask(nextExecution, contextId, fingerprint)) {
+        continue;
       }
+
+      order += 1;
+      const taskId = resolvedDeps.createTaskId();
+      nextExecution.workingDefinition.tasks.push({
+        id: taskId,
+        contextId,
+        order,
+        title: `Fix validation issue: ${issue.title}`,
+        instructions: issue.description,
+        metadata: {
+          validatorIssueFingerprint: fingerprint,
+          validatorIssueTitle: issue.title,
+        },
+        source: "validator",
+      });
+      nextExecution.taskStates[taskId] = {
+        taskId,
+        contextId,
+        order,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        reopenedCount: 0,
+        lastReopenedAt: null,
+        failureMessage: null,
+      };
     }
 
     const contextState = nextExecution.contextStates[contextId];

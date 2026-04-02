@@ -1,4 +1,7 @@
+import { writeFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 import { getErrorMessage } from "@/lib/errors";
+import { SHARED_DOCUMENT_DIRECTORY } from "@/lib/workflow-graph/shared-documents";
 import {
   emit as defaultEmitStreamFrame,
   type GraphWorkflowStreamFrame,
@@ -37,7 +40,8 @@ export interface GraphWorkflowExecutionLoopDeps {
         summary?: string | null;
         issues?: WorkflowValidatorIssue[];
         reopenTaskIds?: string[];
-        autoCreateFixTasks?: boolean;
+        scriptOutput?: string;
+        scriptOutputDocumentPath?: string;
       },
     ): Promise<GraphWorkflowExecution>;
     send(
@@ -69,6 +73,12 @@ export interface GraphWorkflowExecutionLoopDeps {
     sessionName: string,
     frame: GraphWorkflowStreamFrame,
   ): void;
+  /** Write script validation output to disk. Returns relative path on success, null on failure. */
+  persistScriptOutput?(
+    worktreePath: string,
+    contextId: string,
+    output: string,
+  ): Promise<string | null>;
 }
 
 function emitDone(
@@ -81,6 +91,25 @@ function emitDone(
     type: "done",
     reason,
   });
+}
+
+async function defaultPersistScriptOutput(
+  worktreePath: string,
+  contextId: string,
+  output: string,
+): Promise<string | null> {
+  const relativePath = path.join(
+    SHARED_DOCUMENT_DIRECTORY,
+    `validation-output-${contextId}.txt`,
+  );
+  const absolutePath = path.join(worktreePath, relativePath);
+  try {
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    await writeFile(absolutePath, output, "utf-8");
+    return relativePath;
+  } catch {
+    return null;
+  }
 }
 
 async function validateActiveContext(input: {
@@ -229,12 +258,32 @@ export function createGraphWorkflowExecutionLoop(
             contextId,
           });
 
-          const contextDef = execution.workingDefinition.executionContexts.find(
-            (c) => c.id === contextId,
-          );
-          const autoCreateFixTasks =
-            contextDef?.contextValidation?.agentValidator
-              ?.autoCreateFixTasks === true;
+          let scriptOutput: string | undefined;
+          let scriptOutputDocumentPath: string | undefined;
+
+          if (
+            !validation.pass &&
+            validation.scriptResult &&
+            validation.scriptResult.output
+          ) {
+            scriptOutput = validation.scriptResult.output;
+            const session = await deps.getSession(
+              input.projectPath,
+              input.sessionName,
+            );
+            if (session) {
+              const persist =
+                deps.persistScriptOutput ?? defaultPersistScriptOutput;
+              const docPath = await persist(
+                session.worktreePath,
+                contextId,
+                scriptOutput,
+              );
+              if (docPath) {
+                scriptOutputDocumentPath = docPath;
+              }
+            }
+          }
 
           execution = await deps.workflowManager.recordContextValidationResult(
             input.projectPath,
@@ -245,7 +294,8 @@ export function createGraphWorkflowExecutionLoop(
               summary: validation.summary,
               issues: validation.issues,
               reopenTaskIds: validation.reopenTaskIds,
-              autoCreateFixTasks,
+              scriptOutput,
+              scriptOutputDocumentPath,
             },
           );
 
