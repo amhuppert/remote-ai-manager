@@ -16,6 +16,7 @@ import {
   type NodeTypes,
   type EdgeTypes,
 } from "@xyflow/react";
+import AutoLayout from "@/components/workflow-graph/AutoLayout";
 import ExecutionContextNode from "@/components/workflow-graph/ExecutionContextNode";
 import ContextEdge from "@/components/workflow-graph/ContextEdge";
 import {
@@ -218,6 +219,7 @@ export default function WorkflowBuilderCanvas() {
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={["Backspace", "Delete"]}
       >
+        <AutoLayout definition={draftDefinition} onLayout={updateLayout} />
         <Background
           variant={BackgroundVariant.Dots}
           color="rgba(255,255,255,0.15)"

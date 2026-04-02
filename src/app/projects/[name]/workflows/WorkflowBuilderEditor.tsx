@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ReactFlowProvider } from "@xyflow/react";
+import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
 import type {
@@ -14,6 +14,7 @@ import {
   deleteExecutionContext,
 } from "@/lib/workflow-graph/builder-draft";
 import { generateWorkflowLayout } from "@/lib/workflow-graph/layout";
+import { collectNodeDimensions } from "@/components/workflow-graph/AutoLayout";
 import { validateWorkflowDefinition } from "@/lib/workflow-graph/validation";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import WorkflowBuilderCanvas from "./WorkflowBuilderCanvas";
@@ -35,7 +36,17 @@ interface WorkflowBuilderEditorProps {
   codexConfig?: CodexConfig;
 }
 
-export default function WorkflowBuilderEditor({
+export default function WorkflowBuilderEditor(
+  props: WorkflowBuilderEditorProps,
+): React.JSX.Element {
+  return (
+    <ReactFlowProvider>
+      <WorkflowBuilderEditorInner {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function WorkflowBuilderEditorInner({
   record,
   workflowName,
   revision,
@@ -46,6 +57,7 @@ export default function WorkflowBuilderEditor({
   defaultModel,
   codexConfig,
 }: WorkflowBuilderEditorProps): React.JSX.Element {
+  const { getNodes } = useReactFlow();
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (s) => s.draftDefinition,
   );
@@ -125,7 +137,12 @@ export default function WorkflowBuilderEditor({
 
   function handleRelayout() {
     if (!draftDefinition) return;
-    const newLayout = generateWorkflowLayout(draftDefinition, null);
+    const dims = collectNodeDimensions(getNodes());
+    const newLayout = generateWorkflowLayout(
+      draftDefinition,
+      null,
+      dims.size > 0 ? dims : undefined,
+    );
     updateLayout(newLayout);
   }
 
@@ -142,45 +159,43 @@ export default function WorkflowBuilderEditor({
   }
 
   return (
-    <ReactFlowProvider>
-      <div className="wb-editor">
-        <WorkflowToolbar
-          workflowName={workflowName}
-          revision={revision}
-          onRename={onRename}
-          onDelete={onDelete}
-          onAddContext={handleAddContext}
-          onSave={() => void handleSave()}
-          onReset={handleReset}
-          onRelayout={handleRelayout}
-          dirty={dirty}
-          saving={isSaving}
-          hasValidationErrors={validationErrors.length > 0}
-        />
-        {saveError && (
-          <div
-            style={{
-              padding: "var(--space-sm) var(--space-md)",
-              color: "var(--red)",
-              fontSize: "0.72rem",
-              background: "rgba(255,61,90,0.06)",
-              borderBottom: "1px solid rgba(255,61,90,0.15)",
-            }}
-          >
-            {saveError}
-          </div>
-        )}
-        <div className="wb-editor-body">
-          <WorkflowBuilderCanvas />
-          <WorkflowInspectorPanel
-            onSave={handleSave}
-            onDelete={handleDeleteContext}
-            saving={isSaving}
-            defaultModel={defaultModel}
-            codexConfig={codexConfig}
-          />
+    <div className="wb-editor">
+      <WorkflowToolbar
+        workflowName={workflowName}
+        revision={revision}
+        onRename={onRename}
+        onDelete={onDelete}
+        onAddContext={handleAddContext}
+        onSave={() => void handleSave()}
+        onReset={handleReset}
+        onRelayout={handleRelayout}
+        dirty={dirty}
+        saving={isSaving}
+        hasValidationErrors={validationErrors.length > 0}
+      />
+      {saveError && (
+        <div
+          style={{
+            padding: "var(--space-sm) var(--space-md)",
+            color: "var(--red)",
+            fontSize: "0.72rem",
+            background: "rgba(255,61,90,0.06)",
+            borderBottom: "1px solid rgba(255,61,90,0.15)",
+          }}
+        >
+          {saveError}
         </div>
+      )}
+      <div className="wb-editor-body">
+        <WorkflowBuilderCanvas />
+        <WorkflowInspectorPanel
+          onSave={handleSave}
+          onDelete={handleDeleteContext}
+          saving={isSaving}
+          defaultModel={defaultModel}
+          codexConfig={codexConfig}
+        />
       </div>
-    </ReactFlowProvider>
+    </div>
   );
 }

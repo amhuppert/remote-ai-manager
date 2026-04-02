@@ -3,8 +3,12 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/types";
 
-const X_SPACING = 360;
-const Y_SPACING = 240;
+export type NodeDimensions = Map<string, { width: number; height: number }>;
+
+const DEFAULT_NODE_WIDTH = 248;
+const DEFAULT_NODE_HEIGHT = 200;
+const MIN_X_GAP = 112;
+const MIN_Y_GAP = 40;
 
 function computeDepths(
   definition: WorkflowSemanticDefinition,
@@ -62,35 +66,59 @@ function computeDepths(
 export function generateWorkflowLayout(
   definition: WorkflowSemanticDefinition,
   existingLayout?: GraphWorkflowVisualLayout | null,
+  nodeDimensions?: NodeDimensions,
 ): GraphWorkflowVisualLayout {
   const contextPositions: GraphWorkflowVisualLayout["contextPositions"] = {};
   const existingPositions = existingLayout?.contextPositions ?? {};
   const depths = computeDepths(definition);
-  const rowsByDepth = new Map<number, number>();
+
+  function nodeWidth(contextId: string): number {
+    return nodeDimensions?.get(contextId)?.width ?? DEFAULT_NODE_WIDTH;
+  }
+
+  function nodeHeight(contextId: string): number {
+    return nodeDimensions?.get(contextId)?.height ?? DEFAULT_NODE_HEIGHT;
+  }
+
+  // Compute max width per depth column to determine X offsets
+  const maxWidthByDepth = new Map<number, number>();
+  for (const context of definition.executionContexts) {
+    const d = depths.get(context.id) ?? 0;
+    maxWidthByDepth.set(
+      d,
+      Math.max(maxWidthByDepth.get(d) ?? 0, nodeWidth(context.id)),
+    );
+  }
+
+  const xByDepth = new Map<number, number>();
+  const sortedDepths = [...maxWidthByDepth.keys()].sort((a, b) => a - b);
+  let cumulativeX = 0;
+  for (const d of sortedDepths) {
+    xByDepth.set(d, cumulativeX);
+    cumulativeX += (maxWidthByDepth.get(d) ?? DEFAULT_NODE_WIDTH) + MIN_X_GAP;
+  }
+
+  // Track the next available Y position for each depth column
+  const nextYByDepth = new Map<number, number>();
 
   for (const context of definition.executionContexts) {
     const existingPosition = existingPositions[context.id];
     if (existingPosition) {
       contextPositions[context.id] = existingPosition;
-      const depth = depths.get(context.id) ?? 0;
-      const occupiedRow = Math.max(
-        0,
-        Math.round(existingPosition.y / Y_SPACING),
-      );
-      rowsByDepth.set(
-        depth,
-        Math.max(rowsByDepth.get(depth) ?? 0, occupiedRow + 1),
-      );
+      const d = depths.get(context.id) ?? 0;
+      const bottomEdge =
+        existingPosition.y + nodeHeight(context.id) + MIN_Y_GAP;
+      nextYByDepth.set(d, Math.max(nextYByDepth.get(d) ?? 0, bottomEdge));
       continue;
     }
 
-    const depth = depths.get(context.id) ?? 0;
-    const row = rowsByDepth.get(depth) ?? 0;
-    rowsByDepth.set(depth, row + 1);
+    const d = depths.get(context.id) ?? 0;
+    const y = nextYByDepth.get(d) ?? 0;
+    nextYByDepth.set(d, y + nodeHeight(context.id) + MIN_Y_GAP);
 
     contextPositions[context.id] = {
-      x: depth * X_SPACING,
-      y: row * Y_SPACING,
+      x: xByDepth.get(d) ?? 0,
+      y,
     };
   }
 

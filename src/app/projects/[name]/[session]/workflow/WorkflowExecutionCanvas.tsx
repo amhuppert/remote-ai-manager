@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -14,6 +14,7 @@ import {
   type NodeTypes,
   type EdgeTypes,
 } from "@xyflow/react";
+import AutoLayout from "@/components/workflow-graph/AutoLayout";
 import ExecutionContextNode from "@/components/workflow-graph/ExecutionContextNode";
 import ContextEdge from "@/components/workflow-graph/ContextEdge";
 import {
@@ -43,14 +44,21 @@ export default function WorkflowExecutionCanvas({
   layout,
   onSelectContext,
 }: WorkflowExecutionCanvasProps) {
+  const [effectiveLayout, setEffectiveLayout] =
+    useState<GraphWorkflowVisualLayout>(layout);
+
+  useEffect(() => {
+    setEffectiveLayout(layout);
+  }, [layout]);
+
   const [nodes, setNodes, onNodesChange] = useNodesState<
     Node<ExecutionContextNodeData>
   >([]);
   const [edges, setEdges] = useEdgesState<Edge<ContextEdgeData>>([]);
 
   const derivedNodes = useMemo(
-    () => deriveNodes(execution.workingDefinition, layout, execution),
-    [execution, layout],
+    () => deriveNodes(execution.workingDefinition, effectiveLayout, execution),
+    [execution, effectiveLayout],
   );
 
   const derivedEdges = useMemo(
@@ -92,6 +100,10 @@ export default function WorkflowExecutionCanvas({
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
+        <AutoLayout
+          definition={execution.workingDefinition}
+          onLayout={setEffectiveLayout}
+        />
         <Background
           variant={BackgroundVariant.Dots}
           color="rgba(255,255,255,0.15)"
