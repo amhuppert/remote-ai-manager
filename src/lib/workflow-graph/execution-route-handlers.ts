@@ -16,6 +16,8 @@ import type {
   MessageContentBlock,
   SessionState,
 } from "@/types";
+import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-dispatcher";
+import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
@@ -44,9 +46,14 @@ const startExecutionSchema = z.object({
 
 const logger = createLogger("graph-workflow-route-handlers");
 
+const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+  dispatchPush: dispatchPushForGraphWorkflowEvent,
+});
+
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
   mutateSession,
+  eventPublisher,
 });
 
 const workflowStorage = createWorkflowStorageService({ readConfig });

@@ -104,8 +104,30 @@ export const activeConversationSchema = z.object({
   sessionName: z.string(),
 });
 
+export const activeGraphWorkflowExecutionSchema = z.object({
+  executionId: z.string(),
+  status: z.enum([
+    "pending",
+    "running",
+    "paused",
+    "completed",
+    "halted",
+    "aborted",
+  ]),
+  projectName: z.string(),
+  projectPath: z.string(),
+  sessionName: z.string(),
+  activeContextTitle: z.string().nullable(),
+  completedContexts: z.number(),
+  totalContexts: z.number(),
+  startedAt: z.string(),
+});
+
 export const activeConversationsResponseSchema = z.object({
   conversations: z.array(activeConversationSchema),
+  graphWorkflowExecutions: z
+    .array(activeGraphWorkflowExecutionSchema)
+    .default([]),
 });
 
 // -- Transcript --

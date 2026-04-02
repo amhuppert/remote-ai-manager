@@ -57,6 +57,14 @@ export interface WorkflowNotification extends BaseNotification {
   read?: boolean;
 }
 
+export interface GraphWorkflowNotification extends BaseNotification {
+  type: "graph-workflow";
+  status: string;
+  activeContextTitle: string | null;
+  completedContexts: number;
+  totalContexts: number;
+}
+
 export type ServerNotificationItem =
   | MergeNotification
   | CommitNotification
@@ -67,7 +75,8 @@ export type NotificationItem =
   | MergeNotification
   | CommitNotification
   | ResolveConflictsNotification
-  | WorkflowNotification;
+  | WorkflowNotification
+  | GraphWorkflowNotification;
 
 interface NotificationsPanelProps {
   open: boolean;
@@ -118,7 +127,11 @@ function summarizeError(errorMessage: string): string {
 
 /** Check if a notification item has an error message to display. */
 function getErrorMessage(item: NotificationItem): string | undefined {
-  if (item.type === "conversation" || item.type === "workflow")
+  if (
+    item.type === "conversation" ||
+    item.type === "workflow" ||
+    item.type === "graph-workflow"
+  )
     return undefined;
   if (item.status !== "error") return undefined;
   return item.errorMessage;
@@ -149,6 +162,8 @@ function getItemHref(item: NotificationItem): string {
       return base;
     case "workflow":
       return base;
+    case "graph-workflow":
+      return `${base}/workflow`;
     default:
       return assertNever(item);
   }
@@ -166,6 +181,8 @@ function getItemTitle(item: NotificationItem): string {
       return `Resolve conflicts on ${item.branchName}`;
     case "workflow":
       return "Ralph Loop";
+    case "graph-workflow":
+      return item.activeContextTitle ?? "Graph Workflow";
     default:
       return assertNever(item);
   }
@@ -182,6 +199,8 @@ function getItemCategory(item: NotificationItem): string {
     case "resolve-conflicts":
       return "resolve";
     case "workflow":
+      return "workflow";
+    case "graph-workflow":
       return "workflow";
     default:
       return assertNever(item);
@@ -236,13 +255,16 @@ function getItemStatusClass(item: NotificationItem): string {
           return assertNever(status);
       }
     }
+    case "graph-workflow":
+      return item.status === "running" ? "running" : "paused";
     default:
       return assertNever(item);
   }
 }
 
 function isUnread(item: NotificationItem): boolean {
-  if (item.type === "conversation") return false;
+  if (item.type === "conversation" || item.type === "graph-workflow")
+    return false;
   return item.read === false;
 }
 
@@ -359,6 +381,8 @@ function getItemIcon(item: NotificationItem) {
     case "resolve-conflicts":
       return <ResolveIcon />;
     case "workflow":
+      return <WorkflowIcon />;
+    case "graph-workflow":
       return <WorkflowIcon />;
     default:
       return assertNever(item);

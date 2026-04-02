@@ -4,6 +4,7 @@ import { useMemo, useCallback } from "react";
 import NotificationsPanel, {
   type NotificationItem,
   type ConversationNotification,
+  type GraphWorkflowNotification,
   type MergeNotification,
   type CommitNotification,
   type ResolveConflictsNotification,
@@ -28,8 +29,9 @@ import {
 export default function NotificationsPanelContainer() {
   const panelOpen = useUnifiedPanelOpen();
   const closePanel = useCloseUnifiedPanel();
-  const { data: activeConversations, isPending: convLoading } =
+  const { data: activeData, isPending: convLoading } =
     useActiveConversationsQuery();
+  const activeConversations = activeData?.conversations;
   const { data: notificationsData, isPending: notifLoading } =
     useNotificationsQuery({ enabled: panelOpen });
   const jobs = useNotificationJobs();
@@ -70,6 +72,23 @@ export default function NotificationsPanelContainer() {
         iterationCount: wf.iterationCount,
         maxIterations: wf.maxIterations,
       } satisfies WorkflowNotification);
+    }
+
+    // Map active graph workflow executions
+    if (activeData?.graphWorkflowExecutions) {
+      for (const gw of activeData.graphWorkflowExecutions) {
+        result.push({
+          type: "graph-workflow",
+          id: `gw-${gw.executionId}`,
+          timestamp: gw.startedAt,
+          projectName: gw.projectName,
+          sessionName: gw.sessionName,
+          status: gw.status,
+          activeContextTitle: gw.activeContextTitle,
+          completedContexts: gw.completedContexts,
+          totalContexts: gw.totalContexts,
+        } satisfies GraphWorkflowNotification);
+      }
     }
 
     // Map active conversations
@@ -183,7 +202,13 @@ export default function NotificationsPanelContainer() {
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
     );
     return result;
-  }, [activeConversations, jobs, notificationsData, activeWorkflows]);
+  }, [
+    activeConversations,
+    activeData,
+    jobs,
+    notificationsData,
+    activeWorkflows,
+  ]);
 
   const unreadCount = notificationsData?.unreadCount ?? 0;
 

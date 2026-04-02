@@ -31,9 +31,23 @@ interface PublishValidationResultInput {
   reopenTaskIds?: string[];
 }
 
+export interface GraphWorkflowPushInfo {
+  kind:
+    | "workflow-completed"
+    | "workflow-halted"
+    | "circuit-breaker"
+    | "context-completed";
+  projectName: string;
+  sessionName: string;
+  contextTitle?: string;
+  completedContexts?: number;
+  totalContexts?: number;
+}
+
 export interface GraphWorkflowExecutionEventPublisherDeps {
   broadcast?(event: GraphWorkflowSSEEvent): void;
   now?(): string;
+  dispatchPush?(info: GraphWorkflowPushInfo): void;
 }
 
 function cloneExecution(
@@ -83,6 +97,77 @@ function publishEvents(
   const send = deps.broadcast ?? defaultBroadcast;
   for (const event of events) {
     send(event);
+  }
+}
+
+function dispatchPushNotifications(
+  deps: GraphWorkflowExecutionEventPublisherDeps,
+  events: GraphWorkflowSSEEvent[],
+  input: PublishExecutionUpdateInput,
+  nextExecution: GraphWorkflowExecution,
+): void {
+  if (!deps.dispatchPush) return;
+
+  const projectName = getProjectName(input.projectPath);
+  const { sessionName } = input;
+
+  const hasCircuitBreaker = events.some(
+    (e) => e.type === "graph-workflow-circuit-breaker",
+  );
+
+  for (const event of events) {
+    if (event.type === "graph-workflow-status") {
+      if (event.workflowStatus === "completed") {
+        deps.dispatchPush({
+          kind: "workflow-completed",
+          projectName,
+          sessionName,
+        });
+      } else if (event.workflowStatus === "halted" && !hasCircuitBreaker) {
+        // Circuit-breaker events send their own, more specific push —
+        // skip the generic halt push to avoid duplicate notifications.
+        deps.dispatchPush({
+          kind: "workflow-halted",
+          projectName,
+          sessionName,
+        });
+      }
+    }
+
+    if (event.type === "graph-workflow-circuit-breaker") {
+      const contextDef = nextExecution.workingDefinition.executionContexts.find(
+        (c) => c.id === event.contextId,
+      );
+      deps.dispatchPush({
+        kind: "circuit-breaker",
+        projectName,
+        sessionName,
+        contextTitle: contextDef?.title ?? event.contextId,
+      });
+    }
+
+    if (
+      event.type === "graph-workflow-context-status" &&
+      event.status === "completed"
+    ) {
+      const contextDef = nextExecution.workingDefinition.executionContexts.find(
+        (c) => c.id === event.contextId,
+      );
+      const completedContexts = Object.values(
+        nextExecution.contextStates,
+      ).filter((cs) => cs.status === "completed").length;
+      const totalContexts =
+        nextExecution.workingDefinition.executionContexts.length;
+
+      deps.dispatchPush({
+        kind: "context-completed",
+        projectName,
+        sessionName,
+        contextTitle: contextDef?.title ?? event.contextId,
+        completedContexts,
+        totalContexts,
+      });
+    }
   }
 }
 
@@ -236,6 +321,7 @@ export function createGraphWorkflowExecutionEventPublisher(
 
     const occurredAt = getNow(deps);
     publishEvents(deps, events);
+    dispatchPushNotifications(deps, events, input, nextExecution);
     return appendEvents(nextExecution, occurredAt, events);
   }
 

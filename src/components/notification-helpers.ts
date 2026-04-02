@@ -81,6 +81,8 @@ export function getItemLabel(item: NotificationItem): string {
           return assertNever(status);
       }
     }
+    case "graph-workflow":
+      return `${item.completedContexts}/${item.totalContexts}`;
     default:
       return assertNever(item);
   }

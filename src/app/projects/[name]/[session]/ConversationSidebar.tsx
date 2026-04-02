@@ -81,10 +81,14 @@ export default function ConversationSidebar({
   const hydrateSidebar = useHydrateSidebar();
 
   // --- Active conversations query ---
-  const { data: activeConversations } = useActiveConversationsQuery();
+  const { data: activeData } = useActiveConversationsQuery();
   const activeConvoList = useMemo(
-    () => activeConversations ?? [],
-    [activeConversations],
+    () => activeData?.conversations ?? [],
+    [activeData],
+  );
+  const activeGraphWorkflows = useMemo(
+    () => activeData?.graphWorkflowExecutions ?? [],
+    [activeData],
   );
 
   // --- Session mutations ---
@@ -312,8 +316,11 @@ export default function ConversationSidebar({
                 onClick={() => setActiveTab("active")}
               >
                 Active
-                {activeConvoList.length > 0 && (
-                  <span className="cc-tab-count">{activeConvoList.length}</span>
+                {(activeConvoList.length > 0 ||
+                  activeGraphWorkflows.length > 0) && (
+                  <span className="cc-tab-count">
+                    {activeConvoList.length + activeGraphWorkflows.length}
+                  </span>
                 )}
               </button>
             </div>
@@ -471,7 +478,40 @@ export default function ConversationSidebar({
               </>
             ) : (
               <div className="convo-sidebar-list">
-                {activeConvoList.length === 0 ? (
+                {activeGraphWorkflows.length > 0 && (
+                  <div className="convo-sidebar-project-group">
+                    <div className="cc-section-header convo-sidebar-group-header">
+                      <span className="cc-section-label">Graph Workflows</span>
+                      <span className="cc-section-count">
+                        {activeGraphWorkflows.length}
+                      </span>
+                    </div>
+                    {activeGraphWorkflows.map((gw) => (
+                      <Link
+                        key={gw.executionId}
+                        href={`/projects/${encodeURIComponent(gw.projectName)}/${encodeURIComponent(gw.sessionName)}/workflow`}
+                        className="convo-sidebar-item"
+                      >
+                        {statusDot(gw.status)}
+                        <div className="convo-sidebar-item-body">
+                          <div className="convo-sidebar-item-name-row">
+                            <div className="convo-sidebar-item-summary">
+                              {gw.activeContextTitle ?? "Graph Workflow"}
+                            </div>
+                            <span className="convo-sidebar-active-time">
+                              {gw.completedContexts}/{gw.totalContexts}
+                            </span>
+                          </div>
+                          <span className="convo-sidebar-session-label">
+                            {gw.projectName} / {gw.sessionName}
+                          </span>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+                {activeConvoList.length === 0 &&
+                activeGraphWorkflows.length === 0 ? (
                   <div className="convo-sidebar-empty">
                     No active conversations.
                     <span className="convo-sidebar-empty-hint">

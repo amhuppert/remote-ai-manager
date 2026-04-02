@@ -16,6 +16,7 @@ function makeConversation(
     archived?: boolean;
     name?: string | null;
     summary?: string | null;
+    role?: string | null;
   } = {},
 ) {
   return {
@@ -36,7 +37,7 @@ function makeConversation(
     pendingQuestionId: null,
     pendingQuestions: null,
     forkedFrom: null,
-    role: null,
+    role: overrides.role ?? null,
     contextTokens: null,
     contextWindowMax: null,
   };
@@ -50,6 +51,7 @@ function makeState(
         sessionName: string;
         archived?: boolean;
         conversations: ReturnType<typeof makeConversation>[];
+        graphWorkflowExecution?: unknown;
       }
     >;
   } = {},
@@ -71,7 +73,7 @@ function makeState(
       tddEnabled: true,
       workflow: null,
       workflowHistory: [],
-      graphWorkflowExecution: null,
+      graphWorkflowExecution: s.graphWorkflowExecution ?? null,
       graphWorkflowExecutionHistory: [],
     };
   }
@@ -238,6 +240,129 @@ describe("GET /api/conversations/active", () => {
 
     expect(body.conversations[0].id).toBe("newer");
     expect(body.conversations[1].id).toBe("older");
+  });
+
+  it("returns active graph workflow executions", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [makeConversation({ id: "c1", status: "running" })],
+            graphWorkflowExecution: {
+              id: "exec-1",
+              seedDefinitionId: "def-1",
+              seedDefinitionRevision: 1,
+              workingDefinition: {
+                schemaVersion: 1,
+                executionContexts: [
+                  {
+                    id: "ctx-1",
+                    title: "Plan",
+                    description: "Plan the work",
+                    agent: { model: "opus", reasoningEffort: "high" },
+                    mutability: { allowAgentTaskAdd: false },
+                    circuitBreaker: {},
+                    iterationPolicy: { maxIterations: 3 },
+                  },
+                  {
+                    id: "ctx-2",
+                    title: "Implement",
+                    description: "Do the work",
+                    agent: { model: "sonnet", reasoningEffort: "medium" },
+                    mutability: { allowAgentTaskAdd: false },
+                    circuitBreaker: {},
+                    iterationPolicy: { maxIterations: 3 },
+                  },
+                ],
+                tasks: [],
+                edges: [],
+              },
+              status: "running",
+              activeContextId: "ctx-1",
+              contextStates: {
+                "ctx-1": {
+                  contextId: "ctx-1",
+                  status: "running",
+                  totalTaskCount: 2,
+                  completedTaskCount: 1,
+                  iterationCount: 1,
+                  consecutiveFailureCount: 0,
+                  lastValidationAt: null,
+                  lastValidationPass: null,
+                },
+                "ctx-2": {
+                  contextId: "ctx-2",
+                  status: "pending",
+                  totalTaskCount: 1,
+                  completedTaskCount: 0,
+                  iterationCount: 0,
+                  consecutiveFailureCount: 0,
+                  lastValidationAt: null,
+                  lastValidationPass: null,
+                },
+              },
+              taskStates: {},
+              retryState: {},
+              sharedDocuments: [],
+              machineSnapshot: null,
+              history: [],
+              startedAt: "2026-01-01T12:00:00.000Z",
+              completedAt: null,
+              haltReason: null,
+            },
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations).toHaveLength(1);
+    expect(body.graphWorkflowExecutions).toHaveLength(1);
+    expect(body.graphWorkflowExecutions[0]).toEqual({
+      executionId: "exec-1",
+      status: "running",
+      projectName: "my-project",
+      projectPath: "/home/user/my-project",
+      sessionName: "my-session",
+      activeContextTitle: "Plan",
+      completedContexts: 0,
+      totalContexts: 2,
+      startedAt: "2026-01-01T12:00:00.000Z",
+    });
+  });
+
+  it("excludes conversations with role 'iteration' (graph workflow)", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({ id: "c1", status: "running" }),
+              makeConversation({
+                id: "c2",
+                status: "running",
+                role: "iteration",
+              }),
+              makeConversation({
+                id: "c3",
+                status: "awaiting",
+                role: "validator",
+              }),
+            ],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations).toHaveLength(1);
+    expect(body.conversations[0].id).toBe("c1");
   });
 
   it("returns 500 when readState fails", async () => {

@@ -26,7 +26,9 @@ export default function UnifiedPanel(): React.JSX.Element | null {
   const isOpen = useUnifiedPanelOpen();
   const close = useCloseUnifiedPanel();
   const togglePanel = useToggleUnifiedPanel();
-  const { data: conversations, isPending } = useActiveConversationsQuery();
+  const { data: activeData, isPending } = useActiveConversationsQuery();
+  const conversations = activeData?.conversations;
+  const graphWorkflowExecutions = activeData?.graphWorkflowExecutions;
   const activeWorkflows = useActiveWorkflows();
   const pathname = usePathname();
   // Extract conversation ID from URL: /projects/<name>/<session>/<conversationId>
@@ -39,6 +41,12 @@ export default function UnifiedPanel(): React.JSX.Element | null {
   useAppHotkey("toggleActivePanel", togglePanel);
 
   if (!isOpen) return null;
+
+  const hasWorkflows = activeWorkflows.length > 0;
+  const hasGraphWorkflows =
+    graphWorkflowExecutions && graphWorkflowExecutions.length > 0;
+  const hasConversations = conversations && conversations.length > 0;
+  const hasAnyContent = hasWorkflows || hasGraphWorkflows || hasConversations;
 
   return (
     <>
@@ -55,8 +63,8 @@ export default function UnifiedPanel(): React.JSX.Element | null {
           </button>
         </div>
         <div className="unified-panel-body">
-          {/* Active Workflows */}
-          {activeWorkflows.length > 0 && (
+          {/* Active Workflows (Ralph Loop) */}
+          {hasWorkflows && (
             <div className="unified-panel-section">
               <div className="unified-panel-section-title">
                 Active Workflows
@@ -91,20 +99,52 @@ export default function UnifiedPanel(): React.JSX.Element | null {
             </div>
           )}
 
+          {/* Active Graph Workflow Executions */}
+          {hasGraphWorkflows && (
+            <div className="unified-panel-section">
+              <div className="unified-panel-section-title">Graph Workflows</div>
+              <ul className="unified-panel-list">
+                {graphWorkflowExecutions.map((gw) => (
+                  <li key={gw.executionId}>
+                    <Link
+                      href={`/projects/${encodeURIComponent(gw.projectName)}/${encodeURIComponent(gw.sessionName)}/workflow`}
+                      className="unified-panel-item"
+                      onClick={close}
+                    >
+                      <span
+                        className={`unified-panel-dot ${gw.status}`}
+                        title={gw.status}
+                      />
+                      <div className="unified-panel-item-body">
+                        <div className="unified-panel-item-name">
+                          {gw.activeContextTitle ?? "Graph Workflow"}
+                        </div>
+                        <div className="unified-panel-item-meta">
+                          {gw.projectName} / {gw.sessionName}
+                        </div>
+                      </div>
+                      <div className="unified-panel-item-time">
+                        {gw.completedContexts}/{gw.totalContexts}
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Active Conversations */}
           {isPending ? (
             <div className="unified-panel-empty">Loading...</div>
-          ) : !conversations || conversations.length === 0 ? (
-            activeWorkflows.length === 0 && (
-              <div className="unified-panel-empty">
-                No active conversations.
-                <br />
-                <span className="unified-panel-empty-hint">
-                  New, running, or awaiting conversations will appear here.
-                </span>
-              </div>
-            )
-          ) : (
+          ) : !hasAnyContent ? (
+            <div className="unified-panel-empty">
+              No active conversations.
+              <br />
+              <span className="unified-panel-empty-hint">
+                New, running, or awaiting conversations will appear here.
+              </span>
+            </div>
+          ) : hasConversations ? (
             <ul className="unified-panel-list">
               {conversations.map((convo) => (
                 <li key={convo.id}>
@@ -132,7 +172,7 @@ export default function UnifiedPanel(): React.JSX.Element | null {
                 </li>
               ))}
             </ul>
-          )}
+          ) : null}
         </div>
       </aside>
     </>

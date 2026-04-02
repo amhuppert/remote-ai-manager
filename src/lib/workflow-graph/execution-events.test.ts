@@ -224,4 +224,188 @@ describe("graph workflow execution event publisher", () => {
       }),
     );
   });
+
+  it("dispatches push notification when workflow completes", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+
+    const prev = createWorkflowExecution({ status: "running" });
+    const next = createWorkflowExecution({ ...prev, status: "completed" });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "sess-1",
+      previousExecution: prev,
+      nextExecution: next,
+    });
+
+    expect(dispatchPush).toHaveBeenCalledWith({
+      kind: "workflow-completed",
+      projectName: "repo",
+      sessionName: "sess-1",
+    });
+  });
+
+  it("dispatches push notification when workflow is halted", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+
+    const prev = createWorkflowExecution({ status: "running" });
+    const next = createWorkflowExecution({ ...prev, status: "halted" });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "sess-1",
+      previousExecution: prev,
+      nextExecution: next,
+    });
+
+    expect(dispatchPush).toHaveBeenCalledWith({
+      kind: "workflow-halted",
+      projectName: "repo",
+      sessionName: "sess-1",
+    });
+  });
+
+  it("dispatches push notification when circuit breaker trips", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+
+    const prev = createWorkflowExecution({ status: "running" });
+    const next = createWorkflowExecution({
+      ...prev,
+      status: "halted",
+      haltReason: {
+        type: "circuit_breaker",
+        contextId: "context-plan",
+        condition: "retry_exhaustion",
+        failureCount: 3,
+        summary: null,
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "sess-1",
+      previousExecution: prev,
+      nextExecution: next,
+    });
+
+    const pushKinds = dispatchPush.mock.calls.map(
+      (args: unknown[]) => (args[0] as { kind: string }).kind,
+    );
+    expect(pushKinds).toContain("circuit-breaker");
+    // Circuit-breaker push is more specific — generic workflow-halted should be suppressed
+    expect(pushKinds).not.toContain("workflow-halted");
+  });
+
+  it("dispatches push notification when execution context completes", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+
+    const prev = createWorkflowExecution({
+      status: "running",
+      activeContextId: "context-plan",
+      contextStates: {
+        "context-plan": {
+          contextId: "context-plan",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+        "context-implement": {
+          contextId: "context-implement",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+        "context-verify": {
+          contextId: "context-verify",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+      },
+    });
+    const next = createWorkflowExecution({
+      ...prev,
+      contextStates: {
+        ...prev.contextStates,
+        "context-plan": {
+          ...prev.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+        },
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "sess-1",
+      previousExecution: prev,
+      nextExecution: next,
+    });
+
+    expect(dispatchPush).toHaveBeenCalledWith({
+      kind: "context-completed",
+      projectName: "repo",
+      sessionName: "sess-1",
+      contextTitle: "Plan",
+      completedContexts: 1,
+      totalContexts: 3,
+    });
+  });
+
+  it("does not dispatch push when dispatchPush dep is not provided", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+
+    const prev = createWorkflowExecution({ status: "running" });
+    const next = createWorkflowExecution({ ...prev, status: "completed" });
+
+    // Should not throw even without dispatchPush
+    expect(() => {
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "sess-1",
+        previousExecution: prev,
+        nextExecution: next,
+      });
+    }).not.toThrow();
+  });
 });

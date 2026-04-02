@@ -242,11 +242,10 @@ export function useActiveConversationsQuery() {
   return useQuery({
     queryKey: conversationKeys.active,
     queryFn: async () => {
-      const data = await apiFetch(
+      return apiFetch(
         "/api/conversations/active",
         activeConversationsResponseSchema,
       );
-      return data.conversations;
     },
     refetchInterval: 10_000,
   });

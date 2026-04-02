@@ -264,6 +264,7 @@ function createProvidedMachine() {
             sessionName: context.sessionName,
             conversationId: context.conversationId,
             status: context.status,
+            role: context.role,
           });
         })();
       },
