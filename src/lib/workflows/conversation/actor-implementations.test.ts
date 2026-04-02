@@ -85,7 +85,6 @@ function createMockDeps(
     createQuerySession: vi.fn(() => mockQuerySession),
     buildChildEnv: vi.fn(() => ({ HOME: "/home/test" })),
     resolvePluginPaths: vi.fn(async () => []),
-    createInitToolServer: vi.fn(() => null),
     createNotificationToolServer: vi.fn(() => null),
     createRoadmapToolServer: vi.fn(() => ({})),
     createWiredPlannerToolServer: vi.fn(() => ({})),

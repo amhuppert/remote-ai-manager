@@ -152,8 +152,6 @@ const makeSessions = (count: number): SessionState[] =>
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    workflow: null,
-    workflowHistory: [],
     graphWorkflowExecution: null,
     graphWorkflowExecutionHistory: [],
     referenceDocuments: [],

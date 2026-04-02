@@ -48,7 +48,7 @@ function getState(): SemaphoreState {
  * Acquire a semaphore slot. Returns a release function.
  * If at capacity, waits in a FIFO queue until a slot opens or timeout expires.
  *
- * @param label - Descriptive label for logging (e.g. "prompt:sessionName" or "ralph:sessionName")
+ * @param label - Descriptive label for logging (e.g. "prompt:sessionName")
  */
 export async function acquireQuerySlot(label: string): Promise<() => void> {
   const state = getState();

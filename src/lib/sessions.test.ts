@@ -100,7 +100,6 @@ function stateWithSession(
             objective: null,
             creationMode: "fast" as const,
             tddEnabled: true,
-            workflow: null,
             ...overrides,
           },
         },
@@ -1472,7 +1471,6 @@ describe("retargetOrphanedChildren", () => {
         tddEnabled: true,
         targetBranch: "main",
         parentSessionName: null,
-        workflow: null,
       },
     };
     for (const child of children) {
@@ -1491,7 +1489,6 @@ describe("retargetOrphanedChildren", () => {
         tddEnabled: true,
         targetBranch: child.targetBranch,
         parentSessionName: child.parentSessionName,
-        workflow: null,
       };
     }
     return {
@@ -1616,7 +1613,6 @@ describe("deleteSession — orphan retargeting", () => {
               tddEnabled: true,
               targetBranch: "main",
               parentSessionName: null,
-              workflow: null,
             },
             Child: {
               sessionName: "Child",
@@ -1633,7 +1629,6 @@ describe("deleteSession — orphan retargeting", () => {
               tddEnabled: true,
               targetBranch: "csm/parent",
               parentSessionName: "Parent",
-              workflow: null,
             },
           },
           roadmapItems: [],

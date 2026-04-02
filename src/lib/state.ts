@@ -540,35 +540,6 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
     });
   }
 
-  /**
-   * On startup, detect workflows stuck in "running" status and reset to "stopped".
-   * Follows the same recovery pattern as recoverStaleConversations.
-   */
-  async function recoverStaleWorkflows(): Promise<number> {
-    return mutateState("recoverStaleWorkflows", (state) => {
-      let recovered = 0;
-
-      for (const project of Object.values(state.projects)) {
-        for (const session of Object.values(project.sessions)) {
-          if (session.workflow && session.workflow.status === "running") {
-            logger.warn("state.recover_stale_workflow", {
-              sessionName: session.sessionName,
-              previousStatus: session.workflow.status,
-            });
-            session.workflow.status = "stopped";
-            recovered++;
-          }
-        }
-      }
-
-      if (recovered > 0) {
-        logger.info("state.workflow_recovery_complete", { recovered });
-      }
-
-      return recovered;
-    });
-  }
-
   // ----------------------------------------------------------
   // Roadmap Item Mutations
   // ----------------------------------------------------------
@@ -753,7 +724,6 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
     setProjectPinned,
     recoverStaleConversations,
     recoverOrphanedConversations,
-    recoverStaleWorkflows,
     getRoadmapItems,
     createRoadmapItem,
     updateRoadmapItem,
@@ -791,7 +761,6 @@ export const recoverStaleConversations =
   defaultManager.recoverStaleConversations;
 export const recoverOrphanedConversations =
   defaultManager.recoverOrphanedConversations;
-export const recoverStaleWorkflows = defaultManager.recoverStaleWorkflows;
 export const getRoadmapItems = defaultManager.getRoadmapItems;
 export const createRoadmapItem = defaultManager.createRoadmapItem;
 export const updateRoadmapItem = defaultManager.updateRoadmapItem;

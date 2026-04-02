@@ -288,8 +288,6 @@ export async function discoverAndImportWorktrees(
       tddEnabled: true,
       targetBranch: "main",
       parentSessionName: null,
-      workflow: null,
-      workflowHistory: [],
       graphWorkflowExecution: null,
       graphWorkflowExecutionHistory: [],
       referenceDocuments: [],

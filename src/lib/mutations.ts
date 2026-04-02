@@ -4,7 +4,6 @@ import {
   projectKeys,
   sessionKeys,
   conversationKeys,
-  workflowKeys,
   workflowDefinitionKeys,
   presetKeys,
   roadmapItemKeys,
@@ -18,10 +17,6 @@ import {
 } from "@/lib/schemas";
 import {
   mutationFetch,
-  workflowMutationResponseSchema,
-  statusResponseSchema,
-  fixPlanMutationResponseSchema,
-  workflowConfigMutationResponseSchema,
   finalizeInitResponseSchema,
   installPresetResponseSchema,
   roadmapItemMutationResponseSchema,
@@ -30,8 +25,6 @@ import {
 } from "@/lib/api-client";
 import type {
   ImagePayload,
-  FixPlanTask,
-  RalphLoopConfig,
   RoadmapItemType,
   RoadmapItemStatus,
   SessionState,
@@ -755,244 +748,9 @@ export function useGenericRenameConversationMutation() {
 }
 
 // ---------------------------------------------------------------------------
-// Workflow Mutations
+// Preset Mutations
 // ---------------------------------------------------------------------------
 
-function workflowUrl(projectName: string, sessionName: string, path = "") {
-  return `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow${path}`;
-}
-
-export function useStartWorkflowMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (objective?: string) =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName),
-        "start-workflow",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ objective }),
-        },
-        workflowMutationResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
-    },
-  });
-}
-
-export function useUpdateWorkflowObjectiveMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (objective: string) =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName),
-        "update-workflow-objective",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ objective }),
-        },
-        workflowMutationResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
-    },
-  });
-}
-
-export function useConfirmWorkflowMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: () =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName, "/confirm"),
-        "confirm-workflow",
-        { method: "POST" },
-        workflowMutationResponseSchema,
-      ),
-    onSuccess: (data) => {
-      queryClient.setQueryData(
-        workflowKeys.status(projectName, sessionName),
-        data.workflow,
-      );
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
-    },
-  });
-}
-
-export function useStopWorkflowMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: () =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName, "/stop"),
-        "stop-workflow",
-        { method: "POST" },
-        statusResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
-    },
-  });
-}
-
-export function useResumeWorkflowMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: () =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName, "/resume"),
-        "resume-workflow",
-        { method: "POST" },
-        workflowMutationResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
-    },
-  });
-}
-
-export function useResetWorkflowMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: () =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName, "/reset"),
-        "reset-workflow",
-        { method: "POST" },
-        statusResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
-    },
-  });
-}
-
-export function useUpdateFixPlanMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (fixPlan: FixPlanTask[]) =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName, "/fix-plan"),
-        "update-fix-plan",
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fixPlan }),
-        },
-        fixPlanMutationResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
-    },
-  });
-}
-
-export function useUpdateWorkflowConfigMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (config: RalphLoopConfig) =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName, "/config"),
-        "update-workflow-config",
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(config),
-        },
-        workflowConfigMutationResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
-    },
-  });
-}
-
-export function useGeneratePlanMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: () =>
-      mutationFetch(
-        workflowUrl(projectName, sessionName, "/generate-plan"),
-        "generate-plan",
-        { method: "POST" },
-        statusResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowKeys.status(projectName, sessionName),
-      });
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Preset Mutations
 // ---------------------------------------------------------------------------
 

@@ -7,7 +7,6 @@ import {
   conversationKeys,
   commandKeys,
   fileKeys,
-  workflowKeys,
   workflowDefinitionKeys,
   kiroDocKeys,
   notificationKeys,
@@ -30,8 +29,6 @@ import {
   contentResponseSchema,
   kiroDocTreeSchema,
   presetsResponseSchema,
-  workflowResponseSchema,
-  workflowIterationsResponseSchema,
   workflowDefinitionsResponseSchema,
   workflowDefinitionMutationResponseSchema,
   roadmapItemsResponseSchema,
@@ -337,37 +334,6 @@ export function useProjectFilesQuery(
         projectFilesResponseSchema,
       ),
     enabled: options?.enabled,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Workflow Queries
-// ---------------------------------------------------------------------------
-
-export function useWorkflowQuery(projectName: string, sessionName: string) {
-  return useQuery({
-    queryKey: workflowKeys.status(projectName, sessionName),
-    queryFn: () =>
-      apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow`,
-        workflowResponseSchema,
-      ).then((r) => r.workflow),
-    refetchInterval: 5_000,
-  });
-}
-
-export function useWorkflowIterationsQuery(
-  projectName: string,
-  sessionName: string,
-) {
-  return useQuery({
-    queryKey: workflowKeys.iterations(projectName, sessionName),
-    queryFn: () =>
-      apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/workflow/iterations`,
-        workflowIterationsResponseSchema,
-      ).then((r) => r.iterations),
-    enabled: false, // Only fetch on demand
   });
 }
 

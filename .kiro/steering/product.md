@@ -10,7 +10,7 @@ CC (Command Center) is a web-based control plane for managing remote Claude Code
 4. **Live Observability** — Stores conversation transcripts as own JSONL files and computes git diffs to show conversation history and code changes per session
 5. **Real-Time Status** — Broadcasts events via SSE (conversation status, jobs, notifications, workflows, dev servers) to drive UI updates and browser notifications
 6. **Background Jobs** — Fire-and-forget merge, commit, and conflict resolution operations with SQLite-backed notification history
-7. **Ralph Loop Workflows** — Autonomous multi-iteration development loops with fix plans, circuit breakers, and progress detection
+7. **Graph Workflows** — Declarative multi-context workflow execution with task graphs, validation, retries, and circuit breakers
 8. **Dev Server Automation** — Spawns and manages dev servers per session with liveness polling and remote URL resolution (Tailscale)
 9. **Voice Input** — Voice-to-text prompt entry via Whisper transcription
 
@@ -19,7 +19,7 @@ CC (Command Center) is a web-based control plane for managing remote Claude Code
 - **Multi-repo development** — Manage Claude Code sessions across several repositories from one place
 - **Parallel sessions** — Run multiple isolated Claude sessions within the same project simultaneously (each in its own worktree)
 - **Remote monitoring** — Observe what Claude is doing across sessions: conversation transcripts, code diffs, session status
-- **Autonomous development** — Ralph Loop runs iterative coding cycles with automatic progress tracking, fix plans, and circuit breakers for unattended operation
+- **Autonomous development** — Graph workflows run structured multi-context coding cycles with task graphs, validation, retries, and circuit breakers for unattended operation
 
 ## Value Proposition
 

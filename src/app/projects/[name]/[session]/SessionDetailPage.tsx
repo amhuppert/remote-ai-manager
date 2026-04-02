@@ -258,14 +258,12 @@ export default function SessionDetailPage({
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
   const isFinished = session?.finished ?? false;
   const targetBranch = session?.targetBranch ?? "main";
-  const workflowActive = session?.workflow?.status === "running";
   const conversationRole = session?.conversations.find(
     (c) => c.id === conversationId,
   )?.role;
   const isWorkflowManagedConversation =
     conversationRole === "iteration" || conversationRole === "validator";
-  const isReadOnly =
-    isFinished || workflowActive || isWorkflowManagedConversation;
+  const isReadOnly = isFinished || isWorkflowManagedConversation;
   const isBusy =
     sending ||
     sessionStatus === "running" ||
@@ -1242,11 +1240,6 @@ export default function SessionDetailPage({
               This session has been merged into {targetBranch} and is read-only.
             </div>
           )}
-          {workflowActive && !isFinished && (
-            <div className="finished-banner">
-              Workflow is active — prompts are blocked during execution.
-            </div>
-          )}
 
           {/* Sidebar expand button — rendered outside session-content-area to avoid overflow:hidden clipping */}
           {conversations && sidebarCollapsed && (
@@ -1552,10 +1545,7 @@ export default function SessionDetailPage({
                       placeholder={
                         isFinished
                           ? "Session is merged and read-only"
-                          : workflowActive
-                            ? "Prompts blocked during active workflow"
-                            : (promptPlaceholder ??
-                              "Send a prompt to Claude...")
+                          : (promptPlaceholder ?? "Send a prompt to Claude...")
                       }
                       rows={1}
                       value={promptText}

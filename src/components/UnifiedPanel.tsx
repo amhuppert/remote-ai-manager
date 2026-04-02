@@ -9,7 +9,6 @@ import {
   useCloseUnifiedPanel,
   useToggleUnifiedPanel,
 } from "@/stores/unified-panel.store";
-import { useActiveWorkflows } from "@/stores/workflow.store";
 
 function formatRelativeTime(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
@@ -29,7 +28,6 @@ export default function UnifiedPanel(): React.JSX.Element | null {
   const { data: activeData, isPending } = useActiveConversationsQuery();
   const conversations = activeData?.conversations;
   const graphWorkflowExecutions = activeData?.graphWorkflowExecutions;
-  const activeWorkflows = useActiveWorkflows();
   const pathname = usePathname();
   // Extract conversation ID from URL: /projects/<name>/<session>/<conversationId>
   const pathSegments = pathname.split("/");
@@ -42,11 +40,10 @@ export default function UnifiedPanel(): React.JSX.Element | null {
 
   if (!isOpen) return null;
 
-  const hasWorkflows = activeWorkflows.length > 0;
   const hasGraphWorkflows =
     graphWorkflowExecutions && graphWorkflowExecutions.length > 0;
   const hasConversations = conversations && conversations.length > 0;
-  const hasAnyContent = hasWorkflows || hasGraphWorkflows || hasConversations;
+  const hasAnyContent = hasGraphWorkflows || hasConversations;
 
   return (
     <>
@@ -63,42 +60,6 @@ export default function UnifiedPanel(): React.JSX.Element | null {
           </button>
         </div>
         <div className="unified-panel-body">
-          {/* Active Workflows (Ralph Loop) */}
-          {hasWorkflows && (
-            <div className="unified-panel-section">
-              <div className="unified-panel-section-title">
-                Active Workflows
-              </div>
-              <ul className="unified-panel-list">
-                {activeWorkflows.map((wf) => (
-                  <li key={`${wf.projectName}::${wf.sessionName}`}>
-                    <Link
-                      href={`/projects/${encodeURIComponent(wf.projectName)}/${encodeURIComponent(wf.sessionName)}`}
-                      className="unified-panel-item"
-                      onClick={close}
-                    >
-                      <span
-                        className={`unified-panel-dot ${wf.status}`}
-                        title={wf.status}
-                      />
-                      <div className="unified-panel-item-body">
-                        <div className="unified-panel-item-name">
-                          Ralph Loop
-                        </div>
-                        <div className="unified-panel-item-meta">
-                          {wf.projectName} / {wf.sessionName}
-                        </div>
-                      </div>
-                      <div className="unified-panel-item-time">
-                        {wf.iterationCount}/{wf.maxIterations}
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
           {/* Active Graph Workflow Executions */}
           {hasGraphWorkflows && (
             <div className="unified-panel-section">

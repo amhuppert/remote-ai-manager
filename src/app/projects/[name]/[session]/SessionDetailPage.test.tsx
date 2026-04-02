@@ -190,8 +190,6 @@ const baseSession: SessionState = {
   objective: null,
   creationMode: "fast" as const,
   tddEnabled: true,
-  workflow: null,
-  workflowHistory: [],
   graphWorkflowExecution: null,
   graphWorkflowExecutionHistory: [],
   referenceDocuments: [],

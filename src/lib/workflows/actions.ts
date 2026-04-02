@@ -2,51 +2,17 @@
  * Generic XState action library for workflow machines.
  *
  * This module contains workflow-agnostic actions: snapshot persistence,
- * generic SSE broadcasting, and notification creation. Workflow-specific
- * actions (e.g., Ralph Loop iteration broadcasts) live in their own
- * workflow directories.
+ * generic SSE broadcasting, and notification creation.
  *
  * All actions use the XState v5 named-actions-with-params pattern so they
  * can be provided/overridden via machine.provide() in tests.
  */
 
-import type {
-  SSEEvent,
-  WorkflowStatus,
-  HaltReason,
-  NotificationType,
-  JobType,
-} from "@/types";
-
-// Re-export Ralph Loop-specific actions for backward compatibility.
-// New code should import directly from "@/lib/workflows/ralph-loop/actions".
-export {
-  broadcastIterationComplete,
-  broadcastFixPlanUpdated,
-  broadcastCircuitBreaker,
-  type BroadcastIterationCompleteParams,
-  type BroadcastFixPlanUpdatedParams,
-  type BroadcastCircuitBreakerParams,
-} from "./ralph-loop/actions";
+import type { SSEEvent, NotificationType, JobType } from "@/types";
 
 // ============================================================
 // Action parameter types
 // ============================================================
-
-export interface BroadcastStatusParams {
-  projectName: string;
-  sessionName: string;
-  workflowStatus: WorkflowStatus;
-  iterationCount: number;
-  maxIterations: number;
-  taskProgress: {
-    total: number;
-    completed: number;
-    skipped: number;
-    pending: number;
-  };
-  haltReason: HaltReason | null;
-}
 
 /** Parameters for the generic broadcastWorkflowEvent action. */
 export interface BroadcastWorkflowEventParams {
@@ -117,8 +83,8 @@ function getDefaultDeps(): WorkflowActionDeps {
 
 /**
  * Get the current action dependencies.
- * Used by workflow-specific action modules (e.g., ralph-loop/actions.ts)
- * to access the shared broadcast/persist infrastructure.
+ * Used by workflow-specific action modules to access the shared
+ * broadcast/persist infrastructure.
  */
 export function getActionDeps(): WorkflowActionDeps {
   return getDefaultDeps();
@@ -137,19 +103,6 @@ export function _resetDepsForTesting(): void {
 // ============================================================
 // Generic Named Actions
 // ============================================================
-
-/**
- * Broadcast a workflow-status SSE event.
- */
-export function broadcastStatus(
-  _actionContext: unknown,
-  params: BroadcastStatusParams,
-): void {
-  getDefaultDeps().broadcast({
-    type: "workflow-status",
-    ...params,
-  });
-}
 
 /**
  * Generic SSE event broadcaster.
@@ -196,7 +149,6 @@ export function createNotificationAction(
  *   const machine = setup({ actions: { ...workflowActions } }).createMachine(...)
  */
 export const workflowActions = {
-  broadcastStatus,
   broadcastWorkflowEvent,
   persistSnapshot,
   createNotificationAction,

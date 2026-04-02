@@ -1,4 +1,4 @@
-import { recoverStaleConversations, recoverStaleWorkflows } from "./lib/state";
+import { recoverStaleConversations } from "./lib/state";
 import { startMergeDetection } from "./lib/merge-detection";
 import { initialize as initNotificationDb } from "./lib/notification-db";
 import { setConfigReader } from "./lib/push-dispatcher";
@@ -13,13 +13,6 @@ export async function register() {
     const recovered = await recoverStaleConversations();
     if (recovered > 0) {
       logger.info("startup.recovered_stale_conversations", { recovered });
-    }
-
-    const workflowsRecovered = await recoverStaleWorkflows();
-    if (workflowsRecovered > 0) {
-      logger.info("startup.recovered_stale_workflows", {
-        recovered: workflowsRecovered,
-      });
     }
   } catch (err) {
     logger.error("startup.recovery_failed", {

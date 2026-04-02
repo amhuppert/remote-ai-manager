@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   pushForNotification,
   pushForConversationStatus,
-  pushForWorkflowStatus,
   pushForGraphWorkflowEvent,
 } from "./push-dispatcher";
 import type { PushNotificationConfig, Notification } from "@/types";
@@ -191,66 +190,6 @@ describe("pushForConversationStatus", () => {
     });
 
     expect(sendPushNotification).toHaveBeenCalledOnce();
-  });
-});
-
-describe("pushForWorkflowStatus", () => {
-  beforeEach(() => {
-    sendPushNotification.mockReset();
-  });
-
-  it("sends push for completed workflow", async () => {
-    await pushForWorkflowStatus(pushConfig, {
-      projectName: "proj",
-      sessionName: "sess",
-      workflowStatus: "completed",
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledOnce();
-    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
-      trigger: "workflow-completed",
-      title: "Workflow completed",
-      message: "Ralph Loop workflow completed for session sess",
-      projectName: "proj",
-      sessionName: "sess",
-    });
-  });
-
-  it("sends push for halted workflow", async () => {
-    await pushForWorkflowStatus(pushConfig, {
-      projectName: "proj",
-      sessionName: "sess",
-      workflowStatus: "halted",
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledOnce();
-    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
-      trigger: "workflow-halted",
-      title: "Workflow halted",
-      message: "Ralph Loop workflow halted for session sess",
-      projectName: "proj",
-      sessionName: "sess",
-    });
-  });
-
-  it("does not send push for running workflow", async () => {
-    await pushForWorkflowStatus(pushConfig, {
-      projectName: "proj",
-      sessionName: "sess",
-      workflowStatus: "running",
-    });
-
-    expect(sendPushNotification).not.toHaveBeenCalled();
-  });
-
-  it("does not send push for stopped workflow", async () => {
-    await pushForWorkflowStatus(pushConfig, {
-      projectName: "proj",
-      sessionName: "sess",
-      workflowStatus: "stopped",
-    });
-
-    expect(sendPushNotification).not.toHaveBeenCalled();
   });
 });
 

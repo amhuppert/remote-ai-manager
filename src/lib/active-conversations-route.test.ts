@@ -71,8 +71,6 @@ function makeState(
       objective: null,
       creationMode: "fast",
       tddEnabled: true,
-      workflow: null,
-      workflowHistory: [],
       graphWorkflowExecution: s.graphWorkflowExecution ?? null,
       graphWorkflowExecutionHistory: [],
     };

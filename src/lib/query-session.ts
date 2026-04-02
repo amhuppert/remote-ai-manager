@@ -33,7 +33,7 @@ const logger = createLogger("query-session");
 // ============================================================
 
 export interface TurnOptions {
-  /** When true, AskUserQuestion tool is denied (used by optimistic/Ralph Loop callers) */
+  /** When true, AskUserQuestion tool is denied (used by autonomous callers) */
   autonomous?: boolean;
 }
 

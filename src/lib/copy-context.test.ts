@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildSessionContext, buildConversationContext } from "./copy-context";
-import type {
-  SessionState,
-  GraphWorkflowExecution,
-  RalphLoopWorkflow,
-} from "@/types";
+import type { SessionState, GraphWorkflowExecution } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,8 +50,6 @@ function makeSession(overrides: Record<string, unknown> = {}): SessionState {
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    workflow: null,
-    workflowHistory: [],
     graphWorkflowExecution: null,
     graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
@@ -197,87 +191,6 @@ function makeGraphWorkflowExecution(
   } as GraphWorkflowExecution;
 }
 
-function makeRalphLoopWorkflow(
-  overrides: Record<string, unknown> = {},
-): RalphLoopWorkflow {
-  return {
-    status: "running",
-    objective: "Implement dark mode",
-    fixPlan: [
-      {
-        id: "fp-1",
-        description: "Add theme provider",
-        group: 1,
-        status: "completed" as const,
-        createdAt: "2026-03-28T09:30:00Z",
-        completedAt: "2026-03-28T10:15:00Z",
-        skipReason: null,
-        addedByIteration: null,
-      },
-      {
-        id: "fp-2",
-        description: "Update components",
-        group: 1,
-        status: "pending" as const,
-        createdAt: "2026-03-28T09:30:00Z",
-        completedAt: null,
-        skipReason: null,
-        addedByIteration: null,
-      },
-    ],
-    references: [],
-    config: {
-      maxIterations: 20,
-      iterationTimeoutMs: 900000,
-      contextSoftLimitTokens: 160000,
-      contextHardLimitTokens: 180000,
-      circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
-      model: "sonnet" as const,
-      effort: "high" as const,
-    },
-    circuitBreaker: {
-      state: "closed" as const,
-      consecutiveNoProgress: 0,
-      consecutiveSameError: 0,
-      lastErrorPattern: null,
-      lastProgressIteration: 0,
-    },
-    iterations: [
-      {
-        iterationNumber: 1,
-        conversationId: "conv-iter-1",
-        status: "completed",
-        startedAt: "2026-03-28T10:00:00Z",
-        completedAt: "2026-03-28T10:15:00Z",
-        durationMs: 900000,
-        costUsd: 0.15,
-        turns: 8,
-        gitMetrics: {
-          filesChanged: 3,
-          linesAdded: 50,
-          linesRemoved: 10,
-          changedFiles: ["a.ts", "b.ts", "c.ts"],
-        },
-        statusReport: null,
-        tasksCompleted: ["Add theme provider"],
-        tasksSkipped: [],
-        tasksAdded: [],
-        progressClassification: "progress",
-        peakContextTokens: 50000,
-      },
-    ],
-    haltReason: null,
-    generatingPlan: false,
-    createdAt: "2026-03-28T09:30:00Z",
-    startedAt: "2026-03-28T10:00:00Z",
-    completedAt: null,
-    totalCostUsd: 0.15,
-    totalDurationMs: 900000,
-    currentIterationConversationId: "conv-iter-2",
-    ...overrides,
-  } as RalphLoopWorkflow;
-}
-
 // ---------------------------------------------------------------------------
 // Tests: buildSessionContext
 // ---------------------------------------------------------------------------
@@ -335,48 +248,7 @@ describe("buildSessionContext", () => {
       sessionName: "s",
       session,
     });
-    expect(result).not.toContain("<ralph-loop>");
     expect(result).not.toContain("<graph-workflow>");
-  });
-
-  it("includes ralph loop workflow info when active", () => {
-    const workflow = makeRalphLoopWorkflow();
-    const session = makeSession({ workflow });
-    const result = buildSessionContext({
-      projectName: "p",
-      sessionName: "s",
-      session,
-    });
-
-    expect(result).toContain("<ralph-loop>");
-    expect(result).toContain("<workflow-status>running</workflow-status>");
-    expect(result).toContain("<objective>Implement dark mode</objective>");
-    expect(result).toContain("<iteration-count>1</iteration-count>");
-    expect(result).toContain("<max-iterations>20</max-iterations>");
-    expect(result).toContain(
-      "<current-iteration-conversation-id>conv-iter-2</current-iteration-conversation-id>",
-    );
-    expect(result).toContain("<total-cost-usd>0.15</total-cost-usd>");
-    expect(result).toContain("<total-duration-ms>900000</total-duration-ms>");
-    expect(result).toContain("</ralph-loop>");
-  });
-
-  it("includes ralph loop halt reason when halted", () => {
-    const workflow = makeRalphLoopWorkflow({
-      status: "halted",
-      haltReason: {
-        type: "circuit_breaker",
-        reason: "no_progress",
-      },
-    });
-    const session = makeSession({ workflow });
-    const result = buildSessionContext({
-      projectName: "p",
-      sessionName: "s",
-      session,
-    });
-
-    expect(result).toContain("<halt-reason>circuit_breaker</halt-reason>");
   });
 
   it("includes graph workflow execution info when active", () => {
@@ -543,7 +415,6 @@ describe("buildConversationContext", () => {
       session,
       conversationId: "conv-1",
     });
-    expect(result).not.toContain("<ralph-loop>");
     expect(result).not.toContain("<graph-workflow>");
   });
 
@@ -572,27 +443,6 @@ describe("buildConversationContext", () => {
     expect(result).toContain(
       "<linked-task-title>Wire up events</linked-task-title>",
     );
-  });
-
-  it("includes ralph loop info on conversation page", () => {
-    const workflow = makeRalphLoopWorkflow();
-    const session = makeSession({
-      workflow,
-      conversations: [
-        makeConversation({ id: "conv-iter-2", role: "iteration" }),
-      ],
-    });
-    const result = buildConversationContext({
-      projectName: "p",
-      sessionName: "s",
-      session,
-      conversationId: "conv-iter-2",
-    });
-
-    expect(result).toContain("<ralph-loop>");
-    expect(result).toContain("<workflow-status>running</workflow-status>");
-    expect(result).toContain("<objective>Implement dark mode</objective>");
-    expect(result).toContain("<iteration-count>1</iteration-count>");
   });
 
   it("handles missing conversation gracefully", () => {

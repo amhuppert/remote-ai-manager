@@ -28,7 +28,6 @@ import {
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import CopyableId from "@/components/CopyableId";
-import WorkflowCard from "./WorkflowCard";
 import GraphWorkflowCard from "./GraphWorkflowCard";
 import SessionGitPanel from "./SessionGitPanel";
 import CommitDialog from "./CommitDialog";
@@ -121,8 +120,6 @@ export default function ConversationList({
   const decodedProjectName = decodeURIComponent(projectName);
   const isFinished = session?.finished ?? false;
   const targetBranch = session?.targetBranch ?? "main";
-  const hasWorkflow = session?.workflow != null;
-
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
   const isBusy =
     sessionStatus === "running" || sessionStatus === "waiting_for_input";
@@ -364,22 +361,13 @@ export default function ConversationList({
               </div>
             )}
 
-            {/* Workflow Card — Ralph Loop and Graph Workflow are mutually exclusive */}
-            {hasWorkflow && session?.workflow ? (
-              <WorkflowCard
+            {session && (
+              <GraphWorkflowCard
                 projectName={projectName}
                 sessionName={sessionName}
-                workflow={session.workflow}
+                execution={session.graphWorkflowExecution ?? null}
+                isFinished={isFinished}
               />
-            ) : (
-              session && (
-                <GraphWorkflowCard
-                  projectName={projectName}
-                  sessionName={sessionName}
-                  execution={session.graphWorkflowExecution ?? null}
-                  isFinished={isFinished}
-                />
-              )
             )}
 
             {/* Finished banner */}

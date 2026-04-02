@@ -14,7 +14,7 @@ interface GraphWorkflowCardProps {
 }
 
 // ---------------------------------------------------------------------------
-// Status helpers (mirrors WorkflowCard pattern for Ralph Loop)
+// Status helpers
 // ---------------------------------------------------------------------------
 
 function getStatusColor(status: GraphWorkflowStatus): string {

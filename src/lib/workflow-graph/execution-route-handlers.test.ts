@@ -33,8 +33,6 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    workflow: null,
-    workflowHistory: [],
     graphWorkflowExecution: null,
     graphWorkflowExecutionHistory: [],
     referenceDocuments: [],

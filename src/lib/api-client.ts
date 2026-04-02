@@ -9,12 +9,8 @@ import { z } from "zod";
 import {
   sessionStateSchema,
   commitLogEntrySchema,
-  ralphLoopWorkflowSchema,
-  ralphLoopIterationMetaSchema,
   roadmapItemSchema,
   messageContentBlockSchema,
-  fixPlanTaskSchema,
-  ralphLoopConfigSchema,
   workflowDefinitionRecordSchema,
   workflowGeneratedDraftSchema,
 } from "@/lib/schemas";
@@ -162,27 +158,6 @@ export const presetInfoSchema = z.object({
 
 export const presetsResponseSchema = z.object({
   presets: z.array(presetInfoSchema),
-});
-
-// -- Workflows --
-export const workflowResponseSchema = z.object({
-  workflow: ralphLoopWorkflowSchema.nullable(),
-});
-
-export const workflowIterationsResponseSchema = z.object({
-  iterations: z.array(ralphLoopIterationMetaSchema),
-});
-
-export const workflowMutationResponseSchema = z.object({
-  workflow: ralphLoopWorkflowSchema,
-});
-
-export const fixPlanMutationResponseSchema = z.object({
-  fixPlan: z.array(fixPlanTaskSchema),
-});
-
-export const workflowConfigMutationResponseSchema = z.object({
-  config: ralphLoopConfigSchema,
 });
 
 export const statusResponseSchema = z.object({

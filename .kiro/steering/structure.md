@@ -28,7 +28,7 @@ Hybrid approach: **feature-colocated components** within App Router pages, **sha
 
 **Location**: `src/lib/`
 **Purpose**: All business logic, data access, and utilities
-**Pattern**: One module per domain concept (e.g., `sessions.ts`, `state.ts`, `config.ts`, `prompt.ts`, `transcript.ts`); use nested directories when a domain has multiple related files (e.g., `src/lib/logging/`, `src/lib/ralph-loop/`)
+**Pattern**: One module per domain concept (e.g., `sessions.ts`, `state.ts`, `config.ts`, `prompt.ts`, `transcript.ts`); use nested directories when a domain has multiple related files (e.g., `src/lib/logging/`, `src/lib/workflows/`)
 **React Query**: Query factories in `queries.ts`, mutation factories in `mutations.ts`, key definitions in `query-keys.ts`
 
 ### API Routes (`src/app/api/`)

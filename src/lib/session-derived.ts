@@ -20,13 +20,6 @@ export function deriveSessionStatus(
   // Finished sessions are done — conversation statuses are irrelevant
   if (session.finished) return "idle";
 
-  // Workflow status takes priority — provides stable status during execution
-  if (session.workflow) {
-    const ws = session.workflow.status;
-    if (ws === "running") return "running";
-    // planning, completed, halted, stopped — fall through to conversation-based
-  }
-
   if (session.conversations.length === 0) {
     return "idle";
   }

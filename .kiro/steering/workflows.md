@@ -1,6 +1,6 @@
 # Workflow Orchestration with XState
 
-All multi-step background workflows use XState v5 state machines. Three machines exist today: **Optimistic** (prompt + merge), **Smart Merge** (git pipeline), and **Ralph Loop** (autonomous dev loop). New workflows follow the same patterns.
+All multi-step background workflows use XState v5 state machines. Two machines exist today: **Optimistic** (prompt + merge) and **Smart Merge** (git pipeline). New workflows follow the same patterns.
 
 ## Directory Convention
 
@@ -163,11 +163,11 @@ actions: {
 }
 ```
 
-Available actions: `broadcastStatus`, `broadcastIterationComplete`, `broadcastFixPlanUpdated`, `broadcastCircuitBreaker`, `persistSnapshot`.
+Available actions: `broadcastWorkflowEvent`, `persistSnapshot`, `createNotificationAction`.
 
 ## Persistence
 
-For long-running workflows (Ralph Loop), context snapshots are debounced to the state file:
+For long-running workflows, context snapshots can be debounced to the state file:
 
 ```typescript
 persistWorkflowSnapshot(projectPath, sessionName, actor.getPersistedSnapshot());

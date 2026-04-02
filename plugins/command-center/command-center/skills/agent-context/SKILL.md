@@ -5,8 +5,8 @@ description: >-
   to understand the CC-specific context of its environment. Use when the agent
   asks "what is Command Center", "how does CC work", "what MCP tools do I
   have", "what's my worktree", "how is this project configured", "what dev
-  servers are available", "how do I use the roadmap tools", "how does Ralph
-  Loop work", or needs orientation about the CC environment it is running in.
+  servers are available", "how do I use the roadmap tools", or needs
+  orientation about the CC environment it is running in.
 ---
 
 # Command Center Agent Context
@@ -57,34 +57,6 @@ Track work items discovered during your session. These persist in CC's project s
 | `remove_roadmap_item` | Remove an item by its `item_id` (string). |
 
 Use roadmap tools when you discover work that is out of scope for the current task but worth tracking — bugs you notice, feature ideas, or technical debt.
-
-### Ralph Loop Init (Available When No Workflow Exists)
-
-If the user wants to start an autonomous multi-iteration workflow, the `initialize_ralph_loop` tool is available. It creates a Ralph Loop workflow with a structured task plan.
-
-**Before calling this tool, use the `/command-center:plan-ralph-loop` skill** to ensure high-quality task planning. The skill guides you through proper decomposition, dependency grouping, and avoids common pitfalls like stub orphaning and context budget overload.
-
-| Parameter | Type | Description |
-|---|---|---|
-| `objective` | string | Concise summary of the development goal |
-| `tasks` | array | Task plan: `{ description, group }` entries. Group 1 = no dependencies, Group 2+ = depends on lower groups. |
-| `references` | array (optional) | Reference documents: `{ filePath, description }` for executing agents to read on demand. |
-
-After calling this tool, the user reviews and confirms the plan in the CC UI before execution begins.
-
-### Ralph Loop Iteration Tools (During Workflow Iterations Only)
-
-When running inside a Ralph Loop iteration, you have two additional tools instead of the init tool:
-
-| Tool | Purpose |
-|---|---|
-| `report_status` | Report your iteration status: `in_progress`, `complete`, or `blocked`. Include a `work_summary` and `work_type`. Set `exit_signal: true` ONLY when ALL tasks are resolved — if tasks remain pending, `exit_signal` must be `false`. |
-| `update_fix_plan` | Mutate the task plan: mark tasks as `completedTaskIds`, skip tasks with `skippedTasks: [{ taskId, reason }]`, or add discovered tasks with `newTasks: [{ description, group }]`. Changes broadcast to the UI immediately. |
-
-**During Ralph Loop iterations:**
-- You cannot use `AskUserQuestion` — you must proceed autonomously.
-- Each iteration is isolated: fresh conversation, no session persistence across iterations.
-- If you approach context limits, the tools will warn you to wrap up.
 
 ## Project Configuration
 
@@ -143,7 +115,7 @@ These happen automatically — no action needed from you:
 | Working directory | User's chosen directory | Isolated git worktree |
 | Permissions | User-configured | `bypassPermissions` (full access) |
 | Session persistence | Local `~/.claude/` | CC manages its own transcripts |
-| MCP tools | User-configured | CC injects roadmap + Ralph Loop tools |
+| MCP tools | User-configured | CC injects roadmap tools |
 | Dev servers | User starts manually | CC manages lifecycle, port allocation |
 | Merge to main | User runs git commands | CC's merge workflow with validation |
 

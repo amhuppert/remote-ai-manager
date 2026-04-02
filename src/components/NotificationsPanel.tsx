@@ -49,14 +49,6 @@ export interface ResolveConflictsNotification extends ServerNotificationBase {
   errorMessage?: string;
 }
 
-export interface WorkflowNotification extends BaseNotification {
-  type: "workflow";
-  status: "running" | "stopped" | "completed" | "halted";
-  iterationCount: number;
-  maxIterations: number;
-  read?: boolean;
-}
-
 export interface GraphWorkflowNotification extends BaseNotification {
   type: "graph-workflow";
   status: string;
@@ -75,7 +67,6 @@ export type NotificationItem =
   | MergeNotification
   | CommitNotification
   | ResolveConflictsNotification
-  | WorkflowNotification
   | GraphWorkflowNotification;
 
 interface NotificationsPanelProps {
@@ -127,11 +118,7 @@ function summarizeError(errorMessage: string): string {
 
 /** Check if a notification item has an error message to display. */
 function getErrorMessage(item: NotificationItem): string | undefined {
-  if (
-    item.type === "conversation" ||
-    item.type === "workflow" ||
-    item.type === "graph-workflow"
-  )
+  if (item.type === "conversation" || item.type === "graph-workflow")
     return undefined;
   if (item.status !== "error") return undefined;
   return item.errorMessage;
@@ -160,8 +147,6 @@ function getItemHref(item: NotificationItem): string {
       return base;
     case "resolve-conflicts":
       return base;
-    case "workflow":
-      return base;
     case "graph-workflow":
       return `${base}/workflow`;
     default:
@@ -179,8 +164,6 @@ function getItemTitle(item: NotificationItem): string {
       return `Commit on ${item.branchName}`;
     case "resolve-conflicts":
       return `Resolve conflicts on ${item.branchName}`;
-    case "workflow":
-      return "Ralph Loop";
     case "graph-workflow":
       return item.activeContextTitle ?? "Graph Workflow";
     default:
@@ -198,8 +181,6 @@ function getItemCategory(item: NotificationItem): string {
       return "commit";
     case "resolve-conflicts":
       return "resolve";
-    case "workflow":
-      return "workflow";
     case "graph-workflow":
       return "workflow";
     default:
@@ -234,21 +215,6 @@ function getItemStatusClass(item: NotificationItem): string {
           return "success";
         case "error":
           return "error";
-        case "running":
-          return "running";
-        default:
-          return assertNever(status);
-      }
-    }
-    case "workflow": {
-      const status = item.status;
-      switch (status) {
-        case "completed":
-          return "success";
-        case "halted":
-          return "warning";
-        case "stopped":
-          return "paused";
         case "running":
           return "running";
         default:
@@ -380,8 +346,6 @@ function getItemIcon(item: NotificationItem) {
       return <CommitIcon />;
     case "resolve-conflicts":
       return <ResolveIcon />;
-    case "workflow":
-      return <WorkflowIcon />;
     case "graph-workflow":
       return <WorkflowIcon />;
     default:

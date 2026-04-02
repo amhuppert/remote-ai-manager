@@ -123,7 +123,6 @@ export interface ActorImplementationDeps {
   resolvePluginPaths(): Promise<Array<{ name: string; path: string }>>;
 
   // MCP tool factories
-  createInitToolServer(context: Record<string, unknown>): unknown;
   createNotificationToolServer(
     context: Record<string, unknown>,
     deps: Record<string, unknown>,
@@ -198,7 +197,6 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     querySessionMod,
     childEnvMod,
     commandsMod,
-    initToolMod,
     notificationToolMod,
     roadmapToolsMod,
     referenceDocumentToolsMod,
@@ -219,7 +217,6 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/query-session"),
     import("@/lib/child-env"),
     import("@/lib/commands"),
-    import("@/lib/ralph-loop/init-tool"),
     import("@/lib/agent-notification-tool"),
     import("@/lib/roadmap-tools"),
     import("@/lib/reference-document-tools"),
@@ -243,7 +240,6 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     createQuerySession: querySessionMod.createQuerySession,
     buildChildEnv: childEnvMod.buildChildEnv,
     resolvePluginPaths: commandsMod.resolvePluginPaths,
-    createInitToolServer: initToolMod.createInitToolServer,
     createNotificationToolServer:
       notificationToolMod.createNotificationToolServer,
     createRoadmapToolServer: roadmapToolsMod.createRoadmapToolServer,
@@ -719,15 +715,6 @@ export async function executePromptForMachine(
       input.sessionName,
     );
 
-    const initToolServer =
-      sessionState?.workflow == null
-        ? deps.createInitToolServer({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            projectName,
-          })
-        : null;
-
     const pushConfig = config.pushNotification as
       | { enabled?: boolean; topic?: string }
       | undefined;
@@ -846,7 +833,6 @@ export async function executePromptForMachine(
           ? input.forkedFrom.forkPointAssistantUuid
           : undefined,
       mcpServers: {
-        ...(initToolServer ? { "ralph-loop-init": initToolServer } : {}),
         ...(notificationToolServer
           ? { "agent-notification": notificationToolServer }
           : {}),

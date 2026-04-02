@@ -81,8 +81,6 @@ function makeSessionWith(
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    workflow: null,
-    workflowHistory: [],
     graphWorkflowExecution: null,
     graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
@@ -115,8 +113,6 @@ async function seedSession(
             tddEnabled: true,
             targetBranch: "main",
             parentSessionName: null,
-            workflow: null,
-            workflowHistory: [],
             graphWorkflowExecution: null,
             graphWorkflowExecutionHistory: [],
             referenceDocuments: [],
@@ -498,120 +494,6 @@ describe("deriveSessionStatus", () => {
     const session = makeSessionWith([]);
     expect(deriveSessionStatus(session)).toBe("idle");
   });
-
-  it("returns running when workflow status is running", () => {
-    const session = makeSessionWith([makeConvo({ status: "awaiting" })], {
-      workflow: {
-        status: "running",
-        objective: "test",
-        fixPlan: [],
-        references: [],
-        config: {
-          maxIterations: 20,
-          iterationTimeoutMs: 3_600_000,
-          contextSoftLimitTokens: 160_000,
-          contextHardLimitTokens: 180_000,
-          circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
-          model: "opus",
-          effort: "high",
-        },
-        circuitBreaker: {
-          state: "closed",
-          consecutiveNoProgress: 0,
-          consecutiveSameError: 0,
-          lastErrorPattern: null,
-          lastProgressIteration: 0,
-        },
-        iterations: [],
-        haltReason: null,
-        generatingPlan: false,
-        createdAt: "2024-01-01T00:00:00Z",
-        startedAt: "2024-01-01T00:00:00Z",
-        completedAt: null,
-        totalCostUsd: 0,
-        totalDurationMs: 0,
-        currentIterationConversationId: null,
-      },
-    });
-
-    expect(deriveSessionStatus(session)).toBe("running");
-  });
-
-  it("falls through to conversation status when workflow status is stopped", () => {
-    const session = makeSessionWith([makeConvo({ status: "new" })], {
-      workflow: {
-        status: "stopped",
-        objective: "test",
-        fixPlan: [],
-        references: [],
-        config: {
-          maxIterations: 20,
-          iterationTimeoutMs: 3_600_000,
-          contextSoftLimitTokens: 160_000,
-          contextHardLimitTokens: 180_000,
-          circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
-          model: "opus",
-          effort: "high",
-        },
-        circuitBreaker: {
-          state: "closed",
-          consecutiveNoProgress: 0,
-          consecutiveSameError: 0,
-          lastErrorPattern: null,
-          lastProgressIteration: 0,
-        },
-        iterations: [],
-        haltReason: null,
-        generatingPlan: false,
-        createdAt: "2024-01-01T00:00:00Z",
-        startedAt: "2024-01-01T00:00:00Z",
-        completedAt: null,
-        totalCostUsd: 0,
-        totalDurationMs: 0,
-        currentIterationConversationId: null,
-      },
-    });
-
-    expect(deriveSessionStatus(session)).toBe("new");
-  });
-
-  it("falls through to conversation status for non-active workflow states", () => {
-    const session = makeSessionWith([makeConvo({ status: "running" })], {
-      workflow: {
-        status: "completed",
-        objective: "test",
-        fixPlan: [],
-        references: [],
-        config: {
-          maxIterations: 20,
-          iterationTimeoutMs: 3_600_000,
-          contextSoftLimitTokens: 160_000,
-          contextHardLimitTokens: 180_000,
-          circuitBreaker: { noProgressThreshold: 3, sameErrorThreshold: 5 },
-          model: "opus",
-          effort: "high",
-        },
-        circuitBreaker: {
-          state: "closed",
-          consecutiveNoProgress: 0,
-          consecutiveSameError: 0,
-          lastErrorPattern: null,
-          lastProgressIteration: 0,
-        },
-        iterations: [],
-        haltReason: { type: "plan_complete" },
-        generatingPlan: false,
-        createdAt: "2024-01-01T00:00:00Z",
-        startedAt: "2024-01-01T00:00:00Z",
-        completedAt: "2024-01-02T00:00:00Z",
-        totalCostUsd: 1.5,
-        totalDurationMs: 60000,
-        currentIterationConversationId: null,
-      },
-    });
-
-    expect(deriveSessionStatus(session)).toBe("running");
-  });
 });
 
 describe("deriveSessionPromptCount", () => {
@@ -695,7 +577,6 @@ describe("finalizeInitialization", () => {
     await seedSession(state, {
       creationMode: "focus" as const,
       tddEnabled: true,
-      workflow: null,
       objective: "Test objective",
       conversations: [
         makeConvo({ id: initConvoId, role: "initialization", promptCount: 1 }),
@@ -731,7 +612,6 @@ describe("finalizeInitialization", () => {
     await seedSession(state, {
       creationMode: "focus" as const,
       tddEnabled: true,
-      workflow: null,
       objective: "Test objective",
       conversations: [makeConvo({ role: null })],
     });

@@ -8,7 +8,7 @@
  *   - Provides event dispatch for API routes
  *   - Wires runtime state (sendToMachine, stream callbacks)
  *
- * Follows the Ralph Loop workflow-manager.ts pattern.
+ * Follows the standard workflow-manager pattern.
  */
 
 import { createActor, fromPromise, type Snapshot } from "xstate";

@@ -137,10 +137,13 @@ Real-time broadcasts to connected UI clients via `sse-broadcaster.ts`. All event
 | `job-status` | Jobs | Background job state change (merge, commit, resolve-conflicts) |
 | `notification-created` | Notifications | New persistent notification created |
 | `notification-updated` | Notifications | Notification marked as read/dismissed |
-| `workflow-status` | Ralph Loop | Workflow started/completed/failed/halted |
-| `workflow-iteration-complete` | Ralph Loop | Single iteration finished (with progress info) |
-| `workflow-fix-plan-updated` | Ralph Loop | Fix plan tasks updated |
-| `workflow-circuit-breaker` | Ralph Loop | Consecutive failure threshold hit |
+| `graph-workflow-status` | Graph Workflow | Workflow started/completed/failed/halted |
+| `graph-workflow-context-status` | Graph Workflow | Execution context status change |
+| `graph-workflow-task-status` | Graph Workflow | Task status change |
+| `graph-workflow-validation-result` | Graph Workflow | Validation result received |
+| `graph-workflow-retry` | Graph Workflow | Retry attempt for a context |
+| `graph-workflow-circuit-breaker` | Graph Workflow | Circuit breaker triggered |
+| `graph-workflow-shared-documents-updated` | Graph Workflow | Shared documents updated |
 | `dev-server-status` | Dev Server | Dev server started/stopped/health change |
 
 ## Tracing Architecture

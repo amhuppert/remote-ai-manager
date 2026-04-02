@@ -113,8 +113,6 @@ describe("graph workflow execution repository", () => {
       tddEnabled: true,
       targetBranch: "main",
       parentSessionName: null,
-      workflow: null,
-      workflowHistory: [],
       graphWorkflowExecution: null,
       graphWorkflowExecutionHistory: [],
       referenceDocuments: [],

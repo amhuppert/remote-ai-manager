@@ -66,7 +66,7 @@ CC can expose an MCP tool (`run_codex`) that lets Claude delegate tasks to OpenA
 - `model` and `reasoningEffort` are optional defaults — Claude can override them per invocation
 - Allowed reasoning effort values: `minimal`, `low`, `medium`, `high`, `xhigh`
 - CC forces Codex into autonomous `workspace-write` sandbox mode with no approval prompts
-- The tool is immediately available in new Ralph Loop runs and newly created interactive sessions
+- The tool is immediately available in newly created interactive sessions
 - Long-lived interactive sessions do not hot-reload Codex config mid-session
 
 ## Development

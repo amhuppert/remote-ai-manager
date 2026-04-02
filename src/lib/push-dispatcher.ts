@@ -8,7 +8,6 @@ import type {
   Notification,
   ConversationStatus,
   ConversationRole,
-  WorkflowStatus,
 } from "@/types";
 
 const logger = createLogger("push-dispatcher");
@@ -105,49 +104,6 @@ export async function pushForConversationStatus(
 }
 
 // ============================================================
-// Push for workflow status changes
-// ============================================================
-
-interface WorkflowStatusInfo {
-  projectName: string;
-  sessionName: string;
-  workflowStatus: WorkflowStatus;
-}
-
-export async function pushForWorkflowStatus(
-  config: PushNotificationConfig | undefined,
-  info: WorkflowStatusInfo,
-): Promise<void> {
-  switch (info.workflowStatus) {
-    case "completed":
-      await sendPushNotification(config, {
-        trigger: "workflow-completed",
-        title: "Workflow completed",
-        message: `Ralph Loop workflow completed for session ${info.sessionName}`,
-        projectName: info.projectName,
-        sessionName: info.sessionName,
-      });
-      return;
-    case "halted":
-      await sendPushNotification(config, {
-        trigger: "workflow-halted",
-        title: "Workflow halted",
-        message: `Ralph Loop workflow halted for session ${info.sessionName}`,
-        projectName: info.projectName,
-        sessionName: info.sessionName,
-      });
-      return;
-    case "stopped":
-    case "planning":
-    case "running":
-      // No push notification for intermediate/stop statuses
-      return;
-    default:
-      assertNever(info.workflowStatus);
-  }
-}
-
-// ============================================================
 // Push for graph workflow events
 // ============================================================
 
@@ -235,12 +191,6 @@ export function dispatchPushForConversationStatus(
 ): void {
   getPushConfig()
     .then((config) => pushForConversationStatus(config, info))
-    .catch(() => {});
-}
-
-export function dispatchPushForWorkflowStatus(info: WorkflowStatusInfo): void {
-  getPushConfig()
-    .then((config) => pushForWorkflowStatus(config, info))
     .catch(() => {});
 }
 

@@ -270,8 +270,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       tddEnabled: opts.tddEnabled ?? true,
       targetBranch: opts.targetBranch ?? "main",
       parentSessionName: opts.parentSessionName ?? null,
-      workflow: null,
-      workflowHistory: [],
       graphWorkflowExecution: null,
       graphWorkflowExecutionHistory: [],
       referenceDocuments: [],

@@ -9,178 +9,65 @@
  */
 
 import type { Snapshot } from "xstate";
-import {
-  mutateSession as defaultMutateSession,
-  readState as defaultReadState,
-} from "@/lib/state";
-import { createLogger } from "@/lib/logging";
-import type { ManagerState } from "@/types";
-
-const logger = createLogger("workflow-persistence");
 
 // ============================================================
-// Dependency Injection (setDeps pattern, matching actions.ts)
+// Dependency Injection (kept for API compatibility with tests)
 // ============================================================
 
 export interface PersistenceDeps {
-  mutateSession: typeof defaultMutateSession;
-  readState: () => Promise<ManagerState>;
+  mutateSession: (...args: unknown[]) => Promise<void>;
+  readState: () => Promise<unknown>;
 }
 
-let _deps: PersistenceDeps | null = null;
-
-function getDeps(): PersistenceDeps {
-  if (!_deps) {
-    _deps = {
-      mutateSession: defaultMutateSession,
-      readState: defaultReadState,
-    };
-  }
-  return _deps;
-}
-
-export function setPersistenceDeps(deps: PersistenceDeps): void {
-  _deps = deps;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function setPersistenceDeps(_deps: PersistenceDeps): void {
+  // No-op — legacy DI surface kept for test compatibility
 }
 
 export function _resetPersistenceDepsForTesting(): void {
-  _deps = null;
+  // No-op
 }
-
-/** Debounce timers keyed by `projectPath::sessionName`. */
-const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-const DEFAULT_DEBOUNCE_MS = 500;
 
 /**
  * Persist a workflow snapshot to the session's state.
  * Debounced to avoid excessive writes during rapid state transitions.
  *
- * The snapshot is stored in `session.workflow._xstateSnapshot` (a JSON blob)
- * alongside the existing workflow fields.
+ * Note: This is the generic default implementation used by `actions.ts`.
+ * The conversation workflow machine overrides this with its own implementation
+ * that persists to the conversation-level snapshot field.
  */
 export function persistWorkflowSnapshot(
-  projectPath: string,
-  sessionName: string,
-  snapshot: Snapshot<unknown>,
-  options?: { debounceMs?: number; immediate?: boolean },
+  _projectPath: string,
+  _sessionName: string,
+  _snapshot: Snapshot<unknown>,
+  _options?: { debounceMs?: number; immediate?: boolean },
 ): void {
-  const key = `${projectPath}::${sessionName}`;
-  const debounceMs = options?.debounceMs ?? DEFAULT_DEBOUNCE_MS;
-
-  // Clear existing timer for this key
-  const existing = debounceTimers.get(key);
-  if (existing) {
-    clearTimeout(existing);
-  }
-
-  const doWrite = () => {
-    debounceTimers.delete(key);
-    void writeSnapshot(projectPath, sessionName, snapshot);
-  };
-
-  if (options?.immediate) {
-    debounceTimers.delete(key);
-    doWrite();
-  } else {
-    debounceTimers.set(key, setTimeout(doWrite, debounceMs));
-  }
-}
-
-async function writeSnapshot(
-  projectPath: string,
-  sessionName: string,
-  snapshot: Snapshot<unknown>,
-): Promise<void> {
-  try {
-    await getDeps().mutateSession(
-      projectPath,
-      sessionName,
-      "persistWorkflowSnapshot",
-      (session) => {
-        if (session.workflow) {
-          // Store the XState snapshot as a JSON-serializable field
-          (session.workflow as Record<string, unknown>)._xstateSnapshot =
-            snapshot;
-        }
-      },
-    );
-
-    logger.debug("workflow-persistence.snapshot_saved", {
-      sessionName,
-    });
-  } catch (err) {
-    logger.error("workflow-persistence.snapshot_save_failed", {
-      sessionName,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  // No-op: Ralph Loop workflow (which stored snapshots in session.workflow)
+  // has been removed. The conversation workflow overrides this action with
+  // its own implementation via .provide().
 }
 
 /**
  * Restore a workflow snapshot from persisted state.
- * Returns the snapshot if found and schema version matches, null otherwise.
+ * Returns null — the legacy storage location (session.workflow) no longer exists.
  */
 export async function restoreWorkflowSnapshot(
-  projectPath: string,
-  sessionName: string,
-  expectedSchemaVersion: number,
+  _projectPath: string,
+  _sessionName: string,
+  _expectedSchemaVersion: number,
 ): Promise<Snapshot<unknown> | null> {
-  try {
-    const state = await getDeps().readState();
-    const project = state.projects[projectPath];
-    if (!project) return null;
-
-    const session = project.sessions[sessionName];
-    if (!session?.workflow) return null;
-
-    const snapshot = (session.workflow as Record<string, unknown>)
-      ._xstateSnapshot as Snapshot<unknown> | undefined;
-    if (!snapshot) return null;
-
-    // Check schema version in the snapshot context
-    const context = (snapshot as { context?: { _schemaVersion?: number } })
-      .context;
-    if (context?._schemaVersion !== expectedSchemaVersion) {
-      logger.warn("workflow-persistence.schema_mismatch", {
-        sessionName,
-        expected: expectedSchemaVersion,
-        actual: context?._schemaVersion,
-      });
-      return null;
-    }
-
-    logger.info("workflow-persistence.snapshot_restored", {
-      sessionName,
-    });
-
-    return snapshot;
-  } catch (err) {
-    logger.error("workflow-persistence.snapshot_restore_failed", {
-      sessionName,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
-  }
+  return null;
 }
 
 /**
  * Flush any pending debounced writes immediately.
- * Useful for testing or graceful shutdown.
+ * No-op since snapshot persistence was removed with Ralph Loop.
  */
 export function flushPendingWrites(): void {
-  for (const [key, timer] of debounceTimers) {
-    clearTimeout(timer);
-    debounceTimers.delete(key);
-    void key; // Timer callback already captured the write closure
-  }
+  // No-op
 }
 
 /** Reset state for testing — do not use in production. */
 export function _resetForTesting(): void {
-  for (const timer of debounceTimers.values()) {
-    clearTimeout(timer);
-  }
-  debounceTimers.clear();
   _resetPersistenceDepsForTesting();
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
+import type { ConversationState } from "@/types";
 import {
   createPromptRouteHandlers,
   type PromptRouteDeps,
@@ -13,6 +14,7 @@ function createTestDeps(): PromptRouteDeps {
   return {
     resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
     getSession: vi.fn().mockResolvedValue(testSession),
+    getConversation: vi.fn().mockResolvedValue(testConversation),
     isSessionBusy: vi.fn().mockReturnValue(false),
     executePromptStream: vi.fn().mockResolvedValue(undefined),
   };
@@ -37,6 +39,14 @@ function makeParams(name = "my-project", session = "test-session") {
   return { params: Promise.resolve({ name, session }) };
 }
 
+function makeConvParams(
+  name = "my-project",
+  session = "test-session",
+  conversationId = "conv-1",
+) {
+  return { params: Promise.resolve({ name, session, conversationId }) };
+}
+
 const testSession = {
   sessionName: "test-session",
   worktreePath: "/projects/my-project/.worktrees/test-session",
@@ -46,6 +56,31 @@ const testSession = {
   archived: false,
   finished: false,
   conversations: [],
+};
+
+const testConversation = {
+  id: "conv-1",
+  status: "awaiting" as const,
+  createdAt: "2024-01-01T00:00:00Z",
+  lastActivityAt: "2024-01-01T00:00:00Z",
+  promptCount: 0,
+  role: null,
+  name: null,
+  summary: null,
+  claudeSessionId: null,
+  transcriptPath: "/tmp/transcript.jsonl",
+  totalCostUsd: 0,
+  totalDurationMs: 0,
+  totalTurns: 0,
+  source: "cc",
+  pendingQuestionId: null,
+  pendingQuestions: null,
+  forkedFrom: null,
+  contextTokens: null,
+  contextWindowMax: null,
+  debugMode: null,
+  machineSnapshot: null,
+  archived: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -141,6 +176,51 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     const response = await handlers.POST(
       makeRequest({ prompt: "  Hello Claude  " }),
       makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+  });
+});
+
+// ===========================================================================
+// Conversation-level prompt route tests
+// ===========================================================================
+
+describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversationId]/prompt", () => {
+  it("returns 403 for managed iteration conversations", async () => {
+    vi.mocked(deps.getConversation).mockResolvedValue({
+      ...testConversation,
+      role: "iteration",
+    } as ConversationState);
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "Hello" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.code).toBe("MANAGED_CONVERSATION");
+  });
+
+  it("returns 404 when conversation is not found", async () => {
+    vi.mocked(deps.getConversation).mockResolvedValue(null);
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "test" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.error).toBe("Conversation not found");
+  });
+
+  it("returns SSE stream on valid conversation prompt", async () => {
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "Hello Claude" }),
+      makeConvParams(),
     );
 
     expect(response.status).toBe(200);

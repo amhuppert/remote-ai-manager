@@ -2,11 +2,7 @@
  * Builds XML context strings for the "Copy Context" clipboard button.
  * Used on both the session overview and conversation detail pages.
  */
-import type {
-  SessionState,
-  GraphWorkflowExecution,
-  RalphLoopWorkflow,
-} from "@/types";
+import type { SessionState, GraphWorkflowExecution } from "@/types";
 import {
   deriveSessionStatus,
   deriveSessionPromptCount,
@@ -37,10 +33,6 @@ export function buildSessionContext(params: {
     `  <creation-mode>${session.creationMode}</creation-mode>`,
     `  <finished>${session.finished}</finished>`,
   ];
-
-  if (session.workflow) {
-    appendRalphLoopLines(lines, session.workflow, "  ");
-  }
 
   if (session.graphWorkflowExecution) {
     appendGraphWorkflowLines(lines, session.graphWorkflowExecution, "  ");
@@ -94,10 +86,6 @@ export function buildConversationContext(params: {
     );
   }
 
-  if (session.workflow) {
-    appendRalphLoopLines(lines, session.workflow, "  ");
-  }
-
   if (session.graphWorkflowExecution) {
     appendGraphWorkflowLines(
       lines,
@@ -114,41 +102,6 @@ export function buildConversationContext(params: {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-function appendRalphLoopLines(
-  lines: string[],
-  workflow: RalphLoopWorkflow,
-  indent: string,
-): void {
-  lines.push(`${indent}<ralph-loop>`);
-  lines.push(
-    `${indent}  <workflow-status>${workflow.status}</workflow-status>`,
-  );
-  lines.push(`${indent}  <objective>${workflow.objective}</objective>`);
-  lines.push(
-    `${indent}  <iteration-count>${workflow.iterations.length}</iteration-count>`,
-  );
-  lines.push(
-    `${indent}  <max-iterations>${workflow.config.maxIterations}</max-iterations>`,
-  );
-  if (workflow.currentIterationConversationId) {
-    lines.push(
-      `${indent}  <current-iteration-conversation-id>${workflow.currentIterationConversationId}</current-iteration-conversation-id>`,
-    );
-  }
-  lines.push(
-    `${indent}  <total-cost-usd>${workflow.totalCostUsd}</total-cost-usd>`,
-  );
-  lines.push(
-    `${indent}  <total-duration-ms>${workflow.totalDurationMs}</total-duration-ms>`,
-  );
-  if (workflow.haltReason) {
-    lines.push(
-      `${indent}  <halt-reason>${workflow.haltReason.type}</halt-reason>`,
-    );
-  }
-  lines.push(`${indent}</ralph-loop>`);
-}
 
 function appendGraphWorkflowLines(
   lines: string[],

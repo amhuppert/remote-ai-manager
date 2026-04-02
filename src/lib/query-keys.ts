@@ -55,14 +55,6 @@ export const conversationKeys = {
     ] as const,
 };
 
-export const workflowKeys = {
-  all: ["workflow"] as const,
-  status: (projectName: string, sessionName: string) =>
-    [...workflowKeys.all, "status", projectName, sessionName] as const,
-  iterations: (projectName: string, sessionName: string) =>
-    [...workflowKeys.all, "iterations", projectName, sessionName] as const,
-};
-
 export const workflowDefinitionKeys = {
   all: ["workflow-definitions"] as const,
   list: (projectName: string) =>

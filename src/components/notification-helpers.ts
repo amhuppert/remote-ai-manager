@@ -66,21 +66,6 @@ export function getItemLabel(item: NotificationItem): string {
           return assertNever(status);
       }
     }
-    case "workflow": {
-      const status = item.status;
-      switch (status) {
-        case "running":
-          return `${item.iterationCount}/${item.maxIterations}`;
-        case "stopped":
-          return "Stopped";
-        case "completed":
-          return "Complete";
-        case "halted":
-          return "Halted";
-        default:
-          return assertNever(status);
-      }
-    }
     case "graph-workflow":
       return `${item.completedContexts}/${item.totalContexts}`;
     default:

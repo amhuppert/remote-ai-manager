@@ -6,7 +6,7 @@
  *                  ↘ failed ←──────────↙
  *
  * This is the simplest workflow machine — validates the standard pattern
- * before applying it to more complex workflows (Smart Merge, Ralph Loop).
+ * before applying it to more complex workflows (Smart Merge, Graph Workflow).
  */
 
 import { setup, assign, fromPromise } from "xstate";
