@@ -11132,3 +11132,39 @@ html[data-dev-tools-enabled] nextjs-portal {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   Collapsible Text
+   ============================================================ */
+
+.collapsible-text {
+  position: relative;
+}
+
+.collapsible-text-content {
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+}
+
+.collapsible-text-content.collapsed {
+  -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+}
+
+.collapsible-text-toggle {
+  display: block;
+  margin-top: var(--space-xs);
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--cyan-dim);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.collapsible-text-toggle:hover {
+  color: var(--cyan);
+}

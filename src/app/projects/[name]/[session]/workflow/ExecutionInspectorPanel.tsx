@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import MarkdownContent from "@/components/MarkdownContent";
+import CollapsibleText from "@/components/CollapsibleText";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationResultEvent,
@@ -26,6 +28,8 @@ interface ExecutionInspectorPanelProps {
 
 type DetailTab = "tasks" | "history";
 
+type Timestamped<T> = T & { occurredAt: string };
+
 function getContextTasks(execution: GraphWorkflowExecution, contextId: string) {
   return execution.workingDefinition.tasks
     .filter((task) => task.contextId === contextId)
@@ -47,7 +51,12 @@ function getHistoryEntries(
         entry.event.type === "graph-workflow-validation-result" &&
         (contextId == null || entry.event.contextId === contextId),
     )
-    .map((entry) => entry.event)
+    .map(
+      (entry): Timestamped<GraphWorkflowValidationResultEvent> => ({
+        ...entry.event,
+        occurredAt: entry.occurredAt,
+      }),
+    )
     .reverse();
   const retryEvents = execution.history
     .filter(
@@ -60,7 +69,12 @@ function getHistoryEntries(
         entry.event.type === "graph-workflow-retry" &&
         (contextId == null || entry.event.contextId === contextId),
     )
-    .map((entry) => entry.event)
+    .map(
+      (entry): Timestamped<GraphWorkflowRetryEvent> => ({
+        ...entry.event,
+        occurredAt: entry.occurredAt,
+      }),
+    )
     .reverse();
   const circuitBreakerEvents = execution.history
     .filter(
@@ -73,10 +87,37 @@ function getHistoryEntries(
         entry.event.type === "graph-workflow-circuit-breaker" &&
         (contextId == null || entry.event.contextId === contextId),
     )
-    .map((entry) => entry.event)
+    .map(
+      (entry): Timestamped<GraphWorkflowCircuitBreakerEvent> => ({
+        ...entry.event,
+        occurredAt: entry.occurredAt,
+      }),
+    )
     .reverse();
 
   return { validationEvents, retryEvents, circuitBreakerEvents };
+}
+
+function formatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return "";
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function getStatusBadgeClass(status?: string): string {
@@ -137,6 +178,78 @@ function countEnabledValidators(execution: GraphWorkflowExecution): number {
   );
 }
 
+function resolveTaskTitle(
+  execution: GraphWorkflowExecution,
+  taskId: string,
+): string {
+  return (
+    execution.workingDefinition.tasks.find((t) => t.id === taskId)?.title ??
+    taskId
+  );
+}
+
+// ---- Structured Validation Result Card ----
+
+function ValidationCard({
+  event,
+  execution,
+}: {
+  event: Timestamped<GraphWorkflowValidationResultEvent>;
+  execution: GraphWorkflowExecution;
+}) {
+  const hasReopened = event.reopenTaskIds.length > 0;
+  const hasIssues = event.issues.length > 0;
+
+  return (
+    <div className="wb-validation-card">
+      <div className="wb-validation-header">
+        <span className={`wb-validation-dot ${event.pass ? "pass" : "fail"}`} />
+        <span className="wb-validation-summary">{event.summary}</span>
+        <span className="wb-validation-timestamp">
+          {formatTimestamp(event.occurredAt)}
+        </span>
+      </div>
+      {(hasReopened || hasIssues) && (
+        <div className="wb-validation-body">
+          {hasReopened && (
+            <>
+              <div className="wb-validation-section-label">Reopened Tasks</div>
+              <ul className="wb-validation-reopen-list">
+                {event.reopenTaskIds.map((taskId) => (
+                  <li key={taskId} className="wb-validation-reopen-item">
+                    {resolveTaskTitle(execution, taskId)}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {hasIssues && (
+            <>
+              <div className="wb-validation-section-label">
+                Issues ({event.issues.length})
+              </div>
+              <CollapsibleText maxCollapsedHeight={140}>
+                <ul className="wb-validation-issues-list">
+                  {event.issues.map((issue, idx) => (
+                    <li key={idx} className="wb-validation-issue">
+                      <div className="wb-validation-issue-title">
+                        {issue.title}
+                      </div>
+                      <div className="wb-validation-issue-desc">
+                        {issue.description}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </CollapsibleText>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- Overview View (no context selected) ----
 
 function OverviewView({ execution }: { execution: GraphWorkflowExecution }) {
@@ -186,19 +299,11 @@ function OverviewView({ execution }: { execution: GraphWorkflowExecution }) {
           <section className="wb-overview-section">
             <div className="wb-overview-section-title">Recent Validations</div>
             {history.validationEvents.slice(0, 5).map((event, index) => (
-              <div key={`val-${index}`} className="wb-exec-event">
-                <div className="wb-exec-event-header">
-                  <span
-                    className={`wb-exec-event-dot ${event.pass ? "pass" : "fail"}`}
-                  />
-                  <span className="wb-exec-event-text">{event.summary}</span>
-                </div>
-                {event.issues[0] && (
-                  <div className="wb-exec-event-detail">
-                    {event.issues[0].title}: {event.issues[0].description}
-                  </div>
-                )}
-              </div>
+              <ValidationCard
+                key={`val-${index}`}
+                event={event}
+                execution={execution}
+              />
             ))}
           </section>
         )}
@@ -217,6 +322,9 @@ function OverviewView({ execution }: { execution: GraphWorkflowExecution }) {
                     <span className="wb-exec-event-dot retry" />
                     <span className="wb-exec-event-text">
                       {ctxTitle}: attempt {event.attempt}/{event.maxAttempts}
+                    </span>
+                    <span className="wb-exec-event-timestamp">
+                      {formatTimestamp(event.occurredAt)}
                     </span>
                   </div>
                 </div>
@@ -240,6 +348,9 @@ function OverviewView({ execution }: { execution: GraphWorkflowExecution }) {
                     <span className="wb-exec-event-text">
                       {ctxTitle}: {event.failureCount} failures (
                       {event.condition})
+                    </span>
+                    <span className="wb-exec-event-timestamp">
+                      {formatTimestamp(event.occurredAt)}
                     </span>
                   </div>
                 </div>
@@ -387,7 +498,13 @@ function DetailView({
 
       <div className="wb-inspector-body">
         {context.description && (
-          <div className="wb-exec-description">{context.description}</div>
+          <div className="wb-exec-description">
+            <CollapsibleText maxCollapsedHeight={100}>
+              <div className="wb-markdown-inline">
+                <MarkdownContent content={context.description} />
+              </div>
+            </CollapsibleText>
+          </div>
         )}
 
         <div className="wb-overview-stat-grid">
@@ -467,7 +584,11 @@ function DetailView({
                           <span className="wb-task-detail-label">
                             Instructions
                           </span>
-                          {task.instructions}
+                          <CollapsibleText maxCollapsedHeight={100}>
+                            <div className="wb-markdown-inline">
+                              <MarkdownContent content={task.instructions} />
+                            </div>
+                          </CollapsibleText>
                         </div>
                         {taskState?.failureMessage && (
                           <div className="wb-task-detail-field">
@@ -602,25 +723,11 @@ function DetailView({
               <div className="wb-overview-section-title">Validations</div>
               {history.validationEvents.length > 0 ? (
                 history.validationEvents.map((event, index) => (
-                  <div key={`val-${index}`} className="wb-exec-event">
-                    <div className="wb-exec-event-header">
-                      <span
-                        className={`wb-exec-event-dot ${event.pass ? "pass" : "fail"}`}
-                      />
-                      <span className="wb-exec-event-text">
-                        {event.summary}
-                      </span>
-                    </div>
-                    {event.issues.length > 0 && (
-                      <div className="wb-exec-event-detail">
-                        {event.issues.map((issue, issueIdx) => (
-                          <div key={`issue-${issueIdx}`}>
-                            {issue.title}: {issue.description}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <ValidationCard
+                    key={`val-${index}`}
+                    event={event}
+                    execution={execution}
+                  />
                 ))
               ) : (
                 <div className="wb-exec-event">
@@ -643,6 +750,9 @@ function DetailView({
                       <span className="wb-exec-event-text">
                         Attempt {event.attempt}/{event.maxAttempts}
                       </span>
+                      <span className="wb-exec-event-timestamp">
+                        {formatTimestamp(event.occurredAt)}
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -660,6 +770,9 @@ function DetailView({
                       <span className="wb-exec-event-dot breaker" />
                       <span className="wb-exec-event-text">
                         {event.failureCount} failures ({event.condition})
+                      </span>
+                      <span className="wb-exec-event-timestamp">
+                        {formatTimestamp(event.occurredAt)}
                       </span>
                     </div>
                   </div>

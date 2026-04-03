@@ -17,8 +17,14 @@ function makeExecution(
         {
           id: "ctx-1",
           title: "API Integration",
-          description:
-            "Implement REST API endpoints for user management with authentication and validation.",
+          description: `Implement REST API endpoints for **user management** with authentication and validation.
+
+### Requirements
+- All endpoints must use \`Zod\` schema validation
+- JWT tokens for auth middleware
+- Rate limiting on public endpoints
+
+> Note: The existing \`/api/health\` endpoint pattern should be followed for consistency.`,
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: true },
           circuitBreaker: {},
@@ -69,7 +75,21 @@ function makeExecution(
           contextId: "ctx-1",
           order: 1,
           title: "Create user endpoint",
-          instructions: "Implement POST /api/users with Zod validation",
+          instructions: `Implement \`POST /api/users\` with Zod validation.
+
+### Acceptance Criteria
+1. Request body validated with \`createUserSchema\`
+2. Returns **201** with user object on success
+3. Returns **409** if email already exists
+4. Password hashed with \`bcrypt\` before storage
+
+\`\`\`typescript
+const createUserSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  name: z.string().min(1),
+});
+\`\`\``,
           source: "user" as const,
         },
         {
@@ -78,7 +98,7 @@ function makeExecution(
           order: 2,
           title: "Auth middleware",
           instructions:
-            "Add JWT authentication middleware to protect the endpoints",
+            "Add JWT authentication middleware to protect the endpoints. Verify tokens using `jsonwebtoken` library and attach decoded user to `req.user`.",
           source: "user" as const,
         },
         {
@@ -257,11 +277,17 @@ function makeExecution(
             {
               title: "Missing error handler",
               description:
-                "POST /api/users does not handle duplicate email errors",
+                "POST /api/users does not handle duplicate email errors. The endpoint should return 409 Conflict with a descriptive message.",
             },
             {
               title: "Missing input validation",
-              description: "Email format validation is not strict enough",
+              description:
+                "Email format validation is not strict enough — accepts strings without TLD",
+            },
+            {
+              title: "No rate limit headers",
+              description:
+                "Rate-limited endpoints should include X-RateLimit-Remaining and X-RateLimit-Reset headers",
             },
           ],
           reopenTaskIds: ["task-1"],
@@ -448,6 +474,16 @@ function makeHaltedExecution(): GraphWorkflowExecution {
             {
               title: "Dependency missing",
               description: "jsonwebtoken not installed",
+            },
+            {
+              title: "Token verification incomplete",
+              description:
+                "Middleware does not check token expiration or validate issuer claim",
+            },
+            {
+              title: "Missing auth error responses",
+              description:
+                "Endpoints return 500 instead of 401 when token is invalid",
             },
           ],
           reopenTaskIds: ["task-2"],

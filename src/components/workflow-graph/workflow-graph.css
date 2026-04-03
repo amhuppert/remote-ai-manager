@@ -1777,6 +1777,246 @@
   background: var(--bg-raised);
 }
 
+/* ---- Inline Markdown (compact rendering within inspector) ---- */
+
+.wb-markdown-inline {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.wb-markdown-inline p {
+  margin: 0 0 0.5em;
+}
+
+.wb-markdown-inline p:last-child {
+  margin-bottom: 0;
+}
+
+.wb-markdown-inline h1,
+.wb-markdown-inline h2,
+.wb-markdown-inline h3,
+.wb-markdown-inline h4,
+.wb-markdown-inline h5,
+.wb-markdown-inline h6 {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0.6em 0 0.3em;
+  line-height: 1.3;
+}
+
+.wb-markdown-inline h1:first-child,
+.wb-markdown-inline h2:first-child,
+.wb-markdown-inline h3:first-child {
+  margin-top: 0;
+}
+
+.wb-markdown-inline ul,
+.wb-markdown-inline ol {
+  margin: 0.3em 0;
+  padding-left: 1.3em;
+}
+
+.wb-markdown-inline li {
+  margin-bottom: 0.15em;
+}
+
+.wb-markdown-inline code {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  background: var(--bg-base);
+  color: var(--cyan-dim);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.wb-markdown-inline pre {
+  background: var(--bg-base);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  margin: 0.4em 0;
+  overflow-x: auto;
+}
+
+.wb-markdown-inline pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.wb-markdown-inline blockquote {
+  border-left: 2px solid var(--border-default);
+  padding-left: var(--space-sm);
+  margin: 0.4em 0;
+  color: var(--text-tertiary);
+}
+
+.wb-markdown-inline table {
+  font-size: 0.7rem;
+  border-collapse: collapse;
+  margin: 0.4em 0;
+  width: 100%;
+}
+
+.wb-markdown-inline th,
+.wb-markdown-inline td {
+  padding: 3px 8px;
+  border: 1px solid var(--border-dim);
+  text-align: left;
+}
+
+.wb-markdown-inline th {
+  background: var(--bg-raised);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wb-markdown-inline a {
+  color: var(--cyan-dim);
+  text-decoration: none;
+}
+
+.wb-markdown-inline a:hover {
+  color: var(--cyan);
+  text-decoration: underline;
+}
+
+/* ---- Structured Validation Result ---- */
+
+.wb-validation-card {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.wb-validation-card:last-child {
+  border-bottom: none;
+}
+
+.wb-validation-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.72rem;
+}
+
+.wb-validation-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+.wb-validation-dot.pass {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green-glow);
+}
+
+.wb-validation-dot.fail {
+  background: var(--red);
+}
+
+.wb-validation-summary {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.wb-validation-timestamp {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.wb-validation-body {
+  margin-top: 8px;
+  padding-left: 14px;
+}
+
+.wb-validation-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+  margin-top: 8px;
+}
+
+.wb-validation-section-label:first-child {
+  margin-top: 0;
+}
+
+.wb-validation-reopen-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.wb-validation-reopen-item {
+  font-size: 0.72rem;
+  color: var(--amber);
+  padding: 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-validation-reopen-item::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--amber);
+  flex-shrink: 0;
+}
+
+.wb-validation-issues-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-left: 2px solid var(--border-default);
+  padding-left: 10px;
+}
+
+.wb-validation-issue {
+  padding: 4px 0;
+}
+
+.wb-validation-issue + .wb-validation-issue {
+  border-top: 1px solid var(--border-dim);
+}
+
+.wb-validation-issue-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.wb-validation-issue-desc {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+  margin-top: 1px;
+}
+
+/* ---- History Event Timestamp ---- */
+
+.wb-exec-event-timestamp {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 /* ---- Save Error Banner ---- */
 
 .wb-save-error-banner {
