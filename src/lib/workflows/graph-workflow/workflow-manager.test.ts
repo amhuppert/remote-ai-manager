@@ -471,6 +471,71 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("normalizes a running execution to paused when hasLiveIteration is false and no loop is active", async () => {
+    const repository = createRepository(
+      createWorkflowExecution({
+        status: "running",
+        activeContextId: "context-plan",
+        contextStates: {
+          "context-plan": {
+            contextId: "context-plan",
+            status: "ready",
+            totalTaskCount: 1,
+            completedTaskCount: 1,
+            iterationCount: 1,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+        },
+        taskStates: {
+          "task-plan-1": {
+            taskId: "task-plan-1",
+            contextId: "context-plan",
+            order: 1,
+            status: "completed",
+            summary: "Done",
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: "2026-03-27T15:05:00.000Z",
+            lastConversationId: "conversation-1",
+            reopenedCount: 0,
+            lastReopenedAt: null,
+            failureMessage: null,
+          },
+        },
+        machineSnapshot: {
+          schemaVersion: 1,
+          lifecycleStatus: "running",
+          activeContextId: "context-plan",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      isExecutionLoopActive() {
+        return false;
+      },
+    });
+
+    const recovered = await manager.normalizeAfterRestart("/repo", "session-1");
+
+    expect(recovered).not.toBeNull();
+    expect(recovered?.status).toBe("paused");
+    expect(recovered?.machineSnapshot).toEqual({
+      schemaVersion: 1,
+      lifecycleStatus: "paused",
+      activeContextId: "context-plan",
+      recoveryMode: "restart_normalized",
+      hasLiveIteration: false,
+    });
+  });
+
   it("schedules the first runnable context and keeps other eligible contexts ready", async () => {
     const branchedDefinition = createWorkflowDefinition({
       edges: [

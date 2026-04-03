@@ -196,12 +196,6 @@ async function updateExecution(
   return execution;
 }
 
-function hasRunningTasks(execution: GraphWorkflowExecution): boolean {
-  return Object.values(execution.taskStates).some(
-    (ts) => ts.status === "running",
-  );
-}
-
 function reopenTasks(
   execution: GraphWorkflowExecution,
   contextId: string,
@@ -570,11 +564,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       return null;
     }
 
-    const snapshot =
-      execution.machineSnapshot as GraphWorkflowLifecycleSnapshot | null;
-    const hasLiveIteration =
-      snapshot?.hasLiveIteration === true || hasRunningTasks(execution);
-    if (execution.status !== "running" || !hasLiveIteration) {
+    if (execution.status !== "running") {
       return execution;
     }
 
