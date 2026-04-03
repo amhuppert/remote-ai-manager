@@ -38,7 +38,13 @@ const nodeTypes = {
 } as unknown as NodeTypes;
 const edgeTypes = { contextEdge: ContextEdge } as unknown as EdgeTypes;
 
-export default function WorkflowBuilderCanvas() {
+interface WorkflowBuilderCanvasProps {
+  onSelectContext?: (contextId: string | null) => void;
+}
+
+export default function WorkflowBuilderCanvas({
+  onSelectContext,
+}: WorkflowBuilderCanvasProps) {
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (s) => s.draftDefinition,
   );
@@ -129,9 +135,11 @@ export default function WorkflowBuilderCanvas() {
 
   const handleSelectionChange = useCallback(
     ({ nodes: selectedNodes }: OnSelectionChangeParams) => {
-      setSelectedContextId(selectedNodes[0]?.id ?? null);
+      const id = selectedNodes[0]?.id ?? null;
+      setSelectedContextId(id);
+      onSelectContext?.(id);
     },
-    [setSelectedContextId],
+    [setSelectedContextId, onSelectContext],
   );
 
   const handleNodesDelete = useCallback(

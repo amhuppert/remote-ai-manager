@@ -1776,3 +1776,273 @@
   border-left: 2px solid var(--cyan);
   background: var(--bg-raised);
 }
+
+/* ---- Save Error Banner ---- */
+
+.wb-save-error-banner {
+  padding: var(--space-sm) var(--space-md);
+  color: var(--red);
+  font-size: 0.72rem;
+  background: rgba(255, 61, 90, 0.06);
+  border-bottom: 1px solid rgba(255, 61, 90, 0.15);
+}
+
+/* ---- Mobile Toolbar ---- */
+
+.wb-mobile-toolbar {
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px var(--space-md);
+}
+
+.wb-mobile-toolbar-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.wb-mobile-toolbar-main .wb-header-identity {
+  flex: 1;
+  min-width: 0;
+}
+
+.wb-mobile-toolbar-main .wb-header-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-mobile-toolbar-actions {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.wb-mobile-toolbar-overflow {
+  position: relative;
+}
+
+.wb-mobile-toolbar-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 140px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-mobile-toolbar-menu-item {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  border-radius: 3px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.wb-mobile-toolbar-menu-item:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.wb-mobile-toolbar-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.wb-mobile-toolbar-menu-danger {
+  color: var(--red);
+}
+
+.wb-mobile-toolbar-menu-danger:hover {
+  background: rgba(255, 61, 90, 0.08);
+  color: var(--red);
+}
+
+/* ---- Mobile Tab Bar (workflow-specific visibility) ---- */
+
+.wb-mobile-tab-bar {
+  display: none;
+}
+
+/* ---- Mobile Log Empty State ---- */
+
+.wb-mobile-log-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: var(--space-xl);
+  color: var(--text-tertiary);
+  font-size: 0.82rem;
+}
+
+/* ================================================================
+   Mobile Layout Overrides (≤768px)
+   ================================================================ */
+
+@media (max-width: 768px) {
+  /* ---- Tab bar: visible on mobile ---- */
+
+  .wb-mobile-tab-bar {
+    display: flex;
+  }
+
+  /* ---- Builder: bottom padding for tab bar + safe area ---- */
+
+  .app[data-page="workflow-builder"] .main {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ---- Builder: full-screen panel switching ---- */
+
+  .app[data-page="workflow-builder"] .wb-page {
+    flex-direction: column;
+  }
+
+  .app[data-page="workflow-builder"] .wb-sidebar {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+    border-right: none;
+    border-bottom: 1px solid var(--border-dim);
+  }
+
+  .app[data-page="workflow-builder"] .wb-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .app[data-page="workflow-builder"] .wb-inspector {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+    border-left: none;
+  }
+
+  .app[data-page="workflow-builder"] .wb-editor-body {
+    flex-direction: column;
+  }
+
+  /* Graph panel: show sidebar=hidden, content=visible, canvas=visible, inspector=hidden */
+  .app[data-page="workflow-builder"][data-mobile-panel="graph"] .wb-sidebar {
+    display: none;
+  }
+  .app[data-page="workflow-builder"][data-mobile-panel="graph"] .wb-inspector {
+    display: none;
+  }
+
+  /* Definitions panel: show sidebar=visible, content=hidden */
+  .app[data-page="workflow-builder"][data-mobile-panel="definitions"]
+    .wb-content {
+    display: none;
+  }
+
+  /* Inspector panel: show sidebar=hidden, content=visible, canvas=hidden, inspector=visible */
+  .app[data-page="workflow-builder"][data-mobile-panel="inspector"]
+    .wb-sidebar {
+    display: none;
+  }
+  .app[data-page="workflow-builder"][data-mobile-panel="inspector"]
+    .wb-canvas-wrapper {
+    display: none;
+  }
+
+  /* ---- Builder: Mobile toolbar touch targets ---- */
+
+  .wb-mobile-toolbar .wb-btn {
+    min-height: 44px;
+  }
+
+  /* ---- Builder: ReactFlow controls above tab bar ---- */
+
+  .app[data-page="workflow-builder"] .react-flow__controls {
+    bottom: 12px;
+  }
+
+  /* ---- Execution: bottom padding for tab bar + safe area ---- */
+
+  .app[data-page="workflow"] .main {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ---- Execution: compact status bar ---- */
+
+  .app[data-page="workflow"] .wb-exec-info {
+    display: none;
+  }
+
+  .app[data-page="workflow"] .wb-exec-bar {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .app[data-page="workflow"] .wb-exec-controls .wb-btn {
+    min-height: 44px;
+  }
+
+  /* ---- Execution: full-screen panel switching ---- */
+
+  .app[data-page="workflow"] .wb-execution-body {
+    flex-direction: column;
+  }
+
+  .app[data-page="workflow"] .wb-inspector {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+    border-left: none;
+  }
+
+  /* Graph panel: canvas=visible, inspector=hidden */
+  .app[data-page="workflow"][data-mobile-panel="graph"]
+    .wb-execution-body
+    .wb-inspector {
+    display: none;
+  }
+  .app[data-page="workflow"][data-mobile-panel="graph"] .wb-transcript-viewer {
+    display: none;
+  }
+
+  /* Inspector panel: canvas=hidden, inspector=visible, transcript=hidden */
+  .app[data-page="workflow"][data-mobile-panel="inspector"]
+    .wb-execution-body
+    .wb-canvas-wrapper {
+    display: none;
+  }
+  .app[data-page="workflow"][data-mobile-panel="inspector"]
+    .wb-transcript-viewer {
+    display: none;
+  }
+
+  /* Log panel: canvas=hidden, inspector=hidden, transcript=visible */
+  .app[data-page="workflow"][data-mobile-panel="log"]
+    .wb-execution-body
+    .wb-canvas-wrapper {
+    display: none;
+  }
+  .app[data-page="workflow"][data-mobile-panel="log"]
+    .wb-execution-body
+    .wb-inspector {
+    display: none;
+  }
+
+  /* ---- Execution: ReactFlow controls above tab bar ---- */
+
+  .app[data-page="workflow"] .react-flow__controls {
+    bottom: 12px;
+  }
+}

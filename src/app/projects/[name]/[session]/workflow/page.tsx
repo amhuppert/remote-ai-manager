@@ -4,7 +4,17 @@ import { useParams } from "next/navigation";
 import "@/components/workflow-graph/workflow-graph.css";
 import { useSessionQuery } from "@/lib/queries";
 import Topbar from "@/components/Topbar";
+import { useWorkflowMobilePanel } from "@/components/workflow-graph/useWorkflowMobilePanel";
+import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobileTabBar";
 import ConnectedGraphWorkflowPanel from "./ConnectedGraphWorkflowPanel";
+
+export type ExecutionMobilePanel = "graph" | "inspector" | "log";
+
+const executionMobileTabs = [
+  { value: "graph" as const, label: "Graph" },
+  { value: "inspector" as const, label: "Inspector" },
+  { value: "log" as const, label: "Log" },
+];
 
 export default function WorkflowPage() {
   const params = useParams<{ name: string; session: string }>();
@@ -18,8 +28,11 @@ export default function WorkflowPage() {
     session?.graphWorkflowExecution != null ||
     (session?.graphWorkflowExecutionHistory.length ?? 0) > 0;
 
+  const { isMobile, mobilePanel, setMobilePanel, autoSwitchPanel } =
+    useWorkflowMobilePanel<ExecutionMobilePanel>("graph");
+
   return (
-    <div className="app" data-page="workflow">
+    <div className="app" data-page="workflow" data-mobile-panel={mobilePanel}>
       <Topbar
         page="detail"
         breadcrumbs={[
@@ -57,10 +70,20 @@ export default function WorkflowPage() {
             <ConnectedGraphWorkflowPanel
               projectName={projectName}
               sessionName={sessionName}
+              isMobile={isMobile}
+              mobilePanel={mobilePanel}
+              autoSwitchPanel={autoSwitchPanel}
             />
           </div>
         )}
       </main>
+      {isMobile && hasGraphWorkflow && (
+        <WorkflowMobileTabBar<ExecutionMobilePanel>
+          tabs={executionMobileTabs}
+          activePanel={mobilePanel}
+          onChange={setMobilePanel}
+        />
+      )}
     </div>
   );
 }

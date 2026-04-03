@@ -15,12 +15,15 @@ import {
   useWorkflowDefinitionQuery,
   useWorkflowDefinitionsQuery,
 } from "@/lib/queries";
+import { useWorkflowMobilePanel } from "@/components/workflow-graph/useWorkflowMobilePanel";
+import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobileTabBar";
 import type {
   ClaudeModel,
   CodexConfig,
   GraphWorkflowVisualLayout,
   WorkflowSemanticDefinition,
 } from "@/types";
+import type { BuilderMobilePanel } from "./WorkflowBuilderEditor";
 import WorkflowBuilderEditor from "./WorkflowBuilderEditor";
 import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
 
@@ -48,6 +51,8 @@ export default function ConnectedWorkflowBuilderPage({
   defaultModel,
   codexConfig,
 }: ConnectedWorkflowBuilderPageProps): React.JSX.Element {
+  const { isMobile, mobilePanel, setMobilePanel, autoSwitchPanel } =
+    useWorkflowMobilePanel<BuilderMobilePanel>("graph");
   const definitionsQuery = useWorkflowDefinitionsQuery(projectName);
   const [requestedWorkflowId, setRequestedWorkflowId] = useState<string | null>(
     null,
@@ -89,6 +94,7 @@ export default function ConnectedWorkflowBuilderPage({
   function handleSelectDefinition(id: string): void {
     setRequestedWorkflowId(id);
     setSaveError(null);
+    autoSwitchPanel("graph");
   }
 
   async function handleCreateWorkflow(): Promise<void> {
@@ -101,6 +107,7 @@ export default function ConnectedWorkflowBuilderPage({
     });
     setSaveError(null);
     setRequestedWorkflowId(created.item.id);
+    autoSwitchPanel("graph");
   }
 
   async function handleSaveDraft(draft: {
@@ -155,7 +162,11 @@ export default function ConnectedWorkflowBuilderPage({
   }
 
   return (
-    <div className="app" data-page="workflow-builder">
+    <div
+      className="app"
+      data-page="workflow-builder"
+      data-mobile-panel={mobilePanel}
+    >
       <Topbar
         page="sessions"
         breadcrumbs={[
@@ -211,6 +222,8 @@ export default function ConnectedWorkflowBuilderPage({
                 saveError={saveError}
                 defaultModel={defaultModel}
                 codexConfig={codexConfig}
+                isMobile={isMobile}
+                onAutoSwitchPanel={autoSwitchPanel}
               />
             ) : (
               <div className="wb-empty-state">
@@ -220,6 +233,19 @@ export default function ConnectedWorkflowBuilderPage({
           </div>
         </div>
       </main>
+      {isMobile && (
+        <WorkflowMobileTabBar<BuilderMobilePanel>
+          tabs={builderMobileTabs}
+          activePanel={mobilePanel}
+          onChange={setMobilePanel}
+        />
+      )}
     </div>
   );
 }
+
+const builderMobileTabs = [
+  { value: "graph" as const, label: "Graph" },
+  { value: "definitions" as const, label: "Defs" },
+  { value: "inspector" as const, label: "Inspector" },
+];

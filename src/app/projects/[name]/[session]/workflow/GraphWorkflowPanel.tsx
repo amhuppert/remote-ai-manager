@@ -9,6 +9,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowVisualLayout,
 } from "@/types";
+import type { ExecutionMobilePanel } from "./page";
 import ExecutionStatusBar from "./ExecutionStatusBar";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
@@ -37,6 +38,9 @@ interface GraphWorkflowPanelProps {
   ): void;
   onReorderTask(contextId: string, orderedTaskIds: string[]): void;
   isMutating: boolean;
+  isMobile: boolean;
+  mobilePanel: ExecutionMobilePanel;
+  autoSwitchPanel: (panel: ExecutionMobilePanel) => void;
 }
 
 /** Resolve task info needed by the transcript viewer. */
@@ -81,24 +85,36 @@ export default function GraphWorkflowPanel({
   onRemoveTask,
   onReorderTask,
   isMutating,
+  isMobile,
+  mobilePanel,
+  autoSwitchPanel,
 }: GraphWorkflowPanelProps) {
   const [selectedContextId, setSelectedContextId] = useState<string | null>(
     null,
   );
   const [viewingTaskId, setViewingTaskId] = useState<string | null>(null);
 
-  const handleSelectContext = useCallback((contextId: string | null) => {
-    setSelectedContextId(contextId);
-    setViewingTaskId(null);
-  }, []);
+  const handleSelectContext = useCallback(
+    (contextId: string | null) => {
+      setSelectedContextId(contextId);
+      setViewingTaskId(null);
+      if (contextId) autoSwitchPanel("inspector");
+    },
+    [autoSwitchPanel],
+  );
 
-  const handleViewTask = useCallback((taskId: string) => {
-    setViewingTaskId(taskId);
-  }, []);
+  const handleViewTask = useCallback(
+    (taskId: string) => {
+      setViewingTaskId(taskId);
+      autoSwitchPanel("log");
+    },
+    [autoSwitchPanel],
+  );
 
   const handleCloseTranscript = useCallback(() => {
     setViewingTaskId(null);
-  }, []);
+    autoSwitchPanel("graph");
+  }, [autoSwitchPanel]);
 
   const mergedLayout = useMemo(() => {
     if (!execution) return null;
@@ -140,35 +156,78 @@ export default function GraphWorkflowPanel({
           isMutating={isMutating}
         />
         <div className="wb-execution-body">
-          {viewingTask ? (
-            <IterationTranscriptViewer
-              projectName={projectName}
-              sessionName={sessionName}
-              conversationId={viewingTask.conversationId}
-              isLive={viewingTask.isLive}
-              contextTitle={viewingTask.contextTitle}
-              taskTitle={viewingTask.taskTitle}
-              onClose={handleCloseTranscript}
-            />
+          {isMobile ? (
+            <>
+              <WorkflowExecutionCanvas
+                execution={execution}
+                layout={mergedLayout}
+                onSelectContext={handleSelectContext}
+              />
+              <ExecutionInspectorPanel
+                execution={execution}
+                selectedContextId={selectedContextId}
+                onDeselectContext={() => handleSelectContext(null)}
+                onAddTask={onAddTask}
+                onUpdateTask={onUpdateTask}
+                onRemoveTask={onRemoveTask}
+                onReorderTask={onReorderTask}
+                onViewTask={handleViewTask}
+                viewingTaskId={viewingTaskId}
+                isMutating={isMutating}
+              />
+              {mobilePanel === "log" && (
+                <div className="wb-transcript-viewer">
+                  {viewingTask ? (
+                    <IterationTranscriptViewer
+                      projectName={projectName}
+                      sessionName={sessionName}
+                      conversationId={viewingTask.conversationId}
+                      isLive={viewingTask.isLive}
+                      contextTitle={viewingTask.contextTitle}
+                      taskTitle={viewingTask.taskTitle}
+                      onClose={handleCloseTranscript}
+                    />
+                  ) : (
+                    <div className="wb-mobile-log-empty">
+                      Select a task in Inspector to open its log.
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           ) : (
-            <WorkflowExecutionCanvas
-              execution={execution}
-              layout={mergedLayout}
-              onSelectContext={handleSelectContext}
-            />
+            <>
+              {viewingTask ? (
+                <IterationTranscriptViewer
+                  projectName={projectName}
+                  sessionName={sessionName}
+                  conversationId={viewingTask.conversationId}
+                  isLive={viewingTask.isLive}
+                  contextTitle={viewingTask.contextTitle}
+                  taskTitle={viewingTask.taskTitle}
+                  onClose={handleCloseTranscript}
+                />
+              ) : (
+                <WorkflowExecutionCanvas
+                  execution={execution}
+                  layout={mergedLayout}
+                  onSelectContext={handleSelectContext}
+                />
+              )}
+              <ExecutionInspectorPanel
+                execution={execution}
+                selectedContextId={selectedContextId}
+                onDeselectContext={() => handleSelectContext(null)}
+                onAddTask={onAddTask}
+                onUpdateTask={onUpdateTask}
+                onRemoveTask={onRemoveTask}
+                onReorderTask={onReorderTask}
+                onViewTask={handleViewTask}
+                viewingTaskId={viewingTaskId}
+                isMutating={isMutating}
+              />
+            </>
           )}
-          <ExecutionInspectorPanel
-            execution={execution}
-            selectedContextId={selectedContextId}
-            onDeselectContext={() => handleSelectContext(null)}
-            onAddTask={onAddTask}
-            onUpdateTask={onUpdateTask}
-            onRemoveTask={onRemoveTask}
-            onReorderTask={onReorderTask}
-            onViewTask={handleViewTask}
-            viewingTaskId={viewingTaskId}
-            isMutating={isMutating}
-          />
         </div>
       </div>
     </ReactFlowProvider>

@@ -9,16 +9,23 @@ import {
   useResumeGraphWorkflowMutation,
   useRuntimeEditGraphWorkflowMutation,
 } from "@/lib/mutations";
+import type { ExecutionMobilePanel } from "./page";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
 
 interface ConnectedGraphWorkflowPanelProps {
   projectName: string;
   sessionName: string;
+  isMobile: boolean;
+  mobilePanel: ExecutionMobilePanel;
+  autoSwitchPanel: (panel: ExecutionMobilePanel) => void;
 }
 
 export default function ConnectedGraphWorkflowPanel({
   projectName,
   sessionName,
+  isMobile,
+  mobilePanel,
+  autoSwitchPanel,
 }: ConnectedGraphWorkflowPanelProps) {
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const session = sessionQuery.data ?? null;
@@ -137,6 +144,9 @@ export default function ConnectedGraphWorkflowPanel({
         clearMutation.isPending ||
         runtimeEditMutation.isPending
       }
+      isMobile={isMobile}
+      mobilePanel={mobilePanel}
+      autoSwitchPanel={autoSwitchPanel}
     />
   );
 }

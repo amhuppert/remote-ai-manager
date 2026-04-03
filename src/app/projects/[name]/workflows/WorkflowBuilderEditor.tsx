@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
@@ -21,6 +21,8 @@ import WorkflowBuilderCanvas from "./WorkflowBuilderCanvas";
 import WorkflowInspectorPanel from "./WorkflowInspectorPanel";
 import WorkflowToolbar from "./WorkflowToolbar";
 
+export type BuilderMobilePanel = "graph" | "definitions" | "inspector";
+
 interface WorkflowBuilderEditorProps {
   record: WorkflowDefinitionRecord;
   workflowName: string;
@@ -34,6 +36,8 @@ interface WorkflowBuilderEditorProps {
   saveError?: string | null;
   defaultModel?: ClaudeModel;
   codexConfig?: CodexConfig;
+  isMobile?: boolean;
+  onAutoSwitchPanel?: (panel: BuilderMobilePanel) => void;
 }
 
 export default function WorkflowBuilderEditor(
@@ -56,6 +60,8 @@ function WorkflowBuilderEditorInner({
   saveError,
   defaultModel,
   codexConfig,
+  isMobile,
+  onAutoSwitchPanel,
 }: WorkflowBuilderEditorProps): React.JSX.Element {
   const { getNodes } = useReactFlow();
   const draftDefinition = _useGraphWorkflowBuilderStore(
@@ -129,6 +135,7 @@ function WorkflowBuilderEditorInner({
     updateLayout(result.layout);
     setSelectedContextId(result.contextId);
     setValidationErrors([]);
+    onAutoSwitchPanel?.("inspector");
   }
 
   function handleReset() {
@@ -158,6 +165,13 @@ function WorkflowBuilderEditorInner({
     setValidationErrors([]);
   }
 
+  const handleSelectContext = useCallback(
+    (id: string | null) => {
+      if (id) onAutoSwitchPanel?.("inspector");
+    },
+    [onAutoSwitchPanel],
+  );
+
   return (
     <div className="wb-editor">
       <WorkflowToolbar
@@ -172,22 +186,11 @@ function WorkflowBuilderEditorInner({
         dirty={dirty}
         saving={isSaving}
         hasValidationErrors={validationErrors.length > 0}
+        isMobile={isMobile}
       />
-      {saveError && (
-        <div
-          style={{
-            padding: "var(--space-sm) var(--space-md)",
-            color: "var(--red)",
-            fontSize: "0.72rem",
-            background: "rgba(255,61,90,0.06)",
-            borderBottom: "1px solid rgba(255,61,90,0.15)",
-          }}
-        >
-          {saveError}
-        </div>
-      )}
+      {saveError && <div className="wb-save-error-banner">{saveError}</div>}
       <div className="wb-editor-body">
-        <WorkflowBuilderCanvas />
+        <WorkflowBuilderCanvas onSelectContext={handleSelectContext} />
         <WorkflowInspectorPanel
           onSave={handleSave}
           onDelete={handleDeleteContext}

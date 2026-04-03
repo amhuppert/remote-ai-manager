@@ -18,6 +18,9 @@ const noopCallbacks = {
   onReorderTask: vi.fn(),
   isMutating: false,
   layout: null,
+  isMobile: false,
+  mobilePanel: "graph" as const,
+  autoSwitchPanel: vi.fn(),
 };
 
 describe("GraphWorkflowPanel", () => {
