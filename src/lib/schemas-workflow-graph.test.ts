@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  getCodexReasoningLevelsForModel,
+  globalConfigSchema,
   graphWorkflowAgentValidatorConfigSchema,
   graphWorkflowExecutionSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
   sessionStateSchema,
   workflowAgentValidatorResultSchema,
+  workflowDefaultsSchema,
   workflowDefinitionRecordSchema,
   workflowRuntimeEditRequestSchema,
+  workflowValidatorDefaultSchema,
 } from "./schemas";
 
 const timestamp = "2026-03-27T12:00:00.000Z";
@@ -456,5 +460,146 @@ describe("workflow graph session state and SSE schemas", () => {
       ],
     });
     expect(docsEvent.success).toBe(true);
+  });
+});
+
+describe("workflowValidatorDefaultSchema", () => {
+  it("parses a claude validator default with model and effort", () => {
+    const result = workflowValidatorDefaultSchema.safeParse({
+      type: "claude",
+      model: "sonnet",
+      reasoningEffort: "high",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("claude");
+    }
+  });
+
+  it("parses a codex validator default with model and effort", () => {
+    const result = workflowValidatorDefaultSchema.safeParse({
+      type: "codex",
+      model: "o3",
+      reasoningEffort: "high",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("codex");
+    }
+  });
+
+  it("allows model and effort to be optional", () => {
+    const result = workflowValidatorDefaultSchema.safeParse({
+      type: "codex",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects invalid type", () => {
+    const result = workflowValidatorDefaultSchema.safeParse({
+      type: "gpt",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid claude model", () => {
+    const result = workflowValidatorDefaultSchema.safeParse({
+      type: "claude",
+      model: "gpt-4",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("codex allows free-form model strings", () => {
+    const result = workflowValidatorDefaultSchema.safeParse({
+      type: "codex",
+      model: "o4-mini",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("workflowDefaultsSchema", () => {
+  it("parses with both validators specified", () => {
+    const result = workflowDefaultsSchema.safeParse({
+      executionValidator: {
+        type: "codex",
+        model: "o3",
+        reasoningEffort: "high",
+      },
+      taskValidator: {
+        type: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.executionValidator?.type).toBe("codex");
+      expect(result.data.taskValidator?.type).toBe("claude");
+    }
+  });
+
+  it("allows all fields to be optional", () => {
+    const result = workflowDefaultsSchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("getCodexReasoningLevelsForModel", () => {
+  it("returns allowed levels for gpt-5.4", () => {
+    expect(getCodexReasoningLevelsForModel("gpt-5.4")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  it("excludes minimal from gpt-5.4 (not supported by the API)", () => {
+    const levels = getCodexReasoningLevelsForModel("gpt-5.4");
+    expect(levels).not.toContain("minimal");
+  });
+
+  it("returns null for unknown models (all levels allowed)", () => {
+    expect(getCodexReasoningLevelsForModel("unknown-model")).toBeNull();
+  });
+});
+
+describe("globalConfigSchema workflowDefaults", () => {
+  it("accepts config with workflowDefaults", () => {
+    const result = globalConfigSchema.safeParse({
+      baseDir: "/projects",
+      ignorePatterns: [],
+      stateFilePath: "/tmp/state.json",
+      claudeTimeoutMs: 3600000,
+      workflowDefaults: {
+        executionValidator: { type: "codex", model: "o3" },
+        taskValidator: {
+          type: "claude",
+          model: "sonnet",
+          reasoningEffort: "high",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.workflowDefaults?.executionValidator?.type).toBe(
+        "codex",
+      );
+    }
+  });
+
+  it("accepts config without workflowDefaults (backward compat)", () => {
+    const result = globalConfigSchema.safeParse({
+      baseDir: "/projects",
+      ignorePatterns: [],
+      stateFilePath: "/tmp/state.json",
+      claudeTimeoutMs: 3600000,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.workflowDefaults).toBeUndefined();
+    }
   });
 });

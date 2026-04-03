@@ -86,6 +86,57 @@ export const codexConfigSchema = z.object({
 });
 export type CodexConfig = z.infer<typeof codexConfigSchema>;
 
+// ============================================================
+// Workflow Defaults
+// ============================================================
+
+export const validatorTypeSchema = z.enum(["claude", "codex"]);
+export type ValidatorType = z.infer<typeof validatorTypeSchema>;
+
+export const workflowValidatorDefaultClaudeSchema = z.object({
+  type: z.literal("claude"),
+  model: claudeModelSchema.optional(),
+  reasoningEffort: effortLevelSchema.optional(),
+});
+
+export const workflowValidatorDefaultCodexSchema = z.object({
+  type: z.literal("codex"),
+  model: z.string().trim().min(1).optional(),
+  reasoningEffort: codexReasoningEffortSchema.optional(),
+});
+
+export const workflowValidatorDefaultSchema = z.discriminatedUnion("type", [
+  workflowValidatorDefaultClaudeSchema,
+  workflowValidatorDefaultCodexSchema,
+]);
+export type WorkflowValidatorDefault = z.infer<
+  typeof workflowValidatorDefaultSchema
+>;
+
+export const workflowDefaultsSchema = z.object({
+  executionValidator: workflowValidatorDefaultSchema.optional(),
+  taskValidator: workflowValidatorDefaultSchema.optional(),
+});
+export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
+
+// ============================================================
+// Codex Model Reasoning Levels
+// ============================================================
+
+const CODEX_MODEL_REASONING_LEVELS: Record<string, CodexReasoningEffort[]> = {
+  "gpt-5.4": ["low", "medium", "high", "xhigh"],
+};
+
+/**
+ * Returns the reasoning effort levels supported by a Codex model.
+ * Returns null for unknown models (all levels are allowed).
+ */
+export function getCodexReasoningLevelsForModel(
+  model: string,
+): CodexReasoningEffort[] | null {
+  return CODEX_MODEL_REASONING_LEVELS[model] ?? null;
+}
+
 export const globalConfigSchema = z.object({
   baseDir: z.string(),
   ignorePatterns: z.array(z.string()),
@@ -100,6 +151,7 @@ export const globalConfigSchema = z.object({
   tailscaleEnabled: z.boolean().optional(),
   pushNotification: pushNotificationConfigSchema.optional(),
   codex: codexConfigSchema.optional(),
+  workflowDefaults: workflowDefaultsSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
   branchPrefix: z.string().optional(),
 });

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkflowDefinitionRecord } from "@/types";
+import type { GlobalConfig, WorkflowDefinitionRecord } from "@/types";
 import type { PlannerToolDeps } from "./planner-tools";
 
 const TOOLS_KEY = "__test_planner_tools";
@@ -74,10 +74,19 @@ function getHandler(name: string): (args: unknown) => Promise<unknown> {
   return tool.handler;
 }
 
+const MOCK_CONFIG: GlobalConfig = {
+  baseDir: "/projects",
+  ignorePatterns: [],
+  stateFilePath: "/tmp/state.json",
+  claudeTimeoutMs: 3600000,
+  defaultModel: "opus",
+};
+
 function createMockDeps(
   overrides: Partial<PlannerToolDeps> = {},
 ): PlannerToolDeps {
   return {
+    readConfig: vi.fn(async () => MOCK_CONFIG),
     listWorkflows: vi.fn(async () => []),
     getWorkflow: vi.fn(async () => null),
     createWorkflow: vi.fn(async (_projectPath, draft) => ({
@@ -452,5 +461,314 @@ describe("graph workflow planner tools", () => {
     })) as { isError?: boolean };
 
     expect(result.isError).toBe(true);
+  });
+
+  it("create_graph_workflow inflates codex task validator when type is 'codex'", async () => {
+    const { createPlannerToolServer } = await import("./planner-tools");
+    const deps = createMockDeps();
+
+    createPlannerToolServer(
+      { projectPath: "/test", sessionName: "test-session" },
+      deps,
+    );
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          taskValidation: {
+            type: "codex",
+            instructions: "Validate each task with Codex.",
+          },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            taskValidation?: {
+              type: string;
+              enabled: boolean;
+              instructions: string;
+              codex?: Record<string, unknown>;
+              agent?: { model: string; reasoningEffort: string };
+            };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.taskValidation).toBeDefined();
+    expect(ctx.taskValidation!.type).toBe("codex");
+    expect(ctx.taskValidation!.codex).toEqual({});
+    expect(ctx.taskValidation!.agent).toBeUndefined();
+    expect(ctx.taskValidation!.instructions).toBe(
+      "Validate each task with Codex.",
+    );
+  });
+
+  it("create_graph_workflow inflates codex context validator when type is 'codex'", async () => {
+    const { createPlannerToolServer } = await import("./planner-tools");
+    const deps = createMockDeps();
+
+    createPlannerToolServer(
+      { projectPath: "/test", sessionName: "test-session" },
+      deps,
+    );
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          contextValidation: {
+            agentValidator: {
+              type: "codex",
+              instructions: "Validate context with Codex.",
+            },
+            onFail: { mode: "retry", maxAttempts: 2 },
+          },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            contextValidation?: {
+              agentValidator?: {
+                type: string;
+                enabled: boolean;
+                instructions: string;
+                codex?: Record<string, unknown>;
+                agent?: { model: string; reasoningEffort: string };
+              };
+            };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.contextValidation?.agentValidator?.type).toBe("codex");
+    expect(ctx.contextValidation?.agentValidator?.codex).toEqual({});
+    expect(ctx.contextValidation?.agentValidator?.agent).toBeUndefined();
+  });
+
+  it("create_graph_workflow uses workflowDefaults from config for validator type", async () => {
+    const { createPlannerToolServer } = await import("./planner-tools");
+    const deps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        ...MOCK_CONFIG,
+        workflowDefaults: {
+          executionValidator: { type: "codex" as const },
+          taskValidator: { type: "codex" as const },
+        },
+      })),
+    });
+
+    createPlannerToolServer(
+      { projectPath: "/test", sessionName: "test-session" },
+      deps,
+    );
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          taskValidation: {
+            instructions: "Validate tasks.",
+          },
+          contextValidation: {
+            agentValidator: {
+              instructions: "Validate context.",
+            },
+            onFail: { mode: "halt", maxAttempts: 1 },
+          },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            taskValidation?: { type: string };
+            contextValidation?: {
+              agentValidator?: { type: string };
+            };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.taskValidation?.type).toBe("codex");
+    expect(ctx.contextValidation?.agentValidator?.type).toBe("codex");
+  });
+
+  it("codex validator defaults flow model and effort into definition", async () => {
+    const { createPlannerToolServer } = await import("./planner-tools");
+    const deps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        ...MOCK_CONFIG,
+        workflowDefaults: {
+          taskValidator: {
+            type: "codex" as const,
+            model: "o3",
+            reasoningEffort: "high" as const,
+          },
+        },
+      })),
+    });
+
+    createPlannerToolServer(
+      { projectPath: "/test", sessionName: "test-session" },
+      deps,
+    );
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          taskValidation: { instructions: "Validate." },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            taskValidation?: {
+              type: string;
+              codex?: { model?: string; reasoningEffort?: string };
+            };
+          }>;
+        };
+      },
+    ];
+
+    const tv = draft.definition.executionContexts[0]!.taskValidation!;
+    expect(tv.type).toBe("codex");
+    expect(tv.codex?.model).toBe("o3");
+    expect(tv.codex?.reasoningEffort).toBe("high");
+  });
+
+  it("claude validator defaults flow model and effort into definition", async () => {
+    const { createPlannerToolServer } = await import("./planner-tools");
+    const deps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        ...MOCK_CONFIG,
+        workflowDefaults: {
+          executionValidator: {
+            type: "claude" as const,
+            model: "opus" as const,
+            reasoningEffort: "medium" as const,
+          },
+        },
+      })),
+    });
+
+    createPlannerToolServer(
+      { projectPath: "/test", sessionName: "test-session" },
+      deps,
+    );
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          contextValidation: {
+            agentValidator: { instructions: "Validate context." },
+            onFail: { mode: "halt", maxAttempts: 1 },
+          },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            contextValidation?: {
+              agentValidator?: {
+                type: string;
+                agent?: { model: string; reasoningEffort: string };
+              };
+            };
+          }>;
+        };
+      },
+    ];
+
+    const av =
+      draft.definition.executionContexts[0]!.contextValidation!.agentValidator!;
+    expect(av.type).toBe("claude");
+    expect(av.agent?.model).toBe("opus");
+    expect(av.agent?.reasoningEffort).toBe("medium");
+  });
+
+  it("explicit per-context type overrides workflowDefaults", async () => {
+    const { createPlannerToolServer } = await import("./planner-tools");
+    const deps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        ...MOCK_CONFIG,
+        workflowDefaults: {
+          taskValidator: { type: "codex" as const },
+        },
+      })),
+    });
+
+    createPlannerToolServer(
+      { projectPath: "/test", sessionName: "test-session" },
+      deps,
+    );
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          taskValidation: {
+            type: "claude",
+            instructions: "Use Claude explicitly.",
+          },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            taskValidation?: { type: string };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.taskValidation?.type).toBe("claude");
   });
 });

@@ -247,4 +247,81 @@ afterEach(() => {
 
 ---
 
+## Graph Workflows — Validator Configuration
+
+Graph workflows support two validator types for both task-level and execution-context-level validation:
+
+| Type | Engine | Runs where | When to use |
+|------|--------|-----------|-------------|
+| `claude` | Claude agent (via SDK) | Cloud | Nuanced reviews, subjective quality checks |
+| `codex` | OpenAI Codex | Local | Fast, deterministic checks (tests pass, types check, lint clean) |
+
+### Codex is a first-class validator
+
+Set the validator type directly via the `type` field in the workflow definition. **Do NOT** configure a Claude validator and instruct it to call Codex via MCP tools — that creates unnecessary indirection.
+
+```json
+{
+  "taskValidation": {
+    "type": "codex",
+    "enabled": true,
+    "codex": {},
+    "instructions": "Run tests and typecheck. Fail if either has errors."
+  }
+}
+```
+
+For Claude validators:
+
+```json
+{
+  "taskValidation": {
+    "type": "claude",
+    "enabled": true,
+    "agent": { "model": "sonnet", "reasoningEffort": "high" },
+    "instructions": "Review code quality and architecture."
+  }
+}
+```
+
+### Global defaults via `config.json`
+
+The `workflowDefaults` section in global config sets defaults for workflows created via the planner MCP tools. Per-context overrides always take precedence.
+
+Each validator default is an object with `type`, `model`, and `reasoningEffort`. Model and reasoning effort are type-specific: Claude uses `ClaudeModel` + `EffortLevel`, Codex uses free-form model strings + `CodexReasoningEffort`. Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns the allowed levels for a given model (currently only `gpt-5.4` is mapped: `low`, `medium`, `high`, `xhigh`).
+
+```json
+{
+  "workflowDefaults": {
+    "executionValidator": {
+      "type": "codex",
+      "model": "gpt-5.4",
+      "reasoningEffort": "high"
+    },
+    "taskValidator": {
+      "type": "claude",
+      "model": "sonnet",
+      "reasoningEffort": "high"
+    }
+  }
+}
+```
+
+| Field | Controls | Fallback |
+|-------|----------|----------|
+| `executionValidator` | Default config for context-level validators | `{ type: "claude" }` |
+| `taskValidator` | Default config for task-level validators | `{ type: "claude" }` |
+| `.type` | Validator engine | `"claude"` |
+| `.model` | Model (Claude: `"opus"\|"sonnet"\|"haiku"`, Codex: any string) | Context agent model (Claude) or global codex config (Codex) |
+| `.reasoningEffort` | Reasoning level (Claude: `"low"\|"medium"\|"high"\|"max"`, Codex: `"minimal"\|"low"\|"medium"\|"high"\|"xhigh"`) | Context agent effort (Claude) or global codex config (Codex) |
+
+### Where validators live in the definition
+
+- **Task validation** (`executionContext.taskValidation`) — Runs after each task completes within a context
+- **Context validation** (`executionContext.contextValidation.agentValidator`) — Runs after all tasks in a context complete, gates downstream contexts
+
+Both support the same `type` discriminator (`"claude"` or `"codex"`).
+
+---
+
 _Document patterns, not every state transition. New workflows following these patterns shouldn't require updates._

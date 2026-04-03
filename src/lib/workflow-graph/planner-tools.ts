@@ -7,7 +7,19 @@ import type {
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/types";
-import { claudeModelSchema, effortLevelSchema } from "@/lib/schemas";
+import {
+  claudeModelSchema,
+  effortLevelSchema,
+  validatorTypeSchema,
+} from "@/lib/schemas";
+import type {
+  ClaudeModel,
+  EffortLevel,
+  GlobalConfig,
+  ValidatorType,
+  WorkflowDefaults,
+  WorkflowValidatorDefault,
+} from "@/types";
 import { getErrorMessage } from "@/lib/errors";
 import { generateWorkflowLayout } from "./layout";
 import { createWorkflowStorageService } from "./storage";
@@ -81,34 +93,42 @@ const executionContextInputSchema = z.object({
     .describe("Mutability permissions. Defaults: allowAgentTaskAdd false."),
   taskValidation: z
     .object({
+      type: validatorTypeSchema
+        .optional()
+        .describe(
+          "Validator type: 'claude' (Claude agent) or 'codex' (OpenAI Codex, runs locally). Omit to use the project's workflow defaults.",
+        ),
       instructions: z
         .string()
         .trim()
         .min(1)
         .describe(
-          "Instructions the validator agent uses to check each completed task.",
+          "Instructions the validator uses to check each completed task.",
         ),
     })
     .optional()
     .describe(
-      "Per-task validation by an agent after each task completes. Omit if no per-task validation is needed.",
+      "Per-task validation after each task completes. Omit if no per-task validation is needed.",
     ),
   contextValidation: z
     .object({
       agentValidator: z
         .object({
+          type: validatorTypeSchema
+            .optional()
+            .describe(
+              "Validator type: 'claude' (Claude agent) or 'codex' (OpenAI Codex, runs locally). Omit to use the project's workflow defaults.",
+            ),
           instructions: z
             .string()
             .trim()
             .min(1)
             .describe(
-              "Instructions the validator agent uses to check the context's work.",
+              "Instructions the validator uses to check the context's work.",
             ),
         })
         .optional()
-        .describe(
-          "Agent-based validation after all tasks in this context complete.",
-        ),
+        .describe("Validation after all tasks in this context complete."),
       scriptValidator: z
         .object({
           enabled: z
@@ -263,81 +283,132 @@ type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 const DEFAULT_MODEL = "sonnet" as const;
 const DEFAULT_EFFORT = "high" as const;
 const DEFAULT_MAX_ITERATIONS = 20;
+
+/**
+ * Build a validator config for the workflow definition.
+ * - inputType: explicit type from the MCP tool input (overrides default)
+ * - validatorDefault: from workflowDefaults config (provides type + model/effort)
+ * - claudeFallback: model/effort from the execution context agent config
+ */
+function buildValidatorConfig(
+  instructions: string,
+  inputType: ValidatorType | undefined,
+  validatorDefault: WorkflowValidatorDefault | undefined,
+  claudeFallback: { model: ClaudeModel; reasoningEffort: EffortLevel },
+) {
+  const type = inputType ?? validatorDefault?.type ?? "claude";
+
+  if (type === "codex") {
+    const codexDefaults =
+      validatorDefault?.type === "codex" ? validatorDefault : undefined;
+    return {
+      type: "codex" as const,
+      enabled: true,
+      codex: {
+        ...(codexDefaults?.model !== undefined
+          ? { model: codexDefaults.model }
+          : {}),
+        ...(codexDefaults?.reasoningEffort !== undefined
+          ? { reasoningEffort: codexDefaults.reasoningEffort }
+          : {}),
+      },
+      instructions,
+    };
+  }
+
+  const claudeDefaults =
+    validatorDefault?.type === "claude" ? validatorDefault : undefined;
+  return {
+    type: "claude" as const,
+    enabled: true,
+    agent: {
+      model: claudeDefaults?.model ?? claudeFallback.model,
+      reasoningEffort:
+        claudeDefaults?.reasoningEffort ?? claudeFallback.reasoningEffort,
+    },
+    instructions,
+  };
+}
+
 function inflateToSemanticDefinition(
   input: CreateWorkflowInput,
+  workflowDefaults?: WorkflowDefaults,
 ): WorkflowSemanticDefinition {
-  const executionContexts = input.executionContexts.map((ctx) => ({
-    id: ctx.slug,
-    title: ctx.title,
-    description: ctx.instructions,
-    agent: {
-      model: ctx.agentConfig?.model ?? DEFAULT_MODEL,
-      reasoningEffort: ctx.agentConfig?.reasoningEffort ?? DEFAULT_EFFORT,
-    },
-    mutability: {
-      allowAgentTaskAdd: ctx.mutabilityPolicy?.allowAgentTaskAdd ?? false,
-    },
-    circuitBreaker: {},
-    iterationPolicy: {
-      maxIterations:
-        ctx.iterationPolicy?.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-      ...(ctx.iterationPolicy?.contextSoftLimitTokens !== undefined
-        ? { contextSoftLimitTokens: ctx.iterationPolicy.contextSoftLimitTokens }
+  const taskValidatorDefault = workflowDefaults?.taskValidator;
+  const execValidatorDefault = workflowDefaults?.executionValidator;
+
+  const executionContexts = input.executionContexts.map((ctx) => {
+    const ctxModel = ctx.agentConfig?.model ?? DEFAULT_MODEL;
+    const ctxEffort = ctx.agentConfig?.reasoningEffort ?? DEFAULT_EFFORT;
+    const claudeFallback = { model: ctxModel, reasoningEffort: ctxEffort };
+
+    return {
+      id: ctx.slug,
+      title: ctx.title,
+      description: ctx.instructions,
+      agent: { model: ctxModel, reasoningEffort: ctxEffort },
+      mutability: {
+        allowAgentTaskAdd: ctx.mutabilityPolicy?.allowAgentTaskAdd ?? false,
+      },
+      circuitBreaker: {},
+      iterationPolicy: {
+        maxIterations:
+          ctx.iterationPolicy?.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+        ...(ctx.iterationPolicy?.contextSoftLimitTokens !== undefined
+          ? {
+              contextSoftLimitTokens:
+                ctx.iterationPolicy.contextSoftLimitTokens,
+            }
+          : {}),
+        ...(ctx.iterationPolicy?.contextHardLimitTokens !== undefined
+          ? {
+              contextHardLimitTokens:
+                ctx.iterationPolicy.contextHardLimitTokens,
+            }
+          : {}),
+      },
+      ...(ctx.taskValidation
+        ? {
+            taskValidation: buildValidatorConfig(
+              ctx.taskValidation.instructions,
+              ctx.taskValidation.type,
+              taskValidatorDefault,
+              claudeFallback,
+            ),
+          }
         : {}),
-      ...(ctx.iterationPolicy?.contextHardLimitTokens !== undefined
-        ? { contextHardLimitTokens: ctx.iterationPolicy.contextHardLimitTokens }
-        : {}),
-    },
-    ...(ctx.taskValidation
-      ? {
-          taskValidation: {
-            type: "claude" as const,
-            enabled: true,
-            agent: {
-              model: ctx.agentConfig?.model ?? DEFAULT_MODEL,
-              reasoningEffort:
-                ctx.agentConfig?.reasoningEffort ?? DEFAULT_EFFORT,
-            },
-            instructions: ctx.taskValidation.instructions,
-          },
-        }
-      : {}),
-    ...(ctx.contextValidation
-      ? {
-          contextValidation: {
-            ...(ctx.contextValidation.agentValidator
-              ? {
-                  agentValidator: {
-                    type: "claude" as const,
-                    enabled: true,
-                    agent: {
-                      model: ctx.agentConfig?.model ?? DEFAULT_MODEL,
-                      reasoningEffort:
-                        ctx.agentConfig?.reasoningEffort ?? DEFAULT_EFFORT,
-                    },
-                    instructions:
+      ...(ctx.contextValidation
+        ? {
+            contextValidation: {
+              ...(ctx.contextValidation.agentValidator
+                ? {
+                    agentValidator: buildValidatorConfig(
                       ctx.contextValidation.agentValidator.instructions,
+                      ctx.contextValidation.agentValidator.type,
+                      execValidatorDefault,
+                      claudeFallback,
+                    ),
+                  }
+                : {}),
+              ...(ctx.contextValidation.scriptValidator
+                ? { scriptValidator: ctx.contextValidation.scriptValidator }
+                : {}),
+              onFail: ctx.contextValidation.onFail
+                ? {
+                    mode: ctx.contextValidation.onFail.mode,
+                    retryScope: "same_context" as const,
+                    maxAttempts: ctx.contextValidation.onFail.maxAttempts,
+                  }
+                : {
+                    mode: "halt" as const,
+                    retryScope: "same_context" as const,
+                    maxAttempts: 1,
                   },
-                }
-              : {}),
-            ...(ctx.contextValidation.scriptValidator
-              ? { scriptValidator: ctx.contextValidation.scriptValidator }
-              : {}),
-            onFail: ctx.contextValidation.onFail
-              ? {
-                  mode: ctx.contextValidation.onFail.mode,
-                  retryScope: "same_context" as const,
-                  maxAttempts: ctx.contextValidation.onFail.maxAttempts,
-                }
-              : {
-                  mode: "halt" as const,
-                  retryScope: "same_context" as const,
-                  maxAttempts: 1,
-                },
-          },
-        }
-      : {}),
-  }));
+            },
+          }
+        : {}),
+    };
+  });
 
   // Derive task order from array position per context
   const contextTaskCounters = new Map<string, number>();
@@ -390,6 +461,7 @@ function errorResult(message: string) {
 // ============================================================
 
 export interface PlannerToolDeps {
+  readConfig(): Promise<GlobalConfig>;
   listWorkflows(projectPath: string): Promise<WorkflowDefinitionSummary[]>;
   getWorkflow(
     projectPath: string,
@@ -428,7 +500,7 @@ Guidelines for planning:
 - Task instructions must be self-contained: the executing agent sees only the workflow definition and the codebase, not this conversation. Include the specific what, why, files to modify, and how to verify.
 - Edges express dependencies: context B waits for context A to complete. Do not create edges between contexts that can run independently.
 - Use kebab-case slugs that describe the content (e.g. 'auth-setup', 'create-user-schema'), not generic names like 'step-1'.
-- Validation configuration is optional. Only add context validation when you need a checkpoint that gates downstream work. Most simple workflows need no validation config.
+- Validation is optional. When needed, set the validator type directly: 'claude' (Claude agent) or 'codex' (OpenAI Codex, runs locally). Codex is a first-class validator — set it via the type field. Do NOT configure a Claude validator with instructions to invoke Codex via tools. Omit type to use project defaults.
 - The user will review and edit the workflow in the visual builder before starting execution.`;
 
 const REPLACE_DESCRIPTION =
@@ -451,7 +523,11 @@ export function createPlannerToolServer(
       }
 
       try {
-        const definition = inflateToSemanticDefinition(parsed.data);
+        const config = await deps.readConfig();
+        const definition = inflateToSemanticDefinition(
+          parsed.data,
+          config.workflowDefaults,
+        );
         const layout = generateWorkflowLayout(definition);
         const record = await deps.createWorkflow(context.projectPath, {
           name: parsed.data.name,
@@ -483,7 +559,11 @@ export function createPlannerToolServer(
       }
 
       try {
-        const definition = inflateToSemanticDefinition(parsed.data);
+        const config = await deps.readConfig();
+        const definition = inflateToSemanticDefinition(
+          parsed.data,
+          config.workflowDefaults,
+        );
         const layout = generateWorkflowLayout(definition);
         const record = await deps.updateWorkflow(
           context.projectPath,
@@ -644,7 +724,7 @@ export function createPlannerToolServer(
 // ============================================================
 
 export interface CreateWiredPlannerToolServerDeps {
-  readConfig(): Promise<import("@/types").GlobalConfig>;
+  readConfig(): Promise<GlobalConfig>;
   getSession(
     projectPath: string,
     sessionName: string,
@@ -664,6 +744,7 @@ export function createWiredPlannerToolServer(
   });
 
   return createPlannerToolServer(context, {
+    readConfig: wireDeps.readConfig,
     listWorkflows: storage.list,
     getWorkflow: storage.get,
     createWorkflow: storage.create,
