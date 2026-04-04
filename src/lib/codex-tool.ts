@@ -106,8 +106,8 @@ export async function runCodexDefault(input: {
     env: input.env,
     config: {
       sandbox_workspace_write: {
-        exclude_slash_tmp: true,
-        exclude_tmpdir_env_var: true,
+        exclude_slash_tmp: false,
+        exclude_tmpdir_env_var: false,
         writable_roots: [],
         network_access: true,
       },
