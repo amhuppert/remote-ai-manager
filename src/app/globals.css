@@ -5815,6 +5815,160 @@ textarea {
 }
 
 /* ============================================================
+   Docs Panel
+   ============================================================ */
+
+.docs-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* ---- Scrollable list ---- */
+
+.docs-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-xs) 0;
+}
+
+/* ---- Document item ---- */
+
+.docs-panel-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-left: 2px solid transparent;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.docs-panel-item:hover {
+  background: var(--bg-hover);
+}
+
+.docs-panel-item:hover .docs-panel-item-path {
+  color: var(--text-primary);
+}
+
+.docs-panel-item-path {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.docs-panel-item-desc {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Content view header ---- */
+
+.docs-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.docs-panel-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.docs-panel-back:hover {
+  color: var(--cyan);
+  background: var(--bg-hover);
+}
+
+.docs-panel-filename {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Content area ---- */
+
+.docs-panel-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.docs-panel-content .markdown-viewer {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- Empty state ---- */
+
+.docs-panel-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+/* ---- Mobile overrides ---- */
+
+@media (max-width: 768px) {
+  .docs-panel-item {
+    padding: 10px 12px;
+    min-height: 44px;
+  }
+
+  .docs-panel-back {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ============================================================
    Session Mode Badge
    ============================================================ */
 
