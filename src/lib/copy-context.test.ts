@@ -74,7 +74,7 @@ function makeGraphWorkflowExecution(
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 10 },
+          iterationPolicy: { maxIterations: 10, continuity: { enabled: true } },
         },
         {
           id: "ctx-2",
@@ -82,7 +82,7 @@ function makeGraphWorkflowExecution(
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 5 },
+          iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
         },
       ],
       tasks: [
@@ -182,6 +182,7 @@ function makeGraphWorkflowExecution(
     },
     retryState: {},
     sharedDocuments: [],
+    laneStates: {},
     machineSnapshot: null,
     history: [],
     startedAt: "2026-03-28T10:00:00Z",

@@ -27,6 +27,7 @@ export function createWorkflowDefinition(
         circuitBreaker: {},
         iterationPolicy: {
           maxIterations: 4,
+          continuity: { enabled: true },
         },
         contextValidation: {
           onFail: {
@@ -50,6 +51,7 @@ export function createWorkflowDefinition(
         circuitBreaker: {},
         iterationPolicy: {
           maxIterations: 3,
+          continuity: { enabled: true },
         },
       },
       {
@@ -66,6 +68,7 @@ export function createWorkflowDefinition(
         circuitBreaker: {},
         iterationPolicy: {
           maxIterations: 2,
+          continuity: { enabled: true },
         },
       },
     ],
@@ -230,6 +233,7 @@ export function createWorkflowExecution(
     },
     retryState: {},
     sharedDocuments: [],
+    laneStates: {},
     machineSnapshot: null,
     history: [],
     startedAt: timestamp,

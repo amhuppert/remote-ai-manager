@@ -15,8 +15,11 @@ import type {
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/types";
-import { workflowDefinitionRecordSchema } from "@/lib/schemas";
 import { validateWorkflowDefinition } from "./validation";
+import {
+  assertDefinitionRecordSupported,
+  assertNoLegacyWorkflowFields,
+} from "./schema-cutover-guard";
 
 export interface WorkflowStorageDeps {
   readConfig(): Promise<GlobalConfig>;
@@ -65,7 +68,7 @@ async function writeJsonAtomically(
 
 async function readRecord(filePath: string): Promise<WorkflowDefinitionRecord> {
   const raw = await readFile(filePath, "utf-8");
-  return workflowDefinitionRecordSchema.parse(JSON.parse(raw));
+  return assertDefinitionRecordSupported(JSON.parse(raw));
 }
 
 function assertValidDefinition(definition: WorkflowSemanticDefinition): void {
@@ -121,6 +124,10 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps) {
     projectPath: string,
     draft: WorkflowDefinitionDraft,
   ): Promise<WorkflowDefinitionRecord> {
+    assertNoLegacyWorkflowFields(
+      draft.definition,
+      "Workflow definition (save)",
+    );
     assertValidDefinition(draft.definition);
 
     const config = await deps.readConfig();
@@ -154,6 +161,10 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps) {
     workflowId: string,
     draft: WorkflowDefinitionDraft,
   ): Promise<WorkflowDefinitionRecord> {
+    assertNoLegacyWorkflowFields(
+      draft.definition,
+      "Workflow definition (save)",
+    );
     assertValidDefinition(draft.definition);
 
     const existing = await get(projectPath, workflowId);

@@ -122,24 +122,6 @@ export interface BuildFollowUpPromptInput {
   maxAttempts: number;
 }
 
-const CONTEXT_EXHAUSTION_THRESHOLD = 0.85;
-
-export function isContextExhausted(input: {
-  contextTokens: number | null;
-  contextWindowMax: number | null;
-}): boolean {
-  if (
-    input.contextTokens == null ||
-    input.contextWindowMax == null ||
-    input.contextWindowMax === 0
-  ) {
-    return false;
-  }
-  return (
-    input.contextTokens / input.contextWindowMax >= CONTEXT_EXHAUSTION_THRESHOLD
-  );
-}
-
 export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
   const taskList = input.remainingTaskIds.map((id) => `- ${id}`).join("\n");
   return [

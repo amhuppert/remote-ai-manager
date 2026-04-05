@@ -28,13 +28,16 @@ function makeExecution(
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: true },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 5 },
+          iterationPolicy: {
+            maxIterations: 5,
+            continuity: { enabled: true },
+          },
           taskValidation: {
             type: "claude",
             enabled: true,
-
             agent: { model: "sonnet", reasoningEffort: "medium" },
             instructions: "Validate task output",
+            continuity: { enabled: true },
           },
           contextValidation: {
             onFail: {
@@ -45,9 +48,9 @@ function makeExecution(
             agentValidator: {
               type: "claude",
               enabled: true,
-
               agent: { model: "sonnet", reasoningEffort: "medium" },
               instructions: "Validate all endpoints work",
+              continuity: { enabled: true },
             },
           },
         },
@@ -58,7 +61,7 @@ function makeExecution(
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3 },
+          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
         {
           id: "ctx-3",
@@ -66,7 +69,7 @@ function makeExecution(
           agent: { model: "haiku", reasoningEffort: "low" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 2 },
+          iterationPolicy: { maxIterations: 2, continuity: { enabled: true } },
         },
       ],
       tasks: [
@@ -245,6 +248,7 @@ const createUserSchema = z.object({
         lastUpdatedByConversationId: null,
       },
     ],
+    laneStates: {},
     machineSnapshot: null,
     history: [
       {
@@ -260,6 +264,11 @@ const createUserSchema = z.object({
           summary: "All database migrations applied successfully",
           issues: [],
           reopenTaskIds: [],
+          sessionRef: {
+            engine: "claude" as const,
+            lane: "context_validator" as const,
+            conversationId: "conv-val-1",
+          },
         },
       },
       {
@@ -270,9 +279,9 @@ const createUserSchema = z.object({
           sessionName: "test",
           executionId: "exec-1",
           contextId: "ctx-1",
-          validatorType: "context" as const,
+          validatorType: "task" as const,
           pass: false,
-          summary: "API validation failed: missing error handling",
+          summary: "Task validation failed: missing error handling",
           issues: [
             {
               title: "Missing error handler",
@@ -284,13 +293,24 @@ const createUserSchema = z.object({
               description:
                 "Email format validation is not strict enough — accepts strings without TLD",
             },
-            {
-              title: "No rate limit headers",
-              description:
-                "Rate-limited endpoints should include X-RateLimit-Remaining and X-RateLimit-Reset headers",
-            },
           ],
           reopenTaskIds: ["task-1"],
+          sessionRef: {
+            engine: "codex" as const,
+            lane: "task_validator" as const,
+            threadId: "thread-abc123",
+          },
+          reviewArtifact: {
+            engine: "codex" as const,
+            threadId: "thread-abc123",
+            response:
+              "Reviewed the POST /api/users endpoint. Found missing error handling for duplicate emails and insufficient input validation.",
+            usage: {
+              inputTokens: 1240,
+              cachedInputTokens: 800,
+              outputTokens: 312,
+            },
+          },
         },
       },
       {
@@ -525,6 +545,7 @@ const sharedHandlers = {
   onRemoveTask: fn(),
   onReorderTask: fn(),
   onViewTask: fn(),
+  onViewConversation: fn(),
   viewingTaskId: null,
   isMutating: false,
 };

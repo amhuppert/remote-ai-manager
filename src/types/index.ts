@@ -87,6 +87,12 @@ export type {
   NotificationsResponse,
   MarkReadRequest,
   // Graph Workflow types
+  GraphWorkflowLaneKind,
+  GraphWorkflowExecutionSessionRef,
+  GraphWorkflowValidationReviewArtifact,
+  GraphWorkflowLaneTurnUsage,
+  GraphWorkflowLaneState,
+  GraphWorkflowLaneContinuityPolicy,
   GraphWorkflowAgentConfig,
   GraphWorkflowMutabilityPolicy,
   GraphWorkflowCircuitBreakerCondition,

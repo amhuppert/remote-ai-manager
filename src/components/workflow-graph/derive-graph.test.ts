@@ -72,7 +72,7 @@ describe("deriveNodes", () => {
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3 },
+          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
       ],
     });
@@ -99,7 +99,7 @@ describe("deriveNodes", () => {
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3 },
+          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
         {
           id: "ctx-2",
@@ -107,7 +107,7 @@ describe("deriveNodes", () => {
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3 },
+          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
       ],
     });
@@ -133,7 +133,7 @@ describe("deriveNodes", () => {
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3 },
+          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
       ],
       tasks: [
@@ -186,7 +186,7 @@ describe("deriveNodes", () => {
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3 },
+          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
       ],
       tasks: [

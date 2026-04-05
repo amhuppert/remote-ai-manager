@@ -31,7 +31,7 @@ function makeNode(
         agent: { model: "sonnet", reasoningEffort: "medium" },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 3 },
+        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
       },
       tasks: [
         {

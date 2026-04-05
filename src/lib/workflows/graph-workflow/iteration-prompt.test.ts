@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildIterationPrompt,
-  buildFollowUpPrompt,
-  isContextExhausted,
-} from "./iteration-prompt";
+import { buildIterationPrompt, buildFollowUpPrompt } from "./iteration-prompt";
 import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowSharedDocumentEntry,
@@ -20,7 +16,7 @@ function makeContext(
     agent: { model: "opus", reasoningEffort: "high" },
     mutability: { allowAgentTaskAdd: true },
     circuitBreaker: {},
-    iterationPolicy: { maxIterations: 4 },
+    iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
     ...overrides,
   };
 }
@@ -336,52 +332,5 @@ describe("buildFollowUpPrompt", () => {
     });
 
     expect(prompt).toMatch(/stall|block|halt|cannot.+progress/i);
-  });
-});
-
-describe("isContextExhausted", () => {
-  it("returns true when usage exceeds 85% of capacity", () => {
-    expect(
-      isContextExhausted({ contextTokens: 170_000, contextWindowMax: 200_000 }),
-    ).toBe(true);
-  });
-
-  it("returns false when usage is below 85%", () => {
-    expect(
-      isContextExhausted({ contextTokens: 100_000, contextWindowMax: 200_000 }),
-    ).toBe(false);
-  });
-
-  it("returns false at exactly 85%", () => {
-    expect(
-      isContextExhausted({ contextTokens: 170_000, contextWindowMax: 200_000 }),
-    ).toBe(true);
-    expect(
-      isContextExhausted({ contextTokens: 169_999, contextWindowMax: 200_000 }),
-    ).toBe(false);
-  });
-
-  it("returns false when contextTokens is null", () => {
-    expect(
-      isContextExhausted({ contextTokens: null, contextWindowMax: 200_000 }),
-    ).toBe(false);
-  });
-
-  it("returns false when contextWindowMax is null", () => {
-    expect(
-      isContextExhausted({ contextTokens: 170_000, contextWindowMax: null }),
-    ).toBe(false);
-  });
-
-  it("returns false when both are null", () => {
-    expect(
-      isContextExhausted({ contextTokens: null, contextWindowMax: null }),
-    ).toBe(false);
-  });
-
-  it("returns false when contextWindowMax is zero", () => {
-    expect(isContextExhausted({ contextTokens: 0, contextWindowMax: 0 })).toBe(
-      false,
-    );
   });
 });

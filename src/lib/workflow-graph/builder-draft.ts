@@ -105,6 +105,7 @@ export function addExecutionContext(
     circuitBreaker: {},
     iterationPolicy: {
       maxIterations: 3,
+      continuity: { enabled: true },
     },
   });
 

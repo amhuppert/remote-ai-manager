@@ -75,8 +75,25 @@ const executionContextInputSchema = z.object({
         .min(1)
         .optional()
         .describe("Maximum agent iterations before halting."),
-      contextSoftLimitTokens: z.number().int().positive().optional(),
-      contextHardLimitTokens: z.number().int().positive().optional(),
+      continuity: z
+        .object({
+          enabled: z
+            .boolean()
+            .optional()
+            .describe(
+              "Whether the implementer reuses the same session within this execution context. Defaults to true.",
+            ),
+          contextLimitTokens: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              "Token threshold after which the implementer session rotates before the next iteration. Omit to disable limit-based rotation.",
+            ),
+        })
+        .optional()
+        .describe("Implementer session continuity policy."),
     })
     .optional()
     .describe("Iteration limits. Defaults: maxIterations 20."),
@@ -105,6 +122,25 @@ const executionContextInputSchema = z.object({
         .describe(
           "Instructions the validator uses to check each completed task.",
         ),
+      continuity: z
+        .object({
+          enabled: z
+            .boolean()
+            .optional()
+            .describe(
+              "Whether the task validator reuses the same session within this execution context. Defaults to true.",
+            ),
+          contextLimitTokens: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              "Token threshold after which the task validator session rotates. Omit to disable limit-based rotation.",
+            ),
+        })
+        .optional()
+        .describe("Task validator session continuity policy."),
     })
     .optional()
     .describe(
@@ -126,6 +162,25 @@ const executionContextInputSchema = z.object({
             .describe(
               "Instructions the validator uses to check the context's work.",
             ),
+          continuity: z
+            .object({
+              enabled: z
+                .boolean()
+                .optional()
+                .describe(
+                  "Whether the context validator reuses the same session within this execution context. Defaults to true.",
+                ),
+              contextLimitTokens: z
+                .number()
+                .int()
+                .positive()
+                .optional()
+                .describe(
+                  "Token threshold after which the context validator session rotates. Omit to disable limit-based rotation.",
+                ),
+            })
+            .optional()
+            .describe("Context validator session continuity policy."),
         })
         .optional()
         .describe("Validation after all tasks in this context complete."),
@@ -295,8 +350,16 @@ function buildValidatorConfig(
   inputType: ValidatorType | undefined,
   validatorDefault: WorkflowValidatorDefault | undefined,
   claudeFallback: { model: ClaudeModel; reasoningEffort: EffortLevel },
+  continuityInput?: { enabled?: boolean; contextLimitTokens?: number },
 ) {
   const type = inputType ?? validatorDefault?.type ?? "claude";
+
+  const continuity = {
+    enabled: continuityInput?.enabled ?? true,
+    ...(continuityInput?.contextLimitTokens !== undefined
+      ? { contextLimitTokens: continuityInput.contextLimitTokens }
+      : {}),
+  };
 
   if (type === "codex") {
     const codexDefaults =
@@ -313,6 +376,7 @@ function buildValidatorConfig(
           : {}),
       },
       instructions,
+      continuity,
     };
   }
 
@@ -327,6 +391,7 @@ function buildValidatorConfig(
         claudeDefaults?.reasoningEffort ?? claudeFallback.reasoningEffort,
     },
     instructions,
+    continuity,
   };
 }
 
@@ -354,18 +419,15 @@ function inflateToSemanticDefinition(
       iterationPolicy: {
         maxIterations:
           ctx.iterationPolicy?.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-        ...(ctx.iterationPolicy?.contextSoftLimitTokens !== undefined
-          ? {
-              contextSoftLimitTokens:
-                ctx.iterationPolicy.contextSoftLimitTokens,
-            }
-          : {}),
-        ...(ctx.iterationPolicy?.contextHardLimitTokens !== undefined
-          ? {
-              contextHardLimitTokens:
-                ctx.iterationPolicy.contextHardLimitTokens,
-            }
-          : {}),
+        continuity: {
+          enabled: ctx.iterationPolicy?.continuity?.enabled ?? true,
+          ...(ctx.iterationPolicy?.continuity?.contextLimitTokens !== undefined
+            ? {
+                contextLimitTokens:
+                  ctx.iterationPolicy.continuity.contextLimitTokens,
+              }
+            : {}),
+        },
       },
       ...(ctx.taskValidation
         ? {
@@ -374,6 +436,7 @@ function inflateToSemanticDefinition(
               ctx.taskValidation.type,
               taskValidatorDefault,
               claudeFallback,
+              ctx.taskValidation.continuity,
             ),
           }
         : {}),
@@ -387,6 +450,7 @@ function inflateToSemanticDefinition(
                       ctx.contextValidation.agentValidator.type,
                       execValidatorDefault,
                       claudeFallback,
+                      ctx.contextValidation.agentValidator.continuity,
                     ),
                   }
                 : {}),

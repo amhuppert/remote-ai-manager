@@ -2007,6 +2007,88 @@
   margin-top: 1px;
 }
 
+/* ---- Validation meta row (lane, engine, reuse, view button) ---- */
+
+.wb-validation-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+  padding-left: 14px;
+}
+
+.wb-validation-lane-badge {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.wb-validation-lane-badge.task {
+  background: var(--blue-glow);
+  color: var(--blue);
+}
+
+.wb-validation-lane-badge.context {
+  background: var(--cyan-glow);
+  color: var(--cyan-dim);
+}
+
+.wb-validation-engine-badge {
+  font-size: 0.64rem;
+  color: var(--text-tertiary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+}
+
+.wb-validation-reuse-badge {
+  font-size: 0.64rem;
+  color: var(--text-tertiary);
+  opacity: 0.8;
+}
+
+.wb-validation-view-btn {
+  margin-left: auto;
+  font-size: 0.68rem;
+}
+
+/* ---- Codex review artifact ---- */
+
+.wb-validation-codex-artifact {
+  margin-top: 8px;
+  padding-left: 14px;
+}
+
+.wb-validation-codex-thread {
+  font-size: 0.68rem;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+
+.wb-validation-codex-thread code {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+}
+
+.wb-validation-codex-response {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.wb-validation-codex-usage {
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
 /* ---- History Event Timestamp ---- */
 
 .wb-exec-event-timestamp {

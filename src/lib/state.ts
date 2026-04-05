@@ -17,6 +17,7 @@ import { managerStateSchema } from "./schemas";
 import { readConfig } from "./config";
 import { createLogger } from "./logging";
 import { withStateLock } from "./state-mutex";
+import { checkRawStateForLegacyWorkflowPayloads } from "./workflow-graph/schema-cutover-guard";
 
 const logger = createLogger("state");
 
@@ -96,6 +97,8 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
         `State file contains invalid JSON (${raw.length} bytes): ${getErrorMessage(err)}`,
       );
     }
+
+    checkRawStateForLegacyWorkflowPayloads(parsed);
 
     const result = managerStateSchema.safeParse(parsed);
     if (!result.success) {

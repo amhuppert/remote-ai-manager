@@ -155,7 +155,7 @@ describe("WorkflowBuilderEditor", () => {
           agent: { model: "sonnet", reasoningEffort: "medium" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 4 },
+          iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
         },
       ],
       tasks: [
@@ -202,5 +202,43 @@ describe("WorkflowBuilderEditor", () => {
       .validationErrors.map((e) => e.code);
     expect(codes).toContain("empty-context-title");
     expect(codes).toContain("empty-task-instructions");
+  });
+
+  it("save payload includes the new continuity shape and no legacy limit fields", async () => {
+    resetStore();
+    const onSave = vi.fn();
+
+    render(
+      <WorkflowBuilderEditor
+        record={createWorkflowDefinitionRecord()}
+        {...defaultHeaderProps}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Context/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Save Draft/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+
+    const [payload] = onSave.mock.calls[0] as [
+      {
+        definition: {
+          executionContexts: Array<{
+            iterationPolicy: { continuity: Record<string, unknown> };
+          }>;
+        };
+      },
+    ];
+
+    // Every context must carry the new continuity object with an enabled flag
+    for (const ctx of payload.definition.executionContexts) {
+      expect(ctx.iterationPolicy.continuity).toHaveProperty("enabled");
+      expect(ctx.iterationPolicy.continuity).not.toHaveProperty(
+        "contextSoftLimitTokens",
+      );
+      expect(ctx.iterationPolicy.continuity).not.toHaveProperty(
+        "contextHardLimitTokens",
+      );
+    }
   });
 });

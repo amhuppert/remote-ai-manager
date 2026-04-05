@@ -4,10 +4,12 @@ import type {
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
+  GraphWorkflowExecutionSessionRef,
   GraphWorkflowSSEEvent,
   GraphWorkflowSharedDocumentsUpdatedEvent,
   GraphWorkflowStatusEvent,
   GraphWorkflowValidationResultEvent,
+  GraphWorkflowValidationReviewArtifact,
   GraphWorkflowValidatorType,
   WorkflowValidatorIssue,
 } from "@/types";
@@ -29,6 +31,8 @@ interface PublishValidationResultInput {
   summary: string;
   issues?: WorkflowValidatorIssue[];
   reopenTaskIds?: string[];
+  sessionRef?: GraphWorkflowExecutionSessionRef | null;
+  reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 
 export interface GraphWorkflowPushInfo {
@@ -339,6 +343,8 @@ export function createGraphWorkflowExecutionEventPublisher(
       summary: input.summary,
       issues: input.issues ?? [],
       reopenTaskIds: input.reopenTaskIds ?? [],
+      sessionRef: input.sessionRef ?? null,
+      reviewArtifact: input.reviewArtifact ?? null,
     };
 
     publishEvents(deps, [event]);

@@ -6,11 +6,14 @@ import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowExecutionSessionRef,
   GraphWorkflowTaskDefinition,
+  GraphWorkflowValidationReviewArtifact,
   WorkflowAgentValidatorResult,
   WorkflowValidatorIssue,
 } from "@/types";
 import { validateWorkflowValidatorRemediation } from "./validation";
+import type { ValidatorRunResult } from "./validator-runner";
 
 export interface GraphWorkflowTaskValidatorInput {
   projectPath: string;
@@ -55,6 +58,8 @@ export interface GraphWorkflowTaskValidationOutcome {
   feedback: string;
   issues: WorkflowValidatorIssue[];
   reopenTaskIds: string[];
+  sessionRef?: GraphWorkflowExecutionSessionRef | null;
+  reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 
 export interface GraphWorkflowContextValidationInput {
@@ -75,15 +80,17 @@ export interface GraphWorkflowContextValidationOutcome {
   reopenTaskIds: string[];
   agentResult: WorkflowAgentValidatorResult | null;
   scriptResult: RepoValidationCommandResult | null;
+  sessionRef?: GraphWorkflowExecutionSessionRef | null;
+  reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 
 export interface GraphWorkflowValidationServiceDeps {
   runTaskValidator(
     input: GraphWorkflowTaskValidatorInput,
-  ): Promise<WorkflowAgentValidatorResult>;
+  ): Promise<ValidatorRunResult>;
   runContextAgentValidator(
     input: GraphWorkflowContextAgentValidatorInput,
-  ): Promise<WorkflowAgentValidatorResult>;
+  ): Promise<ValidatorRunResult>;
   runContextScriptValidator(
     input: GraphWorkflowContextScriptValidatorInput,
   ): Promise<RepoValidationCommandResult>;
@@ -184,10 +191,10 @@ function normalizeValidatorResult(
 }
 
 const defaultDeps: GraphWorkflowValidationServiceDeps = {
-  async runTaskValidator() {
+  async runTaskValidator(): Promise<ValidatorRunResult> {
     throw new Error("Task validator runner is not configured");
   },
-  async runContextAgentValidator() {
+  async runContextAgentValidator(): Promise<ValidatorRunResult> {
     throw new Error("Context validator runner is not configured");
   },
   async runContextScriptValidator(input) {
@@ -217,7 +224,7 @@ export function createGraphWorkflowValidationService(
       };
     }
 
-    const result = await resolvedDeps.runTaskValidator({
+    const runResult = await resolvedDeps.runTaskValidator({
       projectPath: input.projectPath,
       sessionName: input.sessionName,
       execution: input.execution,
@@ -228,7 +235,15 @@ export function createGraphWorkflowValidationService(
       validator,
     });
 
-    return normalizeValidatorResult(input.execution, input.contextId, result);
+    return {
+      ...normalizeValidatorResult(
+        input.execution,
+        input.contextId,
+        runResult.result,
+      ),
+      sessionRef: runResult.metadata.sessionRef,
+      reviewArtifact: runResult.metadata.reviewArtifact,
+    };
   }
 
   async function validateContextCompletion(
@@ -240,6 +255,9 @@ export function createGraphWorkflowValidationService(
     const scriptValidator = validation?.scriptValidator;
 
     let agentResult: WorkflowAgentValidatorResult | null = null;
+    let agentSessionRef: GraphWorkflowExecutionSessionRef | null = null;
+    let agentReviewArtifact: GraphWorkflowValidationReviewArtifact | null =
+      null;
     let normalizedAgent: {
       pass: boolean;
       summary: string;
@@ -249,13 +267,16 @@ export function createGraphWorkflowValidationService(
     } | null = null;
 
     if (agentValidator?.enabled) {
-      agentResult = await resolvedDeps.runContextAgentValidator({
+      const runResult = await resolvedDeps.runContextAgentValidator({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         execution: input.execution,
         context,
         validator: agentValidator,
       });
+      agentResult = runResult.result;
+      agentSessionRef = runResult.metadata.sessionRef;
+      agentReviewArtifact = runResult.metadata.reviewArtifact;
       normalizedAgent = normalizeValidatorResult(
         input.execution,
         input.contextId,
@@ -283,6 +304,8 @@ export function createGraphWorkflowValidationService(
         reopenTaskIds: normalizedAgent?.reopenTaskIds ?? [],
         agentResult,
         scriptResult,
+        sessionRef: agentSessionRef,
+        reviewArtifact: agentReviewArtifact,
       };
     }
 
@@ -302,6 +325,8 @@ export function createGraphWorkflowValidationService(
         reopenTaskIds: [],
         agentResult,
         scriptResult,
+        sessionRef: agentSessionRef,
+        reviewArtifact: agentReviewArtifact,
       };
     }
 
@@ -317,6 +342,8 @@ export function createGraphWorkflowValidationService(
         reopenTaskIds: normalizedAgent?.reopenTaskIds ?? [],
         agentResult,
         scriptResult,
+        sessionRef: agentSessionRef,
+        reviewArtifact: agentReviewArtifact,
       };
     }
 
@@ -330,6 +357,8 @@ export function createGraphWorkflowValidationService(
       reopenTaskIds: normalizedAgent?.reopenTaskIds ?? [],
       agentResult,
       scriptResult,
+      sessionRef: agentSessionRef,
+      reviewArtifact: agentReviewArtifact,
     };
   }
 

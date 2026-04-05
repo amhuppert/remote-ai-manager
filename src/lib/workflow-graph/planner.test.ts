@@ -139,7 +139,10 @@ describe("workflow graph planner", () => {
               agent: { model: "opus", reasoningEffort: "high" },
               mutability: { allowAgentTaskAdd: false },
               circuitBreaker: {},
-              iterationPolicy: { maxIterations: 1 },
+              iterationPolicy: {
+                maxIterations: 1,
+                continuity: { enabled: true },
+              },
             },
           ],
           tasks: [

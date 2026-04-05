@@ -1109,11 +1109,12 @@ describe("graph workflow manager", () => {
           agent: { model: "opus", reasoningEffort: "high" },
           mutability: { allowAgentTaskAdd: true },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 4 },
+          iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
           contextValidation: {
             agentValidator: {
               type: "claude",
               enabled: true,
+              continuity: { enabled: true },
               agent: { model: "opus", reasoningEffort: "medium" },
               instructions: "Validate the work.",
             },
@@ -1251,7 +1252,7 @@ describe("graph workflow manager", () => {
           agent: { model: "opus", reasoningEffort: "high" },
           mutability: { allowAgentTaskAdd: true },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 4 },
+          iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
           contextValidation: {
             onFail: {
               mode: "retry",
@@ -1471,5 +1472,73 @@ describe("graph workflow manager", () => {
       }),
     ).rejects.toThrow("already has an active graph workflow execution");
     expect(loadDefinition).not.toHaveBeenCalled();
+  });
+
+  it("clears lane states when scheduling a new execution context", async () => {
+    const baseExecution = createWorkflowExecution({
+      status: "running",
+      activeContextId: null,
+      laneStates: {
+        implementer: {
+          engine: "claude",
+          lane: "implementer",
+          contextId: "context-plan",
+          sessionRef: {
+            engine: "claude",
+            lane: "implementer",
+            conversationId: "conv-old",
+          },
+          lastContextTokens: 50_000,
+          lastContextWindowMax: 200_000,
+          rotateBeforeNextTurn: false,
+          limitEvaluation: "disabled",
+          lastUsedAt: "2026-03-27T15:00:00.000Z",
+        },
+      },
+      contextStates: {
+        "context-plan": {
+          contextId: "context-plan",
+          status: "completed",
+          totalTaskCount: 1,
+          completedTaskCount: 1,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          lastValidationAt: "2026-03-27T15:00:00.000Z",
+          lastValidationPass: true,
+        },
+        "context-implement": {
+          contextId: "context-implement",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+        "context-verify": {
+          contextId: "context-verify",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          lastValidationAt: null,
+          lastValidationPass: null,
+        },
+      },
+    });
+
+    const repository = createRepository(baseExecution);
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.scheduleNextContext("/repo", "session-1");
+
+    expect(execution.laneStates).toEqual({});
   });
 });

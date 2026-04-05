@@ -93,6 +93,11 @@ export default function GraphWorkflowPanel({
     null,
   );
   const [viewingTaskId, setViewingTaskId] = useState<string | null>(null);
+  const [viewingConversation, setViewingConversation] = useState<{
+    conversationId: string;
+    contextTitle: string;
+    label: string;
+  } | null>(null);
 
   const handleSelectContext = useCallback(
     (contextId: string | null) => {
@@ -113,8 +118,27 @@ export default function GraphWorkflowPanel({
 
   const handleCloseTranscript = useCallback(() => {
     setViewingTaskId(null);
+    setViewingConversation(null);
     autoSwitchPanel("graph");
   }, [autoSwitchPanel]);
+
+  const handleViewConversation = useCallback(
+    (conversationId: string, lane: string, contextId: string) => {
+      const contextDef = execution?.workingDefinition.executionContexts.find(
+        (ctx) => ctx.id === contextId,
+      );
+      const label =
+        lane === "task_validator" ? "Task Validator" : "Context Validator";
+      setViewingConversation({
+        conversationId,
+        contextTitle: contextDef?.title ?? contextId,
+        label,
+      });
+      setViewingTaskId(null);
+      autoSwitchPanel("log");
+    },
+    [execution, autoSwitchPanel],
+  );
 
   const mergedLayout = useMemo(() => {
     if (!execution) return null;
@@ -174,6 +198,7 @@ export default function GraphWorkflowPanel({
                 onViewTask={handleViewTask}
                 viewingTaskId={viewingTaskId}
                 isMutating={isMutating}
+                onViewConversation={handleViewConversation}
               />
               {mobilePanel === "log" && (
                 <div className="wb-transcript-viewer">
@@ -185,6 +210,16 @@ export default function GraphWorkflowPanel({
                       isLive={viewingTask.isLive}
                       contextTitle={viewingTask.contextTitle}
                       taskTitle={viewingTask.taskTitle}
+                      onClose={handleCloseTranscript}
+                    />
+                  ) : viewingConversation ? (
+                    <IterationTranscriptViewer
+                      projectName={projectName}
+                      sessionName={sessionName}
+                      conversationId={viewingConversation.conversationId}
+                      isLive={false}
+                      contextTitle={viewingConversation.contextTitle}
+                      taskTitle={viewingConversation.label}
                       onClose={handleCloseTranscript}
                     />
                   ) : (
@@ -207,6 +242,16 @@ export default function GraphWorkflowPanel({
                   taskTitle={viewingTask.taskTitle}
                   onClose={handleCloseTranscript}
                 />
+              ) : viewingConversation ? (
+                <IterationTranscriptViewer
+                  projectName={projectName}
+                  sessionName={sessionName}
+                  conversationId={viewingConversation.conversationId}
+                  isLive={false}
+                  contextTitle={viewingConversation.contextTitle}
+                  taskTitle={viewingConversation.label}
+                  onClose={handleCloseTranscript}
+                />
               ) : (
                 <WorkflowExecutionCanvas
                   execution={execution}
@@ -225,6 +270,7 @@ export default function GraphWorkflowPanel({
                 onViewTask={handleViewTask}
                 viewingTaskId={viewingTaskId}
                 isMutating={isMutating}
+                onViewConversation={handleViewConversation}
               />
             </>
           )}

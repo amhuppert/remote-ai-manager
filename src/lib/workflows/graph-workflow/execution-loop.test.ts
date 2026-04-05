@@ -26,7 +26,7 @@ function createSingleContextDefinition(
         agent: { model: "sonnet", reasoningEffort: "medium" },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations },
+        iterationPolicy: { maxIterations, continuity: { enabled: true } },
       },
     ],
     tasks: [
@@ -83,6 +83,7 @@ function createRunningExecution(
     },
     retryState: {},
     sharedDocuments: [],
+    laneStates: {},
     machineSnapshot: null,
     history: [],
     startedAt: "2026-03-27T12:00:00.000Z",
@@ -513,11 +514,15 @@ describe("execution loop", () => {
             agent: { model: "sonnet", reasoningEffort: "medium" },
             mutability: { allowAgentTaskAdd: false },
             circuitBreaker: {},
-            iterationPolicy: { maxIterations: 3 },
+            iterationPolicy: {
+              maxIterations: 3,
+              continuity: { enabled: true },
+            },
             contextValidation: {
               agentValidator: {
                 type: "claude",
                 enabled: true,
+                continuity: { enabled: true },
                 agent: { model: "opus", reasoningEffort: "medium" },
                 instructions: "Validate the work.",
               },

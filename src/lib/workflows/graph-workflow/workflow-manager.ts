@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
+import { createLogger } from "@/lib/logging";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionSessionRef,
   GraphWorkflowHaltReason,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowStatus,
+  GraphWorkflowValidationReviewArtifact,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
   WorkflowValidatorIssue,
@@ -64,6 +67,8 @@ export interface GraphWorkflowContextValidationResultInput {
   reopenTaskIds?: string[];
   scriptOutput?: string;
   scriptOutputDocumentPath?: string;
+  sessionRef?: GraphWorkflowExecutionSessionRef | null;
+  reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 
 export type GraphWorkflowManagerEvent =
@@ -86,6 +91,8 @@ export interface GraphWorkflowManagerDeps {
   /** Check if an execution loop is currently running for this session. When true, normalizeAfterRestart skips normalization. */
   isExecutionLoopActive?(projectPath: string, sessionName: string): boolean;
 }
+
+const logger = createLogger("graph-workflow-manager");
 
 function cloneExecution(
   execution: GraphWorkflowExecution,
@@ -624,6 +631,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     nextExecution.activeContextId = nextContextId;
     if (nextContextId) {
       nextExecution.contextStates[nextContextId]!.status = "running";
+      logger.info("workflow-continuity.context.reset", {
+        nextContextId,
+        clearedLanes: Object.keys(nextExecution.laneStates),
+      });
+      nextExecution.laneStates = {};
     }
 
     nextExecution.machineSnapshot = buildMachineSnapshot(
@@ -668,6 +680,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     const validationEventFields = {
       issues: result.issues ?? [],
       reopenTaskIds: result.reopenTaskIds ?? [],
+      sessionRef: result.sessionRef,
+      reviewArtifact: result.reviewArtifact,
     };
 
     if (result.pass) {

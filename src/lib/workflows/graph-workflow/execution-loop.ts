@@ -8,7 +8,9 @@ import {
 } from "@/lib/workflow-graph/stream-registry";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionSessionRef,
   GraphWorkflowHaltReason,
+  GraphWorkflowValidationReviewArtifact,
   SessionState,
   WorkflowValidatorIssue,
 } from "@/types";
@@ -42,6 +44,8 @@ export interface GraphWorkflowExecutionLoopDeps {
         reopenTaskIds?: string[];
         scriptOutput?: string;
         scriptOutputDocumentPath?: string;
+        sessionRef?: GraphWorkflowExecutionSessionRef | null;
+        reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
       },
     ): Promise<GraphWorkflowExecution>;
     send(
@@ -233,6 +237,8 @@ export function createGraphWorkflowExecutionLoop(
         reopenTaskIds: validation.reopenTaskIds,
         scriptOutput,
         scriptOutputDocumentPath,
+        sessionRef: validation.sessionRef,
+        reviewArtifact: validation.reviewArtifact,
       },
     );
   }

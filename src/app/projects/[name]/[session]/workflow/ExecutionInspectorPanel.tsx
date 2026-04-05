@@ -8,6 +8,7 @@ import type {
   GraphWorkflowValidationResultEvent,
   GraphWorkflowRetryEvent,
   GraphWorkflowCircuitBreakerEvent,
+  GraphWorkflowLaneKind,
 } from "@/types";
 
 interface ExecutionInspectorPanelProps {
@@ -24,6 +25,11 @@ interface ExecutionInspectorPanelProps {
   onViewTask: (taskId: string) => void;
   viewingTaskId: string | null;
   isMutating: boolean;
+  onViewConversation?: (
+    conversationId: string,
+    lane: GraphWorkflowLaneKind,
+    contextId: string,
+  ) => void;
 }
 
 type DetailTab = "tasks" | "history";
@@ -188,17 +194,57 @@ function resolveTaskTitle(
   );
 }
 
+function computeReusedSessions(
+  events: Timestamped<GraphWorkflowValidationResultEvent>[],
+): Set<number> {
+  const seenByLane = new Map<string, string>();
+  const reusedIndices = new Set<number>();
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    const ref = event.sessionRef;
+    if (!ref) continue;
+    const sessionId =
+      ref.engine === "claude" ? ref.conversationId : ref.threadId;
+    const laneKey = `${ref.lane}:${ref.engine}`;
+    const seen = seenByLane.get(laneKey);
+    if (seen !== undefined && seen === sessionId) {
+      reusedIndices.add(i);
+    } else {
+      seenByLane.set(laneKey, sessionId);
+    }
+  }
+  return reusedIndices;
+}
+
 // ---- Structured Validation Result Card ----
+
+function getLaneBadgeLabel(lane: GraphWorkflowLaneKind | undefined): string {
+  if (lane === "task_validator") return "Task";
+  if (lane === "context_validator") return "Context";
+  return "";
+}
 
 function ValidationCard({
   event,
   execution,
+  isReusedSession,
+  onViewConversation,
 }: {
   event: Timestamped<GraphWorkflowValidationResultEvent>;
   execution: GraphWorkflowExecution;
+  isReusedSession?: boolean;
+  onViewConversation?: (
+    conversationId: string,
+    lane: GraphWorkflowLaneKind,
+    contextId: string,
+  ) => void;
 }) {
   const hasReopened = event.reopenTaskIds.length > 0;
   const hasIssues = event.issues.length > 0;
+  const sessionRef = event.sessionRef;
+  const reviewArtifact = event.reviewArtifact;
+
+  const laneBadge = getLaneBadgeLabel(sessionRef?.lane);
 
   return (
     <div className="wb-validation-card">
@@ -209,6 +255,60 @@ function ValidationCard({
           {formatTimestamp(event.occurredAt)}
         </span>
       </div>
+      {sessionRef && (
+        <div className="wb-validation-meta">
+          {laneBadge && (
+            <span
+              className={`wb-validation-lane-badge ${sessionRef.lane === "task_validator" ? "task" : "context"}`}
+            >
+              {laneBadge}
+            </span>
+          )}
+          <span className="wb-validation-engine-badge">
+            {sessionRef.engine}
+          </span>
+          {isReusedSession && (
+            <span className="wb-validation-reuse-badge">↺ continued</span>
+          )}
+          {sessionRef.engine === "claude" && onViewConversation && (
+            <button
+              className="wb-btn wb-btn-xs wb-btn-default wb-validation-view-btn"
+              onClick={() =>
+                onViewConversation(
+                  sessionRef.conversationId,
+                  sessionRef.lane,
+                  event.contextId,
+                )
+              }
+              type="button"
+            >
+              View Transcript
+            </button>
+          )}
+        </div>
+      )}
+      {reviewArtifact?.engine === "codex" && (
+        <div className="wb-validation-codex-artifact">
+          <div className="wb-validation-section-label">Codex Review</div>
+          <div className="wb-validation-codex-thread">
+            Thread: <code>{reviewArtifact.threadId}</code>
+          </div>
+          {reviewArtifact.response && (
+            <CollapsibleText maxCollapsedHeight={120}>
+              <div className="wb-validation-codex-response">
+                {reviewArtifact.response}
+              </div>
+            </CollapsibleText>
+          )}
+          {reviewArtifact.usage && (
+            <div className="wb-validation-codex-usage">
+              {reviewArtifact.usage.inputTokens}↑{" "}
+              {reviewArtifact.usage.cachedInputTokens}⊙{" "}
+              {reviewArtifact.usage.outputTokens}↓ tokens
+            </div>
+          )}
+        </div>
+      )}
       {(hasReopened || hasIssues) && (
         <div className="wb-validation-body">
           {hasReopened && (
@@ -252,7 +352,13 @@ function ValidationCard({
 
 // ---- Overview View (no context selected) ----
 
-function OverviewView({ execution }: { execution: GraphWorkflowExecution }) {
+function OverviewView({
+  execution,
+  onViewConversation,
+}: {
+  execution: GraphWorkflowExecution;
+  onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
+}) {
   const totalContexts = execution.workingDefinition.executionContexts.length;
   const completedContexts = Object.values(execution.contextStates).filter(
     (cs) => cs.status === "completed",
@@ -298,13 +404,20 @@ function OverviewView({ execution }: { execution: GraphWorkflowExecution }) {
         {history.validationEvents.length > 0 && (
           <section className="wb-overview-section">
             <div className="wb-overview-section-title">Recent Validations</div>
-            {history.validationEvents.slice(0, 5).map((event, index) => (
-              <ValidationCard
-                key={`val-${index}`}
-                event={event}
-                execution={execution}
-              />
-            ))}
+            {(() => {
+              const reused = computeReusedSessions(history.validationEvents);
+              return history.validationEvents
+                .slice(0, 5)
+                .map((event, index) => (
+                  <ValidationCard
+                    key={`val-${index}`}
+                    event={event}
+                    execution={execution}
+                    isReusedSession={reused.has(index)}
+                    onViewConversation={onViewConversation}
+                  />
+                ));
+            })()}
           </section>
         )}
 
@@ -390,6 +503,7 @@ function DetailView({
   onViewTask,
   viewingTaskId,
   isMutating,
+  onViewConversation,
 }: {
   execution: GraphWorkflowExecution;
   contextId: string;
@@ -404,6 +518,7 @@ function DetailView({
   onViewTask: (taskId: string) => void;
   viewingTaskId: string | null;
   isMutating: boolean;
+  onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
 }) {
   const [activeTab, setActiveTab] = useState<DetailTab>("tasks");
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
@@ -722,13 +837,20 @@ function DetailView({
             <section className="wb-overview-section">
               <div className="wb-overview-section-title">Validations</div>
               {history.validationEvents.length > 0 ? (
-                history.validationEvents.map((event, index) => (
-                  <ValidationCard
-                    key={`val-${index}`}
-                    event={event}
-                    execution={execution}
-                  />
-                ))
+                (() => {
+                  const reused = computeReusedSessions(
+                    history.validationEvents,
+                  );
+                  return history.validationEvents.map((event, index) => (
+                    <ValidationCard
+                      key={`val-${index}`}
+                      event={event}
+                      execution={execution}
+                      isReusedSession={reused.has(index)}
+                      onViewConversation={onViewConversation}
+                    />
+                  ));
+                })()
               ) : (
                 <div className="wb-exec-event">
                   <div className="wb-exec-event-header">
@@ -799,6 +921,7 @@ export default function ExecutionInspectorPanel({
   onViewTask,
   viewingTaskId,
   isMutating,
+  onViewConversation,
 }: ExecutionInspectorPanelProps) {
   const selectedContext = selectedContextId
     ? execution.workingDefinition.executionContexts.find(
@@ -807,7 +930,12 @@ export default function ExecutionInspectorPanel({
     : null;
 
   if (!selectedContext || !selectedContextId) {
-    return <OverviewView execution={execution} />;
+    return (
+      <OverviewView
+        execution={execution}
+        onViewConversation={onViewConversation}
+      />
+    );
   }
 
   return (
@@ -822,6 +950,7 @@ export default function ExecutionInspectorPanel({
       onViewTask={onViewTask}
       viewingTaskId={viewingTaskId}
       isMutating={isMutating}
+      onViewConversation={onViewConversation}
     />
   );
 }

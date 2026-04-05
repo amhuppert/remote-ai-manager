@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { Codex } from "@openai/codex-sdk";
 import { buildChildEnv } from "@/lib/child-env";
-import { runCodexDefault, toStringEnv } from "@/lib/codex-tool";
+import { toStringEnv } from "@/lib/codex-tool";
 import { readConfig } from "@/lib/config";
-import { createConversation } from "@/lib/conversations";
+import { createConversation, getConversation } from "@/lib/conversations";
 import { createLogger } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
 import { executePromptStream } from "@/lib/prompt";
@@ -35,6 +36,7 @@ import {
 } from "@/lib/workflows/graph-workflow/execution-loop";
 import { createGraphWorkflowIterationOrchestrator } from "@/lib/workflows/graph-workflow/iteration-orchestrator";
 import { createGraphWorkflowManager } from "@/lib/workflows/graph-workflow/workflow-manager";
+import { createWorkflowContinuityService } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -69,6 +71,13 @@ const sharedDocumentRegistry =
   createGraphWorkflowSharedDocumentRegistryService();
 const CODEX_VALIDATOR_TIMEOUT_MS = 300_000;
 
+const continuityService = createWorkflowContinuityService({
+  createConversation,
+  getConversation,
+  startCodexThread: async () => ({ threadId: crypto.randomUUID() }),
+  resumeCodexThread: async (threadId) => ({ threadId }),
+});
+
 const validatorRunner = createValidatorRunner({
   async executeValidatorAgent(input) {
     const session = await defaultGetSession(
@@ -79,11 +88,14 @@ const validatorRunner = createValidatorRunner({
       throw new Error("Session not found");
     }
 
-    const conversation = await createConversation(
-      input.projectPath,
-      input.sessionName,
-      { role: "validator" },
-    );
+    // Use the provided conversationId (from continuity service) or create a fresh one
+    const conversationId =
+      input.conversationId ??
+      (
+        await createConversation(input.projectPath, input.sessionName, {
+          role: "validator",
+        })
+      ).id;
 
     const textParts: string[] = [];
     const result = await executePromptStream(
@@ -102,7 +114,7 @@ const validatorRunner = createValidatorRunner({
           textParts.push((data as { type: "text"; text: string }).text);
         }
       },
-      conversation.id,
+      conversationId,
       input.model,
       undefined,
       {
@@ -116,6 +128,8 @@ const validatorRunner = createValidatorRunner({
     return {
       text: textParts.join(""),
       structuredOutput: result.structuredOutput,
+      contextTokens: result.contextTokens,
+      contextWindowMax: result.contextWindowMax,
     };
   },
 
@@ -149,27 +163,98 @@ const validatorRunner = createValidatorRunner({
           : CODEX_VALIDATOR_TIMEOUT_MS;
 
     const env = toStringEnv({ ...buildChildEnv(), CLAUDECODE: "" });
-    const codexResult = await runCodexDefault({
-      prompt: input.prompt,
-      workingDirectory: session.worktreePath,
-      env,
-      model: effectiveModel,
-      reasoningEffort: effectiveReasoning,
-      outputSchema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
-        string,
-        unknown
-      >,
-      timeoutMs,
-    });
 
-    if (codexResult.timedOut) throw new Error("Codex validator timed out");
-    if (codexResult.error)
-      throw new Error(`Codex validator failed: ${codexResult.error}`);
-    if (!codexResult.response)
-      throw new Error("Codex validator produced no response");
+    const signal = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+    const outputSchema = VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
+      string,
+      unknown
+    >;
 
-    return codexResult.response;
+    // Reuse an existing Codex thread when the continuity service resolved one
+    if (input.sessionAction === "reuse" && input.storedThreadId) {
+      try {
+        const codex = new Codex({ env });
+        const thread = codex.resumeThread(input.storedThreadId, {
+          model: effectiveModel,
+          sandboxMode: "workspace-write",
+          workingDirectory: session.worktreePath,
+          skipGitRepoCheck: true,
+          modelReasoningEffort: effectiveReasoning,
+        });
+
+        const turn = await thread.run(input.prompt, { outputSchema, signal });
+
+        if (!turn.finalResponse) {
+          throw new Error("Codex validator produced no response");
+        }
+
+        const sdkUsage = turn.usage;
+        return {
+          text: turn.finalResponse,
+          realThreadId: thread.id,
+          usage: sdkUsage
+            ? {
+                inputTokens: sdkUsage.input_tokens,
+                cachedInputTokens: sdkUsage.cached_input_tokens,
+                outputTokens: sdkUsage.output_tokens,
+              }
+            : null,
+        };
+      } catch (err) {
+        const name = err instanceof Error ? err.name : "";
+        if (name === "AbortError" || name === "TimeoutError") {
+          throw new Error("Codex validator timed out");
+        }
+        // Stale thread reference — fall back to a fresh thread
+        logger.warn("workflow-continuity.stale_session.recovery", {
+          engine: "codex",
+          storedThreadId: input.storedThreadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Fresh thread — use startThread directly to capture the real thread ID for future reuse
+    try {
+      const codex = new Codex({ env });
+      const thread = codex.startThread({
+        model: effectiveModel,
+        sandboxMode: "workspace-write",
+        workingDirectory: session.worktreePath,
+        skipGitRepoCheck: true,
+        modelReasoningEffort: effectiveReasoning,
+      });
+
+      const turn = await thread.run(input.prompt, { outputSchema, signal });
+
+      if (!turn.finalResponse) {
+        throw new Error("Codex validator produced no response");
+      }
+
+      const sdkUsage = turn.usage;
+      return {
+        text: turn.finalResponse,
+        realThreadId: thread.id,
+        usage: sdkUsage
+          ? {
+              inputTokens: sdkUsage.input_tokens,
+              cachedInputTokens: sdkUsage.cached_input_tokens,
+              outputTokens: sdkUsage.output_tokens,
+            }
+          : null,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const name = err instanceof Error ? err.name : "";
+      if (name === "AbortError" || name === "TimeoutError") {
+        throw new Error("Codex validator timed out");
+      }
+      throw new Error(`Codex validator failed: ${msg}`);
+    }
   },
+
+  continuityService,
+  executionRepository,
 });
 const validationService = createGraphWorkflowValidationService({
   runTaskValidator: validatorRunner.runTaskValidator,
@@ -178,6 +263,7 @@ const validationService = createGraphWorkflowValidationService({
 const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository,
   createConversation,
+  continuityService,
   createToolServer: (input) => ({
     server: createGraphWorkflowToolServer({
       executionContextTitle: input.contextTitle,

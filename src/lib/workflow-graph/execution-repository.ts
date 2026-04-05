@@ -1,5 +1,6 @@
 import { graphWorkflowExecutionSchema } from "@/lib/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import { assertNoLegacyWorkflowFields } from "./schema-cutover-guard";
 import type {
   GraphWorkflowExecution,
   SessionState,
@@ -33,6 +34,10 @@ export interface GraphWorkflowExecutionRepositoryDeps {
 function createExecutionFromSeed(
   seed: GraphWorkflowExecutionSeed,
 ): GraphWorkflowExecution {
+  assertNoLegacyWorkflowFields(
+    seed.definition,
+    "Workflow definition (execution start)",
+  );
   const contextStates: GraphWorkflowExecution["contextStates"] = {};
   const taskStates: GraphWorkflowExecution["taskStates"] = {};
   const retryState: GraphWorkflowExecution["retryState"] = {};

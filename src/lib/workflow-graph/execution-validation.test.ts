@@ -16,7 +16,7 @@ describe("graph workflow execution validation service", () => {
                 taskValidation: {
                   type: "claude",
                   enabled: true,
-
+                  continuity: { enabled: true },
                   agent: {
                     model: "sonnet",
                     reasoningEffort: "medium",
@@ -80,15 +80,24 @@ describe("graph workflow execution validation service", () => {
       },
     });
     const runTaskValidator = vi.fn(async () => ({
-      pass: true,
-      summary: "Needs more evidence",
-      reopenTaskIds: ["task-plan-2"],
-      issues: [
-        {
-          title: "Missing artifact",
-          description: "Attach the architecture notes before closing the task.",
-        },
-      ],
+      result: {
+        pass: true,
+        summary: "Needs more evidence",
+        reopenTaskIds: ["task-plan-2"],
+        issues: [
+          {
+            title: "Missing artifact",
+            description:
+              "Attach the architecture notes before closing the task.",
+          },
+        ],
+      },
+      metadata: {
+        sessionRef: null,
+        reviewArtifact: null,
+        limitEvaluation: "disabled" as const,
+        rotateBeforeNextTurn: false,
+      },
     }));
     const service = createGraphWorkflowValidationService({
       runTaskValidator,
@@ -141,7 +150,7 @@ describe("graph workflow execution validation service", () => {
                   agentValidator: {
                     type: "claude",
                     enabled: true,
-
+                    continuity: { enabled: true },
                     agent: {
                       model: "opus",
                       reasoningEffort: "high",
@@ -181,10 +190,18 @@ describe("graph workflow execution validation service", () => {
       },
     });
     const runContextAgentValidator = vi.fn(async () => ({
-      pass: true,
-      summary: "Agent validator passed",
-      reopenTaskIds: [],
-      issues: [],
+      result: {
+        pass: true,
+        summary: "Agent validator passed",
+        reopenTaskIds: [],
+        issues: [],
+      },
+      metadata: {
+        sessionRef: null,
+        reviewArtifact: null,
+        limitEvaluation: "disabled" as const,
+        rotateBeforeNextTurn: false,
+      },
     }));
     const runContextScriptValidator = vi.fn(async () => ({
       executed: true,

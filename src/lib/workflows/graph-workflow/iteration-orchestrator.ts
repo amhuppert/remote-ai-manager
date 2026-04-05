@@ -5,11 +5,12 @@ import type {
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
 } from "@/types";
-import {
-  buildIterationPrompt,
-  buildFollowUpPrompt,
-  isContextExhausted,
-} from "./iteration-prompt";
+import type {
+  ResolveImplementerCallInput,
+  ResolvedImplementerCall,
+  RecordClaudeLaneTurnInput,
+} from "./workflow-continuity-service";
+import { buildIterationPrompt, buildFollowUpPrompt } from "./iteration-prompt";
 import {
   createGraphWorkflowValidationService,
   type GraphWorkflowValidationService,
@@ -77,6 +78,15 @@ export interface GraphWorkflowAgentIterationResult {
   contextWindowMax: number | null;
 }
 
+export interface IterationOrchestratorContinuityService {
+  resolveImplementerCall(
+    input: ResolveImplementerCallInput,
+  ): Promise<ResolvedImplementerCall>;
+  recordClaudeTurnOutcome(
+    input: RecordClaudeLaneTurnInput,
+  ): GraphWorkflowExecution;
+}
+
 export interface GraphWorkflowIterationOrchestratorDeps {
   executionRepository: GraphWorkflowIterationExecutionRepository;
   createConversation(
@@ -90,6 +100,7 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   runAgentIteration(
     input: GraphWorkflowRunAgentIterationInput,
   ): Promise<GraphWorkflowAgentIterationResult>;
+  continuityService?: IterationOrchestratorContinuityService;
   validationService?: GraphWorkflowValidationService;
   now?(): string;
   emitStreamFrame?(
@@ -340,13 +351,32 @@ export function createGraphWorkflowIterationOrchestrator(
       );
     }
 
-    const conversation = await deps.createConversation(
-      input.projectPath,
-      input.sessionName,
-      { role: "iteration" },
-    );
+    // Resolve the implementer conversation — continuity service decides reuse vs fresh
+    let conversationId: string;
+    let executionWithLaneState: GraphWorkflowExecution;
+    let promptMode: "iteration_seed" | "follow_up" = "iteration_seed";
+    if (deps.continuityService) {
+      const resolved = await deps.continuityService.resolveImplementerCall({
+        execution: initialExecution,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        contextId: input.contextId,
+      });
+      conversationId = resolved.conversationId;
+      executionWithLaneState = resolved.execution;
+      promptMode = resolved.promptMode;
+    } else {
+      const conversation = await deps.createConversation(
+        input.projectPath,
+        input.sessionName,
+        { role: "iteration" },
+      );
+      conversationId = conversation.id;
+      executionWithLaneState = initialExecution;
+    }
 
-    const seededExecution = cloneExecution(initialExecution);
+    const conversation = { id: conversationId };
+    const seededExecution = cloneExecution(executionWithLaneState);
     const seededContextState = seededExecution.contextStates[input.contextId];
     if (!seededContextState) {
       throw new Error(
@@ -381,25 +411,31 @@ export function createGraphWorkflowIterationOrchestrator(
       allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
       sharedDocuments: seededExecution.sharedDocuments,
       completeTask: async (taskId: string, summary: string) => {
-        const currentExecution = await requireExecution(
+        const preValidationExecution = await requireExecution(
           input.projectPath,
           input.sessionName,
         );
         const validation = await validationService.validateTaskCompletion({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
-          execution: currentExecution,
+          execution: preValidationExecution,
           contextId: input.contextId,
           taskId,
           conversationId: conversation.id,
           summary,
         });
 
+        // Reload after validation to capture any lane state updates the validator runner persisted
+        const postValidationExecution = await requireExecution(
+          input.projectPath,
+          input.sessionName,
+        );
+
         if (!validation.pass) {
           const failedExecution = await markTaskValidationFailed({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
-            execution: currentExecution,
+            execution: postValidationExecution,
             contextId: input.contextId,
             taskId,
             conversationId: conversation.id,
@@ -414,6 +450,8 @@ export function createGraphWorkflowIterationOrchestrator(
               validatorType: "task",
               pass: false,
               summary: validation.feedback,
+              sessionRef: validation.sessionRef,
+              reviewArtifact: validation.reviewArtifact,
             });
           await persistExecution(
             input.projectPath,
@@ -423,10 +461,30 @@ export function createGraphWorkflowIterationOrchestrator(
           throw new Error(validation.feedback);
         }
 
+        // Publish the passing validation event before marking the task complete so
+        // session refs written to execution state remain visible in the history
+        const executionWithValidationEvent =
+          eventPublisher.publishValidationResult({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            execution: postValidationExecution,
+            contextId: input.contextId,
+            validatorType: "task",
+            pass: true,
+            summary: validation.summary,
+            sessionRef: validation.sessionRef,
+            reviewArtifact: validation.reviewArtifact,
+          });
+        await persistExecution(
+          input.projectPath,
+          input.sessionName,
+          executionWithValidationEvent,
+        );
+
         return markTaskCompleted({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
-          execution: currentExecution,
+          execution: executionWithValidationEvent,
           contextId: input.contextId,
           taskId,
           summary,
@@ -460,19 +518,49 @@ export function createGraphWorkflowIterationOrchestrator(
           emitStreamFrame(input.projectPath, input.sessionName, frame),
       } as const;
 
-      // Initial agent call with full iteration prompt
+      async function recordTurnOutcome(
+        agentResult: GraphWorkflowAgentIterationResult,
+      ): Promise<void> {
+        if (!deps.continuityService) return;
+        const current = await requireExecution(
+          input.projectPath,
+          input.sessionName,
+        );
+        const updated = deps.continuityService.recordClaudeTurnOutcome({
+          execution: current,
+          lane: "implementer",
+          contextTokens: agentResult.contextTokens,
+          contextWindowMax: agentResult.contextWindowMax,
+          contextLimitTokens:
+            context.iterationPolicy.continuity.contextLimitTokens,
+        });
+        await persistExecution(input.projectPath, input.sessionName, updated);
+      }
+
+      // Initial agent call — seed prompt for fresh sessions, follow-up for resumed sessions
+      const initialTasks = getIncompleteTasks(seededExecution, input.contextId);
+      const initialPrompt =
+        promptMode === "follow_up"
+          ? buildFollowUpPrompt({
+              remainingTaskIds: initialTasks.map((t) => t.id),
+              attemptNumber: 1,
+              maxAttempts: MAX_FOLLOW_UPS,
+            })
+          : buildIterationPrompt({
+              context,
+              tasks: initialTasks,
+              taskStates: seededExecution.taskStates,
+              sharedDocuments: seededExecution.sharedDocuments,
+              allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
+            });
+
       let agentResult = await deps.runAgentIteration({
         ...agentCallBase,
-        prompt: buildIterationPrompt({
-          context,
-          tasks: getIncompleteTasks(seededExecution, input.contextId),
-          taskStates: seededExecution.taskStates,
-          sharedDocuments: seededExecution.sharedDocuments,
-          allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
-        }),
+        prompt: initialPrompt,
       });
+      await recordTurnOutcome(agentResult);
 
-      // Follow-up loop: re-message if there are still incomplete tasks and context has room
+      // Follow-up loop: re-message if there are still incomplete tasks
       for (let attempt = 1; attempt <= MAX_FOLLOW_UPS; attempt++) {
         const midExecution = await requireExecution(
           input.projectPath,
@@ -481,7 +569,13 @@ export function createGraphWorkflowIterationOrchestrator(
 
         const remaining = getIncompleteTasks(midExecution, input.contextId);
         if (remaining.length === 0) break;
-        if (isContextExhausted(agentResult)) break;
+
+        // Stop if the continuity service has scheduled a rotation due to context limit
+        if (deps.continuityService) {
+          const laneState = midExecution.laneStates["implementer"];
+          if (laneState?.engine === "claude" && laneState.rotateBeforeNextTurn)
+            break;
+        }
 
         agentResult = await deps.runAgentIteration({
           ...agentCallBase,
@@ -491,6 +585,7 @@ export function createGraphWorkflowIterationOrchestrator(
             maxAttempts: MAX_FOLLOW_UPS,
           }),
         });
+        await recordTurnOutcome(agentResult);
       }
 
       emitStreamFrame(input.projectPath, input.sessionName, {

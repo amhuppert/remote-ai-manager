@@ -367,22 +367,20 @@ export type GraphWorkflowCircuitBreakerPolicy = z.infer<
   typeof graphWorkflowCircuitBreakerPolicySchema
 >;
 
-export const graphWorkflowIterationPolicySchema = z
-  .object({
-    maxIterations: z.number().int().min(1),
-    contextSoftLimitTokens: z.number().int().positive().optional(),
-    contextHardLimitTokens: z.number().int().positive().optional(),
-  })
-  .refine(
-    (value) =>
-      value.contextSoftLimitTokens === undefined ||
-      value.contextHardLimitTokens === undefined ||
-      value.contextSoftLimitTokens <= value.contextHardLimitTokens,
-    {
-      message: "contextSoftLimitTokens cannot exceed contextHardLimitTokens",
-      path: ["contextSoftLimitTokens"],
-    },
-  );
+export const graphWorkflowLaneContinuityPolicySchema = z.object({
+  enabled: z.boolean().default(true),
+  contextLimitTokens: z.number().int().positive().optional(),
+});
+export type GraphWorkflowLaneContinuityPolicy = z.infer<
+  typeof graphWorkflowLaneContinuityPolicySchema
+>;
+
+export const graphWorkflowIterationPolicySchema = z.object({
+  maxIterations: z.number().int().min(1),
+  continuity: graphWorkflowLaneContinuityPolicySchema.default({
+    enabled: true,
+  }),
+});
 export type GraphWorkflowIterationPolicy = z.infer<
   typeof graphWorkflowIterationPolicySchema
 >;
@@ -390,6 +388,9 @@ export type GraphWorkflowIterationPolicy = z.infer<
 const graphWorkflowValidatorBaseSchema = z.object({
   enabled: z.boolean(),
   instructions: z.string().trim().min(1),
+  continuity: graphWorkflowLaneContinuityPolicySchema.default({
+    enabled: true,
+  }),
 });
 
 export const graphWorkflowClaudeValidatorConfigSchema =
@@ -747,6 +748,58 @@ export type GraphWorkflowTaskStatusEvent = z.infer<
   typeof graphWorkflowTaskStatusEventSchema
 >;
 
+export const graphWorkflowLaneKindSchema = z.enum([
+  "implementer",
+  "task_validator",
+  "context_validator",
+]);
+export type GraphWorkflowLaneKind = z.infer<typeof graphWorkflowLaneKindSchema>;
+
+export const graphWorkflowExecutionSessionRefSchema = z.discriminatedUnion(
+  "engine",
+  [
+    z.object({
+      engine: z.literal("claude"),
+      lane: graphWorkflowLaneKindSchema,
+      conversationId: z.string().trim().min(1),
+    }),
+    z.object({
+      engine: z.literal("codex"),
+      lane: graphWorkflowLaneKindSchema,
+      threadId: z.string().trim().min(1),
+    }),
+  ],
+);
+export type GraphWorkflowExecutionSessionRef = z.infer<
+  typeof graphWorkflowExecutionSessionRefSchema
+>;
+
+export const graphWorkflowValidationReviewArtifactSchema = z.discriminatedUnion(
+  "engine",
+  [
+    z.object({
+      engine: z.literal("claude"),
+      conversationId: z.string().trim().min(1),
+    }),
+    z.object({
+      engine: z.literal("codex"),
+      threadId: z.string().trim().min(1),
+      response: z.string(),
+      usage: z
+        .object({
+          inputTokens: z.number().int().min(0),
+          cachedInputTokens: z.number().int().min(0),
+          outputTokens: z.number().int().min(0),
+        })
+        .nullable()
+        .default(null),
+    }),
+  ],
+);
+export type GraphWorkflowValidationReviewArtifact = z.infer<
+  typeof graphWorkflowValidationReviewArtifactSchema
+>;
+
 export const graphWorkflowValidationResultEventSchema = z.object({
   type: z.literal("graph-workflow-validation-result"),
   projectName: z.string(),
@@ -758,6 +811,10 @@ export const graphWorkflowValidationResultEventSchema = z.object({
   summary: z.string(),
   issues: z.array(workflowValidatorIssueSchema).default([]),
   reopenTaskIds: z.array(z.string()).default([]),
+  sessionRef: graphWorkflowExecutionSessionRefSchema.nullable().optional(),
+  reviewArtifact: graphWorkflowValidationReviewArtifactSchema
+    .nullable()
+    .optional(),
 });
 export type GraphWorkflowValidationResultEvent = z.infer<
   typeof graphWorkflowValidationResultEventSchema
@@ -820,6 +877,46 @@ export type GraphWorkflowExecutionEvent = z.infer<
   typeof graphWorkflowExecutionEventSchema
 >;
 
+// ============================================================
+// Lane Runtime State
+// ============================================================
+
+const graphWorkflowLaneTurnUsageSchema = z.object({
+  inputTokens: z.number().int().min(0),
+  cachedInputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+});
+export type GraphWorkflowLaneTurnUsage = z.infer<
+  typeof graphWorkflowLaneTurnUsageSchema
+>;
+
+export const graphWorkflowLaneStateSchema = z.discriminatedUnion("engine", [
+  z.object({
+    lane: graphWorkflowLaneKindSchema,
+    contextId: z.string().trim().min(1),
+    engine: z.literal("claude"),
+    sessionRef: graphWorkflowExecutionSessionRefSchema,
+    lastContextTokens: z.number().int().nullable().default(null),
+    lastContextWindowMax: z.number().int().nullable().default(null),
+    rotateBeforeNextTurn: z.boolean().default(false),
+    limitEvaluation: z.enum(["disabled", "supported"]),
+    lastUsedAt: z.string(),
+  }),
+  z.object({
+    lane: graphWorkflowLaneKindSchema,
+    contextId: z.string().trim().min(1),
+    engine: z.literal("codex"),
+    sessionRef: graphWorkflowExecutionSessionRefSchema,
+    lastTurnUsage: graphWorkflowLaneTurnUsageSchema.nullable().default(null),
+    rotateBeforeNextTurn: z.literal(false).default(false),
+    limitEvaluation: z.enum(["disabled", "unsupported"]),
+    lastUsedAt: z.string(),
+  }),
+]);
+export type GraphWorkflowLaneState = z.infer<
+  typeof graphWorkflowLaneStateSchema
+>;
+
 export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
   seedDefinitionId: z.string().trim().min(1),
@@ -833,6 +930,7 @@ export const graphWorkflowExecutionSchema = z.object({
   taskStates: z.record(z.string(), graphWorkflowTaskStateSchema).default({}),
   retryState: z.record(z.string(), graphWorkflowRetryStateSchema).default({}),
   sharedDocuments: z.array(graphWorkflowSharedDocumentEntrySchema).default([]),
+  laneStates: z.record(z.string(), graphWorkflowLaneStateSchema).default({}),
   machineSnapshot: z.unknown().nullable().default(null),
   history: z.array(graphWorkflowExecutionEventSchema).default([]),
   startedAt: z.string(),

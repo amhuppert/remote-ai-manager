@@ -78,20 +78,20 @@ function createDefaultTaskValidation(
     return {
       type: "codex",
       enabled: false,
-
       codex: {
         model: codexCfg?.model,
         reasoningEffort: codexCfg?.reasoningEffort,
       },
       instructions: "",
+      continuity: { enabled: true },
     };
   }
   return {
     type: "claude",
     enabled: false,
-
     agent: createDefaultAgentConfig(model),
     instructions: "",
+    continuity: { enabled: true },
   };
 }
 
@@ -108,20 +108,20 @@ function createDefaultContextAgentValidator(
     return {
       type: "codex",
       enabled: false,
-
       codex: {
         model: codexCfg?.model,
         reasoningEffort: codexCfg?.reasoningEffort,
       },
       instructions: "",
+      continuity: { enabled: true },
     };
   }
   return {
     type: "claude",
     enabled: false,
-
     agent: createDefaultAgentConfig(model),
     instructions: "",
+    continuity: { enabled: true },
   };
 }
 
@@ -962,6 +962,63 @@ export default function WorkflowInspectorPanel({
                     }}
                   />
                 )}
+                <div className="wb-subsection-label">Session Continuity</div>
+                <div className="wb-inline-field">
+                  <span className="wb-inline-field-label">Enabled</span>
+                  <div
+                    className={`wb-toggle${taskValidation.continuity.enabled ? " on" : ""}`}
+                    onClick={() =>
+                      applyContextUpdate({
+                        taskValidation: {
+                          ...taskValidation,
+                          continuity: {
+                            ...taskValidation.continuity,
+                            enabled: !taskValidation.continuity.enabled,
+                          },
+                        },
+                      })
+                    }
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        applyContextUpdate({
+                          taskValidation: {
+                            ...taskValidation,
+                            continuity: {
+                              ...taskValidation.continuity,
+                              enabled: !taskValidation.continuity.enabled,
+                            },
+                          },
+                        });
+                      }
+                    }}
+                  />
+                </div>
+                <div className="wb-inline-field">
+                  <span className="wb-inline-field-label">
+                    Context Limit (tokens)
+                  </span>
+                  <input
+                    min={1}
+                    onChange={(event) =>
+                      applyContextUpdate({
+                        taskValidation: {
+                          ...taskValidation,
+                          continuity: {
+                            ...taskValidation.continuity,
+                            contextLimitTokens: getOptionalPositiveNumber(
+                              event.target.value,
+                            ),
+                          },
+                        },
+                      })
+                    }
+                    type="number"
+                    value={taskValidation.continuity.contextLimitTokens ?? ""}
+                  />
+                </div>
               </>,
             )}
 
@@ -1182,6 +1239,80 @@ export default function WorkflowInspectorPanel({
                     }}
                   />
                 )}
+                {agentValidator.enabled && (
+                  <>
+                    <div className="wb-subsection-label">
+                      Session Continuity
+                    </div>
+                    <div className="wb-inline-field">
+                      <span className="wb-inline-field-label">Enabled</span>
+                      <div
+                        className={`wb-toggle${agentValidator.continuity.enabled ? " on" : ""}`}
+                        onClick={() =>
+                          applyContextUpdate({
+                            contextValidation: {
+                              ...contextValidation,
+                              agentValidator: {
+                                ...agentValidator,
+                                continuity: {
+                                  ...agentValidator.continuity,
+                                  enabled: !agentValidator.continuity.enabled,
+                                },
+                              },
+                            },
+                          })
+                        }
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            applyContextUpdate({
+                              contextValidation: {
+                                ...contextValidation,
+                                agentValidator: {
+                                  ...agentValidator,
+                                  continuity: {
+                                    ...agentValidator.continuity,
+                                    enabled: !agentValidator.continuity.enabled,
+                                  },
+                                },
+                              },
+                            });
+                          }
+                        }}
+                      />
+                    </div>
+                    <div className="wb-inline-field">
+                      <span className="wb-inline-field-label">
+                        Context Limit (tokens)
+                      </span>
+                      <input
+                        min={1}
+                        onChange={(event) =>
+                          applyContextUpdate({
+                            contextValidation: {
+                              ...contextValidation,
+                              agentValidator: {
+                                ...agentValidator,
+                                continuity: {
+                                  ...agentValidator.continuity,
+                                  contextLimitTokens: getOptionalPositiveNumber(
+                                    event.target.value,
+                                  ),
+                                },
+                              },
+                            },
+                          })
+                        }
+                        type="number"
+                        value={
+                          agentValidator.continuity.contextLimitTokens ?? ""
+                        }
+                      />
+                    </div>
+                  </>
+                )}
                 <div className="wb-inline-field">
                   <span className="wb-inline-field-label">
                     Script Validator
@@ -1294,30 +1425,46 @@ export default function WorkflowInspectorPanel({
                 </div>
                 <div className="wb-inline-field">
                   <span className="wb-inline-field-label">
-                    Soft Context Limit
+                    Session Continuity
                   </span>
-                  <input
-                    min={1}
-                    onChange={(event) =>
+                  <div
+                    className={`wb-toggle${selectedContext.iterationPolicy.continuity.enabled ? " on" : ""}`}
+                    onClick={() =>
                       applyContextUpdate({
                         iterationPolicy: {
                           ...selectedContext.iterationPolicy,
-                          contextSoftLimitTokens: getOptionalPositiveNumber(
-                            event.target.value,
-                          ),
+                          continuity: {
+                            ...selectedContext.iterationPolicy.continuity,
+                            enabled:
+                              !selectedContext.iterationPolicy.continuity
+                                .enabled,
+                          },
                         },
                       })
                     }
-                    type="number"
-                    value={
-                      selectedContext.iterationPolicy.contextSoftLimitTokens ??
-                      ""
-                    }
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        applyContextUpdate({
+                          iterationPolicy: {
+                            ...selectedContext.iterationPolicy,
+                            continuity: {
+                              ...selectedContext.iterationPolicy.continuity,
+                              enabled:
+                                !selectedContext.iterationPolicy.continuity
+                                  .enabled,
+                            },
+                          },
+                        });
+                      }
+                    }}
                   />
                 </div>
                 <div className="wb-inline-field">
                   <span className="wb-inline-field-label">
-                    Hard Context Limit
+                    Context Limit (tokens)
                   </span>
                   <input
                     min={1}
@@ -1325,16 +1472,19 @@ export default function WorkflowInspectorPanel({
                       applyContextUpdate({
                         iterationPolicy: {
                           ...selectedContext.iterationPolicy,
-                          contextHardLimitTokens: getOptionalPositiveNumber(
-                            event.target.value,
-                          ),
+                          continuity: {
+                            ...selectedContext.iterationPolicy.continuity,
+                            contextLimitTokens: getOptionalPositiveNumber(
+                              event.target.value,
+                            ),
+                          },
                         },
                       })
                     }
                     type="number"
                     value={
-                      selectedContext.iterationPolicy.contextHardLimitTokens ??
-                      ""
+                      selectedContext.iterationPolicy.continuity
+                        .contextLimitTokens ?? ""
                     }
                   />
                 </div>
