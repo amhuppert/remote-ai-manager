@@ -1104,7 +1104,8 @@ describe("parseValidatorResponse", () => {
       reopenTaskIds: [],
     };
     const result = parseValidatorResponse("some text", structured);
-    expect(result).toEqual(structured);
+    expect(result.result).toEqual(structured);
+    expect(result.parsePath).toBe("structured_output");
   });
 
   it("parses raw JSON string when no structuredOutput", () => {
@@ -1115,8 +1116,9 @@ describe("parseValidatorResponse", () => {
       reopenTaskIds: ["task-1"],
     });
     const result = parseValidatorResponse(json);
-    expect(result.pass).toBe(false);
-    expect(result.issues).toHaveLength(1);
+    expect(result.result.pass).toBe(false);
+    expect(result.result.issues).toHaveLength(1);
+    expect(result.parsePath).toBe("raw_json");
   });
 
   it("falls back to fenced block extraction", () => {
@@ -1132,13 +1134,15 @@ describe("parseValidatorResponse", () => {
       "```",
     ].join("\n");
     const result = parseValidatorResponse(text);
-    expect(result.pass).toBe(true);
+    expect(result.result.pass).toBe(true);
+    expect(result.parsePath).toBe("fenced_json_block");
   });
 
   it("returns failing result when all parsing paths fail", () => {
     const result = parseValidatorResponse("no json here");
-    expect(result.pass).toBe(false);
-    expect(result.summary).toContain("did not return structured output");
+    expect(result.result.pass).toBe(false);
+    expect(result.result.summary).toContain("did not return structured output");
+    expect(result.parsePath).toBe("fenced_json_block");
   });
 
   it("ignores invalid structuredOutput and falls back to text", () => {
@@ -1149,8 +1153,9 @@ describe("parseValidatorResponse", () => {
       reopenTaskIds: [],
     });
     const result = parseValidatorResponse(json, { invalid: true });
-    expect(result.pass).toBe(true);
-    expect(result.summary).toBe("Text parse");
+    expect(result.result.pass).toBe(true);
+    expect(result.result.summary).toBe("Text parse");
+    expect(result.parsePath).toBe("raw_json");
   });
 });
 

@@ -2,6 +2,8 @@ import {
   executeRepoValidationCommand,
   type RepoValidationCommandResult,
 } from "@/lib/repo-config";
+import { createLogger } from "@/lib/logging";
+import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
@@ -202,6 +204,8 @@ const defaultDeps: GraphWorkflowValidationServiceDeps = {
   },
 };
 
+const validationLogger = createLogger("graph-workflow-validation");
+
 export function createGraphWorkflowValidationService(
   deps: Partial<GraphWorkflowValidationServiceDeps> = {},
 ) {
@@ -214,7 +218,13 @@ export function createGraphWorkflowValidationService(
     const task = getTaskDefinition(input.execution, input.taskId);
     const validator = context.taskValidation;
 
+    const execLogger = getExecutionLogger(input.execution.id);
+
     if (!validator?.enabled) {
+      execLogger?.validation(input.contextId, "task_validation.skipped", {
+        taskId: input.taskId,
+        reason: "not_enabled",
+      });
       return {
         pass: true,
         summary: "Task validation is not enabled",
@@ -223,6 +233,12 @@ export function createGraphWorkflowValidationService(
         reopenTaskIds: [],
       };
     }
+
+    execLogger?.validation(input.contextId, "task_validation.started", {
+      taskId: input.taskId,
+      validatorType: validator.type,
+      summaryPreview: input.summary.slice(0, 200),
+    });
 
     const runResult = await resolvedDeps.runTaskValidator({
       projectPath: input.projectPath,
@@ -235,12 +251,28 @@ export function createGraphWorkflowValidationService(
       validator,
     });
 
+    const normalized = normalizeValidatorResult(
+      input.execution,
+      input.contextId,
+      runResult.result,
+    );
+
+    execLogger?.validation(input.contextId, "task_validation.completed", {
+      taskId: input.taskId,
+      pass: normalized.pass,
+      summary: normalized.summary,
+      issueCount: normalized.issues.length,
+      reopenTaskIds: normalized.reopenTaskIds,
+    });
+    validationLogger.info("graph-workflow.task_validation.completed", {
+      executionId: input.execution.id,
+      contextId: input.contextId,
+      taskId: input.taskId,
+      pass: normalized.pass,
+    });
+
     return {
-      ...normalizeValidatorResult(
-        input.execution,
-        input.contextId,
-        runResult.result,
-      ),
+      ...normalized,
       sessionRef: runResult.metadata.sessionRef,
       reviewArtifact: runResult.metadata.reviewArtifact,
     };
@@ -253,6 +285,13 @@ export function createGraphWorkflowValidationService(
     const validation = context.contextValidation;
     const agentValidator = validation?.agentValidator;
     const scriptValidator = validation?.scriptValidator;
+
+    const execLogger = getExecutionLogger(input.execution.id);
+    execLogger?.validation(input.contextId, "context_validation.started", {
+      hasAgentValidator: !!agentValidator?.enabled,
+      hasScriptValidator: !!scriptValidator?.enabled,
+      agentValidatorType: agentValidator?.type,
+    });
 
     let agentResult: WorkflowAgentValidatorResult | null = null;
     let agentSessionRef: GraphWorkflowExecutionSessionRef | null = null;
@@ -282,10 +321,25 @@ export function createGraphWorkflowValidationService(
         input.contextId,
         agentResult,
       );
+      execLogger?.validation(
+        input.contextId,
+        "context_validation.agent_completed",
+        {
+          pass: normalizedAgent.pass,
+          summary: normalizedAgent.summary,
+          issueCount: normalizedAgent.issues.length,
+          reopenTaskIds: normalizedAgent.reopenTaskIds,
+          engine: agentValidator.type,
+        },
+      );
     }
 
     let scriptResult: RepoValidationCommandResult | null = null;
     if (scriptValidator?.enabled) {
+      execLogger?.validation(
+        input.contextId,
+        "context_validation.script_started",
+      );
       scriptResult = await resolvedDeps.runContextScriptValidator({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -293,6 +347,16 @@ export function createGraphWorkflowValidationService(
         branchName: input.branchName,
         timeoutMs: input.timeoutMs,
       });
+      execLogger?.validation(
+        input.contextId,
+        "context_validation.script_completed",
+        {
+          executed: scriptResult.executed,
+          pass: scriptResult.pass,
+          hasOutput: !!scriptResult.output,
+          message: scriptResult.message,
+        },
+      );
     }
 
     if (scriptValidator?.enabled && scriptResult && !scriptResult.executed) {
@@ -313,6 +377,20 @@ export function createGraphWorkflowValidationService(
     const scriptPass =
       scriptResult === null || (scriptResult.executed && scriptResult.pass);
     const pass = agentPass && scriptPass;
+
+    execLogger?.validation(input.contextId, "context_validation.completed", {
+      pass,
+      agentPass,
+      scriptPass,
+      summary: normalizedAgent?.summary,
+    });
+    validationLogger.info("graph-workflow.context_validation.completed", {
+      executionId: input.execution.id,
+      contextId: input.contextId,
+      pass,
+      agentPass,
+      scriptPass,
+    });
 
     if (pass) {
       return {

@@ -1,6 +1,8 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { getErrorMessage } from "@/lib/errors";
+import { createLogger } from "@/lib/logging";
+import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { SHARED_DOCUMENT_DIRECTORY } from "@/lib/workflow-graph/shared-documents";
 import {
   emit as defaultEmitStreamFrame,
@@ -183,6 +185,8 @@ function areAllContextTasksCompleted(
 
 // -- Execution loop -----------------------------------------------------------
 
+const logger = createLogger("graph-workflow-execution-loop");
+
 export function createGraphWorkflowExecutionLoop(
   deps: GraphWorkflowExecutionLoopDeps,
 ) {
@@ -249,6 +253,15 @@ export function createGraphWorkflowExecutionLoop(
     const key = loopKey(input.projectPath, input.sessionName);
     activeLoops.add(key);
     let execution = input.execution;
+    const execLogger = getExecutionLogger(execution.id);
+
+    execLogger?.lifecycle("loop.started", {
+      executionId: execution.id,
+      activeContextId: execution.activeContextId,
+    });
+    logger.info("graph-workflow.loop.started", {
+      executionId: execution.id,
+    });
 
     try {
       while (execution.status === "running") {
@@ -259,6 +272,7 @@ export function createGraphWorkflowExecutionLoop(
           );
 
           if (!execution.activeContextId) {
+            execLogger?.lifecycle("loop.no_eligible_contexts");
             execution = await deps.workflowManager.send(
               input.projectPath,
               input.sessionName,
@@ -278,6 +292,10 @@ export function createGraphWorkflowExecutionLoop(
         // after resuming from a recovery_error that occurred during
         // validation), skip iteration and go straight to validation.
         if (areAllContextTasksCompleted(execution, contextId)) {
+          execLogger?.lifecycle("loop.skip_to_validation", {
+            contextId,
+            reason: "all_tasks_already_completed",
+          });
           execution = await runAndRecordContextValidation({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
@@ -324,6 +342,11 @@ export function createGraphWorkflowExecutionLoop(
           contextState.iterationCount >=
             contextDef.iterationPolicy.maxIterations
         ) {
+          execLogger?.decision("max_iterations.reached", {
+            contextId,
+            iterationCount: contextState.iterationCount,
+            maxIterations: contextDef.iterationPolicy.maxIterations,
+          });
           execution = await deps.workflowManager.send(
             input.projectPath,
             input.sessionName,
@@ -346,10 +369,17 @@ export function createGraphWorkflowExecutionLoop(
         }
 
         if (iterationResult.shouldContinueInContext) {
+          execLogger?.iteration(contextId, "loop.continue_in_context", {
+            conversationId: iterationResult.conversationId,
+          });
           continue;
         }
 
         if (iterationResult.shouldValidateContext) {
+          execLogger?.iteration(
+            contextId,
+            "loop.all_tasks_completed_entering_validation",
+          );
           execution = await runAndRecordContextValidation({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
@@ -377,6 +407,13 @@ export function createGraphWorkflowExecutionLoop(
       );
       return execution;
     } catch (error) {
+      execLogger?.lifecycle("loop.recovery_error", {
+        error: getErrorMessage(error),
+      });
+      logger.error("graph-workflow.loop.recovery_error", {
+        executionId: execution.id,
+        error: getErrorMessage(error),
+      });
       const haltedExecution = await deps.workflowManager.send(
         input.projectPath,
         input.sessionName,

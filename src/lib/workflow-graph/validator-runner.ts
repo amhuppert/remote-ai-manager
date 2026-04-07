@@ -1,4 +1,6 @@
 import { workflowAgentValidatorResultSchema } from "@/lib/schemas";
+import { createLogger } from "@/lib/logging";
+import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   ClaudeModel,
   CodexReasoningEffort,
@@ -202,32 +204,46 @@ export function extractValidatorResult(
   return result.data;
 }
 
+export interface ParsedValidatorResponse {
+  result: WorkflowAgentValidatorResult;
+  parsePath:
+    | "structured_output"
+    | "raw_json"
+    | "fenced_json_block"
+    | "fenced_json_block_fallback";
+}
+
 /**
  * Parse a validator response, trying structured output first, then raw JSON,
  * then fenced ```json block extraction as a fallback.
+ * Returns both the result and which parse path succeeded.
  */
 export function parseValidatorResponse(
   text: string,
   structuredOutput?: unknown,
-): WorkflowAgentValidatorResult {
+): ParsedValidatorResponse {
   // Path 1: structured output from SDK (both Claude and Codex)
   if (structuredOutput != null) {
     const result =
       workflowAgentValidatorResultSchema.safeParse(structuredOutput);
-    if (result.success) return result.data;
+    if (result.success)
+      return { result: result.data, parsePath: "structured_output" };
   }
 
   // Path 2: raw JSON string (Codex outputSchema response)
   try {
     const parsed = JSON.parse(text);
     const result = workflowAgentValidatorResultSchema.safeParse(parsed);
-    if (result.success) return result.data;
+    if (result.success) return { result: result.data, parsePath: "raw_json" };
   } catch {
     /* not raw JSON, try fenced block */
   }
 
   // Path 3: fenced ```json block (legacy fallback)
-  return extractValidatorResult(text);
+  return {
+    result: extractValidatorResult(text),
+    parsePath: "fenced_json_block",
+  };
 }
 
 // -- Validator runner ---------------------------------------------------------
@@ -319,6 +335,8 @@ export interface ValidatorRunnerDeps {
   executionRepository?: ValidatorContinuityRepository;
 }
 
+const validatorLogger = createLogger("graph-workflow-validator");
+
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
   async function persistLaneState(
     projectPath: string,
@@ -375,22 +393,54 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       storedThreadId?: string,
     ) => Promise<ExecuteValidatorCodexResult | string>,
   ): Promise<ValidatorRunResult> {
+    const contextId = execution.activeContextId ?? "";
+    const execLogger = getExecutionLogger(execution.id);
+
+    execLogger?.validation(contextId, "validator.invoked", {
+      lane,
+      engine: validatorType,
+      hasContinuityService: !!deps.continuityService,
+    });
+    validatorLogger.info("graph-workflow.validator.invoked", {
+      executionId: execution.id,
+      lane,
+      engine: validatorType,
+    });
+
     if (!deps.continuityService) {
       // No continuity service — execute one-shot without lane tracking
       if (validatorType === "codex") {
         const rawResult = await runCodexAgent("create");
         const text = typeof rawResult === "string" ? rawResult : rawResult.text;
+        const { result: parsed, parsePath } = parseValidatorResponse(text);
+        execLogger?.validation(contextId, "validator.result_parsed", {
+          lane,
+          engine: validatorType,
+          parsePath,
+          pass: parsed.pass,
+          issueCount: parsed.issues.length,
+          reopenTaskIds: parsed.reopenTaskIds,
+        });
         return {
-          result: parseValidatorResponse(text),
+          result: parsed,
           metadata: buildNoServiceMetadata(),
         };
       }
       const rawResult = await runClaudeAgent();
+      const { result: parsed, parsePath } = parseValidatorResponse(
+        rawResult.text,
+        rawResult.structuredOutput,
+      );
+      execLogger?.validation(contextId, "validator.result_parsed", {
+        lane,
+        engine: validatorType,
+        parsePath,
+        pass: parsed.pass,
+        issueCount: parsed.issues.length,
+        reopenTaskIds: parsed.reopenTaskIds,
+      });
       return {
-        result: parseValidatorResponse(
-          rawResult.text,
-          rawResult.structuredOutput,
-        ),
+        result: parsed,
         metadata: buildNoServiceMetadata(),
       };
     }
@@ -441,8 +491,28 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         usage,
       };
 
+      const { result: parsed, parsePath } = parseValidatorResponse(text);
+
+      execLogger?.validation(contextId, "validator.result_parsed", {
+        lane,
+        engine: "codex",
+        parsePath,
+        pass: parsed.pass,
+        issueCount: parsed.issues.length,
+        summary: parsed.summary,
+        reopenTaskIds: parsed.reopenTaskIds,
+        sessionAction,
+        threadId: codexThreadId,
+        usage,
+      });
+      execLogger?.writeValidatorResponse(
+        contextId,
+        `${lane}-codex-response.json`,
+        { raw: text, parsed, parsePath },
+      );
+
       return {
-        result: parseValidatorResponse(text),
+        result: parsed,
         metadata: {
           sessionRef,
           reviewArtifact,
@@ -474,11 +544,31 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         ? { engine: "claude", conversationId: sessionRef.conversationId }
         : null;
 
+    const { result: parsed, parsePath } = parseValidatorResponse(
+      claudeResult.text,
+      claudeResult.structuredOutput,
+    );
+
+    execLogger?.validation(contextId, "validator.result_parsed", {
+      lane,
+      engine: "claude",
+      parsePath,
+      pass: parsed.pass,
+      issueCount: parsed.issues.length,
+      summary: parsed.summary,
+      reopenTaskIds: parsed.reopenTaskIds,
+      conversationId,
+      contextTokens: claudeResult.contextTokens,
+      contextWindowMax: claudeResult.contextWindowMax,
+    });
+    execLogger?.writeValidatorResponse(
+      contextId,
+      `${lane}-claude-response.json`,
+      { raw: claudeResult.text, parsed, parsePath },
+    );
+
     return {
-      result: parseValidatorResponse(
-        claudeResult.text,
-        claudeResult.structuredOutput,
-      ),
+      result: parsed,
       metadata: {
         sessionRef,
         reviewArtifact,
@@ -501,6 +591,18 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       tasks: contextTasks,
       summary: input.summary,
       validator: input.validator,
+    });
+
+    const execLogger = getExecutionLogger(input.execution.id);
+    execLogger?.writePrompt(
+      input.context.id,
+      `task-validation-${input.task.id}.md`,
+      prompt,
+    );
+    execLogger?.validation(input.context.id, "task_validator.started", {
+      taskId: input.task.id,
+      engine: input.validator.type,
+      promptLength: prompt.length,
     });
 
     const contextLimitTokens = input.validator.continuity.contextLimitTokens;
@@ -556,10 +658,23 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         async () => ({ text: "", realThreadId: null, usage: null }),
       );
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      execLogger?.validation(input.context.id, "task_validator.error", {
+        taskId: input.task.id,
+        engine: input.validator.type,
+        error: errorMessage,
+      });
+      validatorLogger.error("graph-workflow.task_validator.error", {
+        executionId: input.execution.id,
+        contextId: input.context.id,
+        taskId: input.task.id,
+        error: errorMessage,
+      });
       return {
         result: {
           pass: false,
-          summary: `Validator agent failed: ${error instanceof Error ? error.message : String(error)}`,
+          summary: `Validator agent failed: ${errorMessage}`,
           issues: [],
           reopenTaskIds: [],
         },
@@ -579,6 +694,21 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       context: input.context,
       tasks: contextTasks,
       validator: input.validator,
+    });
+
+    const execLogger = getExecutionLogger(input.execution.id);
+    const retryState = input.execution.retryState[input.context.id];
+    const attemptLabel = retryState ? `-attempt-${retryState.attempt}` : "";
+    execLogger?.writePrompt(
+      input.context.id,
+      `context-validation${attemptLabel}.md`,
+      prompt,
+    );
+    execLogger?.validation(input.context.id, "context_validator.started", {
+      engine: input.validator.type,
+      promptLength: prompt.length,
+      taskCount: contextTasks.length,
+      retryAttempt: retryState?.attempt ?? 0,
     });
 
     const contextLimitTokens = input.validator.continuity.contextLimitTokens;
@@ -634,10 +764,21 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         async () => ({ text: "", realThreadId: null, usage: null }),
       );
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      execLogger?.validation(input.context.id, "context_validator.error", {
+        engine: input.validator.type,
+        error: errorMessage,
+      });
+      validatorLogger.error("graph-workflow.context_validator.error", {
+        executionId: input.execution.id,
+        contextId: input.context.id,
+        error: errorMessage,
+      });
       return {
         result: {
           pass: false,
-          summary: `Validator agent failed: ${error instanceof Error ? error.message : String(error)}`,
+          summary: `Validator agent failed: ${errorMessage}`,
           issues: [],
           reopenTaskIds: [],
         },

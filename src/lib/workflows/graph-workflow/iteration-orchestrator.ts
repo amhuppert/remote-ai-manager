@@ -1,3 +1,5 @@
+import { createLogger } from "@/lib/logging";
+import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   ClaudeModel,
   GraphWorkflowExecution,
@@ -198,6 +200,8 @@ function countRemainingTasks(
   return getIncompleteTasks(execution, contextId).length;
 }
 
+const logger = createLogger("graph-workflow-iteration");
+
 export function createGraphWorkflowIterationOrchestrator(
   deps: GraphWorkflowIterationOrchestratorDeps,
 ) {
@@ -351,6 +355,22 @@ export function createGraphWorkflowIterationOrchestrator(
       );
     }
 
+    const execLogger = getExecutionLogger(initialExecution.id);
+    execLogger?.iteration(input.contextId, "iteration.started", {
+      iterationNumber:
+        (initialExecution.contextStates[input.contextId]?.iterationCount ?? 0) +
+        1,
+      incompleteTaskCount: incompleteTasks.length,
+      incompleteTaskIds: incompleteTasks.map((t) => t.id),
+      model: context.agent.model,
+      reasoningEffort: context.agent.reasoningEffort,
+    });
+    logger.info("graph-workflow.iteration.started", {
+      executionId: initialExecution.id,
+      contextId: input.contextId,
+      incompleteTaskCount: incompleteTasks.length,
+    });
+
     // Resolve the implementer conversation — continuity service decides reuse vs fresh
     let conversationId: string;
     let executionWithLaneState: GraphWorkflowExecution;
@@ -374,6 +394,12 @@ export function createGraphWorkflowIterationOrchestrator(
       conversationId = conversation.id;
       executionWithLaneState = initialExecution;
     }
+
+    execLogger?.iteration(input.contextId, "iteration.conversation_resolved", {
+      conversationId,
+      promptMode,
+      sessionAction: deps.continuityService ? "continuity_managed" : "fresh",
+    });
 
     const conversation = { id: conversationId };
     const seededExecution = cloneExecution(executionWithLaneState);
@@ -411,6 +437,11 @@ export function createGraphWorkflowIterationOrchestrator(
       allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
       sharedDocuments: seededExecution.sharedDocuments,
       completeTask: async (taskId: string, summary: string) => {
+        execLogger?.task(input.contextId, "task.completion_attempted", {
+          taskId,
+          summaryLength: summary.length,
+          summaryPreview: summary.slice(0, 200),
+        });
         const preValidationExecution = await requireExecution(
           input.projectPath,
           input.sessionName,
@@ -432,6 +463,16 @@ export function createGraphWorkflowIterationOrchestrator(
         );
 
         if (!validation.pass) {
+          execLogger?.task(input.contextId, "task.validation_failed", {
+            taskId,
+            feedback: validation.feedback,
+            issueCount: validation.issues.length,
+          });
+          logger.info("graph-workflow.task.validation_failed", {
+            executionId: preValidationExecution.id,
+            contextId: input.contextId,
+            taskId,
+          });
           const failedExecution = await markTaskValidationFailed({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
@@ -460,6 +501,11 @@ export function createGraphWorkflowIterationOrchestrator(
           );
           throw new Error(validation.feedback);
         }
+
+        execLogger?.task(input.contextId, "task.validation_passed", {
+          taskId,
+          summary: validation.summary,
+        });
 
         // Publish the passing validation event before marking the task complete so
         // session refs written to execution state remain visible in the history
@@ -554,11 +600,33 @@ export function createGraphWorkflowIterationOrchestrator(
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
             });
 
+      // Log the prompt sent to the agent
+      const iterationNum = seededContextState.iterationCount;
+      execLogger?.writePrompt(
+        input.contextId,
+        promptMode === "follow_up"
+          ? `iteration-${iterationNum}-followup-0.md`
+          : `iteration-${iterationNum}.md`,
+        initialPrompt,
+      );
+      execLogger?.iteration(input.contextId, "iteration.prompt_sent", {
+        promptMode,
+        promptLength: initialPrompt.length,
+        model: context.agent.model,
+        reasoningEffort: context.agent.reasoningEffort,
+      });
+
       let agentResult = await deps.runAgentIteration({
         ...agentCallBase,
         prompt: initialPrompt,
       });
       await recordTurnOutcome(agentResult);
+
+      execLogger?.iteration(input.contextId, "iteration.agent_turn_completed", {
+        turnNumber: 0,
+        contextTokens: agentResult.contextTokens,
+        contextWindowMax: agentResult.contextWindowMax,
+      });
 
       // Follow-up loop: re-message if there are still incomplete tasks
       for (let attempt = 1; attempt <= MAX_FOLLOW_UPS; attempt++) {
@@ -568,24 +636,74 @@ export function createGraphWorkflowIterationOrchestrator(
         );
 
         const remaining = getIncompleteTasks(midExecution, input.contextId);
-        if (remaining.length === 0) break;
+        if (remaining.length === 0) {
+          execLogger?.iteration(
+            input.contextId,
+            "iteration.follow_up_skipped",
+            {
+              reason: "all_tasks_completed",
+              attempt,
+            },
+          );
+          break;
+        }
 
         // Stop if the continuity service has scheduled a rotation due to context limit
         if (deps.continuityService) {
           const laneState = midExecution.laneStates["implementer"];
-          if (laneState?.engine === "claude" && laneState.rotateBeforeNextTurn)
+          if (
+            laneState?.engine === "claude" &&
+            laneState.rotateBeforeNextTurn
+          ) {
+            execLogger?.iteration(
+              input.contextId,
+              "iteration.follow_up_skipped",
+              {
+                reason: "context_rotation_scheduled",
+                attempt,
+                remainingTaskCount: remaining.length,
+              },
+            );
+            execLogger?.decision("rotation.caused_follow_up_skip", {
+              contextId: input.contextId,
+              lane: "implementer",
+              remainingTaskCount: remaining.length,
+            });
             break;
+          }
         }
+
+        const followUpPrompt = buildFollowUpPrompt({
+          remainingTaskIds: remaining.map((t) => t.id),
+          attemptNumber: attempt,
+          maxAttempts: MAX_FOLLOW_UPS,
+        });
+        execLogger?.writePrompt(
+          input.contextId,
+          `iteration-${iterationNum}-followup-${attempt}.md`,
+          followUpPrompt,
+        );
+        execLogger?.iteration(input.contextId, "iteration.follow_up_sent", {
+          attempt,
+          maxAttempts: MAX_FOLLOW_UPS,
+          remainingTaskIds: remaining.map((t) => t.id),
+        });
 
         agentResult = await deps.runAgentIteration({
           ...agentCallBase,
-          prompt: buildFollowUpPrompt({
-            remainingTaskIds: remaining.map((t) => t.id),
-            attemptNumber: attempt,
-            maxAttempts: MAX_FOLLOW_UPS,
-          }),
+          prompt: followUpPrompt,
         });
         await recordTurnOutcome(agentResult);
+
+        execLogger?.iteration(
+          input.contextId,
+          "iteration.agent_turn_completed",
+          {
+            turnNumber: attempt,
+            contextTokens: agentResult.contextTokens,
+            contextWindowMax: agentResult.contextWindowMax,
+          },
+        );
       }
 
       emitStreamFrame(input.projectPath, input.sessionName, {
@@ -620,8 +738,24 @@ export function createGraphWorkflowIterationOrchestrator(
       finalizedExecution,
       input.contextId,
     );
+    const completedTaskCount = finalizedContextState.completedTaskCount;
     const shouldValidateContext = remainingTaskCount === 0;
     const shouldContinueInContext = remainingTaskCount > 0;
+
+    execLogger?.iteration(input.contextId, "iteration.completed", {
+      conversationId: conversation.id,
+      iterationNumber: finalizedContextState.iterationCount,
+      completedTaskCount,
+      remainingTaskCount,
+      shouldValidateContext,
+      shouldContinueInContext,
+    });
+    logger.info("graph-workflow.iteration.completed", {
+      executionId: finalizedExecution.id,
+      contextId: input.contextId,
+      completedTaskCount,
+      remainingTaskCount,
+    });
 
     finalizedContextState.status = shouldValidateContext
       ? "validating"

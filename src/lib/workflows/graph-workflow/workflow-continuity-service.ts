@@ -1,4 +1,5 @@
 import { createLogger } from "@/lib/logging";
+import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowLaneKind,
@@ -229,6 +230,14 @@ export function createWorkflowContinuityService(
           : !continuityEnabled
             ? "continuity_disabled"
             : "rotation_scheduled";
+
+      const execLogger = getExecutionLogger(execution.id);
+      execLogger?.decision("implementer.rotation", {
+        contextId,
+        reason,
+        continuityEnabled,
+        previousContextId: laneState?.contextId ?? null,
+      });
 
       if (reason === "context_changed" && laneState) {
         logger.warn("workflow-continuity.stale_session.reset", {
@@ -552,6 +561,20 @@ export function createWorkflowContinuityService(
           lane,
           contextTokens,
           limit: contextLimitTokens,
+        });
+
+        const contextId = laneState.contextId;
+        const execLogger = getExecutionLogger(execution.id);
+        execLogger?.decision("rotation.scheduled", {
+          lane,
+          engine: "claude",
+          contextId,
+          contextTokens,
+          contextWindowMax,
+          contextLimitTokens,
+          utilization: contextWindowMax
+            ? Math.round((contextTokens / contextWindowMax) * 100)
+            : null,
         });
       }
     }

@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createLogger } from "@/lib/logging";
+import {
+  createExecutionLogger,
+  registerExecutionLogger,
+  unregisterExecutionLogger,
+  getExecutionLogger,
+} from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionSessionRef,
@@ -424,6 +430,24 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       nextExecution,
     );
 
+    // Initialize per-execution structured logger
+    const execLogger = createExecutionLogger(nextExecution.id);
+    registerExecutionLogger(execLogger);
+    execLogger.writeManifest(nextExecution);
+    execLogger.lifecycle("execution.started", {
+      definitionId: definition.id,
+      definitionRevision: definition.revision,
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      contextCount: definition.definition.executionContexts.length,
+      taskCount: definition.definition.tasks.length,
+    });
+    logger.info("graph-workflow.execution.started", {
+      executionId: nextExecution.id,
+      definitionId: definition.id,
+      definitionRevision: definition.revision,
+    });
+
     return nextExecution;
   }
 
@@ -439,6 +463,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     );
     const now = getNow(deps);
 
+    const execLogger = getExecutionLogger(execution.id);
+
     if (event.type === "pause") {
       const nextExecution = transitionToNonRunningState(
         execution,
@@ -451,6 +477,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         sessionName,
         nextExecution,
       );
+      execLogger?.lifecycle("execution.paused");
+      logger.info("graph-workflow.execution.paused", {
+        executionId: execution.id,
+      });
       return nextExecution;
     }
 
@@ -466,6 +496,12 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         sessionName,
         nextExecution,
       );
+      execLogger?.lifecycle("execution.aborted");
+      execLogger?.writeManifest(nextExecution);
+      unregisterExecutionLogger(execution.id);
+      logger.info("graph-workflow.execution.aborted", {
+        executionId: execution.id,
+      });
       return nextExecution;
     }
 
@@ -485,6 +521,12 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         sessionName,
         nextExecution,
       );
+      execLogger?.lifecycle("execution.completed");
+      execLogger?.writeManifest(nextExecution);
+      unregisterExecutionLogger(execution.id);
+      logger.info("graph-workflow.execution.completed", {
+        executionId: execution.id,
+      });
       return nextExecution;
     }
 
@@ -499,6 +541,15 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       sessionName,
       nextExecution,
     );
+    execLogger?.lifecycle("execution.halted", {
+      haltReason: event.reason,
+    });
+    execLogger?.writeManifest(nextExecution);
+    unregisterExecutionLogger(execution.id);
+    logger.info("graph-workflow.execution.halted", {
+      executionId: execution.id,
+      haltReasonType: event.reason.type,
+    });
     return nextExecution;
   }
 
@@ -556,6 +607,22 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       sessionName,
       nextExecution,
     );
+
+    // Re-register execution logger on resume
+    const execLogger = createExecutionLogger(nextExecution.id);
+    registerExecutionLogger(execLogger);
+    execLogger.lifecycle("execution.resumed", {
+      previousStatus: execution.status,
+      hasInterruptedTasks: hasInterrupted,
+      resetContextIds: Object.values(nextExecution.contextStates)
+        .filter((cs) => cs.status === "ready")
+        .map((cs) => cs.contextId),
+    });
+    logger.info("graph-workflow.execution.resumed", {
+      executionId: nextExecution.id,
+      previousStatus: execution.status,
+    });
+
     return nextExecution;
   }
 
@@ -631,9 +698,18 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     nextExecution.activeContextId = nextContextId;
     if (nextContextId) {
       nextExecution.contextStates[nextContextId]!.status = "running";
-      logger.info("workflow-continuity.context.reset", {
+      const clearedLanes = Object.keys(nextExecution.laneStates);
+      logger.info("graph-workflow.context.scheduled", {
+        executionId: nextExecution.id,
         nextContextId,
-        clearedLanes: Object.keys(nextExecution.laneStates),
+        eligibleContextIds,
+        clearedLanes,
+      });
+      const execLogger = getExecutionLogger(nextExecution.id);
+      execLogger?.lifecycle("context.scheduled", {
+        contextId: nextContextId,
+        eligibleContextIds,
+        clearedLanes,
       });
       nextExecution.laneStates = {};
     }
@@ -677,6 +753,15 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     contextState.lastValidationAt = now;
     contextState.lastValidationPass = result.pass;
 
+    const execLogger = getExecutionLogger(nextExecution.id);
+    execLogger?.validation(result.contextId, "context_validation.recorded", {
+      pass: result.pass,
+      summary: result.summary,
+      issueCount: result.issues?.length ?? 0,
+      reopenTaskIds: result.reopenTaskIds ?? [],
+      hasScriptOutput: !!result.scriptOutput,
+    });
+
     const validationEventFields = {
       issues: result.issues ?? [],
       reopenTaskIds: result.reopenTaskIds ?? [],
@@ -713,6 +798,14 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           summary: result.summary ?? "Validation passed",
           ...validationEventFields,
         });
+      execLogger?.lifecycle("context.completed", {
+        contextId: result.contextId,
+        summary: result.summary,
+      });
+      logger.info("graph-workflow.context.validation_passed", {
+        executionId: nextExecution.id,
+        contextId: result.contextId,
+      });
       return updateExecution(
         deps.executionRepository,
         projectPath,
@@ -723,6 +816,12 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
     // Apply remediations before deciding on retry/halt
     applyValidationRemediations(nextExecution, result, now);
+    execLogger?.decision("remediation.applied", {
+      contextId: result.contextId,
+      reopenedTaskCount: result.reopenTaskIds?.length ?? 0,
+      newFixTaskCount: result.issues?.length ?? 0,
+      hasScriptOutputDocument: !!result.scriptOutputDocumentPath,
+    });
 
     contextState.consecutiveFailureCount += 1;
 
@@ -731,6 +830,14 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     if (retryState) {
       const nextAttempt = retryState.attempt + 1;
       retryState.attempt = nextAttempt;
+      execLogger?.decision("retry.evaluated", {
+        contextId: result.contextId,
+        attempt: nextAttempt,
+        maxAttempts: retryState.maxAttempts,
+        outcome:
+          nextAttempt < retryState.maxAttempts ? "retrying" : "exhausted",
+        consecutiveFailureCount: contextState.consecutiveFailureCount,
+      });
       if (nextAttempt < retryState.maxAttempts) {
         contextState.status = "ready";
         nextExecution.activeContextId = result.contextId;
@@ -753,6 +860,17 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             summary: result.summary ?? "Validation failed",
             ...validationEventFields,
           });
+        execLogger?.lifecycle("context.retrying", {
+          contextId: result.contextId,
+          attempt: nextAttempt,
+          maxAttempts: retryState.maxAttempts,
+        });
+        logger.info("graph-workflow.context.retrying", {
+          executionId: nextExecution.id,
+          contextId: result.contextId,
+          attempt: nextAttempt,
+          maxAttempts: retryState.maxAttempts,
+        });
         return updateExecution(
           deps.executionRepository,
           projectPath,
@@ -780,6 +898,25 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       "none",
       false,
     );
+    execLogger?.decision("circuit_breaker.triggered", {
+      contextId: result.contextId,
+      condition: "retry_exhaustion",
+      failureCount: contextState.consecutiveFailureCount,
+      summary: result.summary,
+      retryAttempts: retryState?.attempt ?? 0,
+      retryMax: retryState?.maxAttempts ?? 0,
+    });
+    execLogger?.lifecycle("execution.halted", {
+      haltReason: nextExecution.haltReason,
+    });
+    execLogger?.writeManifest(nextExecution);
+    unregisterExecutionLogger(nextExecution.id);
+    logger.info("graph-workflow.circuit_breaker.triggered", {
+      executionId: nextExecution.id,
+      contextId: result.contextId,
+      failureCount: contextState.consecutiveFailureCount,
+    });
+
     const executionWithValidationEvent = eventPublisher.publishValidationResult(
       {
         projectPath,

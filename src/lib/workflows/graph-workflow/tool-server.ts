@@ -1,9 +1,12 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/errors";
 import type { AgentAddedTask } from "@/lib/workflow-graph/runtime-edits";
 import type { SharedDocumentUpsertInput } from "@/lib/workflow-graph/shared-documents";
+
+const logger = createLogger("graph-workflow-tools");
 
 const completeTaskSchema = z.object({
   taskSlug: z
@@ -122,8 +125,17 @@ export function createGraphWorkflowToolServer(
     async (args) => {
       const parsed = completeTaskSchema.safeParse(args);
       if (!parsed.success) {
+        logger.warn("graph-workflow.tool.validation_error", {
+          tool: "complete_task",
+          error: parsed.error.message,
+        });
         return createValidationErrorResult(parsed.error.message);
       }
+
+      logger.info("graph-workflow.tool.complete_task", {
+        taskSlug: parsed.data.taskSlug,
+        summaryLength: parsed.data.summary.length,
+      });
 
       try {
         await context.completeTask(parsed.data.taskSlug, parsed.data.summary);
@@ -131,6 +143,10 @@ export function createGraphWorkflowToolServer(
           `Task ${parsed.data.taskSlug} was completed and recorded for "${context.executionContextTitle}".`,
         );
       } catch (error) {
+        logger.warn("graph-workflow.tool.complete_task.error", {
+          taskSlug: parsed.data.taskSlug,
+          error: getErrorMessage(error),
+        });
         return createToolErrorResult(getErrorMessage(error));
       }
     },
@@ -145,6 +161,10 @@ export function createGraphWorkflowToolServer(
       if (!parsed.success) {
         return createValidationErrorResult(parsed.error.message);
       }
+
+      logger.info("graph-workflow.tool.upsert_shared_document", {
+        relativePath: parsed.data.relativePath,
+      });
 
       try {
         await context.upsertSharedDocument(parsed.data);
@@ -167,12 +187,21 @@ export function createGraphWorkflowToolServer(
         return createValidationErrorResult(parsed.error.message);
       }
 
+      logger.info("graph-workflow.tool.add_task", {
+        title: parsed.data.title,
+        slug: parsed.data.slug,
+      });
+
       try {
         await context.addTask(parsed.data);
         return createTextResult(
           `Queued a new task at the end of execution context "${context.executionContextTitle}".`,
         );
       } catch (error) {
+        logger.warn("graph-workflow.tool.add_task.error", {
+          title: parsed.data.title,
+          error: getErrorMessage(error),
+        });
         return createToolErrorResult(getErrorMessage(error));
       }
     },

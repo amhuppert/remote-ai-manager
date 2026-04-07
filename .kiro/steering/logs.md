@@ -163,6 +163,111 @@ HTTP Request (X-Trace-Id header)
 
 Every API route is wrapped with `withTracing()`. The trace ID links debug log entries for a single request. Transcript entries are separate — they record the conversation content, not the request lifecycle.
 
+## Workflow Execution Logs (`workflow-logs/{executionId}/`)
+
+Per-execution structured log directory for graph workflow observability. Separate from `cc-debug.log` — these logs capture the full decision trail of a workflow execution for post-hoc investigation by AI agents.
+
+### Directory Structure
+
+```
+<config-dir>/workflow-logs/<executionId>/
+├── _manifest.json                         # Entry point: metadata, definition, context summaries
+├── lifecycle.jsonl                         # Execution-level events (start, pause, resume, halt, complete)
+├── decisions.jsonl                         # Cross-cutting decisions (rotation, retry, circuit breaker)
+└── contexts/<contextId>/
+    ├── iterations.jsonl                    # Iteration lifecycle (start, follow-ups, completion)
+    ├── tasks.jsonl                         # Task events (completion, reopening, agent-added, validation)
+    ├── validation.jsonl                    # Validator invocations, results, remediation
+    └── prompts/
+        ├── iteration-<n>.md               # Full prompt text sent to agent
+        ├── iteration-<n>-followup.md      # Follow-up prompt text
+        ├── task-validator-<taskId>.md      # Task validator prompt
+        ├── task-validator-<taskId>.json    # Task validator response (raw + parsed + parsePath)
+        ├── context-validator.md           # Context validator prompt (or context-validator-retry-<n>.md)
+        └── context-validator.json         # Context validator response
+```
+
+### Investigation Workflow
+
+1. **Start with `_manifest.json`** — shows execution status, halt reason, context summaries (iteration counts, task counts, validation outcomes), and the full workflow definition
+2. **Check `lifecycle.jsonl`** for execution-level events — when it started, paused, resumed, completed, or halted
+3. **Check `decisions.jsonl`** for cross-cutting decisions — implementer rotation, context scheduling, retry decisions, circuit breaker triggers
+4. **Drill into `contexts/<id>/`** for the context of interest:
+   - `iterations.jsonl` — iteration-by-iteration progression, task completion tracking
+   - `tasks.jsonl` — individual task outcomes, reopenings, agent-added tasks
+   - `validation.jsonl` — validator invocations, pass/fail, issue details, remediation actions
+   - `prompts/` — full prompt text and validator responses for exact reproduction
+
+### Key Events by File
+
+| File | Event | Data |
+|------|-------|------|
+| `lifecycle.jsonl` | `execution.started` | definitionId, revision, contextCount, taskCount |
+| `lifecycle.jsonl` | `execution.resumed` | previousStatus |
+| `lifecycle.jsonl` | `execution.paused` / `execution.aborted` | — |
+| `lifecycle.jsonl` | `execution.completed` / `execution.halted` | haltReason |
+| `lifecycle.jsonl` | `shared_document.created` / `shared_document.updated` | documentId, relativePath |
+| `decisions.jsonl` | `context.scheduled` | contextId, eligibleContextIds |
+| `decisions.jsonl` | `implementer.rotation` | reason, continuityEnabled, previousContextId |
+| `decisions.jsonl` | `rotation.scheduled` | tokenUtilization, inputTokens, maxTokens |
+| `decisions.jsonl` | `max_iterations.reached` | contextId, maxIterations |
+| `iterations.jsonl` | `iteration.started` | iterationNumber, pendingTasks, model, reasoningEffort |
+| `iterations.jsonl` | `iteration.prompt_sent` | promptLength |
+| `iterations.jsonl` | `iteration.agent_turn_completed` | inputTokens, outputTokens |
+| `iterations.jsonl` | `iteration.follow_up_sent` / `iteration.follow_up_skipped` | reason |
+| `iterations.jsonl` | `iteration.completed` | completedTasks, remainingTasks |
+| `tasks.jsonl` | `task.completion_attempted` | taskId |
+| `tasks.jsonl` | `task.validation_passed` / `task.validation_failed` | taskId |
+| `tasks.jsonl` | `task.added_by_agent` | taskId, title |
+| `tasks.jsonl` | `task.reopened` | taskId, reopenedCount, reason |
+| `validation.jsonl` | `task_validator.started` | taskId |
+| `validation.jsonl` | `context_validator.started` | retryAttempt |
+| `validation.jsonl` | `validator.invoked` | validatorType (claude/codex) |
+| `validation.jsonl` | `validator.result_parsed` | parsePath, pass, issueCount |
+| `validation.jsonl` | `validator.remediation_applied` | reopenedCount, createdFixCount, deduplicatedCount |
+
+### All Entries Share
+
+```json
+{
+  "timestamp": "ISO 8601",
+  "event": "event.name",
+  "executionId": "uuid",
+  ...data
+}
+```
+
+### Query Patterns (jq)
+
+```bash
+# All events for a context
+jq '.' workflow-logs/<id>/contexts/<ctx>/iterations.jsonl
+
+# Failed validations
+jq 'select(.event == "validator.result_parsed" and .pass == false)' workflow-logs/<id>/contexts/<ctx>/validation.jsonl
+
+# Circuit breaker and retry decisions
+jq 'select(.event | test("circuit_breaker|retry"))' workflow-logs/<id>/decisions.jsonl
+
+# Task reopenings (indicates validator found issues)
+jq 'select(.event == "task.reopened")' workflow-logs/<id>/contexts/<ctx>/tasks.jsonl
+
+# Rotation decisions (context scheduling)
+jq 'select(.event | test("rotation|implementer"))' workflow-logs/<id>/decisions.jsonl
+```
+
+### Design Principles
+
+- **Fire-and-forget**: All writes are silent — log failures never affect workflow execution
+- **AI-optimized structure**: Separate files per concern so agents can load only what's relevant without exhausting context
+- **Full prompt capture**: Every prompt sent and every validator response is stored verbatim for exact reproduction
+- **Parse path tracking**: Validator responses record which parse path succeeded (`structured_output`, `raw_json`, `fenced_json_block`, `fenced_json_block_fallback`) for debugging response format issues
+
+### Implementation
+
+- `createExecutionLogger()` in `src/lib/workflow-graph/execution-logger.ts` — factory
+- `registerExecutionLogger()` / `getExecutionLogger()` — global registry (Map keyed by executionId) so all modules can access the logger without parameter threading
+
 ---
 
 _Document query patterns, not exhaustive field lists_

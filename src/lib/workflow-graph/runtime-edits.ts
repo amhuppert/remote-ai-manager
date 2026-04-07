@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { createLogger } from "@/lib/logging";
+import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowExecution,
   WorkflowGraphValidationError,
@@ -11,6 +13,8 @@ import {
   validateWorkflowRuntimeEdit,
   validateWorkflowValidatorRemediation,
 } from "./validation";
+
+const logger = createLogger("graph-workflow-runtime-edits");
 
 export interface AgentAddedTask {
   slug?: string;
@@ -283,6 +287,19 @@ export function createGraphWorkflowRuntimeEditService(
       totalTaskCount: contextState.totalTaskCount + 1,
     };
 
+    const execLogger = getExecutionLogger(execution.id);
+    execLogger?.task(contextId, "task.added_by_agent", {
+      taskId,
+      title: task.title,
+      instructionsLength: task.instructions.length,
+    });
+    logger.info("graph-workflow.task.added_by_agent", {
+      executionId: execution.id,
+      contextId,
+      taskId,
+      title: task.title,
+    });
+
     return nextExecution;
   }
 
@@ -305,6 +322,11 @@ export function createGraphWorkflowRuntimeEditService(
     const nextExecution = cloneExecution(execution);
     const now = resolvedDeps.now();
 
+    const execLogger = getExecutionLogger(execution.id);
+    let reopenedCount = 0;
+    let createdFixCount = 0;
+    let deduplicatedCount = 0;
+
     for (const taskId of remediation.reopenTaskIds) {
       const taskState = nextExecution.taskStates[taskId];
       if (!taskState) {
@@ -316,6 +338,13 @@ export function createGraphWorkflowRuntimeEditService(
       taskState.reopenedCount += 1;
       taskState.lastReopenedAt = now;
       taskState.failureMessage = remediation.summary;
+      reopenedCount += 1;
+
+      execLogger?.task(contextId, "task.reopened", {
+        taskId,
+        reopenedCount: taskState.reopenedCount,
+        reason: remediation.summary,
+      });
     }
 
     const nextOrder = getContextTaskOrder(nextExecution, contextId);
@@ -324,10 +353,12 @@ export function createGraphWorkflowRuntimeEditService(
     for (const issue of remediation.issues) {
       const fingerprint = normalizeIssueFingerprint(issue);
       if (findOpenEquivalentFixTask(nextExecution, contextId, fingerprint)) {
+        deduplicatedCount += 1;
         continue;
       }
 
       order += 1;
+      createdFixCount += 1;
       const taskId = resolvedDeps.createTaskId();
       nextExecution.workingDefinition.tasks.push({
         id: taskId,
@@ -367,6 +398,22 @@ export function createGraphWorkflowRuntimeEditService(
         contextId,
       );
     }
+
+    execLogger?.validation(contextId, "validator.remediation_applied", {
+      reopenedCount,
+      createdFixCount,
+      deduplicatedCount,
+      totalIssues: remediation.issues.length,
+      totalReopens: remediation.reopenTaskIds.length,
+      summary: remediation.summary,
+    });
+    logger.info("graph-workflow.validator.remediation_applied", {
+      executionId: execution.id,
+      contextId,
+      reopenedCount,
+      createdFixCount,
+      deduplicatedCount,
+    });
 
     return nextExecution;
   }

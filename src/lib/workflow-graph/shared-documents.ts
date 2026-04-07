@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { createLogger } from "@/lib/logging";
+import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowSharedDocumentEntry,
 } from "@/types";
+
+const logger = createLogger("graph-workflow-shared-documents");
 
 export const SHARED_DOCUMENT_DIRECTORY = path.join(
   ".cc",
@@ -97,6 +101,8 @@ export function createGraphWorkflowSharedDocumentRegistryService(
         normalizedRelativePath,
     );
 
+    const execLogger = getExecutionLogger(execution.id);
+
     if (existingIndex >= 0) {
       const existingEntry = nextExecution.sharedDocuments[existingIndex]!;
       nextExecution.sharedDocuments[existingIndex] = {
@@ -107,17 +113,43 @@ export function createGraphWorkflowSharedDocumentRegistryService(
         updatedAt: now,
         lastUpdatedByConversationId: input.conversationId ?? null,
       };
+
+      execLogger?.lifecycle("shared_document.updated", {
+        documentId: existingEntry.id,
+        relativePath: normalizedRelativePath,
+        conversationId: input.conversationId ?? null,
+      });
+      logger.info("graph-workflow.shared_document.updated", {
+        executionId: execution.id,
+        documentId: existingEntry.id,
+        relativePath: normalizedRelativePath,
+      });
+
       return nextExecution;
     }
 
+    const documentId = resolvedDeps.createDocumentId();
     nextExecution.sharedDocuments.push({
-      id: resolvedDeps.createDocumentId(),
+      id: documentId,
       relativePath: normalizedRelativePath,
       description: input.description,
       readWhen: input.readWhen,
       createdAt: now,
       updatedAt: now,
       lastUpdatedByConversationId: input.conversationId ?? null,
+    });
+
+    execLogger?.lifecycle("shared_document.created", {
+      documentId,
+      relativePath: normalizedRelativePath,
+      description: input.description,
+      readWhen: input.readWhen,
+      conversationId: input.conversationId ?? null,
+    });
+    logger.info("graph-workflow.shared_document.created", {
+      executionId: execution.id,
+      documentId,
+      relativePath: normalizedRelativePath,
     });
 
     return nextExecution;
