@@ -501,6 +501,250 @@ describe("execution loop", () => {
   );
 
   it(
+    "retries once when the iteration fails with a stream-closed error",
+    { timeout: 5000 },
+    async () => {
+      const definition = createSingleContextDefinition(5);
+      let currentExecution = createRunningExecution(definition, {
+        activeContextId: "ctx-1",
+        contextStates: {
+          "ctx-1": {
+            contextId: "ctx-1",
+            status: "running",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 1,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+        },
+        laneStates: {
+          implementer: {
+            engine: "claude",
+            lane: "implementer",
+            contextId: "ctx-1",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-1",
+            },
+            lastContextTokens: null,
+            lastContextWindowMax: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-27T12:00:00.000Z",
+          },
+        },
+      });
+      let iterationCallCount = 0;
+
+      const recoverRetryableIterationError = vi.fn(
+        async (_projectPath, _sessionName, input) => {
+          expect(input).toEqual({
+            contextId: "ctx-1",
+            errorMessage: "SDK error: MCP error -32000: Stream closed",
+          });
+          const next = structuredClone(currentExecution);
+          next.contextStates["ctx-1"]!.status = "ready";
+          const lane = next.laneStates["implementer"];
+          if (lane?.engine === "claude") {
+            lane.rotateBeforeNextTurn = true;
+          }
+          currentExecution = next;
+          return next;
+        },
+      );
+
+      const sendSpy = vi.fn(async (_projectPath, _sessionName, event) => {
+        if (event.type === "complete") {
+          currentExecution = {
+            ...structuredClone(currentExecution),
+            status: "completed",
+            completedAt: "2026-03-27T12:05:00.000Z",
+          };
+        }
+        return currentExecution;
+      });
+
+      const deps: GraphWorkflowExecutionLoopDeps = {
+        workflowManager: {
+          async scheduleNextContext() {
+            return currentExecution;
+          },
+          async recordContextValidationResult(_p, _s, result) {
+            const next = structuredClone(currentExecution);
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.contextStates["ctx-1"]!.lastValidationPass = result.pass;
+            next.activeContextId = null;
+            currentExecution = next;
+            return next;
+          },
+          send: sendSpy,
+          recoverRetryableIterationError,
+        },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            iterationCallCount += 1;
+            if (iterationCallCount === 1) {
+              throw new Error("SDK error: MCP error -32000: Stream closed");
+            }
+
+            const next = structuredClone(currentExecution);
+            next.contextStates["ctx-1"]!.iterationCount = 2;
+            next.taskStates["task-1"]!.status = "completed";
+            next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
+            next.contextStates["ctx-1"]!.completedTaskCount = 1;
+            currentExecution = next;
+
+            return {
+              conversationId: "conv-2",
+              execution: next,
+              shouldContinueInContext: false,
+              shouldValidateContext: true,
+            };
+          },
+        },
+        validationService: {
+          async validateContextCompletion() {
+            return {
+              pass: true,
+              summary: "passed",
+              feedback: "passed",
+              issues: [],
+              reopenTaskIds: [],
+              agentResult: null,
+              scriptResult: null,
+            };
+          },
+        },
+        async getSession() {
+          return { worktreePath: "/repo", branchName: "main" } as SessionState;
+        },
+        emitStreamFrame: vi.fn(),
+      };
+
+      const loop = createGraphWorkflowExecutionLoop(deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: currentExecution,
+      });
+
+      expect(iterationCallCount).toBe(2);
+      expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+      expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+        type: "complete",
+      });
+      expect(result.status).toBe("completed");
+    },
+  );
+
+  it(
+    "halts after a second consecutive stream-closed error",
+    { timeout: 5000 },
+    async () => {
+      const definition = createSingleContextDefinition(5);
+      let currentExecution = createRunningExecution(definition, {
+        activeContextId: "ctx-1",
+        contextStates: {
+          "ctx-1": {
+            contextId: "ctx-1",
+            status: "running",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 1,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+        },
+      });
+
+      const sendSpy = vi.fn(
+        async (
+          _projectPath: string,
+          _sessionName: string,
+          event:
+            | { type: "complete" }
+            | { type: "halt"; reason: GraphWorkflowHaltReason },
+        ) => {
+          if (event.type === "halt") {
+            currentExecution = {
+              ...structuredClone(currentExecution),
+              status: "halted",
+              haltReason: event.reason,
+              completedAt: "2026-03-27T12:06:00.000Z",
+            };
+          }
+          return currentExecution;
+        },
+      );
+
+      const recoverRetryableIterationError = vi.fn(
+        async (_projectPath, _sessionName, _input) => {
+          const next = structuredClone(currentExecution);
+          next.contextStates["ctx-1"]!.status = "ready";
+          currentExecution = next;
+          return next;
+        },
+      );
+
+      const deps: GraphWorkflowExecutionLoopDeps = {
+        workflowManager: {
+          async scheduleNextContext() {
+            return currentExecution;
+          },
+          recordContextValidationResult: vi.fn(),
+          send: sendSpy,
+          recoverRetryableIterationError,
+        },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            throw new Error("SDK error: MCP error -32000: Stream closed");
+          },
+        },
+        validationService: {
+          async validateContextCompletion() {
+            return {
+              pass: true,
+              summary: "passed",
+              feedback: "passed",
+              issues: [],
+              reopenTaskIds: [],
+              agentResult: null,
+              scriptResult: null,
+            };
+          },
+        },
+        async getSession() {
+          return { worktreePath: "/repo", branchName: "main" } as SessionState;
+        },
+        emitStreamFrame: vi.fn(),
+      };
+
+      const loop = createGraphWorkflowExecutionLoop(deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: currentExecution,
+      });
+
+      expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+      expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+        type: "halt",
+        reason: {
+          type: "recovery_error",
+          message: "SDK error: MCP error -32000: Stream closed",
+        },
+      });
+      expect(result.status).toBe("halted");
+    },
+  );
+
+  it(
     "passes validation issues, reopenTaskIds, and script output to recordContextValidationResult",
     { timeout: 5000 },
     async () => {

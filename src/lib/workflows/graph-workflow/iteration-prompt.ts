@@ -13,6 +13,32 @@ export interface BuildIterationPromptInput {
   allowAgentTaskAdd: boolean;
 }
 
+function buildTaskLines(
+  tasks: GraphWorkflowTaskDefinition[],
+  taskStates: Record<string, GraphWorkflowTaskState>,
+): string[] {
+  return tasks.map((task) => {
+    const state = taskStates[task.id];
+    const status = state?.status ?? "pending";
+    const failureMessage = state?.failureMessage ?? null;
+    const lines = [
+      `- ${task.id} [${status}] ${task.title}`,
+      `  Instructions: ${task.instructions}`,
+    ];
+    if (failureMessage) {
+      lines.push(
+        "",
+        `  ### Previous Attempt Failed`,
+        `  A previous attempt to complete this task was rejected by validation:`,
+        `  ${failureMessage}`,
+        "",
+        `  Address the issues above before calling complete_task again.`,
+      );
+    }
+    return lines.join("\n");
+  });
+}
+
 export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   const sections: string[] = [];
 
@@ -33,26 +59,7 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   );
 
   // Task list with failure feedback inline
-  const taskLines = input.tasks.map((task) => {
-    const state = input.taskStates[task.id];
-    const status = state?.status ?? "pending";
-    const failureMessage = state?.failureMessage ?? null;
-    const lines = [
-      `- ${task.id} [${status}] ${task.title}`,
-      `  Instructions: ${task.instructions}`,
-    ];
-    if (failureMessage) {
-      lines.push(
-        "",
-        `  ### Previous Attempt Failed`,
-        `  A previous attempt to complete this task was rejected by validation:`,
-        `  ${failureMessage}`,
-        "",
-        `  Address the issues above before calling complete_task again.`,
-      );
-    }
-    return lines.join("\n");
-  });
+  const taskLines = buildTaskLines(input.tasks, input.taskStates);
 
   sections.push(
     ["## Tasks (work through them in order)", ...taskLines].join("\n"),
@@ -117,18 +124,19 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
 }
 
 export interface BuildFollowUpPromptInput {
-  remainingTaskIds: string[];
+  remainingTasks: GraphWorkflowTaskDefinition[];
+  taskStates: Record<string, GraphWorkflowTaskState>;
   attemptNumber: number;
   maxAttempts: number;
 }
 
 export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
-  const taskList = input.remainingTaskIds.map((id) => `- ${id}`).join("\n");
+  const taskLines = buildTaskLines(input.remainingTasks, input.taskStates);
   return [
-    `You still have ${input.remainingTaskIds.length} incomplete task(s):`,
-    taskList,
+    `You still have ${input.remainingTasks.length} incomplete task(s):`,
+    ["## Remaining Tasks", ...taskLines].join("\n"),
     `Please continue working through them in order, calling \`complete_task\` for each.`,
     `This is follow-up attempt ${input.attemptNumber} of ${input.maxAttempts}.`,
     "The workflow cannot progress until tasks are completed via the complete_task MCP tool. Without it, the workflow will stall.",
-  ].join("\n");
+  ].join("\n\n");
 }

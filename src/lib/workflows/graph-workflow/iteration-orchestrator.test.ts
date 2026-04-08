@@ -689,7 +689,97 @@ describe("graph workflow iteration orchestrator", () => {
     expect(initialPrompt).not.toContain("# Execution Context");
     expect(initialPrompt).toContain("task-plan-1");
     expect(initialPrompt).toContain("task-plan-2");
+    expect(initialPrompt).toContain("Inspect code");
+    expect(initialPrompt).toContain("Read the relevant files.");
+    expect(initialPrompt).toContain("Write plan");
+    expect(initialPrompt).toContain("Document the plan.");
     expect(initialPrompt).toContain("complete_task");
+  });
+
+  it("includes validator-created task instructions in resumed follow-up prompts", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "completed",
+      "task-plan-2": "pending",
+    });
+    execution.workingDefinition.tasks.push({
+      id: "fix-1234",
+      contextId: "context-plan",
+      order: 3,
+      title: "Fix: Missing regression coverage",
+      instructions: "Add tests for the shared dropdown validation path.",
+      source: "validator",
+    });
+    execution.taskStates["fix-1234"] = {
+      taskId: "fix-1234",
+      contextId: "context-plan",
+      order: 3,
+      status: "pending",
+      summary: null,
+      startedAt: null,
+      completedAt: null,
+      lastConversationId: null,
+      reopenedCount: 0,
+      lastReopenedAt: null,
+      failureMessage: "Previous fix did not cover the failing edge case.",
+    };
+    execution.contextStates["context-plan"] = {
+      ...execution.contextStates["context-plan"]!,
+      totalTaskCount: 3,
+      completedTaskCount: 1,
+    };
+
+    const repository = createRepository(execution);
+    const createConversation = vi.fn(async () => ({ id: "conv-unused" }));
+    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const runAgentIteration = vi.fn(async () => ({
+      contextTokens: 50_000,
+      contextWindowMax: 200_000,
+    }));
+
+    const resolveImplementerCall = vi.fn(
+      async (input: ResolveImplementerCallInput) => ({
+        execution: input.execution,
+        conversationId: "conv-resumed",
+        sessionAction: "reuse" as const,
+        promptMode: "follow_up" as const,
+      }),
+    );
+
+    const recordClaudeTurnOutcome = vi.fn(
+      (input: RecordClaudeLaneTurnInput) => input.execution,
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      continuityService: { resolveImplementerCall, recordClaudeTurnOutcome },
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const calls = runAgentIteration.mock.calls as unknown as Array<
+      [{ prompt: string }]
+    >;
+    const initialPrompt = calls[0]![0].prompt;
+
+    expect(initialPrompt).toContain("fix-1234");
+    expect(initialPrompt).toContain("Fix: Missing regression coverage");
+    expect(initialPrompt).toContain(
+      "Add tests for the shared dropdown validation path.",
+    );
+    expect(initialPrompt).toContain(
+      "Previous fix did not cover the failing edge case.",
+    );
   });
 
   it("stops follow-ups after max attempts even if tasks are still incomplete", async () => {

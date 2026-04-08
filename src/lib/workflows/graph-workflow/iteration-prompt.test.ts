@@ -4,6 +4,7 @@ import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
+  GraphWorkflowTaskState,
 } from "@/types";
 
 function makeContext(
@@ -46,6 +47,25 @@ function makeSharedDoc(
     createdAt: "2026-03-27T15:00:00.000Z",
     updatedAt: "2026-03-27T15:00:00.000Z",
     lastUpdatedByConversationId: "conversation-seed",
+    ...overrides,
+  };
+}
+
+function makeTaskState(
+  overrides: Partial<GraphWorkflowTaskState> = {},
+): GraphWorkflowTaskState {
+  return {
+    taskId: "task-plan-1",
+    contextId: "context-plan",
+    order: 1,
+    status: "pending",
+    summary: null,
+    startedAt: null,
+    completedAt: null,
+    lastConversationId: null,
+    reopenedCount: 0,
+    lastReopenedAt: null,
+    failureMessage: null,
     ...overrides,
   };
 }
@@ -301,21 +321,51 @@ describe("buildIterationPrompt", () => {
 });
 
 describe("buildFollowUpPrompt", () => {
-  it("lists remaining tasks and reminds the agent to continue", () => {
+  it("lists remaining task details and reminds the agent to continue", () => {
     const prompt = buildFollowUpPrompt({
-      remainingTaskIds: ["task-plan-1", "task-plan-2"],
+      remainingTasks: [
+        makeTask({
+          id: "task-plan-1",
+          title: "Inspect code",
+          instructions: "Read files.",
+        }),
+        makeTask({
+          id: "task-plan-2",
+          order: 2,
+          title: "Write plan",
+          instructions: "Document plan.",
+        }),
+      ],
+      taskStates: {
+        "task-plan-1": makeTaskState({
+          taskId: "task-plan-1",
+        }),
+        "task-plan-2": makeTaskState({
+          taskId: "task-plan-2",
+          order: 2,
+          status: "interrupted",
+        }),
+      },
       attemptNumber: 1,
       maxAttempts: 2,
     });
 
     expect(prompt).toContain("task-plan-1");
     expect(prompt).toContain("task-plan-2");
+    expect(prompt).toContain("Inspect code");
+    expect(prompt).toContain("Write plan");
+    expect(prompt).toContain("Read files.");
+    expect(prompt).toContain("Document plan.");
+    expect(prompt).toContain("interrupted");
     expect(prompt).toContain("complete_task");
   });
 
   it("includes the attempt number and max attempts", () => {
     const prompt = buildFollowUpPrompt({
-      remainingTaskIds: ["task-1"],
+      remainingTasks: [makeTask({ id: "task-1" })],
+      taskStates: {
+        "task-1": makeTaskState({ taskId: "task-1" }),
+      },
       attemptNumber: 2,
       maxAttempts: 3,
     });
@@ -326,11 +376,31 @@ describe("buildFollowUpPrompt", () => {
 
   it("warns that workflow will stall without tool call", () => {
     const prompt = buildFollowUpPrompt({
-      remainingTaskIds: ["task-1"],
+      remainingTasks: [makeTask({ id: "task-1" })],
+      taskStates: {
+        "task-1": makeTaskState({ taskId: "task-1" }),
+      },
       attemptNumber: 1,
       maxAttempts: 2,
     });
 
     expect(prompt).toMatch(/stall|block|halt|cannot.+progress/i);
+  });
+
+  it("includes validation failure feedback for remaining tasks", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask({ id: "fix-1234", title: "Fix tests" })],
+      taskStates: {
+        "fix-1234": makeTaskState({
+          taskId: "fix-1234",
+          failureMessage: "Previous patch missed regression coverage.",
+        }),
+      },
+      attemptNumber: 1,
+      maxAttempts: 2,
+    });
+
+    expect(prompt).toContain("Previous Attempt Failed");
+    expect(prompt).toContain("Previous patch missed regression coverage.");
   });
 });

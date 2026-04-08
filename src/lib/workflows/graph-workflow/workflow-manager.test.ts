@@ -292,6 +292,104 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("schedules implementer rotation when recovering a retryable iteration error", async () => {
+    const repository = createRepository(
+      createWorkflowExecution({
+        status: "running",
+        activeContextId: "context-plan",
+        contextStates: {
+          "context-plan": {
+            contextId: "context-plan",
+            status: "running",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 1,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+          "context-implement": {
+            contextId: "context-implement",
+            status: "pending",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 0,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+          "context-verify": {
+            contextId: "context-verify",
+            status: "pending",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 0,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+        },
+        laneStates: {
+          implementer: {
+            engine: "claude",
+            lane: "implementer",
+            contextId: "context-plan",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-1",
+            },
+            lastContextTokens: 10_000,
+            lastContextWindowMax: 200_000,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-27T15:00:00.000Z",
+          },
+        },
+        machineSnapshot: {
+          schemaVersion: 1,
+          lifecycleStatus: "running",
+          activeContextId: "context-plan",
+          recoveryMode: "none",
+          hasLiveIteration: true,
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      now() {
+        return "2026-03-27T15:07:00.000Z";
+      },
+    });
+
+    const execution = await manager.recoverRetryableIterationError(
+      "/repo",
+      "session-1",
+      {
+        contextId: "context-plan",
+        errorMessage: "SDK error: MCP error -32000: Stream closed",
+      },
+    );
+
+    expect(execution.status).toBe("running");
+    expect(execution.contextStates["context-plan"]?.status).toBe("ready");
+    expect(execution.laneStates["implementer"]).toMatchObject({
+      rotateBeforeNextTurn: true,
+      lastUsedAt: "2026-03-27T15:07:00.000Z",
+    });
+    expect(execution.machineSnapshot).toEqual({
+      schemaVersion: 1,
+      lifecycleStatus: "running",
+      activeContextId: "context-plan",
+      recoveryMode: "none",
+      hasLiveIteration: false,
+    });
+  });
+
   it("normalizes an in-flight iteration after restart so resume starts a fresh iteration", async () => {
     const repository = createRepository(
       createWorkflowExecution({

@@ -77,6 +77,11 @@ export interface GraphWorkflowContextValidationResultInput {
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 
+export interface GraphWorkflowRetryableIterationErrorInput {
+  contextId: string;
+  errorMessage: string;
+}
+
 export type GraphWorkflowManagerEvent =
   | { type: "pause" }
   | { type: "abort" }
@@ -937,6 +942,69 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     );
   }
 
+  async function recoverRetryableIterationError(
+    projectPath: string,
+    sessionName: string,
+    input: GraphWorkflowRetryableIterationErrorInput,
+  ): Promise<GraphWorkflowExecution> {
+    const execution = requireRunningExecution(
+      await requireActiveExecution(
+        deps.executionRepository,
+        projectPath,
+        sessionName,
+      ),
+    );
+    const now = getNow(deps);
+    const nextExecution = cloneExecution(execution);
+    const contextState = nextExecution.contextStates[input.contextId];
+    if (!contextState) {
+      throw new Error(
+        `Execution context "${input.contextId}" does not exist in runtime state`,
+      );
+    }
+
+    contextState.status = "ready";
+    nextExecution.activeContextId = input.contextId;
+    nextExecution.completedAt = null;
+    nextExecution.haltReason = null;
+    nextExecution.machineSnapshot = buildMachineSnapshot(
+      nextExecution,
+      "running",
+      "none",
+      false,
+    );
+
+    const implementerLane = nextExecution.laneStates["implementer"];
+    const rotationScheduled =
+      implementerLane?.engine === "claude" &&
+      implementerLane.contextId === input.contextId;
+
+    if (rotationScheduled) {
+      implementerLane.rotateBeforeNextTurn = true;
+      implementerLane.lastUsedAt = now;
+    }
+
+    const execLogger = getExecutionLogger(nextExecution.id);
+    execLogger?.decision("iteration.retryable_error_recovery", {
+      contextId: input.contextId,
+      error: input.errorMessage,
+      rotationScheduled,
+    });
+    logger.warn("graph-workflow.iteration.retryable_error_recovery", {
+      executionId: nextExecution.id,
+      contextId: input.contextId,
+      error: input.errorMessage,
+      rotationScheduled,
+    });
+
+    return updateExecution(
+      deps.executionRepository,
+      projectPath,
+      sessionName,
+      nextExecution,
+    );
+  }
+
   async function hasActive(
     projectPath: string,
     sessionName: string,
@@ -955,6 +1023,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     normalizeAfterRestart,
     scheduleNextContext,
     recordContextValidationResult,
+    recoverRetryableIterationError,
     hasActive,
   };
 }

@@ -588,7 +588,8 @@ export function createGraphWorkflowIterationOrchestrator(
       const initialPrompt =
         promptMode === "follow_up"
           ? buildFollowUpPrompt({
-              remainingTaskIds: initialTasks.map((t) => t.id),
+              remainingTasks: initialTasks,
+              taskStates: seededExecution.taskStates,
               attemptNumber: 1,
               maxAttempts: MAX_FOLLOW_UPS,
             })
@@ -674,7 +675,8 @@ export function createGraphWorkflowIterationOrchestrator(
         }
 
         const followUpPrompt = buildFollowUpPrompt({
-          remainingTaskIds: remaining.map((t) => t.id),
+          remainingTasks: remaining,
+          taskStates: midExecution.taskStates,
           attemptNumber: attempt,
           maxAttempts: MAX_FOLLOW_UPS,
         });

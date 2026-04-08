@@ -57,6 +57,11 @@ export interface GraphWorkflowExecutionLoopDeps {
         | { type: "complete" }
         | { type: "halt"; reason: GraphWorkflowHaltReason },
     ): Promise<GraphWorkflowExecution>;
+    recoverRetryableIterationError?(
+      projectPath: string,
+      sessionName: string,
+      input: { contextId: string; errorMessage: string },
+    ): Promise<GraphWorkflowExecution>;
   };
   iterationOrchestrator: {
     runIteration(input: {
@@ -183,6 +188,10 @@ function areAllContextTasksCompleted(
   );
 }
 
+function isRetryableIterationError(error: unknown): boolean {
+  return /stream closed/i.test(getErrorMessage(error));
+}
+
 // -- Execution loop -----------------------------------------------------------
 
 const logger = createLogger("graph-workflow-execution-loop");
@@ -253,6 +262,7 @@ export function createGraphWorkflowExecutionLoop(
     const key = loopKey(input.projectPath, input.sessionName);
     activeLoops.add(key);
     let execution = input.execution;
+    const retryableRecoveryAttempts = new Map<string, number>();
     const execLogger = getExecutionLogger(execution.id);
 
     execLogger?.lifecycle("loop.started", {
@@ -314,12 +324,53 @@ export function createGraphWorkflowExecutionLoop(
           continue;
         }
 
-        const iterationResult = await deps.iterationOrchestrator.runIteration({
-          projectPath: input.projectPath,
-          projectName: input.projectName,
-          sessionName: input.sessionName,
-          contextId,
-        });
+        let iterationResult: GraphWorkflowIterationResult;
+        try {
+          iterationResult = await deps.iterationOrchestrator.runIteration({
+            projectPath: input.projectPath,
+            projectName: input.projectName,
+            sessionName: input.sessionName,
+            contextId,
+          });
+          retryableRecoveryAttempts.delete(contextId);
+        } catch (error) {
+          const recoveryAttempts =
+            retryableRecoveryAttempts.get(contextId) ?? 0;
+          const recoverRetryableIterationError =
+            deps.workflowManager.recoverRetryableIterationError;
+          const canRecover =
+            isRetryableIterationError(error) &&
+            recoveryAttempts < 1 &&
+            recoverRetryableIterationError;
+
+          if (!canRecover) {
+            throw error;
+          }
+
+          const errorMessage = getErrorMessage(error);
+          retryableRecoveryAttempts.set(contextId, recoveryAttempts + 1);
+          execLogger?.decision("iteration.retryable_error_detected", {
+            contextId,
+            error: errorMessage,
+            recoveryAttempt: recoveryAttempts + 1,
+            maxRecoveryAttempts: 1,
+          });
+          logger.warn("graph-workflow.loop.retryable_iteration_error", {
+            executionId: execution.id,
+            contextId,
+            error: errorMessage,
+            recoveryAttempt: recoveryAttempts + 1,
+          });
+          execution = await recoverRetryableIterationError(
+            input.projectPath,
+            input.sessionName,
+            {
+              contextId,
+              errorMessage,
+            },
+          );
+          continue;
+        }
         execution = iterationResult.execution;
 
         if (execution.status !== "running") {
