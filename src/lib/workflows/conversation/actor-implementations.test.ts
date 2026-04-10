@@ -41,6 +41,7 @@ import {
   processMessage,
   mapErrorSubtype,
 } from "./actor-implementations";
+import { QUERY_SESSION_ERROR_CODES } from "@/lib/query-session-errors";
 
 // ---------------------------------------------------------------------------
 // Shared mock session
@@ -1051,6 +1052,71 @@ describe("executePromptForMachine", () => {
 
     expect(result.error).toBe("SDK crashed");
     expect(result.aborted).toBe(false);
+  });
+
+  it("retries once with a fresh QuerySession when prompt delivery never reached Claude", async () => {
+    const staleSession: QuerySessionLike = {
+      status: "alive",
+      model: undefined,
+      effort: undefined,
+      outputFormat: undefined,
+      close: vi.fn(),
+      query: { streamInput: vi.fn(), close: vi.fn() },
+      sendPrompt: vi.fn(async () => {
+        staleSession.status = "dead";
+        const error = new Error("QuerySession died before prompt delivery");
+        (
+          error as Error & {
+            code?: string;
+          }
+        ).code = QUERY_SESSION_ERROR_CODES.promptNotDelivered;
+        throw error;
+      }),
+    };
+    const freshSession: QuerySessionLike = {
+      status: "alive",
+      model: undefined,
+      effort: undefined,
+      outputFormat: undefined,
+      close: vi.fn(),
+      query: { streamInput: vi.fn(), close: vi.fn() },
+      sendPrompt: vi.fn(async () => ({
+        sessionId: "sdk-session-retry",
+        costUsd: 0.02,
+        durationMs: 600,
+        numTurns: 1,
+        contextTokens: 250,
+        contextWindow: 200000,
+        contentBlocks: [{ type: "text" as const, text: "Recovered turn" }],
+        aborted: false,
+        error: null,
+      })),
+    };
+
+    vi.mocked(mockDeps.getSessionFromRegistry).mockReturnValue(staleSession);
+    vi.mocked(mockDeps.createQuerySession).mockReturnValue(freshSession);
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    const result = await executePromptForMachine(input);
+
+    expect(staleSession.sendPrompt).toHaveBeenCalledTimes(1);
+    expect(staleSession.close).toHaveBeenCalledTimes(1);
+    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
+    expect(freshSession.sendPrompt).toHaveBeenCalledTimes(1);
+    expect(result.sessionId).toBe("sdk-session-retry");
+    expect(result.error).toBeNull();
+    expect(result.contentBlocks).toEqual([
+      { type: "text", text: "Recovered turn" },
+    ]);
   });
 
   it("marks result as aborted when abort signal fires", async () => {

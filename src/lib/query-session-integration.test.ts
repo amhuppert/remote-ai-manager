@@ -25,6 +25,7 @@ vi.mock("@/lib/sdk-env", () => ({}));
 // ---------------------------------------------------------------------------
 
 import { createQuerySession, type QuerySessionOptions } from "./query-session";
+import { isUndeliveredQuerySessionError } from "./query-session-errors";
 import {
   getSession,
   closeAllSessions,
@@ -285,6 +286,67 @@ describe("Crash recovery", () => {
     const turn2 = session2.sendPrompt("Recovered", emit);
     mock2.pushMessage(makeResultMessage("sess-2", "u1"));
     const result = await turn2;
+    expect(result.sessionId).toBe("sess-2");
+
+    session2.close();
+  });
+
+  it("after pump completion between turns, creating a new session works", async () => {
+    const mock1 = createControllableMockQuery();
+    queryMock.mockReturnValue(mock1.query);
+
+    const session1 = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn1 = session1.sendPrompt("First", emit);
+    mock1.pushMessage(makeResultMessage("sess-1", "u1"));
+    await turn1;
+
+    let resolveStatus:
+      | ((value: Array<{ name: string; status: string }>) => void)
+      | undefined;
+    mock1.query.mcpServerStatus.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve as (
+            value: Array<{ name: string; status: string }>,
+          ) => void;
+        }),
+    );
+
+    const turn2 = session1.sendPrompt("Second", emit);
+    mock1.endPump();
+
+    let caughtError: unknown;
+    try {
+      await turn2;
+    } catch (error) {
+      caughtError = error;
+    }
+    expect(caughtError).toBeInstanceOf(Error);
+    expect((caughtError as Error).message).toBe(
+      "QuerySession died before prompt delivery",
+    );
+    expect(isUndeliveredQuerySessionError(caughtError)).toBe(true);
+
+    if (resolveStatus) {
+      resolveStatus([]);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(session1.status).toBe("dead");
+    expect(getSession("conv-integration")).toBeUndefined();
+
+    const mock2 = createControllableMockQuery();
+    queryMock.mockReturnValue(mock2.query);
+
+    const session2 = createQuerySession(
+      makeDefaultOptions({ resume: "sess-1" }),
+    );
+    const turn3 = session2.sendPrompt("Recovered", emit);
+    mock2.pushMessage(makeResultMessage("sess-2", "u2"));
+
+    const result = await turn3;
     expect(result.sessionId).toBe("sess-2");
 
     session2.close();

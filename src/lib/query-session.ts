@@ -22,6 +22,10 @@ import type { EffortLevel } from "./schemas";
 import { createLogger } from "./logging";
 import { registerSession, unregisterSession } from "./query-session-registry";
 import { extractContextTokens, extractContextWindow } from "./context-fill";
+import {
+  QUERY_SESSION_ERROR_CODES,
+  tagQuerySessionError,
+} from "./query-session-errors";
 
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/sdk-env";
@@ -155,6 +159,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let firstPromptResolve: ((msg: SDKUserMessage) => void) | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const stderrChunks: string[] = [];
+  let awaitingSubsequentPromptDelivery = false;
 
   // The hanging generator: yields the first user message, then hangs forever.
   // This keeps the SDK subprocess alive indefinitely.
@@ -286,11 +291,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           firstPromptResolve = null;
         }
       } else {
-        // Reconnect any failed MCP servers before sending the prompt
-        void reconnectFailedMcpServers().then(() => {
-          const userMessage = buildUserMessage(prompt);
-          void q.streamInput(wrapAsIterable(userMessage));
-        });
+        void sendSubsequentPrompt(prompt);
       }
     });
   }
@@ -300,26 +301,28 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // ------------------------------------------------------------------
 
   function close(): void {
-    if (status === "dead") return; // idempotent
-
-    status = "dead";
-
     // Clear idle timer
     if (idleTimer) {
       clearTimeout(idleTimer);
       idleTimer = null;
     }
 
-    logger.info("query-session.closed", {
-      conversationId: options.conversationId,
-    });
-
     // Reject any pending turn
     if (pendingTurn) {
       const turn = pendingTurn;
       pendingTurn = null;
+      currentTurnOptions = null;
+      awaitingSubsequentPromptDelivery = false;
       turn.reject(new Error("QuerySession closed while turn was in progress"));
     }
+
+    if (status === "dead") return; // idempotent
+
+    status = "dead";
+
+    logger.info("query-session.closed", {
+      conversationId: options.conversationId,
+    });
 
     unregisterSession(options.conversationId);
 
@@ -343,6 +346,11 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       // Generator completed normally (subprocess exited cleanly)
       if (status === "alive") {
         markDead("pump_completed");
+        rejectPendingTurn(
+          awaitingSubsequentPromptDelivery
+            ? createPromptNotDeliveredError()
+            : new Error("QuerySession ended before the turn completed"),
+        );
       }
     } catch (err) {
       if (status === "alive") {
@@ -357,16 +365,18 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         markDead("pump_error");
 
         // Reject pending turn with stderr attached
-        if (pendingTurn) {
-          const turn = pendingTurn;
-          pendingTurn = null;
-          const rejectError =
-            err instanceof Error ? err : new Error(String(err));
-          if (stderr) {
-            (rejectError as Error & { stderr: string }).stderr = stderr;
-          }
-          turn.reject(rejectError);
+        const rejectError = err instanceof Error ? err : new Error(String(err));
+        if (stderr) {
+          (rejectError as Error & { stderr: string }).stderr = stderr;
         }
+        rejectPendingTurn(
+          awaitingSubsequentPromptDelivery
+            ? tagQuerySessionError(
+                rejectError,
+                QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+              )
+            : rejectError,
+        );
       }
     }
   }
@@ -421,6 +431,48 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     }
   }
 
+  async function sendSubsequentPrompt(
+    prompt: string | MessageContentBlock[],
+  ): Promise<void> {
+    awaitingSubsequentPromptDelivery = true;
+
+    try {
+      await reconnectFailedMcpServers();
+      if (status === "dead") {
+        throw createPromptNotDeliveredError();
+      }
+
+      const userMessage = buildUserMessage(prompt);
+      await q.streamInput(wrapAsIterable(userMessage));
+      awaitingSubsequentPromptDelivery = false;
+    } catch (err) {
+      awaitingSubsequentPromptDelivery = false;
+
+      const baseError = err instanceof Error ? err : new Error(String(err));
+      const error = tagQuerySessionError(
+        baseError,
+        QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+      );
+
+      logger.error("query-session.stream_input_error", {
+        conversationId: options.conversationId,
+        error: error.message,
+      });
+
+      if (status === "alive") {
+        markDead("stream_input_error");
+      }
+
+      rejectPendingTurn(error);
+
+      try {
+        q.close();
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
   // ------------------------------------------------------------------
   // Message processing
   // ------------------------------------------------------------------
@@ -450,6 +502,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       }
 
       case "assistant": {
+        awaitingSubsequentPromptDelivery = false;
         const asstMsg = message as SDKAssistantMessage;
         turn.sessionId = asstMsg.session_id;
 
@@ -479,6 +532,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       }
 
       case "result": {
+        awaitingSubsequentPromptDelivery = false;
         const resultMsg = message as SDKResultSuccess | SDKResultError;
         turn.sessionId = resultMsg.session_id;
         turn.costUsd = resultMsg.total_cost_usd;
@@ -549,6 +603,22 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         // Already forwarded via emit above
         break;
     }
+  }
+
+  function rejectPendingTurn(error: Error): void {
+    if (!pendingTurn) return;
+    const turn = pendingTurn;
+    pendingTurn = null;
+    currentTurnOptions = null;
+    awaitingSubsequentPromptDelivery = false;
+    turn.reject(error);
+  }
+
+  function createPromptNotDeliveredError(): Error {
+    return tagQuerySessionError(
+      new Error("QuerySession died before prompt delivery"),
+      QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+    );
   }
 }
 

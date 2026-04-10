@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { isUndeliveredQuerySessionError } from "./query-session-errors";
 
 // ---------------------------------------------------------------------------
 // Mock the SDK and registry
@@ -689,6 +690,103 @@ describe("QuerySession crash detection", () => {
     expect((caughtError as Error & { stderr: string }).stderr).toBe(
       "Error: ENOENT: no such file or directory\nFatal: cannot initialize session\n",
     );
+  });
+
+  it("rejects a subsequent prompt when the pump completes before delivery", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    let resolveStatus:
+      | ((value: Array<{ name: string; status: string }>) => void)
+      | undefined;
+    mock.query.mcpServerStatus.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve as (
+            value: Array<{ name: string; status: string }>,
+          ) => void;
+        }),
+    );
+
+    const turn2 = session.sendPrompt("Second", emit);
+    mock.endPump();
+
+    let caughtError: unknown;
+    try {
+      await turn2;
+    } catch (error) {
+      caughtError = error;
+    }
+    expect(caughtError).toBeInstanceOf(Error);
+    expect((caughtError as Error).message).toBe(
+      "QuerySession died before prompt delivery",
+    );
+    expect(isUndeliveredQuerySessionError(caughtError)).toBe(true);
+
+    if (resolveStatus) {
+      resolveStatus([]);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(session.status).toBe("dead");
+  });
+
+  it("rejects a subsequent prompt when streamInput throws", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    mock.query.streamInput.mockRejectedValue(
+      new Error("ProcessTransport is not ready for writing"),
+    );
+
+    const turn2 = session.sendPrompt("Second", emit);
+
+    let caughtError: unknown;
+    try {
+      await turn2;
+    } catch (error) {
+      caughtError = error;
+    }
+    expect(caughtError).toBeInstanceOf(Error);
+    expect((caughtError as Error).message).toBe(
+      "ProcessTransport is not ready for writing",
+    );
+    expect(isUndeliveredQuerySessionError(caughtError)).toBe(true);
+    expect(session.status).toBe("dead");
   });
 });
 

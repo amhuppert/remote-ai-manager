@@ -41,6 +41,7 @@ import {
   CC_CONTEXT,
   TDD_INSTRUCTIONS,
 } from "@/lib/prompt";
+import { isUndeliveredQuerySessionError } from "@/lib/query-session-errors";
 
 const logger = createLogger("conversation-actor");
 
@@ -347,6 +348,24 @@ export function buildEffectivePrompt(
   return effectivePrompt;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function shouldRetryUndeliveredPrompt(
+  error: unknown,
+  session: { status: string } | undefined,
+  abortSignal: AbortSignal,
+  attemptNumber: number,
+): boolean {
+  return (
+    attemptNumber === 0 &&
+    !abortSignal.aborted &&
+    session?.status === "dead" &&
+    isUndeliveredQuerySessionError(error)
+  );
+}
+
 /**
  * Build the canUseTool callback for the SDK QuerySession.
  * Handles AskUserQuestion (blocking for user input or denying in autonomous mode).
@@ -642,6 +661,7 @@ export async function executePromptForMachine(
       `No runtime state registered for conversation ${key}. Was the actor started via the conversation manager?`,
     );
   }
+  const runtimeState = runtime;
 
   const config = await deps.readConfig();
   const projectName =
@@ -709,7 +729,7 @@ export async function executePromptForMachine(
 
   const isNewSession = !querySession || querySession.status === "dead";
 
-  if (isNewSession) {
+  async function createManagedQuerySession(): Promise<QuerySessionLike> {
     const sessionState = await deps.getSessionState(
       input.projectPath,
       input.sessionName,
@@ -756,7 +776,7 @@ export async function executePromptForMachine(
 
     // Build canUseTool callback
     const canUseTool = buildCanUseTool(
-      runtime,
+      runtimeState,
       {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -808,7 +828,7 @@ export async function executePromptForMachine(
         .filter(Boolean)
         .join("\n\n") || undefined;
 
-    querySession = deps.createQuerySession({
+    const nextQuerySession = deps.createQuerySession({
       conversationId: input.conversationId,
       cwd: input.worktreePath,
       model: effectiveModel ?? undefined,
@@ -855,7 +875,7 @@ export async function executePromptForMachine(
           sessionName: input.sessionName,
           worktreePath: input.worktreePath,
         }),
-        ...(runtime.additionalMcpServers ?? {}),
+        ...(runtimeState.additionalMcpServers ?? {}),
       },
       canUseTool: canUseTool as never,
       env: { ...deps.buildChildEnv(), CLAUDECODE: "" },
@@ -868,19 +888,27 @@ export async function executePromptForMachine(
     });
 
     // Register raw Query for backward compat (queueMessage)
-    deps.registerQuery(input.conversationId, querySession.query);
+    deps.registerQuery(input.conversationId, nextQuerySession.query);
+    runtimeState.querySession = nextQuerySession;
+    querySession = nextQuerySession;
+
+    return nextQuerySession;
+  }
+
+  if (isNewSession) {
+    querySession = await createManagedQuerySession();
   }
 
   // Store the session in runtime for reuse
-  runtime.querySession = querySession;
+  runtimeState.querySession = querySession;
 
   // ---------------------------------------------------------------
   // Safety-net timeout
   // ---------------------------------------------------------------
-  const abortController = runtime.abortController;
+  const abortController = runtimeState.abortController;
   deps.registerAbortController(input.conversationId, abortController);
 
-  runtime.timeoutHandle = setTimeout(() => {
+  runtimeState.timeoutHandle = setTimeout(() => {
     logger.warn("prompt.timeout", {
       sessionName: input.sessionName,
       timeoutMs: config.claudeTimeoutMs,
@@ -902,7 +930,7 @@ export async function executePromptForMachine(
       if (msg.type === "system") {
         const sysMsg = msg as SDKSystemMessage;
         if (sysMsg.subtype === "init" && sysMsg.session_id) {
-          runtime.sendToMachine?.({
+          runtimeState.sendToMachine?.({
             type: "SDK_INIT",
             sessionId: sysMsg.session_id,
           });
@@ -912,13 +940,13 @@ export async function executePromptForMachine(
       await processMessage(
         msg,
         input.conversationId,
-        runtime.streamEmit ?? (() => {}),
+        runtimeState.streamEmit ?? (() => {}),
         contentBlocks,
         deps.safeAppendTranscriptEntry,
       );
       return;
     }
-    runtime.streamEmit?.(event, data);
+    runtimeState.streamEmit?.(event, data);
   };
 
   // Prepend debug mode instructions on first debug turn
@@ -946,14 +974,48 @@ export async function executePromptForMachine(
     | undefined;
 
   try {
-    turnResult = await querySession!.sendPrompt(effectivePrompt, turnEmit, {
+    const sendPromptOptions = {
       autonomous: input.autonomous,
       ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
-    });
+    };
+    let deliveryAttempt = 0;
+
+    while (true) {
+      try {
+        turnResult = await querySession!.sendPrompt(
+          effectivePrompt,
+          turnEmit,
+          sendPromptOptions,
+        );
+        break;
+      } catch (err) {
+        if (
+          !shouldRetryUndeliveredPrompt(
+            err,
+            querySession,
+            abortController.signal,
+            deliveryAttempt,
+          )
+        ) {
+          throw err;
+        }
+
+        deliveryAttempt += 1;
+        logger.warn("prompt.session_retry", {
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          attempt: deliveryAttempt,
+          error: getErrorMessage(err),
+        });
+
+        querySession?.close();
+        querySession = await createManagedQuerySession();
+      }
+    }
   } catch (err) {
     if (abortController.signal.aborted) {
       logger.info("prompt.aborted", { sessionName: input.sessionName });
-      runtime.streamEmit?.("aborted", {
+      runtimeState.streamEmit?.("aborted", {
         message: "Prompt execution was cancelled",
       });
       return {
@@ -969,12 +1031,12 @@ export async function executePromptForMachine(
       };
     }
 
-    const errorMsg = err instanceof Error ? err.message : "Unknown SDK error";
+    const errorMsg = getErrorMessage(err);
     logger.error("prompt.sdk_error", {
       sessionName: input.sessionName,
       error: errorMsg,
     });
-    runtime.streamEmit?.("error", { message: `SDK error: ${errorMsg}` });
+    runtimeState.streamEmit?.("error", { message: `SDK error: ${errorMsg}` });
     return {
       sessionId: null,
       costUsd: null,
@@ -988,9 +1050,9 @@ export async function executePromptForMachine(
     };
   } finally {
     // Clear timeout
-    if (runtime.timeoutHandle) {
-      clearTimeout(runtime.timeoutHandle);
-      runtime.timeoutHandle = undefined;
+    if (runtimeState.timeoutHandle) {
+      clearTimeout(runtimeState.timeoutHandle);
+      runtimeState.timeoutHandle = undefined;
     }
     deps.unregisterAbortController(input.conversationId);
   }

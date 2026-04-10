@@ -189,7 +189,9 @@ function areAllContextTasksCompleted(
 }
 
 function isRetryableIterationError(error: unknown): boolean {
-  return /stream closed/i.test(getErrorMessage(error));
+  return /stream closed|querysession died before prompt delivery|processtransport is not ready for writing/i.test(
+    getErrorMessage(error),
+  );
 }
 
 // -- Execution loop -----------------------------------------------------------
