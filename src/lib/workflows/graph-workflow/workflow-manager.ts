@@ -154,7 +154,10 @@ function markActiveContextReady(execution: GraphWorkflowExecution): void {
     return;
   }
 
-  if (activeContext.status === "running") {
+  if (
+    activeContext.status === "running" ||
+    activeContext.status === "validating"
+  ) {
     activeContext.status = "ready";
   }
 }

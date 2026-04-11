@@ -213,6 +213,124 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("transitions a validating context to ready when halted", async () => {
+    const repository = createRepository(
+      createWorkflowExecution({
+        status: "running",
+        activeContextId: "context-plan",
+        contextStates: {
+          "context-plan": {
+            contextId: "context-plan",
+            status: "validating",
+            totalTaskCount: 1,
+            completedTaskCount: 1,
+            iterationCount: 2,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+          "context-implement": {
+            contextId: "context-implement",
+            status: "pending",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 0,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+          "context-verify": {
+            contextId: "context-verify",
+            status: "pending",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 0,
+            consecutiveFailureCount: 0,
+            lastValidationAt: null,
+            lastValidationPass: null,
+          },
+        },
+        taskStates: {
+          "task-plan-1": {
+            taskId: "task-plan-1",
+            contextId: "context-plan",
+            order: 1,
+            status: "completed",
+            summary: "done",
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: "2026-03-27T15:01:00.000Z",
+            lastConversationId: "conversation-1",
+            reopenedCount: 0,
+            lastReopenedAt: null,
+            failureMessage: null,
+          },
+          "task-implement-1": {
+            taskId: "task-implement-1",
+            contextId: "context-implement",
+            order: 1,
+            status: "pending",
+            summary: null,
+            startedAt: null,
+            completedAt: null,
+            lastConversationId: null,
+            reopenedCount: 0,
+            lastReopenedAt: null,
+            failureMessage: null,
+          },
+          "task-verify-1": {
+            taskId: "task-verify-1",
+            contextId: "context-verify",
+            order: 1,
+            status: "pending",
+            summary: null,
+            startedAt: null,
+            completedAt: null,
+            lastConversationId: null,
+            reopenedCount: 0,
+            lastReopenedAt: null,
+            failureMessage: null,
+          },
+        },
+        machineSnapshot: {
+          schemaVersion: 1,
+          lifecycleStatus: "running",
+          activeContextId: "context-plan",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      now() {
+        return "2026-03-27T15:05:00.000Z";
+      },
+    });
+
+    const execution = await manager.send("/repo", "session-1", {
+      type: "halt",
+      reason: {
+        type: "max_iterations",
+        contextId: "context-plan",
+        iterationCount: 2,
+      },
+    });
+
+    expect(execution.status).toBe("halted");
+    expect(execution.contextStates["context-plan"]?.status).toBe("ready");
+    expect(execution.machineSnapshot).toEqual({
+      schemaVersion: 1,
+      lifecycleStatus: "halted",
+      activeContextId: "context-plan",
+      recoveryMode: "none",
+      hasLiveIteration: false,
+    });
+  });
+
   it("resumes a paused execution preserving the active context", async () => {
     const repository = createRepository(
       createWorkflowExecution({
