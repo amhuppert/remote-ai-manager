@@ -63,8 +63,6 @@ function makeTaskState(
     startedAt: null,
     completedAt: null,
     lastConversationId: null,
-    reopenedCount: 0,
-    lastReopenedAt: null,
     failureMessage: null,
     failureHistory: [],
     ...overrides,

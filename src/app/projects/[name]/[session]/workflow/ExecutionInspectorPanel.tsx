@@ -6,7 +6,6 @@ import CollapsibleText from "@/components/CollapsibleText";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationResultEvent,
-  GraphWorkflowRetryEvent,
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowLaneKind,
 } from "@/types";
@@ -64,24 +63,6 @@ function getHistoryEntries(
       }),
     )
     .reverse();
-  const retryEvents = execution.history
-    .filter(
-      (
-        entry,
-      ): entry is {
-        occurredAt: string;
-        event: GraphWorkflowRetryEvent;
-      } =>
-        entry.event.type === "graph-workflow-retry" &&
-        (contextId == null || entry.event.contextId === contextId),
-    )
-    .map(
-      (entry): Timestamped<GraphWorkflowRetryEvent> => ({
-        ...entry.event,
-        occurredAt: entry.occurredAt,
-      }),
-    )
-    .reverse();
   const circuitBreakerEvents = execution.history
     .filter(
       (
@@ -101,7 +82,7 @@ function getHistoryEntries(
     )
     .reverse();
 
-  return { validationEvents, retryEvents, circuitBreakerEvents };
+  return { validationEvents, circuitBreakerEvents };
 }
 
 function formatTimestamp(iso: string): string {
@@ -130,8 +111,6 @@ function getStatusBadgeClass(status?: string): string {
   switch (status) {
     case "running":
       return "running";
-    case "validating":
-      return "validating";
     case "completed":
       return "completed";
     case "halted":
@@ -145,8 +124,6 @@ function getStatusLabel(status?: string): string {
   switch (status) {
     case "running":
       return "Running";
-    case "validating":
-      return "Validating";
     case "completed":
       return "Completed";
     case "halted":
@@ -176,16 +153,6 @@ function countEnabledValidators(execution: GraphWorkflowExecution): number {
     (count, ctx) =>
       count + [ctx.taskValidation?.enabled].filter(Boolean).length,
     0,
-  );
-}
-
-function resolveTaskTitle(
-  execution: GraphWorkflowExecution,
-  taskId: string,
-): string {
-  return (
-    execution.workingDefinition.tasks.find((t) => t.id === taskId)?.title ??
-    taskId
   );
 }
 
@@ -220,12 +187,10 @@ function getLaneBadgeLabel(lane: GraphWorkflowLaneKind | undefined): string {
 
 function ValidationCard({
   event,
-  execution,
   isReusedSession,
   onViewConversation,
 }: {
   event: Timestamped<GraphWorkflowValidationResultEvent>;
-  execution: GraphWorkflowExecution;
   isReusedSession?: boolean;
   onViewConversation?: (
     conversationId: string,
@@ -233,7 +198,6 @@ function ValidationCard({
     contextId: string,
   ) => void;
 }) {
-  const hasReopened = event.reopenTaskIds.length > 0;
   const hasIssues = event.issues.length > 0;
   const sessionRef = event.sessionRef;
   const reviewArtifact = event.reviewArtifact;
@@ -299,41 +263,23 @@ function ValidationCard({
           )}
         </div>
       )}
-      {(hasReopened || hasIssues) && (
+      {hasIssues && (
         <div className="wb-validation-body">
-          {hasReopened && (
-            <>
-              <div className="wb-validation-section-label">Reopened Tasks</div>
-              <ul className="wb-validation-reopen-list">
-                {event.reopenTaskIds.map((taskId) => (
-                  <li key={taskId} className="wb-validation-reopen-item">
-                    {resolveTaskTitle(execution, taskId)}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {hasIssues && (
-            <>
-              <div className="wb-validation-section-label">
-                Issues ({event.issues.length})
-              </div>
-              <CollapsibleText maxCollapsedHeight={140}>
-                <ul className="wb-validation-issues-list">
-                  {event.issues.map((issue, idx) => (
-                    <li key={idx} className="wb-validation-issue">
-                      <div className="wb-validation-issue-title">
-                        {issue.title}
-                      </div>
-                      <div className="wb-validation-issue-desc">
-                        {issue.description}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </CollapsibleText>
-            </>
-          )}
+          <div className="wb-validation-section-label">
+            Issues ({event.issues.length})
+          </div>
+          <CollapsibleText maxCollapsedHeight={140}>
+            <ul className="wb-validation-issues-list">
+              {event.issues.map((issue, idx) => (
+                <li key={idx} className="wb-validation-issue">
+                  <div className="wb-validation-issue-title">{issue.title}</div>
+                  <div className="wb-validation-issue-desc">
+                    {issue.description}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CollapsibleText>
         </div>
       )}
     </div>
@@ -402,37 +348,11 @@ function OverviewView({
                   <ValidationCard
                     key={`val-${index}`}
                     event={event}
-                    execution={execution}
                     isReusedSession={reused.has(index)}
                     onViewConversation={onViewConversation}
                   />
                 ));
             })()}
-          </section>
-        )}
-
-        {history.retryEvents.length > 0 && (
-          <section className="wb-overview-section">
-            <div className="wb-overview-section-title">Retries</div>
-            {history.retryEvents.slice(0, 5).map((event, index) => {
-              const ctxTitle =
-                execution.workingDefinition.executionContexts.find(
-                  (ctx) => ctx.id === event.contextId,
-                )?.title ?? event.contextId;
-              return (
-                <div key={`retry-${index}`} className="wb-exec-event">
-                  <div className="wb-exec-event-header">
-                    <span className="wb-exec-event-dot retry" />
-                    <span className="wb-exec-event-text">
-                      {ctxTitle}: attempt {event.attempt}/{event.maxAttempts}
-                    </span>
-                    <span className="wb-exec-event-timestamp">
-                      {formatTimestamp(event.occurredAt)}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
           </section>
         )}
 
@@ -835,7 +755,6 @@ function DetailView({
                     <ValidationCard
                       key={`val-${index}`}
                       event={event}
-                      execution={execution}
                       isReusedSession={reused.has(index)}
                       onViewConversation={onViewConversation}
                     />
@@ -851,25 +770,6 @@ function DetailView({
                 </div>
               )}
             </section>
-
-            {history.retryEvents.length > 0 && (
-              <section className="wb-overview-section">
-                <div className="wb-overview-section-title">Retries</div>
-                {history.retryEvents.map((event, index) => (
-                  <div key={`retry-${index}`} className="wb-exec-event">
-                    <div className="wb-exec-event-header">
-                      <span className="wb-exec-event-dot retry" />
-                      <span className="wb-exec-event-text">
-                        Attempt {event.attempt}/{event.maxAttempts}
-                      </span>
-                      <span className="wb-exec-event-timestamp">
-                        {formatTimestamp(event.occurredAt)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </section>
-            )}
 
             {history.circuitBreakerEvents.length > 0 && (
               <section className="wb-overview-section">

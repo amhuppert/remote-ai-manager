@@ -497,6 +497,7 @@ export function createGraphWorkflowIterationOrchestrator(
               validatorType: "task",
               pass: false,
               summary: validation.feedback,
+              issues: validation.issues,
               sessionRef: validation.sessionRef,
               reviewArtifact: validation.reviewArtifact,
             });
@@ -766,14 +767,9 @@ export function createGraphWorkflowIterationOrchestrator(
       remainingTaskCount,
     });
 
-    // When all tasks are completed, mark the context as completed directly.
-    // (No context-level validation — task-level validation is sufficient.)
     finalizedContextState.status = shouldContinueInContext
       ? "running"
       : "completed";
-    if (!shouldContinueInContext) {
-      finalizedContextState.lastValidationPass = true;
-    }
     finalizedExecution.activeContextId = shouldContinueInContext
       ? input.contextId
       : null;

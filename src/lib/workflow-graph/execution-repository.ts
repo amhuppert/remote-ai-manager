@@ -40,7 +40,6 @@ function createExecutionFromSeed(
   );
   const contextStates: GraphWorkflowExecution["contextStates"] = {};
   const taskStates: GraphWorkflowExecution["taskStates"] = {};
-  const retryState: GraphWorkflowExecution["retryState"] = {};
 
   for (const context of seed.definition.executionContexts) {
     const totalTaskCount = seed.definition.tasks.filter(
@@ -54,8 +53,6 @@ function createExecutionFromSeed(
       completedTaskCount: 0,
       iterationCount: 0,
       consecutiveFailureCount: 0,
-      lastValidationAt: null,
-      lastValidationPass: null,
     };
   }
 
@@ -69,8 +66,6 @@ function createExecutionFromSeed(
       startedAt: null,
       completedAt: null,
       lastConversationId: null,
-      reopenedCount: 0,
-      lastReopenedAt: null,
       failureMessage: null,
       failureHistory: [],
     };
@@ -86,7 +81,6 @@ function createExecutionFromSeed(
     activeTaskId: null,
     contextStates,
     taskStates,
-    retryState,
     sharedDocuments: [],
     machineSnapshot: null,
     history: [],

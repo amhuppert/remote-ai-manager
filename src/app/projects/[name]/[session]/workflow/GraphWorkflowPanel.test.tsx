@@ -67,8 +67,6 @@ describe("GraphWorkflowPanel", () => {
           startedAt: "2026-03-28T10:01:00.000Z",
           completedAt: null,
           lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
         },

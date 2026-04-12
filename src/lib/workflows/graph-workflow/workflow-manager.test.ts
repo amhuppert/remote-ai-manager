@@ -111,8 +111,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 1,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
           "context-implement": {
             contextId: "context-implement",
@@ -121,8 +119,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 0,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
           "context-verify": {
             contextId: "context-verify",
@@ -131,8 +127,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 0,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
         },
         taskStates: {
@@ -145,8 +139,6 @@ describe("graph workflow manager", () => {
             startedAt: "2026-03-27T15:00:00.000Z",
             completedAt: null,
             lastConversationId: "conversation-1",
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -159,8 +151,6 @@ describe("graph workflow manager", () => {
             startedAt: null,
             completedAt: null,
             lastConversationId: null,
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -173,8 +163,6 @@ describe("graph workflow manager", () => {
             startedAt: null,
             completedAt: null,
             lastConversationId: null,
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -215,7 +203,7 @@ describe("graph workflow manager", () => {
     });
   });
 
-  it("transitions a validating context to ready when halted", async () => {
+  it("transitions a running context to ready when halted", async () => {
     const repository = createRepository(
       createWorkflowExecution({
         status: "running",
@@ -223,13 +211,11 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             contextId: "context-plan",
-            status: "validating",
+            status: "running",
             totalTaskCount: 1,
             completedTaskCount: 1,
             iterationCount: 2,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
           "context-implement": {
             contextId: "context-implement",
@@ -238,8 +224,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 0,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
           "context-verify": {
             contextId: "context-verify",
@@ -248,8 +232,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 0,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
         },
         taskStates: {
@@ -262,8 +244,6 @@ describe("graph workflow manager", () => {
             startedAt: "2026-03-27T15:00:00.000Z",
             completedAt: "2026-03-27T15:01:00.000Z",
             lastConversationId: "conversation-1",
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -276,8 +256,6 @@ describe("graph workflow manager", () => {
             startedAt: null,
             completedAt: null,
             lastConversationId: null,
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -290,8 +268,6 @@ describe("graph workflow manager", () => {
             startedAt: null,
             completedAt: null,
             lastConversationId: null,
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -351,8 +327,6 @@ describe("graph workflow manager", () => {
             startedAt: "2026-03-27T15:00:00.000Z",
             completedAt: null,
             lastConversationId: "conversation-1",
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -365,8 +339,6 @@ describe("graph workflow manager", () => {
             startedAt: null,
             completedAt: null,
             lastConversationId: null,
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -379,8 +351,6 @@ describe("graph workflow manager", () => {
             startedAt: null,
             completedAt: null,
             lastConversationId: null,
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -431,8 +401,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 1,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
           "context-implement": {
             contextId: "context-implement",
@@ -441,8 +409,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 0,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
           "context-verify": {
             contextId: "context-verify",
@@ -451,8 +417,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 0,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
         },
         laneStates: {
@@ -529,8 +493,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 1,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
           "context-implement": {
             contextId: "context-implement",
@@ -539,8 +501,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 0,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
           "context-verify": {
             contextId: "context-verify",
@@ -549,8 +509,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 0,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
         },
         taskStates: {
@@ -563,8 +521,6 @@ describe("graph workflow manager", () => {
             startedAt: "2026-03-27T15:00:00.000Z",
             completedAt: null,
             lastConversationId: "conversation-1",
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -577,8 +533,6 @@ describe("graph workflow manager", () => {
             startedAt: null,
             completedAt: null,
             lastConversationId: null,
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -591,8 +545,6 @@ describe("graph workflow manager", () => {
             startedAt: null,
             completedAt: null,
             lastConversationId: null,
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -644,8 +596,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 1,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
         },
         taskStates: {
@@ -658,8 +608,6 @@ describe("graph workflow manager", () => {
             startedAt: "2026-03-27T15:00:00.000Z",
             completedAt: null,
             lastConversationId: "conversation-1",
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -712,8 +660,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 1,
             iterationCount: 1,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
         },
         taskStates: {
@@ -726,8 +672,6 @@ describe("graph workflow manager", () => {
             startedAt: "2026-03-27T15:00:00.000Z",
             completedAt: "2026-03-27T15:05:00.000Z",
             lastConversationId: "conversation-1",
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -796,8 +740,6 @@ describe("graph workflow manager", () => {
             status: "completed",
             completedTaskCount: 1,
             iterationCount: 1,
-            lastValidationPass: true,
-            lastValidationAt: "2026-03-27T15:00:00.000Z",
           },
         },
       }),
@@ -848,8 +790,6 @@ describe("graph workflow manager", () => {
             status: "halted",
             iterationCount: 2,
             consecutiveFailureCount: 2,
-            lastValidationAt: "2026-03-27T15:30:00.000Z",
-            lastValidationPass: false,
           },
         },
         taskStates: {
@@ -860,13 +800,6 @@ describe("graph workflow manager", () => {
             startedAt: "2026-03-27T15:00:00.000Z",
             completedAt: "2026-03-27T15:10:00.000Z",
             lastConversationId: "conversation-1",
-          },
-        },
-        retryState: {
-          "context-plan": {
-            contextId: "context-plan",
-            attempt: 2,
-            maxAttempts: 2,
           },
         },
         machineSnapshot: {
@@ -896,7 +829,6 @@ describe("graph workflow manager", () => {
       status: "ready",
       consecutiveFailureCount: 0,
     });
-    expect(execution.retryState["context-plan"]?.attempt).toBe(0);
     expect(execution.machineSnapshot).toEqual({
       schemaVersion: 1,
       lifecycleStatus: "running",
@@ -921,8 +853,6 @@ describe("graph workflow manager", () => {
             completedTaskCount: 0,
             iterationCount: 1,
             consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
           },
         },
         taskStates: {
@@ -935,8 +865,6 @@ describe("graph workflow manager", () => {
             startedAt: "2026-03-27T15:00:00.000Z",
             completedAt: null,
             lastConversationId: "conversation-1",
-            reopenedCount: 0,
-            lastReopenedAt: null,
             failureMessage: null,
             failureHistory: [],
           },
@@ -1041,8 +969,6 @@ describe("graph workflow manager", () => {
           completedTaskCount: 1,
           iterationCount: 1,
           consecutiveFailureCount: 0,
-          lastValidationAt: "2026-03-27T15:00:00.000Z",
-          lastValidationPass: true,
         },
         "context-implement": {
           contextId: "context-implement",
@@ -1051,8 +977,6 @@ describe("graph workflow manager", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-verify": {
           contextId: "context-verify",
@@ -1061,8 +985,6 @@ describe("graph workflow manager", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
       },
     });

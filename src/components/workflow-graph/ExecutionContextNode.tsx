@@ -19,8 +19,6 @@ function getStatusBadge(
   switch (status) {
     case "running":
       return { label: "Running", className: "running" };
-    case "validating":
-      return { label: "Validating", className: "validating" };
     case "completed":
       return { label: "Completed", className: "completed" };
     case "halted":
@@ -49,8 +47,6 @@ function getFooterText(
       return "Ready to start";
     case "running":
       return `Running task ${(completedCount ?? 0) + 1}/${totalCount ?? taskCount}`;
-    case "validating":
-      return "Validating...";
     case "completed":
       return "Completed";
     case "halted":

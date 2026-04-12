@@ -30,7 +30,6 @@ interface PublishValidationResultInput {
   pass: boolean;
   summary: string;
   issues?: WorkflowValidatorIssue[];
-  reopenTaskIds?: string[];
   sessionRef?: GraphWorkflowExecutionSessionRef | null;
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
@@ -216,9 +215,7 @@ export function createGraphWorkflowExecutionEventPublisher(
         !previousContext ||
         previousContext.status !== nextContext.status ||
         previousContext.completedTaskCount !== nextContext.completedTaskCount ||
-        previousContext.iterationCount !== nextContext.iterationCount ||
-        previousContext.lastValidationAt !== nextContext.lastValidationAt ||
-        previousContext.lastValidationPass !== nextContext.lastValidationPass
+        previousContext.iterationCount !== nextContext.iterationCount
       ) {
         events.push({
           type: "graph-workflow-context-status",
@@ -257,29 +254,6 @@ export function createGraphWorkflowExecutionEventPublisher(
           status: nextTask.status,
           source: getTaskSource(nextExecution, task.id) ?? "user",
           order: nextTask.order,
-        });
-      }
-    }
-
-    for (const context of nextExecution.workingDefinition.executionContexts) {
-      const previousRetry = previousExecution?.retryState[context.id] ?? null;
-      const nextRetry = nextExecution.retryState[context.id];
-      if (!nextRetry) {
-        continue;
-      }
-
-      if (
-        nextRetry.attempt > 0 &&
-        (!previousRetry || previousRetry.attempt !== nextRetry.attempt)
-      ) {
-        events.push({
-          type: "graph-workflow-retry",
-          projectName,
-          sessionName: input.sessionName,
-          executionId: nextExecution.id,
-          contextId: context.id,
-          attempt: nextRetry.attempt,
-          maxAttempts: nextRetry.maxAttempts,
         });
       }
     }
@@ -342,7 +316,6 @@ export function createGraphWorkflowExecutionEventPublisher(
       pass: input.pass,
       summary: input.summary,
       issues: input.issues ?? [],
-      reopenTaskIds: input.reopenTaskIds ?? [],
       sessionRef: input.sessionRef ?? null,
       reviewArtifact: input.reviewArtifact ?? null,
     };

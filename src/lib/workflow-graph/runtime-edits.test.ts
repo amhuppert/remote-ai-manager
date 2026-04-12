@@ -23,8 +23,6 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-implement": {
           contextId: "context-implement",
@@ -33,8 +31,6 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-verify": {
           contextId: "context-verify",
@@ -43,8 +39,6 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
       },
     });
@@ -96,8 +90,6 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-implement": {
           contextId: "context-implement",
@@ -106,8 +98,6 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-verify": {
           contextId: "context-verify",
@@ -116,8 +106,6 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
       },
     });
@@ -216,8 +204,6 @@ describe("graph workflow runtime edit service", () => {
           startedAt: null,
           completedAt: null,
           lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
         },
@@ -233,8 +219,6 @@ describe("graph workflow runtime edit service", () => {
           startedAt: null,
           completedAt: null,
           lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
         },

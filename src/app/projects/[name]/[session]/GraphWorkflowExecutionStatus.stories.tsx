@@ -30,8 +30,6 @@ const completedTask = (taskId: string, contextId: string, order: number) => ({
   startedAt: "2026-03-29T12:00:00Z",
   completedAt: "2026-03-29T12:05:00Z",
   lastConversationId: null,
-  reopenedCount: 0,
-  lastReopenedAt: null,
   failureMessage: null,
   failureHistory: [],
 });
@@ -45,8 +43,6 @@ const pendingTask = (taskId: string, contextId: string, order: number) => ({
   startedAt: null,
   completedAt: null,
   lastConversationId: null,
-  reopenedCount: 0,
-  lastReopenedAt: null,
   failureMessage: null,
   failureHistory: [],
 });

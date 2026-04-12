@@ -30,7 +30,6 @@ describe("extractValidatorResult", () => {
         pass: true,
         summary: "All checks passed",
         issues: [],
-        reopenTaskIds: [],
       }),
       "```",
     ].join("\n");
@@ -40,7 +39,6 @@ describe("extractValidatorResult", () => {
       pass: true,
       summary: "All checks passed",
       issues: [],
-      reopenTaskIds: [],
     });
   });
 
@@ -56,7 +54,6 @@ describe("extractValidatorResult", () => {
         pass: false,
         summary: "Missing test coverage",
         issues: [{ title: "No tests", description: "Add unit tests." }],
-        reopenTaskIds: ["task-1"],
       }),
       "```",
     ].join("\n");
@@ -66,7 +63,6 @@ describe("extractValidatorResult", () => {
       pass: false,
       summary: "Missing test coverage",
       issues: [{ title: "No tests", description: "Add unit tests." }],
-      reopenTaskIds: ["task-1"],
     });
   });
 
@@ -79,7 +75,6 @@ describe("extractValidatorResult", () => {
 
     const result = extractValidatorResult(text);
     expect(result.issues).toEqual([]);
-    expect(result.reopenTaskIds).toEqual([]);
   });
 
   it("returns a failing result when no JSON block is found", () => {
@@ -177,7 +172,7 @@ describe("buildTaskValidationPrompt", () => {
     expect(prompt).toContain("Created widget component with props interface.");
   });
 
-  it("lists sibling task IDs for reopenTaskIds reference", () => {
+  it("lists sibling task IDs for task context", () => {
     const prompt = buildTaskValidationPrompt({
       context,
       task: tasks[0]!,
@@ -202,7 +197,7 @@ describe("buildTaskValidationPrompt", () => {
     expect(prompt).toContain("`pass`");
     expect(prompt).toContain("`summary`");
     expect(prompt).toContain("`issues`");
-    expect(prompt).toContain("`reopenTaskIds`");
+    expect(prompt).not.toContain("`reopenTaskIds`");
   });
 });
 
@@ -245,7 +240,6 @@ describe("createValidatorRunner", () => {
         pass: true,
         summary: "Task completed correctly",
         issues: [],
-        reopenTaskIds: [],
       }),
       "```",
     ].join("\n");
@@ -365,7 +359,6 @@ describe("createValidatorRunner", () => {
         pass: true,
         summary: "OK",
         issues: [],
-        reopenTaskIds: [],
       }),
       "```",
     ].join("\n");
@@ -414,7 +407,6 @@ describe("createValidatorRunner", () => {
         pass: true,
         summary: "Codex OK",
         issues: [],
-        reopenTaskIds: [],
       }),
     );
     const runner = createValidatorRunner({
@@ -468,7 +460,6 @@ describe("continuity service wiring", () => {
     pass: true,
     summary: "All good",
     issues: [],
-    reopenTaskIds: [],
   });
 
   function buildSimpleExecution(): GraphWorkflowExecution {
@@ -654,7 +645,6 @@ describe("continuity service wiring", () => {
       pass: true,
       summary: "Looks good",
       issues: [],
-      reopenTaskIds: [],
     });
 
     const executeValidatorAgent = vi.fn();
@@ -738,7 +728,6 @@ describe("parseValidatorResponse", () => {
       pass: true,
       summary: "All good",
       issues: [],
-      reopenTaskIds: [],
     };
     const result = parseValidatorResponse("some text", structured);
     expect(result.result).toEqual(structured);
@@ -750,7 +739,6 @@ describe("parseValidatorResponse", () => {
       pass: false,
       summary: "Needs work",
       issues: [{ title: "Bug", description: "Fix" }],
-      reopenTaskIds: ["task-1"],
     });
     const result = parseValidatorResponse(json);
     expect(result.result.pass).toBe(false);
@@ -766,7 +754,6 @@ describe("parseValidatorResponse", () => {
         pass: true,
         summary: "OK",
         issues: [],
-        reopenTaskIds: [],
       }),
       "```",
     ].join("\n");
@@ -787,7 +774,6 @@ describe("parseValidatorResponse", () => {
       pass: true,
       summary: "Text parse",
       issues: [],
-      reopenTaskIds: [],
     });
     const result = parseValidatorResponse(json, { invalid: true });
     expect(result.result.pass).toBe(true);
@@ -808,7 +794,6 @@ describe("continuity runtime integration (real service)", () => {
     pass: true,
     summary: "All good",
     issues: [],
-    reopenTaskIds: [],
   });
   const NOW = "2026-04-01T10:00:00.000Z";
 

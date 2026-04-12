@@ -23,8 +23,6 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-implement": {
           contextId: "context-implement",
@@ -33,8 +31,6 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-verify": {
           contextId: "context-verify",
@@ -43,8 +39,6 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
       },
       taskStates: {
@@ -57,8 +51,6 @@ describe("graph workflow execution event publisher", () => {
           startedAt: "2026-03-28T09:58:00.000Z",
           completedAt: null,
           lastConversationId: "conversation-1",
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
         },
@@ -71,8 +63,6 @@ describe("graph workflow execution event publisher", () => {
           startedAt: null,
           completedAt: null,
           lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
         },
@@ -85,17 +75,8 @@ describe("graph workflow execution event publisher", () => {
           startedAt: null,
           completedAt: null,
           lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
-        },
-      },
-      retryState: {
-        "context-plan": {
-          contextId: "context-plan",
-          attempt: 0,
-          maxAttempts: 2,
         },
       },
     });
@@ -128,13 +109,6 @@ describe("graph workflow execution event publisher", () => {
           failureMessage: "Validation failed",
         },
       },
-      retryState: {
-        "context-plan": {
-          contextId: "context-plan",
-          attempt: 1,
-          maxAttempts: 2,
-        },
-      },
       sharedDocuments: [
         {
           id: "doc-1",
@@ -159,7 +133,6 @@ describe("graph workflow execution event publisher", () => {
       "graph-workflow-status",
       "graph-workflow-context-status",
       "graph-workflow-task-status",
-      "graph-workflow-retry",
       "graph-workflow-circuit-breaker",
       "graph-workflow-shared-documents-updated",
     ]);
@@ -168,7 +141,6 @@ describe("graph workflow execution event publisher", () => {
         "graph-workflow-status",
         "graph-workflow-context-status",
         "graph-workflow-task-status",
-        "graph-workflow-retry",
         "graph-workflow-circuit-breaker",
         "graph-workflow-shared-documents-updated",
       ],
@@ -197,10 +169,9 @@ describe("graph workflow execution event publisher", () => {
       sessionName: "session-1",
       execution,
       contextId: "context-plan",
-      validatorType: "context",
+      validatorType: "task",
       pass: false,
       summary: "Validation failed because the fix task was incomplete.",
-      reopenTaskIds: ["task-plan-1"],
       issues: [
         {
           title: "Fix task incomplete",
@@ -222,8 +193,7 @@ describe("graph workflow execution event publisher", () => {
     expect(updatedExecution.history[0]?.event).toEqual(
       expect.objectContaining({
         type: "graph-workflow-validation-result",
-        validatorType: "context",
-        reopenTaskIds: ["task-plan-1"],
+        validatorType: "task",
       }),
     );
   });
@@ -337,8 +307,6 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-implement": {
           contextId: "context-implement",
@@ -347,8 +315,6 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-verify": {
           contextId: "context-verify",
@@ -357,8 +323,6 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
       },
     });

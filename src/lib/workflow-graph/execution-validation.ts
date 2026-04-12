@@ -10,7 +10,6 @@ import type {
   WorkflowAgentValidatorResult,
   WorkflowValidatorIssue,
 } from "@/types";
-import { validateWorkflowValidatorRemediation } from "./validation";
 import type { ValidatorRunResult } from "./validator-runner";
 
 export interface GraphWorkflowTaskValidatorInput {
@@ -39,7 +38,6 @@ export interface GraphWorkflowTaskValidationOutcome {
   summary: string;
   feedback: string;
   issues: WorkflowValidatorIssue[];
-  reopenTaskIds: string[];
   sessionRef?: GraphWorkflowExecutionSessionRef | null;
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
@@ -90,46 +88,13 @@ function formatFeedback(
   ].join("\n");
 }
 
-function normalizeValidatorResult(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-  result: WorkflowAgentValidatorResult,
-): {
+function normalizeValidatorResult(result: WorkflowAgentValidatorResult): {
   pass: boolean;
   summary: string;
   feedback: string;
   issues: WorkflowValidatorIssue[];
-  reopenTaskIds: string[];
 } {
-  const remediationValidation = validateWorkflowValidatorRemediation(
-    contextId,
-    execution,
-    result,
-  );
-  if (!remediationValidation.ok) {
-    const issues = remediationValidation.errors.map((error) => ({
-      title: "Invalid validator remediation",
-      description: error.message,
-    }));
-    const summary = "Validator returned invalid remediation directives";
-
-    return {
-      pass: false,
-      summary,
-      feedback: formatFeedback(
-        "Task validation blocked completion.",
-        summary,
-        issues,
-      ),
-      issues,
-      reopenTaskIds: [],
-    };
-  }
-
-  const pass =
-    result.pass &&
-    result.issues.length === 0 &&
-    result.reopenTaskIds.length === 0;
+  const pass = result.pass && result.issues.length === 0;
 
   return {
     pass,
@@ -140,7 +105,6 @@ function normalizeValidatorResult(
       result.issues,
     ),
     issues: result.issues,
-    reopenTaskIds: result.reopenTaskIds,
   };
 }
 
@@ -176,7 +140,6 @@ export function createGraphWorkflowValidationService(
         summary: "Task validation is not enabled",
         feedback: "Task validation is not enabled.",
         issues: [],
-        reopenTaskIds: [],
       };
     }
 
@@ -197,18 +160,13 @@ export function createGraphWorkflowValidationService(
       validator,
     });
 
-    const normalized = normalizeValidatorResult(
-      input.execution,
-      input.contextId,
-      runResult.result,
-    );
+    const normalized = normalizeValidatorResult(runResult.result);
 
     execLogger?.validation(input.contextId, "task_validation.completed", {
       taskId: input.taskId,
       pass: normalized.pass,
       summary: normalized.summary,
       issueCount: normalized.issues.length,
-      reopenTaskIds: normalized.reopenTaskIds,
     });
     validationLogger.info("graph-workflow.task_validation.completed", {
       executionId: input.execution.id,

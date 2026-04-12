@@ -23,13 +23,6 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
                   mutability: { allowAgentTaskAdd: true },
                   circuitBreaker: { consecutiveFailureThreshold: 3 },
                   iterationPolicy: { maxIterations: 3 },
-                  contextValidation: {
-                    onFail: {
-                      mode: "retry",
-                      retryScope: "same_context",
-                      maxAttempts: 2,
-                    },
-                  },
                 },
                 {
                   id: "context-implement",

@@ -138,10 +138,7 @@ function markActiveContextReady(execution: GraphWorkflowExecution): void {
     return;
   }
 
-  if (
-    activeContext.status === "running" ||
-    activeContext.status === "validating"
-  ) {
+  if (activeContext.status === "running") {
     activeContext.status = "ready";
   }
 }
@@ -404,13 +401,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       if (contextState.status === "halted") {
         contextState.status = "ready";
         contextState.consecutiveFailureCount = 0;
-      }
-    }
-
-    for (const retryEntry of Object.values(nextExecution.retryState)) {
-      const contextState = nextExecution.contextStates[retryEntry.contextId];
-      if (contextState && contextState.status === "ready") {
-        retryEntry.attempt = 0;
       }
     }
 

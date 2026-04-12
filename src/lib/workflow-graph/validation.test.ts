@@ -9,7 +9,6 @@ import {
   getTerminalContextIds,
   validateWorkflowDefinition,
   validateWorkflowRuntimeEdit,
-  validateWorkflowValidatorRemediation,
 } from "./validation";
 
 describe("workflow-graph validation", () => {
@@ -89,39 +88,6 @@ describe("workflow-graph validation", () => {
 
     expect(result.ok).toBe(false);
     expect(result.errors[0]?.code).toBe("runtime-edit-target-context-locked");
-  });
-
-  it("rejects remediation that reopens tasks outside the validating context", () => {
-    const baseExecution = createWorkflowExecution();
-    const execution = createWorkflowExecution({
-      taskStates: {
-        ...baseExecution.taskStates,
-        "task-plan-1": {
-          ...baseExecution.taskStates["task-plan-1"]!,
-          status: "completed",
-          completedAt: "2026-03-27T12:00:00.000Z",
-        },
-        "task-implement-1": {
-          ...baseExecution.taskStates["task-implement-1"]!,
-          status: "completed",
-          completedAt: "2026-03-27T12:00:00.000Z",
-        },
-      },
-    });
-
-    const result = validateWorkflowValidatorRemediation(
-      "context-plan",
-      execution,
-      {
-        pass: false,
-        summary: "Wrong task reopened",
-        reopenTaskIds: ["task-implement-1"],
-        issues: [],
-      },
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.errors[0]?.code).toBe("remediation-task-out-of-scope");
   });
 
   it("rejects empty task instructions and empty task titles", () => {
@@ -237,7 +203,6 @@ describe("workflow-graph validation", () => {
           ...baseExecution.contextStates["context-plan"]!,
           status: "completed",
           completedTaskCount: 1,
-          lastValidationPass: true,
         },
       },
     });

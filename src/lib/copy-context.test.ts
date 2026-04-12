@@ -125,8 +125,6 @@ function makeGraphWorkflowExecution(
         completedTaskCount: 1,
         iterationCount: 2,
         consecutiveFailureCount: 0,
-        lastValidationAt: null,
-        lastValidationPass: null,
       },
       "ctx-2": {
         contextId: "ctx-2",
@@ -135,8 +133,6 @@ function makeGraphWorkflowExecution(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
-        lastValidationAt: null,
-        lastValidationPass: null,
       },
     },
     taskStates: {
@@ -149,8 +145,6 @@ function makeGraphWorkflowExecution(
         startedAt: "2026-03-28T10:00:00Z",
         completedAt: "2026-03-28T10:30:00Z",
         lastConversationId: "conv-iter-1",
-        reopenedCount: 0,
-        lastReopenedAt: null,
         failureMessage: null,
         failureHistory: [],
       },
@@ -163,8 +157,6 @@ function makeGraphWorkflowExecution(
         startedAt: "2026-03-28T10:30:00Z",
         completedAt: null,
         lastConversationId: "conv-iter-2",
-        reopenedCount: 0,
-        lastReopenedAt: null,
         failureMessage: null,
         failureHistory: [],
       },
@@ -177,13 +169,10 @@ function makeGraphWorkflowExecution(
         startedAt: null,
         completedAt: null,
         lastConversationId: null,
-        reopenedCount: 0,
-        lastReopenedAt: null,
         failureMessage: null,
         failureHistory: [],
       },
     },
-    retryState: {},
     sharedDocuments: [],
     laneStates: {},
     machineSnapshot: null,
@@ -306,23 +295,6 @@ describe("buildSessionContext", () => {
     });
 
     expect(result).toContain("<halt-reason>circuit_breaker</halt-reason>");
-  });
-
-  it("includes graph workflow retry state when retrying", () => {
-    const execution = makeGraphWorkflowExecution({
-      retryState: {
-        "ctx-1": { contextId: "ctx-1", attempt: 2, maxAttempts: 3 },
-      },
-    });
-    const session = makeSession({ graphWorkflowExecution: execution });
-    const result = buildSessionContext({
-      projectName: "p",
-      sessionName: "s",
-      session,
-    });
-
-    expect(result).toContain("<retry-attempt>2</retry-attempt>");
-    expect(result).toContain("<retry-max-attempts>3</retry-max-attempts>");
   });
 });
 

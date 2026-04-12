@@ -45,7 +45,6 @@ function makeExecution(
     activeTaskId: null,
     contextStates: {},
     taskStates: {},
-    retryState: {},
     sharedDocuments: [],
     machineSnapshot: null,
     history: [],
@@ -208,8 +207,6 @@ describe("deriveNodes", () => {
       completedTaskCount: 0,
       iterationCount: 1,
       consecutiveFailureCount: 0,
-      lastValidationAt: null,
-      lastValidationPass: null,
     };
 
     const taskState: GraphWorkflowTaskState = {
@@ -221,8 +218,6 @@ describe("deriveNodes", () => {
       startedAt: new Date().toISOString(),
       completedAt: null,
       lastConversationId: null,
-      reopenedCount: 0,
-      lastReopenedAt: null,
       failureMessage: null,
       failureHistory: [],
     };
@@ -284,8 +279,6 @@ describe("deriveEdges", () => {
           completedTaskCount: 1,
           iterationCount: 1,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "ctx-2": {
           contextId: "ctx-2",
@@ -294,8 +287,6 @@ describe("deriveEdges", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
       },
     });

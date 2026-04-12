@@ -50,24 +50,6 @@ function createSemanticDefinition() {
             reasoningEffort: "medium",
           },
         },
-        contextValidation: {
-          agentValidator: {
-            enabled: true,
-            instructions: "Review the whole context before unlock.",
-            agent: {
-              model: "opus",
-              reasoningEffort: "high",
-            },
-          },
-          scriptValidator: {
-            enabled: true,
-          },
-          onFail: {
-            mode: "retry",
-            retryScope: "same_context",
-            maxAttempts: 2,
-          },
-        },
       },
       {
         id: "context-2",
@@ -199,8 +181,6 @@ describe("workflow graph execution schemas", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
         "context-2": {
           contextId: "context-2",
@@ -209,8 +189,6 @@ describe("workflow graph execution schemas", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: null,
         },
       },
       taskStates: {
@@ -223,8 +201,6 @@ describe("workflow graph execution schemas", () => {
           startedAt: timestamp,
           completedAt: null,
           lastConversationId: "conversation-1",
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
         },
@@ -237,17 +213,8 @@ describe("workflow graph execution schemas", () => {
           startedAt: null,
           completedAt: null,
           lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
-        },
-      },
-      retryState: {
-        "context-1": {
-          contextId: "context-1",
-          attempt: 1,
-          maxAttempts: 2,
         },
       },
       sharedDocuments: [
@@ -280,7 +247,6 @@ describe("workflow graph execution schemas", () => {
                   "The schema tests do not cover session persistence.",
               },
             ],
-            reopenTaskIds: ["task-1"],
           },
         },
       ],
@@ -309,12 +275,10 @@ describe("workflow graph validator and request schemas", () => {
       summary: "Looks good",
     });
     expect(emptyResult.issues).toEqual([]);
-    expect(emptyResult.reopenTaskIds).toEqual([]);
 
     const issueResult = workflowAgentValidatorResultSchema.parse({
       pass: false,
       summary: "Needs fixes",
-      reopenTaskIds: ["task-1"],
       issues: [
         {
           title: "Missing coverage",

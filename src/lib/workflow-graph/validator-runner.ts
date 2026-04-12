@@ -41,12 +41,8 @@ export const VALIDATOR_OUTPUT_SCHEMA = {
         additionalProperties: false,
       },
     },
-    reopenTaskIds: {
-      type: "array",
-      items: { type: "string" },
-    },
   },
-  required: ["pass", "summary", "issues", "reopenTaskIds"],
+  required: ["pass", "summary", "issues"],
   additionalProperties: false,
 } as const;
 
@@ -103,7 +99,6 @@ export function buildTaskValidationPrompt(
     "- `pass` (boolean): `true` if the task meets all validation criteria, `false` otherwise",
     "- `summary` (string): Brief explanation of your assessment",
     "- `issues` (array of `{ title, description }`): Specific problems found (empty array if pass is true)",
-    "- `reopenTaskIds` (array of strings): IDs of previously completed tasks that need rework (only from the task list above, empty array if none)",
   ].join("\n");
 }
 
@@ -123,7 +118,6 @@ export function extractValidatorResult(
       pass: false,
       summary: "Validator agent did not return structured output",
       issues: [],
-      reopenTaskIds: [],
     };
   }
 
@@ -138,7 +132,6 @@ export function extractValidatorResult(
       pass: false,
       summary: "Validator agent returned invalid structured output",
       issues: [],
-      reopenTaskIds: [],
     };
   }
 
@@ -148,7 +141,6 @@ export function extractValidatorResult(
       pass: false,
       summary: "Validator agent returned invalid structured output",
       issues: [],
-      reopenTaskIds: [],
     };
   }
 
@@ -370,7 +362,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           parsePath,
           pass: parsed.pass,
           issueCount: parsed.issues.length,
-          reopenTaskIds: parsed.reopenTaskIds,
         });
         return {
           result: parsed,
@@ -388,7 +379,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         parsePath,
         pass: parsed.pass,
         issueCount: parsed.issues.length,
-        reopenTaskIds: parsed.reopenTaskIds,
       });
       return {
         result: parsed,
@@ -451,7 +441,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         pass: parsed.pass,
         issueCount: parsed.issues.length,
         summary: parsed.summary,
-        reopenTaskIds: parsed.reopenTaskIds,
         sessionAction,
         threadId: codexThreadId,
         usage,
@@ -507,7 +496,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       pass: parsed.pass,
       issueCount: parsed.issues.length,
       summary: parsed.summary,
-      reopenTaskIds: parsed.reopenTaskIds,
       conversationId,
       contextTokens: claudeResult.contextTokens,
       contextWindowMax: claudeResult.contextWindowMax,
@@ -627,7 +615,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           pass: false,
           summary: `Validator agent failed: ${errorMessage}`,
           issues: [],
-          reopenTaskIds: [],
         },
         metadata: buildNoServiceMetadata(),
       };

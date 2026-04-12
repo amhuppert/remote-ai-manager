@@ -162,17 +162,6 @@ function appendGraphWorkflowLines(
     `${indent}  <completed-contexts>${completedContexts}</completed-contexts>`,
   );
 
-  // Retry state for active context
-  if (execution.activeContextId) {
-    const retry = execution.retryState[execution.activeContextId];
-    if (retry) {
-      lines.push(`${indent}  <retry-attempt>${retry.attempt}</retry-attempt>`);
-      lines.push(
-        `${indent}  <retry-max-attempts>${retry.maxAttempts}</retry-max-attempts>`,
-      );
-    }
-  }
-
   // Halt reason
   if (execution.haltReason) {
     lines.push(

@@ -246,8 +246,6 @@ export function createGraphWorkflowRuntimeEditService(
       startedAt: null,
       completedAt: null,
       lastConversationId: null,
-      reopenedCount: 0,
-      lastReopenedAt: null,
       failureMessage: null,
       failureHistory: [],
     };
@@ -317,8 +315,6 @@ export function createGraphWorkflowRuntimeEditService(
           startedAt: null,
           completedAt: null,
           lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
         };

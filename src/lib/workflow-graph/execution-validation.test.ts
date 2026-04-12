@@ -6,7 +6,7 @@ import {
 import { createGraphWorkflowValidationService } from "./execution-validation";
 
 describe("graph workflow execution validation service", () => {
-  it("blocks task completion while preserving validator issues and reopen directives", async () => {
+  it("blocks task completion while preserving validator issues", async () => {
     const definition = createWorkflowDefinition({
       executionContexts: createWorkflowDefinition().executionContexts.map(
         (context) =>
@@ -73,8 +73,6 @@ describe("graph workflow execution validation service", () => {
           startedAt: "2026-03-27T16:00:00.000Z",
           completedAt: "2026-03-27T16:05:00.000Z",
           lastConversationId: "conversation-seed",
-          reopenedCount: 0,
-          lastReopenedAt: null,
           failureMessage: null,
           failureHistory: [],
         },
@@ -84,7 +82,6 @@ describe("graph workflow execution validation service", () => {
       result: {
         pass: true,
         summary: "Needs more evidence",
-        reopenTaskIds: ["task-plan-2"],
         issues: [
           {
             title: "Missing artifact",
@@ -129,7 +126,6 @@ describe("graph workflow execution validation service", () => {
     );
     expect(result.pass).toBe(false);
     expect(result.summary).toBe("Needs more evidence");
-    expect(result.reopenTaskIds).toEqual(["task-plan-2"]);
     expect(result.issues).toEqual([
       {
         title: "Missing artifact",

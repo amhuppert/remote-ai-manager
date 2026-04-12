@@ -52,8 +52,6 @@ function makeNode(
           completedTaskCount: status === "completed" ? 1 : 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
-          lastValidationAt: null,
-          lastValidationPass: status === "completed" ? true : null,
         },
       }),
     },

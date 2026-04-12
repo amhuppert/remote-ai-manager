@@ -437,35 +437,10 @@ export type GraphWorkflowCodexValidatorConfig = z.infer<
   typeof graphWorkflowCodexValidatorConfigSchema
 >;
 
-export const graphWorkflowScriptValidatorConfigSchema = z.object({
-  enabled: z.boolean(),
-});
-export type GraphWorkflowScriptValidatorConfig = z.infer<
-  typeof graphWorkflowScriptValidatorConfigSchema
->;
-
-export const graphWorkflowValidationFailurePolicySchema = z.object({
-  mode: z.enum(["halt", "retry"]),
-  retryScope: z.literal("same_context"),
-  maxAttempts: z.number().int().min(1),
-});
-export type GraphWorkflowValidationFailurePolicy = z.infer<
-  typeof graphWorkflowValidationFailurePolicySchema
->;
-
 export const graphWorkflowTaskValidationSchema =
   graphWorkflowAgentValidatorConfigSchema;
 export type GraphWorkflowTaskValidation = z.infer<
   typeof graphWorkflowTaskValidationSchema
->;
-
-export const graphWorkflowContextValidationSchema = z.object({
-  agentValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
-  scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
-  onFail: graphWorkflowValidationFailurePolicySchema,
-});
-export type GraphWorkflowContextValidation = z.infer<
-  typeof graphWorkflowContextValidationSchema
 >;
 
 export const graphWorkflowExecutionContextDefinitionSchema = z.object({
@@ -480,17 +455,12 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
   taskValidation: graphWorkflowTaskValidationSchema.optional(),
-  contextValidation: graphWorkflowContextValidationSchema.optional(),
 });
 export type GraphWorkflowExecutionContextDefinition = z.infer<
   typeof graphWorkflowExecutionContextDefinitionSchema
 >;
 
-export const graphWorkflowTaskSourceSchema = z.enum([
-  "user",
-  "agent",
-  "validator",
-]);
+export const graphWorkflowTaskSourceSchema = z.enum(["user", "agent"]);
 export type GraphWorkflowTaskSource = z.infer<
   typeof graphWorkflowTaskSourceSchema
 >;
@@ -579,7 +549,6 @@ export type WorkflowValidatorIssue = z.infer<
 export const workflowAgentValidatorResultSchema = z.object({
   pass: z.boolean(),
   summary: z.string(),
-  reopenTaskIds: z.array(z.string()).default([]),
   issues: z.array(workflowValidatorIssueSchema).default([]),
 });
 export type WorkflowAgentValidatorResult = z.infer<
@@ -613,7 +582,6 @@ export const graphWorkflowContextStatusSchema = z.enum([
   "pending",
   "ready",
   "running",
-  "validating",
   "completed",
   "halted",
 ]);
@@ -664,8 +632,6 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
   completedTaskCount: z.number().int().min(0).default(0),
   iterationCount: z.number().int().min(0).default(0),
   consecutiveFailureCount: z.number().int().min(0).default(0),
-  lastValidationAt: z.string().nullable().default(null),
-  lastValidationPass: z.boolean().nullable().default(null),
 });
 export type GraphWorkflowExecutionContextState = z.infer<
   typeof graphWorkflowExecutionContextStateSchema
@@ -688,8 +654,6 @@ export const graphWorkflowTaskStateSchema = z.object({
   startedAt: z.string().nullable().default(null),
   completedAt: z.string().nullable().default(null),
   lastConversationId: z.string().nullable().default(null),
-  reopenedCount: z.number().int().min(0).default(0),
-  lastReopenedAt: z.string().nullable().default(null),
   failureMessage: z.string().nullable().default(null),
   failureHistory: z.array(graphWorkflowTaskValidationFailureSchema).default([]),
 });
@@ -697,20 +661,7 @@ export type GraphWorkflowTaskState = z.infer<
   typeof graphWorkflowTaskStateSchema
 >;
 
-export const graphWorkflowRetryStateSchema = z.object({
-  contextId: z.string().trim().min(1),
-  attempt: z.number().int().min(0),
-  maxAttempts: z.number().int().min(1),
-});
-export type GraphWorkflowRetryState = z.infer<
-  typeof graphWorkflowRetryStateSchema
->;
-
-export const graphWorkflowValidatorTypeSchema = z.enum([
-  "task",
-  "context",
-  "script",
-]);
+export const graphWorkflowValidatorTypeSchema = z.enum(["task"]);
 export type GraphWorkflowValidatorType = z.infer<
   typeof graphWorkflowValidatorTypeSchema
 >;
@@ -760,7 +711,6 @@ export type GraphWorkflowTaskStatusEvent = z.infer<
 export const graphWorkflowLaneKindSchema = z.enum([
   "implementer",
   "task_validator",
-  "context_validator",
 ]);
 export type GraphWorkflowLaneKind = z.infer<typeof graphWorkflowLaneKindSchema>;
 
@@ -819,7 +769,6 @@ export const graphWorkflowValidationResultEventSchema = z.object({
   pass: z.boolean(),
   summary: z.string(),
   issues: z.array(workflowValidatorIssueSchema).default([]),
-  reopenTaskIds: z.array(z.string()).default([]),
   sessionRef: graphWorkflowExecutionSessionRefSchema.nullable().optional(),
   reviewArtifact: graphWorkflowValidationReviewArtifactSchema
     .nullable()
@@ -827,19 +776,6 @@ export const graphWorkflowValidationResultEventSchema = z.object({
 });
 export type GraphWorkflowValidationResultEvent = z.infer<
   typeof graphWorkflowValidationResultEventSchema
->;
-
-export const graphWorkflowRetryEventSchema = z.object({
-  type: z.literal("graph-workflow-retry"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  executionId: z.string(),
-  contextId: z.string(),
-  attempt: z.number().int().min(0),
-  maxAttempts: z.number().int().min(1),
-});
-export type GraphWorkflowRetryEvent = z.infer<
-  typeof graphWorkflowRetryEventSchema
 >;
 
 export const graphWorkflowCircuitBreakerEventSchema = z.object({
@@ -872,7 +808,6 @@ export const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowContextStatusEventSchema,
   graphWorkflowTaskStatusEventSchema,
   graphWorkflowValidationResultEventSchema,
-  graphWorkflowRetryEventSchema,
   graphWorkflowCircuitBreakerEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
 ]);
@@ -937,7 +872,6 @@ export const graphWorkflowExecutionSchema = z.object({
     .record(z.string(), graphWorkflowExecutionContextStateSchema)
     .default({}),
   taskStates: z.record(z.string(), graphWorkflowTaskStateSchema).default({}),
-  retryState: z.record(z.string(), graphWorkflowRetryStateSchema).default({}),
   sharedDocuments: z.array(graphWorkflowSharedDocumentEntrySchema).default([]),
   laneStates: z.record(z.string(), graphWorkflowLaneStateSchema).default({}),
   machineSnapshot: z.unknown().nullable().default(null),
@@ -1540,7 +1474,6 @@ export type SSEEvent =
   | GraphWorkflowContextStatusEvent
   | GraphWorkflowTaskStatusEvent
   | GraphWorkflowValidationResultEvent
-  | GraphWorkflowRetryEvent
   | GraphWorkflowCircuitBreakerEvent
   | GraphWorkflowSharedDocumentsUpdatedEvent
   | DevServerStatusEvent

@@ -117,21 +117,6 @@
   }
 }
 
-.graph-node.status-validating {
-  --node-color: var(--amber);
-  --node-color-glow: rgba(255, 179, 0, 0.15);
-  border-color: rgba(255, 179, 0, 0.2);
-  border-top-color: rgba(255, 179, 0, 0.45);
-  animation: pulse-node 2s ease-in-out infinite;
-}
-
-.graph-node.status-validating::before {
-  opacity: 1;
-}
-.graph-node.status-validating::after {
-  opacity: 1;
-}
-
 .graph-node.status-completed {
   --node-color: var(--green);
   --node-color-glow: rgba(0, 230, 118, 0.1);
@@ -206,12 +191,6 @@
   background: rgba(0, 229, 255, 0.08);
   color: var(--cyan);
   border: 1px solid rgba(0, 229, 255, 0.3);
-}
-
-.graph-node-badge.validating {
-  background: rgba(255, 179, 0, 0.08);
-  color: var(--amber);
-  border: 1px solid rgba(255, 179, 0, 0.3);
 }
 
 .graph-node-badge.completed {
@@ -301,10 +280,6 @@
   background: var(--cyan);
   box-shadow: 0 0 6px var(--cyan-glow);
 }
-.graph-node-progress-fill.validating {
-  background: var(--amber);
-  box-shadow: 0 0 6px var(--amber-glow);
-}
 .graph-node-progress-fill.completed {
   background: var(--green);
   box-shadow: 0 0 6px var(--green-glow);
@@ -332,10 +307,6 @@
 .graph-node-footer.halted {
   color: var(--text-secondary);
 }
-.graph-node-footer.validating {
-  color: var(--text-secondary);
-}
-
 /* ---- Node Connection Ports (React Flow Handle overrides) ---- */
 
 .react-flow__handle {

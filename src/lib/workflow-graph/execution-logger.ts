@@ -5,10 +5,10 @@
  * - _manifest.json: index + metadata (entry point for investigation)
  * - lifecycle.jsonl: execution-level events
  * - contexts/<id>/iterations.jsonl: per-context iteration events
- * - contexts/<id>/tasks.jsonl: task completion, reopening, agent-added tasks
+ * - contexts/<id>/tasks.jsonl: task completion, validation failures, agent-added tasks
  * - contexts/<id>/validation.jsonl: validator invocations + results
  * - contexts/<id>/prompts/: full prompt text + validator responses
- * - decisions.jsonl: cross-cutting decision log (rotation, retry, circuit breaker)
+ * - decisions.jsonl: cross-cutting decision log (rotation, circuit breaker)
  */
 
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -81,7 +81,6 @@ interface ManifestContextSummary {
   iterationCount: number;
   totalTasks: number;
   completedTasks: number;
-  validationOutcome: "passed" | "failed" | "not_run" | null;
 }
 
 interface Manifest {
@@ -184,14 +183,6 @@ export function createExecutionLogger(
             iterationCount: state?.iterationCount ?? 0,
             totalTasks: state?.totalTaskCount ?? 0,
             completedTasks: state?.completedTaskCount ?? 0,
-            validationOutcome:
-              state?.lastValidationPass === true
-                ? "passed"
-                : state?.lastValidationPass === false
-                  ? "failed"
-                  : state?.lastValidationAt
-                    ? "not_run"
-                    : null,
           };
         });
 
@@ -213,13 +204,13 @@ export function createExecutionLogger(
           "contexts/<id>/iterations.jsonl":
             "Per-context iteration lifecycle: start, follow-ups, completion.",
           "contexts/<id>/tasks.jsonl":
-            "Task completions, reopenings, agent-added tasks, validation feedback.",
+            "Task completions, agent-added tasks, validation feedback.",
           "contexts/<id>/validation.jsonl":
-            "Validator invocations, results, remediation decisions.",
+            "Validator invocations and results.",
           "contexts/<id>/prompts/":
             "Full prompt text (.md) and validator responses (.json).",
           "decisions.jsonl":
-            "Cross-cutting: rotation, retry, circuit breaker decisions.",
+            "Cross-cutting: rotation and circuit breaker decisions.",
         },
       };
 

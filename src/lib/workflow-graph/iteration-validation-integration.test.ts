@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { GraphWorkflowExecution } from "@/types";
 import {
   createWorkflowDefinition,
@@ -78,35 +78,36 @@ describe("graph workflow iteration validation integration", () => {
     );
 
     let toolInput: GraphWorkflowIterationToolServerInput | null = null;
+    const createConversation = async () => ({ id: "conversation-1" });
+    const createToolServer = (input: GraphWorkflowIterationToolServerInput) => {
+      toolInput = input;
+      return { server: { id: "tool-server" } };
+    };
+    const runAgentIteration = async () => {
+      if (!toolInput) {
+        throw new Error("Tool server input was not captured");
+      }
+
+      let thrown: Error | null = null;
+      try {
+        await toolInput.completeTask("task-plan-1", "Finished planning.");
+      } catch (error) {
+        thrown = error as Error;
+      }
+
+      expect(thrown?.message).toContain("Task validation blocked completion");
+      expect(repository.read().taskStates["task-plan-1"]).toMatchObject({
+        status: "pending",
+        failureMessage: expect.stringContaining("Missing validation artifact"),
+      });
+      return { contextTokens: null, contextWindowMax: null };
+    };
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
-      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn((input) => {
-        toolInput = input;
-        return { server: { id: "tool-server" } };
-      }),
-      runAgentIteration: vi.fn(async () => {
-        if (!toolInput) {
-          throw new Error("Tool server input was not captured");
-        }
-
-        let thrown: Error | null = null;
-        try {
-          await toolInput.completeTask("task-plan-1", "Finished planning.");
-        } catch (error) {
-          thrown = error as Error;
-        }
-
-        expect(thrown?.message).toContain("Task validation blocked completion");
-        expect(repository.read().taskStates["task-plan-1"]).toMatchObject({
-          status: "pending",
-          failureMessage: expect.stringContaining(
-            "Missing validation artifact",
-          ),
-        });
-        return { contextTokens: null, contextWindowMax: null };
-      }),
+      createConversation,
+      createToolServer,
+      runAgentIteration,
       validationService: {
         async validateTaskCompletion() {
           return {
@@ -119,7 +120,6 @@ describe("graph workflow iteration validation integration", () => {
                   "Add the evidence file before completing the task.",
               },
             ],
-            reopenTaskIds: [],
             feedback:
               "Task validation blocked completion.\n- Missing validation artifact: Add the evidence file before completing the task.",
           };

@@ -20,7 +20,6 @@ import {
   graphWorkflowContextStatusEventSchema,
   graphWorkflowTaskStatusEventSchema,
   graphWorkflowValidationResultEventSchema,
-  graphWorkflowRetryEventSchema,
   graphWorkflowCircuitBreakerEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
 } from "@/lib/schemas";
@@ -252,21 +251,6 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-validation-result", (event) => {
       try {
         const parsed = graphWorkflowValidationResultEventSchema.safeParse(
-          JSON.parse(event.data),
-        );
-        if (!parsed.success) return;
-        invalidateGraphWorkflow(
-          parsed.data.projectName,
-          parsed.data.sessionName,
-        );
-      } catch {
-        // best-effort
-      }
-    });
-
-    es.addEventListener("graph-workflow-retry", (event) => {
-      try {
-        const parsed = graphWorkflowRetryEventSchema.safeParse(
           JSON.parse(event.data),
         );
         if (!parsed.success) return;

@@ -52,7 +52,6 @@ function makeValidExecution() {
     activeContextId: "ctx-1",
     contextStates: {},
     taskStates: {},
-    retryState: {},
     sharedDocuments: [],
     machineSnapshot: null,
     history: [],

@@ -98,8 +98,6 @@ function createExecutionWithPlanTasks(
         completedTaskCount: statuses["task-plan-1"] === "completed" ? 1 : 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
-        lastValidationAt: null,
-        lastValidationPass: null,
       },
       "context-implement": {
         contextId: "context-implement",
@@ -108,8 +106,6 @@ function createExecutionWithPlanTasks(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
-        lastValidationAt: null,
-        lastValidationPass: null,
       },
       "context-verify": {
         contextId: "context-verify",
@@ -118,8 +114,6 @@ function createExecutionWithPlanTasks(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
-        lastValidationAt: null,
-        lastValidationPass: null,
       },
     },
     taskStates: {
@@ -132,8 +126,6 @@ function createExecutionWithPlanTasks(
         startedAt: null,
         completedAt: null,
         lastConversationId: null,
-        reopenedCount: 0,
-        lastReopenedAt: null,
         failureMessage: null,
         failureHistory: [],
       },
@@ -146,8 +138,6 @@ function createExecutionWithPlanTasks(
         startedAt: null,
         completedAt: null,
         lastConversationId: null,
-        reopenedCount: 0,
-        lastReopenedAt: null,
         failureMessage: null,
         failureHistory: [],
       },
@@ -160,8 +150,6 @@ function createExecutionWithPlanTasks(
         startedAt: null,
         completedAt: null,
         lastConversationId: null,
-        reopenedCount: 0,
-        lastReopenedAt: null,
         failureMessage: null,
         failureHistory: [],
       },
@@ -174,8 +162,6 @@ function createExecutionWithPlanTasks(
         startedAt: null,
         completedAt: null,
         lastConversationId: null,
-        reopenedCount: 0,
-        lastReopenedAt: null,
         failureMessage: null,
         failureHistory: [],
       },
@@ -371,9 +357,6 @@ describe("graph workflow iteration orchestrator", () => {
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
     );
-    expect(
-      result.execution.contextStates["context-plan"]?.lastValidationPass,
-    ).toBe(true);
   });
 
   it("emits live stream frames for iteration boundaries and agent content", async () => {
@@ -712,7 +695,7 @@ describe("graph workflow iteration orchestrator", () => {
       order: 3,
       title: "Fix: Missing regression coverage",
       instructions: "Add tests for the shared dropdown validation path.",
-      source: "validator",
+      source: "agent",
     });
     execution.taskStates["fix-1234"] = {
       taskId: "fix-1234",
@@ -723,8 +706,6 @@ describe("graph workflow iteration orchestrator", () => {
       startedAt: null,
       completedAt: null,
       lastConversationId: null,
-      reopenedCount: 0,
-      lastReopenedAt: null,
       failureMessage: "Previous fix did not cover the failing edge case.",
       failureHistory: [],
     };
@@ -954,7 +935,6 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
         summary: "Task passed",
         feedback: "Task validation passed.",
         issues: [] as never[],
-        reopenTaskIds: [] as string[],
         sessionRef: validatorLaneState.sessionRef,
         reviewArtifact: null,
       };
@@ -1484,7 +1464,6 @@ describe("task validation event publishing (fix-30388517)", () => {
       summary: "All checks passed",
       feedback: "Task validation passed.",
       issues: [] as never[],
-      reopenTaskIds: [] as string[],
       sessionRef,
       reviewArtifact: {
         engine: "claude" as const,

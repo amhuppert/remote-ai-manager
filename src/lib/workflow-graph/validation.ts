@@ -1,6 +1,5 @@
 import type {
   GraphWorkflowExecution,
-  WorkflowAgentValidatorResult,
   WorkflowGraphValidationError,
   WorkflowRuntimeEditRequest,
   WorkflowSemanticDefinition,
@@ -235,10 +234,7 @@ export function getEligibleContextIds(
 
       return (prerequisites.get(contextId) ?? []).every((upstreamId) => {
         const upstream = execution.contextStates[upstreamId];
-        return (
-          upstream?.status === "completed" &&
-          upstream.lastValidationPass === true
-        );
+        return upstream?.status === "completed";
       });
     });
 }
@@ -365,7 +361,6 @@ export function validateWorkflowRuntimeEdit(
 
     if (
       destinationState?.status === "running" ||
-      destinationState?.status === "validating" ||
       destinationState?.status === "completed" ||
       destinationState?.status === "halted"
     ) {
@@ -378,48 +373,6 @@ export function validateWorkflowRuntimeEdit(
       });
     }
   });
-
-  return resultFromErrors(errors);
-}
-
-export function validateWorkflowValidatorRemediation(
-  contextId: string,
-  execution: GraphWorkflowExecution,
-  remediation: WorkflowAgentValidatorResult,
-): WorkflowGraphValidationResult {
-  const errors: WorkflowGraphValidationError[] = [];
-
-  for (const taskId of remediation.reopenTaskIds) {
-    const taskState = execution.taskStates[taskId];
-    if (!taskState) {
-      errors.push({
-        code: "remediation-unknown-task",
-        message: `Remediation references missing task "${taskId}"`,
-        taskId,
-        contextId,
-      });
-      continue;
-    }
-
-    if (taskState.contextId !== contextId) {
-      errors.push({
-        code: "remediation-task-out-of-scope",
-        message: `Task "${taskId}" is outside context "${contextId}"`,
-        taskId,
-        contextId,
-      });
-      continue;
-    }
-
-    if (taskState.status !== "completed") {
-      errors.push({
-        code: "remediation-task-not-completed",
-        message: `Task "${taskId}" is not completed and cannot be reopened`,
-        taskId,
-        contextId,
-      });
-    }
-  }
 
   return resultFromErrors(errors);
 }
