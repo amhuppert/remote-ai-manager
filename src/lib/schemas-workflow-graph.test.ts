@@ -226,6 +226,7 @@ describe("workflow graph execution schemas", () => {
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
         "task-2": {
           taskId: "task-2",
@@ -239,6 +240,7 @@ describe("workflow graph execution schemas", () => {
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
       },
       retryState: {
@@ -268,7 +270,7 @@ describe("workflow graph execution schemas", () => {
             sessionName: "validator-loop-design-f93878",
             executionId: "execution-1",
             contextId: "context-1",
-            validatorType: "context",
+            validatorType: "task",
             pass: false,
             summary: "Validation requested fixes",
             issues: [
@@ -751,11 +753,7 @@ describe("graphWorkflowExecutionSessionRefSchema", () => {
   });
 
   it("accepts all lane kinds", () => {
-    const lanes = [
-      "implementer",
-      "task_validator",
-      "context_validator",
-    ] as const;
+    const lanes = ["implementer", "task_validator"] as const;
     for (const lane of lanes) {
       const result = graphWorkflowExecutionSessionRefSchema.safeParse({
         engine: "claude",

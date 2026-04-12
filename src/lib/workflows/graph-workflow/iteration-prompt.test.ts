@@ -66,6 +66,7 @@ function makeTaskState(
     reopenedCount: 0,
     lastReopenedAt: null,
     failureMessage: null,
+    failureHistory: [],
     ...overrides,
   };
 }
@@ -188,32 +189,8 @@ describe("buildIterationPrompt", () => {
         }),
       ],
       taskStates: {
-        "task-1": {
-          taskId: "task-1",
-          contextId: "context-plan",
-          order: 1,
-          status: "pending",
-          summary: null,
-          startedAt: null,
-          completedAt: null,
-          lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
-          failureMessage: null,
-        },
-        "task-2": {
-          taskId: "task-2",
-          contextId: "context-plan",
-          order: 2,
-          status: "pending",
-          summary: null,
-          startedAt: null,
-          completedAt: null,
-          lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
-          failureMessage: null,
-        },
+        "task-1": makeTaskState({ taskId: "task-1" }),
+        "task-2": makeTaskState({ taskId: "task-2", order: 2 }),
       },
       sharedDocuments: [],
       allowAgentTaskAdd: false,
@@ -246,25 +223,50 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain("Before implementing routes.");
   });
 
-  it("includes task failure feedback for tasks with a failureMessage", () => {
+  it("renders full failure history when multiple validation failures exist", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask({ id: "task-1" })],
       taskStates: {
-        "task-1": {
+        "task-1": makeTaskState({
           taskId: "task-1",
-          contextId: "context-plan",
-          order: 1,
           status: "interrupted",
-          summary: null,
           startedAt: "2026-03-27T16:00:00.000Z",
-          completedAt: null,
-          lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
+          failureHistory: [
+            {
+              message: "Missing test coverage for edge cases.",
+              timestamp: "2026-03-27T16:05:00.000Z",
+            },
+            {
+              message: "Tests still do not exercise the service path.",
+              timestamp: "2026-03-27T16:15:00.000Z",
+            },
+          ],
+        }),
+      },
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    expect(prompt).toContain("Attempt 1");
+    expect(prompt).toContain("Missing test coverage for edge cases.");
+    expect(prompt).toContain("Attempt 2");
+    expect(prompt).toContain("Tests still do not exercise the service path.");
+  });
+
+  it("falls back to failureMessage when failureHistory is empty", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask({ id: "task-1" })],
+      taskStates: {
+        "task-1": makeTaskState({
+          taskId: "task-1",
+          status: "interrupted",
+          startedAt: "2026-03-27T16:00:00.000Z",
           failureMessage:
             "Task validation blocked completion.\n- Missing test coverage: Add unit tests for the new parser.",
-        },
+          failureHistory: [],
+        }),
       },
       sharedDocuments: [],
       allowAgentTaskAdd: false,
@@ -274,31 +276,19 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain("Add unit tests for the new parser");
   });
 
-  it("does not include failure feedback section when no failureMessage exists", () => {
+  it("does not include failure feedback section when no failures exist", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask({ id: "task-1" })],
       taskStates: {
-        "task-1": {
-          taskId: "task-1",
-          contextId: "context-plan",
-          order: 1,
-          status: "pending",
-          summary: null,
-          startedAt: null,
-          completedAt: null,
-          lastConversationId: null,
-          reopenedCount: 0,
-          lastReopenedAt: null,
-          failureMessage: null,
-        },
+        "task-1": makeTaskState({ taskId: "task-1" }),
       },
       sharedDocuments: [],
       allowAgentTaskAdd: false,
     });
 
     expect(prompt).not.toMatch(
-      /previous.+attempt.+failed|validation.+failed|failure.+feedback/i,
+      /previous.+attempt|validation.+failure|failure.+history/i,
     );
   });
 
@@ -317,6 +307,33 @@ describe("buildIterationPrompt", () => {
     // Should not mark any single task as "active" — the agent works through all of them
     expect(prompt).not.toMatch(/\(active task\)/i);
     expect(prompt).not.toContain("Your Active Task");
+  });
+
+  it("includes validation criteria when taskValidationInstructions is provided", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      taskValidationInstructions:
+        "Verify test coverage exists and all tests pass.",
+    });
+
+    expect(prompt).toContain("Validation Criteria");
+    expect(prompt).toContain("Verify test coverage exists and all tests pass.");
+  });
+
+  it("omits validation criteria section when no instructions provided", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    expect(prompt).not.toContain("Validation Criteria");
   });
 });
 

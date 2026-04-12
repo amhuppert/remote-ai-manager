@@ -33,6 +33,7 @@ const completedTask = (taskId: string, contextId: string, order: number) => ({
   reopenedCount: 0,
   lastReopenedAt: null,
   failureMessage: null,
+  failureHistory: [],
 });
 
 const pendingTask = (taskId: string, contextId: string, order: number) => ({
@@ -47,6 +48,7 @@ const pendingTask = (taskId: string, contextId: string, order: number) => ({
   reopenedCount: 0,
   lastReopenedAt: null,
   failureMessage: null,
+  failureHistory: [],
 });
 
 export const Running: Story = {

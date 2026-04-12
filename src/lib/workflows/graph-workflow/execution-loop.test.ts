@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-  SessionState,
   WorkflowSemanticDefinition,
 } from "@/types";
 import {
@@ -79,6 +78,7 @@ function createRunningExecution(
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
     },
     retryState: {},
@@ -131,7 +131,6 @@ describe("execution loop", () => {
             currentExecution = next;
             return next;
           },
-          recordContextValidationResult: vi.fn(),
           send: sendSpy,
         },
         iterationOrchestrator: {
@@ -149,25 +148,8 @@ describe("execution loop", () => {
               conversationId: `conv-${iterationCallCount}`,
               execution: next,
               shouldContinueInContext: true,
-              shouldValidateContext: false,
             };
           },
-        },
-        validationService: {
-          async validateContextCompletion() {
-            return {
-              pass: true,
-              summary: "passed",
-              feedback: "passed",
-              issues: [],
-              reopenTaskIds: [],
-              agentResult: null,
-              scriptResult: null,
-            };
-          },
-        },
-        async getSession() {
-          return { worktreePath: "/repo", branchName: "main" } as SessionState;
         },
         emitStreamFrame: vi.fn(),
       };
@@ -209,25 +191,12 @@ describe("execution loop", () => {
         workflowManager: {
           async scheduleNextContext() {
             const next = structuredClone(currentExecution);
-            // Only schedule if context is not already completed
             if (next.contextStates["ctx-1"]!.status !== "completed") {
               next.activeContextId = "ctx-1";
               next.contextStates["ctx-1"]!.status = "running";
             } else {
               next.activeContextId = null;
             }
-            currentExecution = next;
-            return next;
-          },
-          async recordContextValidationResult(
-            _projectPath,
-            _sessionName,
-            result,
-          ) {
-            const next = structuredClone(currentExecution);
-            next.contextStates["ctx-1"]!.status = "completed";
-            next.contextStates["ctx-1"]!.lastValidationPass = result.pass;
-            next.activeContextId = null;
             currentExecution = next;
             return next;
           },
@@ -246,31 +215,17 @@ describe("execution loop", () => {
           async runIteration(): Promise<GraphWorkflowIterationResult> {
             const next = structuredClone(currentExecution);
             next.contextStates["ctx-1"]!.iterationCount = 1;
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.contextStates["ctx-1"]!.lastValidationPass = true;
             next.taskStates["task-1"]!.status = "completed";
+            next.activeContextId = null;
             currentExecution = next;
             return {
               conversationId: "conv-1",
               execution: next,
               shouldContinueInContext: false,
-              shouldValidateContext: true,
             };
           },
-        },
-        validationService: {
-          async validateContextCompletion() {
-            return {
-              pass: true,
-              summary: "passed",
-              feedback: "passed",
-              issues: [],
-              reopenTaskIds: [],
-              agentResult: null,
-              scriptResult: null,
-            };
-          },
-        },
-        async getSession() {
-          return { worktreePath: "/repo", branchName: "main" } as SessionState;
         },
         emitStreamFrame: vi.fn(),
       };
@@ -301,14 +256,10 @@ describe("execution loop", () => {
       const deps: GraphWorkflowExecutionLoopDeps = {
         workflowManager: {
           async scheduleNextContext() {
-            // No more contexts to schedule — all done
             currentExecution = {
               ...structuredClone(currentExecution),
               activeContextId: null,
             };
-            return currentExecution;
-          },
-          async recordContextValidationResult() {
             return currentExecution;
           },
           async send(_p, _s, event) {
@@ -324,13 +275,11 @@ describe("execution loop", () => {
         },
         iterationOrchestrator: {
           async runIteration() {
-            // Check the registry while the loop is running
             wasActiveDuringIteration = isExecutionLoopActive(
               "/repo",
               "session-1",
             );
 
-            // Complete all tasks so context is done
             const ctx = currentExecution.contextStates["ctx-1"]!;
             currentExecution = {
               ...structuredClone(currentExecution),
@@ -341,6 +290,7 @@ describe("execution loop", () => {
                   ...ctx,
                   status: "completed",
                   completedTaskCount: 1,
+                  lastValidationPass: true,
                 },
               },
             };
@@ -348,28 +298,8 @@ describe("execution loop", () => {
               conversationId: "conv-1",
               execution: currentExecution,
               shouldContinueInContext: false,
-              shouldValidateContext: false,
             } satisfies GraphWorkflowIterationResult;
           },
-        },
-        validationService: {
-          async validateContextCompletion() {
-            return {
-              pass: true,
-              summary: "passed",
-              feedback: "passed",
-              issues: [],
-              reopenTaskIds: [],
-              agentResult: null,
-              scriptResult: null,
-            };
-          },
-        },
-        async getSession() {
-          return {
-            worktreePath: "/repo",
-            branchName: "main",
-          } as SessionState;
         },
         emitStreamFrame: vi.fn(),
       };
@@ -387,116 +317,6 @@ describe("execution loop", () => {
 
       expect(wasActiveDuringIteration).toBe(true);
       expect(isExecutionLoopActive("/repo", "session-1")).toBe(false);
-    },
-  );
-
-  it(
-    "validates context directly when resumed with all tasks already completed",
-    { timeout: 5000 },
-    async () => {
-      const definition = createSingleContextDefinition(5);
-      // Simulate state after resume from recovery_error:
-      // activeContextId still points to a context whose tasks are all done
-      let currentExecution = createRunningExecution(definition, {
-        activeContextId: "ctx-1",
-        contextStates: {
-          "ctx-1": {
-            contextId: "ctx-1",
-            status: "running",
-            totalTaskCount: 1,
-            completedTaskCount: 1,
-            iterationCount: 1,
-            consecutiveFailureCount: 0,
-            lastValidationAt: null,
-            lastValidationPass: null,
-          },
-        },
-        taskStates: {
-          "task-1": {
-            taskId: "task-1",
-            contextId: "ctx-1",
-            order: 1,
-            status: "completed",
-            summary: "Done",
-            startedAt: "2026-03-27T12:01:00.000Z",
-            completedAt: "2026-03-27T12:02:00.000Z",
-            lastConversationId: "conv-prev",
-            reopenedCount: 0,
-            lastReopenedAt: null,
-            failureMessage: null,
-          },
-        },
-      });
-
-      const runIterationSpy = vi.fn();
-      const recordValidationSpy = vi.fn(
-        async (
-          _projectPath: string,
-          _sessionName: string,
-          result: { pass: boolean },
-        ) => {
-          const next = structuredClone(currentExecution);
-          next.contextStates["ctx-1"]!.status = "completed";
-          next.contextStates["ctx-1"]!.lastValidationPass = result.pass;
-          next.activeContextId = null;
-          currentExecution = next;
-          return next;
-        },
-      );
-
-      const deps: GraphWorkflowExecutionLoopDeps = {
-        workflowManager: {
-          async scheduleNextContext() {
-            const next = structuredClone(currentExecution);
-            next.activeContextId = null;
-            currentExecution = next;
-            return next;
-          },
-          recordContextValidationResult: recordValidationSpy,
-          async send(_p, _s, event) {
-            if (event.type === "complete") {
-              currentExecution = {
-                ...structuredClone(currentExecution),
-                status: "completed",
-                completedAt: "2026-03-27T12:05:00.000Z",
-              };
-            }
-            return currentExecution;
-          },
-        },
-        iterationOrchestrator: {
-          runIteration: runIterationSpy,
-        },
-        validationService: {
-          async validateContextCompletion() {
-            return {
-              pass: true,
-              summary: "passed",
-              feedback: "passed",
-              issues: [],
-              reopenTaskIds: [],
-              agentResult: null,
-              scriptResult: null,
-            };
-          },
-        },
-        async getSession() {
-          return { worktreePath: "/repo", branchName: "main" } as SessionState;
-        },
-        emitStreamFrame: vi.fn(),
-      };
-
-      const loop = createGraphWorkflowExecutionLoop(deps);
-      const result = await loop.run({
-        projectPath: "/repo",
-        projectName: "test",
-        sessionName: "session-1",
-        execution: currentExecution,
-      });
-
-      expect(runIterationSpy).not.toHaveBeenCalled();
-      expect(recordValidationSpy).toHaveBeenCalledOnce();
-      expect(result.status).toBe("completed");
     },
   );
 
@@ -572,14 +392,6 @@ describe("execution loop", () => {
           async scheduleNextContext() {
             return currentExecution;
           },
-          async recordContextValidationResult(_p, _s, result) {
-            const next = structuredClone(currentExecution);
-            next.contextStates["ctx-1"]!.status = "completed";
-            next.contextStates["ctx-1"]!.lastValidationPass = result.pass;
-            next.activeContextId = null;
-            currentExecution = next;
-            return next;
-          },
           send: sendSpy,
           recoverRetryableIterationError,
         },
@@ -592,34 +404,20 @@ describe("execution loop", () => {
 
             const next = structuredClone(currentExecution);
             next.contextStates["ctx-1"]!.iterationCount = 2;
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.contextStates["ctx-1"]!.lastValidationPass = true;
             next.taskStates["task-1"]!.status = "completed";
             next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
             next.contextStates["ctx-1"]!.completedTaskCount = 1;
+            next.activeContextId = null;
             currentExecution = next;
 
             return {
               conversationId: "conv-2",
               execution: next,
               shouldContinueInContext: false,
-              shouldValidateContext: true,
             };
           },
-        },
-        validationService: {
-          async validateContextCompletion() {
-            return {
-              pass: true,
-              summary: "passed",
-              feedback: "passed",
-              issues: [],
-              reopenTaskIds: [],
-              agentResult: null,
-              scriptResult: null,
-            };
-          },
-        },
-        async getSession() {
-          return { worktreePath: "/repo", branchName: "main" } as SessionState;
         },
         emitStreamFrame: vi.fn(),
       };
@@ -713,14 +511,6 @@ describe("execution loop", () => {
           async scheduleNextContext() {
             return currentExecution;
           },
-          async recordContextValidationResult(_p, _s, result) {
-            const next = structuredClone(currentExecution);
-            next.contextStates["ctx-1"]!.status = "completed";
-            next.contextStates["ctx-1"]!.lastValidationPass = result.pass;
-            next.activeContextId = null;
-            currentExecution = next;
-            return next;
-          },
           send: sendSpy,
           recoverRetryableIterationError,
         },
@@ -735,34 +525,20 @@ describe("execution loop", () => {
 
             const next = structuredClone(currentExecution);
             next.contextStates["ctx-1"]!.iterationCount = 2;
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.contextStates["ctx-1"]!.lastValidationPass = true;
             next.taskStates["task-1"]!.status = "completed";
             next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
             next.contextStates["ctx-1"]!.completedTaskCount = 1;
+            next.activeContextId = null;
             currentExecution = next;
 
             return {
               conversationId: "conv-2",
               execution: next,
               shouldContinueInContext: false,
-              shouldValidateContext: true,
             };
           },
-        },
-        validationService: {
-          async validateContextCompletion() {
-            return {
-              pass: true,
-              summary: "passed",
-              feedback: "passed",
-              issues: [],
-              reopenTaskIds: [],
-              agentResult: null,
-              scriptResult: null,
-            };
-          },
-        },
-        async getSession() {
-          return { worktreePath: "/repo", branchName: "main" } as SessionState;
         },
         emitStreamFrame: vi.fn(),
       };
@@ -837,7 +613,6 @@ describe("execution loop", () => {
           async scheduleNextContext() {
             return currentExecution;
           },
-          recordContextValidationResult: vi.fn(),
           send: sendSpy,
           recoverRetryableIterationError,
         },
@@ -845,22 +620,6 @@ describe("execution loop", () => {
           async runIteration(): Promise<GraphWorkflowIterationResult> {
             throw new Error("SDK error: MCP error -32000: Stream closed");
           },
-        },
-        validationService: {
-          async validateContextCompletion() {
-            return {
-              pass: true,
-              summary: "passed",
-              feedback: "passed",
-              issues: [],
-              reopenTaskIds: [],
-              agentResult: null,
-              scriptResult: null,
-            };
-          },
-        },
-        async getSession() {
-          return { worktreePath: "/repo", branchName: "main" } as SessionState;
         },
         emitStreamFrame: vi.fn(),
       };
@@ -882,165 +641,6 @@ describe("execution loop", () => {
         },
       });
       expect(result.status).toBe("halted");
-    },
-  );
-
-  it(
-    "passes validation issues, reopenTaskIds, and script output to recordContextValidationResult",
-    { timeout: 5000 },
-    async () => {
-      const definition: WorkflowSemanticDefinition = {
-        schemaVersion: 1,
-        executionContexts: [
-          {
-            id: "ctx-1",
-            title: "Do work",
-            description: "Single context",
-            agent: { model: "sonnet", reasoningEffort: "medium" },
-            mutability: { allowAgentTaskAdd: false },
-            circuitBreaker: {},
-            iterationPolicy: {
-              maxIterations: 3,
-              continuity: { enabled: true },
-            },
-            contextValidation: {
-              agentValidator: {
-                type: "claude",
-                enabled: true,
-                continuity: { enabled: true },
-                agent: { model: "opus", reasoningEffort: "medium" },
-                instructions: "Validate the work.",
-              },
-              onFail: {
-                mode: "retry" as const,
-                retryScope: "same_context" as const,
-                maxAttempts: 2,
-              },
-            },
-          },
-        ],
-        tasks: [
-          {
-            id: "task-1",
-            contextId: "ctx-1",
-            order: 1,
-            title: "Implement feature",
-            instructions: "Do the thing.",
-            source: "user" as const,
-          },
-        ],
-        edges: [],
-      };
-
-      let currentExecution = createRunningExecution(definition);
-      const recordedResults: Array<{
-        contextId: string;
-        pass: boolean;
-        issues?: unknown[];
-        reopenTaskIds?: string[];
-        scriptOutput?: string;
-        scriptOutputDocumentPath?: string;
-      }> = [];
-
-      const deps: GraphWorkflowExecutionLoopDeps = {
-        workflowManager: {
-          async scheduleNextContext() {
-            const next = structuredClone(currentExecution);
-            next.activeContextId = "ctx-1";
-            next.contextStates["ctx-1"]!.status = "running";
-            currentExecution = next;
-            return next;
-          },
-          async recordContextValidationResult(
-            _projectPath,
-            _sessionName,
-            result,
-          ) {
-            recordedResults.push(structuredClone(result));
-            const next = structuredClone(currentExecution);
-            next.status = "halted";
-            next.haltReason = {
-              type: "circuit_breaker",
-              contextId: "ctx-1",
-              condition: "retry_exhaustion",
-              summary: result.summary ?? null,
-              failureCount: 2,
-            };
-            currentExecution = next;
-            return next;
-          },
-          async send() {
-            return currentExecution;
-          },
-        },
-        iterationOrchestrator: {
-          async runIteration(): Promise<GraphWorkflowIterationResult> {
-            const next = structuredClone(currentExecution);
-            next.contextStates["ctx-1"]!.iterationCount = 1;
-            next.taskStates["task-1"]!.status = "completed";
-            currentExecution = next;
-            return {
-              conversationId: "conv-1",
-              execution: next,
-              shouldContinueInContext: false,
-              shouldValidateContext: true,
-            };
-          },
-        },
-        validationService: {
-          async validateContextCompletion() {
-            return {
-              pass: false,
-              summary: "Found issues",
-              feedback: "Task needs rework.",
-              issues: [
-                {
-                  title: "Missing tests",
-                  description: "Add unit tests.",
-                },
-              ],
-              reopenTaskIds: ["task-1"],
-              agentResult: null,
-              scriptResult: {
-                executed: true,
-                pass: false,
-                stdout: "FAIL: 3 tests failed",
-                stderr: "",
-                output: "FAIL: 3 tests failed",
-                timedOut: false,
-                message: "Tests failed",
-              },
-            };
-          },
-        },
-        async getSession() {
-          return { worktreePath: "/repo", branchName: "main" } as SessionState;
-        },
-        emitStreamFrame: vi.fn(),
-        async persistScriptOutput() {
-          return ".cc/graph-workflow-docs/validation-output-ctx-1.txt";
-        },
-      };
-
-      const loop = createGraphWorkflowExecutionLoop(deps);
-      await loop.run({
-        projectPath: "/repo",
-        projectName: "test",
-        sessionName: "session-1",
-        execution: currentExecution,
-      });
-
-      expect(recordedResults).toHaveLength(1);
-      expect(recordedResults[0]).toMatchObject({
-        contextId: "ctx-1",
-        pass: false,
-        summary: "Found issues",
-        issues: [{ title: "Missing tests", description: "Add unit tests." }],
-        reopenTaskIds: ["task-1"],
-        scriptOutput: "FAIL: 3 tests failed",
-        scriptOutputDocumentPath:
-          ".cc/graph-workflow-docs/validation-output-ctx-1.txt",
-      });
     },
   );
 });

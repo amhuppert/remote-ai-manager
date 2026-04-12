@@ -14,10 +14,7 @@ import type {
   GraphWorkflowValidationReviewArtifact,
   WorkflowAgentValidatorResult,
 } from "@/types";
-import type {
-  GraphWorkflowTaskValidatorInput,
-  GraphWorkflowContextAgentValidatorInput,
-} from "./execution-validation";
+import type { GraphWorkflowTaskValidatorInput } from "./execution-validation";
 import type {
   ResolveValidatorCallInput,
   ResolvedValidatorCall,
@@ -107,52 +104,6 @@ export function buildTaskValidationPrompt(
     "- `summary` (string): Brief explanation of your assessment",
     "- `issues` (array of `{ title, description }`): Specific problems found (empty array if pass is true)",
     "- `reopenTaskIds` (array of strings): IDs of previously completed tasks that need rework (only from the task list above, empty array if none)",
-  ].join("\n");
-}
-
-export interface BuildContextValidationPromptInput {
-  context: GraphWorkflowExecutionContextDefinition;
-  tasks: GraphWorkflowTaskDefinition[];
-  validator: GraphWorkflowAgentValidatorConfig;
-}
-
-export function buildContextValidationPrompt(
-  input: BuildContextValidationPromptInput,
-): string {
-  const taskList = input.tasks
-    .map((t) => `- \`${t.id}\`: ${t.title} — ${t.instructions}`)
-    .join("\n");
-
-  return [
-    "# Execution Context Validation",
-    "",
-    "You are a validation agent reviewing all completed work in an execution context.",
-    "Your job is to assess whether the overall goal has been met.",
-    "",
-    "## Your Validation Instructions",
-    "",
-    input.validator.instructions,
-    "",
-    "## Context",
-    "",
-    `Execution context: ${input.context.title}`,
-    ...(input.context.description
-      ? [`Goal: ${input.context.description}`]
-      : []),
-    "",
-    "## Completed Tasks",
-    "",
-    taskList,
-    "",
-    "## Required Output",
-    "",
-    "Review the combined work across all tasks — read files, run checks, verify correctness.",
-    "Then output your assessment as a JSON object with these fields:",
-    "",
-    "- `pass` (boolean): `true` if the execution context goal has been fully met, `false` otherwise",
-    "- `summary` (string): Brief explanation of your assessment",
-    "- `issues` (array of `{ title, description }`): Specific problems found (empty array if pass is true)",
-    "- `reopenTaskIds` (array of strings): IDs of tasks that need rework (only from the task list above, empty array if none)",
   ].join("\n");
 }
 
@@ -382,7 +333,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     projectPath: string,
     sessionName: string,
     execution: GraphWorkflowExecution,
-    lane: "task_validator" | "context_validator",
+    lane: "task_validator",
     validatorType: "claude" | "codex",
     contextLimitTokens: number | undefined,
     runClaudeAgent: (
@@ -683,109 +634,5 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     }
   }
 
-  async function runContextAgentValidator(
-    input: GraphWorkflowContextAgentValidatorInput,
-  ): Promise<ValidatorRunResult> {
-    const contextTasks = input.execution.workingDefinition.tasks.filter(
-      (t) => t.contextId === input.context.id,
-    );
-
-    const prompt = buildContextValidationPrompt({
-      context: input.context,
-      tasks: contextTasks,
-      validator: input.validator,
-    });
-
-    const execLogger = getExecutionLogger(input.execution.id);
-    const retryState = input.execution.retryState[input.context.id];
-    const attemptLabel = retryState ? `-attempt-${retryState.attempt}` : "";
-    execLogger?.writePrompt(
-      input.context.id,
-      `context-validation${attemptLabel}.md`,
-      prompt,
-    );
-    execLogger?.validation(input.context.id, "context_validator.started", {
-      engine: input.validator.type,
-      promptLength: prompt.length,
-      taskCount: contextTasks.length,
-      retryAttempt: retryState?.attempt ?? 0,
-    });
-
-    const contextLimitTokens = input.validator.continuity.contextLimitTokens;
-
-    try {
-      if (input.validator.type === "codex") {
-        const validator = input.validator;
-        return await runValidatorTurn(
-          input.projectPath,
-          input.sessionName,
-          input.execution,
-          "context_validator",
-          "codex",
-          contextLimitTokens,
-          async () => ({ text: "" }),
-          async (sessionAction, storedThreadId) =>
-            deps.executeValidatorCodex({
-              projectPath: input.projectPath,
-              sessionName: input.sessionName,
-              prompt,
-              model: validator.codex.model,
-              reasoningEffort: validator.codex.reasoningEffort,
-              sessionAction,
-              storedThreadId,
-            }),
-        );
-      }
-
-      const validator = input.validator;
-      return await runValidatorTurn(
-        input.projectPath,
-        input.sessionName,
-        input.execution,
-        "context_validator",
-        "claude",
-        contextLimitTokens,
-        async (conversationId) =>
-          deps.executeValidatorAgent({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            prompt,
-            model: validator.agent.model,
-            reasoningEffort: validator.agent.reasoningEffort,
-            outputFormat: {
-              type: "json_schema",
-              schema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
-                string,
-                unknown
-              >,
-            },
-            conversationId,
-          }),
-        async () => ({ text: "", realThreadId: null, usage: null }),
-      );
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      execLogger?.validation(input.context.id, "context_validator.error", {
-        engine: input.validator.type,
-        error: errorMessage,
-      });
-      validatorLogger.error("graph-workflow.context_validator.error", {
-        executionId: input.execution.id,
-        contextId: input.context.id,
-        error: errorMessage,
-      });
-      return {
-        result: {
-          pass: false,
-          summary: `Validator agent failed: ${errorMessage}`,
-          issues: [],
-          reopenTaskIds: [],
-        },
-        metadata: buildNoServiceMetadata(),
-      };
-    }
-  }
-
-  return { runTaskValidator, runContextAgentValidator };
+  return { runTaskValidator };
 }

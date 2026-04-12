@@ -76,6 +76,7 @@ describe("graph workflow execution validation service", () => {
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
       },
     });
@@ -137,113 +138,5 @@ describe("graph workflow execution validation service", () => {
     ]);
     expect(result.feedback).toContain("Task validation blocked completion");
     expect(result.feedback).toContain("Missing artifact");
-  });
-
-  it("requires both agent and script validators to pass for context completion", async () => {
-    const definition = createWorkflowDefinition({
-      executionContexts: createWorkflowDefinition().executionContexts.map(
-        (context) =>
-          context.id === "context-plan"
-            ? {
-                ...context,
-                contextValidation: {
-                  agentValidator: {
-                    type: "claude",
-                    enabled: true,
-                    continuity: { enabled: true },
-                    agent: {
-                      model: "opus",
-                      reasoningEffort: "high",
-                    },
-                    instructions: "Validate the plan.",
-                  },
-                  scriptValidator: {
-                    enabled: true,
-                  },
-                  onFail: {
-                    mode: "retry",
-                    retryScope: "same_context",
-                    maxAttempts: 2,
-                  },
-                },
-              }
-            : context,
-      ),
-    });
-    const execution = createWorkflowExecution({
-      workingDefinition: definition,
-      contextStates: {
-        ...createWorkflowExecution().contextStates,
-        "context-plan": {
-          ...createWorkflowExecution().contextStates["context-plan"]!,
-          status: "validating",
-          completedTaskCount: 1,
-        },
-      },
-      taskStates: {
-        ...createWorkflowExecution().taskStates,
-        "task-plan-1": {
-          ...createWorkflowExecution().taskStates["task-plan-1"]!,
-          status: "completed",
-          completedAt: "2026-03-27T16:10:00.000Z",
-        },
-      },
-    });
-    const runContextAgentValidator = vi.fn(async () => ({
-      result: {
-        pass: true,
-        summary: "Agent validator passed",
-        reopenTaskIds: [],
-        issues: [],
-      },
-      metadata: {
-        sessionRef: null,
-        reviewArtifact: null,
-        limitEvaluation: "disabled" as const,
-        rotateBeforeNextTurn: false,
-      },
-    }));
-    const runContextScriptValidator = vi.fn(async () => ({
-      executed: true,
-      pass: false,
-      stdout: "",
-      stderr: "Type errors remain",
-      output: "Type errors remain",
-      timedOut: false,
-      message: "Pre-merge validation failed",
-    }));
-    const service = createGraphWorkflowValidationService({
-      runContextAgentValidator,
-      runContextScriptValidator,
-    });
-
-    const result = await service.validateContextCompletion({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      worktreePath: "/repo/.worktrees/session-1",
-      branchName: "csm/session-1",
-      execution,
-      contextId: "context-plan",
-    });
-
-    expect(runContextAgentValidator).toHaveBeenCalled();
-    expect(runContextScriptValidator).toHaveBeenCalledWith({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      worktreePath: "/repo/.worktrees/session-1",
-      branchName: "csm/session-1",
-      timeoutMs: undefined,
-    });
-    expect(result.pass).toBe(false);
-    expect(result.summary).toBe("Pre-merge validation failed");
-    expect(result.feedback).toContain("Type errors remain");
-    expect(result.agentResult).toMatchObject({
-      pass: true,
-      summary: "Agent validator passed",
-    });
-    expect(result.scriptResult).toMatchObject({
-      pass: false,
-      executed: true,
-    });
   });
 });

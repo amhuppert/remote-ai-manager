@@ -11,6 +11,7 @@ export interface BuildIterationPromptInput {
   taskStates: Record<string, GraphWorkflowTaskState>;
   sharedDocuments: GraphWorkflowSharedDocumentEntry[];
   allowAgentTaskAdd: boolean;
+  taskValidationInstructions?: string;
 }
 
 function buildTaskLines(
@@ -20,12 +21,28 @@ function buildTaskLines(
   return tasks.map((task) => {
     const state = taskStates[task.id];
     const status = state?.status ?? "pending";
+    const failureHistory = state?.failureHistory ?? [];
     const failureMessage = state?.failureMessage ?? null;
     const lines = [
       `- ${task.id} [${status}] ${task.title}`,
       `  Instructions: ${task.instructions}`,
     ];
-    if (failureMessage) {
+
+    if (failureHistory.length > 0) {
+      lines.push("", `  ### Validation Failure History`);
+      for (let i = 0; i < failureHistory.length; i++) {
+        const failure = failureHistory[i]!;
+        lines.push(
+          `  **Attempt ${i + 1}** (${failure.timestamp}):`,
+          `  ${failure.message}`,
+          "",
+        );
+      }
+      lines.push(
+        `  Address ALL issues from previous attempts before calling complete_task again.`,
+      );
+    } else if (failureMessage) {
+      // Backward compat: fall back to single failureMessage
       lines.push(
         "",
         `  ### Previous Attempt Failed`,
@@ -64,6 +81,18 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   sections.push(
     ["## Tasks (work through them in order)", ...taskLines].join("\n"),
   );
+
+  // Validation criteria (auto-injected from task validation config)
+  if (input.taskValidationInstructions) {
+    sections.push(
+      [
+        "## Validation Criteria",
+        "Each completed task will be validated against these criteria before it is accepted. If validation fails, you will need to address the issues and call `complete_task` again.",
+        "",
+        input.taskValidationInstructions,
+      ].join("\n"),
+    );
+  }
 
   // Protocol
   sections.push(

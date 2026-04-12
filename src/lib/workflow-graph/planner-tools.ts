@@ -146,78 +146,6 @@ const executionContextInputSchema = z.object({
     .describe(
       "Per-task validation after each task completes. Omit if no per-task validation is needed.",
     ),
-  contextValidation: z
-    .object({
-      agentValidator: z
-        .object({
-          type: validatorTypeSchema
-            .optional()
-            .describe(
-              "Validator type: 'claude' (Claude agent) or 'codex' (OpenAI Codex, runs locally). Omit to use the project's workflow defaults.",
-            ),
-          instructions: z
-            .string()
-            .trim()
-            .min(1)
-            .describe(
-              "Instructions the validator uses to check the context's work.",
-            ),
-          continuity: z
-            .object({
-              enabled: z
-                .boolean()
-                .optional()
-                .describe(
-                  "Whether the context validator reuses the same session within this execution context. Defaults to true.",
-                ),
-              contextLimitTokens: z
-                .number()
-                .int()
-                .positive()
-                .optional()
-                .describe(
-                  "Token threshold after which the context validator session rotates. Omit to disable limit-based rotation.",
-                ),
-            })
-            .optional()
-            .describe("Context validator session continuity policy."),
-        })
-        .optional()
-        .describe("Validation after all tasks in this context complete."),
-      scriptValidator: z
-        .object({
-          enabled: z
-            .boolean()
-            .describe(
-              "Whether to run the project's pre-merge validation script.",
-            ),
-        })
-        .optional()
-        .describe(
-          "Script-based validation (runs the project's configured pre-merge script).",
-        ),
-      onFail: z
-        .object({
-          mode: z
-            .enum(["halt", "retry"])
-            .describe(
-              "'halt' stops the workflow; 'retry' reruns this context.",
-            ),
-          maxAttempts: z
-            .number()
-            .int()
-            .min(1)
-            .describe("Maximum retry attempts before halting."),
-        })
-        .optional()
-        .describe(
-          "What to do when context validation fails. Required if agentValidator or scriptValidator is set.",
-        ),
-    })
-    .optional()
-    .describe(
-      "Validation gate run after all tasks in this context complete. Omit if no validation checkpoint is needed.",
-    ),
 });
 
 const taskInputSchema = z.object({
@@ -400,7 +328,6 @@ function inflateToSemanticDefinition(
   workflowDefaults?: WorkflowDefaults,
 ): WorkflowSemanticDefinition {
   const taskValidatorDefault = workflowDefaults?.taskValidator;
-  const execValidatorDefault = workflowDefaults?.executionValidator;
 
   const executionContexts = input.executionContexts.map((ctx) => {
     const ctxModel = ctx.agentConfig?.model ?? DEFAULT_MODEL;
@@ -438,37 +365,6 @@ function inflateToSemanticDefinition(
               claudeFallback,
               ctx.taskValidation.continuity,
             ),
-          }
-        : {}),
-      ...(ctx.contextValidation
-        ? {
-            contextValidation: {
-              ...(ctx.contextValidation.agentValidator
-                ? {
-                    agentValidator: buildValidatorConfig(
-                      ctx.contextValidation.agentValidator.instructions,
-                      ctx.contextValidation.agentValidator.type,
-                      execValidatorDefault,
-                      claudeFallback,
-                      ctx.contextValidation.agentValidator.continuity,
-                    ),
-                  }
-                : {}),
-              ...(ctx.contextValidation.scriptValidator
-                ? { scriptValidator: ctx.contextValidation.scriptValidator }
-                : {}),
-              onFail: ctx.contextValidation.onFail
-                ? {
-                    mode: ctx.contextValidation.onFail.mode,
-                    retryScope: "same_context" as const,
-                    maxAttempts: ctx.contextValidation.onFail.maxAttempts,
-                  }
-                : {
-                    mode: "halt" as const,
-                    retryScope: "same_context" as const,
-                    maxAttempts: 1,
-                  },
-            },
           }
         : {}),
     };

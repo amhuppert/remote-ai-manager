@@ -258,7 +258,6 @@ const validatorRunner = createValidatorRunner({
 });
 const validationService = createGraphWorkflowValidationService({
   runTaskValidator: validatorRunner.runTaskValidator,
-  runContextAgentValidator: validatorRunner.runContextAgentValidator,
 });
 const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository,
@@ -388,8 +387,6 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
 const executionLoop = createGraphWorkflowExecutionLoop({
   workflowManager,
   iterationOrchestrator,
-  validationService,
-  getSession: defaultGetSession,
   emitStreamFrame: emitGraphWorkflowStreamFrame,
 });
 

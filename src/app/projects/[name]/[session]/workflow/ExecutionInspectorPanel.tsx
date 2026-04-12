@@ -174,12 +174,7 @@ function getTaskStatusDotClass(status?: string): string {
 function countEnabledValidators(execution: GraphWorkflowExecution): number {
   return execution.workingDefinition.executionContexts.reduce(
     (count, ctx) =>
-      count +
-      [
-        ctx.taskValidation?.enabled,
-        ctx.contextValidation?.agentValidator?.enabled,
-        ctx.contextValidation?.scriptValidator?.enabled,
-      ].filter(Boolean).length,
+      count + [ctx.taskValidation?.enabled].filter(Boolean).length,
     0,
   );
 }
@@ -220,7 +215,6 @@ function computeReusedSessions(
 
 function getLaneBadgeLabel(lane: GraphWorkflowLaneKind | undefined): string {
   if (lane === "task_validator") return "Task";
-  if (lane === "context_validator") return "Context";
   return "";
 }
 
@@ -258,11 +252,7 @@ function ValidationCard({
       {sessionRef && (
         <div className="wb-validation-meta">
           {laneBadge && (
-            <span
-              className={`wb-validation-lane-badge ${sessionRef.lane === "task_validator" ? "task" : "context"}`}
-            >
-              {laneBadge}
-            </span>
+            <span className="wb-validation-lane-badge task">{laneBadge}</span>
           )}
           <span className="wb-validation-engine-badge">
             {sessionRef.engine}

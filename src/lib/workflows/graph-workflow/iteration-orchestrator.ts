@@ -126,7 +126,6 @@ export interface GraphWorkflowIterationResult {
   conversationId: string;
   execution: GraphWorkflowExecution;
   shouldContinueInContext: boolean;
-  shouldValidateContext: boolean;
 }
 
 function cloneExecution(
@@ -328,6 +327,13 @@ export function createGraphWorkflowIterationOrchestrator(
 
     taskState.lastConversationId = input.conversationId;
     taskState.failureMessage = input.failureMessage;
+    taskState.failureHistory = [
+      ...(taskState.failureHistory ?? []),
+      {
+        message: input.failureMessage,
+        timestamp: getNow(deps),
+      },
+    ];
     nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
 
     return persistExecution(
@@ -599,6 +605,9 @@ export function createGraphWorkflowIterationOrchestrator(
               taskStates: seededExecution.taskStates,
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
+              taskValidationInstructions: context.taskValidation?.enabled
+                ? context.taskValidation.instructions
+                : undefined,
             });
 
       // Log the prompt sent to the agent
@@ -741,7 +750,6 @@ export function createGraphWorkflowIterationOrchestrator(
       input.contextId,
     );
     const completedTaskCount = finalizedContextState.completedTaskCount;
-    const shouldValidateContext = remainingTaskCount === 0;
     const shouldContinueInContext = remainingTaskCount > 0;
 
     execLogger?.iteration(input.contextId, "iteration.completed", {
@@ -749,7 +757,6 @@ export function createGraphWorkflowIterationOrchestrator(
       iterationNumber: finalizedContextState.iterationCount,
       completedTaskCount,
       remainingTaskCount,
-      shouldValidateContext,
       shouldContinueInContext,
     });
     logger.info("graph-workflow.iteration.completed", {
@@ -759,10 +766,17 @@ export function createGraphWorkflowIterationOrchestrator(
       remainingTaskCount,
     });
 
-    finalizedContextState.status = shouldValidateContext
-      ? "validating"
-      : "running";
-    finalizedExecution.activeContextId = input.contextId;
+    // When all tasks are completed, mark the context as completed directly.
+    // (No context-level validation — task-level validation is sufficient.)
+    finalizedContextState.status = shouldContinueInContext
+      ? "running"
+      : "completed";
+    if (!shouldContinueInContext) {
+      finalizedContextState.lastValidationPass = true;
+    }
+    finalizedExecution.activeContextId = shouldContinueInContext
+      ? input.contextId
+      : null;
     finalizedExecution.machineSnapshot = buildMachineSnapshot(
       finalizedExecution,
       false,
@@ -778,7 +792,6 @@ export function createGraphWorkflowIterationOrchestrator(
       conversationId: conversation.id,
       execution: persistedExecution,
       shouldContinueInContext,
-      shouldValidateContext,
     };
   }
 

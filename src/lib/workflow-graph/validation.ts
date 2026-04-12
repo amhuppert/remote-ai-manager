@@ -80,17 +80,6 @@ export function validateWorkflowDefinition(
         contextId: context.id,
       });
     }
-
-    if (
-      context.contextValidation?.agentValidator?.enabled &&
-      !context.contextValidation.agentValidator.instructions.trim()
-    ) {
-      errors.push({
-        code: "empty-context-validator-instructions",
-        message: `Context validator on "${context.id}" is enabled but has no instructions`,
-        contextId: context.id,
-      });
-    }
   }
 
   for (const task of definition.tasks) {

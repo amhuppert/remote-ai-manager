@@ -60,6 +60,7 @@ describe("graph workflow execution event publisher", () => {
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
         "task-implement-1": {
           taskId: "task-implement-1",
@@ -73,6 +74,7 @@ describe("graph workflow execution event publisher", () => {
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
         "task-verify-1": {
           taskId: "task-verify-1",
@@ -86,6 +88,7 @@ describe("graph workflow execution event publisher", () => {
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
       },
       retryState: {

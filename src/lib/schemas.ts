@@ -671,6 +671,14 @@ export type GraphWorkflowExecutionContextState = z.infer<
   typeof graphWorkflowExecutionContextStateSchema
 >;
 
+export const graphWorkflowTaskValidationFailureSchema = z.object({
+  message: z.string(),
+  timestamp: z.string(),
+});
+export type GraphWorkflowTaskValidationFailure = z.infer<
+  typeof graphWorkflowTaskValidationFailureSchema
+>;
+
 export const graphWorkflowTaskStateSchema = z.object({
   taskId: z.string().trim().min(1),
   contextId: z.string().trim().min(1),
@@ -683,6 +691,7 @@ export const graphWorkflowTaskStateSchema = z.object({
   reopenedCount: z.number().int().min(0).default(0),
   lastReopenedAt: z.string().nullable().default(null),
   failureMessage: z.string().nullable().default(null),
+  failureHistory: z.array(graphWorkflowTaskValidationFailureSchema).default([]),
 });
 export type GraphWorkflowTaskState = z.infer<
   typeof graphWorkflowTaskStateSchema

@@ -1,7 +1,3 @@
-import {
-  executeRepoValidationCommand,
-  type RepoValidationCommandResult,
-} from "@/lib/repo-config";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
@@ -28,22 +24,6 @@ export interface GraphWorkflowTaskValidatorInput {
   validator: GraphWorkflowAgentValidatorConfig;
 }
 
-export interface GraphWorkflowContextAgentValidatorInput {
-  projectPath: string;
-  sessionName: string;
-  execution: GraphWorkflowExecution;
-  context: GraphWorkflowExecutionContextDefinition;
-  validator: GraphWorkflowAgentValidatorConfig;
-}
-
-export interface GraphWorkflowContextScriptValidatorInput {
-  projectPath: string;
-  sessionName: string;
-  worktreePath: string;
-  branchName: string;
-  timeoutMs?: number;
-}
-
 export interface GraphWorkflowTaskValidationInput {
   projectPath: string;
   sessionName: string;
@@ -64,38 +44,10 @@ export interface GraphWorkflowTaskValidationOutcome {
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 
-export interface GraphWorkflowContextValidationInput {
-  projectPath: string;
-  sessionName: string;
-  worktreePath: string;
-  branchName: string;
-  execution: GraphWorkflowExecution;
-  contextId: string;
-  timeoutMs?: number;
-}
-
-export interface GraphWorkflowContextValidationOutcome {
-  pass: boolean;
-  summary: string;
-  feedback: string;
-  issues: WorkflowValidatorIssue[];
-  reopenTaskIds: string[];
-  agentResult: WorkflowAgentValidatorResult | null;
-  scriptResult: RepoValidationCommandResult | null;
-  sessionRef?: GraphWorkflowExecutionSessionRef | null;
-  reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
-}
-
 export interface GraphWorkflowValidationServiceDeps {
   runTaskValidator(
     input: GraphWorkflowTaskValidatorInput,
   ): Promise<ValidatorRunResult>;
-  runContextAgentValidator(
-    input: GraphWorkflowContextAgentValidatorInput,
-  ): Promise<ValidatorRunResult>;
-  runContextScriptValidator(
-    input: GraphWorkflowContextScriptValidatorInput,
-  ): Promise<RepoValidationCommandResult>;
 }
 
 function getContextDefinition(
@@ -196,12 +148,6 @@ const defaultDeps: GraphWorkflowValidationServiceDeps = {
   async runTaskValidator(): Promise<ValidatorRunResult> {
     throw new Error("Task validator runner is not configured");
   },
-  async runContextAgentValidator(): Promise<ValidatorRunResult> {
-    throw new Error("Context validator runner is not configured");
-  },
-  async runContextScriptValidator(input) {
-    return executeRepoValidationCommand(input);
-  },
 };
 
 const validationLogger = createLogger("graph-workflow-validation");
@@ -278,171 +224,8 @@ export function createGraphWorkflowValidationService(
     };
   }
 
-  async function validateContextCompletion(
-    input: GraphWorkflowContextValidationInput,
-  ): Promise<GraphWorkflowContextValidationOutcome> {
-    const context = getContextDefinition(input.execution, input.contextId);
-    const validation = context.contextValidation;
-    const agentValidator = validation?.agentValidator;
-    const scriptValidator = validation?.scriptValidator;
-
-    const execLogger = getExecutionLogger(input.execution.id);
-    execLogger?.validation(input.contextId, "context_validation.started", {
-      hasAgentValidator: !!agentValidator?.enabled,
-      hasScriptValidator: !!scriptValidator?.enabled,
-      agentValidatorType: agentValidator?.type,
-    });
-
-    let agentResult: WorkflowAgentValidatorResult | null = null;
-    let agentSessionRef: GraphWorkflowExecutionSessionRef | null = null;
-    let agentReviewArtifact: GraphWorkflowValidationReviewArtifact | null =
-      null;
-    let normalizedAgent: {
-      pass: boolean;
-      summary: string;
-      feedback: string;
-      issues: WorkflowValidatorIssue[];
-      reopenTaskIds: string[];
-    } | null = null;
-
-    if (agentValidator?.enabled) {
-      const runResult = await resolvedDeps.runContextAgentValidator({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        execution: input.execution,
-        context,
-        validator: agentValidator,
-      });
-      agentResult = runResult.result;
-      agentSessionRef = runResult.metadata.sessionRef;
-      agentReviewArtifact = runResult.metadata.reviewArtifact;
-      normalizedAgent = normalizeValidatorResult(
-        input.execution,
-        input.contextId,
-        agentResult,
-      );
-      execLogger?.validation(
-        input.contextId,
-        "context_validation.agent_completed",
-        {
-          pass: normalizedAgent.pass,
-          summary: normalizedAgent.summary,
-          issueCount: normalizedAgent.issues.length,
-          reopenTaskIds: normalizedAgent.reopenTaskIds,
-          engine: agentValidator.type,
-        },
-      );
-    }
-
-    let scriptResult: RepoValidationCommandResult | null = null;
-    if (scriptValidator?.enabled) {
-      execLogger?.validation(
-        input.contextId,
-        "context_validation.script_started",
-      );
-      scriptResult = await resolvedDeps.runContextScriptValidator({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        worktreePath: input.worktreePath,
-        branchName: input.branchName,
-        timeoutMs: input.timeoutMs,
-      });
-      execLogger?.validation(
-        input.contextId,
-        "context_validation.script_completed",
-        {
-          executed: scriptResult.executed,
-          pass: scriptResult.pass,
-          hasOutput: !!scriptResult.output,
-          message: scriptResult.message,
-        },
-      );
-    }
-
-    if (scriptValidator?.enabled && scriptResult && !scriptResult.executed) {
-      return {
-        pass: false,
-        summary: "Project pre-merge validation command is not configured",
-        feedback: "Project pre-merge validation command is not configured.",
-        issues: normalizedAgent?.issues ?? [],
-        reopenTaskIds: normalizedAgent?.reopenTaskIds ?? [],
-        agentResult,
-        scriptResult,
-        sessionRef: agentSessionRef,
-        reviewArtifact: agentReviewArtifact,
-      };
-    }
-
-    const agentPass = normalizedAgent?.pass ?? true;
-    const scriptPass =
-      scriptResult === null || (scriptResult.executed && scriptResult.pass);
-    const pass = agentPass && scriptPass;
-
-    execLogger?.validation(input.contextId, "context_validation.completed", {
-      pass,
-      agentPass,
-      scriptPass,
-      summary: normalizedAgent?.summary,
-    });
-    validationLogger.info("graph-workflow.context_validation.completed", {
-      executionId: input.execution.id,
-      contextId: input.contextId,
-      pass,
-      agentPass,
-      scriptPass,
-    });
-
-    if (pass) {
-      return {
-        pass: true,
-        summary:
-          normalizedAgent?.summary ?? "Execution context validation passed",
-        feedback:
-          normalizedAgent?.feedback ?? "Execution context validation passed.",
-        issues: [],
-        reopenTaskIds: [],
-        agentResult,
-        scriptResult,
-        sessionRef: agentSessionRef,
-        reviewArtifact: agentReviewArtifact,
-      };
-    }
-
-    if (scriptResult && !scriptPass) {
-      return {
-        pass: false,
-        summary: scriptResult.message ?? "Pre-merge validation failed",
-        feedback:
-          scriptResult.output ||
-          scriptResult.message ||
-          "Pre-merge validation failed",
-        issues: normalizedAgent?.issues ?? [],
-        reopenTaskIds: normalizedAgent?.reopenTaskIds ?? [],
-        agentResult,
-        scriptResult,
-        sessionRef: agentSessionRef,
-        reviewArtifact: agentReviewArtifact,
-      };
-    }
-
-    return {
-      pass: false,
-      summary:
-        normalizedAgent?.summary ?? "Execution context validation failed",
-      feedback:
-        normalizedAgent?.feedback ?? "Execution context validation failed.",
-      issues: normalizedAgent?.issues ?? [],
-      reopenTaskIds: normalizedAgent?.reopenTaskIds ?? [],
-      agentResult,
-      scriptResult,
-      sessionRef: agentSessionRef,
-      reviewArtifact: agentReviewArtifact,
-    };
-  }
-
   return {
     validateTaskCompletion,
-    validateContextCompletion,
   };
 }
 

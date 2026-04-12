@@ -57,14 +57,6 @@ function createExecutionFromSeed(
       lastValidationAt: null,
       lastValidationPass: null,
     };
-
-    if (context.contextValidation?.onFail.mode === "retry") {
-      retryState[context.id] = {
-        contextId: context.id,
-        attempt: 0,
-        maxAttempts: context.contextValidation.onFail.maxAttempts,
-      };
-    }
   }
 
   for (const task of seed.definition.tasks) {
@@ -80,6 +72,7 @@ function createExecutionFromSeed(
       reopenedCount: 0,
       lastReopenedAt: null,
       failureMessage: null,
+      failureHistory: [],
     };
   }
 

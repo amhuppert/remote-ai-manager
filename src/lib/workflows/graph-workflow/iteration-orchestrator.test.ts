@@ -135,6 +135,7 @@ function createExecutionWithPlanTasks(
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
       "task-plan-2": {
         taskId: "task-plan-2",
@@ -148,6 +149,7 @@ function createExecutionWithPlanTasks(
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
       "task-implement-1": {
         taskId: "task-implement-1",
@@ -161,6 +163,7 @@ function createExecutionWithPlanTasks(
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
       "task-verify-1": {
         taskId: "task-verify-1",
@@ -174,6 +177,7 @@ function createExecutionWithPlanTasks(
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
     },
     sharedDocuments: [
@@ -258,7 +262,6 @@ describe("graph workflow iteration orchestrator", () => {
     );
     expect(result.conversationId).toBe("conversation-1");
     expect(result.shouldContinueInContext).toBe(true);
-    expect(result.shouldValidateContext).toBe(false);
     expect(result.execution.contextStates["context-plan"]).toMatchObject({
       status: "running",
       completedTaskCount: 1,
@@ -321,7 +324,7 @@ describe("graph workflow iteration orchestrator", () => {
     expect(result.shouldContinueInContext).toBe(true);
   });
 
-  it("signals context validation once all tasks are completed in an iteration", async () => {
+  it("marks context as completed once all tasks are completed in an iteration", async () => {
     const repository = createRepository(
       createExecutionWithPlanTasks({
         "task-plan-1": "completed",
@@ -365,10 +368,12 @@ describe("graph workflow iteration orchestrator", () => {
     });
 
     expect(result.shouldContinueInContext).toBe(false);
-    expect(result.shouldValidateContext).toBe(true);
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
-      "validating",
+      "completed",
     );
+    expect(
+      result.execution.contextStates["context-plan"]?.lastValidationPass,
+    ).toBe(true);
   });
 
   it("emits live stream frames for iteration boundaries and agent content", async () => {
@@ -721,6 +726,7 @@ describe("graph workflow iteration orchestrator", () => {
       reopenedCount: 0,
       lastReopenedAt: null,
       failureMessage: "Previous fix did not cover the failing edge case.",
+      failureHistory: [],
     };
     execution.contextStates["context-plan"] = {
       ...execution.contextStates["context-plan"]!,
@@ -969,7 +975,6 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
       runAgentIteration,
       validationService: {
         validateTaskCompletion,
-        validateContextCompletion: vi.fn(),
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -1502,7 +1507,6 @@ describe("task validation event publishing (fix-30388517)", () => {
       runAgentIteration,
       validationService: {
         validateTaskCompletion,
-        validateContextCompletion: vi.fn(),
       },
       now() {
         return "2026-03-27T16:00:00.000Z";

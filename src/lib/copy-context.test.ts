@@ -152,6 +152,7 @@ function makeGraphWorkflowExecution(
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
       "task-2": {
         taskId: "task-2",
@@ -165,6 +166,7 @@ function makeGraphWorkflowExecution(
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
       "task-3": {
         taskId: "task-3",
@@ -178,6 +180,7 @@ function makeGraphWorkflowExecution(
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
     },
     retryState: {},

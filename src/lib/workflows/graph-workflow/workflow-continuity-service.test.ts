@@ -81,6 +81,7 @@ function makeExecution(
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
     },
     retryState: {},
@@ -469,56 +470,6 @@ describe("resolveValidatorCall", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "task_validator",
-      engine: "claude",
-    });
-
-    expect(deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-  });
-
-  it("creates fresh session when context_validator continuity is disabled", async () => {
-    const deps = makeDeps();
-    const svc = createWorkflowContinuityService(deps);
-
-    const definition = makeDefinition();
-    definition.executionContexts[0]!.contextValidation = {
-      agentValidator: {
-        type: "claude",
-        enabled: true,
-        continuity: { enabled: false },
-        agent: { model: "sonnet", reasoningEffort: "medium" },
-        instructions: "Validate context.",
-      },
-      onFail: { mode: "halt", retryScope: "same_context", maxAttempts: 1 },
-    };
-
-    const existingLane: GraphWorkflowLaneState = {
-      engine: "claude",
-      lane: "context_validator",
-      contextId: "ctx-1",
-      sessionRef: {
-        engine: "claude",
-        lane: "context_validator",
-        conversationId: "conv-ctx-val",
-      },
-      lastContextTokens: null,
-      lastContextWindowMax: null,
-      rotateBeforeNextTurn: false,
-      limitEvaluation: "disabled",
-      lastUsedAt: NOW,
-    };
-
-    const execution = makeExecution({
-      workingDefinition: definition,
-      laneStates: { context_validator: existingLane },
-    });
-
-    const result = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
       engine: "claude",
     });
 

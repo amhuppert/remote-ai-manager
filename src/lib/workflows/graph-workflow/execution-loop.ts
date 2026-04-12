@@ -1,25 +1,11 @@
-import { writeFile, mkdir } from "node:fs/promises";
-import path from "node:path";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
-import { SHARED_DOCUMENT_DIRECTORY } from "@/lib/workflow-graph/shared-documents";
 import {
   emit as defaultEmitStreamFrame,
   type GraphWorkflowStreamFrame,
 } from "@/lib/workflow-graph/stream-registry";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionSessionRef,
-  GraphWorkflowHaltReason,
-  GraphWorkflowValidationReviewArtifact,
-  SessionState,
-  WorkflowValidatorIssue,
-} from "@/types";
-import type {
-  GraphWorkflowContextValidationOutcome,
-  GraphWorkflowValidationService,
-} from "@/lib/workflow-graph/execution-validation";
+import type { GraphWorkflowExecution, GraphWorkflowHaltReason } from "@/types";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 
 export interface GraphWorkflowExecutionLoopInput {
@@ -34,21 +20,6 @@ export interface GraphWorkflowExecutionLoopDeps {
     scheduleNextContext(
       projectPath: string,
       sessionName: string,
-    ): Promise<GraphWorkflowExecution>;
-    recordContextValidationResult(
-      projectPath: string,
-      sessionName: string,
-      result: {
-        contextId: string;
-        pass: boolean;
-        summary?: string | null;
-        issues?: WorkflowValidatorIssue[];
-        reopenTaskIds?: string[];
-        scriptOutput?: string;
-        scriptOutputDocumentPath?: string;
-        sessionRef?: GraphWorkflowExecutionSessionRef | null;
-        reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
-      },
     ): Promise<GraphWorkflowExecution>;
     send(
       projectPath: string,
@@ -71,25 +42,11 @@ export interface GraphWorkflowExecutionLoopDeps {
       contextId: string;
     }): Promise<GraphWorkflowIterationResult>;
   };
-  validationService: Pick<
-    GraphWorkflowValidationService,
-    "validateContextCompletion"
-  >;
-  getSession(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<SessionState | null>;
   emitStreamFrame?(
     projectPath: string,
     sessionName: string,
     frame: GraphWorkflowStreamFrame,
   ): void;
-  /** Write script validation output to disk. Returns relative path on success, null on failure. */
-  persistScriptOutput?(
-    worktreePath: string,
-    contextId: string,
-    output: string,
-  ): Promise<string | null>;
 }
 
 function emitDone(
@@ -101,52 +58,6 @@ function emitDone(
   (deps.emitStreamFrame ?? defaultEmitStreamFrame)(projectPath, sessionName, {
     type: "done",
     reason,
-  });
-}
-
-async function defaultPersistScriptOutput(
-  worktreePath: string,
-  contextId: string,
-  output: string,
-): Promise<string | null> {
-  const relativePath = path.join(
-    SHARED_DOCUMENT_DIRECTORY,
-    `validation-output-${contextId}.txt`,
-  );
-  const absolutePath = path.join(worktreePath, relativePath);
-  try {
-    await mkdir(path.dirname(absolutePath), { recursive: true });
-    await writeFile(absolutePath, output, "utf-8");
-    return relativePath;
-  } catch {
-    return null;
-  }
-}
-
-async function validateActiveContext(input: {
-  deps: GraphWorkflowExecutionLoopDeps;
-  projectPath: string;
-  sessionName: string;
-  execution: GraphWorkflowExecution;
-  contextId: string;
-}): Promise<GraphWorkflowContextValidationOutcome> {
-  const session = await input.deps.getSession(
-    input.projectPath,
-    input.sessionName,
-  );
-  if (!session) {
-    throw new Error(
-      "Session not found while validating graph workflow context",
-    );
-  }
-
-  return input.deps.validationService.validateContextCompletion({
-    projectPath: input.projectPath,
-    sessionName: input.sessionName,
-    worktreePath: session.worktreePath,
-    branchName: session.branchName,
-    execution: input.execution,
-    contextId: input.contextId,
   });
 }
 
@@ -173,21 +84,6 @@ export function _resetActiveLoopsForTesting(): void {
 
 // -- Helpers ------------------------------------------------------------------
 
-function areAllContextTasksCompleted(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-): boolean {
-  const contextTasks = execution.workingDefinition.tasks.filter(
-    (t) => t.contextId === contextId,
-  );
-  return (
-    contextTasks.length > 0 &&
-    contextTasks.every(
-      (t) => execution.taskStates[t.id]?.status === "completed",
-    )
-  );
-}
-
 function isRetryableIterationError(error: unknown): boolean {
   return /stream closed|querysession died before prompt delivery|processtransport is not ready for writing/i.test(
     getErrorMessage(error),
@@ -201,63 +97,6 @@ const logger = createLogger("graph-workflow-execution-loop");
 export function createGraphWorkflowExecutionLoop(
   deps: GraphWorkflowExecutionLoopDeps,
 ) {
-  async function runAndRecordContextValidation(input: {
-    projectPath: string;
-    sessionName: string;
-    execution: GraphWorkflowExecution;
-    contextId: string;
-  }): Promise<GraphWorkflowExecution> {
-    const validation = await validateActiveContext({
-      deps,
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      execution: input.execution,
-      contextId: input.contextId,
-    });
-
-    let scriptOutput: string | undefined;
-    let scriptOutputDocumentPath: string | undefined;
-
-    if (
-      !validation.pass &&
-      validation.scriptResult &&
-      validation.scriptResult.output
-    ) {
-      scriptOutput = validation.scriptResult.output;
-      const session = await deps.getSession(
-        input.projectPath,
-        input.sessionName,
-      );
-      if (session) {
-        const persist = deps.persistScriptOutput ?? defaultPersistScriptOutput;
-        const docPath = await persist(
-          session.worktreePath,
-          input.contextId,
-          scriptOutput,
-        );
-        if (docPath) {
-          scriptOutputDocumentPath = docPath;
-        }
-      }
-    }
-
-    return deps.workflowManager.recordContextValidationResult(
-      input.projectPath,
-      input.sessionName,
-      {
-        contextId: input.contextId,
-        pass: validation.pass,
-        summary: validation.summary,
-        issues: validation.issues,
-        reopenTaskIds: validation.reopenTaskIds,
-        scriptOutput,
-        scriptOutputDocumentPath,
-        sessionRef: validation.sessionRef,
-        reviewArtifact: validation.reviewArtifact,
-      },
-    );
-  }
-
   async function run(
     input: GraphWorkflowExecutionLoopInput,
   ): Promise<GraphWorkflowExecution> {
@@ -297,32 +136,6 @@ export function createGraphWorkflowExecutionLoop(
 
         const contextId = execution.activeContextId;
         if (!contextId) {
-          continue;
-        }
-
-        // If all tasks for the active context are already completed (e.g.
-        // after resuming from a recovery_error that occurred during
-        // validation), skip iteration and go straight to validation.
-        if (areAllContextTasksCompleted(execution, contextId)) {
-          execLogger?.lifecycle("loop.skip_to_validation", {
-            contextId,
-            reason: "all_tasks_already_completed",
-          });
-          execution = await runAndRecordContextValidation({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            execution,
-            contextId,
-          });
-          if (execution.status !== "running") {
-            emitDone(
-              deps,
-              input.projectPath,
-              input.sessionName,
-              execution.haltReason?.type ?? execution.status,
-            );
-            return execution;
-          }
           continue;
         }
 
@@ -428,28 +241,8 @@ export function createGraphWorkflowExecutionLoop(
           continue;
         }
 
-        if (iterationResult.shouldValidateContext) {
-          execLogger?.iteration(
-            contextId,
-            "loop.all_tasks_completed_entering_validation",
-          );
-          execution = await runAndRecordContextValidation({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            execution,
-            contextId,
-          });
-
-          if (execution.status !== "running") {
-            emitDone(
-              deps,
-              input.projectPath,
-              input.sessionName,
-              execution.haltReason?.type ?? execution.status,
-            );
-            return execution;
-          }
-        }
+        // All tasks completed — context is done, schedule next
+        // (scheduleNextContext will mark the current context as completed)
       }
 
       emitDone(

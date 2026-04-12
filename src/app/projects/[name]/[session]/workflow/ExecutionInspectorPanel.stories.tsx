@@ -189,6 +189,7 @@ const createUserSchema = z.object({
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
       "task-2": {
         taskId: "task-2",
@@ -202,6 +203,7 @@ const createUserSchema = z.object({
         reopenedCount: 1,
         lastReopenedAt: "2026-03-30T10:05:00Z",
         failureMessage: null,
+        failureHistory: [],
       },
       "task-3": {
         taskId: "task-3",
@@ -215,6 +217,7 @@ const createUserSchema = z.object({
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
       "task-6": {
         taskId: "task-6",
@@ -228,6 +231,7 @@ const createUserSchema = z.object({
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
     },
     retryState: {
@@ -389,6 +393,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
       "task-2": {
         taskId: "task-2",
@@ -403,6 +408,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         lastReopenedAt: "2026-03-30T10:25:00Z",
         failureMessage:
           "Failed to implement JWT middleware: missing jsonwebtoken dependency",
+        failureHistory: [],
       },
       "task-3": {
         taskId: "task-3",
@@ -416,6 +422,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
       "task-6": {
         taskId: "task-6",
@@ -429,6 +436,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         reopenedCount: 0,
         lastReopenedAt: null,
         failureMessage: null,
+        failureHistory: [],
       },
     },
     history: [

@@ -70,6 +70,7 @@ describe("GraphWorkflowPanel", () => {
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
       },
     });

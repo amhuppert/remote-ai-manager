@@ -5,13 +5,11 @@ import type {
   GraphWorkflowExecution,
   WorkflowGraphValidationError,
   GraphWorkflowTaskDefinition,
-  WorkflowAgentValidatorResult,
   WorkflowRuntimeEditRequest,
 } from "@/types";
 import {
   validateWorkflowDefinition,
   validateWorkflowRuntimeEdit,
-  validateWorkflowValidatorRemediation,
 } from "./validation";
 
 const logger = createLogger("graph-workflow-runtime-edits");
@@ -185,36 +183,6 @@ function countCompletedTasks(
   }).length;
 }
 
-function normalizeIssueFingerprint(issue: {
-  title: string;
-  description: string;
-}): string {
-  return `${issue.title.trim().toLowerCase()}::${issue.description
-    .trim()
-    .toLowerCase()}`;
-}
-
-function findOpenEquivalentFixTask(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-  fingerprint: string,
-): GraphWorkflowTaskDefinition | null {
-  return (
-    execution.workingDefinition.tasks.find((task) => {
-      if (task.contextId !== contextId || task.source !== "validator") {
-        return false;
-      }
-
-      if (task.metadata?.validatorIssueFingerprint !== fingerprint) {
-        return false;
-      }
-
-      const taskState = execution.taskStates[task.id];
-      return taskState?.status !== "completed";
-    }) ?? null
-  );
-}
-
 export function createGraphWorkflowRuntimeEditService(
   deps: Partial<GraphWorkflowRuntimeEditServiceDeps> = {},
 ) {
@@ -281,6 +249,7 @@ export function createGraphWorkflowRuntimeEditService(
       reopenedCount: 0,
       lastReopenedAt: null,
       failureMessage: null,
+      failureHistory: [],
     };
     nextExecution.contextStates[contextId] = {
       ...contextState,
@@ -298,121 +267,6 @@ export function createGraphWorkflowRuntimeEditService(
       contextId,
       taskId,
       title: task.title,
-    });
-
-    return nextExecution;
-  }
-
-  function applyValidatorRemediation(
-    execution: GraphWorkflowExecution,
-    contextId: string,
-    remediation: WorkflowAgentValidatorResult,
-  ): GraphWorkflowExecution {
-    const validation = validateWorkflowValidatorRemediation(
-      contextId,
-      execution,
-      remediation,
-    );
-    if (!validation.ok) {
-      throw new Error(
-        validation.errors.map((error) => error.message).join("\n"),
-      );
-    }
-
-    const nextExecution = cloneExecution(execution);
-    const now = resolvedDeps.now();
-
-    const execLogger = getExecutionLogger(execution.id);
-    let reopenedCount = 0;
-    let createdFixCount = 0;
-    let deduplicatedCount = 0;
-
-    for (const taskId of remediation.reopenTaskIds) {
-      const taskState = nextExecution.taskStates[taskId];
-      if (!taskState) {
-        continue;
-      }
-
-      taskState.status = "pending";
-      taskState.completedAt = null;
-      taskState.reopenedCount += 1;
-      taskState.lastReopenedAt = now;
-      taskState.failureMessage = remediation.summary;
-      reopenedCount += 1;
-
-      execLogger?.task(contextId, "task.reopened", {
-        taskId,
-        reopenedCount: taskState.reopenedCount,
-        reason: remediation.summary,
-      });
-    }
-
-    const nextOrder = getContextTaskOrder(nextExecution, contextId);
-    let order = nextOrder;
-
-    for (const issue of remediation.issues) {
-      const fingerprint = normalizeIssueFingerprint(issue);
-      if (findOpenEquivalentFixTask(nextExecution, contextId, fingerprint)) {
-        deduplicatedCount += 1;
-        continue;
-      }
-
-      order += 1;
-      createdFixCount += 1;
-      const taskId = resolvedDeps.createTaskId();
-      nextExecution.workingDefinition.tasks.push({
-        id: taskId,
-        contextId,
-        order,
-        title: `Fix validation issue: ${issue.title}`,
-        instructions: issue.description,
-        metadata: {
-          validatorIssueFingerprint: fingerprint,
-          validatorIssueTitle: issue.title,
-        },
-        source: "validator",
-      });
-      nextExecution.taskStates[taskId] = {
-        taskId,
-        contextId,
-        order,
-        status: "pending",
-        summary: null,
-        startedAt: null,
-        completedAt: null,
-        lastConversationId: null,
-        reopenedCount: 0,
-        lastReopenedAt: null,
-        failureMessage: null,
-      };
-    }
-
-    const contextState = nextExecution.contextStates[contextId];
-    if (contextState) {
-      contextState.totalTaskCount =
-        nextExecution.workingDefinition.tasks.filter(
-          (task) => task.contextId === contextId,
-        ).length;
-      contextState.completedTaskCount = countCompletedTasks(
-        nextExecution,
-        contextId,
-      );
-    }
-
-    execLogger?.validation(contextId, "validator.remediation_applied", {
-      reopenedCount,
-      createdFixCount,
-      deduplicatedCount,
-      totalIssues: remediation.issues.length,
-      totalReopens: remediation.reopenTaskIds.length,
-      summary: remediation.summary,
-    });
-    logger.info("graph-workflow.validator.remediation_applied", {
-      executionId: execution.id,
-      contextId,
-      reopenedCount,
-      createdFixCount,
-      deduplicatedCount,
     });
 
     return nextExecution;
@@ -466,6 +320,7 @@ export function createGraphWorkflowRuntimeEditService(
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         };
         syncContextState(nextExecution, operation.contextId);
         continue;
@@ -591,7 +446,6 @@ export function createGraphWorkflowRuntimeEditService(
 
   return {
     applyAgentTaskAdd,
-    applyValidatorRemediation,
     applyUserEdits,
   };
 }

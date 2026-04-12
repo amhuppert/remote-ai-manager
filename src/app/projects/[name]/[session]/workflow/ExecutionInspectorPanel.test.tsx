@@ -73,29 +73,6 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
     expect(screen.getByText("Task")).toBeInTheDocument();
   });
 
-  it("renders Context badge for context_validator lane", () => {
-    const execution = makeExecutionWithHistory([
-      makeValidationEvent({
-        validatorType: "context",
-        sessionRef: {
-          engine: "claude",
-          lane: "context_validator",
-          conversationId: "conv-2",
-        },
-      }),
-    ]);
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.getByText("Context")).toBeInTheDocument();
-  });
-
   it("renders engine badge showing claude", () => {
     const execution = makeExecutionWithHistory([
       makeValidationEvent({
@@ -445,6 +422,7 @@ describe("ExecutionInspectorPanel — shared implementer session task history", 
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
         "task-plan-2": {
           taskId: "task-plan-2",
@@ -458,6 +436,7 @@ describe("ExecutionInspectorPanel — shared implementer session task history", 
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
         "task-implement-1": {
           taskId: "task-implement-1",
@@ -471,6 +450,7 @@ describe("ExecutionInspectorPanel — shared implementer session task history", 
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
         "task-verify-1": {
           taskId: "task-verify-1",
@@ -484,6 +464,7 @@ describe("ExecutionInspectorPanel — shared implementer session task history", 
           reopenedCount: 0,
           lastReopenedAt: null,
           failureMessage: null,
+          failureHistory: [],
         },
       },
     });

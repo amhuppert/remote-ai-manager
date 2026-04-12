@@ -124,17 +124,6 @@ describe("graph workflow iteration validation integration", () => {
               "Task validation blocked completion.\n- Missing validation artifact: Add the evidence file before completing the task.",
           };
         },
-        async validateContextCompletion() {
-          return {
-            pass: true,
-            summary: "unused",
-            feedback: "unused",
-            issues: [],
-            reopenTaskIds: [],
-            agentResult: null,
-            scriptResult: null,
-          };
-        },
       },
       now() {
         return "2026-03-27T16:30:00.000Z";
@@ -149,7 +138,6 @@ describe("graph workflow iteration validation integration", () => {
     });
 
     expect(result.shouldContinueInContext).toBe(true);
-    expect(result.shouldValidateContext).toBe(false);
     expect(result.execution.taskStates["task-plan-1"]).toMatchObject({
       status: "pending",
       failureMessage: expect.stringContaining("Missing validation artifact"),
