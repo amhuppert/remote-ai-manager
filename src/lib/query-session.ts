@@ -113,6 +113,9 @@ export interface QuerySessionOptions {
   disallowedTools: string[];
   /** Idle TTL in ms — session is closed after this much inactivity (default: 5 min) */
   idleTtlMs?: number;
+  /** MCP keepalive interval in ms — pings MCP servers between turns to prevent
+   *  the SDK's transport inactivity timeout from closing the stream (default: 30s) */
+  mcpKeepaliveIntervalMs?: number;
   /** Structured output format — enforced by the SDK at generation time */
   outputFormat?: {
     type: "json_schema";
@@ -150,7 +153,10 @@ interface PendingTurn {
  */
 export function createQuerySession(options: QuerySessionOptions): QuerySession {
   const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  const DEFAULT_MCP_KEEPALIVE_MS = 30_000; // 30 seconds
   const idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
+  const mcpKeepaliveMs =
+    options.mcpKeepaliveIntervalMs ?? DEFAULT_MCP_KEEPALIVE_MS;
 
   let status: "alive" | "dead" = "alive";
   let pendingTurn: PendingTurn | null = null;
@@ -158,6 +164,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let isFirstPrompt = true;
   let firstPromptResolve: ((msg: SDKUserMessage) => void) | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let mcpKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
   const stderrChunks: string[] = [];
   let awaitingSubsequentPromptDelivery = false;
 
@@ -255,10 +262,14 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       throw new Error("QuerySession is dead — cannot send prompt");
     }
 
-    // Clear idle timer — a new prompt has arrived
+    // Clear idle timer and MCP keepalive — a new prompt has arrived
     if (idleTimer) {
       clearTimeout(idleTimer);
       idleTimer = null;
+    }
+    if (mcpKeepaliveTimer) {
+      clearInterval(mcpKeepaliveTimer);
+      mcpKeepaliveTimer = null;
     }
 
     currentTurnOptions = turnOptions ?? null;
@@ -301,10 +312,14 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // ------------------------------------------------------------------
 
   function close(): void {
-    // Clear idle timer
+    // Clear idle timer and MCP keepalive
     if (idleTimer) {
       clearTimeout(idleTimer);
       idleTimer = null;
+    }
+    if (mcpKeepaliveTimer) {
+      clearInterval(mcpKeepaliveTimer);
+      mcpKeepaliveTimer = null;
     }
 
     // Reject any pending turn
@@ -391,53 +406,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     });
   }
 
-  // ------------------------------------------------------------------
-  // MCP server health check
-  // ------------------------------------------------------------------
-
-  async function reconnectFailedMcpServers(): Promise<void> {
-    try {
-      const statuses = await q.mcpServerStatus();
-      const failed = statuses.filter((s) => s.status === "failed");
-      if (failed.length === 0) return;
-
-      logger.info("query-session.mcp_reconnect", {
-        conversationId: options.conversationId,
-        servers: failed.map((s) => s.name),
-      });
-
-      await Promise.all(
-        failed.map(async (server) => {
-          try {
-            await q.reconnectMcpServer(server.name);
-            logger.info("query-session.mcp_reconnected", {
-              conversationId: options.conversationId,
-              server: server.name,
-            });
-          } catch (err) {
-            logger.warn("query-session.mcp_reconnect_failed", {
-              conversationId: options.conversationId,
-              server: server.name,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }),
-      );
-    } catch (err) {
-      logger.warn("query-session.mcp_status_check_failed", {
-        conversationId: options.conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
   async function sendSubsequentPrompt(
     prompt: string | MessageContentBlock[],
   ): Promise<void> {
     awaitingSubsequentPromptDelivery = true;
 
     try {
-      await reconnectFailedMcpServers();
       if (status === "dead") {
         throw createPromptNotDeliveredError();
       }
@@ -593,6 +567,15 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
               close();
             }
           }, idleTtlMs);
+        }
+
+        // Start MCP keepalive — ping MCP servers periodically to prevent
+        // the SDK's transport inactivity timeout from closing the stream
+        if (mcpKeepaliveMs > 0 && status === "alive") {
+          mcpKeepaliveTimer = setInterval(() => {
+            if (status !== "alive" || pendingTurn) return;
+            q.mcpServerStatus().catch(() => {});
+          }, mcpKeepaliveMs);
         }
 
         break;

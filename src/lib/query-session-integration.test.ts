@@ -55,7 +55,6 @@ function createControllableMockQuery() {
     streamInput: vi.fn(),
     interrupt: vi.fn(),
     mcpServerStatus: vi.fn().mockResolvedValue([]),
-    reconnectMcpServer: vi.fn().mockResolvedValue(undefined),
     next() {
       if (messages.length > 0) {
         return Promise.resolve({
@@ -302,15 +301,12 @@ describe("Crash recovery", () => {
     mock1.pushMessage(makeResultMessage("sess-1", "u1"));
     await turn1;
 
-    let resolveStatus:
-      | ((value: Array<{ name: string; status: string }>) => void)
-      | undefined;
-    mock1.query.mcpServerStatus.mockImplementation(
+    // Make streamInput hang so the pump can die before delivery
+    let resolveStreamInput: (() => void) | undefined;
+    mock1.query.streamInput.mockImplementation(
       () =>
-        new Promise((resolve) => {
-          resolveStatus = resolve as (
-            value: Array<{ name: string; status: string }>,
-          ) => void;
+        new Promise<void>((resolve) => {
+          resolveStreamInput = resolve;
         }),
     );
 
@@ -329,8 +325,8 @@ describe("Crash recovery", () => {
     );
     expect(isUndeliveredQuerySessionError(caughtError)).toBe(true);
 
-    if (resolveStatus) {
-      resolveStatus([]);
+    if (resolveStreamInput) {
+      resolveStreamInput();
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
 

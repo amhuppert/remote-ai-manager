@@ -35,15 +35,4 @@ describe("buildChildEnv", () => {
     const env = buildChildEnv();
     expect(env.NODE_CHANNEL_FD).toBeUndefined();
   });
-
-  it("sets CLAUDE_CODE_STREAM_CLOSE_TIMEOUT to 3600000", () => {
-    const env = buildChildEnv();
-    expect(env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT).toBe("3600000");
-  });
-
-  it("does not override CLAUDE_CODE_STREAM_CLOSE_TIMEOUT if already set", () => {
-    process.env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT = "999999";
-    const env = buildChildEnv();
-    expect(env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT).toBe("999999");
-  });
 });
