@@ -124,7 +124,6 @@ const makeSessions = (count: number): SessionState[] =>
       {
         id: `conv-${i + 1}`,
         name: null,
-        claudeSessionId: null,
         transcriptPath: null,
         status: i === 0 ? ("running" as const) : ("awaiting" as const),
         promptCount: i * 3,
@@ -144,6 +143,8 @@ const makeSessions = (count: number): SessionState[] =>
         contextWindowMax: null,
         debugMode: null,
         machineSnapshot: null,
+        agentBackend: "claude" as const,
+        backendRef: null,
       },
     ],
     source: "cc" as const,

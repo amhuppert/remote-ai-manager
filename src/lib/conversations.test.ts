@@ -38,7 +38,6 @@ function makeConvo(
   return {
     id: crypto.randomUUID(),
     name: null,
-    claudeSessionId: null,
     transcriptPath: null,
     status: "new",
     promptCount: 0,
@@ -58,6 +57,8 @@ function makeConvo(
     contextWindowMax: null,
     debugMode: null,
     machineSnapshot: null,
+    agentBackend: "claude" as const,
+    backendRef: null,
     ...overrides,
   };
 }
@@ -152,7 +153,6 @@ describe("createConversation", () => {
 
     expect(convo.id).toBeTruthy();
     expect(convo.name).toBe("test 1");
-    expect(convo.claudeSessionId).toBeNull();
     expect(convo.transcriptPath).toBeNull();
     expect(convo.status).toBe("new");
     expect(convo.promptCount).toBe(0);
@@ -667,7 +667,6 @@ describe("conversationStatusSchema migration", () => {
   it("migrates legacy status in full conversation state parsing", () => {
     const legacyConvo = {
       id: "test-id",
-      claudeSessionId: null,
       transcriptPath: null,
       status: "idle",
       promptCount: 0,

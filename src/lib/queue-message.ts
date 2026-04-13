@@ -1,13 +1,12 @@
 /**
  * Queue a user message into an actively running conversation.
  *
- * Uses `query.streamInput()` from the Agent SDK to deliver the message
- * to the running SDK query, which buffers it for delivery when the
+ * Uses the backend runtime's `queueUserInput()` to deliver the message
+ * to the running conversation, which buffers it for delivery when the
  * current turn ends.
  */
 
-import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { getQuery as defaultGetQuery } from "./query-registry";
+import { getRuntime as defaultGetRuntime } from "@/lib/agent-backends/runtime-registry";
 import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
 import {
   broadcast as defaultBroadcast,
@@ -18,13 +17,13 @@ import { createLogger } from "./logging";
 const logger = createLogger("queue-message");
 
 export interface QueueMessageDeps {
-  getQuery: typeof defaultGetQuery;
+  getRuntime: typeof defaultGetRuntime;
   appendTranscriptEntry: typeof defaultAppendTranscriptEntry;
   broadcast: BroadcastFn;
 }
 
 const defaultDeps: QueueMessageDeps = {
-  getQuery: defaultGetQuery,
+  getRuntime: defaultGetRuntime,
   appendTranscriptEntry: defaultAppendTranscriptEntry,
   broadcast: defaultBroadcast,
 };
@@ -56,27 +55,18 @@ export async function queueMessage(params: QueueMessageParams): Promise<void> {
     ...(broadcastOverride ? { broadcast: broadcastOverride } : {}),
   };
 
-  const q = d.getQuery(conversationId);
-  if (!q) {
+  const runtime = d.getRuntime(conversationId);
+  if (!runtime) {
     throw new Error(
       `No active query for conversation ${conversationId} — cannot queue message`,
     );
   }
 
-  logger.info("queue.submit", { conversationId, textLength: text.length });
-
-  // Build an async iterable yielding a single SDKUserMessage
-  async function* buildMessage(): AsyncGenerator<SDKUserMessage> {
-    yield {
-      type: "user",
-      session_id: "",
-      message: {
-        role: "user",
-        content: [{ type: "text", text }],
-      },
-      parent_tool_use_id: null,
-    } as SDKUserMessage;
+  if (!runtime.queueUserInput) {
+    throw new Error("Backend does not support message queueing");
   }
+
+  logger.info("queue.submit", { conversationId, textLength: text.length });
 
   // Persist to transcript immediately
   await d.appendTranscriptEntry(conversationId, {
@@ -86,8 +76,8 @@ export async function queueMessage(params: QueueMessageParams): Promise<void> {
     content: [{ type: "text", text }],
   });
 
-  // Feed into the running SDK query
-  await q.streamInput(buildMessage());
+  // Deliver to the running backend runtime
+  await runtime.queueUserInput({ content: [{ type: "text", text }] });
 
   // Notify connected UI clients
   try {

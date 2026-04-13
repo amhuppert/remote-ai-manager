@@ -14,7 +14,6 @@ function makeConversation(
   return {
     id: "conv-1",
     name: null,
-    claudeSessionId: null,
     transcriptPath: null,
     status: "awaiting",
     promptCount: 0,
@@ -34,6 +33,8 @@ function makeConversation(
     contextWindowMax: null,
     debugMode: null,
     machineSnapshot: null,
+    agentBackend: "claude" as const,
+    backendRef: null,
     ...overrides,
   };
 }

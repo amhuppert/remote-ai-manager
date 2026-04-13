@@ -1,20 +1,17 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { Codex } from "@openai/codex-sdk";
-import { buildChildEnv } from "@/lib/child-env";
-import { toStringEnv } from "@/lib/codex-tool";
 import { readConfig } from "@/lib/config";
 import { createConversation, getConversation } from "@/lib/conversations";
 import { createLogger } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
-import { executePromptStream } from "@/lib/prompt";
 import { getSession as defaultGetSession, mutateSession } from "@/lib/state";
+import { getTaskRunner } from "@/lib/agent-backends/registry";
+import type { AgentSessionRef } from "@/lib/agent-backends/types";
 import type {
   ApiError,
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
   GraphWorkflowStatus,
-  MessageContentBlock,
   SessionState,
 } from "@/types";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-dispatcher";
@@ -23,10 +20,7 @@ import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
 import { createGraphWorkflowValidationService } from "./execution-validation";
-import {
-  createValidatorRunner,
-  VALIDATOR_OUTPUT_SCHEMA,
-} from "./validator-runner";
+import { createValidatorRunner } from "./validator-runner";
 import { emit as emitGraphWorkflowStreamFrame } from "./stream-registry";
 import { createWorkflowStorageService } from "./storage";
 import { createGraphWorkflowToolServer } from "@/lib/workflows/graph-workflow/tool-server";
@@ -71,6 +65,10 @@ const sharedDocumentRegistry =
   createGraphWorkflowSharedDocumentRegistryService();
 const CODEX_VALIDATOR_TIMEOUT_MS = 300_000;
 
+// In-memory cache of agent session refs for task runner resume within iterations.
+// Keyed by conversationId, stores the backendRef from the last task result.
+const agentBackendRefCache = new Map<string, AgentSessionRef>();
+
 const continuityService = createWorkflowContinuityService({
   createConversation,
   getConversation,
@@ -79,180 +77,27 @@ const continuityService = createWorkflowContinuityService({
 });
 
 const validatorRunner = createValidatorRunner({
-  async executeValidatorAgent(input) {
-    const session = await defaultGetSession(
-      input.projectPath,
-      input.sessionName,
-    );
-    if (!session) {
-      throw new Error("Session not found");
-    }
-
-    // Use the provided conversationId (from continuity service) or create a fresh one
-    const conversationId =
-      input.conversationId ??
-      (
-        await createConversation(input.projectPath, input.sessionName, {
-          role: "validator",
-        })
-      ).id;
-
-    const textParts: string[] = [];
-    const result = await executePromptStream(
-      input.projectPath,
-      session,
-      input.prompt,
-      (event, data) => {
-        if (
-          event === "content" &&
-          typeof data === "object" &&
-          data !== null &&
-          "type" in data &&
-          (data as { type: string }).type === "text" &&
-          "text" in data
-        ) {
-          textParts.push((data as { type: "text"; text: string }).text);
-        }
-      },
-      conversationId,
-      input.model,
-      undefined,
-      {
-        autonomous: true,
-        effort: input.reasoningEffort,
-        skipSessionLock: true,
-        outputFormat: input.outputFormat,
-      },
-    );
-
-    return {
-      text: textParts.join(""),
-      structuredOutput: result.structuredOutput,
-      contextTokens: result.contextTokens,
-      contextWindowMax: result.contextWindowMax,
-    };
+  getTaskRunner,
+  async resolveWorktreePath(projectPath, sessionName) {
+    const session = await defaultGetSession(projectPath, sessionName);
+    if (!session) throw new Error("Session not found");
+    return session.worktreePath;
   },
-
-  async executeValidatorCodex(input) {
-    const session = await defaultGetSession(
-      input.projectPath,
-      input.sessionName,
-    );
-    if (!session) {
-      throw new Error("Session not found");
-    }
-
+  async resolveTimeoutMs(validatorType) {
     const config = await readConfig();
-    const codexConfig = config.codex;
-
-    if (codexConfig?.enabled !== true) {
-      throw new Error(
-        "Codex validator is configured for this workflow, but Codex is disabled in global config",
-      );
-    }
-
-    const effectiveModel = input.model ?? codexConfig.model;
-    const effectiveReasoning =
-      input.reasoningEffort ?? codexConfig.reasoningEffort;
-
-    const timeoutMs =
-      codexConfig.timeout === null
-        ? 0
-        : codexConfig.timeout !== undefined
-          ? codexConfig.timeout * 1000
-          : CODEX_VALIDATOR_TIMEOUT_MS;
-
-    const env = toStringEnv({ ...buildChildEnv(), CLAUDECODE: "" });
-
-    const signal = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
-    const outputSchema = VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
-      string,
-      unknown
-    >;
-
-    // Reuse an existing Codex thread when the continuity service resolved one
-    if (input.sessionAction === "reuse" && input.storedThreadId) {
-      try {
-        const codex = new Codex({ env });
-        const thread = codex.resumeThread(input.storedThreadId, {
-          model: effectiveModel,
-          sandboxMode: "workspace-write",
-          workingDirectory: session.worktreePath,
-          skipGitRepoCheck: true,
-          modelReasoningEffort: effectiveReasoning,
-        });
-
-        const turn = await thread.run(input.prompt, { outputSchema, signal });
-
-        if (!turn.finalResponse) {
-          throw new Error("Codex validator produced no response");
-        }
-
-        const sdkUsage = turn.usage;
-        return {
-          text: turn.finalResponse,
-          realThreadId: thread.id,
-          usage: sdkUsage
-            ? {
-                inputTokens: sdkUsage.input_tokens,
-                cachedInputTokens: sdkUsage.cached_input_tokens,
-                outputTokens: sdkUsage.output_tokens,
-              }
-            : null,
-        };
-      } catch (err) {
-        const name = err instanceof Error ? err.name : "";
-        if (name === "AbortError" || name === "TimeoutError") {
-          throw new Error("Codex validator timed out");
-        }
-        // Stale thread reference — fall back to a fresh thread
-        logger.warn("workflow-continuity.stale_session.recovery", {
-          engine: "codex",
-          storedThreadId: input.storedThreadId,
-          error: err instanceof Error ? err.message : String(err),
-        });
+    if (validatorType === "codex") {
+      const codexConfig = config.codex;
+      if (codexConfig?.enabled !== true) {
+        throw new Error(
+          "Codex validator is configured for this workflow, but Codex is disabled in global config",
+        );
       }
+      if (codexConfig.timeout === null) return 0;
+      if (codexConfig.timeout !== undefined) return codexConfig.timeout * 1000;
+      return CODEX_VALIDATOR_TIMEOUT_MS;
     }
-
-    // Fresh thread — use startThread directly to capture the real thread ID for future reuse
-    try {
-      const codex = new Codex({ env });
-      const thread = codex.startThread({
-        model: effectiveModel,
-        sandboxMode: "workspace-write",
-        workingDirectory: session.worktreePath,
-        skipGitRepoCheck: true,
-        modelReasoningEffort: effectiveReasoning,
-      });
-
-      const turn = await thread.run(input.prompt, { outputSchema, signal });
-
-      if (!turn.finalResponse) {
-        throw new Error("Codex validator produced no response");
-      }
-
-      const sdkUsage = turn.usage;
-      return {
-        text: turn.finalResponse,
-        realThreadId: thread.id,
-        usage: sdkUsage
-          ? {
-              inputTokens: sdkUsage.input_tokens,
-              cachedInputTokens: sdkUsage.cached_input_tokens,
-              outputTokens: sdkUsage.output_tokens,
-            }
-          : null,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const name = err instanceof Error ? err.name : "";
-      if (name === "AbortError" || name === "TimeoutError") {
-        throw new Error("Codex validator timed out");
-      }
-      throw new Error(`Codex validator failed: ${msg}`);
-    }
+    return config.claudeTimeoutMs;
   },
-
   continuityService,
   executionRepository,
 });
@@ -336,49 +181,32 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       throw new Error("Session not found");
     }
 
-    let promptError: string | null = null;
-    const result = await executePromptStream(
-      input.projectPath,
-      session,
-      input.prompt,
-      (event, data) => {
-        if (event === "content") {
-          input.emitStreamFrame?.({
-            type: "content",
-            conversationId: input.conversationId,
-            contextId: input.contextId,
-            content: data as MessageContentBlock,
-          });
-          return;
-        }
-
-        if (
-          event === "error" &&
-          typeof data === "object" &&
-          data !== null &&
-          "message" in data &&
-          typeof (data as { message?: unknown }).message === "string"
-        ) {
-          promptError = (data as { message: string }).message;
-        }
+    const runner = getTaskRunner("claude");
+    const resumeRef = agentBackendRefCache.get(input.conversationId) ?? null;
+    const result = await runner.run({
+      workingDirectory: session.worktreePath,
+      prompt: input.prompt,
+      modelId: input.model,
+      reasoningEffort: input.reasoningEffort,
+      autonomous: true,
+      timeoutMs: 0,
+      resumeRef,
+      tooling: {
+        claudeSdkServers: { "graph-workflow": input.toolServer },
       },
-      input.conversationId,
-      input.model,
-      undefined,
-      {
-        autonomous: true,
-        effort: input.reasoningEffort,
-        additionalMcpServers: { "graph-workflow": input.toolServer },
-      },
-    );
+    });
 
-    if (promptError) {
-      throw new Error(promptError);
+    if (result.backendRef) {
+      agentBackendRefCache.set(input.conversationId, result.backendRef);
+    }
+
+    if (result.error) {
+      throw new Error(result.error);
     }
 
     return {
-      contextTokens: result.contextTokens,
-      contextWindowMax: result.contextWindowMax,
+      contextTokens: null,
+      contextWindowMax: null,
     };
   },
   validationService,

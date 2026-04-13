@@ -130,7 +130,8 @@ export const conversationMachine = setup({
     status: input.promptCount === 0 ? "new" : "awaiting",
     promptCount: input.promptCount,
     transcriptPath: input.transcriptPath,
-    claudeSessionId: input.claudeSessionId,
+    agentBackend: input.agentBackend,
+    backendRef: input.backendRef,
     forkedFrom: input.forkedFrom,
     role: input.role,
     activeTurn: null,
@@ -158,9 +159,10 @@ export const conversationMachine = setup({
         SUBMIT_PROMPT: {
           target: "acquiringResources",
           actions: assign({
-            activeTurn: ({ event }) => ({
+            activeTurn: ({ context, event }) => ({
               promptText: event.promptText,
               images: event.images ?? [],
+              backend: event.backend ?? context.agentBackend,
               modelId: event.modelId ?? null,
               effort: event.effort ?? null,
               autonomous: event.autonomous ?? false,
@@ -287,7 +289,8 @@ export const conversationMachine = setup({
             worktreePath: context.worktreePath,
             conversationId: context.conversationId,
             transcriptPath: context.transcriptPath!,
-            claudeSessionId: context.claudeSessionId,
+            agentBackend: context.agentBackend,
+            backendRef: context.backendRef,
             forkedFrom: context.forkedFrom,
             role: context.role,
             promptText: context.activeTurn!.promptText,
@@ -303,8 +306,8 @@ export const conversationMachine = setup({
           target: "#conversation.finalizingTurn",
           actions: assign({
             lastResult: ({ event }) => event.output,
-            claudeSessionId: ({ context, event }) =>
-              event.output.sessionId ?? context.claudeSessionId,
+            backendRef: ({ context, event }) =>
+              event.output.backendRef ?? context.backendRef,
           }),
         },
         onError: {
@@ -317,17 +320,17 @@ export const conversationMachine = setup({
 
       // Parent-level events — handled in both running and waitingForInput
       on: {
-        SDK_INIT: {
+        BACKEND_INIT: {
           actions: assign({
-            claudeSessionId: ({ event }) => event.sessionId,
+            backendRef: ({ event }) => event.backendRef,
           }),
         },
         PROMPT_COMPLETED: {
           target: "#conversation.finalizingTurn",
           actions: assign({
             lastResult: ({ event }) => event.result,
-            claudeSessionId: ({ context, event }) =>
-              event.result.sessionId ?? context.claudeSessionId,
+            backendRef: ({ context, event }) =>
+              event.result.backendRef ?? context.backendRef,
           }),
         },
         PROMPT_FAILED: {
@@ -652,9 +655,10 @@ export const conversationMachine = setup({
             SUBMIT_PROMPT: {
               target: "#conversation.acquiringResources",
               actions: assign({
-                activeTurn: ({ event }) => ({
+                activeTurn: ({ event, context }) => ({
                   promptText: event.promptText,
                   images: event.images ?? [],
+                  backend: event.backend ?? context.agentBackend,
                   modelId: event.modelId ?? null,
                   effort: event.effort ?? null,
                   autonomous: event.autonomous ?? false,
@@ -689,9 +693,10 @@ export const conversationMachine = setup({
             SUBMIT_PROMPT: {
               target: "#conversation.acquiringResources",
               actions: assign({
-                activeTurn: ({ event }) => ({
+                activeTurn: ({ event, context }) => ({
                   promptText: event.promptText,
                   images: event.images ?? [],
+                  backend: event.backend ?? context.agentBackend,
                   modelId: event.modelId ?? null,
                   effort: event.effort ?? null,
                   autonomous: event.autonomous ?? false,
@@ -710,9 +715,10 @@ export const conversationMachine = setup({
             SUBMIT_PROMPT: {
               target: "#conversation.acquiringResources",
               actions: assign({
-                activeTurn: ({ event }) => ({
+                activeTurn: ({ event, context }) => ({
                   promptText: event.promptText,
                   images: event.images ?? [],
+                  backend: event.backend ?? context.agentBackend,
                   modelId: event.modelId ?? null,
                   effort: event.effort ?? null,
                   autonomous: event.autonomous ?? false,
@@ -731,9 +737,10 @@ export const conversationMachine = setup({
             SUBMIT_PROMPT: {
               target: "#conversation.acquiringResources",
               actions: assign({
-                activeTurn: ({ event }) => ({
+                activeTurn: ({ event, context }) => ({
                   promptText: event.promptText,
                   images: event.images ?? [],
+                  backend: event.backend ?? context.agentBackend,
                   modelId: event.modelId ?? null,
                   effort: event.effort ?? null,
                   autonomous: event.autonomous ?? false,
@@ -768,9 +775,10 @@ export const conversationMachine = setup({
             SUBMIT_PROMPT: {
               target: "#conversation.acquiringResources",
               actions: assign({
-                activeTurn: ({ event }) => ({
+                activeTurn: ({ event, context }) => ({
                   promptText: event.promptText,
                   images: event.images ?? [],
+                  backend: event.backend ?? context.agentBackend,
                   modelId: event.modelId ?? null,
                   effort: event.effort ?? null,
                   autonomous: event.autonomous ?? false,
@@ -789,9 +797,10 @@ export const conversationMachine = setup({
             SUBMIT_PROMPT: {
               target: "#conversation.acquiringResources",
               actions: assign({
-                activeTurn: ({ event }) => ({
+                activeTurn: ({ event, context }) => ({
                   promptText: event.promptText,
                   images: event.images ?? [],
+                  backend: event.backend ?? context.agentBackend,
                   modelId: event.modelId ?? null,
                   effort: event.effort ?? null,
                   autonomous: event.autonomous ?? false,

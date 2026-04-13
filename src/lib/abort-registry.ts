@@ -1,6 +1,6 @@
 import { createLogger } from "./logging";
 import { getGlobalSingleton } from "./global-singleton";
-import { getSession } from "./query-session-registry";
+import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 
 const logger = createLogger("abort-registry");
 
@@ -46,10 +46,10 @@ export function abortConversation(conversationId: string): boolean {
   registry.delete(conversationId);
   controller.abort();
 
-  // Also close the query session to terminate the subprocess
-  // The next prompt will create a fresh session with resume
+  // Also close the backend runtime to terminate any active session.
+  // The next prompt will create a fresh runtime with resume.
   try {
-    getSession(conversationId)?.close();
+    getRuntime(conversationId)?.close();
   } catch {
     // best-effort
   }

@@ -45,7 +45,7 @@ function createTestMachine() {
       ),
       executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
         async () => ({
-          sessionId: null,
+          backendRef: null,
           costUsd: null,
           durationMs: null,
           numTurns: null,
@@ -79,7 +79,8 @@ const DEFAULT_INPUT = {
   forkedFrom: null,
   role: null,
   transcriptPath: null,
-  claudeSessionId: null,
+  agentBackend: "claude" as const,
+  backendRef: null,
   promptCount: 0,
 };
 
@@ -357,7 +358,8 @@ describe("conversation manager", () => {
         status: "awaiting" as const,
         promptCount: 3,
         transcriptPath: "/tmp/t.jsonl",
-        claudeSessionId: "sdk-1",
+        agentBackend: "claude" as const,
+        backendRef: { backend: "claude" as const, sessionId: "sdk-1" },
         forkedFrom: null,
         role: null,
         activeTurn: null,
@@ -377,7 +379,6 @@ describe("conversation manager", () => {
       const conv = {
         id: "conv-1",
         name: null,
-        claudeSessionId: null,
         transcriptPath: null,
         status: "new" as const,
         promptCount: 0,
@@ -397,6 +398,8 @@ describe("conversation manager", () => {
         contextWindowMax: null as number | null,
         debugMode: null,
         machineSnapshot: null,
+        agentBackend: "claude" as const,
+        backendRef: null,
       };
 
       applySyncDerivedFields(context, conv);

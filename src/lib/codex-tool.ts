@@ -2,19 +2,18 @@
  * Codex MCP tool — lets Claude invoke the OpenAI Codex SDK as a one-shot sub-agent.
  *
  * Exposes a single `run_codex` tool that runs Codex in the session worktree
- * via the `@openai/codex-sdk` TypeScript SDK, returning a structured JSON response.
+ * via the task runner abstraction, returning a structured JSON response.
  */
 
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
-import { Codex } from "@openai/codex-sdk";
 import { z } from "zod";
-import { buildChildEnv } from "./child-env";
 import { codexReasoningEffortSchema } from "./schemas";
 import type { CodexConfig, CodexReasoningEffort } from "@/types";
 import { createLogger } from "./logging";
+import { getTaskRunner } from "@/lib/agent-backends/registry";
 
 const logger = createLogger("codex-tool");
 
@@ -40,12 +39,10 @@ export interface CodexRunResult {
 }
 
 export interface CodexToolDeps {
-  buildChildEnv(): NodeJS.ProcessEnv;
   ensureDir(dirPath: string): Promise<void>;
   runCodex(input: {
     prompt: string;
     workingDirectory: string;
-    env: Record<string, string>;
     model?: string;
     reasoningEffort?: CodexReasoningEffort;
     outputSchema: Record<string, unknown>;
@@ -81,73 +78,49 @@ export const CODEX_OUTPUT_SCHEMA = {
 } as const;
 
 // ============================================================
-// SDK Runner
+// SDK Runner (via task runner abstraction)
 // ============================================================
-
-/** Strip `undefined` values from a `NodeJS.ProcessEnv` to produce a clean `Record<string, string>`. */
-function toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) result[key] = value;
-  }
-  return result;
-}
 
 export async function runCodexDefault(input: {
   prompt: string;
   workingDirectory: string;
-  env: Record<string, string>;
   model?: string;
   reasoningEffort?: CodexReasoningEffort;
   outputSchema: Record<string, unknown>;
   timeoutMs: number;
 }): Promise<CodexRunResult> {
-  const codex = new Codex({
-    env: input.env,
-    config: {
-      sandbox_workspace_write: {
-        exclude_slash_tmp: false,
-        exclude_tmpdir_env_var: false,
-        writable_roots: [],
-        network_access: true,
-      },
-    },
-  });
-
-  const thread = codex.startThread({
-    model: input.model,
-    sandboxMode: "workspace-write",
-    workingDirectory: input.workingDirectory,
-    skipGitRepoCheck: true,
-    modelReasoningEffort: input.reasoningEffort,
-  });
-
-  const signal =
-    input.timeoutMs > 0 ? AbortSignal.timeout(input.timeoutMs) : undefined;
+  const runner = getTaskRunner("codex");
 
   try {
-    const turn = await thread.run(input.prompt, {
+    const result = await runner.run({
+      workingDirectory: input.workingDirectory,
+      prompt: input.prompt,
+      modelId: input.model,
+      reasoningEffort: input.reasoningEffort,
       outputSchema: input.outputSchema,
-      signal,
+      autonomous: true,
+      timeoutMs: input.timeoutMs,
+      sandboxMode: "workspace-write",
+      approvalPolicy: "never",
+      skipGitRepoCheck: true,
+      networkAccessEnabled: true,
+      webSearchMode: "disabled",
     });
-    return {
-      response: turn.finalResponse,
-      error: null,
-      timedOut: false,
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const name = err instanceof Error ? err.name : "";
 
-    if (name === "AbortError" || name === "TimeoutError") {
+    if (result.timedOut) {
       return { response: null, error: null, timedOut: true };
     }
+    if (result.error) {
+      return { response: null, error: result.error, timedOut: false };
+    }
+    return { response: result.text, error: null, timedOut: false };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     return { response: null, error: msg, timedOut: false };
   }
 }
 
 export const defaultCodexToolDeps: CodexToolDeps = {
-  buildChildEnv,
   ensureDir: async (dirPath: string) => {
     await mkdir(dirPath, { recursive: true });
   },
@@ -308,7 +281,6 @@ export function createCodexToolServer(
           const result = await deps.runCodex({
             prompt: wrapCodexPrompt(args.prompt),
             workingDirectory: context.worktreePath,
-            env: toStringEnv({ ...deps.buildChildEnv(), CLAUDECODE: "" }),
             model: effectiveModel,
             reasoningEffort: effectiveReasoningEffort,
             outputSchema: CODEX_OUTPUT_SCHEMA as unknown as Record<
@@ -371,6 +343,15 @@ function errorResult(message: string) {
     content: [{ type: "text" as const, text: message }],
     isError: true,
   };
+}
+
+/** Strip `undefined` values from a `NodeJS.ProcessEnv` to produce a clean `Record<string, string>`. */
+function toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) result[key] = value;
+  }
+  return result;
 }
 
 export { toStringEnv };

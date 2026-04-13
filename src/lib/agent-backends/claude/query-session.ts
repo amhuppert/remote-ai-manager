@@ -18,10 +18,9 @@ import type {
   Options,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { MessageContentBlock } from "@/types";
-import type { EffortLevel } from "./schemas";
-import { createLogger } from "./logging";
-import { registerSession, unregisterSession } from "./query-session-registry";
-import { extractContextTokens, extractContextWindow } from "./context-fill";
+import type { EffortLevel } from "@/lib/schemas";
+import { createLogger } from "@/lib/logging";
+import { extractContextTokens, extractContextWindow } from "@/lib/context-fill";
 import {
   QUERY_SESSION_ERROR_CODES,
   tagQuerySessionError,
@@ -236,8 +235,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     close,
   };
 
-  registerSession(options.conversationId, session);
-
   logger.info("query-session.created", {
     conversationId: options.conversationId,
     cwd: options.cwd,
@@ -339,8 +336,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       conversationId: options.conversationId,
     });
 
-    unregisterSession(options.conversationId);
-
     // Close the SDK subprocess
     try {
       q.close();
@@ -399,7 +394,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   function markDead(reason: string): void {
     if (status === "dead") return;
     status = "dead";
-    unregisterSession(options.conversationId);
     logger.info("query-session.dead", {
       conversationId: options.conversationId,
       reason,

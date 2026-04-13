@@ -3,18 +3,13 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { isUndeliveredQuerySessionError } from "./query-session-errors";
 
 // ---------------------------------------------------------------------------
-// Mock the SDK and registry
+// Mock the SDK
 // ---------------------------------------------------------------------------
 
 const queryMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
-}));
-
-vi.mock("./query-session-registry", () => ({
-  registerSession: vi.fn(),
-  unregisterSession: vi.fn(),
 }));
 
 vi.mock("@/lib/sdk-env", () => ({}));
@@ -24,7 +19,6 @@ vi.mock("@/lib/sdk-env", () => ({}));
 // ---------------------------------------------------------------------------
 
 import { createQuerySession, type QuerySessionOptions } from "./query-session";
-import { registerSession, unregisterSession } from "./query-session-registry";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -159,16 +153,6 @@ describe("createQuerySession", () => {
 
     const session = createQuerySession(makeDefaultOptions());
     expect(session.status).toBe("alive");
-
-    session.close();
-  });
-
-  it("registers itself in the registry on creation", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    expect(registerSession).toHaveBeenCalledWith("conv-123", session);
 
     session.close();
   });
@@ -592,16 +576,6 @@ describe("QuerySession.close", () => {
     expect(mock.query.close).toHaveBeenCalled();
   });
 
-  it("unregisters from the registry", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    session.close();
-
-    expect(unregisterSession).toHaveBeenCalledWith("conv-123");
-  });
-
   it("rejects pending turn promise", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
@@ -639,25 +613,6 @@ describe("QuerySession crash detection", () => {
 
     await expect(turnPromise).rejects.toThrow("Subprocess exited unexpectedly");
     expect(session.status).toBe("dead");
-  });
-
-  it("unregisters from registry on crash", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    const emit = vi.fn();
-    const turnPromise = session.sendPrompt("Hello", emit);
-
-    mock.crashPump(new Error("crash"));
-
-    try {
-      await turnPromise;
-    } catch {
-      // expected
-    }
-
-    expect(unregisterSession).toHaveBeenCalledWith("conv-123");
   });
 
   it("includes captured stderr in error when pump crashes", async () => {

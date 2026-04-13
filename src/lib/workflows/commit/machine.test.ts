@@ -169,7 +169,7 @@ describe("commitMachine", () => {
         }),
         fixValidation: mockFixValidation(async () => ({
           status: "fixed",
-          claudeSessionId: "sdk-session-1",
+          sessionRef: { backend: "claude", sessionId: "sdk-session-1" },
         })),
       });
       const actor = createActor(machine, { input: defaultInput });
@@ -243,7 +243,10 @@ describe("commitMachine", () => {
           fixCallCount++;
           return {
             status: "fixed",
-            claudeSessionId: `session-${fixCallCount}`,
+            sessionRef: {
+              backend: "claude" as const,
+              sessionId: `session-${fixCallCount}`,
+            },
           };
         }),
       });
@@ -315,8 +318,8 @@ describe("commitMachine", () => {
     });
   });
 
-  describe("claudeSessionId propagation", () => {
-    it("claudeSessionId passed from first attempt to retry", async () => {
+  describe("sessionRef propagation", () => {
+    it("sessionRef passed from first attempt to retry", async () => {
       let validationCallCount = 0;
       const fixInputs: FixValidationInput[] = [];
 
@@ -329,7 +332,10 @@ describe("commitMachine", () => {
         }),
         fixValidation: mockFixValidation(async (input) => {
           fixInputs.push({ ...input });
-          return { status: "fixed", claudeSessionId: "sdk-session-42" };
+          return {
+            status: "fixed",
+            sessionRef: { backend: "claude", sessionId: "sdk-session-42" },
+          };
         }),
       });
       const actor = createActor(machine, { input: defaultInput });
@@ -338,8 +344,11 @@ describe("commitMachine", () => {
       await toPromise(actor);
 
       expect(fixInputs).toHaveLength(2);
-      expect(fixInputs[0]!.claudeSessionId).toBeUndefined();
-      expect(fixInputs[1]!.claudeSessionId).toBe("sdk-session-42");
+      expect(fixInputs[0]!.sessionRef).toBeUndefined();
+      expect(fixInputs[1]!.sessionRef).toEqual({
+        backend: "claude",
+        sessionId: "sdk-session-42",
+      });
     });
   });
 
@@ -430,7 +439,7 @@ describe("commitMachine", () => {
       expect(ctx.commitHash).toBeNull();
       expect(ctx.fixAttempt).toBe(0);
       expect(ctx.maxFixAttempts).toBe(2);
-      expect(ctx.fixSessionId).toBeNull();
+      expect(ctx.fixSessionRef).toBeNull();
       expect(ctx.validationTimeoutMs).toBe(300_000);
       expect(ctx.finalStatus).toBeNull();
     });

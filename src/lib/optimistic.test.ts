@@ -19,7 +19,6 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
       {
         id: "conv-1",
         name: "fix-login-bug 1",
-        claudeSessionId: null,
         transcriptPath: null,
         status: "new",
         promptCount: 0,
@@ -39,6 +38,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
         contextWindowMax: null,
         debugMode: null,
         machineSnapshot: null,
+        agentBackend: "claude" as const,
+        backendRef: null,
       },
     ],
     source: "cc",

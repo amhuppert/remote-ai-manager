@@ -101,7 +101,7 @@ export const commitMachine = setup({
     validationTimeoutMs: input.validationTimeoutMs ?? 300_000,
     fixAttempt: 0,
     maxFixAttempts: input.maxFixAttempts ?? 2,
-    fixSessionId: null,
+    fixSessionRef: null,
     finalStatus: null,
   }),
   initial: "committing",
@@ -168,17 +168,17 @@ export const commitMachine = setup({
           projectPath: context.projectPath,
           sessionName: context.sessionName,
           branchName: context.branchName,
-          claudeSessionId: context.fixSessionId ?? undefined,
+          sessionRef: context.fixSessionRef ?? undefined,
         }),
         onDone: [
           {
             guard: "fixSucceeded",
             actions: assign({
-              fixSessionId: ({ event }) => {
+              fixSessionRef: ({ event }) => {
                 const e = event as unknown as {
                   output: FixValidationOutput;
                 };
-                return e.output.claudeSessionId ?? null;
+                return e.output.sessionRef ?? null;
               },
             }),
             target: "checkingFixChanges",

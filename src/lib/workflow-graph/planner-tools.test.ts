@@ -80,6 +80,7 @@ const MOCK_CONFIG: GlobalConfig = {
   stateFilePath: "/tmp/state.json",
   claudeTimeoutMs: 3600000,
   defaultModel: "opus",
+  defaultAgentBackend: "claude",
 };
 
 function createMockDeps(

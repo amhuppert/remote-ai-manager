@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createServer as createTcpServer } from "node:net";
 import {
   createDevServerRegistry,
-  isPortAlive,
   type DevServerRegistryDeps,
 } from "./dev-server-registry";
 
@@ -24,6 +22,7 @@ function createTestDeps(
     }),
     livenessStart: vi.fn(),
     getLanUrl: vi.fn((port: number) => `http://192.168.1.100:${port}`),
+    checkPortListening: vi.fn().mockResolvedValue(false),
     ...overrides,
   };
 }
@@ -141,41 +140,32 @@ describe("DevServerRegistry", () => {
     });
 
     it("registers Tailscale after server starts listening on port", async () => {
-      // Start a real TCP listener on a port so the deferred check can find it
-      const { createServer } = await import("node:net");
-      const tcpServer = createServer();
-      const port = await new Promise<number>((resolve) => {
-        tcpServer.listen(0, "127.0.0.1", () => {
-          const addr = tcpServer.address();
-          resolve(typeof addr === "object" && addr ? addr.port : 0);
-        });
+      // Mock port-listening check to report port as occupied (avoids needing
+      // a real TCP server, which can fail with EPERM in sandboxed environments)
+      vi.mocked(deps.checkPortListening).mockResolvedValue(true);
+      const port = 54321;
+
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "tailscale-test",
+        command: `echo CC_PORT=${port} && sleep 60`,
+        worktreePath: "/tmp",
       });
 
-      try {
-        await registry.startServer({
-          projectPath: "/proj",
-          sessionName: "s1",
-          serverName: "tailscale-test",
-          command: `echo CC_PORT=${port} && sleep 60`,
-          worktreePath: "/tmp",
-        });
+      // Wait for stdout processing + deferred Tailscale poll (500ms interval)
+      await new Promise((r) => setTimeout(r, 1200));
 
-        // Wait for stdout processing + deferred Tailscale poll (500ms interval)
-        await new Promise((r) => setTimeout(r, 1200));
+      const server = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "tailscale-test",
+      });
 
-        const server = registry.getServer({
-          projectPath: "/proj",
-          sessionName: "s1",
-          serverName: "tailscale-test",
-        });
-
-        expect(server!.status).toBe("running");
-        expect(server!.port).toBe(port);
-        expect(deps.tailscale.register).toHaveBeenCalledWith(port);
-        expect(server!.remoteUrl).toBe("https://mock.ts.net:3000");
-      } finally {
-        tcpServer.close();
-      }
+      expect(server!.status).toBe("running");
+      expect(server!.port).toBe(port);
+      expect(deps.tailscale.register).toHaveBeenCalledWith(port);
+      expect(server!.remoteUrl).toBe("https://mock.ts.net:3000");
     });
 
     it("transitions to error when process exits before CC_PORT", async () => {
@@ -292,20 +282,9 @@ describe("DevServerRegistry", () => {
   });
 
   describe("process group killing", () => {
-    /** Helper: find a free TCP port */
-    async function findFreePort(): Promise<number> {
-      return new Promise((resolve) => {
-        const srv = createTcpServer();
-        srv.listen(0, "127.0.0.1", () => {
-          const addr = srv.address() as { port: number };
-          srv.close(() => resolve(addr.port));
-        });
-      });
-    }
-
     /** Helper: poll until condition is true or timeout */
     async function waitFor(
-      fn: () => Promise<boolean>,
+      fn: () => boolean | Promise<boolean>,
       timeoutMs = 5000,
       intervalMs = 200,
     ): Promise<void> {
@@ -315,6 +294,16 @@ describe("DevServerRegistry", () => {
         await new Promise((r) => setTimeout(r, intervalMs));
       }
       throw new Error("waitFor timed out");
+    }
+
+    /** Check if a process group is alive (signal 0 = existence check) */
+    function isProcessGroupAlive(pid: number): boolean {
+      try {
+        process.kill(-pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
     }
 
     it("stores PID in entry for process group kills", async () => {
@@ -336,18 +325,25 @@ describe("DevServerRegistry", () => {
     });
 
     it("kills child processes via process group when stopping", async () => {
-      const port = await findFreePort();
+      const fakePort = 54322;
 
       await registry.startServer({
         projectPath: "/proj",
         sessionName: "s1",
         serverName: "group-kill-test",
-        command: `echo CC_PORT=${port} && node -e "require('net').createServer(()=>{}).listen(${port}, '127.0.0.1'); setInterval(()=>{},60000)"`,
+        command: `echo CC_PORT=${fakePort} && node -e "setInterval(()=>{},60000)"`,
         worktreePath: "/tmp",
       });
 
-      // Wait for the port to become alive
-      await waitFor(() => isPortAlive(port), 5000);
+      // Wait for CC_PORT detection → "running" status
+      await waitFor(() => {
+        const s = registry.getServer({
+          projectPath: "/proj",
+          sessionName: "s1",
+          serverName: "group-kill-test",
+        });
+        return s?.status === "running";
+      });
 
       const server = registry.getServer({
         projectPath: "/proj",
@@ -355,6 +351,11 @@ describe("DevServerRegistry", () => {
         serverName: "group-kill-test",
       });
       expect(server!.status).toBe("running");
+      const pid = server!._pid!;
+      expect(pid).toBeGreaterThan(0);
+
+      // Verify the process group is alive before stopping
+      expect(isProcessGroupAlive(pid)).toBe(true);
 
       // Stop the server
       await registry.stopServer({
@@ -363,9 +364,9 @@ describe("DevServerRegistry", () => {
         serverName: "group-kill-test",
       });
 
-      // Port should be freed (process group killed)
-      await waitFor(async () => !(await isPortAlive(port)), 10000);
-      expect(await isPortAlive(port)).toBe(false);
+      // Process group should be dead (all children killed)
+      await waitFor(() => !isProcessGroupAlive(pid), 10000);
+      expect(isProcessGroupAlive(pid)).toBe(false);
     });
   });
 

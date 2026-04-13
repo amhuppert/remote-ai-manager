@@ -26,11 +26,6 @@ vi.mock("@/lib/sdk-env", () => ({}));
 
 import { createQuerySession, type QuerySessionOptions } from "./query-session";
 import { isUndeliveredQuerySessionError } from "./query-session-errors";
-import {
-  getSession,
-  closeAllSessions,
-  _resetForTesting as resetRegistry,
-} from "./query-session-registry";
 
 // ---------------------------------------------------------------------------
 // Helpers — controllable mock Query
@@ -167,7 +162,6 @@ function makeResultMessage(sessionId: string, uuid: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  resetRegistry();
 });
 
 describe("Multi-turn subprocess reuse", () => {
@@ -214,20 +208,6 @@ describe("Multi-turn subprocess reuse", () => {
     session.close();
   });
 
-  it("session is retrievable from registry after creation", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(
-      makeDefaultOptions({ conversationId: "conv-reg-test" }),
-    );
-
-    const retrieved = getSession("conv-reg-test");
-    expect(retrieved).toBe(session);
-
-    session.close();
-  });
-
   it("raw Query object is accessible for queueMessage compatibility", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
@@ -255,7 +235,6 @@ describe("Crash recovery", () => {
 
     await expect(turnPromise).rejects.toThrow("Subprocess died");
     expect(session.status).toBe("dead");
-    expect(getSession("conv-integration")).toBeUndefined();
   });
 
   it("after crash, creating a new session for same conversation works", async () => {
@@ -331,7 +310,6 @@ describe("Crash recovery", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(session1.status).toBe("dead");
-    expect(getSession("conv-integration")).toBeUndefined();
 
     const mock2 = createControllableMockQuery();
     queryMock.mockReturnValue(mock2.query);
@@ -350,39 +328,15 @@ describe("Crash recovery", () => {
 });
 
 describe("Session deletion cleanup", () => {
-  it("close terminates session and removes from registry", () => {
+  it("close terminates session", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
     const session = createQuerySession(makeDefaultOptions());
-    expect(getSession("conv-integration")).toBe(session);
 
     session.close();
     expect(session.status).toBe("dead");
-    expect(getSession("conv-integration")).toBeUndefined();
     expect(mock.query.close).toHaveBeenCalled();
-  });
-
-  it("closeAllSessions terminates all active sessions", () => {
-    const mock1 = createControllableMockQuery();
-    const mock2 = createControllableMockQuery();
-
-    queryMock.mockReturnValueOnce(mock1.query).mockReturnValueOnce(mock2.query);
-
-    const s1 = createQuerySession(
-      makeDefaultOptions({ conversationId: "conv-1" }),
-    );
-    const s2 = createQuerySession(
-      makeDefaultOptions({ conversationId: "conv-2" }),
-    );
-
-    expect(getSession("conv-1")).toBe(s1);
-    expect(getSession("conv-2")).toBe(s2);
-
-    closeAllSessions();
-
-    expect(getSession("conv-1")).toBeUndefined();
-    expect(getSession("conv-2")).toBeUndefined();
   });
 });
 

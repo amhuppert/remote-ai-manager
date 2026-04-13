@@ -12,7 +12,6 @@ import type { ConversationState, SessionState } from "@/types";
 const BASE_CONVERSATION: ConversationState = {
   id: "conv-1",
   status: "awaiting",
-  claudeSessionId: null,
   transcriptPath: "/tmp/transcript.jsonl",
   totalCostUsd: 0,
   totalDurationMs: 0,
@@ -40,6 +39,8 @@ const BASE_CONVERSATION: ConversationState = {
     phase: "hypothesizing",
   },
   machineSnapshot: null,
+  agentBackend: "claude" as const,
+  backendRef: null,
 };
 
 const BASE_SESSION: SessionState = {

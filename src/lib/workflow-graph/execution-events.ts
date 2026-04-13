@@ -13,6 +13,7 @@ import type {
   GraphWorkflowValidatorType,
   WorkflowValidatorIssue,
 } from "@/types";
+import type { AgentSessionRef } from "@/lib/agent-backends/types";
 
 interface PublishExecutionUpdateInput {
   projectPath: string;
@@ -30,8 +31,26 @@ interface PublishValidationResultInput {
   pass: boolean;
   summary: string;
   issues?: WorkflowValidatorIssue[];
-  sessionRef?: GraphWorkflowExecutionSessionRef | null;
+  sessionRef?: AgentSessionRef | null;
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
+}
+
+/**
+ * Convert an AgentSessionRef to a GraphWorkflowExecutionSessionRef for event persistence.
+ * The lane is set to "task_validator" since validation events are the only consumer.
+ */
+function toExecutionSessionRef(
+  ref: AgentSessionRef | null | undefined,
+): GraphWorkflowExecutionSessionRef | null {
+  if (!ref) return null;
+  if (ref.backend === "claude") {
+    return {
+      engine: "claude",
+      lane: "task_validator",
+      conversationId: ref.sessionId,
+    };
+  }
+  return { engine: "codex", lane: "task_validator", threadId: ref.threadId };
 }
 
 export interface GraphWorkflowPushInfo {
@@ -316,7 +335,7 @@ export function createGraphWorkflowExecutionEventPublisher(
       pass: input.pass,
       summary: input.summary,
       issues: input.issues ?? [],
-      sessionRef: input.sessionRef ?? null,
+      sessionRef: toExecutionSessionRef(input.sessionRef),
       reviewArtifact: input.reviewArtifact ?? null,
     };
 

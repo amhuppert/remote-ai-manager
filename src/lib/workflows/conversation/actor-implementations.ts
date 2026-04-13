@@ -19,6 +19,14 @@ import type {
   MessageContentBlock,
   ConversationState,
   SessionState,
+  AgentBackendId,
+  AgentSessionRef,
+  ConversationBackendRuntime,
+  ConversationBackendFactory,
+  ConversationBackendTurnInput,
+  ConversationBackendTurnResult,
+  ConversationBackendEvent,
+  AskQuestionItem,
 } from "@/types";
 import type { TranscriptEntry } from "@/lib/transcript";
 import type {
@@ -41,42 +49,13 @@ import {
   CC_CONTEXT,
   TDD_INSTRUCTIONS,
 } from "@/lib/prompt";
-import { isUndeliveredQuerySessionError } from "@/lib/query-session-errors";
+import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
 
 const logger = createLogger("conversation-actor");
 
 // ============================================================
 // Minimal types for deps interface
 // ============================================================
-
-/** Subset of QuerySession properties used by actor implementations. */
-export interface QuerySessionLike {
-  status: "alive" | "dead";
-  model: unknown;
-  effort: unknown;
-  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
-  close(): void;
-  sendPrompt(
-    prompt: string | MessageContentBlock[],
-    emit: (event: string, data: unknown) => void,
-    options?: Record<string, unknown>,
-  ): Promise<
-    | {
-        sessionId: string | null;
-        costUsd: number | null;
-        durationMs: number | null;
-        numTurns: number | null;
-        contextTokens: number | null;
-        contextWindow: number | null;
-        contentBlocks: MessageContentBlock[];
-        structuredOutput?: unknown;
-        aborted: boolean;
-        error: string | null;
-      }
-    | undefined
-  >;
-  query: unknown;
-}
 
 /** Subset of GlobalConfig properties used by actor implementations. */
 export interface ActorConfig {
@@ -87,10 +66,6 @@ export interface ActorConfig {
   pushNotification?: unknown;
   codex?: unknown;
 }
-
-export type CanUseToolResult =
-  | { behavior: "deny"; message: string }
-  | { behavior: "allow"; updatedInput: Record<string, unknown> };
 
 // ============================================================
 // Dependency Injection
@@ -117,9 +92,17 @@ export interface ActorImplementationDeps {
     blocks: MessageContentBlock[],
   ): Promise<MessageContentBlock[]>;
 
-  // SDK session lifecycle
-  getSessionFromRegistry(conversationId: string): QuerySessionLike | undefined;
-  createQuerySession(options: Record<string, unknown>): QuerySessionLike;
+  // Backend runtime lifecycle
+  getConversationBackendFactory(
+    backend: AgentBackendId,
+  ): ConversationBackendFactory;
+  registerBackendRuntime(
+    conversationId: string,
+    runtime: ConversationBackendRuntime,
+  ): void;
+  unregisterBackendRuntime(conversationId: string): void;
+
+  // Child environment and plugins (passed to backend factory)
   buildChildEnv(): NodeJS.ProcessEnv;
   resolvePluginPaths(): Promise<Array<{ name: string; path: string }>>;
 
@@ -166,13 +149,17 @@ export interface ActorImplementationDeps {
   ): Promise<Array<{ filePath: string; description: string }>>;
   fileExists(filePath: string): boolean;
 
+  // Transcript reading (for synthetic fork seed)
+  readConversationMessages(
+    transcriptPath: string | null,
+  ): Promise<Array<{ role: string; content: MessageContentBlock[] }>>;
+
   // Lifecycle registries
   registerAbortController(
     conversationId: string,
     controller: AbortController,
   ): void;
   unregisterAbortController(conversationId: string): void;
-  registerQuery(conversationId: string, q: unknown): void;
 }
 
 let _deps: ActorImplementationDeps | null = null;
@@ -194,8 +181,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     transcriptMod,
     configMod,
     transcriptImagesMod,
-    querySessionRegistryMod,
-    querySessionMod,
+    registryMod,
+    runtimeRegistryMod,
     childEnvMod,
     commandsMod,
     notificationToolMod,
@@ -205,7 +192,6 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     plannerToolsMod,
     projectResolverMod,
     debugLogMod,
-    queryRegistryMod,
     stateMod,
     abortRegistryMod,
   ] = await Promise.all([
@@ -214,8 +200,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/transcript"),
     import("@/lib/config"),
     import("@/lib/transcript-images"),
-    import("@/lib/query-session-registry"),
-    import("@/lib/query-session"),
+    import("@/lib/agent-backends/registry"),
+    import("@/lib/agent-backends/runtime-registry"),
     import("@/lib/child-env"),
     import("@/lib/commands"),
     import("@/lib/agent-notification-tool"),
@@ -225,7 +211,6 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/workflow-graph/planner-tools"),
     import("@/lib/project-resolver"),
     import("@/lib/debug-log"),
-    import("@/lib/query-registry"),
     import("@/lib/state"),
     import("@/lib/abort-registry"),
   ]);
@@ -237,8 +222,9 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     readConfig: configMod.readConfig,
     safeAppendTranscriptEntry: transcriptMod.safeAppendTranscriptEntry,
     externalizeImageBlocks: transcriptImagesMod.externalizeImageBlocks,
-    getSessionFromRegistry: querySessionRegistryMod.getSession,
-    createQuerySession: querySessionMod.createQuerySession,
+    getConversationBackendFactory: registryMod.getConversationBackendFactory,
+    registerBackendRuntime: runtimeRegistryMod.registerRuntime,
+    unregisterBackendRuntime: runtimeRegistryMod.unregisterRuntime,
     buildChildEnv: childEnvMod.buildChildEnv,
     resolvePluginPaths: commandsMod.resolvePluginPaths,
     createNotificationToolServer:
@@ -251,11 +237,11 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     getCodexToolPromptHint: codexToolMod.getCodexToolPromptHint,
     getProjectDisplayName: projectResolverMod.getProjectDisplayName,
     getDebugLogUrl: debugLogMod.getDebugLogUrl,
-    registerQuery: queryRegistryMod.registerQuery,
     mutateConversation: stateMod.mutateConversation,
     getSessionState: stateMod.getSession,
     createReferenceDocument: stateMod.createReferenceDocument,
     getReferenceDocuments: stateMod.getReferenceDocuments,
+    readConversationMessages: transcriptMod.readConversationMessages,
     fileExists: (await import("node:fs")).existsSync,
     registerAbortController: abortRegistryMod.registerAbortController,
     unregisterAbortController: abortRegistryMod.unregisterAbortController,
@@ -277,15 +263,15 @@ export function _resetActorDepsForTesting(): void {
 // ============================================================
 
 /**
- * Determine whether an existing QuerySession should be closed and recreated
+ * Determine whether an existing backend runtime should be closed and recreated
  * because the model, effort level, or outputFormat changed.
  */
-export function shouldRecreateSession(
-  session:
+export function shouldRecreateRuntime(
+  runtime:
     | {
         status: string;
-        model: unknown;
-        effort: unknown;
+        modelId: unknown;
+        reasoningEffort: unknown;
         outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
       }
     | undefined,
@@ -296,12 +282,12 @@ export function shouldRecreateSession(
     schema: Record<string, unknown>;
   },
 ): boolean {
-  if (!session || session.status !== "alive") return false;
+  if (!runtime || runtime.status !== "alive") return false;
   const modelChanged =
-    effectiveModel != null && session.model !== effectiveModel;
+    effectiveModel != null && runtime.modelId !== effectiveModel;
   const effortChanged =
-    effectiveEffort != null && session.effort !== effectiveEffort;
-  const outputFormatChanged = session.outputFormat !== desiredOutputFormat;
+    effectiveEffort != null && runtime.reasoningEffort !== effectiveEffort;
+  const outputFormatChanged = runtime.outputFormat !== desiredOutputFormat;
   return modelChanged || effortChanged || outputFormatChanged;
 }
 
@@ -323,13 +309,11 @@ export function buildEffectivePrompt(
   if (debugMode?.active) {
     let prefix: string;
     if (!debugMode.instructionsDelivered) {
-      // First debug turn: full instructions
       prefix = DEBUG_MODE_INSTRUCTIONS.replaceAll(
         "{DEBUG_LOG_URL}",
         debugLogUrl,
       ).replaceAll("{DEBUG_LOG_FILE_PATH}", debugMode.logFilePath);
     } else {
-      // Subsequent turns: phase-specific context
       prefix = DEBUG_PHASE_CONTEXT[debugMode.phase] ?? "";
     }
 
@@ -354,110 +338,20 @@ function getErrorMessage(error: unknown): string {
 
 export function shouldRetryUndeliveredPrompt(
   error: unknown,
-  session: { status: string } | undefined,
+  runtime: { status: string } | undefined,
   abortSignal: AbortSignal,
   attemptNumber: number,
 ): boolean {
   return (
     attemptNumber === 0 &&
     !abortSignal.aborted &&
-    session?.status === "dead" &&
+    runtime?.status === "dead" &&
     isUndeliveredQuerySessionError(error)
   );
 }
 
-/**
- * Build the canUseTool callback for the SDK QuerySession.
- * Handles AskUserQuestion (blocking for user input or denying in autonomous mode).
- */
-export function buildCanUseTool(
-  runtime: ConversationRuntimeState,
-  identity: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  },
-  autonomous: boolean,
-  mutateConversation: ActorImplementationDeps["mutateConversation"],
-): (
-  toolName: string,
-  toolInput: Record<string, unknown>,
-) => Promise<CanUseToolResult> {
-  return async (
-    toolName: string,
-    toolInput: Record<string, unknown>,
-  ): Promise<CanUseToolResult> => {
-    if (toolName === "AskUserQuestion") {
-      if (autonomous) {
-        return {
-          behavior: "deny" as const,
-          message:
-            "Autonomous optimistic mode — make your best judgment and proceed without asking questions.",
-        };
-      }
-
-      const questions = toolInput.questions;
-      if (!questions || !Array.isArray(questions)) {
-        return { behavior: "allow" as const, updatedInput: toolInput };
-      }
-
-      const questionId = randomUUID();
-
-      // Send ASK_QUESTION event to the machine
-      runtime.sendToMachine?.({
-        type: "ASK_QUESTION",
-        questionId,
-        questions,
-      });
-
-      // Also persist question state (for crash recovery)
-      await mutateConversation(
-        identity.projectPath,
-        identity.sessionName,
-        identity.conversationId,
-        "prompt.setWaitingForInput",
-        (c) => {
-          c.status = "waiting_for_input";
-          c.pendingQuestionId = questionId;
-          c.pendingQuestions = questions as typeof c.pendingQuestions;
-        },
-      ).catch(() => {});
-
-      // Emit on prompt stream for SSE
-      runtime.streamEmit?.("ask-question", { questionId, questions });
-
-      // Block until user answers — use deferred promise from runtime
-      const answers = await new Promise<Record<string, string>>(
-        (resolve, reject) => {
-          runtime.activeQuestionResolver = { resolve, reject };
-        },
-      );
-
-      // Restore running status
-      await mutateConversation(
-        identity.projectPath,
-        identity.sessionName,
-        identity.conversationId,
-        "prompt.resumeRunning",
-        (c) => {
-          c.status = "running";
-          c.pendingQuestionId = null;
-          c.pendingQuestions = null;
-        },
-      ).catch(() => {});
-
-      return {
-        behavior: "allow" as const,
-        updatedInput: { ...toolInput, answers },
-      };
-    }
-
-    return { behavior: "allow" as const, updatedInput: toolInput };
-  };
-}
-
 // ============================================================
-// Message processing
+// Message processing (handles raw SDK messages from provider_event)
 // ============================================================
 
 export async function processMessage(
@@ -595,6 +489,129 @@ export function mapErrorSubtype(error: SDKResultError): string {
 }
 
 // ============================================================
+// Synthetic fork seed
+// ============================================================
+
+/**
+ * Build a text seed from the transcript up to the fork point so backends
+ * without native fork support can receive prior conversation context.
+ */
+const SYNTHETIC_FORK_MAX_CHARS = 24_000;
+const SYNTHETIC_FORK_TRUNCATION_PREFIX = "[truncated historical context]\n\n";
+
+async function buildSyntheticForkSeed(
+  deps: ActorImplementationDeps,
+  transcriptPath: string,
+  messageIndex: number,
+): Promise<string | null> {
+  try {
+    const messages = await deps.readConversationMessages(transcriptPath);
+    const forkSlice = messages.slice(0, messageIndex + 1);
+    if (forkSlice.length === 0) return null;
+
+    const blocks: string[] = [];
+    for (const msg of forkSlice) {
+      const role = msg.role === "user" ? "User" : "Assistant";
+      const textParts = msg.content
+        .filter((b): b is { type: "text"; text: string } => b.type === "text")
+        .map((b) => b.text);
+      if (textParts.length > 0) {
+        blocks.push(`${role}: ${textParts.join("\n")}`);
+      }
+    }
+
+    const header =
+      "The following is the conversation history up to the fork point. Continue from here:\n";
+    let body = blocks.join("\n\n");
+
+    if (header.length + body.length > SYNTHETIC_FORK_MAX_CHARS) {
+      const budget =
+        SYNTHETIC_FORK_MAX_CHARS -
+        header.length -
+        SYNTHETIC_FORK_TRUNCATION_PREFIX.length;
+      body = SYNTHETIC_FORK_TRUNCATION_PREFIX + body.slice(-budget);
+    }
+
+    return header + "\n" + body;
+  } catch (err) {
+    logger.warn("prompt.synthetic_fork_failed", {
+      transcriptPath,
+      error: getErrorMessage(err),
+    });
+    return null;
+  }
+}
+
+// ============================================================
+// Backend runtime creation
+// ============================================================
+
+/**
+ * Build an onAskQuestion callback that bridges between the backend runtime
+ * and the conversation machine's question flow.
+ */
+function buildOnAskQuestion(
+  runtimeState: ConversationRuntimeState,
+  identity: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  },
+  mutateConversation: ActorImplementationDeps["mutateConversation"],
+): (questions: AskQuestionItem[]) => Promise<Record<string, string>> {
+  return async (
+    questions: AskQuestionItem[],
+  ): Promise<Record<string, string>> => {
+    const questionId = randomUUID();
+
+    // Send ASK_QUESTION event to the machine
+    runtimeState.sendToMachine?.({
+      type: "ASK_QUESTION",
+      questionId,
+      questions,
+    });
+
+    // Persist question state (for crash recovery)
+    await mutateConversation(
+      identity.projectPath,
+      identity.sessionName,
+      identity.conversationId,
+      "prompt.setWaitingForInput",
+      (c) => {
+        c.status = "waiting_for_input";
+        c.pendingQuestionId = questionId;
+        c.pendingQuestions = questions as typeof c.pendingQuestions;
+      },
+    ).catch(() => {});
+
+    // Emit on prompt stream for SSE
+    runtimeState.streamEmit?.("ask-question", { questionId, questions });
+
+    // Block until user answers — use deferred promise from runtime
+    const answers = await new Promise<Record<string, string>>(
+      (resolve, reject) => {
+        runtimeState.activeQuestionResolver = { resolve, reject };
+      },
+    );
+
+    // Restore running status
+    await mutateConversation(
+      identity.projectPath,
+      identity.sessionName,
+      identity.conversationId,
+      "prompt.resumeRunning",
+      (c) => {
+        c.status = "running";
+        c.pendingQuestionId = null;
+        c.pendingQuestions = null;
+      },
+    ).catch(() => {});
+
+    return answers;
+  };
+}
+
+// ============================================================
 // Main actor implementations
 // ============================================================
 
@@ -643,7 +660,12 @@ export async function prepareTurnForMachine(
 }
 
 /**
- * Execute a prompt via the Claude Agent SDK.
+ * Execute a prompt via a backend-neutral conversation runtime.
+ *
+ * Orchestrates turn execution using ConversationBackendRuntime:
+ * - Gets or creates the backend runtime via factory
+ * - Constructs ConversationBackendTurnInput with onEvent/onAskQuestion callbacks
+ * - Translates backend events into SSE emit and machine events
  */
 export async function executePromptForMachine(
   input: ExecutePromptInput,
@@ -699,37 +721,39 @@ export async function executePromptForMachine(
   });
 
   // ---------------------------------------------------------------
-  // Get-or-create QuerySession
+  // Get-or-create ConversationBackendRuntime
   // ---------------------------------------------------------------
-  let querySession = deps.getSessionFromRegistry(input.conversationId);
+  let backendRuntime = runtimeState.backendRuntime;
 
-  // Close existing session if model, effort, or outputFormat changed
+  // Close existing runtime if model, effort, or outputFormat changed
   if (
-    querySession &&
-    shouldRecreateSession(
-      querySession,
+    backendRuntime &&
+    shouldRecreateRuntime(
+      backendRuntime,
       effectiveModel,
       effectiveEffort,
       input.outputFormat,
     )
   ) {
     const reason =
-      effectiveModel != null && querySession.model !== effectiveModel
+      effectiveModel != null && backendRuntime.modelId !== effectiveModel
         ? "model_changed"
-        : effectiveEffort != null && querySession.effort !== effectiveEffort
+        : effectiveEffort != null &&
+            backendRuntime.reasoningEffort !== effectiveEffort
           ? "effort_changed"
           : "output_format_changed";
-    logger.info("prompt.session_recreate", {
+    logger.info("prompt.runtime_recreate", {
       sessionName: input.sessionName,
       reason,
     });
-    querySession.close();
-    querySession = undefined;
+    backendRuntime.close();
+    deps.unregisterBackendRuntime(input.conversationId);
+    backendRuntime = undefined;
   }
 
-  const isNewSession = !querySession || querySession.status === "dead";
+  const isNewRuntime = !backendRuntime || backendRuntime.status === "dead";
 
-  async function createManagedQuerySession(): Promise<QuerySessionLike> {
+  async function createManagedBackendRuntime(): Promise<ConversationBackendRuntime> {
     const sessionState = await deps.getSessionState(
       input.projectPath,
       input.sessionName,
@@ -768,24 +792,6 @@ export async function executePromptForMachine(
       sessionName: input.sessionName,
     });
 
-    const pluginPaths = await deps.resolvePluginPaths();
-    const sdkPlugins = pluginPaths.map((p) => ({
-      type: "local" as const,
-      path: p.path,
-    }));
-
-    // Build canUseTool callback
-    const canUseTool = buildCanUseTool(
-      runtimeState,
-      {
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-      },
-      input.autonomous,
-      deps.mutateConversation,
-    );
-
     // Auto-register focus.md as a reference document
     const focusPath = `${input.worktreePath}/memory-bank/focus.md`;
     if (deps.fileExists(focusPath)) {
@@ -814,93 +820,85 @@ export async function executePromptForMachine(
           ].join("\n")
         : null;
 
-    // Build system prompt append
-    const systemPromptParts =
-      [
-        CC_CONTEXT,
-        sessionState?.objective
-          ? `<objective>${sessionState.objective}</objective>`
-          : null,
-        sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
-        deps.getCodexToolPromptHint(codexToolServer != null),
-        referenceDocsPrompt,
-      ]
-        .filter(Boolean)
-        .join("\n\n") || undefined;
+    // Build session instructions (baked into the runtime once)
+    const sessionInstructions = [
+      CC_CONTEXT,
+      sessionState?.objective
+        ? `<objective>${sessionState.objective}</objective>`
+        : null,
+      sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
+      deps.getCodexToolPromptHint(codexToolServer != null),
+      referenceDocsPrompt,
+    ].filter((s): s is string => s != null && s.length > 0);
 
-    const nextQuerySession = deps.createQuerySession({
-      conversationId: input.conversationId,
-      cwd: input.worktreePath,
-      model: effectiveModel ?? undefined,
-      effort: effectiveEffort,
-      systemPrompt: {
-        type: "preset",
-        preset: "claude_code",
-        append: systemPromptParts,
-      },
-      resume:
-        input.claudeSessionId ??
-        input.forkedFrom?.sourceClaudeSessionId ??
-        undefined,
-      forkSession:
-        input.forkedFrom != null && input.claudeSessionId == null
-          ? true
-          : undefined,
-      resumeSessionAt:
-        input.forkedFrom != null &&
-        input.claudeSessionId == null &&
-        input.forkedFrom.forkPointAssistantUuid != null
-          ? input.forkedFrom.forkPointAssistantUuid
-          : undefined,
-      mcpServers: {
-        ...(notificationToolServer
-          ? { "agent-notification": notificationToolServer }
-          : {}),
-        ...(codexToolServer ? { "codex-tool": codexToolServer } : {}),
-        "roadmap-tools": deps.createRoadmapToolServer({
-          projectPath: input.projectPath,
-        }),
-        "graph-workflow-planner": deps.createWiredPlannerToolServer(
-          {
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-          },
-          {
-            readConfig: deps.readConfig,
-            getSession: deps.getSessionState,
-          },
-        ),
-        "reference-document-tools": deps.createReferenceDocumentToolServer({
+    // Build Claude SDK servers for tooling overrides
+    const claudeSdkServers: Record<string, unknown> = {
+      ...(notificationToolServer
+        ? { "agent-notification": notificationToolServer }
+        : {}),
+      ...(codexToolServer ? { "codex-tool": codexToolServer } : {}),
+      "roadmap-tools": deps.createRoadmapToolServer({
+        projectPath: input.projectPath,
+      }),
+      "graph-workflow-planner": deps.createWiredPlannerToolServer(
+        {
           projectPath: input.projectPath,
           sessionName: input.sessionName,
-          worktreePath: input.worktreePath,
-        }),
-        ...(runtimeState.additionalMcpServers ?? {}),
-      },
-      canUseTool: canUseTool as never,
-      env: { ...deps.buildChildEnv(), CLAUDECODE: "" },
-      maxTurns: config.maxTurns,
-      plugins: sdkPlugins,
-      settingSources: ["user", "project", "local"],
-      disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
-      idleTtlMs: config.idleQuerySessionTtlMs,
-      ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
+        },
+        {
+          readConfig: deps.readConfig,
+          getSession: deps.getSessionState,
+        },
+      ),
+      "reference-document-tools": deps.createReferenceDocumentToolServer({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        worktreePath: input.worktreePath,
+      }),
+      // Merge per-conversation tooling overrides (e.g., graph workflow tools)
+      ...(runtimeState.tooling?.claudeSdkServers ?? {}),
+    };
+
+    // Get factory and create runtime
+    const factory = deps.getConversationBackendFactory(input.agentBackend);
+
+    logger.info("prompt.runtime_create", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
     });
 
-    // Register raw Query for backward compat (queueMessage)
-    deps.registerQuery(input.conversationId, nextQuerySession.query);
-    runtimeState.querySession = nextQuerySession;
-    querySession = nextQuerySession;
+    const newRuntime = await factory.createRuntime({
+      conversationId: input.conversationId,
+      projectPath: input.projectPath,
+      projectName,
+      sessionName: input.sessionName,
+      worktreePath: input.worktreePath,
+      persistedRef: input.backendRef,
+      modelId: effectiveModel,
+      reasoningEffort: effectiveEffort,
+      outputFormat: input.outputFormat,
+      sessionInstructions,
+      tooling: {
+        claudeSdkServers,
+        portableMcp: runtimeState.tooling?.portableMcp,
+      },
+    });
 
-    return nextQuerySession;
+    // Register in runtime-registry and local state
+    deps.registerBackendRuntime(input.conversationId, newRuntime);
+    runtimeState.backendRuntime = newRuntime;
+    backendRuntime = newRuntime;
+
+    return newRuntime;
   }
 
-  if (isNewSession) {
-    querySession = await createManagedQuerySession();
+  if (isNewRuntime) {
+    backendRuntime = await createManagedBackendRuntime();
   }
 
-  // Store the session in runtime for reuse
-  runtimeState.querySession = querySession;
+  // Store the runtime in local state for reuse
+  runtimeState.backendRuntime = backendRuntime;
 
   // ---------------------------------------------------------------
   // Safety-net timeout
@@ -913,43 +911,78 @@ export async function executePromptForMachine(
       sessionName: input.sessionName,
       timeoutMs: config.claudeTimeoutMs,
     });
-    querySession?.close();
+    backendRuntime?.close();
     abortController.abort();
   }, config.claudeTimeoutMs);
 
   // ---------------------------------------------------------------
-  // Process messages and send prompt
+  // Build turn input and execute
   // ---------------------------------------------------------------
   const contentBlocks: MessageContentBlock[] = [];
 
-  const turnEmit = async (event: string, data: unknown) => {
-    if (event === "__raw_message") {
-      const msg = data as SDKMessage;
+  // onEvent: translate backend events into existing SSE emit path
+  const onEvent = async (event: ConversationBackendEvent): Promise<void> => {
+    switch (event.type) {
+      case "backend_init":
+        runtimeState.sendToMachine?.({
+          type: "BACKEND_INIT",
+          backendRef: event.backendRef,
+        });
+        break;
 
-      // Send SDK_INIT event to machine for session ID capture
-      if (msg.type === "system") {
-        const sysMsg = msg as SDKSystemMessage;
-        if (sysMsg.subtype === "init" && sysMsg.session_id) {
-          runtimeState.sendToMachine?.({
-            type: "SDK_INIT",
-            sessionId: sysMsg.session_id,
-          });
+      case "content":
+        contentBlocks.push(event.block);
+        runtimeState.streamEmit?.("content", event.block);
+        break;
+
+      case "provider_event": {
+        // Handle raw SDK messages for transcript writing and real-time SSE streaming
+        const msg = event.payload as SDKMessage;
+
+        // Send BACKEND_INIT event to machine on SDK init
+        if (msg.type === "system") {
+          const sysMsg = msg as SDKSystemMessage;
+          if (sysMsg.subtype === "init" && sysMsg.session_id) {
+            runtimeState.sendToMachine?.({
+              type: "BACKEND_INIT",
+              backendRef: {
+                backend: "claude",
+                sessionId: sysMsg.session_id,
+              } as AgentSessionRef,
+            });
+          }
         }
+
+        await processMessage(
+          msg,
+          input.conversationId,
+          runtimeState.streamEmit ?? (() => {}),
+          contentBlocks,
+          deps.safeAppendTranscriptEntry,
+        );
+        break;
       }
 
-      await processMessage(
-        msg,
-        input.conversationId,
-        runtimeState.streamEmit ?? (() => {}),
-        contentBlocks,
-        deps.safeAppendTranscriptEntry,
-      );
-      return;
+      case "error":
+        runtimeState.streamEmit?.("error", { message: event.message });
+        break;
     }
-    runtimeState.streamEmit?.(event, data);
   };
 
-  // Prepend debug mode instructions on first debug turn
+  // onAskQuestion: bridges question flow between backend and machine
+  const onAskQuestion = input.autonomous
+    ? undefined
+    : buildOnAskQuestion(
+        runtimeState,
+        {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+        },
+        deps.mutateConversation,
+      );
+
+  // Prepend debug mode instructions
   const effectivePrompt = buildEffectivePrompt(
     input.promptText,
     (input.images?.length ?? 0) > 0,
@@ -958,41 +991,76 @@ export async function executePromptForMachine(
     deps.getDebugLogUrl(input.conversationId),
   );
 
-  let turnResult:
-    | {
-        sessionId: string | null;
-        costUsd: number | null;
-        durationMs: number | null;
-        numTurns: number | null;
-        contextTokens: number | null;
-        contextWindow: number | null;
-        contentBlocks: MessageContentBlock[];
-        structuredOutput?: unknown;
-        aborted: boolean;
-        error: string | null;
+  // Determine prompt text — backend receives string, images are separate
+  const promptText =
+    typeof effectivePrompt === "string"
+      ? effectivePrompt
+      : effectivePrompt
+          .filter((b): b is { type: "text"; text: string } => b.type === "text")
+          .map((b) => b.text)
+          .join("\n\n");
+
+  // Determine fork params
+  let nativeFork: ConversationBackendTurnInput["nativeFork"] = undefined;
+  let syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"] =
+    undefined;
+
+  if (input.forkedFrom && !input.backendRef) {
+    // First turn of a forked conversation
+    const sourceRef = input.forkedFrom.sourceBackendRef ?? undefined;
+    const locator = input.forkedFrom.forkLocator ?? null;
+
+    if (backendRuntime!.capabilities.preciseFork && sourceRef) {
+      logger.info("prompt.native_fork", {
+        sessionName: input.sessionName,
+        sourceRef,
+        forkLocator: locator,
+      });
+      nativeFork = { sourceRef, forkLocator: locator };
+    } else {
+      // Backend doesn't support precise fork — synthesize context from transcript
+      syntheticForkSeed = await buildSyntheticForkSeed(
+        deps,
+        input.transcriptPath,
+        input.forkedFrom.messageIndex,
+      );
+      if (syntheticForkSeed) {
+        logger.info("prompt.synthetic_fork", {
+          sessionName: input.sessionName,
+          seedLength: syntheticForkSeed.length,
+          messageIndex: input.forkedFrom.messageIndex,
+        });
       }
-    | undefined;
+    }
+  }
+
+  let turnResult: ConversationBackendTurnResult | undefined;
 
   try {
-    const sendPromptOptions = {
-      autonomous: input.autonomous,
-      ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
-    };
     let deliveryAttempt = 0;
 
     while (true) {
       try {
-        turnResult = await querySession!.sendPrompt(
-          effectivePrompt,
-          turnEmit,
-          sendPromptOptions,
-        );
+        turnResult = await backendRuntime!.sendTurn({
+          promptText,
+          images: input.images,
+          sessionInstructions: [], // Already baked into the runtime
+          modelId: effectiveModel,
+          reasoningEffort: effectiveEffort,
+          autonomous: input.autonomous,
+          outputFormat: input.outputFormat,
+          signal: abortController.signal,
+          onEvent,
+          onAskQuestion,
+          nativeFork,
+          syntheticForkSeed,
+        });
         break;
       } catch (err) {
         if (
           !shouldRetryUndeliveredPrompt(
             err,
-            querySession,
+            backendRuntime,
             abortController.signal,
             deliveryAttempt,
           )
@@ -1001,15 +1069,16 @@ export async function executePromptForMachine(
         }
 
         deliveryAttempt += 1;
-        logger.warn("prompt.session_retry", {
+        logger.warn("prompt.runtime_retry", {
           sessionName: input.sessionName,
           conversationId: input.conversationId,
           attempt: deliveryAttempt,
           error: getErrorMessage(err),
         });
 
-        querySession?.close();
-        querySession = await createManagedQuerySession();
+        backendRuntime?.close();
+        deps.unregisterBackendRuntime(input.conversationId);
+        backendRuntime = await createManagedBackendRuntime();
       }
     }
   } catch (err) {
@@ -1019,7 +1088,7 @@ export async function executePromptForMachine(
         message: "Prompt execution was cancelled",
       });
       return {
-        sessionId: null,
+        backendRef: null,
         costUsd: null,
         durationMs: null,
         numTurns: null,
@@ -1038,7 +1107,7 @@ export async function executePromptForMachine(
     });
     runtimeState.streamEmit?.("error", { message: `SDK error: ${errorMsg}` });
     return {
-      sessionId: null,
+      backendRef: null,
       costUsd: null,
       durationMs: null,
       numTurns: null,
@@ -1059,15 +1128,15 @@ export async function executePromptForMachine(
 
   // Build result
   const result: PromptActorResult = {
-    sessionId: turnResult?.sessionId ?? null,
+    backendRef: turnResult?.backendRef ?? null,
     costUsd: turnResult?.costUsd ?? null,
     durationMs: turnResult?.durationMs ?? null,
     numTurns: turnResult?.numTurns ?? null,
     contextTokens: turnResult?.contextTokens ?? null,
-    contextWindow: turnResult?.contextWindow ?? null,
+    contextWindow: turnResult?.contextWindowMax ?? null,
     contentBlocks: turnResult?.contentBlocks ?? contentBlocks,
     structuredOutput: turnResult?.structuredOutput,
-    aborted: false,
+    aborted: turnResult?.aborted ?? false,
     error: turnResult?.error ?? null,
   };
 

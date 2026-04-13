@@ -8,7 +8,7 @@
 import { NextResponse } from "next/server";
 import { discoverProjects as defaultDiscoverProjects } from "@/lib/discovery";
 import { recoverOrphanedConversations as defaultRecoverOrphaned } from "@/lib/state";
-import { getQuery } from "@/lib/query-registry";
+import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 import type { DiscoveredProject } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ export function createProjectsRouteHandlers(
       // Recover conversations stuck in "running" with no active SDK query.
       // Runs on every project list fetch to prevent stale "running" badges.
       await deps.recoverOrphanedConversations?.(
-        (id) => getQuery(id) !== undefined,
+        (id) => getRuntime(id) !== undefined,
       );
 
       const projects = await deps.discoverProjects();

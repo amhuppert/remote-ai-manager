@@ -8,16 +8,18 @@
  */
 
 import type {
-  ClaudeModel,
-  EffortLevel,
   SessionState,
   ImagePayload,
+  ConversationToolingOverrides,
+  AgentBackendId,
 } from "@/types";
 import type { ConversationActorRef } from "./workflows/conversation/machine";
 import type { ConversationEvent } from "./workflows/conversation/types";
 import { createLogger } from "./logging";
 import { getConversation, createConversation } from "./conversations";
 import { getProjectDisplayName } from "./project-resolver";
+import { readConfig } from "./config";
+import { getConversationBackendFactory } from "./agent-backends/registry";
 import { randomUUID } from "node:crypto";
 
 const logger = createLogger("prompt");
@@ -177,6 +179,8 @@ export interface PromptDeps {
   getConversation: typeof getConversation;
   createConversation: typeof createConversation;
   getProjectDisplayName: typeof getProjectDisplayName;
+  readConfig: typeof readConfig;
+  getConversationBackendFactory: typeof getConversationBackendFactory;
 
   // Manager operations — injected to avoid vi.mock() on the manager module
   ensureConversationActor(
@@ -204,11 +208,11 @@ export interface PromptDeps {
     event: ConversationEvent,
   ): boolean;
 
-  setAdditionalMcpServers?(
+  setTooling?(
     projectPath: string,
     sessionName: string,
     conversationId: string,
-    servers: Record<string, unknown>,
+    tooling: ConversationToolingOverrides,
   ): void;
 
   setSkipSessionLock?(
@@ -229,16 +233,13 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
     getConversation,
     createConversation,
     getProjectDisplayName,
+    readConfig,
+    getConversationBackendFactory,
     ensureConversationActor: manager.ensureConversationActor,
     attachPromptStream: manager.attachPromptStream,
     detachPromptStream: manager.detachPromptStream,
     sendConversationEvent: manager.sendConversationEvent,
-    setAdditionalMcpServers: (
-      projectPath,
-      sessionName,
-      conversationId,
-      servers,
-    ) => {
+    setTooling: (projectPath, sessionName, conversationId, tooling) => {
       const key = runtimeState.conversationRuntimeKey(
         projectPath,
         sessionName,
@@ -246,7 +247,7 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
       );
       const runtime = runtimeState.getConversationRuntime(key);
       if (runtime) {
-        runtime.additionalMcpServers = servers;
+        runtime.tooling = tooling;
       }
     },
     setSkipSessionLock: (projectPath, sessionName, conversationId, skip) => {
@@ -276,7 +277,7 @@ export function createPromptExecutor(deps: PromptDeps) {
       promptText: string,
       emit: (event: string, data: unknown) => void,
       conversationId?: string,
-      modelId?: ClaudeModel,
+      modelId?: string,
       images?: ImagePayload[],
       options?: PromptStreamOptions,
     ) =>
@@ -296,8 +297,9 @@ export function createPromptExecutor(deps: PromptDeps) {
 
 export interface PromptStreamOptions {
   autonomous?: boolean;
-  effort?: EffortLevel;
-  additionalMcpServers?: Record<string, unknown>;
+  effort?: string;
+  backend?: AgentBackendId;
+  tooling?: ConversationToolingOverrides;
   skipSessionLock?: boolean;
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
 }
@@ -325,14 +327,15 @@ export async function executePromptStream(
   promptText: string,
   emit: (event: string, data: unknown) => void,
   conversationId?: string,
-  modelId?: ClaudeModel,
+  modelId?: string,
   images?: ImagePayload[],
   options?: PromptStreamOptions,
   deps?: PromptDeps,
 ): Promise<PromptStreamResult> {
   const resolvedDeps = deps ?? (await getDefaultPromptDeps());
 
-  // Get or create conversation
+  // Get or create conversation, resolving backend along the way
+  let resolvedBackend: AgentBackendId;
   if (conversationId) {
     const existing = await resolvedDeps.getConversation(
       projectPath,
@@ -342,12 +345,57 @@ export async function executePromptStream(
     if (!existing) {
       throw new Error(`Conversation not found: ${conversationId}`);
     }
+    // Existing conversation: reject if request specifies a different backend
+    if (options?.backend && options.backend !== existing.agentBackend) {
+      const err = new BackendMismatchError(
+        existing.agentBackend,
+        options.backend,
+      );
+      logger.warn("prompt.backend_mismatch", {
+        conversationId,
+        existingBackend: existing.agentBackend,
+        requestedBackend: options.backend,
+      });
+      throw err;
+    }
+    resolvedBackend = existing.agentBackend;
   } else {
+    // New conversation: use explicit backend or config default
+    if (options?.backend) {
+      resolvedBackend = options.backend;
+    } else {
+      const config = await resolvedDeps.readConfig();
+      resolvedBackend = config.defaultAgentBackend ?? "claude";
+    }
     const conversation = await resolvedDeps.createConversation(
       projectPath,
       session.sessionName,
+      { agentBackend: resolvedBackend },
     );
     conversationId = conversation.id;
+  }
+
+  // Validate model/effort via the backend factory before execution
+  const factory = resolvedDeps.getConversationBackendFactory(resolvedBackend);
+  if (factory.validateModelAndEffort) {
+    try {
+      factory.validateModelAndEffort({
+        modelId: modelId ?? undefined,
+        reasoningEffort: options?.effort,
+      });
+    } catch (err) {
+      logger.warn("prompt.model_effort_validation_failed", {
+        backend: resolvedBackend,
+        modelId,
+        effort: options?.effort,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw new ModelEffortValidationError(
+        err instanceof Error
+          ? err.message
+          : "Invalid model or effort for backend",
+      );
+    }
   }
 
   const streamId = randomUUID();
@@ -356,6 +404,7 @@ export async function executePromptStream(
     sessionName: session.sessionName,
     promptLength: promptText.length,
     model: modelId ?? "default",
+    backend: resolvedBackend,
     conversationId,
   });
 
@@ -366,13 +415,13 @@ export async function executePromptStream(
     conversationId,
   );
 
-  // Register per-invocation MCP servers on the conversation runtime state
-  if (options?.additionalMcpServers) {
-    resolvedDeps.setAdditionalMcpServers?.(
+  // Register per-invocation tooling overrides on the conversation runtime state
+  if (options?.tooling) {
+    resolvedDeps.setTooling?.(
       projectPath,
       session.sessionName,
       conversationId,
-      options.additionalMcpServers,
+      options.tooling,
     );
   }
 
@@ -405,6 +454,7 @@ export async function executePromptStream(
         type: "SUBMIT_PROMPT",
         promptText,
         images,
+        backend: resolvedBackend,
         modelId,
         effort: options?.effort,
         autonomous: options?.autonomous,
@@ -440,6 +490,31 @@ export async function executePromptStream(
       conversationId,
       streamId,
     );
+  }
+}
+
+// ============================================================
+// Error types for backend validation
+// ============================================================
+
+export class BackendMismatchError extends Error {
+  readonly statusCode = 409;
+  constructor(
+    public readonly existingBackend: AgentBackendId,
+    public readonly requestedBackend: AgentBackendId,
+  ) {
+    super(
+      `Backend mismatch: conversation uses "${existingBackend}" but request specified "${requestedBackend}"`,
+    );
+    this.name = "BackendMismatchError";
+  }
+}
+
+export class ModelEffortValidationError extends Error {
+  readonly statusCode = 400;
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelEffortValidationError";
   }
 }
 

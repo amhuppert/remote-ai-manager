@@ -12,10 +12,10 @@ import type {
   AskQuestionItem,
   DebugHypothesis,
   DebugModePhase,
-  ClaudeModel,
-  EffortLevel,
   ImagePayload,
   MessageContentBlock,
+  AgentBackendId,
+  AgentSessionRef,
 } from "@/types";
 
 // ============================================================
@@ -38,7 +38,8 @@ export interface ConversationContext {
   status: ConversationStatus;
   promptCount: number;
   transcriptPath: string | null;
-  claudeSessionId: string | null;
+  agentBackend: AgentBackendId;
+  backendRef: AgentSessionRef | null;
   forkedFrom: ForkedFrom;
   role: ConversationRole;
 
@@ -46,8 +47,9 @@ export interface ConversationContext {
   activeTurn: {
     promptText: string;
     images: ImagePayload[];
-    modelId: ClaudeModel | null;
-    effort: EffortLevel | null;
+    backend: AgentBackendId;
+    modelId: string | null;
+    effort: string | null;
     autonomous: boolean;
     startedAt: string | null;
     streamId: string | null;
@@ -94,15 +96,16 @@ export type ConversationEvent =
       type: "SUBMIT_PROMPT";
       promptText: string;
       images?: ImagePayload[];
-      modelId?: ClaudeModel;
-      effort?: EffortLevel;
+      backend?: AgentBackendId;
+      modelId?: string;
+      effort?: string;
       autonomous?: boolean;
       streamId: string;
       outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
     }
   | { type: "RESOURCES_ACQUIRED"; transcriptPath: string }
   | { type: "RESOURCES_FAILED"; error: string }
-  | { type: "SDK_INIT"; sessionId: string }
+  | { type: "BACKEND_INIT"; backendRef: AgentSessionRef }
   | { type: "ASK_QUESTION"; questionId: string; questions: AskQuestionItem[] }
   | { type: "ANSWER"; questionId: string; answers: Record<string, string> }
   | { type: "PROMPT_COMPLETED"; result: PromptActorResult }
@@ -129,7 +132,8 @@ export interface ConversationInput {
   forkedFrom: ForkedFrom;
   role: ConversationRole;
   transcriptPath: string | null;
-  claudeSessionId: string | null;
+  agentBackend: AgentBackendId;
+  backendRef: AgentSessionRef | null;
   promptCount: number;
 }
 
@@ -150,7 +154,7 @@ export interface PrepareTurnOutput {
 
 /** Output from the executePrompt actor. */
 export interface PromptActorResult {
-  sessionId: string | null;
+  backendRef: AgentSessionRef | null;
   costUsd: number | null;
   durationMs: number | null;
   numTurns: number | null;
@@ -170,13 +174,14 @@ export interface ExecutePromptInput {
   worktreePath: string;
   conversationId: string;
   transcriptPath: string;
-  claudeSessionId: string | null;
+  agentBackend: AgentBackendId;
+  backendRef: AgentSessionRef | null;
   forkedFrom: ForkedFrom;
   role: ConversationRole;
   promptText: string;
   images: ImagePayload[];
-  modelId: ClaudeModel | null;
-  effort: EffortLevel | null;
+  modelId: string | null;
+  effort: string | null;
   autonomous: boolean;
   debugMode: ConversationContext["debugMode"];
   outputFormat?: {

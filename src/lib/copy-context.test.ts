@@ -10,7 +10,6 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
   return {
     id: "conv-1",
     name: null,
-    claudeSessionId: "claude-sess-1",
     transcriptPath: "/tmp/transcripts/conv-1.jsonl",
     status: "awaiting" as const,
     promptCount: 3,
@@ -30,6 +29,8 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     contextWindowMax: 200000,
     debugMode: null,
     machineSnapshot: null,
+    agentBackend: "claude" as const,
+    backendRef: null,
     ...overrides,
   };
 }
@@ -319,9 +320,8 @@ describe("buildConversationContext", () => {
       "<worktree>/home/user/project/.worktrees/my-session</worktree>",
     );
     expect(result).toContain("<conversation-id>conv-1</conversation-id>");
-    expect(result).toContain(
-      "<claude-session-id>claude-sess-1</claude-session-id>",
-    );
+    expect(result).toContain("<agent-backend>claude</agent-backend>");
+    expect(result).toContain("<agent-session-ref>null</agent-session-ref>");
     expect(result).toContain("<status>awaiting</status>");
     expect(result).toContain("<prompt-count>3</prompt-count>");
     expect(result).toContain(

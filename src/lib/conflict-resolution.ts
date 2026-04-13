@@ -1,31 +1,25 @@
-import { query as defaultQuery } from "@anthropic-ai/claude-agent-sdk";
-import type {
-  SDKMessage,
-  SDKAssistantMessage,
-} from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { conflictEntrySchema } from "./schemas";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/schemas";
 import { readConfig as defaultReadConfig } from "./config";
 import { assertNever } from "./assert-never";
 import { createLogger } from "./logging";
+import { getTaskRunner as defaultGetTaskRunner } from "./agent-backends/registry";
+import type { AgentTaskRunner } from "./agent-backends/task";
 
 const logger = createLogger("conflict-resolution");
-
-// Prevent nested session detection when CC runs inside Claude Code
-import "@/lib/sdk-env";
 
 // ============================================================
 // Dependency Injection
 // ============================================================
 
 export interface ConflictResolutionDeps {
-  query: typeof defaultQuery;
+  getTaskRunner(backend: "claude"): AgentTaskRunner;
   readConfig: typeof defaultReadConfig;
 }
 
 const defaultDeps: ConflictResolutionDeps = {
-  query: defaultQuery,
+  getTaskRunner: defaultGetTaskRunner,
   readConfig: defaultReadConfig,
 };
 
@@ -154,6 +148,75 @@ function extractLastJsonCodeFence(text: string): string | null {
 }
 
 // ============================================================
+// Conflict Entry Parsing (resilience order)
+// ============================================================
+
+/**
+ * Parse conflict entries from task runner output using a resilience chain:
+ * 1. Structured output (if the runner returned it via outputSchema)
+ * 2. Raw JSON parse of the full text
+ * 3. Fenced ```json block extraction
+ */
+function parseConflictEntries(
+  text: string | null,
+  structuredOutput: unknown,
+): { conflicts: ConflictEntry[] } | { error: string } {
+  // 1. Structured output
+  if (structuredOutput != null) {
+    const parseResult = z
+      .array(conflictEntrySchema)
+      .safeParse(structuredOutput);
+    if (parseResult.success) {
+      logger.debug("conflict-resolution.parsed_via_structured_output");
+      return { conflicts: parseResult.data };
+    }
+    logger.debug("conflict-resolution.structured_output_invalid", {
+      error: parseResult.error.message,
+    });
+  }
+
+  if (!text) {
+    return { error: "No text output from task runner" };
+  }
+
+  // 2. Raw JSON parse of the full text
+  try {
+    const parsed = JSON.parse(text);
+    const parseResult = z.array(conflictEntrySchema).safeParse(parsed);
+    if (parseResult.success) {
+      logger.debug("conflict-resolution.parsed_via_raw_json");
+      return { conflicts: parseResult.data };
+    }
+  } catch {
+    // Not valid JSON — fall through to fenced block extraction
+  }
+
+  // 3. Fenced ```json block extraction
+  const jsonContent = extractLastJsonCodeFence(text);
+  if (!jsonContent) {
+    return { error: "No JSON code fence found in agent's response" };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonContent);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "Invalid JSON";
+    return { error: `Failed to parse conflict entries JSON: ${errorMsg}` };
+  }
+
+  const parseResult = z.array(conflictEntrySchema).safeParse(parsed);
+  if (!parseResult.success) {
+    return {
+      error: `Failed to parse conflict entries: ${parseResult.error.message}`,
+    };
+  }
+
+  logger.debug("conflict-resolution.parsed_via_fenced_block");
+  return { conflicts: parseResult.data };
+}
+
+// ============================================================
 // Main Entry Point
 // ============================================================
 
@@ -176,13 +239,12 @@ export function createConflictResolver(
 }
 
 /**
- * Invoke Claude Agent SDK to analyze and resolve merge conflicts in a session worktree.
+ * Resolve merge conflicts via the task runner.
  *
  * - Constructs the conflict resolution prompt
- * - Calls query() with full tool access in the session worktree
- * - Streams all messages, collecting assistant text blocks
- * - After stream completes, extracts structured ConflictEntry[] from the last JSON code fence
- * - Returns resolved status with entries on success, or failed status with error on failure
+ * - Runs via the Claude task runner with full tool access
+ * - Extracts structured ConflictEntry[] using resilience chain
+ * - Returns resolved status with entries on success, or failed status with error
  */
 export async function resolveConflicts(params: {
   worktreePath: string;
@@ -199,7 +261,7 @@ async function resolveConflictsImpl(
   deps: ConflictResolutionDeps,
 ): Promise<ConflictResolutionResult> {
   const { worktreePath, decisions } = params;
-  const { query, readConfig } = deps;
+  const { getTaskRunner, readConfig } = deps;
 
   logger.info("conflict-resolution.start", { worktreePath });
 
@@ -221,106 +283,50 @@ async function resolveConflictsImpl(
     prompt += buildDecisionsPrompt(decisions);
   }
 
-  // Collect all assistant text blocks across the stream
-  const assistantTexts: string[] = [];
-
   try {
-    const abortController = new AbortController();
+    const runner = getTaskRunner("claude");
+    const result = await runner.run({
+      workingDirectory: worktreePath,
+      prompt,
+      systemInstructions: [CONFLICT_RESOLUTION_INSTRUCTIONS],
+      autonomous: true,
+      timeoutMs: config.claudeTimeoutMs,
+    });
 
-    // Safety-net timeout: abort if resolution exceeds configured max duration
-    const timeoutHandle = setTimeout(() => {
-      logger.warn("conflict-resolution.timeout", {
+    if (result.error) {
+      logger.error("conflict-resolution.task_error", {
         worktreePath,
-        timeoutMs: config.claudeTimeoutMs,
+        error: result.error,
+        timedOut: result.timedOut,
       });
-      abortController.abort();
-    }, config.claudeTimeoutMs);
-
-    try {
-      const stream = query({
-        prompt,
-        options: {
-          systemPrompt: {
-            type: "preset",
-            preset: "claude_code",
-            append: CONFLICT_RESOLUTION_INSTRUCTIONS,
-          },
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          cwd: worktreePath,
-          persistSession: false,
-          abortController,
-          settingSources: ["user", "project", "local"],
-          env: { CLAUDECODE: "" },
-        },
-      });
-
-      for await (const message of stream) {
-        collectAssistantText(message, assistantTexts);
-      }
-    } finally {
-      clearTimeout(timeoutHandle);
+      return { status: "failed", error: result.error };
     }
+
+    const parseResult = parseConflictEntries(
+      result.text,
+      result.structuredOutput,
+    );
+    if ("error" in parseResult) {
+      logger.warn("conflict-resolution.parse_error", {
+        worktreePath,
+        error: parseResult.error,
+      });
+      return { status: "failed", error: parseResult.error };
+    }
+
+    logger.info("conflict-resolution.resolved", {
+      worktreePath,
+      conflictCount: parseResult.conflicts.length,
+    });
+    return { status: "resolved", conflicts: parseResult.conflicts };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Unknown SDK error";
-    logger.error("conflict-resolution.sdk_error", {
+    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    logger.error("conflict-resolution.runner_error", {
       worktreePath,
       error: errorMsg,
     });
     return { status: "failed", error: errorMsg };
   }
-
-  // Extract the structured conflict entries from the assistant's output
-  const fullText = assistantTexts.join("\n");
-  logger.debug("conflict-resolution.full_text_length", {
-    length: fullText.length,
-  });
-
-  const jsonContent = extractLastJsonCodeFence(fullText);
-  if (!jsonContent) {
-    logger.warn("conflict-resolution.no_json_fence", { worktreePath });
-    return {
-      status: "failed",
-      error: "No JSON code fence found in Claude's response",
-    };
-  }
-
-  // Parse the JSON content
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonContent);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Invalid JSON";
-    logger.warn("conflict-resolution.json_parse_error", {
-      worktreePath,
-      error: errorMsg,
-    });
-    return {
-      status: "failed",
-      error: `Failed to parse conflict entries JSON: ${errorMsg}`,
-    };
-  }
-
-  // Validate with Zod schema
-  const parseResult = z.array(conflictEntrySchema).safeParse(parsed);
-  if (!parseResult.success) {
-    logger.warn("conflict-resolution.zod_parse_error", {
-      worktreePath,
-      error: parseResult.error.message,
-    });
-    return {
-      status: "failed",
-      error: `Failed to parse conflict entries: ${parseResult.error.message}`,
-    };
-  }
-
-  const conflicts = parseResult.data;
-  logger.info("conflict-resolution.resolved", {
-    worktreePath,
-    conflictCount: conflicts.length,
-  });
-
-  return { status: "resolved", conflicts };
 }
 
 // ============================================================
@@ -328,7 +334,7 @@ async function resolveConflictsImpl(
 // ============================================================
 
 /**
- * Invoke Claude Agent SDK to analyze merge conflicts without resolving them.
+ * Analyze merge conflicts without resolving them via the task runner.
  * Produces structured ConflictEntry[] describing each conflict and a proposed resolution,
  * but does NOT edit files or remove conflict markers.
  */
@@ -343,7 +349,7 @@ async function analyzeConflictsImpl(
   deps: ConflictResolutionDeps,
 ): Promise<ConflictAnalysisResult> {
   const { worktreePath } = params;
-  const { query, readConfig } = deps;
+  const { getTaskRunner, readConfig } = deps;
 
   logger.info("conflict-analysis.start", { worktreePath });
 
@@ -360,117 +366,48 @@ async function analyzeConflictsImpl(
   const prompt =
     "Analyze all merge conflicts in this worktree. Follow the instructions in your system prompt precisely. Do NOT edit any files.";
 
-  const assistantTexts: string[] = [];
-
   try {
-    const abortController = new AbortController();
+    const runner = getTaskRunner("claude");
+    const result = await runner.run({
+      workingDirectory: worktreePath,
+      prompt,
+      systemInstructions: [CONFLICT_ANALYSIS_INSTRUCTIONS],
+      autonomous: true,
+      timeoutMs: config.claudeTimeoutMs,
+    });
 
-    const timeoutHandle = setTimeout(() => {
-      logger.warn("conflict-analysis.timeout", {
+    if (result.error) {
+      logger.error("conflict-analysis.task_error", {
         worktreePath,
-        timeoutMs: config.claudeTimeoutMs,
+        error: result.error,
+        timedOut: result.timedOut,
       });
-      abortController.abort();
-    }, config.claudeTimeoutMs);
-
-    try {
-      const stream = query({
-        prompt,
-        options: {
-          systemPrompt: {
-            type: "preset",
-            preset: "claude_code",
-            append: CONFLICT_ANALYSIS_INSTRUCTIONS,
-          },
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          cwd: worktreePath,
-          persistSession: false,
-          abortController,
-          settingSources: ["user", "project", "local"],
-          env: { CLAUDECODE: "" },
-        },
-      });
-
-      for await (const message of stream) {
-        collectAssistantText(message, assistantTexts);
-      }
-    } finally {
-      clearTimeout(timeoutHandle);
+      return { status: "failed", error: result.error };
     }
+
+    const parseResult = parseConflictEntries(
+      result.text,
+      result.structuredOutput,
+    );
+    if ("error" in parseResult) {
+      logger.warn("conflict-analysis.parse_error", {
+        worktreePath,
+        error: parseResult.error,
+      });
+      return { status: "failed", error: parseResult.error };
+    }
+
+    logger.info("conflict-analysis.analyzed", {
+      worktreePath,
+      conflictCount: parseResult.conflicts.length,
+    });
+    return { status: "analyzed", conflicts: parseResult.conflicts };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Unknown SDK error";
-    logger.error("conflict-analysis.sdk_error", {
+    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    logger.error("conflict-analysis.runner_error", {
       worktreePath,
       error: errorMsg,
     });
     return { status: "failed", error: errorMsg };
-  }
-
-  const fullText = assistantTexts.join("\n");
-  logger.debug("conflict-analysis.full_text_length", {
-    length: fullText.length,
-  });
-
-  const jsonContent = extractLastJsonCodeFence(fullText);
-  if (!jsonContent) {
-    logger.warn("conflict-analysis.no_json_fence", { worktreePath });
-    return {
-      status: "failed",
-      error: "No JSON code fence found in Claude's response",
-    };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonContent);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Invalid JSON";
-    logger.warn("conflict-analysis.json_parse_error", {
-      worktreePath,
-      error: errorMsg,
-    });
-    return {
-      status: "failed",
-      error: `Failed to parse conflict entries JSON: ${errorMsg}`,
-    };
-  }
-
-  const parseResult = z.array(conflictEntrySchema).safeParse(parsed);
-  if (!parseResult.success) {
-    logger.warn("conflict-analysis.zod_parse_error", {
-      worktreePath,
-      error: parseResult.error.message,
-    });
-    return {
-      status: "failed",
-      error: `Failed to parse conflict entries: ${parseResult.error.message}`,
-    };
-  }
-
-  const conflicts = parseResult.data;
-  logger.info("conflict-analysis.analyzed", {
-    worktreePath,
-    conflictCount: conflicts.length,
-  });
-
-  return { status: "analyzed", conflicts };
-}
-
-// ============================================================
-// Helpers
-// ============================================================
-
-/**
- * Extract text content from an assistant message and append to the accumulator.
- */
-function collectAssistantText(message: SDKMessage, texts: string[]): void {
-  if (message.type !== "assistant") return;
-
-  const assistantMsg = message as SDKAssistantMessage;
-  for (const block of assistantMsg.message.content) {
-    if (block.type === "text" && "text" in block) {
-      texts.push(block.text);
-    }
   }
 }

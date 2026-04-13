@@ -1,5 +1,5 @@
 /**
- * Invoke Claude Agent SDK to fix pre-merge validation errors in a session worktree.
+ * Fix pre-merge validation errors in a session worktree via the task runner.
  *
  * - Saves validation output to a temp file for the agent to read
  * - Tells the agent what validation command is being run (for context)
@@ -7,25 +7,23 @@
  * - The merge machine re-runs validation after this completes and retries if needed
  */
 
-import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { readConfig } from "./config";
 import { createLogger } from "./logging";
+import { getTaskRunner } from "./agent-backends/registry";
+import type { AgentSessionRef } from "./agent-backends/types";
 
 const logger = createLogger("validation-fix");
-
-// Prevent nested session detection when CC runs inside Claude Code
-import "@/lib/sdk-env";
 
 // ============================================================
 // Public Types
 // ============================================================
 
 export type ValidationFixResult =
-  | { status: "fixed"; claudeSessionId?: string }
-  | { status: "failed"; error: string; claudeSessionId?: string };
+  | { status: "fixed"; sessionRef?: AgentSessionRef | null }
+  | { status: "failed"; error: string; sessionRef?: AgentSessionRef | null };
 
 // ============================================================
 // System Prompt
@@ -126,31 +124,16 @@ function buildRetryPrompt(params: {
 }
 
 // ============================================================
-// Session ID Extraction
-// ============================================================
-
-function extractSessionId(message: SDKMessage): string | undefined {
-  if (message.type === "system" && "subtype" in message) {
-    const sysMsg = message as SDKMessage & { session_id?: string };
-    return sysMsg.session_id;
-  }
-  if (message.type === "result" && "session_id" in message) {
-    return (message as SDKMessage & { session_id: string }).session_id;
-  }
-  return undefined;
-}
-
-// ============================================================
 // Main Entry Point
 // ============================================================
 
 /**
- * Invoke Claude Agent SDK to fix validation errors in a session worktree.
+ * Fix validation errors in a session worktree via the task runner.
  *
  * - Saves validation output to a temp file for the agent to reference
  * - On first attempt: creates a new persisted session
  * - On retry: resumes the previous session for accumulated context
- * - Returns the session ID so the caller can resume on retry
+ * - Returns the session ref so the caller can resume on retry
  */
 export async function fixValidationErrors(params: {
   worktreePath: string;
@@ -159,16 +142,16 @@ export async function fixValidationErrors(params: {
   projectPath?: string;
   sessionName?: string;
   branchName?: string;
-  claudeSessionId?: string;
+  sessionRef?: AgentSessionRef | null;
 }): Promise<ValidationFixResult> {
-  const { worktreePath, validationOutput, validationCommand, claudeSessionId } =
+  const { worktreePath, validationOutput, validationCommand, sessionRef } =
     params;
-  const isRetry = claudeSessionId != null;
+  const isRetry = sessionRef != null;
 
   logger.info("validation-fix.start", {
     worktreePath,
     isRetry,
-    claudeSessionId,
+    sessionRef,
   });
 
   let config;
@@ -210,62 +193,41 @@ export async function fixValidationErrors(params: {
         validationCommand,
       });
 
-  let sessionId: string | undefined;
-
   try {
-    const abortController = new AbortController();
+    const runner = getTaskRunner("claude");
+    const result = await runner.run({
+      workingDirectory: worktreePath,
+      prompt,
+      systemInstructions: [VALIDATION_FIX_INSTRUCTIONS],
+      resumeRef: sessionRef,
+      autonomous: true,
+      timeoutMs: config.claudeTimeoutMs,
+    });
 
-    // Safety-net timeout: abort if fix session exceeds configured max duration
-    const timeoutHandle = setTimeout(() => {
-      logger.warn("validation-fix.timeout", {
+    if (result.error) {
+      logger.error("validation-fix.task_error", {
         worktreePath,
-        timeoutMs: config.claudeTimeoutMs,
+        error: result.error,
+        timedOut: result.timedOut,
       });
-      abortController.abort();
-    }, config.claudeTimeoutMs);
-
-    try {
-      const stream = query({
-        prompt,
-        options: {
-          systemPrompt: {
-            type: "preset",
-            preset: "claude_code",
-            append: VALIDATION_FIX_INSTRUCTIONS,
-          },
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          cwd: worktreePath,
-          persistSession: true,
-          resume: claudeSessionId,
-          abortController,
-          settingSources: ["user", "project", "local"],
-          env: { CLAUDECODE: "" },
-        },
-      });
-
-      // Consume the stream and extract the session ID for resume
-      for await (const message of stream) {
-        const id = extractSessionId(message);
-        if (id) {
-          sessionId = id;
-        }
-      }
-    } finally {
-      clearTimeout(timeoutHandle);
+      return {
+        status: "failed",
+        error: result.error,
+        sessionRef: result.backendRef,
+      };
     }
+
+    logger.info("validation-fix.complete", {
+      worktreePath,
+      sessionRef: result.backendRef,
+    });
+    return { status: "fixed", sessionRef: result.backendRef };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Unknown SDK error";
-    logger.error("validation-fix.sdk_error", {
+    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    logger.error("validation-fix.runner_error", {
       worktreePath,
       error: errorMsg,
     });
-    return { status: "failed", error: errorMsg, claudeSessionId: sessionId };
+    return { status: "failed", error: errorMsg };
   }
-
-  logger.info("validation-fix.complete", {
-    worktreePath,
-    claudeSessionId: sessionId,
-  });
-  return { status: "fixed", claudeSessionId: sessionId };
 }

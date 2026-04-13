@@ -1205,15 +1205,21 @@ export default function SessionDetailPage({
               <div className="si-sep" />
               <CopyableId label="Conv ID" value={conversationId} />
               {(() => {
-                const claudeSid = session.conversations.find(
+                const conv = session.conversations.find(
                   (c) => c.id === conversationId,
-                )?.claudeSessionId;
-                return claudeSid ? (
+                );
+                if (!conv) return null;
+                return (
                   <>
                     <div className="si-sep" />
-                    <CopyableId label="Claude Session" value={claudeSid} />
+                    <CopyableId label="Backend" value={conv.agentBackend} />
+                    <div className="si-sep" />
+                    <CopyableId
+                      label="Session Ref"
+                      value={JSON.stringify(conv.backendRef)}
+                    />
                   </>
-                ) : null;
+                );
               })()}
               <div className="si-sep" />
               <button
@@ -1765,12 +1771,22 @@ export default function SessionDetailPage({
                 />
                 <MobileInfoCopyRow label="Conv ID" value={conversationId} />
                 {(() => {
-                  const claudeSid = session.conversations.find(
+                  const conv = session.conversations.find(
                     (c) => c.id === conversationId,
-                  )?.claudeSessionId;
-                  return claudeSid ? (
-                    <MobileInfoCopyRow label="Claude" value={claudeSid} />
-                  ) : null;
+                  );
+                  if (!conv) return null;
+                  return (
+                    <>
+                      <MobileInfoCopyRow
+                        label="Backend"
+                        value={conv.agentBackend}
+                      />
+                      <MobileInfoCopyRow
+                        label="Session Ref"
+                        value={JSON.stringify(conv.backendRef)}
+                      />
+                    </>
+                  );
                 })()}
                 {contextPercent != null && (
                   <div className="mobile-info-row">

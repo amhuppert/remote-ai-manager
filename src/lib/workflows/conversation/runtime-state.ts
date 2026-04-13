@@ -2,7 +2,7 @@
  * Conversation-scoped runtime state registry for non-serializable data.
  *
  * XState snapshots must be JSON-serializable. AbortControllers, lock release
- * functions, QuerySession handles, stream emitters, etc. cannot live in
+ * functions, backend runtime handles, stream emitters, etc. cannot live in
  * machine context. Instead, we store them in an external Map keyed by
  * `${projectPath}::${sessionName}::${conversationId}`.
  *
@@ -10,6 +10,9 @@
  * - Created when a conversation actor starts a prompt turn
  * - Cleaned up when the turn completes or the actor reaches a terminal state
  */
+
+import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
+import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 
 export interface ConversationRuntimeState {
   /** AbortController for cancelling in-flight SDK queries. */
@@ -21,8 +24,8 @@ export interface ConversationRuntimeState {
   /** Release function for the global query slot semaphore. */
   releaseQuerySlot?: () => void;
 
-  /** Active QuerySession instance (reused across prompts). */
-  querySession?: unknown;
+  /** Active backend runtime instance (reused across prompts). */
+  backendRuntime?: ConversationBackendRuntime;
 
   /** SSE stream emit callback for the current HTTP prompt-stream response. */
   streamEmit?: (event: string, data: unknown) => void;
@@ -39,8 +42,8 @@ export interface ConversationRuntimeState {
   /** Callback to send intermediate events to the conversation machine. Registered by the manager before invoking actors. */
   sendToMachine?: (event: Record<string, unknown>) => void;
 
-  /** Per-conversation MCP servers injected by callers (e.g., graph workflow execution tools). Merged into QuerySession on creation. */
-  additionalMcpServers?: Record<string, unknown>;
+  /** Per-conversation tooling overrides injected by callers (e.g., graph workflow execution tools). Applied to backend runtime on creation. */
+  tooling?: ConversationToolingOverrides;
 
   /** When true, prepareTurnForMachine skips session lock acquisition. Used by validator agents that run within an already-locked session. */
   skipSessionLock?: boolean;

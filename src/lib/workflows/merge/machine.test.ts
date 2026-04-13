@@ -446,7 +446,10 @@ describe("mergeMachine", () => {
           fixCallCount++;
           return {
             status: "fixed",
-            claudeSessionId: `session-${fixCallCount}`,
+            sessionRef: {
+              backend: "claude" as const,
+              sessionId: `session-${fixCallCount}`,
+            },
           };
         }),
       });
@@ -474,7 +477,10 @@ describe("mergeMachine", () => {
           fixCallCount++;
           return {
             status: "fixed",
-            claudeSessionId: `session-${fixCallCount}`,
+            sessionRef: {
+              backend: "claude" as const,
+              sessionId: `session-${fixCallCount}`,
+            },
           };
         }),
       });
@@ -487,7 +493,7 @@ describe("mergeMachine", () => {
       expect(fixCallCount).toBe(2); // Default maxFixAttempts is 2
     });
 
-    it("passes claudeSessionId from first attempt to retry", async () => {
+    it("passes sessionRef from first attempt to retry", async () => {
       let validationCallCount = 0;
       const fixInputs: FixValidationInput[] = [];
 
@@ -500,7 +506,10 @@ describe("mergeMachine", () => {
         }),
         fixValidation: mockFixValidation(async (input) => {
           fixInputs.push({ ...input });
-          return { status: "fixed", claudeSessionId: "sdk-session-42" };
+          return {
+            status: "fixed",
+            sessionRef: { backend: "claude", sessionId: "sdk-session-42" },
+          };
         }),
       });
       const actor = createActor(machine, { input: defaultInput });
@@ -509,8 +518,11 @@ describe("mergeMachine", () => {
       await toPromise(actor);
 
       expect(fixInputs).toHaveLength(2);
-      expect(fixInputs[0]!.claudeSessionId).toBeUndefined();
-      expect(fixInputs[1]!.claudeSessionId).toBe("sdk-session-42");
+      expect(fixInputs[0]!.sessionRef).toBeUndefined();
+      expect(fixInputs[1]!.sessionRef).toEqual({
+        backend: "claude",
+        sessionId: "sdk-session-42",
+      });
     });
 
     it("respects custom maxFixAttempts", async () => {
@@ -658,7 +670,7 @@ describe("mergeMachine", () => {
       expect(ctx.conflictFiles).toEqual([]);
       expect(ctx.fixAttempt).toBe(0);
       expect(ctx.maxFixAttempts).toBe(2);
-      expect(ctx.fixSessionId).toBeNull();
+      expect(ctx.fixSessionRef).toBeNull();
     });
   });
 

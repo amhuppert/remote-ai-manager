@@ -1,27 +1,38 @@
 import { describe, it, expect, vi } from "vitest";
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import {
   createConflictResolver,
   type ConflictResolutionDeps,
 } from "./conflict-resolution";
+import type { AgentTaskRunner, AgentTaskResult } from "./agent-backends/task";
 
-// Helper: create a mock async generator that yields the given messages
-async function* mockQueryStream(
-  messages: SDKMessage[],
-): AsyncGenerator<SDKMessage> {
-  for (const msg of messages) yield msg;
+// ============================================================
+// Test Helpers
+// ============================================================
+
+function createMockRunner(result: Partial<AgentTaskResult>): AgentTaskRunner {
+  return {
+    backend: "claude",
+    run: vi.fn().mockResolvedValue({
+      backendRef: null,
+      text: null,
+      structuredOutput: undefined,
+      usage: null,
+      error: null,
+      timedOut: false,
+      ...result,
+    }),
+  };
 }
-
-// ============================================================
-// Test Dependency Helpers
-// ============================================================
 
 function createTestDeps(
   overrides?: Partial<ConflictResolutionDeps>,
 ): ConflictResolutionDeps {
   return {
-    query: vi.fn() as unknown as ConflictResolutionDeps["query"],
+    getTaskRunner: vi
+      .fn()
+      .mockReturnValue(
+        createMockRunner({ text: null }),
+      ) as ConflictResolutionDeps["getTaskRunner"],
     readConfig: vi.fn().mockResolvedValue({
       baseDir: "/home/user/projects",
       ignorePatterns: [],
@@ -34,7 +45,7 @@ function createTestDeps(
 }
 
 describe("conflict-resolution", () => {
-  it("successfully extracts ConflictEntry[] from a mock Claude response with a JSON code fence", async () => {
+  it("successfully extracts ConflictEntry[] from a fenced JSON code block in text", async () => {
     const conflictEntries = [
       {
         file: "src/index.ts",
@@ -52,7 +63,7 @@ describe("conflict-resolution", () => {
       },
     ];
 
-    const assistantText = `I've analyzed and resolved all merge conflicts. Here's the structured analysis:
+    const text = `I've analyzed and resolved all merge conflicts. Here's the structured analysis:
 
 \`\`\`json
 ${JSON.stringify(conflictEntries, null, 2)}
@@ -60,36 +71,9 @@ ${JSON.stringify(conflictEntries, null, 2)}
 
 All conflicts have been resolved and staged.`;
 
-    const messages: SDKMessage[] = [
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: assistantText }],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.01,
-        duration_ms: 1000,
-        num_turns: 1,
-      } as SDKMessage,
-    ];
-
+    const runner = createMockRunner({ text });
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { resolveConflicts } = createConflictResolver(deps);
@@ -114,52 +98,81 @@ All conflicts have been resolved and staged.`;
       expect(result.conflicts[1]!.file).toBe("src/utils.ts");
     }
 
-    // Verify query was called with correct options
-    const mockQuery = deps.query as ReturnType<typeof vi.fn>;
-    expect(mockQuery).toHaveBeenCalledOnce();
-    const callArgs = mockQuery.mock.calls[0]![0] as Record<string, unknown>;
-    expect(callArgs["options"]).toMatchObject({
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
-      cwd: "/tmp/worktree",
-      persistSession: false,
-    });
+    // Verify getTaskRunner was called with "claude"
+    expect(deps.getTaskRunner).toHaveBeenCalledWith("claude");
+    // Verify runner.run was called with correct options
+    expect(runner.run).toHaveBeenCalledOnce();
+    const callArgs = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(callArgs.workingDirectory).toBe("/tmp/worktree");
+    expect(callArgs.autonomous).toBe(true);
   });
 
-  it("returns failed status when no JSON code fence is found", async () => {
-    const assistantText =
-      "I resolved all conflicts but forgot to include the JSON output.";
-
-    const messages: SDKMessage[] = [
+  it("prefers structured output over text parsing", async () => {
+    const conflictEntries = [
       {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: assistantText }],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.01,
-        duration_ms: 500,
-        num_turns: 1,
-      } as SDKMessage,
+        file: "src/index.ts",
+        description: "Import conflict",
+        resolution: "Merged imports",
+        rationale: "Both needed",
+      },
     ];
 
+    const runner = createMockRunner({
+      text: "some text without json",
+      structuredOutput: conflictEntries,
+    });
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+    });
+
+    expect(result.status).toBe("resolved");
+    if (result.status === "resolved") {
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0]!.file).toBe("src/index.ts");
+    }
+  });
+
+  it("falls back to raw JSON parse when text is valid JSON", async () => {
+    const conflictEntries = [
+      {
+        file: "src/index.ts",
+        description: "Conflict",
+        resolution: "Resolved",
+        rationale: "Reason",
+      },
+    ];
+
+    const runner = createMockRunner({
+      text: JSON.stringify(conflictEntries),
+    });
+    const deps = createTestDeps({
+      getTaskRunner: vi.fn().mockReturnValue(runner),
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+    });
+
+    expect(result.status).toBe("resolved");
+    if (result.status === "resolved") {
+      expect(result.conflicts).toHaveLength(1);
+    }
+  });
+
+  it("returns failed status when no JSON code fence is found and text is not JSON", async () => {
+    const runner = createMockRunner({
+      text: "I resolved all conflicts but forgot to include the JSON output.",
+    });
+    const deps = createTestDeps({
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { resolveConflicts } = createConflictResolver(deps);
@@ -175,7 +188,6 @@ All conflicts have been resolved and staged.`;
   });
 
   it("returns failed status when Zod parse fails (malformed JSON)", async () => {
-    // JSON that doesn't match conflictEntrySchema — missing required fields
     const malformedEntries = [
       {
         file: "src/index.ts",
@@ -183,42 +195,15 @@ All conflicts have been resolved and staged.`;
       },
     ];
 
-    const assistantText = `Here's the analysis:
+    const text = `Here's the analysis:
 
 \`\`\`json
 ${JSON.stringify(malformedEntries, null, 2)}
 \`\`\``;
 
-    const messages: SDKMessage[] = [
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: assistantText }],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.01,
-        duration_ms: 500,
-        num_turns: 1,
-      } as SDKMessage,
-    ];
-
+    const runner = createMockRunner({ text });
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { resolveConflicts } = createConflictResolver(deps);
@@ -243,40 +228,13 @@ ${JSON.stringify(malformedEntries, null, 2)}
       },
     ];
 
-    const assistantText = `\`\`\`json
+    const text = `\`\`\`json
 ${JSON.stringify(conflictEntries, null, 2)}
 \`\`\``;
 
-    const messages: SDKMessage[] = [
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: assistantText }],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.02,
-        duration_ms: 2000,
-        num_turns: 2,
-      } as SDKMessage,
-    ];
-
+    const runner = createMockRunner({ text });
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { resolveConflicts } = createConflictResolver(deps);
@@ -299,10 +257,8 @@ ${JSON.stringify(conflictEntries, null, 2)}
     expect(result.status).toBe("resolved");
 
     // Verify the prompt includes decision information
-    const mockQuery = deps.query as ReturnType<typeof vi.fn>;
-    expect(mockQuery).toHaveBeenCalledOnce();
-    const callArgs = mockQuery.mock.calls[0]![0] as Record<string, unknown>;
-    const prompt = callArgs["prompt"] as string;
+    const callArgs = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    const prompt = callArgs.prompt as string;
 
     expect(prompt).toContain("src/index.ts");
     expect(prompt).toContain("APPROVED");
@@ -313,11 +269,12 @@ ${JSON.stringify(conflictEntries, null, 2)}
     expect(prompt).toContain("PENDING");
   });
 
-  it("returns failed status on SDK error/exception", async () => {
+  it("returns failed status on task runner error", async () => {
+    const runner = createMockRunner({
+      error: "SDK connection failed",
+    });
     const deps = createTestDeps({
-      query: vi.fn().mockImplementation(() => {
-        throw new Error("SDK connection failed");
-      }) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { resolveConflicts } = createConflictResolver(deps);
@@ -332,23 +289,11 @@ ${JSON.stringify(conflictEntries, null, 2)}
     }
   });
 
-  it("returns failed status when SDK stream throws during iteration", async () => {
-    // Simulate a stream that yields one message then throws
-    async function* failingStream(): AsyncGenerator<SDKMessage> {
-      yield {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage;
-      throw new Error("Stream interrupted");
-    }
-
+  it("returns failed status when getTaskRunner throws", async () => {
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          failingStream() as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockImplementation(() => {
+        throw new Error("No task runner registered");
+      }),
     });
 
     const { resolveConflicts } = createConflictResolver(deps);
@@ -359,7 +304,7 @@ ${JSON.stringify(conflictEntries, null, 2)}
 
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
-      expect(result.error).toContain("Stream interrupted");
+      expect(result.error).toContain("No task runner registered");
     }
   });
 
@@ -382,7 +327,7 @@ ${JSON.stringify(conflictEntries, null, 2)}
       },
     ];
 
-    const assistantText = `First attempt:
+    const text = `First attempt:
 
 \`\`\`json
 ${JSON.stringify(firstEntries, null, 2)}
@@ -394,36 +339,9 @@ Wait, let me update that:
 ${JSON.stringify(lastEntries, null, 2)}
 \`\`\``;
 
-    const messages: SDKMessage[] = [
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: assistantText }],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.01,
-        duration_ms: 1000,
-        num_turns: 1,
-      } as SDKMessage,
-    ];
-
+    const runner = createMockRunner({ text });
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { resolveConflicts } = createConflictResolver(deps);
@@ -439,119 +357,16 @@ ${JSON.stringify(lastEntries, null, 2)}
     }
   });
 
-  it("collects text from multiple assistant messages", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Import conflict",
-        resolution: "Merged imports",
-        rationale: "Both needed",
-      },
-    ];
-
-    const messages: SDKMessage[] = [
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [
-            { type: "text", text: "Analyzing conflicts..." },
-            {
-              type: "tool_use",
-              id: "tool-1",
-              name: "Bash",
-              input: { command: "git diff --name-only --diff-filter=U" },
-            },
-          ],
-        },
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "text",
-              text: `All resolved:\n\n\`\`\`json\n${JSON.stringify(conflictEntries, null, 2)}\n\`\`\``,
-            },
-          ],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.03,
-        duration_ms: 3000,
-        num_turns: 3,
-      } as SDKMessage,
-    ];
-
-    const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
-    });
-
-    const { resolveConflicts } = createConflictResolver(deps);
-
-    const result = await resolveConflicts({
-      worktreePath: "/tmp/worktree",
-    });
-
-    expect(result.status).toBe("resolved");
-    if (result.status === "resolved") {
-      expect(result.conflicts).toHaveLength(1);
-      expect(result.conflicts[0]!.file).toBe("src/index.ts");
-    }
-  });
-
   it("returns failed status when JSON code fence contains invalid JSON", async () => {
-    const assistantText = `Here's the analysis:
+    const text = `Here's the analysis:
 
 \`\`\`json
 { this is not valid JSON }
 \`\`\``;
 
-    const messages: SDKMessage[] = [
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: assistantText }],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.01,
-        duration_ms: 500,
-        num_turns: 1,
-      } as SDKMessage,
-    ];
-
+    const runner = createMockRunner({ text });
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { resolveConflicts } = createConflictResolver(deps);
@@ -583,42 +398,15 @@ describe("analyzeConflicts", () => {
       },
     ];
 
-    const assistantText = `I've analyzed the merge conflicts. Here's the structured analysis:
+    const text = `I've analyzed the merge conflicts. Here's the structured analysis:
 
 \`\`\`json
 ${JSON.stringify(conflictEntries, null, 2)}
 \`\`\``;
 
-    const messages: SDKMessage[] = [
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: assistantText }],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.01,
-        duration_ms: 1000,
-        num_turns: 1,
-      } as SDKMessage,
-    ];
-
+    const runner = createMockRunner({ text });
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { analyzeConflicts } = createConflictResolver(deps);
@@ -640,7 +428,7 @@ ${JSON.stringify(conflictEntries, null, 2)}
     }
   });
 
-  it("uses analysis-only prompt that does not instruct file editing", async () => {
+  it("uses analysis-only system instructions", async () => {
     const conflictEntries = [
       {
         file: "src/index.ts",
@@ -650,91 +438,35 @@ ${JSON.stringify(conflictEntries, null, 2)}
       },
     ];
 
-    const assistantText = `\`\`\`json
+    const text = `\`\`\`json
 ${JSON.stringify(conflictEntries, null, 2)}
 \`\`\``;
 
-    const messages: SDKMessage[] = [
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: assistantText }],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.01,
-        duration_ms: 500,
-        num_turns: 1,
-      } as SDKMessage,
-    ];
-
+    const runner = createMockRunner({ text });
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { analyzeConflicts } = createConflictResolver(deps);
 
     await analyzeConflicts({ worktreePath: "/tmp/worktree" });
 
-    // Verify the system prompt does NOT instruct editing or staging
-    const mockQuery = deps.query as ReturnType<typeof vi.fn>;
-    const callArgs = mockQuery.mock.calls[0]![0] as Record<string, unknown>;
-    const options = callArgs["options"] as Record<string, unknown>;
-    const systemPrompt = options["systemPrompt"] as Record<string, unknown>;
-    const appendedPrompt = systemPrompt["append"] as string;
+    // Verify system instructions contain analysis-only directives
+    const callArgs = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    const instructions = callArgs.systemInstructions as string[];
+    const combined = instructions.join("\n");
 
-    expect(appendedPrompt).not.toContain("Edit each file");
-    expect(appendedPrompt).not.toContain("Stage each resolved file");
-    expect(appendedPrompt).toContain("DO NOT");
+    expect(combined).toContain("DO NOT");
+    expect(combined).not.toContain("Edit each file");
+    expect(combined).not.toContain("Stage each resolved file");
   });
 
   it("returns failed status when no JSON code fence is found", async () => {
-    const messages: SDKMessage[] = [
-      {
-        type: "system",
-        subtype: "init",
-        session_id: "test-session",
-      } as SDKMessage,
-      {
-        type: "assistant",
-        session_id: "test-session",
-        message: {
-          role: "assistant",
-          content: [
-            { type: "text", text: "I analyzed but forgot the JSON output." },
-          ],
-        },
-      } as SDKMessage,
-      {
-        type: "result",
-        subtype: "success",
-        session_id: "test-session",
-        total_cost_usd: 0.01,
-        duration_ms: 500,
-        num_turns: 1,
-      } as SDKMessage,
-    ];
-
+    const runner = createMockRunner({
+      text: "I analyzed but forgot the JSON output.",
+    });
     const deps = createTestDeps({
-      query: vi
-        .fn()
-        .mockReturnValue(
-          mockQueryStream(messages) as unknown as Query,
-        ) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { analyzeConflicts } = createConflictResolver(deps);
@@ -747,11 +479,12 @@ ${JSON.stringify(conflictEntries, null, 2)}
     }
   });
 
-  it("returns failed status on SDK error", async () => {
+  it("returns failed status on task runner error", async () => {
+    const runner = createMockRunner({
+      error: "SDK connection failed",
+    });
     const deps = createTestDeps({
-      query: vi.fn().mockImplementation(() => {
-        throw new Error("SDK connection failed");
-      }) as unknown as ConflictResolutionDeps["query"],
+      getTaskRunner: vi.fn().mockReturnValue(runner),
     });
 
     const { analyzeConflicts } = createConflictResolver(deps);

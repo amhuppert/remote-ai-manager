@@ -100,7 +100,6 @@ describe("conversationStateSchema context fields", () => {
   it("accepts contextTokens and contextWindowMax", () => {
     const base = {
       id: "test-id",
-      claudeSessionId: null,
       transcriptPath: null,
       status: "awaiting" as const,
       promptCount: 0,
@@ -117,7 +116,6 @@ describe("conversationStateSchema context fields", () => {
   it("defaults contextTokens and contextWindowMax to null", () => {
     const base = {
       id: "test-id",
-      claudeSessionId: null,
       transcriptPath: null,
       status: "awaiting" as const,
       promptCount: 0,

@@ -9,7 +9,11 @@ import { NextResponse } from "next/server";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
 import { getSession as defaultGetSession } from "@/lib/state";
 import { getConversation as defaultGetConversation } from "@/lib/conversations";
-import { executePromptStream as defaultExecutePromptStream } from "@/lib/prompt";
+import {
+  executePromptStream as defaultExecutePromptStream,
+  BackendMismatchError,
+  ModelEffortValidationError,
+} from "@/lib/prompt";
 import { isSessionBusy as defaultIsSessionBusy } from "@/lib/lock";
 import { runPromptRequestSchema } from "@/lib/schemas";
 import type {
@@ -130,9 +134,22 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             undefined,
             body.modelId,
             body.images,
-            { effort: body.effort },
+            {
+              effort: body.effort,
+              backend: body.backend,
+            },
           );
         } catch (err) {
+          if (err instanceof BackendMismatchError) {
+            emit("error", { message: err.message, code: "BACKEND_MISMATCH" });
+            emit("done", {});
+            return;
+          }
+          if (err instanceof ModelEffortValidationError) {
+            emit("error", { message: err.message, code: "VALIDATION_ERROR" });
+            emit("done", {});
+            return;
+          }
           const msg = err instanceof Error ? err.message : "Prompt failed";
           emit("error", { message: msg });
           emit("done", {});
@@ -257,9 +274,22 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             conversationId,
             body.modelId,
             body.images,
-            { effort: body.effort },
+            {
+              effort: body.effort,
+              backend: body.backend,
+            },
           );
         } catch (err) {
+          if (err instanceof BackendMismatchError) {
+            emit("error", { message: err.message, code: "BACKEND_MISMATCH" });
+            emit("done", {});
+            return;
+          }
+          if (err instanceof ModelEffortValidationError) {
+            emit("error", { message: err.message, code: "VALIDATION_ERROR" });
+            emit("done", {});
+            return;
+          }
           const msg = err instanceof Error ? err.message : "Prompt failed";
           emit("error", { message: msg });
           emit("done", {});

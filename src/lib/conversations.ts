@@ -1,5 +1,11 @@
 import crypto from "node:crypto";
-import type { ConversationState, ConversationRole, ForkedFrom } from "@/types";
+import type {
+  ConversationState,
+  ConversationRole,
+  ForkedFrom,
+  AgentSessionRef,
+  AgentBackendId,
+} from "@/types";
 import {
   mutateSession as defaultMutateSession,
   readState as defaultReadState,
@@ -48,7 +54,7 @@ export function createConversationService(
   async function createConversation(
     projectPath: string,
     sessionName: string,
-    opts?: { role?: ConversationRole },
+    opts?: { role?: ConversationRole; agentBackend?: AgentBackendId },
   ): Promise<ConversationState> {
     const conversation = await mutateSession(
       projectPath,
@@ -60,7 +66,6 @@ export function createConversationService(
         const conv: ConversationState = {
           id: crypto.randomUUID(),
           name: `${sessionName} ${sequenceNumber}`,
-          claudeSessionId: null,
           transcriptPath: null,
           status: "new",
           promptCount: 0,
@@ -80,6 +85,8 @@ export function createConversationService(
           contextWindowMax: null,
           debugMode: null,
           machineSnapshot: null,
+          agentBackend: opts?.agentBackend ?? "claude",
+          backendRef: null,
         };
 
         session.conversations.push(conv);
@@ -208,9 +215,9 @@ export function createConversationService(
       throw new Error(`Source conversation not found: ${sourceConversationId}`);
     }
 
-    const sourceClaudeSessionId = resolveSourceClaudeSessionId(source);
-    if (!sourceClaudeSessionId) {
-      throw new Error("Cannot fork: conversation has no history with Claude");
+    const sourceBackendRef = resolveSourceBackendRef(source);
+    if (!sourceBackendRef) {
+      throw new Error("Cannot fork: conversation has no backend session");
     }
 
     if (!source.transcriptPath) {
@@ -231,16 +238,17 @@ export function createConversationService(
     const sourceName = source.name ?? "Unnamed";
     const forkName = `Fork of ${sourceName} @ turn ${turnNumber}`;
 
-    const forkPointAssistantUuid = await findLastAssistantUuid(
+    const forkLocator = await findLastAssistantUuid(
       source.transcriptPath,
       messageIndex,
     );
 
     const forkedFrom: ForkedFrom = {
       sourceConversationId,
-      sourceClaudeSessionId,
       messageIndex,
-      forkPointAssistantUuid,
+      sourceBackend: sourceBackendRef.backend,
+      sourceBackendRef,
+      forkLocator,
     };
 
     const transcriptPath = await getTranscriptPath(newId);
@@ -262,7 +270,6 @@ export function createConversationService(
         const conversation: ConversationState = {
           id: newId,
           name: forkName,
-          claudeSessionId: null,
           transcriptPath,
           status: "new",
           promptCount: 0,
@@ -282,6 +289,8 @@ export function createConversationService(
           contextWindowMax: null,
           debugMode: null,
           machineSnapshot: null,
+          agentBackend: source.agentBackend ?? "claude",
+          backendRef: null,
         };
 
         sess.conversations.push(conversation);
@@ -326,7 +335,6 @@ export function createConversationService(
         const newConvo: ConversationState = {
           id: crypto.randomUUID(),
           name: `${sessionName} ${sequenceNumber}`,
-          claudeSessionId: null,
           transcriptPath: null,
           status: "new",
           promptCount: 0,
@@ -346,6 +354,8 @@ export function createConversationService(
           contextWindowMax: null,
           debugMode: null,
           machineSnapshot: null,
+          agentBackend: "claude",
+          backendRef: null,
         };
 
         session.conversations.push(newConvo);
@@ -397,14 +407,12 @@ export interface FinalizeInitializationResult {
   name: string;
 }
 
-/** Resolve the Claude session ID to use for SDK resume when forking */
-function resolveSourceClaudeSessionId(
+/** Resolve the backend session ref to use when forking */
+function resolveSourceBackendRef(
   conversation: ConversationState,
-): string | null {
+): AgentSessionRef | null {
   return (
-    conversation.claudeSessionId ??
-    conversation.forkedFrom?.sourceClaudeSessionId ??
-    null
+    conversation.backendRef ?? conversation.forkedFrom?.sourceBackendRef ?? null
   );
 }
 

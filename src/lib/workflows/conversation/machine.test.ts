@@ -36,7 +36,8 @@ const defaultInput: ConversationInput = {
   forkedFrom: null,
   role: null,
   transcriptPath: null,
-  claudeSessionId: null,
+  agentBackend: "claude" as const,
+  backendRef: null,
   promptCount: 0,
 };
 
@@ -44,7 +45,7 @@ function successResult(
   overrides: Partial<PromptActorResult> = {},
 ): PromptActorResult {
   return {
-    sessionId: "sdk-session-1",
+    backendRef: null,
     costUsd: 0.01,
     durationMs: 500,
     numTurns: 1,
@@ -178,7 +179,7 @@ describe("conversationMachine", () => {
       expect(snap.context.promptCount).toBe(1);
       expect(snap.context.activeTurn).toBeNull();
       expect(snap.context.lastResult).toBeTruthy();
-      expect(snap.context.lastResult?.sessionId).toBe("sdk-session-1");
+      expect(snap.context.lastResult?.backendRef).toBeNull();
     });
 
     it("stores transcriptPath from prepareTurn", async () => {

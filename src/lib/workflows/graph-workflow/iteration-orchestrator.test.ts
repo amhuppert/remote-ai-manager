@@ -935,7 +935,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
         summary: "Task passed",
         feedback: "Task validation passed.",
         issues: [] as never[],
-        sessionRef: validatorLaneState.sessionRef,
+        sessionRef: { backend: "claude" as const, sessionId: "validator-conv" },
         reviewArtifact: null,
       };
     });
@@ -1454,9 +1454,8 @@ describe("task validation event publishing (fix-30388517)", () => {
     const createConversation = vi.fn(async () => ({ id: "conv-1" }));
 
     const sessionRef = {
-      engine: "claude" as const,
-      lane: "task_validator" as const,
-      conversationId: "validator-conv",
+      backend: "claude" as const,
+      sessionId: "validator-conv",
     };
 
     const validateTaskCompletion = vi.fn(async () => ({
@@ -1504,11 +1503,16 @@ describe("task validation event publishing (fix-30388517)", () => {
       (entry) => entry.event.type === "graph-workflow-validation-result",
     );
     expect(validationHistoryEntry).toBeDefined();
+    // The persisted event uses GraphWorkflowExecutionSessionRef (converted from AgentSessionRef)
     expect(validationHistoryEntry?.event).toMatchObject({
       type: "graph-workflow-validation-result",
       validatorType: "task",
       pass: true,
-      sessionRef,
+      sessionRef: {
+        engine: "claude",
+        lane: "task_validator",
+        conversationId: "validator-conv",
+      },
     });
   });
 });

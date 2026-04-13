@@ -4,12 +4,12 @@ import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextDefinition,
-  GraphWorkflowExecutionSessionRef,
   GraphWorkflowTaskDefinition,
   GraphWorkflowValidationReviewArtifact,
   WorkflowAgentValidatorResult,
   WorkflowValidatorIssue,
 } from "@/types";
+import type { AgentSessionRef } from "@/lib/agent-backends/types";
 import type { ValidatorRunResult } from "./validator-runner";
 
 export interface GraphWorkflowTaskValidatorInput {
@@ -38,7 +38,7 @@ export interface GraphWorkflowTaskValidationOutcome {
   summary: string;
   feedback: string;
   issues: WorkflowValidatorIssue[];
-  sessionRef?: GraphWorkflowExecutionSessionRef | null;
+  sessionRef?: AgentSessionRef | null;
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 

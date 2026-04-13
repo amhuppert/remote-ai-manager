@@ -29,6 +29,10 @@ import {
   cleanupConversationRuntime,
 } from "./runtime-state";
 import { persistConversationSnapshot } from "./persistence";
+import {
+  getRuntime as getRuntimeFromRegistry,
+  unregisterRuntime,
+} from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
 import type { ConversationState } from "@/types";
 
@@ -83,7 +87,8 @@ export function applySyncDerivedFields(
   c.status = context.status;
   c.pendingQuestionId = context.pendingQuestion?.questionId ?? null;
   c.pendingQuestions = context.pendingQuestion?.questions ?? null;
-  c.claudeSessionId = context.claudeSessionId;
+  c.agentBackend = context.agentBackend;
+  c.backendRef = context.backendRef;
   c.transcriptPath = context.transcriptPath;
   c.totalCostUsd = context.totals.totalCostUsd;
   c.totalDurationMs = context.totals.totalDurationMs;
@@ -416,7 +421,8 @@ export async function ensureConversationActor(
     forkedFrom: conversation.forkedFrom ?? null,
     role: conversation.role ?? null,
     transcriptPath: conversation.transcriptPath ?? null,
-    claudeSessionId: conversation.claudeSessionId ?? null,
+    agentBackend: conversation.agentBackend ?? "claude",
+    backendRef: conversation.backendRef ?? null,
     promptCount: conversation.promptCount ?? 0,
   });
 }
@@ -488,6 +494,20 @@ export function stopConversationActor(
     reason,
   });
 
+  // Close and unregister the backend runtime if one exists
+  const backendRuntime = getRuntimeFromRegistry(conversationId);
+  if (backendRuntime) {
+    try {
+      backendRuntime.close();
+    } catch (err) {
+      logger.warn("conversation-manager.runtime_close_error", {
+        conversationId,
+        error: String(err),
+      });
+    }
+    unregisterRuntime(conversationId);
+  }
+
   actor.stop();
   cleanupConversationRuntime(key);
   getActorRegistry().delete(key);
@@ -551,7 +571,8 @@ export async function rehydrateConversationActors(): Promise<number> {
               forkedFrom: conversation.forkedFrom ?? null,
               role: conversation.role ?? null,
               transcriptPath: conversation.transcriptPath ?? null,
-              claudeSessionId: conversation.claudeSessionId ?? null,
+              agentBackend: conversation.agentBackend ?? "claude",
+              backendRef: conversation.backendRef ?? null,
               promptCount: conversation.promptCount ?? 0,
             },
             snapshot: snapshot as ReturnType<(typeof machine)["resolveState"]>,

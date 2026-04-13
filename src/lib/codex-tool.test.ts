@@ -472,23 +472,7 @@ describe("codex-tool", () => {
       );
     });
 
-    it("sets CLAUDECODE env var to empty string", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps();
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
-
-      const handler = getHandler("run_codex");
-      await handler({ prompt: "do it" });
-
-      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
-        env: Record<string, string>;
-      };
-      expect(callArgs.env.CLAUDECODE).toBe("");
-    });
+    // env is now handled internally by the task runner — no longer passed through deps
   });
 
   // ============================================================
@@ -645,9 +629,6 @@ function createMockDeps(runResult?: {
   const mockEnsureDir = vi.fn().mockResolvedValue(undefined);
 
   return {
-    buildChildEnv: vi.fn(
-      () => ({}),
-    ) as unknown as CodexToolDeps["buildChildEnv"],
     ensureDir: mockEnsureDir,
     runCodex: mockRunCodex,
     mockRunCodex,

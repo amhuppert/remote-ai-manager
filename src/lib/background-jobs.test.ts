@@ -676,7 +676,6 @@ describe("background-jobs", () => {
         .mockResolvedValueOnce(undefined);
       mockFixValidation.mockResolvedValue({
         status: "fixed" as const,
-        claudeSessionId: "session-1",
       });
       mockCheckUncommitted.mockResolvedValue({ hasChanges: true });
 
@@ -703,7 +702,6 @@ describe("background-jobs", () => {
       mockRunValidation.mockRejectedValue(new Error("lint errors"));
       mockFixValidation.mockResolvedValue({
         status: "fixed" as const,
-        claudeSessionId: "session-1",
       });
       mockCheckUncommitted.mockResolvedValue({ hasChanges: true });
 

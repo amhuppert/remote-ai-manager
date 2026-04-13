@@ -14,7 +14,6 @@ const testSession = {
   sessionName: "test-session",
   worktreePath: "/projects/my-project/.worktrees/test-session",
   branchName: "csm/test-session",
-  claudeSessionId: null,
   transcriptPath: null,
   status: "ready" as const,
   createdAt: "2024-01-01T00:00:00Z",

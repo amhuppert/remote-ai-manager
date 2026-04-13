@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PrepareTurnInput, ExecutePromptInput } from "./types";
+import type { ActorImplementationDeps } from "./actor-implementations";
 import type {
-  ActorImplementationDeps,
-  QuerySessionLike,
-} from "./actor-implementations";
+  ConversationBackendRuntime,
+  ConversationBackendTurnInput,
+  ConversationBackendTurnResult,
+} from "@/types";
 import {
   _resetForTesting,
   registerConversationRuntime,
@@ -35,26 +37,45 @@ import {
   executePromptForMachine,
   setActorDeps,
   _resetActorDepsForTesting,
-  shouldRecreateSession,
+  shouldRecreateRuntime,
   buildEffectivePrompt,
-  buildCanUseTool,
   processMessage,
   mapErrorSubtype,
 } from "./actor-implementations";
-import { QUERY_SESSION_ERROR_CODES } from "@/lib/query-session-errors";
+import { QUERY_SESSION_ERROR_CODES } from "@/lib/agent-backends/claude/query-session-errors";
 
 // ---------------------------------------------------------------------------
-// Shared mock session
+// Shared mock backend runtime
 // ---------------------------------------------------------------------------
 
-const mockSendPrompt = vi.fn();
-const mockQuerySession: QuerySessionLike = {
-  status: "alive",
-  model: undefined,
-  effort: undefined,
-  sendPrompt: mockSendPrompt,
-  close: vi.fn(),
-  query: { streamInput: vi.fn(), close: vi.fn() },
+const mockSendTurn = vi.fn();
+
+function createMockBackendRuntime(
+  overrides: Partial<ConversationBackendRuntime> = {},
+): ConversationBackendRuntime {
+  return {
+    status: "alive",
+    modelId: undefined,
+    reasoningEffort: undefined,
+    outputFormat: undefined,
+    capabilities: {
+      queueWhileRunning: false,
+      askUserQuestion: true,
+      preciseFork: false,
+      portableMcpAtStart: false,
+      portableMcpBetweenTurns: false,
+      contextWindowMetrics: true,
+    },
+    sendTurn: mockSendTurn,
+    close: vi.fn(),
+    ...overrides,
+  } as unknown as ConversationBackendRuntime;
+}
+
+const mockBackendRuntime = createMockBackendRuntime();
+
+const mockFactory = {
+  createRuntime: vi.fn(async () => mockBackendRuntime),
 };
 
 // ---------------------------------------------------------------------------
@@ -82,8 +103,9 @@ function createMockDeps(
     externalizeImageBlocks: vi.fn(
       async (_id: string, blocks: unknown[]) => blocks,
     ),
-    getSessionFromRegistry: vi.fn(() => undefined),
-    createQuerySession: vi.fn(() => mockQuerySession),
+    getConversationBackendFactory: vi.fn(() => mockFactory),
+    registerBackendRuntime: vi.fn(),
+    unregisterBackendRuntime: vi.fn(),
     buildChildEnv: vi.fn(() => ({ HOME: "/home/test" })),
     resolvePluginPaths: vi.fn(async () => []),
     createNotificationToolServer: vi.fn(() => null),
@@ -96,10 +118,10 @@ function createMockDeps(
     getSessionState: vi.fn(async () => null),
     createReferenceDocument: vi.fn(async () => ({})),
     getReferenceDocuments: vi.fn(async () => []),
+    readConversationMessages: vi.fn(async () => []),
     fileExists: vi.fn(() => false),
     registerAbortController: vi.fn(),
     unregisterAbortController: vi.fn(),
-    registerQuery: vi.fn(),
     ...overrides,
   } as ActorImplementationDeps;
 }
@@ -131,7 +153,8 @@ function makeExecutePromptInput(
     worktreePath: "/projects/repo/.worktrees/test-session",
     conversationId: "conv-1",
     transcriptPath: "/transcripts/conv-1.jsonl",
-    claudeSessionId: null,
+    agentBackend: "claude",
+    backendRef: null,
     forkedFrom: null,
     role: null,
     promptText: "Hello, world!",
@@ -148,15 +171,15 @@ function makeExecutePromptInput(
 // Unit tests: extracted pure functions
 // ===========================================================================
 
-describe("shouldRecreateSession", () => {
+describe("shouldRecreateRuntime", () => {
   it("returns false when session is undefined", () => {
-    expect(shouldRecreateSession(undefined, "model", "effort")).toBe(false);
+    expect(shouldRecreateRuntime(undefined, "model", "effort")).toBe(false);
   });
 
   it("returns false when session is dead", () => {
     expect(
-      shouldRecreateSession(
-        { status: "dead", model: "a", effort: "low" },
+      shouldRecreateRuntime(
+        { status: "dead", modelId: "a", reasoningEffort: "low" },
         "b",
         "high",
       ),
@@ -165,8 +188,8 @@ describe("shouldRecreateSession", () => {
 
   it("returns false when model and effort unchanged", () => {
     expect(
-      shouldRecreateSession(
-        { status: "alive", model: "a", effort: "low" },
+      shouldRecreateRuntime(
+        { status: "alive", modelId: "a", reasoningEffort: "low" },
         "a",
         "low",
       ),
@@ -175,8 +198,8 @@ describe("shouldRecreateSession", () => {
 
   it("returns true when model changed", () => {
     expect(
-      shouldRecreateSession(
-        { status: "alive", model: "a", effort: "low" },
+      shouldRecreateRuntime(
+        { status: "alive", modelId: "a", reasoningEffort: "low" },
         "b",
         "low",
       ),
@@ -185,8 +208,8 @@ describe("shouldRecreateSession", () => {
 
   it("returns true when effort changed", () => {
     expect(
-      shouldRecreateSession(
-        { status: "alive", model: "a", effort: "low" },
+      shouldRecreateRuntime(
+        { status: "alive", modelId: "a", reasoningEffort: "low" },
         "a",
         "high",
       ),
@@ -195,8 +218,8 @@ describe("shouldRecreateSession", () => {
 
   it("returns false when new values are undefined (no explicit override)", () => {
     expect(
-      shouldRecreateSession(
-        { status: "alive", model: "a", effort: "low" },
+      shouldRecreateRuntime(
+        { status: "alive", modelId: "a", reasoningEffort: "low" },
         undefined,
         undefined,
       ),
@@ -206,8 +229,13 @@ describe("shouldRecreateSession", () => {
   it("returns true when outputFormat changes from undefined to defined", () => {
     const schema = { type: "object", properties: { name: { type: "string" } } };
     expect(
-      shouldRecreateSession(
-        { status: "alive", model: "a", effort: "low", outputFormat: undefined },
+      shouldRecreateRuntime(
+        {
+          status: "alive",
+          modelId: "a",
+          reasoningEffort: "low",
+          outputFormat: undefined,
+        },
         "a",
         "low",
         { type: "json_schema", schema },
@@ -218,11 +246,11 @@ describe("shouldRecreateSession", () => {
   it("returns true when outputFormat changes from defined to undefined", () => {
     const schema = { type: "object", properties: { name: { type: "string" } } };
     expect(
-      shouldRecreateSession(
+      shouldRecreateRuntime(
         {
           status: "alive",
-          model: "a",
-          effort: "low",
+          modelId: "a",
+          reasoningEffort: "low",
           outputFormat: { type: "json_schema", schema },
         },
         "a",
@@ -236,11 +264,11 @@ describe("shouldRecreateSession", () => {
     const schema1 = { type: "object", properties: { a: { type: "string" } } };
     const schema2 = { type: "object", properties: { b: { type: "number" } } };
     expect(
-      shouldRecreateSession(
+      shouldRecreateRuntime(
         {
           status: "alive",
-          model: "a",
-          effort: "low",
+          modelId: "a",
+          reasoningEffort: "low",
           outputFormat: { type: "json_schema", schema: schema1 },
         },
         "a",
@@ -256,8 +284,13 @@ describe("shouldRecreateSession", () => {
       schema: { type: "object", properties: { a: { type: "string" } } },
     };
     expect(
-      shouldRecreateSession(
-        { status: "alive", model: "a", effort: "low", outputFormat: format },
+      shouldRecreateRuntime(
+        {
+          status: "alive",
+          modelId: "a",
+          reasoningEffort: "low",
+          outputFormat: format,
+        },
         "a",
         "low",
         format,
@@ -267,8 +300,13 @@ describe("shouldRecreateSession", () => {
 
   it("returns false when both outputFormats are undefined", () => {
     expect(
-      shouldRecreateSession(
-        { status: "alive", model: "a", effort: "low", outputFormat: undefined },
+      shouldRecreateRuntime(
+        {
+          status: "alive",
+          modelId: "a",
+          reasoningEffort: "low",
+          outputFormat: undefined,
+        },
         "a",
         "low",
         undefined,
@@ -458,72 +496,6 @@ describe("mapErrorSubtype", () => {
       errors: [],
     } as never);
     expect(result).toBe("Unknown error");
-  });
-});
-
-describe("buildCanUseTool", () => {
-  it("allows non-AskUserQuestion tools", async () => {
-    const runtime = {
-      abortController: new AbortController(),
-    };
-    const canUseTool = buildCanUseTool(
-      runtime as never,
-      { projectPath: "/p", sessionName: "s", conversationId: "c" },
-      false,
-      vi.fn(),
-    );
-    const result = await canUseTool("SomeOtherTool", { input: "data" });
-    expect(result.behavior).toBe("allow");
-  });
-
-  it("denies AskUserQuestion in autonomous mode", async () => {
-    const runtime = {
-      abortController: new AbortController(),
-    };
-    const canUseTool = buildCanUseTool(
-      runtime as never,
-      { projectPath: "/p", sessionName: "s", conversationId: "c" },
-      true,
-      vi.fn(),
-    );
-    const result = await canUseTool("AskUserQuestion", { questions: [] });
-    expect(result.behavior).toBe("deny");
-  });
-
-  it("blocks for user answer in non-autonomous mode", async () => {
-    const sendToMachine = vi.fn();
-    const mutateConversation = vi.fn(async () => {});
-    const runtime = {
-      abortController: new AbortController(),
-      sendToMachine,
-      streamEmit: vi.fn(),
-      activeQuestionResolver: undefined as
-        | { resolve: (v: Record<string, string>) => void }
-        | undefined,
-    };
-
-    const canUseTool = buildCanUseTool(
-      runtime as never,
-      { projectPath: "/p", sessionName: "s", conversationId: "c" },
-      false,
-      mutateConversation,
-    );
-
-    const promise = canUseTool("AskUserQuestion", {
-      questions: [{ question: "Continue?" }],
-    });
-
-    // Wait for the deferred promise to be registered
-    await vi.waitFor(() =>
-      expect(runtime.activeQuestionResolver).toBeDefined(),
-    );
-    runtime.activeQuestionResolver!.resolve({ "0": "yes" });
-
-    const result = await promise;
-    expect(result.behavior).toBe("allow");
-    expect(sendToMachine).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "ASK_QUESTION" }),
-    );
   });
 });
 
@@ -812,6 +784,18 @@ describe("prepareTurnForMachine", () => {
 describe("executePromptForMachine", () => {
   let mockDeps: ActorImplementationDeps;
 
+  const defaultTurnResult: ConversationBackendTurnResult = {
+    backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+    costUsd: 0.05,
+    durationMs: 1500,
+    numTurns: 3,
+    contextTokens: 1000,
+    contextWindowMax: 200000,
+    contentBlocks: [{ type: "text", text: "Hello!" }],
+    aborted: false,
+    error: null,
+  };
+
   beforeEach(() => {
     _resetForTesting();
     vi.clearAllMocks();
@@ -819,17 +803,8 @@ describe("executePromptForMachine", () => {
     mockDeps = createMockDeps();
     setActorDeps(mockDeps);
 
-    mockSendPrompt.mockResolvedValue({
-      sessionId: "sdk-session-1",
-      costUsd: 0.05,
-      durationMs: 1500,
-      numTurns: 3,
-      contextTokens: 1000,
-      contextWindow: 200000,
-      contentBlocks: [{ type: "text", text: "Hello!" }],
-      aborted: false,
-      error: null,
-    });
+    mockSendTurn.mockResolvedValue(defaultTurnResult);
+    mockFactory.createRuntime.mockResolvedValue(mockBackendRuntime);
   });
 
   afterEach(() => {
@@ -837,7 +812,7 @@ describe("executePromptForMachine", () => {
     _resetForTesting();
   });
 
-  it("creates a new QuerySession when none exists", async () => {
+  it("creates a new backend runtime when none exists", async () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
@@ -850,15 +825,19 @@ describe("executePromptForMachine", () => {
 
     const result = await executePromptForMachine(input);
 
-    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
-    expect(result.sessionId).toBe("sdk-session-1");
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    expect(result.backendRef).toEqual({
+      backend: "claude",
+      sessionId: "sdk-session-1",
+    });
     expect(result.costUsd).toBe(0.05);
     expect(result.contentBlocks).toEqual([{ type: "text", text: "Hello!" }]);
   });
 
-  it("reuses an existing alive QuerySession", async () => {
-    vi.mocked(mockDeps.getSessionFromRegistry).mockReturnValue(
-      mockQuerySession,
+  it("reuses an existing alive backend runtime", async () => {
+    const existingRuntime = createMockBackendRuntime();
+    (existingRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
+      defaultTurnResult,
     );
 
     const input = makeExecutePromptInput();
@@ -869,24 +848,26 @@ describe("executePromptForMachine", () => {
     );
     registerConversationRuntime(key, {
       abortController: new AbortController(),
+      backendRuntime: existingRuntime,
     });
 
     const result = await executePromptForMachine(input);
 
-    expect(mockDeps.createQuerySession).not.toHaveBeenCalled();
-    expect(result.sessionId).toBe("sdk-session-1");
+    // Should NOT create a new runtime
+    expect(mockFactory.createRuntime).not.toHaveBeenCalled();
+    expect(result.backendRef).toEqual({
+      backend: "claude",
+      sessionId: "sdk-session-1",
+    });
   });
 
-  it("recreates session when model changes", async () => {
-    const existingSession = {
-      ...mockQuerySession,
-      model: "claude-sonnet-4-5-20250514",
-      close: vi.fn(),
-    };
-    vi.mocked(mockDeps.getSessionFromRegistry).mockReturnValue(existingSession);
+  it("recreates runtime when model changes", async () => {
+    const existingRuntime = createMockBackendRuntime({
+      modelId: "claude-sonnet-4-5-20250514",
+    });
 
     const input = makeExecutePromptInput({
-      modelId: "claude-opus-4-20250514" as never,
+      modelId: "claude-opus-4-20250514",
     });
     const key = conversationRuntimeKey(
       input.projectPath,
@@ -895,15 +876,16 @@ describe("executePromptForMachine", () => {
     );
     registerConversationRuntime(key, {
       abortController: new AbortController(),
+      backendRuntime: existingRuntime,
     });
 
     await executePromptForMachine(input);
 
-    expect(existingSession.close).toHaveBeenCalled();
-    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
+    expect(existingRuntime.close).toHaveBeenCalled();
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
   });
 
-  it("sends SDK_INIT event to machine via sendToMachine", async () => {
+  it("sends BACKEND_INIT event to machine via onEvent callback", async () => {
     const sendToMachine = vi.fn();
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
@@ -916,26 +898,23 @@ describe("executePromptForMachine", () => {
       sendToMachine,
     });
 
-    mockSendPrompt.mockImplementation(
-      async (
-        _prompt: unknown,
-        emit: (event: string, data: unknown) => void,
-      ) => {
-        emit("__raw_message", {
-          type: "system",
-          subtype: "init",
-          session_id: "new-sdk-session",
+    mockSendTurn.mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) => {
+        // Simulate a provider_event with system init message
+        await turnInput.onEvent?.({
+          type: "provider_event",
+          payload: {
+            type: "system",
+            subtype: "init",
+            session_id: "new-sdk-session",
+          },
         });
         return {
-          sessionId: "new-sdk-session",
-          costUsd: 0.01,
-          durationMs: 500,
-          numTurns: 1,
-          contextTokens: 100,
-          contextWindow: 200000,
-          contentBlocks: [],
-          aborted: false,
-          error: null,
+          ...defaultTurnResult,
+          backendRef: {
+            backend: "claude" as const,
+            sessionId: "new-sdk-session",
+          },
         };
       },
     );
@@ -944,19 +923,16 @@ describe("executePromptForMachine", () => {
 
     expect(sendToMachine).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "SDK_INIT",
-        sessionId: "new-sdk-session",
+        type: "BACKEND_INIT",
+        backendRef: { backend: "claude", sessionId: "new-sdk-session" },
       }),
     );
   });
 
-  it("recreates session when outputFormat changes", async () => {
-    const existingSession = {
-      ...mockQuerySession,
+  it("recreates runtime when outputFormat changes", async () => {
+    const existingRuntime = createMockBackendRuntime({
       outputFormat: undefined,
-      close: vi.fn(),
-    };
-    vi.mocked(mockDeps.getSessionFromRegistry).mockReturnValue(existingSession);
+    });
 
     const schema = { type: "object", properties: { name: { type: "string" } } };
     const input = makeExecutePromptInput({
@@ -969,22 +945,20 @@ describe("executePromptForMachine", () => {
     );
     registerConversationRuntime(key, {
       abortController: new AbortController(),
+      backendRuntime: existingRuntime,
     });
 
     await executePromptForMachine(input);
 
-    expect(existingSession.close).toHaveBeenCalled();
-    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
+    expect(existingRuntime.close).toHaveBeenCalled();
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
   });
 
-  it("recreates session when outputFormat is removed", async () => {
+  it("recreates runtime when outputFormat is removed", async () => {
     const schema = { type: "object", properties: { name: { type: "string" } } };
-    const existingSession = {
-      ...mockQuerySession,
+    const existingRuntime = createMockBackendRuntime({
       outputFormat: { type: "json_schema" as const, schema },
-      close: vi.fn(),
-    };
-    vi.mocked(mockDeps.getSessionFromRegistry).mockReturnValue(existingSession);
+    });
 
     const input = makeExecutePromptInput({
       outputFormat: undefined,
@@ -996,15 +970,16 @@ describe("executePromptForMachine", () => {
     );
     registerConversationRuntime(key, {
       abortController: new AbortController(),
+      backendRuntime: existingRuntime,
     });
 
     await executePromptForMachine(input);
 
-    expect(existingSession.close).toHaveBeenCalled();
-    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
+    expect(existingRuntime.close).toHaveBeenCalled();
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
   });
 
-  it("passes outputFormat to createQuerySession for debug phases", async () => {
+  it("passes outputFormat to factory.createRuntime for debug phases", async () => {
     const input = makeExecutePromptInput({
       debugMode: {
         active: true,
@@ -1031,12 +1006,12 @@ describe("executePromptForMachine", () => {
 
     const result = await executePromptForMachine(input);
 
-    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
     expect(result.error).toBeNull();
   });
 
-  it("returns error result when SDK throws", async () => {
-    mockSendPrompt.mockRejectedValue(new Error("SDK crashed"));
+  it("returns error result when backend throws", async () => {
+    mockSendTurn.mockRejectedValue(new Error("SDK crashed"));
 
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
@@ -1054,47 +1029,28 @@ describe("executePromptForMachine", () => {
     expect(result.aborted).toBe(false);
   });
 
-  it("retries once with a fresh QuerySession when prompt delivery never reached Claude", async () => {
-    const staleSession: QuerySessionLike = {
-      status: "alive",
-      model: undefined,
-      effort: undefined,
-      outputFormat: undefined,
-      close: vi.fn(),
-      query: { streamInput: vi.fn(), close: vi.fn() },
-      sendPrompt: vi.fn(async () => {
-        staleSession.status = "dead";
-        const error = new Error("QuerySession died before prompt delivery");
-        (
-          error as Error & {
-            code?: string;
-          }
-        ).code = QUERY_SESSION_ERROR_CODES.promptNotDelivered;
-        throw error;
-      }),
-    };
-    const freshSession: QuerySessionLike = {
-      status: "alive",
-      model: undefined,
-      effort: undefined,
-      outputFormat: undefined,
-      close: vi.fn(),
-      query: { streamInput: vi.fn(), close: vi.fn() },
-      sendPrompt: vi.fn(async () => ({
-        sessionId: "sdk-session-retry",
-        costUsd: 0.02,
-        durationMs: 600,
-        numTurns: 1,
-        contextTokens: 250,
-        contextWindow: 200000,
-        contentBlocks: [{ type: "text" as const, text: "Recovered turn" }],
-        aborted: false,
-        error: null,
-      })),
-    };
+  it("retries once with a fresh runtime when prompt delivery never reached backend", async () => {
+    const staleSendTurn = vi.fn();
+    const staleRuntime = createMockBackendRuntime({ sendTurn: staleSendTurn });
+    staleSendTurn.mockImplementation(async () => {
+      (staleRuntime as unknown as { status: string }).status = "dead";
+      const error = new Error("QuerySession died before prompt delivery");
+      (error as Error & { code?: string }).code =
+        QUERY_SESSION_ERROR_CODES.promptNotDelivered;
+      throw error;
+    });
 
-    vi.mocked(mockDeps.getSessionFromRegistry).mockReturnValue(staleSession);
-    vi.mocked(mockDeps.createQuerySession).mockReturnValue(freshSession);
+    const freshSendTurn = vi.fn();
+    const freshRuntime = createMockBackendRuntime({ sendTurn: freshSendTurn });
+    freshSendTurn.mockResolvedValue({
+      ...defaultTurnResult,
+      backendRef: {
+        backend: "claude" as const,
+        sessionId: "sdk-session-retry",
+      },
+      contentBlocks: [{ type: "text" as const, text: "Recovered turn" }],
+    });
+    mockFactory.createRuntime.mockResolvedValue(freshRuntime);
 
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
@@ -1104,15 +1060,19 @@ describe("executePromptForMachine", () => {
     );
     registerConversationRuntime(key, {
       abortController: new AbortController(),
+      backendRuntime: staleRuntime,
     });
 
     const result = await executePromptForMachine(input);
 
-    expect(staleSession.sendPrompt).toHaveBeenCalledTimes(1);
-    expect(staleSession.close).toHaveBeenCalledTimes(1);
-    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
-    expect(freshSession.sendPrompt).toHaveBeenCalledTimes(1);
-    expect(result.sessionId).toBe("sdk-session-retry");
+    expect(staleSendTurn).toHaveBeenCalledTimes(1);
+    expect(staleRuntime.close).toHaveBeenCalledTimes(1);
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    expect(freshSendTurn).toHaveBeenCalledTimes(1);
+    expect(result.backendRef).toEqual({
+      backend: "claude",
+      sessionId: "sdk-session-retry",
+    });
     expect(result.error).toBeNull();
     expect(result.contentBlocks).toEqual([
       { type: "text", text: "Recovered turn" },
@@ -1121,7 +1081,7 @@ describe("executePromptForMachine", () => {
 
   it("marks result as aborted when abort signal fires", async () => {
     const abortController = new AbortController();
-    mockSendPrompt.mockImplementation(async () => {
+    mockSendTurn.mockImplementation(async () => {
       abortController.abort();
       throw new Error("aborted");
     });
@@ -1139,7 +1099,7 @@ describe("executePromptForMachine", () => {
     expect(result.aborted).toBe(true);
   });
 
-  it("merges additionalMcpServers from runtime state into createQuerySession", async () => {
+  it("merges tooling overrides from runtime state into factory.createRuntime", async () => {
     const mockToolServer = { name: "graph-workflow", tools: [] };
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
@@ -1149,22 +1109,25 @@ describe("executePromptForMachine", () => {
     );
     registerConversationRuntime(key, {
       abortController: new AbortController(),
-      additionalMcpServers: { "graph-workflow": mockToolServer },
+      tooling: { claudeSdkServers: { "graph-workflow": mockToolServer } },
     });
 
     await executePromptForMachine(input);
 
-    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
-    const createCall = vi.mocked(mockDeps.createQuerySession).mock
-      .calls[0]![0] as Record<string, unknown>;
-    const mcpServers = createCall["mcpServers"] as Record<string, unknown>;
-    expect(mcpServers["graph-workflow"]).toBe(mockToolServer);
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    const createCall = (
+      mockFactory.createRuntime.mock.calls as unknown[][]
+    )[0]![0] as Record<string, unknown>;
+    const tooling = createCall["tooling"] as {
+      claudeSdkServers?: Record<string, unknown>;
+    };
+    expect(tooling.claudeSdkServers?.["graph-workflow"]).toBe(mockToolServer);
     // Standard servers should still be present
-    expect(mcpServers["roadmap-tools"]).toBeDefined();
-    expect(mcpServers["graph-workflow-planner"]).toBeDefined();
+    expect(tooling.claudeSdkServers?.["roadmap-tools"]).toBeDefined();
+    expect(tooling.claudeSdkServers?.["graph-workflow-planner"]).toBeDefined();
   });
 
-  it("does not include additionalMcpServers when not set on runtime", async () => {
+  it("does not include tooling overrides when not set on runtime", async () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
@@ -1177,13 +1140,16 @@ describe("executePromptForMachine", () => {
 
     await executePromptForMachine(input);
 
-    expect(mockDeps.createQuerySession).toHaveBeenCalledTimes(1);
-    const createCall = vi.mocked(mockDeps.createQuerySession).mock
-      .calls[0]![0] as Record<string, unknown>;
-    const mcpServers = createCall["mcpServers"] as Record<string, unknown>;
-    expect(mcpServers["graph-workflow"]).toBeUndefined();
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    const createCall = (
+      mockFactory.createRuntime.mock.calls as unknown[][]
+    )[0]![0] as Record<string, unknown>;
+    const tooling = createCall["tooling"] as {
+      claudeSdkServers?: Record<string, unknown>;
+    };
+    expect(tooling.claudeSdkServers?.["graph-workflow"]).toBeUndefined();
     // Standard servers still present
-    expect(mcpServers["roadmap-tools"]).toBeDefined();
+    expect(tooling.claudeSdkServers?.["roadmap-tools"]).toBeDefined();
   });
 
   it("propagates structuredOutput from TurnResult to PromptActorResult", async () => {
@@ -1194,17 +1160,9 @@ describe("executePromptForMachine", () => {
       reproductionSteps: ["step 1", "step 2"],
     };
 
-    mockSendPrompt.mockResolvedValue({
-      sessionId: "sess-1",
-      costUsd: 0.05,
-      durationMs: 1000,
-      numTurns: 2,
-      contextTokens: 100,
-      contextWindow: 200000,
-      contentBlocks: [],
+    mockSendTurn.mockResolvedValue({
+      ...defaultTurnResult,
       structuredOutput: structuredData,
-      aborted: false,
-      error: null,
     });
 
     const input = makeExecutePromptInput({
@@ -1251,9 +1209,9 @@ describe("executePromptForMachine", () => {
 
     await executePromptForMachine(input);
 
-    const sendPromptCall = mockSendPrompt.mock.calls[0]!;
-    const promptArg = sendPromptCall[0] as string;
-    expect(promptArg).toContain("<debug-mode>");
-    expect(promptArg).toContain("Help me debug this");
+    const sendTurnCall = mockSendTurn.mock.calls[0]! as unknown[];
+    const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
+    expect(turnInput.promptText).toContain("<debug-mode>");
+    expect(turnInput.promptText).toContain("Help me debug this");
   });
 });

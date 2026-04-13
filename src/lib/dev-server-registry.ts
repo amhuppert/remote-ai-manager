@@ -58,6 +58,7 @@ export interface DevServerRegistryDeps {
   readConfig: typeof defaultReadConfig;
   livenessStart: typeof liveness.start;
   getLanUrl: typeof defaultGetLanUrl;
+  checkPortListening(port: number): Promise<boolean>;
 }
 
 export const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
@@ -69,6 +70,7 @@ export const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
   readConfig: defaultReadConfig,
   livenessStart: liveness.start,
   getLanUrl: defaultGetLanUrl,
+  checkPortListening: isPortListening,
 };
 
 // ============================================================
@@ -173,7 +175,7 @@ export function createDevServerRegistry(
       // Abort if the server is no longer running (exited, stopped, errored)
       if (entry.status !== "running") return;
 
-      if (await isPortListening(port)) {
+      if (await deps.checkPortListening(port)) {
         const remoteUrl = await deps.tailscale.register(port);
         // Entry may have changed status while we awaited
         if (entry.status === "running") {

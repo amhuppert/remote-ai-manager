@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { SessionState, ConversationState } from "@/types";
+import type { SessionState, ConversationState, AgentBackendId } from "@/types";
+import type { ConversationBackendFactory } from "@/lib/agent-backends/conversation";
 
 // ---------------------------------------------------------------------------
 // Infrastructure mocks (module-level side effects only)
@@ -20,7 +21,12 @@ vi.mock("@/lib/logging", () => ({
 // Import module under test
 // ---------------------------------------------------------------------------
 
-import { createPromptExecutor, type PromptDeps } from "./prompt";
+import {
+  createPromptExecutor,
+  BackendMismatchError,
+  ModelEffortValidationError,
+  type PromptDeps,
+} from "./prompt";
 
 // ---------------------------------------------------------------------------
 // Mock actor (simulates XState conversation actor for waitForTurnCompletion)
@@ -55,7 +61,6 @@ function makeConversation(
   return {
     id: "conv-123",
     name: null,
-    claudeSessionId: null,
     transcriptPath: null,
     status: "new" as const,
     promptCount: 0,
@@ -75,6 +80,8 @@ function makeConversation(
     contextWindowMax: null,
     debugMode: null,
     machineSnapshot: null,
+    agentBackend: "claude",
+    backendRef: null,
     ...overrides,
   };
 }
@@ -102,12 +109,25 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
   };
 }
 
+function makeMockFactory(
+  backend: AgentBackendId = "claude",
+  validateFn?: ConversationBackendFactory["validateModelAndEffort"],
+): ConversationBackendFactory {
+  return {
+    backend,
+    createRuntime: vi.fn() as ConversationBackendFactory["createRuntime"],
+    validateModelAndEffort: validateFn,
+  };
+}
+
 function createTestDeps(overrides: Partial<PromptDeps> = {}): PromptDeps {
   const conversation = makeConversation();
   return {
     getConversation: vi.fn().mockResolvedValue(conversation),
     createConversation: vi.fn().mockResolvedValue(conversation),
     getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
+    readConfig: vi.fn().mockResolvedValue({ defaultAgentBackend: "claude" }),
+    getConversationBackendFactory: vi.fn(() => makeMockFactory()),
     ensureConversationActor: vi.fn(async () => mockActor),
     attachPromptStream: vi.fn(),
     detachPromptStream: vi.fn(),
@@ -183,6 +203,7 @@ describe("executePromptStream (facade)", () => {
     expect(deps.createConversation).toHaveBeenCalledWith(
       "/projects/repo",
       "test-session",
+      { agentBackend: "claude" },
     );
   });
 
@@ -373,9 +394,9 @@ describe("executePromptStream (facade)", () => {
     ).rejects.toThrow("Actor creation failed");
   });
 
-  it("forwards additionalMcpServers to deps.setAdditionalMcpServers after actor creation", async () => {
-    const setAdditionalMcpServers = vi.fn();
-    deps = createTestDeps({ setAdditionalMcpServers });
+  it("forwards tooling to deps.setTooling after actor creation", async () => {
+    const setTooling = vi.fn();
+    deps = createTestDeps({ setTooling });
     const executor = createPromptExecutor(deps);
     executePromptStream = executor.executePromptStream;
 
@@ -389,20 +410,20 @@ describe("executePromptStream (facade)", () => {
       "conv-123",
       undefined,
       undefined,
-      { additionalMcpServers: { "graph-workflow": mockToolServer } },
+      { tooling: { claudeSdkServers: { "graph-workflow": mockToolServer } } },
     );
 
-    expect(setAdditionalMcpServers).toHaveBeenCalledWith(
+    expect(setTooling).toHaveBeenCalledWith(
       "/projects/repo",
       "test-session",
       "conv-123",
-      { "graph-workflow": mockToolServer },
+      { claudeSdkServers: { "graph-workflow": mockToolServer } },
     );
   });
 
-  it("does not call setAdditionalMcpServers when no additional servers provided", async () => {
-    const setAdditionalMcpServers = vi.fn();
-    deps = createTestDeps({ setAdditionalMcpServers });
+  it("does not call setTooling when no tooling provided", async () => {
+    const setTooling = vi.fn();
+    deps = createTestDeps({ setTooling });
     const executor = createPromptExecutor(deps);
     executePromptStream = executor.executePromptStream;
 
@@ -414,7 +435,7 @@ describe("executePromptStream (facade)", () => {
       "conv-123",
     );
 
-    expect(setAdditionalMcpServers).not.toHaveBeenCalled();
+    expect(setTooling).not.toHaveBeenCalled();
   });
 
   it("forwards skipSessionLock to deps.setSkipSessionLock after actor creation", async () => {
@@ -519,5 +540,225 @@ describe("executePromptStream (facade)", () => {
         images,
       }),
     );
+  });
+
+  // =========================================================================
+  // Backend selection
+  // =========================================================================
+
+  it("uses existing conversation's agentBackend for resolved backend", async () => {
+    deps = createTestDeps({
+      getConversation: vi
+        .fn()
+        .mockResolvedValue(makeConversation({ agentBackend: "claude" })),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      "conv-123",
+      expect.objectContaining({
+        type: "SUBMIT_PROMPT",
+        backend: "claude",
+      }),
+    );
+  });
+
+  it("rejects with BackendMismatchError when request backend differs from conversation", async () => {
+    deps = createTestDeps({
+      getConversation: vi
+        .fn()
+        .mockResolvedValue(makeConversation({ agentBackend: "claude" })),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await expect(
+      executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "Hello",
+        vi.fn(),
+        "conv-123",
+        undefined,
+        undefined,
+        { backend: "codex" },
+      ),
+    ).rejects.toThrow(BackendMismatchError);
+  });
+
+  it("allows matching backend on existing conversation", async () => {
+    deps = createTestDeps({
+      getConversation: vi
+        .fn()
+        .mockResolvedValue(makeConversation({ agentBackend: "claude" })),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      undefined,
+      undefined,
+      { backend: "claude" },
+    );
+
+    expect(deps.sendConversationEvent).toHaveBeenCalled();
+  });
+
+  it("uses config.defaultAgentBackend for new conversations without explicit backend", async () => {
+    deps = createTestDeps({
+      readConfig: vi.fn().mockResolvedValue({ defaultAgentBackend: "codex" }),
+      getConversationBackendFactory: vi.fn(() => makeMockFactory("codex")),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+    );
+
+    expect(deps.readConfig).toHaveBeenCalled();
+    expect(deps.createConversation).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      { agentBackend: "codex" },
+    );
+    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        type: "SUBMIT_PROMPT",
+        backend: "codex",
+      }),
+    );
+  });
+
+  it("uses explicit backend for new conversations", async () => {
+    deps = createTestDeps({
+      getConversationBackendFactory: vi.fn(() => makeMockFactory("codex")),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      { backend: "codex" },
+    );
+
+    // Should NOT read config since backend was explicit
+    expect(deps.readConfig).not.toHaveBeenCalled();
+    expect(deps.createConversation).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      { agentBackend: "codex" },
+    );
+    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        type: "SUBMIT_PROMPT",
+        backend: "codex",
+      }),
+    );
+  });
+
+  // =========================================================================
+  // Model/effort validation
+  // =========================================================================
+
+  it("calls factory.validateModelAndEffort before execution", async () => {
+    const validateFn = vi.fn();
+    deps = createTestDeps({
+      getConversationBackendFactory: vi.fn(() =>
+        makeMockFactory("claude", validateFn),
+      ),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      "opus",
+      undefined,
+      { effort: "high" },
+    );
+
+    expect(validateFn).toHaveBeenCalledWith({
+      modelId: "opus",
+      reasoningEffort: "high",
+    });
+  });
+
+  it("throws ModelEffortValidationError when factory validation fails", async () => {
+    const validateFn = vi.fn(() => {
+      throw new Error("Invalid model for codex");
+    });
+    deps = createTestDeps({
+      getConversationBackendFactory: vi.fn(() =>
+        makeMockFactory("claude", validateFn),
+      ),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await expect(
+      executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "Hello",
+        vi.fn(),
+        "conv-123",
+        "invalid-model",
+      ),
+    ).rejects.toThrow(ModelEffortValidationError);
+  });
+
+  it("skips validation when factory has no validateModelAndEffort", async () => {
+    deps = createTestDeps({
+      getConversationBackendFactory: vi.fn(() => makeMockFactory("claude")),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    // Should not throw — no validation method means skip
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(deps.sendConversationEvent).toHaveBeenCalled();
   });
 });

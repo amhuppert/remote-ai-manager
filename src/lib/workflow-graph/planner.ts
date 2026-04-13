@@ -1,8 +1,4 @@
-import {
-  createSdkMcpServer,
-  query,
-  tool,
-} from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type {
   WorkflowDefinitionRecord,
@@ -10,7 +6,6 @@ import type {
   WorkflowPlanRequest,
   WorkflowSemanticDefinition,
 } from "@/types";
-import { buildChildEnv } from "@/lib/child-env";
 import { readConfig } from "@/lib/config";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
@@ -18,6 +13,7 @@ import {
   workflowGeneratedDraftSchema,
   workflowSemanticDefinitionSchema,
 } from "@/lib/schemas";
+import { getTaskRunner } from "@/lib/agent-backends/registry";
 import { generateWorkflowLayout } from "./layout";
 import { createWorkflowStorageService } from "./storage";
 import { validateWorkflowDefinition } from "./validation";
@@ -83,14 +79,15 @@ async function defaultRunPlannerQuery(
     ],
   });
 
-  const promptSections = [
+  const systemInstructions = [
     "Generate a workflow graph draft with execution contexts, flat task records, and dependency edges.",
     "Execution contexts should represent real dependency boundaries, not every small task.",
     "Use explicit stable IDs for contexts, tasks, and edges.",
     "Tasks must belong to exactly one execution context and use flat records keyed by contextId.",
     "Do not include layout coordinates.",
-    `Objective:\n${input.objective}`,
   ];
+
+  const promptSections = [`Objective:\n${input.objective}`];
 
   if (input.references.length > 0) {
     promptSections.push(
@@ -106,51 +103,36 @@ async function defaultRunPlannerQuery(
     );
   }
 
-  const abortController = new AbortController();
-  const timeoutHandle = setTimeout(() => abortController.abort(), 600_000);
+  const runner = getTaskRunner("claude");
+
+  logger.info("planner.task_runner_start", {
+    projectPath: input.projectPath,
+  });
 
   try {
-    const stream = query({
+    const result = await runner.run({
+      workingDirectory: input.projectPath ?? process.cwd(),
       prompt: promptSections.join("\n\n"),
-      options: {
-        systemPrompt: {
-          type: "preset",
-          preset: "claude_code",
-        },
-        settingSources: ["user", "project", "local"],
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
-        cwd: input.projectPath ?? process.cwd(),
-        persistSession: false,
-        abortController,
-        env: { ...buildChildEnv(), CLAUDECODE: "" },
-        mcpServers: {
+      systemInstructions,
+      autonomous: true,
+      timeoutMs: 600_000,
+      tooling: {
+        claudeSdkServers: {
           "graph-workflow-planner": plannerToolServer,
-        },
-        canUseTool: async (toolName: string) => {
-          if (toolName === "AskUserQuestion") {
-            return {
-              behavior: "deny" as const,
-              message: "Workflow draft generation must complete autonomously.",
-            };
-          }
-
-          return { behavior: "allow" as const, updatedInput: {} };
         },
       },
     });
 
-    for await (const message of stream) {
-      void message;
-    }
-  } catch (error) {
-    if (!abortController.signal.aborted) {
-      logger.error("planner.query_failed", {
-        error: getErrorMessage(error),
+    if (result.error) {
+      logger.error("planner.task_runner_failed", {
+        error: result.error,
+        timedOut: result.timedOut,
       });
     }
-  } finally {
-    clearTimeout(timeoutHandle);
+  } catch (error) {
+    logger.error("planner.query_failed", {
+      error: getErrorMessage(error),
+    });
   }
 
   return generatedDefinition;

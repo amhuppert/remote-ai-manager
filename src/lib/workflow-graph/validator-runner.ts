@@ -2,18 +2,19 @@ import { workflowAgentValidatorResultSchema } from "@/lib/schemas";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
-  ClaudeModel,
-  CodexReasoningEffort,
-  EffortLevel,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextDefinition,
-  GraphWorkflowExecutionSessionRef,
   GraphWorkflowLaneKind,
   GraphWorkflowTaskDefinition,
   GraphWorkflowValidationReviewArtifact,
   WorkflowAgentValidatorResult,
 } from "@/types";
+import type {
+  AgentBackendId,
+  AgentSessionRef,
+} from "@/lib/agent-backends/types";
+import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type { GraphWorkflowTaskValidatorInput } from "./execution-validation";
 import type {
   ResolveValidatorCallInput,
@@ -191,50 +192,8 @@ export function parseValidatorResponse(
 
 // -- Validator runner ---------------------------------------------------------
 
-export interface ValidatorExecutionResult {
-  text: string;
-  structuredOutput?: unknown;
-  contextTokens?: number | null;
-  contextWindowMax?: number | null;
-}
-
-export interface ExecuteValidatorAgentInput {
-  projectPath: string;
-  sessionName: string;
-  prompt: string;
-  model: ClaudeModel;
-  reasoningEffort: EffortLevel;
-  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
-  /** When provided, reuse this conversation instead of creating a new one. */
-  conversationId?: string;
-}
-
-export interface ExecuteValidatorCodexInput {
-  projectPath: string;
-  sessionName: string;
-  prompt: string;
-  model?: string;
-  reasoningEffort?: CodexReasoningEffort;
-  /** Whether to start a fresh thread or resume an existing one. */
-  sessionAction?: "create" | "reuse";
-  /** Thread ID to resume when sessionAction is "reuse". */
-  storedThreadId?: string;
-}
-
-export interface ExecuteValidatorCodexResult {
-  text: string;
-  /** Real Codex thread ID captured after the turn completes. Null if unavailable. */
-  realThreadId: string | null;
-  /** Per-turn token usage from the Codex SDK. Null when unavailable. */
-  usage: {
-    inputTokens: number;
-    cachedInputTokens: number;
-    outputTokens: number;
-  } | null;
-}
-
 export interface ValidatorExecutionMetadata {
-  sessionRef: GraphWorkflowExecutionSessionRef | null;
+  sessionRef: AgentSessionRef | null;
   reviewArtifact: GraphWorkflowValidationReviewArtifact | null;
   limitEvaluation: "disabled" | "supported" | "unsupported";
   rotateBeforeNextTurn: boolean;
@@ -266,19 +225,55 @@ export interface ValidatorContinuityRepository {
 }
 
 export interface ValidatorRunnerDeps {
-  executeValidatorAgent(
-    input: ExecuteValidatorAgentInput,
-  ): Promise<ValidatorExecutionResult>;
-  executeValidatorCodex(
-    input: ExecuteValidatorCodexInput,
-  ): Promise<ExecuteValidatorCodexResult | string>;
+  getTaskRunner(backend: AgentBackendId): AgentTaskRunner;
+  resolveWorktreePath(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<string>;
+  resolveTimeoutMs(validatorType: "claude" | "codex"): Promise<number>;
   /** When provided, validator runs route through the continuity service for session reuse. */
   continuityService?: ValidatorContinuityService;
   /** Required when continuityService is provided — persists updated lane state. */
   executionRepository?: ValidatorContinuityRepository;
 }
 
+// In-memory cache of backend session refs for task runner resume.
+// Keyed by "executionId:lane", stores the backendRef from the last task result.
+const backendRefCache = new Map<string, AgentSessionRef>();
+
+function refCacheKey(executionId: string, lane: string): string {
+  return `${executionId}:${lane}`;
+}
+
 const validatorLogger = createLogger("graph-workflow-validator");
+
+/**
+ * Convert a continuity service resolve result to an AgentSessionRef for resume.
+ * Returns null when no valid resume ref is available.
+ */
+function resolvedCallToResumeRef(
+  resolved: ResolvedValidatorCall,
+  executionId: string,
+  lane: string,
+): AgentSessionRef | null {
+  if (resolved.sessionAction === "create") {
+    backendRefCache.delete(refCacheKey(executionId, lane));
+    return null;
+  }
+
+  // Prefer cached backend ref from previous task runner result
+  const cached = backendRefCache.get(refCacheKey(executionId, lane));
+  if (cached) return cached;
+
+  // For Codex, the continuity service threadId maps directly to AgentSessionRef
+  if (resolved.engine === "codex") {
+    return { backend: "codex", threadId: resolved.threadId };
+  }
+
+  // For Claude, the continuity service stores a CC conversationId which
+  // cannot be used as a Claude SDK sessionId for task runner resume
+  return null;
+}
 
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
   async function persistLaneState(
@@ -302,20 +297,17 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     updatedExecution: GraphWorkflowExecution,
     lane: GraphWorkflowLaneKind,
   ): {
-    sessionRef: GraphWorkflowExecutionSessionRef | null;
     limitEvaluation: "disabled" | "supported" | "unsupported";
     rotateBeforeNextTurn: boolean;
   } {
     const laneState = updatedExecution.laneStates[lane];
     if (!laneState) {
       return {
-        sessionRef: null,
         limitEvaluation: "disabled",
         rotateBeforeNextTurn: false,
       };
     }
     return {
-      sessionRef: laneState.sessionRef,
       limitEvaluation: laneState.limitEvaluation,
       rotateBeforeNextTurn: laneState.rotateBeforeNextTurn,
     };
@@ -327,17 +319,20 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     execution: GraphWorkflowExecution,
     lane: "task_validator",
     validatorType: "claude" | "codex",
+    prompt: string,
+    modelId: string | undefined,
+    reasoningEffort: string | undefined,
     contextLimitTokens: number | undefined,
-    runClaudeAgent: (
-      conversationId?: string,
-    ) => Promise<ValidatorExecutionResult>,
-    runCodexAgent: (
-      sessionAction: "create" | "reuse",
-      storedThreadId?: string,
-    ) => Promise<ExecuteValidatorCodexResult | string>,
   ): Promise<ValidatorRunResult> {
     const contextId = execution.activeContextId ?? "";
     const execLogger = getExecutionLogger(execution.id);
+    const runner = deps.getTaskRunner(validatorType);
+
+    const worktreePath = await deps.resolveWorktreePath(
+      projectPath,
+      sessionName,
+    );
+    const timeoutMs = await deps.resolveTimeoutMs(validatorType);
 
     execLogger?.validation(contextId, "validator.invoked", {
       lane,
@@ -350,29 +345,40 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       engine: validatorType,
     });
 
+    const baseRequest = {
+      workingDirectory: worktreePath,
+      prompt,
+      modelId,
+      reasoningEffort,
+      autonomous: true,
+      timeoutMs,
+      outputSchema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
+        string,
+        unknown
+      >,
+    };
+
+    // Codex-specific execution controls — explicit, not relying on runner defaults
+    const codexSettings =
+      validatorType === "codex"
+        ? {
+            sandboxMode: "workspace-write" as const,
+            approvalPolicy: "never" as const,
+            webSearchMode: "disabled" as const,
+            skipGitRepoCheck: true,
+            networkAccessEnabled: true,
+          }
+        : {};
+
     if (!deps.continuityService) {
-      // No continuity service — execute one-shot without lane tracking
-      if (validatorType === "codex") {
-        const rawResult = await runCodexAgent("create");
-        const text = typeof rawResult === "string" ? rawResult : rawResult.text;
-        const { result: parsed, parsePath } = parseValidatorResponse(text);
-        execLogger?.validation(contextId, "validator.result_parsed", {
-          lane,
-          engine: validatorType,
-          parsePath,
-          pass: parsed.pass,
-          issueCount: parsed.issues.length,
-        });
-        return {
-          result: parsed,
-          metadata: buildNoServiceMetadata(),
-        };
-      }
-      const rawResult = await runClaudeAgent();
+      // One-shot without lane tracking
+      const taskResult = await runner.run({ ...baseRequest, ...codexSettings });
+      const text = taskResult.text ?? "";
       const { result: parsed, parsePath } = parseValidatorResponse(
-        rawResult.text,
-        rawResult.structuredOutput,
+        text,
+        taskResult.structuredOutput,
       );
+
       execLogger?.validation(contextId, "validator.result_parsed", {
         lane,
         engine: validatorType,
@@ -380,59 +386,91 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         pass: parsed.pass,
         issueCount: parsed.issues.length,
       });
+
       return {
         result: parsed,
         metadata: buildNoServiceMetadata(),
       };
     }
 
+    // With continuity service — resolve session action and resume ref
     const resolved = await deps.continuityService.resolveValidatorCall({
       execution,
       projectPath,
       sessionName,
-      contextId: execution.activeContextId ?? "",
+      contextId,
       lane,
       engine: validatorType,
     });
 
-    if (validatorType === "codex") {
-      const sessionAction = resolved.sessionAction;
-      const storedThreadId =
-        resolved.engine === "codex" ? resolved.threadId : undefined;
+    const resumeRef = resolvedCallToResumeRef(resolved, execution.id, lane);
 
-      const codexResult = await runCodexAgent(sessionAction, storedThreadId);
-      const text =
-        typeof codexResult === "string" ? codexResult : codexResult.text;
-      const realThreadId =
-        typeof codexResult === "string" ? null : codexResult.realThreadId;
-      const usage =
-        typeof codexResult === "string" ? null : (codexResult.usage ?? null);
+    validatorLogger.info("graph-workflow.validator.session_resolved", {
+      executionId: execution.id,
+      lane,
+      engine: validatorType,
+      sessionAction: resolved.sessionAction,
+      hasResumeRef: !!resumeRef,
+    });
+
+    const taskResult = await runner.run({
+      ...baseRequest,
+      ...codexSettings,
+      resumeRef,
+    });
+
+    // Cache the backend ref for future resume
+    if (taskResult.backendRef) {
+      backendRefCache.set(
+        refCacheKey(execution.id, lane),
+        taskResult.backendRef,
+      );
+    }
+
+    const text = taskResult.text ?? "";
+    const { result: parsed, parsePath } = parseValidatorResponse(
+      text,
+      taskResult.structuredOutput,
+    );
+
+    // Record outcome with the continuity service for rotation tracking
+    if (validatorType === "codex") {
+      const newThreadId =
+        taskResult.backendRef?.backend === "codex"
+          ? taskResult.backendRef.threadId
+          : null;
+      const usage = taskResult.usage
+        ? {
+            inputTokens: taskResult.usage.inputTokens ?? 0,
+            cachedInputTokens: taskResult.usage.cachedInputTokens ?? 0,
+            outputTokens: taskResult.usage.outputTokens ?? 0,
+          }
+        : null;
 
       const updatedExecution = deps.continuityService.recordCodexTurnOutcome({
         execution: resolved.execution,
         lane,
         usage,
         contextLimitTokens,
-        newThreadId: realThreadId,
+        newThreadId,
       });
       await persistLaneState(projectPath, sessionName, updatedExecution);
 
-      const { sessionRef, limitEvaluation, rotateBeforeNextTurn } =
-        extractLaneMetadata(updatedExecution, lane);
+      const { limitEvaluation, rotateBeforeNextTurn } = extractLaneMetadata(
+        updatedExecution,
+        lane,
+      );
 
-      // Build Codex review artifact using the real thread ID stored after the turn
       const codexThreadId =
-        sessionRef?.engine === "codex"
-          ? sessionRef.threadId
-          : (realThreadId ?? "");
+        taskResult.backendRef?.backend === "codex"
+          ? taskResult.backendRef.threadId
+          : (newThreadId ?? "");
       const reviewArtifact: GraphWorkflowValidationReviewArtifact = {
         engine: "codex",
         threadId: codexThreadId,
         response: text,
         usage,
       };
-
-      const { result: parsed, parsePath } = parseValidatorResponse(text);
 
       execLogger?.validation(contextId, "validator.result_parsed", {
         lane,
@@ -441,7 +479,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         pass: parsed.pass,
         issueCount: parsed.issues.length,
         summary: parsed.summary,
-        sessionAction,
+        sessionAction: resolved.sessionAction,
         threadId: codexThreadId,
         usage,
       });
@@ -454,7 +492,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       return {
         result: parsed,
         metadata: {
-          sessionRef,
+          sessionRef: taskResult.backendRef ?? null,
           reviewArtifact,
           limitEvaluation,
           rotateBeforeNextTurn,
@@ -462,32 +500,29 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       };
     }
 
-    const conversationId =
-      resolved.engine === "claude" ? resolved.conversationId : undefined;
-
-    const claudeResult = await runClaudeAgent(conversationId);
-
+    // Claude path
     const updatedExecution = deps.continuityService.recordClaudeTurnOutcome({
       execution: resolved.execution,
       lane,
-      contextTokens: claudeResult.contextTokens ?? null,
-      contextWindowMax: claudeResult.contextWindowMax ?? null,
+      contextTokens: null,
+      contextWindowMax: null,
       contextLimitTokens,
     });
     await persistLaneState(projectPath, sessionName, updatedExecution);
 
-    const { sessionRef, limitEvaluation, rotateBeforeNextTurn } =
-      extractLaneMetadata(updatedExecution, lane);
-
-    const reviewArtifact: GraphWorkflowValidationReviewArtifact | null =
-      sessionRef?.engine === "claude"
-        ? { engine: "claude", conversationId: sessionRef.conversationId }
-        : null;
-
-    const { result: parsed, parsePath } = parseValidatorResponse(
-      claudeResult.text,
-      claudeResult.structuredOutput,
+    const { limitEvaluation, rotateBeforeNextTurn } = extractLaneMetadata(
+      updatedExecution,
+      lane,
     );
+
+    const backendSessionId =
+      taskResult.backendRef?.backend === "claude"
+        ? taskResult.backendRef.sessionId
+        : "";
+    const reviewArtifact: GraphWorkflowValidationReviewArtifact | null =
+      backendSessionId
+        ? { engine: "claude", conversationId: backendSessionId }
+        : null;
 
     execLogger?.validation(contextId, "validator.result_parsed", {
       lane,
@@ -496,20 +531,19 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       pass: parsed.pass,
       issueCount: parsed.issues.length,
       summary: parsed.summary,
-      conversationId,
-      contextTokens: claudeResult.contextTokens,
-      contextWindowMax: claudeResult.contextWindowMax,
+      sessionAction: resolved.sessionAction,
+      backendSessionId: backendSessionId || null,
     });
     execLogger?.writeValidatorResponse(
       contextId,
       `${lane}-claude-response.json`,
-      { raw: claudeResult.text, parsed, parsePath },
+      { raw: text, parsed, parsePath },
     );
 
     return {
       result: parsed,
       metadata: {
-        sessionRef,
+        sessionRef: taskResult.backendRef ?? null,
         reviewArtifact,
         limitEvaluation,
         rotateBeforeNextTurn,
@@ -555,18 +589,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           input.execution,
           "task_validator",
           "codex",
+          prompt,
+          validator.codex.model,
+          validator.codex.reasoningEffort,
           contextLimitTokens,
-          async () => ({ text: "" }),
-          async (sessionAction, storedThreadId) =>
-            deps.executeValidatorCodex({
-              projectPath: input.projectPath,
-              sessionName: input.sessionName,
-              prompt,
-              model: validator.codex.model,
-              reasoningEffort: validator.codex.reasoningEffort,
-              sessionAction,
-              storedThreadId,
-            }),
         );
       }
 
@@ -577,24 +603,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         input.execution,
         "task_validator",
         "claude",
+        prompt,
+        validator.agent.model,
+        validator.agent.reasoningEffort,
         contextLimitTokens,
-        async (conversationId) =>
-          deps.executeValidatorAgent({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            prompt,
-            model: validator.agent.model,
-            reasoningEffort: validator.agent.reasoningEffort,
-            outputFormat: {
-              type: "json_schema",
-              schema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
-                string,
-                unknown
-              >,
-            },
-            conversationId,
-          }),
-        async () => ({ text: "", realThreadId: null, usage: null }),
       );
     } catch (error) {
       const errorMessage =

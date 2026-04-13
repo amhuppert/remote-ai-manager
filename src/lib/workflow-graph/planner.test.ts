@@ -100,6 +100,62 @@ describe("workflow graph planner", () => {
     const { createWorkflowPlannerService } = await import("./planner");
     const service = createWorkflowPlannerService({
       loadSeedDefinition: vi.fn(async () => null),
+      runPlannerQuery: vi.fn(
+        async (): Promise<WorkflowSemanticDefinition> => ({
+          schemaVersion: 1,
+          executionContexts: [
+            {
+              id: "context-plan",
+              title: "Plan",
+              description: "Inspect the current implementation surface.",
+              agent: { model: "opus", reasoningEffort: "high" },
+              mutability: { allowAgentTaskAdd: true },
+              circuitBreaker: {},
+              iterationPolicy: {
+                maxIterations: 3,
+                continuity: { enabled: true },
+              },
+            },
+            {
+              id: "context-implement",
+              title: "Implement",
+              description: "Apply the changes.",
+              agent: { model: "sonnet", reasoningEffort: "medium" },
+              mutability: { allowAgentTaskAdd: false },
+              circuitBreaker: {},
+              iterationPolicy: {
+                maxIterations: 4,
+                continuity: { enabled: true },
+              },
+            },
+          ],
+          tasks: [
+            {
+              id: "task-plan-1",
+              contextId: "context-plan",
+              order: 1,
+              title: "Inspect",
+              instructions: "Read the existing implementation.",
+              source: "user",
+            },
+            {
+              id: "task-implement-1",
+              contextId: "context-implement",
+              order: 1,
+              title: "Implement",
+              instructions: "Make the requested change.",
+              source: "user",
+            },
+          ],
+          edges: [
+            {
+              id: "edge-1",
+              sourceContextId: "context-plan",
+              targetContextId: "context-implement",
+            },
+          ],
+        }),
+      ),
     });
 
     const result = await service.generateDraft({
@@ -169,7 +225,18 @@ describe("workflow graph planner", () => {
     const loadSeedDefinition = vi.fn<
       (seedDefinitionId: string) => Promise<WorkflowDefinitionRecord | null>
     >(async () => createWorkflowDefinitionRecord());
-    const service = createWorkflowPlannerService({ loadSeedDefinition });
+    const runPlannerQuery = vi.fn(
+      async (): Promise<WorkflowSemanticDefinition> => ({
+        schemaVersion: 1,
+        executionContexts: [],
+        tasks: [],
+        edges: [],
+      }),
+    );
+    const service = createWorkflowPlannerService({
+      loadSeedDefinition,
+      runPlannerQuery,
+    });
 
     await service.generateDraft({
       objective: "Extend the existing workflow",

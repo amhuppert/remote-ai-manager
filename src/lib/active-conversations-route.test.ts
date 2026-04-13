@@ -22,7 +22,6 @@ function makeConversation(
   return {
     id: overrides.id ?? "conv-1",
     name: overrides.name ?? null,
-    claudeSessionId: null,
     transcriptPath: null,
     status: overrides.status ?? "new",
     promptCount: 0,

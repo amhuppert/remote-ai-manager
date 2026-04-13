@@ -12,6 +12,11 @@ import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
 } from "@/types";
+import type { AgentBackendId } from "@/lib/agent-backends/types";
+import type {
+  AgentTaskRunner,
+  AgentTaskResult,
+} from "@/lib/agent-backends/task";
 import {
   createWorkflowDefinition,
   createWorkflowExecution,
@@ -19,6 +24,36 @@ import {
 import { createWorkflowContinuityService } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
 import { graphWorkflowExecutionSchema } from "@/lib/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+
+// -- Test helpers for task runner mocks ----------------------------------------
+
+function mockGetTaskRunner(
+  claudeRun: ReturnType<typeof vi.fn> = vi.fn(),
+  codexRun: ReturnType<typeof vi.fn> = vi.fn(),
+): (backend: AgentBackendId) => AgentTaskRunner {
+  return (backend: AgentBackendId) => ({
+    backend,
+    run: backend === "claude" ? claudeRun : codexRun,
+  });
+}
+
+function taskResult(
+  text: string | null,
+  overrides: Partial<AgentTaskResult> = {},
+): AgentTaskResult {
+  return {
+    text,
+    usage: null,
+    error: null,
+    timedOut: false,
+    ...overrides,
+  };
+}
+
+const stubWorktreePath = async () => "/worktree";
+const stubTimeoutMs = async () => 300_000;
+
+// -- Pure function tests ------------------------------------------------------
 
 describe("extractValidatorResult", () => {
   it("extracts a valid result from a ```json fenced block", () => {
@@ -232,7 +267,7 @@ function buildExecutionWithTaskValidation(): GraphWorkflowExecution {
 }
 
 describe("createValidatorRunner", () => {
-  it("runTaskValidator passes the prompt to the executor and returns the parsed result", async () => {
+  it("runTaskValidator passes the prompt to the task runner and returns the parsed result", async () => {
     const agentResponse = [
       "I reviewed the code.",
       "```json",
@@ -244,14 +279,11 @@ describe("createValidatorRunner", () => {
       "```",
     ].join("\n");
 
-    const executeValidatorAgent = vi.fn(async () => ({
-      text: agentResponse,
-      structuredOutput: undefined,
-    }));
-    const executeValidatorCodex = vi.fn();
+    const claudeRun = vi.fn(async () => taskResult(agentResponse));
     const runner = createValidatorRunner({
-      executeValidatorAgent,
-      executeValidatorCodex,
+      getTaskRunner: mockGetTaskRunner(claudeRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
     });
 
     const execution = buildExecutionWithTaskValidation();
@@ -273,12 +305,12 @@ describe("createValidatorRunner", () => {
       validator: contextDef.taskValidation!,
     });
 
-    expect(executeValidatorAgent).toHaveBeenCalledWith(
+    expect(claudeRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        projectPath: "/repo",
-        sessionName: "session-1",
-        model: "sonnet",
+        workingDirectory: "/worktree",
+        modelId: "sonnet",
         reasoningEffort: "medium",
+        autonomous: true,
       }),
     );
     expect(result.result.pass).toBe(true);
@@ -286,14 +318,13 @@ describe("createValidatorRunner", () => {
   });
 
   it("runTaskValidator returns a failing result when the agent produces no JSON", async () => {
-    const executeValidatorAgent = vi.fn(async () => ({
-      text: "I could not find anything to review.",
-      structuredOutput: undefined,
-    }));
-    const executeValidatorCodex = vi.fn();
+    const claudeRun = vi.fn(async () =>
+      taskResult("I could not find anything to review."),
+    );
     const runner = createValidatorRunner({
-      executeValidatorAgent,
-      executeValidatorCodex,
+      getTaskRunner: mockGetTaskRunner(claudeRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
     });
 
     const execution = buildExecutionWithTaskValidation();
@@ -320,13 +351,13 @@ describe("createValidatorRunner", () => {
   });
 
   it("runTaskValidator propagates executor errors as a failing result", async () => {
-    const executeValidatorAgent = vi.fn(async () => {
+    const claudeRun = vi.fn(async () => {
       throw new Error("SDK connection failed");
     });
-    const executeValidatorCodex = vi.fn();
     const runner = createValidatorRunner({
-      executeValidatorAgent,
-      executeValidatorCodex,
+      getTaskRunner: mockGetTaskRunner(claudeRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
     });
 
     const execution = buildExecutionWithTaskValidation();
@@ -352,7 +383,7 @@ describe("createValidatorRunner", () => {
     expect(result.result.summary).toContain("SDK connection failed");
   });
 
-  it("runTaskValidator calls executeValidatorAgent with outputFormat for claude type", async () => {
+  it("runTaskValidator passes outputSchema to the task runner for claude type", async () => {
     const agentResponse = [
       "```json",
       JSON.stringify({
@@ -363,14 +394,12 @@ describe("createValidatorRunner", () => {
       "```",
     ].join("\n");
 
-    const executeValidatorAgent = vi.fn(async () => ({
-      text: agentResponse,
-      structuredOutput: undefined,
-    }));
-    const executeValidatorCodex = vi.fn();
+    const claudeRun = vi.fn(async () => taskResult(agentResponse));
+    const codexRun = vi.fn();
     const runner = createValidatorRunner({
-      executeValidatorAgent,
-      executeValidatorCodex,
+      getTaskRunner: mockGetTaskRunner(claudeRun, codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
     });
 
     const execution = buildExecutionWithTaskValidation();
@@ -392,26 +421,27 @@ describe("createValidatorRunner", () => {
       validator: contextDef.taskValidation!,
     });
 
-    expect(executeValidatorAgent).toHaveBeenCalledWith(
+    expect(claudeRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        outputFormat: { type: "json_schema", schema: VALIDATOR_OUTPUT_SCHEMA },
+        outputSchema: VALIDATOR_OUTPUT_SCHEMA,
       }),
     );
-    expect(executeValidatorCodex).not.toHaveBeenCalled();
+    expect(codexRun).not.toHaveBeenCalled();
   });
 
-  it("runTaskValidator calls executeValidatorCodex for codex type", async () => {
-    const executeValidatorAgent = vi.fn();
-    const executeValidatorCodex = vi.fn(async () =>
-      JSON.stringify({
-        pass: true,
-        summary: "Codex OK",
-        issues: [],
-      }),
-    );
+  it("runTaskValidator calls codex task runner for codex type", async () => {
+    const codexResponse = JSON.stringify({
+      pass: true,
+      summary: "Codex OK",
+      issues: [],
+    });
+
+    const claudeRun = vi.fn();
+    const codexRun = vi.fn(async () => taskResult(codexResponse));
     const runner = createValidatorRunner({
-      executeValidatorAgent,
-      executeValidatorCodex,
+      getTaskRunner: mockGetTaskRunner(claudeRun, codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
     });
 
     const execution = buildExecutionWithTaskValidation();
@@ -441,13 +471,15 @@ describe("createValidatorRunner", () => {
       validator: codexValidator,
     });
 
-    expect(executeValidatorCodex).toHaveBeenCalledWith(
+    expect(codexRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: "o3",
+        modelId: "o3",
         reasoningEffort: "high",
+        sandboxMode: "workspace-write",
+        approvalPolicy: "never",
       }),
     );
-    expect(executeValidatorAgent).not.toHaveBeenCalled();
+    expect(claudeRun).not.toHaveBeenCalled();
     expect(result.result.pass).toBe(true);
     expect(result.result.summary).toBe("Codex OK");
   });
@@ -482,13 +514,11 @@ describe("continuity service wiring", () => {
       instructions: "Validate.",
     };
 
-    const executeValidatorAgent = vi.fn().mockResolvedValue({
-      text: passResult,
-      structuredOutput: undefined,
-      contextTokens: 10000,
-      contextWindowMax: 200000,
-    });
-    const executeValidatorCodex = vi.fn();
+    const claudeRun = vi.fn().mockResolvedValue(
+      taskResult(passResult, {
+        backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+      }),
+    );
 
     const resolvedExecution = {
       ...execution,
@@ -506,8 +536,9 @@ describe("continuity service wiring", () => {
     const repositoryUpdate = vi.fn();
 
     const runner = createValidatorRunner({
-      executeValidatorAgent,
-      executeValidatorCodex,
+      getTaskRunner: mockGetTaskRunner(claudeRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
       continuityService: {
         resolveValidatorCall,
         recordClaudeTurnOutcome,
@@ -528,15 +559,18 @@ describe("continuity service wiring", () => {
     });
 
     expect(resolveValidatorCall).toHaveBeenCalledOnce();
-    // Claude agent called with the conversationId from the continuity service
-    expect(executeValidatorAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationId: "continuity-conv-id" }),
+    // Task runner called with no resumeRef (sessionAction: "create" clears cache)
+    expect(claudeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autonomous: true,
+      }),
     );
     expect(recordClaudeTurnOutcome).toHaveBeenCalledWith(
       expect.objectContaining({
         lane: "task_validator",
-        contextTokens: 10000,
-        contextWindowMax: 200000,
+        // Task runner does not expose context token counts
+        contextTokens: null,
+        contextWindowMax: null,
       }),
     );
     expect(repositoryUpdate).toHaveBeenCalledOnce();
@@ -559,12 +593,12 @@ describe("continuity service wiring", () => {
       instructions: "Validate.",
     };
 
-    const executeValidatorAgent = vi.fn();
-    const executeValidatorCodex = vi.fn().mockResolvedValue({
-      text: passResult,
-      realThreadId: "real-thread-123",
-      usage: null,
-    });
+    const codexRun = vi.fn().mockResolvedValue(
+      taskResult(passResult, {
+        backendRef: { backend: "codex", threadId: "real-thread-123" },
+        usage: null,
+      }),
+    );
 
     const resolvedExecution = {
       ...execution,
@@ -581,8 +615,9 @@ describe("continuity service wiring", () => {
     const repositoryUpdate = vi.fn();
 
     const runner = createValidatorRunner({
-      executeValidatorAgent,
-      executeValidatorCodex,
+      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
       continuityService: {
         resolveValidatorCall,
         recordClaudeTurnOutcome,
@@ -603,10 +638,11 @@ describe("continuity service wiring", () => {
     });
 
     expect(resolveValidatorCall).toHaveBeenCalledOnce();
-    expect(executeValidatorCodex).toHaveBeenCalledWith(
+    // Codex runner called with correct settings
+    expect(codexRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionAction: "create",
-        storedThreadId: "placeholder-id",
+        sandboxMode: "workspace-write",
+        approvalPolicy: "never",
       }),
     );
     expect(recordCodexTurnOutcome).toHaveBeenCalledWith(
@@ -647,12 +683,12 @@ describe("continuity service wiring", () => {
       issues: [],
     });
 
-    const executeValidatorAgent = vi.fn();
-    const executeValidatorCodex = vi.fn().mockResolvedValue({
-      text: validatorResponseText,
-      realThreadId: "thread-abc",
-      usage: { inputTokens: 100, cachedInputTokens: 0, outputTokens: 50 },
-    });
+    const codexRun = vi.fn().mockResolvedValue(
+      taskResult(validatorResponseText, {
+        backendRef: { backend: "codex", threadId: "thread-abc" },
+        usage: { inputTokens: 100, cachedInputTokens: 0, outputTokens: 50 },
+      }),
+    );
 
     const resolvedExecution = {
       ...execution,
@@ -691,8 +727,9 @@ describe("continuity service wiring", () => {
     const repositoryUpdate = vi.fn();
 
     const runner = createValidatorRunner({
-      executeValidatorAgent,
-      executeValidatorCodex,
+      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
       continuityService: {
         resolveValidatorCall,
         recordClaudeTurnOutcome,
@@ -842,16 +879,16 @@ describe("continuity runtime integration (real service)", () => {
       now: () => NOW,
     });
 
-    const executeValidatorAgent = vi.fn().mockResolvedValue({
-      text: passResponseJson,
-      structuredOutput: undefined,
-      contextTokens: 10_000,
-      contextWindowMax: 200_000,
-    });
+    const claudeRun = vi.fn().mockResolvedValue(
+      taskResult(passResponseJson, {
+        backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+      }),
+    );
 
     const runner = createValidatorRunner({
-      executeValidatorAgent,
-      executeValidatorCodex: vi.fn(),
+      getTaskRunner: mockGetTaskRunner(claudeRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
       continuityService,
       executionRepository: repo,
     });
@@ -868,9 +905,10 @@ describe("continuity runtime integration (real service)", () => {
       validator,
     });
 
+    // Backend ref from the task runner is captured as metadata sessionRef
     expect(result1.metadata.sessionRef).toMatchObject({
-      engine: "claude",
-      conversationId: "conv-val-1",
+      backend: "claude",
+      sessionId: "sdk-session-1",
     });
     expect(createConversation).toHaveBeenCalledOnce();
     expect(repo.read().laneStates["task_validator"]?.engine).toBe("claude");
@@ -887,10 +925,17 @@ describe("continuity runtime integration (real service)", () => {
       validator,
     });
 
+    // Continuity service reuses the conversation (no second createConversation call)
     expect(createConversation).toHaveBeenCalledOnce();
+    // The cached backend ref is used as resumeRef on the second call
+    expect(claudeRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        resumeRef: { backend: "claude", sessionId: "sdk-session-1" },
+      }),
+    );
     expect(result2.metadata.sessionRef).toMatchObject({
-      engine: "claude",
-      conversationId: "conv-val-1",
+      backend: "claude",
+      sessionId: "sdk-session-1",
     });
   });
 
@@ -943,16 +988,18 @@ describe("continuity runtime integration (real service)", () => {
       now: () => NOW,
     });
 
-    // First Codex run returns a real thread ID after the turn completes
-    const executeValidatorCodex = vi.fn().mockResolvedValue({
-      text: passResponseJson,
-      realThreadId: "thread-real-1",
-      usage: null,
-    });
+    // First Codex run returns a real thread ID via backendRef
+    const codexRun = vi.fn().mockResolvedValue(
+      taskResult(passResponseJson, {
+        backendRef: { backend: "codex", threadId: "thread-real-1" },
+        usage: null,
+      }),
+    );
 
     const runner = createValidatorRunner({
-      executeValidatorAgent: vi.fn(),
-      executeValidatorCodex,
+      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
       continuityService,
       executionRepository: repo,
     });
@@ -971,7 +1018,7 @@ describe("continuity runtime integration (real service)", () => {
 
     expect(startCodexThread).toHaveBeenCalledOnce();
     expect(resumeCodexThread).not.toHaveBeenCalled();
-    // The review artifact records the real thread ID captured after the turn
+    // The review artifact records the real thread ID from backendRef
     expect(result1.metadata.reviewArtifact).toMatchObject({
       engine: "codex",
       threadId: "thread-real-1",
@@ -1063,11 +1110,7 @@ describe("continuity runtime integration (real service)", () => {
       validatorType: "task",
       pass: true,
       summary: "Passed on prior run",
-      sessionRef: {
-        engine: "codex",
-        lane: "task_validator",
-        threadId: "thread-prior",
-      },
+      sessionRef: { backend: "codex", threadId: "thread-prior" },
       reviewArtifact: {
         engine: "codex",
         threadId: "thread-prior",
@@ -1110,13 +1153,17 @@ describe("continuity runtime integration (real service)", () => {
       now: () => NOW,
     });
 
-    const runner = createValidatorRunner({
-      executeValidatorAgent: vi.fn(),
-      executeValidatorCodex: vi.fn().mockResolvedValue({
-        text: passResponseJson,
-        realThreadId: "thread-prior",
+    const codexRun = vi.fn().mockResolvedValue(
+      taskResult(passResponseJson, {
+        backendRef: { backend: "codex", threadId: "thread-prior" },
         usage: null,
       }),
+    );
+
+    const runner = createValidatorRunner({
+      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
       continuityService,
       executionRepository: repo,
     });

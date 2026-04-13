@@ -67,7 +67,6 @@ const testConversation = {
   role: null,
   name: null,
   summary: null,
-  claudeSessionId: null,
   transcriptPath: "/tmp/transcript.jsonl",
   totalCostUsd: 0,
   totalDurationMs: 0,

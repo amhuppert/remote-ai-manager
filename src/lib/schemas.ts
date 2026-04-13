@@ -7,6 +7,15 @@ import { z } from "zod";
 export const claudeModelSchema = z.enum(["opus", "sonnet", "haiku"]);
 export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 
+export const agentBackendSchema = z.enum(["claude", "codex"]);
+export type AgentBackendId = z.infer<typeof agentBackendSchema>;
+
+export const agentSessionRefSchema = z.discriminatedUnion("backend", [
+  z.object({ backend: z.literal("claude"), sessionId: z.string() }),
+  z.object({ backend: z.literal("codex"), threadId: z.string() }),
+]);
+export type AgentSessionRef = z.infer<typeof agentSessionRefSchema>;
+
 export const effortLevelSchema = z.enum(["low", "medium", "high", "max"]);
 export type EffortLevel = z.infer<typeof effortLevelSchema>;
 
@@ -154,6 +163,7 @@ export const globalConfigSchema = z.object({
   workflowDefaults: workflowDefaultsSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
   branchPrefix: z.string().optional(),
+  defaultAgentBackend: agentBackendSchema.default("claude"),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -228,10 +238,10 @@ export type AskQuestionItem = z.infer<typeof askQuestionItemSchema>;
 export const forkedFromSchema = z
   .object({
     sourceConversationId: z.string(),
-    sourceClaudeSessionId: z.string(),
     messageIndex: z.number().int().min(0),
-    /** UUID of the last assistant message before the fork point, used for SDK resumeSessionAt */
-    forkPointAssistantUuid: z.string().nullable().default(null),
+    sourceBackend: agentBackendSchema.optional(),
+    sourceBackendRef: agentSessionRefSchema.optional(),
+    forkLocator: z.string().nullable().optional(),
   })
   .nullable()
   .default(null);
@@ -302,7 +312,6 @@ export type DebugInstrumentationManifest = z.infer<
 export const conversationStateSchema = z.object({
   id: z.string(),
   name: z.string().nullable().default(null),
-  claudeSessionId: z.string().nullable(),
   transcriptPath: z.string().nullable(),
   status: conversationStatusSchema,
   promptCount: z.number(),
@@ -322,6 +331,8 @@ export const conversationStateSchema = z.object({
   contextWindowMax: z.number().nullable().default(null),
   debugMode: debugModeStateSchema.nullable().default(null),
   machineSnapshot: z.unknown().nullable().default(null),
+  agentBackend: agentBackendSchema.default("claude"),
+  backendRef: agentSessionRefSchema.nullable().default(null),
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
@@ -1184,9 +1195,10 @@ export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 export const runPromptRequestSchema = z
   .object({
     prompt: z.string().trim(),
-    modelId: claudeModelSchema.optional(),
-    effort: effortLevelSchema.optional(),
+    modelId: z.string().trim().min(1).optional(),
+    effort: z.string().trim().min(1).optional(),
     images: z.array(imagePayloadSchema).max(5).optional(),
+    backend: agentBackendSchema.optional(),
   })
   .refine(
     (data) => data.prompt.length > 0 || (data.images && data.images.length > 0),

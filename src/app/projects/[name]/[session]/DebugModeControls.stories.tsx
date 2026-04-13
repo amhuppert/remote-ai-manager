@@ -18,7 +18,6 @@ function makeConversation(
     id: "conv-123",
     name: null,
     status: "awaiting",
-    claudeSessionId: null,
     transcriptPath: "/tmp/test.jsonl",
     totalCostUsd: 0,
     totalDurationMs: 0,
@@ -37,6 +36,8 @@ function makeConversation(
     contextWindowMax: null,
     debugMode: null,
     machineSnapshot: null,
+    agentBackend: "claude" as const,
+    backendRef: null,
     ...overrides,
   };
 }

@@ -27,7 +27,36 @@ export type {
   ForkedFrom,
   MessageContentBlock,
   ReferenceDocument,
+  AgentBackendId,
+  AgentSessionRef,
 } from "@/lib/schemas";
+
+export type {
+  ConversationBackendRuntime,
+  ConversationBackendFactory,
+  ConversationBackendCreateInput,
+  ConversationBackendTurnInput,
+  ConversationBackendTurnResult,
+  ConversationBackendEvent,
+  ConversationQueuedUserInput,
+} from "@/lib/agent-backends/conversation";
+
+export type {
+  ConversationBackendCapabilities,
+  ConversationToolingOverrides,
+} from "@/lib/agent-backends/types";
+
+export type {
+  AgentTaskRunner,
+  AgentTaskRequest,
+  AgentTaskResult,
+} from "@/lib/agent-backends/task";
+
+export type {
+  PortableMcpConfig,
+  PortableMcpServerConfig,
+  McpApplyResult,
+} from "@/lib/agent-backends/portable-mcp";
 
 // ============================================================
 // API Types

@@ -26,7 +26,6 @@ const testSession: SessionState = {
     {
       id: "conv-123",
       name: null,
-      claudeSessionId: null,
       transcriptPath: null,
       status: "new",
       promptCount: 0,
@@ -46,6 +45,8 @@ const testSession: SessionState = {
       contextWindowMax: null,
       debugMode: null,
       machineSnapshot: null,
+      agentBackend: "claude" as const,
+      backendRef: null,
     },
   ],
   source: "cc",

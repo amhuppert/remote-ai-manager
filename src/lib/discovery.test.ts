@@ -228,7 +228,6 @@ describe("discoverProjects — session metadata enrichment", () => {
               conversations: [
                 {
                   id: "conv-run",
-                  claudeSessionId: "abc",
                   transcriptPath: null,
                   status: "running",
                   promptCount: 1,
@@ -270,7 +269,6 @@ describe("discoverProjects — session metadata enrichment", () => {
               conversations: [
                 {
                   id: "conv-stuck",
-                  claudeSessionId: "abc",
                   transcriptPath: null,
                   status: "running",
                   promptCount: 1,
@@ -313,7 +311,6 @@ describe("discoverProjects — session metadata enrichment", () => {
               conversations: [
                 {
                   id: "conv-stuck",
-                  claudeSessionId: "abc",
                   transcriptPath: null,
                   status: "running",
                   promptCount: 1,
@@ -432,7 +429,6 @@ describe("discoverProjects — result ordering", () => {
               conversations: [
                 {
                   id: "conv-s2",
-                  claudeSessionId: null,
                   transcriptPath: null,
                   status: "running",
                   promptCount: 1,

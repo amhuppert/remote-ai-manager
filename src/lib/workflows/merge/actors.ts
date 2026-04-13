@@ -7,6 +7,7 @@
 
 import { fromPromise } from "xstate";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/schemas";
+import type { AgentSessionRef } from "@/lib/agent-backends/types";
 
 // ============================================================
 // Actor Input/Output Types
@@ -70,12 +71,12 @@ export interface FixValidationInput {
   projectPath: string;
   sessionName: string;
   branchName: string;
-  claudeSessionId?: string;
+  sessionRef?: AgentSessionRef | null;
 }
 export interface FixValidationOutput {
   status: "fixed" | "failed";
   error?: string;
-  claudeSessionId?: string;
+  sessionRef?: AgentSessionRef | null;
 }
 
 export interface SquashMergeInput {
@@ -222,12 +223,12 @@ export const fixValidation = fromPromise<
     projectPath: input.projectPath,
     sessionName: input.sessionName,
     branchName: input.branchName,
-    claudeSessionId: input.claudeSessionId,
+    sessionRef: input.sessionRef,
   });
   return {
     status: result.status === "fixed" ? "fixed" : "failed",
     error: result.status === "failed" ? result.error : undefined,
-    claudeSessionId: result.claudeSessionId,
+    sessionRef: result.sessionRef,
   };
 });
 
