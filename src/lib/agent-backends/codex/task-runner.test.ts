@@ -87,4 +87,33 @@ describe("CodexTaskRunner", () => {
     expect(startThreadMock).not.toHaveBeenCalled();
     expect(result.error).toContain('Invalid Codex reasoning effort: "max"');
   });
+
+  it("does not abort immediately when timeoutMs is 0 (no timeout)", async () => {
+    // timeoutMs=0 means "no timeout" — the task should run to completion.
+    // Use a real async delay so setTimeout(0) has a chance to fire first
+    // (simulating the real-world case where thread.run() does async work).
+    runMock.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                finalResponse: "done",
+                usage: {
+                  input_tokens: 1,
+                  cached_input_tokens: 0,
+                  output_tokens: 1,
+                },
+              }),
+            50,
+          ),
+        ),
+    );
+
+    const result = await runner.run(makeRequest({ timeoutMs: 0 }));
+
+    expect(result.timedOut).toBe(false);
+    expect(result.text).toBe("done");
+    expect(result.error).toBeNull();
+  });
 });

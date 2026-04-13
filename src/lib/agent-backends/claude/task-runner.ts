@@ -135,14 +135,18 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     const abortController = new AbortController();
     let timedOut = false;
 
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      logger.warn("claude-task-runner.timeout", {
-        workingDirectory: input.workingDirectory,
-        timeoutMs: input.timeoutMs,
-      });
-      abortController.abort();
-    }, input.timeoutMs);
+    // timeoutMs=0 means "no timeout" — skip the timer entirely
+    const timeoutHandle =
+      input.timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            logger.warn("claude-task-runner.timeout", {
+              workingDirectory: input.workingDirectory,
+              timeoutMs: input.timeoutMs,
+            });
+            abortController.abort();
+          }, input.timeoutMs)
+        : null;
 
     let sessionId: string | null = null;
     const textBlocks: string[] = [];
@@ -234,7 +238,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
         });
       }
     } finally {
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
     }
 
     const backendRef = sessionId

@@ -426,6 +426,30 @@ describe("ClaudeTaskRunner", () => {
     expect(callArg.options.mcpServers).not.toHaveProperty("unsupported");
   });
 
+  it("does not abort immediately when timeoutMs is 0 (no timeout)", async () => {
+    // timeoutMs=0 means "no timeout" — the task should run to completion.
+    // Use a real async delay so setTimeout(0) has a chance to fire first
+    // (simulating the real-world case where the SDK does async work).
+    mockQuery.mockImplementation(
+      () =>
+        (async function* () {
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+          yield {
+            type: "assistant",
+            session_id: "session-abc",
+            message: { content: [{ type: "text", text: "Hello" }] },
+          };
+          yield successResultMessage("session-abc");
+        })() as ReturnType<typeof query>,
+    );
+
+    const result = await runner.run(makeRequest({ timeoutMs: 0 }));
+
+    expect(result.timedOut).toBe(false);
+    expect(result.text).toBe("Hello");
+    expect(result.error).toBeNull();
+  });
+
   it("has backend identifier 'claude'", () => {
     expect(runner.backend).toBe("claude");
   });

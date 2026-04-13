@@ -152,14 +152,18 @@ export class CodexTaskRunner implements AgentTaskRunner {
     const abortController = new AbortController();
     let timedOut = false;
 
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      logger.warn("codex-task-runner.timeout", {
-        workingDirectory: input.workingDirectory,
-        timeoutMs: input.timeoutMs,
-      });
-      abortController.abort();
-    }, input.timeoutMs);
+    // timeoutMs=0 means "no timeout" — skip the timer entirely
+    const timeoutHandle =
+      input.timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            logger.warn("codex-task-runner.timeout", {
+              workingDirectory: input.workingDirectory,
+              timeoutMs: input.timeoutMs,
+            });
+            abortController.abort();
+          }, input.timeoutMs)
+        : null;
 
     let threadId: string | null = null;
     let text: string | null = null;
@@ -220,7 +224,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
         }
       }
     } finally {
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
     }
 
     const backendRef = threadId
