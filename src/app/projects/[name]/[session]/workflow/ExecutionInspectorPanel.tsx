@@ -178,11 +178,119 @@ function computeReusedSessions(
   return reusedIndices;
 }
 
+// ---- Codex response parsing ----
+
+interface ParsedValidatorResponse {
+  summary: string;
+  issues: Array<{ title: string; description: string }>;
+}
+
+function parseCodexValidatorResponse(
+  response: string,
+): ParsedValidatorResponse | null {
+  try {
+    const parsed: unknown = JSON.parse(response);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "summary" in parsed &&
+      typeof (parsed as Record<string, unknown>).summary === "string"
+    ) {
+      const obj = parsed as Record<string, unknown>;
+      const issues = Array.isArray(obj.issues)
+        ? (obj.issues as unknown[]).filter(
+            (item): item is { title: string; description: string } =>
+              typeof item === "object" &&
+              item !== null &&
+              "title" in item &&
+              typeof (item as Record<string, unknown>).title === "string" &&
+              "description" in item &&
+              typeof (item as Record<string, unknown>).description === "string",
+          )
+        : [];
+      return { summary: obj.summary as string, issues };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- Structured Validation Result Card ----
 
 function getLaneBadgeLabel(lane: GraphWorkflowLaneKind | undefined): string {
   if (lane === "task_validator") return "Task";
   return "";
+}
+
+function CodexArtifactSection({
+  reviewArtifact,
+}: {
+  reviewArtifact: {
+    engine: "codex";
+    threadId: string;
+    response: string;
+    usage: {
+      inputTokens: number;
+      cachedInputTokens: number;
+      outputTokens: number;
+    } | null;
+  };
+}) {
+  const parsed = useMemo(
+    () => parseCodexValidatorResponse(reviewArtifact.response),
+    [reviewArtifact.response],
+  );
+
+  return (
+    <div className="wb-validation-codex-artifact">
+      <div className="wb-validation-section-label">Codex Review</div>
+      <div className="wb-validation-codex-thread">
+        Thread: <code>{reviewArtifact.threadId}</code>
+      </div>
+      {reviewArtifact.response && (
+        <CollapsibleText maxCollapsedHeight={120}>
+          {parsed ? (
+            <>
+              <div className="wb-validation-codex-response wb-markdown-inline">
+                <MarkdownContent content={parsed.summary} />
+              </div>
+              {parsed.issues.length > 0 && (
+                <div className="wb-validation-body">
+                  <div className="wb-validation-section-label">
+                    Issues ({parsed.issues.length})
+                  </div>
+                  <ul className="wb-validation-issues-list">
+                    {parsed.issues.map((issue, idx) => (
+                      <li key={idx} className="wb-validation-issue">
+                        <div className="wb-validation-issue-title">
+                          {issue.title}
+                        </div>
+                        <div className="wb-validation-issue-desc wb-markdown-inline">
+                          <MarkdownContent content={issue.description} />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="wb-validation-codex-response wb-markdown-inline">
+              <MarkdownContent content={reviewArtifact.response} />
+            </div>
+          )}
+        </CollapsibleText>
+      )}
+      {reviewArtifact.usage && (
+        <div className="wb-validation-codex-usage">
+          {reviewArtifact.usage.inputTokens}↑{" "}
+          {reviewArtifact.usage.cachedInputTokens}⊙{" "}
+          {reviewArtifact.usage.outputTokens}↓ tokens
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ValidationCard({
@@ -208,7 +316,9 @@ function ValidationCard({
     <div className="wb-validation-card">
       <div className="wb-validation-header">
         <span className={`wb-validation-dot ${event.pass ? "pass" : "fail"}`} />
-        <span className="wb-validation-summary">{event.summary}</span>
+        <span className="wb-validation-summary wb-markdown-inline">
+          <MarkdownContent content={event.summary} />
+        </span>
         <span className="wb-validation-timestamp">
           {formatTimestamp(event.occurredAt)}
         </span>
@@ -242,26 +352,7 @@ function ValidationCard({
         </div>
       )}
       {reviewArtifact?.engine === "codex" && (
-        <div className="wb-validation-codex-artifact">
-          <div className="wb-validation-section-label">Codex Review</div>
-          <div className="wb-validation-codex-thread">
-            Thread: <code>{reviewArtifact.threadId}</code>
-          </div>
-          {reviewArtifact.response && (
-            <CollapsibleText maxCollapsedHeight={120}>
-              <div className="wb-validation-codex-response">
-                {reviewArtifact.response}
-              </div>
-            </CollapsibleText>
-          )}
-          {reviewArtifact.usage && (
-            <div className="wb-validation-codex-usage">
-              {reviewArtifact.usage.inputTokens}↑{" "}
-              {reviewArtifact.usage.cachedInputTokens}⊙{" "}
-              {reviewArtifact.usage.outputTokens}↓ tokens
-            </div>
-          )}
-        </div>
+        <CodexArtifactSection reviewArtifact={reviewArtifact} />
       )}
       {hasIssues && (
         <div className="wb-validation-body">
@@ -273,8 +364,8 @@ function ValidationCard({
               {event.issues.map((issue, idx) => (
                 <li key={idx} className="wb-validation-issue">
                   <div className="wb-validation-issue-title">{issue.title}</div>
-                  <div className="wb-validation-issue-desc">
-                    {issue.description}
+                  <div className="wb-validation-issue-desc wb-markdown-inline">
+                    <MarkdownContent content={issue.description} />
                   </div>
                 </li>
               ))}

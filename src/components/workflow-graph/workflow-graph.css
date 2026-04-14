@@ -2050,7 +2050,6 @@
   font-size: 0.72rem;
   color: var(--text-secondary);
   line-height: 1.45;
-  white-space: pre-wrap;
   word-break: break-word;
 }
 

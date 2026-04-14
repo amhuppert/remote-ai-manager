@@ -49,6 +49,61 @@ function makeExecutionWithHistory(
   return createWorkflowExecution({ history });
 }
 
+describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () => {
+  it("renders summary with markdown inline code for any validator", () => {
+    const execution = makeExecutionWithHistory([
+      makeValidationEvent({
+        summary: "All 23 tests passed via `bunx vitest run`",
+        sessionRef: {
+          engine: "claude",
+          lane: "task_validator",
+          conversationId: "conv-md",
+        },
+      }),
+    ]);
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByText("bunx vitest run").closest("code")).toBeTruthy();
+  });
+
+  it("renders issue descriptions as markdown for any validator", () => {
+    const execution = makeExecutionWithHistory([
+      makeValidationEvent({
+        pass: false,
+        summary: "Failed",
+        issues: [
+          {
+            title: "Missing coverage",
+            description: "No tests for `handleSubmit` function",
+          },
+        ],
+        sessionRef: {
+          engine: "claude",
+          lane: "task_validator",
+          conversationId: "conv-md-2",
+        },
+      }),
+    ]);
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByText("handleSubmit").closest("code")).toBeTruthy();
+  });
+});
+
 describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", () => {
   it("renders Task badge for task_validator lane", () => {
     const execution = makeExecutionWithHistory([
@@ -261,6 +316,120 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     );
 
     expect(screen.getByText("Everything checks out.")).toBeInTheDocument();
+  });
+
+  it("parses JSON codex response and renders summary as markdown instead of raw JSON", () => {
+    const jsonResponse = JSON.stringify({
+      pass: true,
+      summary: "Validated with `bunx vitest run` command. All 23 tests passed.",
+      issues: [],
+    });
+    const execution = makeExecutionWithHistory([
+      makeValidationEvent({
+        reviewArtifact: {
+          engine: "codex",
+          threadId: "thread-json-1",
+          response: jsonResponse,
+          usage: null,
+        },
+        sessionRef: {
+          engine: "codex",
+          lane: "task_validator",
+          threadId: "thread-json-1",
+        },
+      }),
+    ]);
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    // Raw JSON must NOT appear
+    expect(screen.queryByText(jsonResponse)).not.toBeInTheDocument();
+    // Summary text should be rendered (markdown strips backticks into <code>)
+    expect(screen.getByText(/All 23 tests passed/)).toBeInTheDocument();
+    // Inline code from backticks should be rendered as <code>
+    expect(screen.getByText("bunx vitest run").closest("code")).toBeTruthy();
+  });
+
+  it("renders issues from parsed codex response JSON", () => {
+    const jsonResponse = JSON.stringify({
+      pass: false,
+      summary: "Found issues in implementation",
+      issues: [
+        {
+          title: "Missing test coverage",
+          description: "The `handleSubmit` function has no unit tests",
+        },
+        {
+          title: "Type error",
+          description: "Parameter type mismatch in `processData`",
+        },
+      ],
+    });
+    const execution = makeExecutionWithHistory([
+      makeValidationEvent({
+        reviewArtifact: {
+          engine: "codex",
+          threadId: "thread-json-2",
+          response: jsonResponse,
+          usage: null,
+        },
+        sessionRef: {
+          engine: "codex",
+          lane: "task_validator",
+          threadId: "thread-json-2",
+        },
+      }),
+    ]);
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    // Issue titles rendered
+    expect(screen.getByText("Missing test coverage")).toBeInTheDocument();
+    expect(screen.getByText("Type error")).toBeInTheDocument();
+    // Issue descriptions rendered with markdown (backtick code)
+    expect(screen.getByText("handleSubmit").closest("code")).toBeTruthy();
+    expect(screen.getByText("processData").closest("code")).toBeTruthy();
+  });
+
+  it("renders non-JSON codex response as markdown", () => {
+    const execution = makeExecutionWithHistory([
+      makeValidationEvent({
+        reviewArtifact: {
+          engine: "codex",
+          threadId: "thread-plain",
+          response: "All tests pass with `vitest` runner.",
+          usage: null,
+        },
+        sessionRef: {
+          engine: "codex",
+          lane: "task_validator",
+          threadId: "thread-plain",
+        },
+      }),
+    ]);
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    // Inline code from backticks should be rendered as <code>
+    expect(screen.getByText("vitest").closest("code")).toBeTruthy();
   });
 });
 
