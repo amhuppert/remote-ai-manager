@@ -16,7 +16,11 @@ import type {
 import type { ConversationActorRef } from "./workflows/conversation/machine";
 import type { ConversationEvent } from "./workflows/conversation/types";
 import { createLogger } from "./logging";
-import { getConversation, createConversation } from "./conversations";
+import {
+  getConversation,
+  createConversation,
+  setConversationBackend,
+} from "./conversations";
 import { getProjectDisplayName } from "./project-resolver";
 import { readConfig } from "./config";
 import { getConversationBackendFactory } from "./agent-backends/registry";
@@ -178,6 +182,7 @@ export const CC_CONTEXT =
 export interface PromptDeps {
   getConversation: typeof getConversation;
   createConversation: typeof createConversation;
+  setConversationBackend: typeof setConversationBackend;
   getProjectDisplayName: typeof getProjectDisplayName;
   readConfig: typeof readConfig;
   getConversationBackendFactory: typeof getConversationBackendFactory;
@@ -232,6 +237,7 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
   _defaultPromptDeps = {
     getConversation,
     createConversation,
+    setConversationBackend,
     getProjectDisplayName,
     readConfig,
     getConversationBackendFactory,
@@ -345,20 +351,34 @@ export async function executePromptStream(
     if (!existing) {
       throw new Error(`Conversation not found: ${conversationId}`);
     }
-    // Existing conversation: reject if request specifies a different backend
+    // Backend is locked after the first prompt has been sent
     if (options?.backend && options.backend !== existing.agentBackend) {
-      const err = new BackendMismatchError(
-        existing.agentBackend,
+      if (existing.promptCount > 0) {
+        const err = new BackendMismatchError(
+          existing.agentBackend,
+          options.backend,
+        );
+        logger.warn("prompt.backend_mismatch", {
+          conversationId,
+          existingBackend: existing.agentBackend,
+          requestedBackend: options.backend,
+        });
+        throw err;
+      }
+      // No prompts yet — adopt the requested backend
+      await resolvedDeps.setConversationBackend(
+        projectPath,
+        session.sessionName,
+        conversationId,
         options.backend,
       );
-      logger.warn("prompt.backend_mismatch", {
+      logger.info("prompt.backend_adopted", {
         conversationId,
-        existingBackend: existing.agentBackend,
-        requestedBackend: options.backend,
+        from: existing.agentBackend,
+        to: options.backend,
       });
-      throw err;
     }
-    resolvedBackend = existing.agentBackend;
+    resolvedBackend = options?.backend ?? existing.agentBackend;
   } else {
     // New conversation: use explicit backend or config default
     if (options?.backend) {

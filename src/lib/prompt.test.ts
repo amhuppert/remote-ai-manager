@@ -125,6 +125,7 @@ function createTestDeps(overrides: Partial<PromptDeps> = {}): PromptDeps {
   return {
     getConversation: vi.fn().mockResolvedValue(conversation),
     createConversation: vi.fn().mockResolvedValue(conversation),
+    setConversationBackend: vi.fn().mockResolvedValue(undefined),
     getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
     readConfig: vi.fn().mockResolvedValue({ defaultAgentBackend: "claude" }),
     getConversationBackendFactory: vi.fn(() => makeMockFactory()),
@@ -574,11 +575,13 @@ describe("executePromptStream (facade)", () => {
     );
   });
 
-  it("rejects with BackendMismatchError when request backend differs from conversation", async () => {
+  it("rejects with BackendMismatchError when request backend differs from locked conversation", async () => {
     deps = createTestDeps({
       getConversation: vi
         .fn()
-        .mockResolvedValue(makeConversation({ agentBackend: "claude" })),
+        .mockResolvedValue(
+          makeConversation({ agentBackend: "claude", promptCount: 1 }),
+        ),
     });
     const executor = createPromptExecutor(deps);
     executePromptStream = executor.executePromptStream;
@@ -595,6 +598,46 @@ describe("executePromptStream (facade)", () => {
         { backend: "codex" },
       ),
     ).rejects.toThrow(BackendMismatchError);
+  });
+
+  it("adopts requested backend when conversation has no prompts yet", async () => {
+    deps = createTestDeps({
+      getConversation: vi
+        .fn()
+        .mockResolvedValue(
+          makeConversation({ agentBackend: "claude", promptCount: 0 }),
+        ),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      undefined,
+      undefined,
+      { backend: "codex" },
+    );
+
+    expect(deps.setConversationBackend).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      "conv-123",
+      "codex",
+    );
+
+    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      "conv-123",
+      expect.objectContaining({
+        type: "SUBMIT_PROMPT",
+        backend: "codex",
+      }),
+    );
   });
 
   it("allows matching backend on existing conversation", async () => {

@@ -138,6 +138,44 @@ export function createConversationService(
     );
   }
 
+  /** Update the agent backend for a conversation that has no prompts yet */
+  async function setConversationBackend(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    backend: AgentBackendId,
+  ): Promise<void> {
+    await mutateSession(
+      projectPath,
+      sessionName,
+      "setConversationBackend",
+      (session) => {
+        const conversation = session.conversations.find(
+          (c) => c.id === conversationId,
+        );
+        if (!conversation) {
+          throw new Error(
+            `Conversation "${conversationId}" not found in session "${sessionName}"`,
+          );
+        }
+        if (conversation.promptCount > 0) {
+          throw new Error(
+            `Cannot change backend after prompts have been sent (conversation "${conversationId}")`,
+          );
+        }
+
+        conversation.agentBackend = backend;
+      },
+    );
+
+    logger.info("conversation.backend_changed", {
+      projectPath,
+      sessionName,
+      conversationId,
+      backend,
+    });
+  }
+
   /** Set a conversation's archived flag */
   async function setConversationArchived(
     projectPath: string,
@@ -378,6 +416,7 @@ export function createConversationService(
     createConversation,
     getConversation,
     getSessionConversations,
+    setConversationBackend,
     setConversationArchived,
     renameConversation,
     forkConversation,
@@ -425,6 +464,7 @@ const defaultService = createConversationService();
 export const createConversation = defaultService.createConversation;
 export const getConversation = defaultService.getConversation;
 export const getSessionConversations = defaultService.getSessionConversations;
+export const setConversationBackend = defaultService.setConversationBackend;
 export const setConversationArchived = defaultService.setConversationArchived;
 export const renameConversation = defaultService.renameConversation;
 export const forkConversation = defaultService.forkConversation;

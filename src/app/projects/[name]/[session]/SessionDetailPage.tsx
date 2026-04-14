@@ -331,13 +331,26 @@ export default function SessionDetailPage({
   );
   const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
 
-  // Sync backend selection when conversation changes or data loads
+  // Sync backend/model/effort when switching conversations or when the
+  // server backend changes on a locked conversation (promptCount > 0).
+  // When the backend isn't locked yet, the user's local toggle is
+  // authoritative — server refetches must not overwrite it.
   const activeBackend = activeConversation?.agentBackend;
+  const prevConversationIdRef = useRef(conversationId);
   useEffect(() => {
     if (!activeConversation) return;
     const backend = activeConversation.agentBackend ?? "claude";
-    // Only reset model/effort when the backend actually changes
+    const isConversationSwitch =
+      prevConversationIdRef.current !== conversationId;
+    prevConversationIdRef.current = conversationId;
+
     if (backend === selectedBackend) return;
+    // On a conversation switch, always adopt the stored backend.
+    // On a server refetch within the same conversation, only sync
+    // when the backend is locked (at least one prompt sent).
+    if (!isConversationSwitch && (activeConversation.promptCount ?? 0) === 0) {
+      return;
+    }
     setSelectedBackend(backend);
     const models = getModelsForBackend(backend);
     setSelectedModel(models[0]!.id);

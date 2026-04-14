@@ -117,9 +117,7 @@ function makeAbortingThread(eventsBeforeAbort: ThreadEvent[]): CodexThreadLike {
 }
 
 /** Capture the Input and TurnOptions passed to runStreamed */
-function makeCapturingThread(
-  events: ThreadEvent[],
-): CodexThreadLike & {
+function makeCapturingThread(events: ThreadEvent[]): CodexThreadLike & {
   capturedInput: Input | null;
   capturedTurnOptions: TurnOptions | undefined;
 } {
