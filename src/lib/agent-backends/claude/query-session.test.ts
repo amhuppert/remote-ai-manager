@@ -44,6 +44,9 @@ function createControllableMockQuery() {
     streamInput: vi.fn(),
     interrupt: vi.fn(),
     mcpServerStatus: vi.fn().mockResolvedValue([]),
+    setMcpServers: vi
+      .fn()
+      .mockResolvedValue({ added: [], removed: [], errors: {} }),
     next() {
       if (messages.length > 0) {
         return Promise.resolve({
@@ -1073,6 +1076,132 @@ describe("MCP keepalive pings", () => {
     vi.useRealTimers();
   });
 
+  it("attempts MCP recovery via setMcpServers when keepalive status check fails", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const mcpServers = {
+      "my-server": { command: "node", args: ["server.js"] },
+    };
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers,
+      }),
+    );
+    const emit = vi.fn();
+
+    // Complete a turn — starts keepalive
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    // Make keepalive fail
+    mock.query.mcpServerStatus.mockRejectedValue(new Error("Stream closed"));
+
+    await vi.advanceTimersByTimeAsync(150);
+    // Flush async recovery chain
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mock.query.mcpServerStatus).toHaveBeenCalledTimes(1);
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+    expect(mock.query.setMcpServers).toHaveBeenCalledWith(mcpServers);
+    expect(session.status).toBe("alive");
+
+    session.close();
+    vi.useRealTimers();
+  });
+
+  it("does not call setMcpServers when keepalive status check succeeds", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers: { s: {} },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(mock.query.mcpServerStatus).toHaveBeenCalledTimes(1);
+    expect(mock.query.setMcpServers).not.toHaveBeenCalled();
+
+    session.close();
+    vi.useRealTimers();
+  });
+
+  it("survives when both keepalive status check and recovery fail", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers: { s: {} },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    mock.query.mcpServerStatus.mockRejectedValue(new Error("dead"));
+    mock.query.setMcpServers.mockRejectedValue(new Error("reconnect failed"));
+
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+    expect(session.status).toBe("alive");
+
+    session.close();
+    vi.useRealTimers();
+  });
+
   it("defaults to 30s keepalive interval when not specified", async () => {
     vi.useFakeTimers();
     const mock = createControllableMockQuery();
@@ -1108,5 +1237,155 @@ describe("MCP keepalive pings", () => {
 
     session.close();
     vi.useRealTimers();
+  });
+});
+
+describe("Pre-turn MCP health check", () => {
+  /** Helper to complete a turn so the next prompt goes through sendSubsequentPrompt */
+  function completeTurn(mock: ReturnType<typeof createControllableMockQuery>) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  it("checks MCP health and reconnects before delivering subsequent prompts", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const mcpServers = {
+      "my-server": { command: "node", args: ["server.js"] },
+    };
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpServers,
+        idleTtlMs: 0,
+        mcpKeepaliveIntervalMs: 0,
+      }),
+    );
+    const emit = vi.fn();
+
+    // Complete first turn
+    const turn1 = session.sendPrompt("First", emit);
+    completeTurn(mock);
+    await turn1;
+
+    // Make MCP unhealthy for the pre-turn check
+    mock.query.mcpServerStatus.mockRejectedValueOnce(
+      new Error("Stream closed"),
+    );
+
+    // Send second prompt — should trigger health check + recovery
+    const turn2 = session.sendPrompt("Second", emit);
+    // Allow the async health check chain to settle before delivering result
+    await new Promise((r) => setImmediate(r));
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+    expect(mock.query.setMcpServers).toHaveBeenCalledWith(mcpServers);
+
+    completeTurn(mock);
+    await turn2;
+
+    session.close();
+  });
+
+  it("delivers prompt even when MCP recovery fails", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpServers: { s: {} },
+        idleTtlMs: 0,
+        mcpKeepaliveIntervalMs: 0,
+      }),
+    );
+    const emit = vi.fn();
+
+    // Complete first turn
+    const turn1 = session.sendPrompt("First", emit);
+    completeTurn(mock);
+    await turn1;
+
+    // Both health check and recovery fail
+    mock.query.mcpServerStatus.mockRejectedValueOnce(new Error("dead"));
+    mock.query.setMcpServers.mockRejectedValueOnce(
+      new Error("reconnect failed"),
+    );
+
+    // Send second prompt — recovery fails but prompt should still be delivered
+    const turn2 = session.sendPrompt("Second", emit);
+    await new Promise((r) => setImmediate(r));
+
+    // streamInput should still have been called (prompt delivered despite MCP failure)
+    expect(mock.query.streamInput).toHaveBeenCalled();
+
+    completeTurn(mock);
+    const result = await turn2;
+    expect(result.error).toBeNull();
+
+    session.close();
+  });
+
+  it("skips health check when no MCP servers are configured", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpServers: {},
+        idleTtlMs: 0,
+        mcpKeepaliveIntervalMs: 0,
+      }),
+    );
+    const emit = vi.fn();
+
+    // Complete first turn
+    const turn1 = session.sendPrompt("First", emit);
+    completeTurn(mock);
+    await turn1;
+
+    mock.query.mcpServerStatus.mockClear();
+
+    // Send second prompt — should NOT call mcpServerStatus
+    const turn2 = session.sendPrompt("Second", emit);
+    await new Promise((r) => setImmediate(r));
+
+    expect(mock.query.mcpServerStatus).not.toHaveBeenCalled();
+
+    completeTurn(mock);
+    await turn2;
+
+    session.close();
+  });
+
+  it("does not check MCP health for the first prompt", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpServers: { s: {} },
+        idleTtlMs: 0,
+        mcpKeepaliveIntervalMs: 0,
+      }),
+    );
+    const emit = vi.fn();
+
+    // First prompt goes through the hanging generator, not sendSubsequentPrompt
+    const turn = session.sendPrompt("First", emit);
+    expect(mock.query.mcpServerStatus).not.toHaveBeenCalled();
+
+    completeTurn(mock);
+    await turn;
+
+    session.close();
   });
 });

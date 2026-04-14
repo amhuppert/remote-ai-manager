@@ -166,6 +166,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let mcpKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
   const stderrChunks: string[] = [];
   let awaitingSubsequentPromptDelivery = false;
+  const hasMcpServers = Object.keys(options.mcpServers).length > 0;
 
   // The hanging generator: yields the first user message, then hangs forever.
   // This keeps the SDK subprocess alive indefinitely.
@@ -410,6 +411,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         throw createPromptNotDeliveredError();
       }
 
+      // Pre-turn MCP health check — verify connections are alive before
+      // delivering the prompt so the SDK doesn't hit "Stream closed" errors
+      await ensureMcpHealthy("pre_turn");
+
       const userMessage = buildUserMessage(prompt);
       await q.streamInput(wrapAsIterable(userMessage));
       awaitingSubsequentPromptDelivery = false;
@@ -438,6 +443,49 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       } catch {
         // best-effort
       }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // MCP health & recovery
+  // ------------------------------------------------------------------
+
+  async function mcpKeepaliveTick(): Promise<void> {
+    try {
+      await q.mcpServerStatus();
+    } catch {
+      logger.warn("query-session.mcp_keepalive_failed", {
+        conversationId: options.conversationId,
+      });
+      await attemptMcpRecovery("keepalive");
+    }
+  }
+
+  async function ensureMcpHealthy(trigger: string): Promise<void> {
+    if (!hasMcpServers) return;
+    try {
+      await q.mcpServerStatus();
+    } catch {
+      logger.warn("query-session.mcp_unhealthy", {
+        conversationId: options.conversationId,
+        trigger,
+      });
+      await attemptMcpRecovery(trigger);
+    }
+  }
+
+  async function attemptMcpRecovery(trigger: string): Promise<void> {
+    try {
+      await q.setMcpServers(options.mcpServers as Record<string, never>);
+      logger.info("query-session.mcp_reconnected", {
+        conversationId: options.conversationId,
+        trigger,
+      });
+    } catch {
+      logger.error("query-session.mcp_reconnect_failed", {
+        conversationId: options.conversationId,
+        trigger,
+      });
     }
   }
 
@@ -564,11 +612,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         }
 
         // Start MCP keepalive — ping MCP servers periodically to prevent
-        // the SDK's transport inactivity timeout from closing the stream
+        // the SDK's transport inactivity timeout from closing the stream.
+        // On failure, attempt to re-establish connections via setMcpServers.
         if (mcpKeepaliveMs > 0 && status === "alive") {
           mcpKeepaliveTimer = setInterval(() => {
             if (status !== "alive" || pendingTurn) return;
-            q.mcpServerStatus().catch(() => {});
+            void mcpKeepaliveTick();
           }, mcpKeepaliveMs);
         }
 
