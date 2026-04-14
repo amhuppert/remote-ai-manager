@@ -307,7 +307,9 @@ export const conversationMachine = setup({
           actions: assign({
             lastResult: ({ event }) => event.output,
             backendRef: ({ context, event }) =>
-              event.output.backendRef ?? context.backendRef,
+              event.output.error
+                ? (event.output.backendRef ?? null)
+                : (event.output.backendRef ?? context.backendRef),
           }),
         },
         onError: {

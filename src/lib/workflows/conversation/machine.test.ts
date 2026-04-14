@@ -286,6 +286,42 @@ describe("conversationMachine", () => {
       const snap = actor.getSnapshot();
       expect(snap.context.lastError).toContain("SDK error");
     });
+
+    it("clears Codex backendRef when prompt returns with error", async () => {
+      const machine = makeTestMachine({
+        executePrompt: makeMockExecutePrompt({
+          error: "Codex Exec exited with code 1: Reading prompt from stdin...",
+          backendRef: null,
+        }),
+      });
+
+      // Start with an existing Codex backendRef (simulating BACKEND_INIT
+      // from a prior turn or mid-turn event that persisted a threadId)
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          agentBackend: "codex" as const,
+          backendRef: {
+            backend: "codex" as const,
+            threadId: "thread-dead",
+          },
+        },
+      });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+
+      await waitForState(actor, "idle");
+
+      const snap = actor.getSnapshot();
+      // backendRef should be cleared so the next prompt starts a fresh thread
+      expect(snap.context.backendRef).toBeNull();
+    });
   });
 
   describe("AskUserQuestion flow", () => {

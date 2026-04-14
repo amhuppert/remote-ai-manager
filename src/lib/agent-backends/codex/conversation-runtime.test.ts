@@ -259,6 +259,29 @@ function todoListCompleted(
   return { type: "item.completed", item };
 }
 
+/**
+ * Makes a thread that yields some events then crashes with the given error
+ * (simulating the Codex process exiting with a non-zero code after partial output).
+ */
+function makeCrashingThread(
+  eventsBeforeCrash: ThreadEvent[],
+  crashError: Error,
+): CodexThreadLike {
+  return {
+    id: null,
+    async runStreamed(): Promise<{ events: AsyncGenerator<ThreadEvent> }> {
+      return {
+        events: (async function* () {
+          for (const event of eventsBeforeCrash) {
+            yield event;
+          }
+          throw crashError;
+        })(),
+      };
+    },
+  };
+}
+
 // ============================================================
 // Minimal event sequence for a successful turn
 // ============================================================
@@ -803,6 +826,89 @@ describe("CodexConversationRuntime", () => {
       // Should not throw
       const result = await runtime.sendTurn(makeTurnInput());
       expect(result.error).toContain("Unexpected SDK failure");
+    });
+
+    it("preserves turn.failed error when process also crashes with exit code", async () => {
+      // Simulates: thread starts → turn.failed with useful message → process exits code 1
+      const thread = makeCrashingThread(
+        [
+          threadStarted(),
+          turnFailed(
+            "API error: model gpt-5.4-nano is temporarily unavailable",
+          ),
+        ],
+        new Error(
+          "Codex Exec exited with code 1: Reading prompt from stdin...\n",
+        ),
+      );
+      startThreadFn.mockReturnValue(thread);
+
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      // Should keep the informative turn.failed message, not the generic exit code error
+      expect(result.error).toContain(
+        "model gpt-5.4-nano is temporarily unavailable",
+      );
+      expect(result.error).not.toContain("Reading prompt from stdin");
+    });
+
+    it("resets to fresh state after thread.started received but turn crashes", async () => {
+      // First turn: thread starts but then crashes
+      const crashThread = makeCrashingThread(
+        [threadStarted("thread-dead")],
+        new Error(
+          "Codex Exec exited with code 1: Reading prompt from stdin...\n",
+        ),
+      );
+      startThreadFn.mockReturnValue(crashThread);
+
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({ sessionInstructions: ["Be helpful"] }),
+        deps,
+      );
+      const result1 = await runtime.sendTurn(makeTurnInput());
+      expect(result1.error).toBeTruthy();
+
+      // Second turn: should start a fresh thread, not try to resume the dead one
+      const thread2 = makeCapturingThread(minimalSuccessEvents("thread-new"));
+      startThreadFn.mockReturnValue(thread2);
+
+      const result2 = await runtime.sendTurn(
+        makeTurnInput({ promptText: "Try again" }),
+      );
+
+      // Should have called startThread (not resumeThread)
+      expect(startThreadFn).toHaveBeenCalledTimes(2);
+      expect(resumeThreadFn).not.toHaveBeenCalled();
+
+      // Should re-include session instructions since it's effectively a fresh start
+      const inputStr = thread2.capturedInput as string;
+      expect(inputStr).toContain("## System Instructions");
+      expect(inputStr).toContain("Be helpful");
+
+      // Second turn should succeed
+      expect(result2.error).toBeNull();
+      expect(result2.backendRef).toEqual({
+        backend: "codex",
+        threadId: "thread-new",
+      });
+    });
+
+    it("returns null backendRef when thread started but turn failed", async () => {
+      const crashThread = makeCrashingThread(
+        [threadStarted("thread-dead")],
+        new Error(
+          "Codex Exec exited with code 1: Reading prompt from stdin...\n",
+        ),
+      );
+      startThreadFn.mockReturnValue(crashThread);
+
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      // Should NOT return the dead thread's ID as backendRef
+      expect(result.backendRef).toBeNull();
     });
   });
 

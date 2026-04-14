@@ -151,6 +151,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
   ): Promise<ConversationBackendTurnResult> {
     const startedAt = this.deps.now();
     let cleanupImageDir: (() => Promise<void>) | null = null;
+    const wasFirstTurn = this.isFirstTurn;
 
     // Mutable accumulator — mutated from inside event callbacks, so must be
     // an object to avoid TypeScript's closure narrowing dropping assignments.
@@ -160,6 +161,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       usage: null as Usage | null,
       errorMessage: null as string | null,
       aborted: false,
+      processCrashed: false,
     };
     const contentBlocks: MessageContentBlock[] = [];
 
@@ -175,9 +177,27 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       const codex = this.deps.createCodex(codexOptions);
       const threadOptions = this.buildThreadOptions();
 
-      const thread = this.threadId
-        ? codex.resumeThread(this.threadId, threadOptions)
+      const isResume = this.threadId != null;
+      const thread = isResume
+        ? codex.resumeThread(this.threadId!, threadOptions)
         : codex.startThread(threadOptions);
+
+      logger.info("codex-runtime.turn_start", {
+        conversationId: this.conversationId,
+        isResume,
+        threadId: this.threadId,
+        threadOptions,
+        modelId: this.modelId,
+        reasoningEffort: this.reasoningEffort,
+        hasOutputFormat: !!this.outputFormat,
+        hasMcpServers: !!codexOptions.config,
+        promptLength:
+          typeof promptInput.input === "string"
+            ? promptInput.input.length
+            : Array.isArray(promptInput.input)
+              ? promptInput.input.length
+              : 0,
+      });
 
       // Start streaming
       const streamed = await thread.runStreamed(promptInput.input, {
@@ -212,6 +232,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         err.message.includes("thread/resume: no rollout found");
 
       if (isResumeFailure) {
+        acc.processCrashed = true;
         acc.errorMessage = `Failed to resume Codex thread ${this.threadId}: ${err instanceof Error ? err.message : String(err)}`;
         if (this.threadId && !acc.knownThreadId) {
           acc.knownThreadId = this.threadId;
@@ -219,10 +240,20 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       } else if (isAbortError(err) || input.signal.aborted) {
         acc.aborted = true;
       } else {
-        acc.errorMessage = err instanceof Error ? err.message : String(err);
+        acc.processCrashed = true;
+        // Preserve error from turn.failed event if already captured —
+        // it contains more useful detail than the generic process exit error.
+        if (!acc.errorMessage) {
+          acc.errorMessage = err instanceof Error ? err.message : String(err);
+        }
         logger.error("codex-runtime.turn_error", {
           conversationId: this.conversationId,
           error: acc.errorMessage,
+          rawError: err instanceof Error ? err.message : String(err),
+          threadId: acc.knownThreadId,
+          modelId: this.modelId,
+          reasoningEffort: this.reasoningEffort,
+          wasFirstTurn,
         });
       }
     } finally {
@@ -233,6 +264,20 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
           // Best-effort cleanup
         }
       }
+    }
+
+    // When the process crashes on a first turn, reset internal state so the
+    // next turn starts a fresh thread instead of trying to resume the dead one.
+    // Graceful turn.failed events (no process crash) preserve the threadId
+    // because the server-side thread may still be alive.
+    if (acc.processCrashed && wasFirstTurn) {
+      this.threadId = null;
+      this.isFirstTurn = true;
+      acc.knownThreadId = null;
+
+      logger.info("codex-runtime.reset_after_failed_first_turn", {
+        conversationId: this.conversationId,
+      });
     }
 
     // Build structured output from last agent_message text
