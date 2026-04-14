@@ -4916,12 +4916,15 @@ textarea {
   padding: 2px;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   flex-shrink: 0;
+  height: 36px;
+  align-items: center;
 }
 
 .backend-toggle-btn {
-  padding: 2px var(--space-sm);
+  padding: 0 var(--space-sm);
+  height: 100%;
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -4949,6 +4952,13 @@ textarea {
 }
 
 .backend-toggle-badge {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
   font-family: var(--font-mono);
   font-size: 0.72rem;
   color: var(--text-secondary);

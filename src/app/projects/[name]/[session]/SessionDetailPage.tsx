@@ -1431,7 +1431,11 @@ export default function SessionDetailPage({
                                 }}
                               >
                                 <div className="message-role">
-                                  {isUserMsg ? "You" : "Claude"}
+                                  {isUserMsg
+                                    ? "You"
+                                    : selectedBackend === "codex"
+                                      ? "Codex"
+                                      : "Claude"}
                                   {!isUserMsg && (msg.model || msg.effort) && (
                                     <span className="message-meta">
                                       <span className="message-meta-sep">
@@ -1530,7 +1534,9 @@ export default function SessionDetailPage({
                         </div>
                       ) : (
                         <div className="message assistant typing-indicator">
-                          <div className="message-role">Claude</div>
+                          <div className="message-role">
+                            {selectedBackend === "codex" ? "Codex" : "Claude"}
+                          </div>
                           <div className="message-content">
                             <div className="typing-dots">
                               <span />
