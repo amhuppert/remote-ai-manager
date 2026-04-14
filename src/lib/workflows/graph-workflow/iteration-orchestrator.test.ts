@@ -5,7 +5,10 @@ import {
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
 import { graphWorkflowExecutionSchema } from "@/lib/schemas";
-import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrator";
+import {
+  createGraphWorkflowIterationOrchestrator,
+  TaskValidationFailedError,
+} from "./iteration-orchestrator";
 import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
 import type {
   ResolveImplementerCallInput,
@@ -1514,5 +1517,156 @@ describe("task validation event publishing (fix-30388517)", () => {
         conversationId: "validator-conv",
       },
     });
+  });
+});
+
+// -- Circuit breaker: validation failure handling -----------------------------
+
+describe("task validation failure handling (circuit breaker)", () => {
+  it("catches validation failure, increments consecutiveFailureCount, and returns shouldContinueInContext", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const repository = createRepository(execution);
+
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return { server: {} };
+      },
+    );
+    const createConversation = vi.fn(async () => ({ id: "conv-fail" }));
+
+    const validateTaskCompletion = vi.fn(async () => ({
+      pass: false,
+      summary: "Validation failed",
+      feedback: "Missing test coverage for edge case.",
+      issues: [{ title: "Missing tests", description: "Add edge case tests." }],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const runAgentIteration = vi.fn(async () => {
+      // Agent attempts to complete a task — validation will fail
+      try {
+        await capturedCompleteTask!("task-plan-1", "Implemented the feature");
+      } catch (error) {
+        // TaskValidationFailedError escapes to the iteration orchestrator
+        if (!(error instanceof TaskValidationFailedError)) {
+          throw error;
+        }
+        throw error;
+      }
+      return { contextTokens: null, contextWindowMax: null };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      validationService: { validateTaskCompletion },
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // Iteration should NOT throw — the error is caught internally
+    expect(result.shouldContinueInContext).toBe(true);
+
+    // consecutiveFailureCount should be incremented
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(1);
+
+    // Task should be marked with failure info
+    const taskState = result.execution.taskStates["task-plan-1"];
+    expect(taskState?.failureMessage).toBe(
+      "Missing test coverage for edge case.",
+    );
+    expect(taskState?.failureHistory).toHaveLength(1);
+  });
+
+  it("resets consecutiveFailureCount when a task completes successfully", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    // Pre-set a failure count to verify it resets
+    execution.contextStates["context-plan"]!.consecutiveFailureCount = 2;
+    const repository = createRepository(execution);
+
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return { server: {} };
+      },
+    );
+    const createConversation = vi.fn(async () => ({ id: "conv-pass" }));
+
+    const validateTaskCompletion = vi.fn(async () => ({
+      pass: true,
+      summary: "Task passed",
+      feedback: "Task validation passed.",
+      issues: [] as never[],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const runAgentIteration = vi.fn(async () => {
+      if (runAgentIteration.mock.calls.length === 1) {
+        await capturedCompleteTask!("task-plan-1", "Done");
+      }
+      return { contextTokens: null, contextWindowMax: null };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      validationService: { validateTaskCompletion },
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // consecutiveFailureCount should reset to 0 after successful completion
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(0);
   });
 });

@@ -128,6 +128,13 @@ export interface GraphWorkflowIterationResult {
   shouldContinueInContext: boolean;
 }
 
+export class TaskValidationFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TaskValidationFailedError";
+  }
+}
+
 function cloneExecution(
   execution: GraphWorkflowExecution,
 ): GraphWorkflowExecution {
@@ -295,6 +302,7 @@ export function createGraphWorkflowIterationOrchestrator(
       nextExecution,
       taskState.contextId,
     );
+    contextState.consecutiveFailureCount = 0;
     nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
 
     return persistExecution(
@@ -334,6 +342,13 @@ export function createGraphWorkflowIterationOrchestrator(
         timestamp: getNow(deps),
       },
     ];
+
+    const contextState = nextExecution.contextStates[input.contextId];
+    if (contextState) {
+      contextState.consecutiveFailureCount =
+        (contextState.consecutiveFailureCount ?? 0) + 1;
+    }
+
     nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
 
     return persistExecution(
@@ -506,7 +521,7 @@ export function createGraphWorkflowIterationOrchestrator(
             input.sessionName,
             executionWithValidationEvent,
           );
-          throw new Error(validation.feedback);
+          throw new TaskValidationFailedError(validation.feedback);
         }
 
         execLogger?.task(input.contextId, "task.validation_passed", {
@@ -724,6 +739,15 @@ export function createGraphWorkflowIterationOrchestrator(
         contextId: input.contextId,
         status: "completed",
       });
+    } catch (error) {
+      if (!(error instanceof TaskValidationFailedError)) {
+        throw error;
+      }
+      execLogger?.iteration(
+        input.contextId,
+        "iteration.validation_failure_caught",
+        { error: error.message },
+      );
     } finally {
       await toolServer.close?.();
     }

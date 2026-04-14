@@ -82,6 +82,10 @@ export function _resetActiveLoopsForTesting(): void {
   activeLoops.clear();
 }
 
+// -- Constants ----------------------------------------------------------------
+
+const DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD = 3;
+
 // -- Helpers ------------------------------------------------------------------
 
 function isRetryableIterationError(error: unknown): boolean {
@@ -202,6 +206,42 @@ export function createGraphWorkflowExecutionLoop(
         const contextDef = execution.workingDefinition.executionContexts.find(
           (c) => c.id === contextId,
         );
+
+        // Circuit breaker: halt if consecutive validation failures exceed threshold
+        if (contextState && contextDef) {
+          const threshold =
+            contextDef.circuitBreaker.consecutiveFailureThreshold ??
+            DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD;
+          if (contextState.consecutiveFailureCount >= threshold) {
+            execLogger?.decision("circuit_breaker.tripped", {
+              contextId,
+              consecutiveFailureCount: contextState.consecutiveFailureCount,
+              threshold,
+            });
+            execution = await deps.workflowManager.send(
+              input.projectPath,
+              input.sessionName,
+              {
+                type: "halt",
+                reason: {
+                  type: "circuit_breaker",
+                  contextId,
+                  condition: "retry_exhaustion",
+                  failureCount: contextState.consecutiveFailureCount,
+                  summary: null,
+                },
+              },
+            );
+            emitDone(
+              deps,
+              input.projectPath,
+              input.sessionName,
+              "circuit_breaker",
+            );
+            return execution;
+          }
+        }
+
         if (
           contextState &&
           contextDef &&

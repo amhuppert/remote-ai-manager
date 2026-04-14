@@ -62,10 +62,19 @@ const executionContextInputSchema = z.object({
       "Override the model or reasoning effort for this context's agent. Omit to use project defaults.",
     ),
   circuitBreakerPolicy: z
-    .object({})
+    .object({
+      consecutiveFailureThreshold: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          "Number of consecutive task validation failures before the circuit breaker halts the context. Defaults to 3.",
+        ),
+    })
     .optional()
     .describe(
-      "Circuit breaker configuration. Currently trips on retry exhaustion; future conditions will add fields here.",
+      "Circuit breaker configuration. Halts the context after repeated validation failures.",
     ),
   iterationPolicy: z
     .object({
@@ -342,7 +351,13 @@ function inflateToSemanticDefinition(
       mutability: {
         allowAgentTaskAdd: ctx.mutabilityPolicy?.allowAgentTaskAdd ?? false,
       },
-      circuitBreaker: {},
+      circuitBreaker: {
+        ...(ctx.circuitBreakerPolicy?.consecutiveFailureThreshold !==
+          undefined && {
+          consecutiveFailureThreshold:
+            ctx.circuitBreakerPolicy.consecutiveFailureThreshold,
+        }),
+      },
       iterationPolicy: {
         maxIterations:
           ctx.iterationPolicy?.maxIterations ?? DEFAULT_MAX_ITERATIONS,

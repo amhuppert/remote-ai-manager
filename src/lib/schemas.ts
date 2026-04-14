@@ -373,7 +373,9 @@ export type GraphWorkflowCircuitBreakerCondition = z.infer<
   typeof graphWorkflowCircuitBreakerConditionSchema
 >;
 
-export const graphWorkflowCircuitBreakerPolicySchema = z.object({});
+export const graphWorkflowCircuitBreakerPolicySchema = z.object({
+  consecutiveFailureThreshold: z.number().int().min(1).optional(),
+});
 export type GraphWorkflowCircuitBreakerPolicy = z.infer<
   typeof graphWorkflowCircuitBreakerPolicySchema
 >;

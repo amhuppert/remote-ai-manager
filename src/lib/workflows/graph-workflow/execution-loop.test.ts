@@ -604,4 +604,166 @@ describe("execution loop", () => {
     });
     expect(result.status).toBe("halted");
   });
+
+  it("halts with circuit_breaker when consecutiveFailureCount reaches threshold", async () => {
+    const definition = createSingleContextDefinition(10);
+    let currentExecution = createRunningExecution(definition, {
+      activeContextId: "ctx-1",
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 2,
+        },
+      },
+    });
+
+    const sendSpy = vi.fn(
+      async (
+        _projectPath: string,
+        _sessionName: string,
+        event:
+          | { type: "complete" }
+          | { type: "halt"; reason: GraphWorkflowHaltReason },
+      ) => {
+        if (event.type === "halt") {
+          currentExecution = {
+            ...structuredClone(currentExecution),
+            status: "halted",
+            haltReason: event.reason,
+            completedAt: "2026-03-27T12:10:00.000Z",
+          };
+        }
+        return currentExecution;
+      },
+    );
+
+    const deps: GraphWorkflowExecutionLoopDeps = {
+      workflowManager: {
+        async scheduleNextContext() {
+          return currentExecution;
+        },
+        send: sendSpy,
+      },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          // Simulate an iteration where validation failed — consecutiveFailureCount
+          // was already incremented by the iteration orchestrator to 3 (threshold)
+          const next = structuredClone(currentExecution);
+          next.contextStates["ctx-1"]!.iterationCount += 1;
+          next.contextStates["ctx-1"]!.consecutiveFailureCount = 3;
+          currentExecution = next;
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: true,
+          };
+        },
+      },
+      emitStreamFrame: vi.fn(),
+    };
+
+    const loop = createGraphWorkflowExecutionLoop(deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: currentExecution,
+    });
+
+    expect(result.status).toBe("halted");
+    expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+      type: "halt",
+      reason: {
+        type: "circuit_breaker",
+        contextId: "ctx-1",
+        condition: "retry_exhaustion",
+        failureCount: 3,
+        summary: null,
+      },
+    });
+  });
+
+  it("continues iterating when consecutiveFailureCount is below threshold", async () => {
+    const definition = createSingleContextDefinition(10);
+    let currentExecution = createRunningExecution(definition, {
+      activeContextId: "ctx-1",
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+        },
+      },
+    });
+    let iterationCallCount = 0;
+
+    const sendSpy = vi.fn(async (_projectPath, _sessionName, event) => {
+      if (event.type === "complete") {
+        currentExecution = {
+          ...structuredClone(currentExecution),
+          status: "completed",
+          completedAt: "2026-03-27T12:05:00.000Z",
+        };
+      }
+      return currentExecution;
+    });
+
+    const deps: GraphWorkflowExecutionLoopDeps = {
+      workflowManager: {
+        async scheduleNextContext() {
+          return currentExecution;
+        },
+        send: sendSpy,
+      },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          const next = structuredClone(currentExecution);
+          next.contextStates["ctx-1"]!.iterationCount = iterationCallCount;
+
+          if (iterationCallCount === 1) {
+            // First iteration: validation fails, count goes to 1 (below threshold of 3)
+            next.contextStates["ctx-1"]!.consecutiveFailureCount = 1;
+            currentExecution = next;
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: true,
+            };
+          }
+
+          // Second iteration: task completes, count resets
+          next.contextStates["ctx-1"]!.consecutiveFailureCount = 0;
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextId = null;
+          currentExecution = next;
+          return {
+            conversationId: "conv-2",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+      emitStreamFrame: vi.fn(),
+    };
+
+    const loop = createGraphWorkflowExecutionLoop(deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: currentExecution,
+    });
+
+    expect(iterationCallCount).toBe(2);
+    expect(result.status).toBe("completed");
+  });
 });
