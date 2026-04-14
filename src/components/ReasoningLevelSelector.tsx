@@ -8,8 +8,9 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import type { EffortLevel } from "@/lib/schemas";
 
-export type EffortLevel = "low" | "medium" | "high" | "max";
+export type { EffortLevel };
 
 interface EffortOption {
   id: EffortLevel;
@@ -18,15 +19,18 @@ interface EffortOption {
 }
 
 const EFFORT_OPTIONS: EffortOption[] = [
+  { id: "minimal", label: "Minimal", description: "Least reasoning" },
   { id: "low", label: "Low", description: "Minimal" },
   { id: "medium", label: "Medium", description: "Moderate" },
   { id: "high", label: "High", description: "Default" },
   { id: "max", label: "Max", description: "Maximum" },
+  { id: "xhigh", label: "XHigh", description: "Maximum (Codex)" },
 ];
 
 interface ReasoningLevelSelectorProps {
   value: EffortLevel;
-  onChange: (level: EffortLevel) => void;
+  /** Bivariant via method syntax — callers can pass narrower type callbacks */
+  onChange(level: EffortLevel): void;
   disabled?: boolean;
   disabledTooltip?: string;
   /** When provided, only these levels are shown in the dropdown. */

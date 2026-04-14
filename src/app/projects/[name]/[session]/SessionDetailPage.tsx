@@ -96,12 +96,14 @@ import {
 } from "@/components/CommandAutocomplete";
 import { FileAutocomplete } from "@/components/FileAutocomplete";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
-import ModelSelector, { type ModelId } from "@/components/ModelSelector";
+import ModelSelector from "@/components/ModelSelector";
+import { getModelsForBackend } from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
+import BackendToggle from "@/components/BackendToggle";
 import {
+  type AgentBackendId,
   type EffortLevel,
-  getEffortLevelsForModel,
-  clampEffortToModel,
+  getEffortLevelsForBackend,
 } from "@/lib/schemas";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import FocusConfirmationBar from "@/components/FocusConfirmationBar";
@@ -126,7 +128,7 @@ interface Props {
   projectName: string;
   sessionName: string;
   conversationId: string;
-  defaultModel: ModelId;
+  defaultModel: string;
   defaultEffort?: EffortLevel;
   autoFocus?: boolean;
 }
@@ -324,21 +326,51 @@ export default function SessionDetailPage({
 
   // --- Local state ---
   const [promptText, setPromptText] = useState("");
-  const [selectedModel, setSelectedModel] = useState<ModelId>(defaultModel);
+  const [selectedBackend, setSelectedBackend] = useState<AgentBackendId>(
+    activeConversation?.agentBackend ?? "claude",
+  );
+  const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
+
+  // Sync backend selection when conversation changes or data loads
+  const activeBackend = activeConversation?.agentBackend;
+  useEffect(() => {
+    if (!activeConversation) return;
+    const backend = activeConversation.agentBackend ?? "claude";
+    // Only reset model/effort when the backend actually changes
+    if (backend === selectedBackend) return;
+    setSelectedBackend(backend);
+    const models = getModelsForBackend(backend);
+    setSelectedModel(models[0]!.id);
+    const levels = getEffortLevelsForBackend(backend, models[0]!.id);
+    setSelectedEffort(levels.includes("high") ? "high" : levels[0]!);
+  }, [conversationId, activeBackend]); // eslint-disable-line react-hooks/exhaustive-deps -- reset on conversation switch or backend change
+
+  const [selectedModel, setSelectedModel] = useState<string>(defaultModel);
   const [selectedEffort, setSelectedEffort] =
     useState<EffortLevel>(defaultEffort);
-  const availableEffortLevels = getEffortLevelsForModel(selectedModel);
+  const availableEffortLevels = getEffortLevelsForBackend(
+    selectedBackend,
+    selectedModel,
+  );
   const effortSupported = availableEffortLevels.length > 0;
 
+  const handleBackendChange = useCallback((backend: AgentBackendId) => {
+    setSelectedBackend(backend);
+    const models = getModelsForBackend(backend);
+    setSelectedModel(models[0]!.id);
+    const levels = getEffortLevelsForBackend(backend, models[0]!.id);
+    setSelectedEffort(levels.includes("high") ? "high" : levels[0]!);
+  }, []);
+
   const handleModelChange = useCallback(
-    (model: ModelId) => {
+    (model: string) => {
       setSelectedModel(model);
-      const clamped = clampEffortToModel(selectedEffort, model);
-      if (clamped && clamped !== selectedEffort) {
-        setSelectedEffort(clamped);
+      const levels = getEffortLevelsForBackend(selectedBackend, model);
+      if (levels.length > 0 && !levels.includes(selectedEffort)) {
+        setSelectedEffort(levels[levels.length - 1]!);
       }
     },
-    [selectedEffort],
+    [selectedBackend, selectedEffort],
   );
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -486,6 +518,7 @@ export default function SessionDetailPage({
           selectedModel,
           undefined,
           effortSupported ? selectedEffort : undefined,
+          selectedBackend,
         );
       },
     );
@@ -497,6 +530,7 @@ export default function SessionDetailPage({
     selectedModel,
     selectedEffort,
     effortSupported,
+    selectedBackend,
     router,
     projectName,
     sessionName,
@@ -702,6 +736,7 @@ export default function SessionDetailPage({
       selectedModel,
       imagePayloads.length > 0 ? imagePayloads : undefined,
       effortSupported ? selectedEffort : undefined,
+      selectedBackend,
     );
   }, [
     sending,
@@ -712,15 +747,23 @@ export default function SessionDetailPage({
     selectedModel,
     selectedEffort,
     effortSupported,
+    selectedBackend,
     pendingImages,
     clearImages,
   ]);
 
   const handleDebugPrompt = useCallback(
     (text: string) => {
-      void sendPrompt(text, messages.length, selectedModel);
+      void sendPrompt(
+        text,
+        messages.length,
+        selectedModel,
+        undefined,
+        undefined,
+        selectedBackend,
+      );
     },
-    [sendPrompt, messages.length, selectedModel],
+    [sendPrompt, messages.length, selectedModel, selectedBackend],
   );
 
   const handleAnswerSubmit = useCallback(
@@ -781,6 +824,7 @@ export default function SessionDetailPage({
           selectedModel,
           undefined,
           effortSupported ? selectedEffort : undefined,
+          selectedBackend,
         );
       },
     );
@@ -790,6 +834,7 @@ export default function SessionDetailPage({
     selectedModel,
     selectedEffort,
     effortSupported,
+    selectedBackend,
   ]);
 
   // Step 2: Once the prompt finishes (session no longer busy), finalize
@@ -935,6 +980,7 @@ export default function SessionDetailPage({
       selectedModel,
       undefined,
       effortSupported ? selectedEffort : undefined,
+      selectedBackend,
     );
   }, [
     conversationId,
@@ -943,6 +989,7 @@ export default function SessionDetailPage({
     selectedModel,
     selectedEffort,
     effortSupported,
+    selectedBackend,
   ]);
 
   const handleVoiceResult = useCallback(
@@ -1647,10 +1694,17 @@ export default function SessionDetailPage({
                             <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                           </svg>
                         </button>
+                        <BackendToggle
+                          value={selectedBackend}
+                          onChange={handleBackendChange}
+                          disabled={sending || isReadOnly}
+                          readOnly={backendLocked}
+                        />
                         <ModelSelector
                           value={selectedModel}
                           onChange={handleModelChange}
                           disabled={sending || isReadOnly}
+                          backend={selectedBackend}
                         />
                         <ReasoningLevelSelector
                           value={selectedEffort}

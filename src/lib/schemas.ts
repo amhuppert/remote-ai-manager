@@ -16,8 +16,19 @@ export const agentSessionRefSchema = z.discriminatedUnion("backend", [
 ]);
 export type AgentSessionRef = z.infer<typeof agentSessionRefSchema>;
 
-export const effortLevelSchema = z.enum(["low", "medium", "high", "max"]);
+export const effortLevelSchema = z.enum([
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "max",
+  "xhigh",
+]);
 export type EffortLevel = z.infer<typeof effortLevelSchema>;
+
+/** Claude-specific effort levels (subset of EffortLevel accepted by the Claude SDK). */
+export const claudeEffortLevelSchema = z.enum(["low", "medium", "high", "max"]);
+export type ClaudeEffortLevel = z.infer<typeof claudeEffortLevelSchema>;
 
 const MODEL_EFFORT_LEVELS: Record<ClaudeModel, EffortLevel[]> = {
   opus: ["low", "medium", "high", "max"],
@@ -78,6 +89,23 @@ export type PushNotificationConfig = z.infer<
 // Codex Config
 // ============================================================
 
+export const codexModelSchema = z.enum([
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.4-nano",
+]);
+export type CodexModel = z.infer<typeof codexModelSchema>;
+
+/** Returns all known Codex model identifiers. */
+export function getCodexModels(): CodexModel[] {
+  return codexModelSchema.options;
+}
+
+/** Returns the default Codex model. */
+export function getDefaultCodexModel(): CodexModel {
+  return "gpt-5.4";
+}
+
 export const codexReasoningEffortSchema = z.enum([
   "minimal",
   "low",
@@ -89,7 +117,7 @@ export type CodexReasoningEffort = z.infer<typeof codexReasoningEffortSchema>;
 
 export const codexConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  model: z.string().trim().min(1).optional(),
+  model: codexModelSchema.optional().default("gpt-5.4"),
   reasoningEffort: codexReasoningEffortSchema.optional(),
   timeout: z.number().positive().nullable().optional(),
 });
@@ -134,6 +162,8 @@ export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
 
 const CODEX_MODEL_REASONING_LEVELS: Record<string, CodexReasoningEffort[]> = {
   "gpt-5.4": ["low", "medium", "high", "xhigh"],
+  "gpt-5.4-mini": ["low", "medium", "high", "xhigh"],
+  "gpt-5.4-nano": ["low", "medium", "high", "xhigh"],
 };
 
 /**
@@ -144,6 +174,21 @@ export function getCodexReasoningLevelsForModel(
   model: string,
 ): CodexReasoningEffort[] | null {
   return CODEX_MODEL_REASONING_LEVELS[model] ?? null;
+}
+
+/**
+ * Returns effort/reasoning levels for the given backend and optional model.
+ * Both Claude and Codex levels are subsets of the unified EffortLevel union.
+ */
+export function getEffortLevelsForBackend(
+  backend: AgentBackendId,
+  model?: string,
+): EffortLevel[] {
+  if (backend === "codex") {
+    const levels = getCodexReasoningLevelsForModel(model ?? "gpt-5.4");
+    return (levels ?? [...codexReasoningEffortSchema.options]) as EffortLevel[];
+  }
+  return getEffortLevelsForModel((model ?? "opus") as ClaudeModel);
 }
 
 export const globalConfigSchema = z.object({

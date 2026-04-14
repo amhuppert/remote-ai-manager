@@ -53,6 +53,34 @@ export const Disabled = {
   },
 } satisfies Story;
 
+export const ClaudeOpus = {
+  args: {
+    value: "high",
+    availableLevels: ["low", "medium", "high", "max"],
+  },
+} satisfies Story;
+
+export const ClaudeHaiku = {
+  args: {
+    disabled: true,
+    disabledTooltip: "Not available for Haiku",
+  },
+} satisfies Story;
+
+export const CodexDefault = {
+  args: {
+    value: "high",
+    availableLevels: ["low", "medium", "high", "xhigh"],
+  },
+} satisfies Story;
+
+export const CodexAllLevels = {
+  args: {
+    value: "medium",
+    availableLevels: ["minimal", "low", "medium", "high", "xhigh"],
+  },
+} satisfies Story;
+
 /** Shows both selectors side-by-side in the prompt toolbar, as they appear in the actual UI */
 export const InPromptArea = {
   decorators: [

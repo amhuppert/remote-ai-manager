@@ -29,6 +29,7 @@ import type {
   AskQuestionItem,
 } from "@/types";
 import type { TranscriptEntry } from "@/lib/transcript";
+import type { McpApplyResult } from "@/lib/agent-backends/portable-mcp";
 import type {
   SDKMessage,
   SDKAssistantMessage,
@@ -60,11 +61,16 @@ const logger = createLogger("conversation-actor");
 /** Subset of GlobalConfig properties used by actor implementations. */
 export interface ActorConfig {
   defaultModel?: string;
+  defaultEffort?: string;
   claudeTimeoutMs: number;
   maxTurns: number;
   idleQuerySessionTtlMs: number;
   pushNotification?: unknown;
-  codex?: unknown;
+  codex?: {
+    model?: string;
+    reasoningEffort?: string;
+    timeout?: number | null;
+  };
 }
 
 // ============================================================
@@ -283,10 +289,8 @@ export function shouldRecreateRuntime(
   },
 ): boolean {
   if (!runtime || runtime.status !== "alive") return false;
-  const modelChanged =
-    effectiveModel != null && runtime.modelId !== effectiveModel;
-  const effortChanged =
-    effectiveEffort != null && runtime.reasoningEffort !== effectiveEffort;
+  const modelChanged = runtime.modelId !== effectiveModel;
+  const effortChanged = runtime.reasoningEffort !== effectiveEffort;
   const outputFormatChanged = runtime.outputFormat !== desiredOutputFormat;
   return modelChanged || effortChanged || outputFormatChanged;
 }
@@ -348,6 +352,111 @@ export function shouldRetryUndeliveredPrompt(
     runtime?.status === "dead" &&
     isUndeliveredQuerySessionError(error)
   );
+}
+
+// ============================================================
+// Backend-aware settings resolution
+// ============================================================
+
+const CODEX_DEFAULT_TIMEOUT_S = 600;
+
+/**
+ * Resolve the effective model and effort for a turn based on the backend.
+ * Claude falls back to config.defaultModel; Codex falls back to config.codex.
+ */
+export function resolveBackendTurnSettings(
+  backend: AgentBackendId,
+  config: ActorConfig,
+  explicitModel: string | null,
+  explicitEffort: string | null,
+): { effectiveModel: string | undefined; effectiveEffort: string | undefined } {
+  if (backend === "codex") {
+    return {
+      effectiveModel: explicitModel ?? config.codex?.model,
+      effectiveEffort: explicitEffort ?? config.codex?.reasoningEffort,
+    };
+  }
+  return {
+    effectiveModel: explicitModel ?? config.defaultModel,
+    effectiveEffort: explicitEffort ?? config.defaultEffort,
+  };
+}
+
+/**
+ * Resolve the safety-net timeout for a turn based on the backend.
+ * Returns 0 when the backend has no timeout (codex timeout: null).
+ */
+export function resolveBackendTimeoutMs(
+  backend: AgentBackendId,
+  config: ActorConfig,
+): number {
+  if (backend === "codex") {
+    const timeout = config.codex?.timeout;
+    if (timeout === null) return 0;
+    if (timeout !== undefined) return timeout * 1000;
+    return CODEX_DEFAULT_TIMEOUT_S * 1000;
+  }
+  return config.claudeTimeoutMs;
+}
+
+export function buildNonClaudeTranscriptEntries(input: {
+  backend: Exclude<AgentBackendId, "claude">;
+  backendRef: AgentSessionRef | null;
+  contentBlocks: MessageContentBlock[];
+  turnResult: ConversationBackendTurnResult;
+  timestamp: string;
+}): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+
+  if (input.contentBlocks.length > 0) {
+    entries.push({
+      timestamp: input.timestamp,
+      type: "assistant",
+      role: "assistant",
+      content: input.contentBlocks,
+    });
+  }
+
+  entries.push({
+    timestamp: input.timestamp,
+    type: "result",
+    raw: {
+      backend: input.backend,
+      backendRef: input.backendRef,
+      durationMs: input.turnResult.durationMs,
+      numTurns: input.turnResult.numTurns,
+      contextTokens: input.turnResult.contextTokens,
+      contextWindowMax: input.turnResult.contextWindowMax,
+      costUsd: input.turnResult.costUsd,
+      aborted: input.turnResult.aborted,
+      error: input.turnResult.error,
+    },
+  });
+
+  return entries;
+}
+
+function formatPortableMcpApplyFailure(result: McpApplyResult): string {
+  const parts = [
+    result.disposition === "unsupported"
+      ? "Portable MCP update is not supported by the active backend runtime"
+      : "Failed to apply portable MCP configuration",
+  ];
+
+  const errorMessages = Object.entries(result.errors).map(
+    ([serverId, message]) => `${serverId}: ${message}`,
+  );
+  if (errorMessages.length > 0) {
+    parts.push(errorMessages.join("; "));
+  }
+  if (result.droppedServerIds.length > 0) {
+    parts.push(`Dropped servers: ${result.droppedServerIds.join(", ")}`);
+  }
+  if (result.droppedFields.length > 0) {
+    parts.push(`Dropped fields: ${result.droppedFields.join(", ")}`);
+  }
+
+  return parts.join(". ");
 }
 
 // ============================================================
@@ -689,9 +798,44 @@ export async function executePromptForMachine(
   const projectName =
     input.projectName || deps.getProjectDisplayName(input.projectPath);
 
-  // Resolve model and effort
-  const effectiveModel = input.modelId ?? config.defaultModel;
-  const effectiveEffort = input.effort ?? undefined;
+  // Resolve backend-specific model and effort defaults
+  const { effectiveModel, effectiveEffort } = resolveBackendTurnSettings(
+    input.agentBackend,
+    config,
+    input.modelId,
+    input.effort,
+  );
+  const factory = deps.getConversationBackendFactory(input.agentBackend);
+
+  if (factory.validateModelAndEffort) {
+    try {
+      factory.validateModelAndEffort({
+        modelId: effectiveModel,
+        reasoningEffort: effectiveEffort,
+      });
+    } catch (err) {
+      const errorMessage = getErrorMessage(err);
+      logger.warn("prompt.model_effort_validation_failed_actor", {
+        sessionName: input.sessionName,
+        backend: input.agentBackend,
+        modelId: effectiveModel,
+        reasoningEffort: effectiveEffort,
+        error: errorMessage,
+      });
+      runtimeState.streamEmit?.("error", { message: errorMessage });
+      return {
+        backendRef: null,
+        costUsd: null,
+        durationMs: null,
+        numTurns: null,
+        contextTokens: null,
+        contextWindow: null,
+        contentBlocks: [],
+        aborted: false,
+        error: errorMessage,
+      };
+    }
+  }
 
   // Build user content blocks
   const userContentBlocks: MessageContentBlock[] = [
@@ -859,9 +1003,6 @@ export async function executePromptForMachine(
       ...(runtimeState.tooling?.claudeSdkServers ?? {}),
     };
 
-    // Get factory and create runtime
-    const factory = deps.getConversationBackendFactory(input.agentBackend);
-
     logger.info("prompt.runtime_create", {
       sessionName: input.sessionName,
       backend: input.agentBackend,
@@ -906,19 +1047,24 @@ export async function executePromptForMachine(
   const abortController = runtimeState.abortController;
   deps.registerAbortController(input.conversationId, abortController);
 
-  runtimeState.timeoutHandle = setTimeout(() => {
-    logger.warn("prompt.timeout", {
-      sessionName: input.sessionName,
-      timeoutMs: config.claudeTimeoutMs,
-    });
-    backendRuntime?.close();
-    abortController.abort();
-  }, config.claudeTimeoutMs);
+  const timeoutMs = resolveBackendTimeoutMs(input.agentBackend, config);
+  if (timeoutMs > 0) {
+    runtimeState.timeoutHandle = setTimeout(() => {
+      logger.warn("prompt.timeout", {
+        sessionName: input.sessionName,
+        timeoutMs,
+      });
+      backendRuntime?.close();
+      abortController.abort();
+    }, timeoutMs);
+  }
 
   // ---------------------------------------------------------------
   // Build turn input and execute
   // ---------------------------------------------------------------
   const contentBlocks: MessageContentBlock[] = [];
+  const pendingTranscriptWrites: Promise<void>[] = [];
+  let sawErrorEvent = false;
 
   // onEvent: translate backend events into existing SSE emit path
   const onEvent = async (event: ConversationBackendEvent): Promise<void> => {
@@ -928,6 +1074,19 @@ export async function executePromptForMachine(
           type: "BACKEND_INIT",
           backendRef: event.backendRef,
         });
+        if (event.backendRef.backend === "codex") {
+          pendingTranscriptWrites.push(
+            deps.safeAppendTranscriptEntry(input.conversationId, {
+              timestamp: new Date().toISOString(),
+              type: "system",
+              raw: {
+                subtype: "init",
+                backend: "codex",
+                thread_id: event.backendRef.threadId,
+              },
+            }),
+          );
+        }
         break;
 
       case "content":
@@ -964,6 +1123,7 @@ export async function executePromptForMachine(
       }
 
       case "error":
+        sawErrorEvent = true;
         runtimeState.streamEmit?.("error", { message: event.message });
         break;
     }
@@ -1037,6 +1197,51 @@ export async function executePromptForMachine(
   let turnResult: ConversationBackendTurnResult | undefined;
 
   try {
+    if (
+      !isNewRuntime &&
+      runtimeState.tooling?.portableMcp &&
+      backendRuntime?.applyPortableMcpConfig
+    ) {
+      const mcpApplyResult = await backendRuntime.applyPortableMcpConfig(
+        runtimeState.tooling.portableMcp,
+      );
+
+      logger.info("prompt.mcp_apply", {
+        sessionName: input.sessionName,
+        backend: input.agentBackend,
+        disposition: mcpApplyResult.disposition,
+        droppedServerIds: mcpApplyResult.droppedServerIds,
+        droppedFields: mcpApplyResult.droppedFields,
+      });
+
+      if (
+        mcpApplyResult.disposition === "rejected" ||
+        mcpApplyResult.disposition === "unsupported"
+      ) {
+        const errorMessage = formatPortableMcpApplyFailure(mcpApplyResult);
+        logger.warn("prompt.mcp_apply_failed", {
+          sessionName: input.sessionName,
+          backend: input.agentBackend,
+          disposition: mcpApplyResult.disposition,
+          errors: mcpApplyResult.errors,
+          droppedServerIds: mcpApplyResult.droppedServerIds,
+          droppedFields: mcpApplyResult.droppedFields,
+        });
+        runtimeState.streamEmit?.("error", { message: errorMessage });
+        return {
+          backendRef: null,
+          costUsd: null,
+          durationMs: null,
+          numTurns: null,
+          contextTokens: null,
+          contextWindow: null,
+          contentBlocks: [],
+          aborted: false,
+          error: errorMessage,
+        };
+      }
+    }
+
     let deliveryAttempt = 0;
 
     while (true) {
@@ -1124,6 +1329,34 @@ export async function executePromptForMachine(
       runtimeState.timeoutHandle = undefined;
     }
     deps.unregisterAbortController(input.conversationId);
+  }
+
+  await Promise.all(pendingTranscriptWrites);
+
+  if (turnResult?.error && !turnResult.aborted && !sawErrorEvent) {
+    logger.warn("prompt.turn_error_fallback_emitted", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      message: turnResult.error,
+    });
+    runtimeState.streamEmit?.("error", { message: turnResult.error });
+  }
+
+  // Post-turn transcript for non-Claude backends.
+  // Claude writes transcript entries inline via provider_event → processMessage();
+  // other backends emit content events that need explicit persistence.
+  if (backendRuntime!.backend !== "claude" && turnResult) {
+    const transcriptEntries = buildNonClaudeTranscriptEntries({
+      backend: backendRuntime!.backend,
+      backendRef: turnResult.backendRef,
+      contentBlocks: turnResult.contentBlocks,
+      turnResult,
+      timestamp: new Date().toISOString(),
+    });
+
+    for (const entry of transcriptEntries) {
+      await deps.safeAppendTranscriptEntry(input.conversationId, entry);
+    }
   }
 
   // Build result

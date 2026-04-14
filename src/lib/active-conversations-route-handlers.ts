@@ -41,6 +41,7 @@ interface ActiveConversation {
   projectName: string;
   projectPath: string;
   sessionName: string;
+  agentBackend: "claude" | "codex";
 }
 
 export interface ActiveGraphWorkflowExecution {
@@ -105,6 +106,7 @@ export function createActiveConversationsRouteHandlers(
               projectName,
               projectPath,
               sessionName: session.sessionName,
+              agentBackend: convo.agentBackend,
             });
           }
 

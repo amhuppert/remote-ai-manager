@@ -11,6 +11,7 @@ const BASE_CONVERSATION = {
   projectName: "my-project",
   projectPath: "/home/user/my-project",
   sessionName: "my-session",
+  agentBackend: "claude" as const,
 };
 
 describe("activeConversationSchema", () => {

@@ -6,11 +6,13 @@ import {
 } from "./schemas";
 
 describe("effortLevelSchema", () => {
-  it("accepts low, medium, high, and max", () => {
+  it("accepts all unified effort levels", () => {
+    expect(effortLevelSchema.parse("minimal")).toBe("minimal");
     expect(effortLevelSchema.parse("low")).toBe("low");
     expect(effortLevelSchema.parse("medium")).toBe("medium");
     expect(effortLevelSchema.parse("high")).toBe("high");
     expect(effortLevelSchema.parse("max")).toBe("max");
+    expect(effortLevelSchema.parse("xhigh")).toBe("xhigh");
   });
 
   it("rejects unknown values", () => {

@@ -701,7 +701,7 @@ export default function WorkflowInspectorPanel({
                   applyContextUpdate({
                     agent: {
                       ...selectedContext.agent,
-                      reasoningEffort: effort,
+                      reasoningEffort: effort as EffortLevel,
                     },
                   })
                 }
@@ -896,7 +896,10 @@ export default function WorkflowInspectorPanel({
                       applyContextUpdate({
                         taskValidation: {
                           ...taskValidation,
-                          agent: { ...tv.agent, reasoningEffort: effort },
+                          agent: {
+                            ...tv.agent,
+                            reasoningEffort: effort as EffortLevel,
+                          },
                         },
                       });
                     }}

@@ -27,13 +27,13 @@ import {
 } from "./query-session";
 import { createCanUseTool, type CanUseToolTurnContext } from "./native-tooling";
 import { createLogger } from "@/lib/logging";
-import { claudeModelSchema, effortLevelSchema } from "@/lib/schemas";
+import { claudeModelSchema, claudeEffortLevelSchema } from "@/lib/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
 
 const logger = createLogger("claude:conversation-runtime");
 
 const KNOWN_CLAUDE_MODELS = claudeModelSchema.options;
-const KNOWN_EFFORT_LEVELS = effortLevelSchema.options;
+const KNOWN_EFFORT_LEVELS = claudeEffortLevelSchema.options;
 
 // ============================================================
 // Claude Conversation Runtime
@@ -435,7 +435,7 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
     }
 
     if (input.reasoningEffort) {
-      const result = effortLevelSchema.safeParse(input.reasoningEffort);
+      const result = claudeEffortLevelSchema.safeParse(input.reasoningEffort);
       if (!result.success) {
         throw new Error(
           `Invalid reasoning effort: "${input.reasoningEffort}". Must be one of: ${KNOWN_EFFORT_LEVELS.join(", ")}.`,

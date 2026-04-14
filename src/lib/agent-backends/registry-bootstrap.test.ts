@@ -9,6 +9,9 @@ describe("agent backend registry bootstrap", () => {
     expect(registry.getConversationBackendFactory("claude").backend).toBe(
       "claude",
     );
+    expect(registry.getConversationBackendFactory("codex").backend).toBe(
+      "codex",
+    );
     expect(registry.getTaskRunner("claude").backend).toBe("claude");
     expect(registry.getTaskRunner("codex").backend).toBe("codex");
   });
@@ -20,6 +23,9 @@ describe("agent backend registry bootstrap", () => {
 
     expect(registry.getConversationBackendFactory("claude").backend).toBe(
       "claude",
+    );
+    expect(registry.getConversationBackendFactory("codex").backend).toBe(
+      "codex",
     );
     expect(registry.getTaskRunner("claude").backend).toBe("claude");
     expect(registry.getTaskRunner("codex").backend).toBe("codex");

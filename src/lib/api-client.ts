@@ -13,6 +13,7 @@ import {
   messageContentBlockSchema,
   workflowDefinitionRecordSchema,
   workflowGeneratedDraftSchema,
+  agentBackendSchema,
 } from "@/lib/schemas";
 import { tracedFetch } from "@/lib/traced-fetch";
 
@@ -98,6 +99,7 @@ export const activeConversationSchema = z.object({
   projectName: z.string(),
   projectPath: z.string(),
   sessionName: z.string(),
+  agentBackend: agentBackendSchema,
 });
 
 export const activeGraphWorkflowExecutionSchema = z.object({

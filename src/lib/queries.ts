@@ -233,6 +233,7 @@ export interface ActiveConversation {
   projectName: string;
   projectPath: string;
   sessionName: string;
+  agentBackend: "claude" | "codex";
 }
 
 export function useActiveConversationsQuery() {

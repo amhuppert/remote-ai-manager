@@ -423,6 +423,8 @@ export default function ConversationSidebar({
                           {convo.promptCount !== 1 ? "s" : ""}
                           {convo.source === "imported" && " \u00B7 imported"}
                           {" \u00B7 "}
+                          {convo.agentBackend}
+                          {" \u00B7 "}
                           <span
                             className="convo-sidebar-id"
                             onClick={(e) => {
@@ -607,6 +609,8 @@ export default function ConversationSidebar({
                                   {activeEditingId !== convo.id && (
                                     <span className="convo-sidebar-session-label">
                                       {convo.sessionName}
+                                      {" \u00B7 "}
+                                      {convo.agentBackend}
                                     </span>
                                   )}
                                 </div>

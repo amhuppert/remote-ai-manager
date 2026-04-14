@@ -1,12 +1,14 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
+import BackendToggle from "./BackendToggle";
 import ModelSelector from "./ModelSelector";
+import ReasoningLevelSelector from "./ReasoningLevelSelector";
 
 const meta = {
-  title: "Components/ModelSelector",
-  component: ModelSelector,
+  title: "Components/BackendToggle",
+  component: BackendToggle,
   args: {
-    value: "sonnet",
+    value: "claude",
     onChange: fn(),
   },
   decorators: [
@@ -24,7 +26,7 @@ const meta = {
       </div>
     ),
   ],
-} satisfies Meta<typeof ModelSelector>;
+} satisfies Meta<typeof BackendToggle>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -33,15 +35,22 @@ export const Default = {
   args: {},
 } satisfies Story;
 
-export const Opus = {
+export const Codex = {
   args: {
-    value: "opus",
+    value: "codex",
   },
 } satisfies Story;
 
-export const Haiku = {
+export const ReadOnly = {
   args: {
-    value: "haiku",
+    readOnly: true,
+  },
+} satisfies Story;
+
+export const ReadOnlyCodex = {
+  args: {
+    value: "codex",
+    readOnly: true,
   },
 } satisfies Story;
 
@@ -51,27 +60,7 @@ export const Disabled = {
   },
 } satisfies Story;
 
-export const ClaudeDefault = {
-  args: {
-    backend: "claude",
-    value: "sonnet",
-  },
-} satisfies Story;
-
-export const CodexDefault = {
-  args: {
-    backend: "codex",
-    value: "gpt-5.4",
-  },
-} satisfies Story;
-
-export const CodexMini = {
-  args: {
-    backend: "codex",
-    value: "gpt-5.4-mini",
-  },
-} satisfies Story;
-
+/** Shows the backend toggle in context with model + effort selectors */
 export const InPromptArea = {
   decorators: [
     (Story) => (
@@ -85,13 +74,15 @@ export const InPromptArea = {
           <div className="prompt-input-wrapper">
             <textarea
               className="prompt-textarea"
-              placeholder="Send a prompt to Claude..."
+              placeholder="Send a prompt..."
               rows={2}
               readOnly
             />
             <div className="prompt-toolbar">
               <div className="prompt-toolbar-start">
                 <Story />
+                <ModelSelector value="opus" onChange={fn()} />
+                <ReasoningLevelSelector value="high" onChange={fn()} />
               </div>
               <div className="prompt-toolbar-end">
                 <button className="send-btn" style={{ cursor: "default" }}>

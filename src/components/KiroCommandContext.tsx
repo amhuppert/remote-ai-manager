@@ -1,7 +1,6 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import type { ClaudeModel } from "@/types";
 
 export interface KiroCommandContextValue {
   projectName: string;
@@ -10,11 +9,11 @@ export interface KiroCommandContextValue {
   sendPrompt: (
     text: string,
     currentMessageCount: number,
-    modelId?: ClaudeModel,
+    modelId?: string,
   ) => Promise<void>;
   messageCount: number;
   isBusy: boolean;
-  selectedModel: ClaudeModel | undefined;
+  selectedModel: string | undefined;
 }
 
 const KiroCommandCtx = createContext<KiroCommandContextValue | null>(null);

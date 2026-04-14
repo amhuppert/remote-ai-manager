@@ -13,7 +13,7 @@ import {
 } from "@/stores/session-detail.store";
 import { tracedFetch } from "@/lib/traced-fetch";
 import type {
-  ClaudeModel,
+  AgentBackendId,
   EffortLevel,
   ImagePayload,
   MessageContentBlock,
@@ -30,9 +30,10 @@ export interface SendPromptHandle {
   send: (
     text: string,
     currentMessageCount: number,
-    modelId?: ClaudeModel,
+    modelId?: string,
     images?: ImagePayload[],
     effort?: EffortLevel,
+    backend?: AgentBackendId,
   ) => Promise<void>;
   /** Queue a message into a running conversation. */
   queue: (text: string) => Promise<void>;
@@ -71,9 +72,10 @@ export function useSendPrompt(
     async (
       text: string,
       currentMessageCount: number,
-      modelId?: ClaudeModel,
+      modelId?: string,
       images?: ImagePayload[],
       effort?: EffortLevel,
+      backend?: AgentBackendId,
     ) => {
       const trimmed = text.trim();
       const hasImages = images && images.length > 0;
@@ -125,6 +127,7 @@ export function useSendPrompt(
             modelId,
             effort,
             images: hasImages ? images : undefined,
+            backend,
           }),
           signal: controller.signal,
         });

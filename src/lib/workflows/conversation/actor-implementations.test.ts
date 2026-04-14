@@ -41,7 +41,10 @@ import {
   buildEffectivePrompt,
   processMessage,
   mapErrorSubtype,
+  resolveBackendTurnSettings,
+  resolveBackendTimeoutMs,
 } from "./actor-implementations";
+import type { ActorConfig } from "./actor-implementations";
 import { QUERY_SESSION_ERROR_CODES } from "@/lib/agent-backends/claude/query-session-errors";
 
 // ---------------------------------------------------------------------------
@@ -54,6 +57,7 @@ function createMockBackendRuntime(
   overrides: Partial<ConversationBackendRuntime> = {},
 ): ConversationBackendRuntime {
   return {
+    backend: "claude" as const,
     status: "alive",
     modelId: undefined,
     reasoningEffort: undefined,
@@ -76,6 +80,7 @@ const mockBackendRuntime = createMockBackendRuntime();
 
 const mockFactory = {
   createRuntime: vi.fn(async () => mockBackendRuntime),
+  validateModelAndEffort: vi.fn(),
 };
 
 // ---------------------------------------------------------------------------
@@ -91,8 +96,10 @@ function createMockDeps(
     getTranscriptPath: vi.fn(async (id: string) => `/transcripts/${id}.jsonl`),
     readConfig: vi.fn(async () => ({
       claudeTimeoutMs: 300_000,
+      defaultModel: "opus",
       maxTurns: 50,
       idleQuerySessionTtlMs: 300_000,
+      defaultEffort: undefined,
     })),
     getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
     getDebugLogUrl: vi.fn(
@@ -216,10 +223,20 @@ describe("shouldRecreateRuntime", () => {
     ).toBe(true);
   });
 
-  it("returns false when new values are undefined (no explicit override)", () => {
+  it("returns true when an existing model/effort changes to undefined", () => {
     expect(
       shouldRecreateRuntime(
         { status: "alive", modelId: "a", reasoningEffort: "low" },
+        undefined,
+        undefined,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when runtime and desired model/effort are both undefined", () => {
+    expect(
+      shouldRecreateRuntime(
+        { status: "alive", modelId: undefined, reasoningEffort: undefined },
         undefined,
         undefined,
       ),
@@ -496,6 +513,115 @@ describe("mapErrorSubtype", () => {
       errors: [],
     } as never);
     expect(result).toBe("Unknown error");
+  });
+});
+
+// ===========================================================================
+// Unit tests: resolveBackendTurnSettings
+// ===========================================================================
+
+describe("resolveBackendTurnSettings", () => {
+  const baseConfig: ActorConfig = {
+    claudeTimeoutMs: 300_000,
+    maxTurns: 50,
+    idleQuerySessionTtlMs: 300_000,
+  };
+
+  it("returns Claude config.defaultModel when backend is claude", () => {
+    const config = { ...baseConfig, defaultModel: "opus" };
+    expect(resolveBackendTurnSettings("claude", config, null, null)).toEqual({
+      effectiveModel: "opus",
+      effectiveEffort: undefined,
+    });
+  });
+
+  it("returns explicit model over Claude default", () => {
+    const config = { ...baseConfig, defaultModel: "opus" };
+    expect(
+      resolveBackendTurnSettings("claude", config, "sonnet", null),
+    ).toEqual({ effectiveModel: "sonnet", effectiveEffort: undefined });
+  });
+
+  it("returns Claude defaultEffort when backend is claude", () => {
+    const config = {
+      ...baseConfig,
+      defaultModel: "opus",
+      defaultEffort: "high",
+    };
+    expect(resolveBackendTurnSettings("claude", config, null, null)).toEqual({
+      effectiveModel: "opus",
+      effectiveEffort: "high",
+    });
+  });
+
+  it("returns Codex config defaults when backend is codex", () => {
+    const config = {
+      ...baseConfig,
+      codex: { model: "o3", reasoningEffort: "high" },
+    };
+    expect(resolveBackendTurnSettings("codex", config, null, null)).toEqual({
+      effectiveModel: "o3",
+      effectiveEffort: "high",
+    });
+  });
+
+  it("returns explicit over Codex defaults", () => {
+    const config = {
+      ...baseConfig,
+      codex: { model: "o3", reasoningEffort: "high" },
+    };
+    expect(resolveBackendTurnSettings("codex", config, "gpt-5", "low")).toEqual(
+      { effectiveModel: "gpt-5", effectiveEffort: "low" },
+    );
+  });
+
+  it("returns undefined for Codex when no config and no explicit", () => {
+    expect(resolveBackendTurnSettings("codex", baseConfig, null, null)).toEqual(
+      { effectiveModel: undefined, effectiveEffort: undefined },
+    );
+  });
+
+  it("does not fall back to Claude defaults for Codex backend", () => {
+    const config = { ...baseConfig, defaultModel: "opus" };
+    expect(resolveBackendTurnSettings("codex", config, null, null)).toEqual({
+      effectiveModel: undefined,
+      effectiveEffort: undefined,
+    });
+  });
+});
+
+// ===========================================================================
+// Unit tests: resolveBackendTimeoutMs
+// ===========================================================================
+
+describe("resolveBackendTimeoutMs", () => {
+  const baseConfig: ActorConfig = {
+    claudeTimeoutMs: 300_000,
+    maxTurns: 50,
+    idleQuerySessionTtlMs: 300_000,
+  };
+
+  it("returns claudeTimeoutMs for claude backend", () => {
+    expect(resolveBackendTimeoutMs("claude", baseConfig)).toBe(300_000);
+  });
+
+  it("returns codex timeout converted to ms when configured", () => {
+    const config = { ...baseConfig, codex: { timeout: 120 } };
+    expect(resolveBackendTimeoutMs("codex", config)).toBe(120_000);
+  });
+
+  it("returns 600s default for codex when no timeout configured", () => {
+    const config = { ...baseConfig, codex: {} };
+    expect(resolveBackendTimeoutMs("codex", config)).toBe(600_000);
+  });
+
+  it("returns 0 (no timeout) when codex timeout is null", () => {
+    const config = { ...baseConfig, codex: { timeout: null } };
+    expect(resolveBackendTimeoutMs("codex", config)).toBe(0);
+  });
+
+  it("returns 600s default when codex config is undefined", () => {
+    expect(resolveBackendTimeoutMs("codex", baseConfig)).toBe(600_000);
   });
 });
 
@@ -805,6 +931,7 @@ describe("executePromptForMachine", () => {
 
     mockSendTurn.mockResolvedValue(defaultTurnResult);
     mockFactory.createRuntime.mockResolvedValue(mockBackendRuntime);
+    mockFactory.validateModelAndEffort.mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -826,6 +953,10 @@ describe("executePromptForMachine", () => {
     const result = await executePromptForMachine(input);
 
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+      modelId: "opus",
+      reasoningEffort: undefined,
+    });
     expect(result.backendRef).toEqual({
       backend: "claude",
       sessionId: "sdk-session-1",
@@ -835,7 +966,7 @@ describe("executePromptForMachine", () => {
   });
 
   it("reuses an existing alive backend runtime", async () => {
-    const existingRuntime = createMockBackendRuntime();
+    const existingRuntime = createMockBackendRuntime({ modelId: "opus" });
     (existingRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
       defaultTurnResult,
     );
@@ -855,6 +986,10 @@ describe("executePromptForMachine", () => {
 
     // Should NOT create a new runtime
     expect(mockFactory.createRuntime).not.toHaveBeenCalled();
+    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+      modelId: "opus",
+      reasoningEffort: undefined,
+    });
     expect(result.backendRef).toEqual({
       backend: "claude",
       sessionId: "sdk-session-1",
@@ -1010,6 +1145,71 @@ describe("executePromptForMachine", () => {
     expect(result.error).toBeNull();
   });
 
+  it("uses config-derived Codex model and effort for actor-side validation", async () => {
+    mockDeps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        claudeTimeoutMs: 300_000,
+        maxTurns: 50,
+        idleQuerySessionTtlMs: 300_000,
+        codex: { model: "gpt-5.4", reasoningEffort: "high" },
+      })),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+      modelId: "gpt-5.4",
+      reasoningEffort: "high",
+    });
+  });
+
+  it("returns a failed result when actor-side validation rejects config-derived defaults", async () => {
+    const streamEmit = vi.fn();
+    mockDeps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        claudeTimeoutMs: 300_000,
+        maxTurns: 50,
+        idleQuerySessionTtlMs: 300_000,
+        codex: { model: "gpt-5.4", reasoningEffort: "max" },
+      })),
+    });
+    setActorDeps(mockDeps);
+    mockFactory.validateModelAndEffort.mockImplementation(() => {
+      throw new Error('Invalid Codex reasoning effort: "max"');
+    });
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      streamEmit,
+    });
+
+    const result = await executePromptForMachine(input);
+
+    expect(result.error).toBe('Invalid Codex reasoning effort: "max"');
+    expect(mockDeps.safeAppendTranscriptEntry).not.toHaveBeenCalled();
+    expect(mockFactory.createRuntime).not.toHaveBeenCalled();
+    expect(streamEmit).toHaveBeenCalledWith("error", {
+      message: 'Invalid Codex reasoning effort: "max"',
+    });
+  });
+
   it("returns error result when backend throws", async () => {
     mockSendTurn.mockRejectedValue(new Error("SDK crashed"));
 
@@ -1031,7 +1231,10 @@ describe("executePromptForMachine", () => {
 
   it("retries once with a fresh runtime when prompt delivery never reached backend", async () => {
     const staleSendTurn = vi.fn();
-    const staleRuntime = createMockBackendRuntime({ sendTurn: staleSendTurn });
+    const staleRuntime = createMockBackendRuntime({
+      sendTurn: staleSendTurn,
+      modelId: "opus",
+    });
     staleSendTurn.mockImplementation(async () => {
       (staleRuntime as unknown as { status: string }).status = "dead";
       const error = new Error("QuerySession died before prompt delivery");
@@ -1127,6 +1330,106 @@ describe("executePromptForMachine", () => {
     expect(tooling.claudeSdkServers?.["graph-workflow-planner"]).toBeDefined();
   });
 
+  it("applies portable MCP config on a reused runtime before sendTurn", async () => {
+    const applyPortableMcpConfig = vi.fn(async () => ({
+      disposition: "deferred_to_next_turn" as const,
+      droppedServerIds: [],
+      droppedFields: [],
+      errors: {},
+    }));
+    const reusedRuntime = createMockBackendRuntime({
+      backend: "codex" as const,
+      applyPortableMcpConfig,
+    });
+    (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...defaultTurnResult,
+      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+    });
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      backendRuntime: reusedRuntime,
+      tooling: {
+        portableMcp: {
+          servers: [
+            {
+              id: "server-1",
+              transport: "stdio",
+              command: "node",
+            },
+          ],
+        },
+      },
+    });
+
+    await executePromptForMachine(input);
+
+    expect(applyPortableMcpConfig).toHaveBeenCalledTimes(1);
+    expect(applyPortableMcpConfig.mock.invocationCallOrder[0]).toBeLessThan(
+      (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0]!,
+    );
+  });
+
+  it("fails fast when portable MCP apply is rejected on a reused runtime", async () => {
+    const streamEmit = vi.fn();
+    const applyPortableMcpConfig = vi.fn(async () => ({
+      disposition: "rejected" as const,
+      droppedServerIds: ["server-1"],
+      droppedFields: ["server-1.cwd"],
+      errors: { "server-1": "unsupported field" },
+    }));
+    const reusedRuntime = createMockBackendRuntime({
+      backend: "codex" as const,
+      applyPortableMcpConfig,
+    });
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      backendRuntime: reusedRuntime,
+      streamEmit,
+      tooling: {
+        portableMcp: {
+          servers: [
+            {
+              id: "server-1",
+              transport: "stdio",
+              command: "node",
+            },
+          ],
+        },
+      },
+    });
+
+    const result = await executePromptForMachine(input);
+
+    expect(reusedRuntime.sendTurn).not.toHaveBeenCalled();
+    expect(result.error).toContain(
+      "Failed to apply portable MCP configuration",
+    );
+    expect(result.error).toContain("server-1: unsupported field");
+    expect(streamEmit).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "Failed to apply portable MCP configuration",
+        ),
+      }),
+    );
+  });
+
   it("does not include tooling overrides when not set on runtime", async () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
@@ -1213,5 +1516,250 @@ describe("executePromptForMachine", () => {
     const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
     expect(turnInput.promptText).toContain("<debug-mode>");
     expect(turnInput.promptText).toContain("Help me debug this");
+  });
+
+  it("writes system, assistant, and result transcript entries for non-Claude backends", async () => {
+    const codexRuntime = createMockBackendRuntime({
+      backend: "codex" as const,
+    });
+    (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) => {
+        await turnInput.onEvent({
+          type: "backend_init",
+          backendRef: { backend: "codex" as const, threadId: "thread-1" },
+        });
+        await turnInput.onEvent({
+          type: "content",
+          block: { type: "text", text: "Codex says hello" },
+        });
+        return {
+          ...defaultTurnResult,
+          backendRef: { backend: "codex" as const, threadId: "thread-1" },
+          contentBlocks: [{ type: "text" as const, text: "Codex says hello" }],
+        };
+      },
+    );
+    mockFactory.createRuntime.mockResolvedValue(codexRuntime);
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
+    const systemEntry = calls.find(
+      ([, entry]) => (entry as { type?: string }).type === "system",
+    );
+    const assistantEntry = calls.find(
+      ([, entry]) => (entry as { role?: string }).role === "assistant",
+    );
+    const resultEntry = calls.find(
+      ([, entry]) => (entry as { type?: string }).type === "result",
+    );
+    expect(systemEntry).toBeDefined();
+    expect(systemEntry![1]).toEqual(
+      expect.objectContaining({
+        type: "system",
+        raw: {
+          subtype: "init",
+          backend: "codex",
+          thread_id: "thread-1",
+        },
+      }),
+    );
+    expect(assistantEntry).toBeDefined();
+    expect((assistantEntry![1] as { content: unknown }).content).toEqual([
+      { type: "text", text: "Codex says hello" },
+    ]);
+    expect(resultEntry).toBeDefined();
+    expect(resultEntry![1]).toEqual(
+      expect.objectContaining({
+        type: "result",
+        raw: expect.objectContaining({
+          backend: "codex",
+          backendRef: { backend: "codex", threadId: "thread-1" },
+          aborted: false,
+          error: null,
+        }),
+      }),
+    );
+  });
+
+  it("does not write extra assistant transcript for Claude backends", async () => {
+    const input = makeExecutePromptInput({ agentBackend: "claude" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
+    const assistantEntries = calls.filter(
+      ([, entry]) => (entry as { role?: string }).role === "assistant",
+    );
+    expect(assistantEntries).toHaveLength(0);
+  });
+
+  it("writes only a result transcript entry when no non-Claude content blocks were produced", async () => {
+    const codexRuntime = createMockBackendRuntime({
+      backend: "codex" as const,
+    });
+    (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...defaultTurnResult,
+      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+      contentBlocks: [],
+    });
+    mockFactory.createRuntime.mockResolvedValue(codexRuntime);
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
+    const assistantEntries = calls.filter(
+      ([, entry]) => (entry as { role?: string }).role === "assistant",
+    );
+    const resultEntries = calls.filter(
+      ([, entry]) => (entry as { type?: string }).type === "result",
+    );
+    expect(assistantEntries).toHaveLength(0);
+    expect(resultEntries).toHaveLength(1);
+  });
+
+  it("writes assistant and result transcript entries for aborted non-Claude turns with partial content", async () => {
+    const codexRuntime = createMockBackendRuntime({
+      backend: "codex" as const,
+    });
+    (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...defaultTurnResult,
+      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+      contentBlocks: [{ type: "text", text: "Partial Codex output" }],
+      aborted: true,
+      error: null,
+    });
+    mockFactory.createRuntime.mockResolvedValue(codexRuntime);
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
+    const assistantEntries = calls.filter(
+      ([, entry]) => (entry as { role?: string }).role === "assistant",
+    );
+    const resultEntries = calls.filter(
+      ([, entry]) => (entry as { type?: string }).type === "result",
+    );
+    expect(assistantEntries).toHaveLength(1);
+    expect(resultEntries).toHaveLength(1);
+    expect(resultEntries[0]![1]).toEqual(
+      expect.objectContaining({
+        raw: expect.objectContaining({
+          aborted: true,
+          backendRef: { backend: "codex", threadId: "thread-1" },
+        }),
+      }),
+    );
+  });
+
+  it("emits an SSE error when a non-Claude runtime returns turnResult.error without an earlier error event", async () => {
+    const streamEmit = vi.fn();
+    const codexRuntime = createMockBackendRuntime({
+      backend: "codex" as const,
+    });
+    (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...defaultTurnResult,
+      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+      error: "Codex failed after streaming",
+    });
+    mockFactory.createRuntime.mockResolvedValue(codexRuntime);
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      streamEmit,
+    });
+
+    await executePromptForMachine(input);
+
+    const errorEvents = streamEmit.mock.calls.filter(
+      ([event]) => event === "error",
+    );
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0]![1]).toEqual({
+      message: "Codex failed after streaming",
+    });
+  });
+
+  it("does not emit a duplicate SSE error when the runtime already emitted one", async () => {
+    const streamEmit = vi.fn();
+    const codexRuntime = createMockBackendRuntime({
+      backend: "codex" as const,
+    });
+    (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) => {
+        await turnInput.onEvent({
+          type: "error",
+          message: "Codex failed after streaming",
+        });
+        return {
+          ...defaultTurnResult,
+          backendRef: { backend: "codex" as const, threadId: "thread-1" },
+          error: "Codex failed after streaming",
+        };
+      },
+    );
+    mockFactory.createRuntime.mockResolvedValue(codexRuntime);
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      streamEmit,
+    });
+
+    await executePromptForMachine(input);
+
+    const errorEvents = streamEmit.mock.calls.filter(
+      ([event]) => event === "error",
+    );
+    expect(errorEvents).toHaveLength(1);
   });
 });

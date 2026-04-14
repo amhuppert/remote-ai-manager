@@ -17,6 +17,7 @@ function makeConversation(
     name?: string | null;
     summary?: string | null;
     role?: string | null;
+    agentBackend?: "claude" | "codex";
   } = {},
 ) {
   return {
@@ -39,6 +40,7 @@ function makeConversation(
     role: overrides.role ?? null,
     contextTokens: null,
     contextWindowMax: null,
+    agentBackend: overrides.agentBackend ?? ("claude" as const),
   };
 }
 

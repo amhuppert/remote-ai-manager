@@ -48,7 +48,7 @@ function PromptInputAreaDemo({
   voiceAvailable?: boolean;
 }) {
   const [text, setText] = useState("");
-  const [model, setModel] = useState<"opus" | "sonnet" | "haiku">("sonnet");
+  const [model, setModel] = useState("sonnet");
   const removeImage = fn();
   const toggleRecording = fn();
 

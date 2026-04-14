@@ -4,35 +4,53 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import type { AgentBackendId } from "@/lib/schemas";
 
 export type ModelId = "opus" | "sonnet" | "haiku";
 
 interface ModelOption {
-  id: ModelId;
+  id: string;
   label: string;
   description: string;
 }
 
-const MODEL_OPTIONS: ModelOption[] = [
+const CLAUDE_MODEL_OPTIONS: ModelOption[] = [
   { id: "opus", label: "Opus", description: "Most capable" },
   { id: "sonnet", label: "Sonnet", description: "Balanced" },
   { id: "haiku", label: "Haiku", description: "Fastest" },
 ];
 
+const CODEX_MODEL_OPTIONS: ModelOption[] = [
+  { id: "gpt-5.4", label: "GPT-5.4", description: "Most capable" },
+  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", description: "Balanced" },
+  { id: "gpt-5.4-nano", label: "GPT-5.4 Nano", description: "Fastest" },
+];
+
+/** Returns the model options for the given backend. */
+export function getModelsForBackend(
+  backend: AgentBackendId = "claude",
+): ModelOption[] {
+  return backend === "codex" ? CODEX_MODEL_OPTIONS : CLAUDE_MODEL_OPTIONS;
+}
+
 interface ModelSelectorProps {
-  value: ModelId;
-  onChange: (model: ModelId) => void;
+  value: string;
+  /** Bivariant via method syntax — callers can pass `(model: ModelId) => void` */
+  onChange(model: string): void;
   disabled?: boolean;
+  backend?: AgentBackendId;
 }
 
 export default function ModelSelector({
   value,
   onChange,
   disabled = false,
+  backend = "claude",
 }: ModelSelectorProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,15 +58,16 @@ export default function ModelSelector({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
-  const selected =
-    MODEL_OPTIONS.find((m) => m.id === value) ?? MODEL_OPTIONS[1]!;
+  const options = useMemo(() => getModelsForBackend(backend), [backend]);
+
+  const selected = options.find((m) => m.id === value) ?? options[1]!;
 
   const toggle = useCallback(() => {
     if (!disabled) setOpen((prev) => !prev);
   }, [disabled]);
 
   const select = useCallback(
-    (id: ModelId) => {
+    (id: string) => {
       onChange(id);
       setOpen(false);
     },
@@ -100,7 +119,7 @@ export default function ModelSelector({
       className={`model-selector-dropdown${open ? " open" : ""}`}
       style={dropdownStyle}
     >
-      {MODEL_OPTIONS.map((option) => (
+      {options.map((option) => (
         <button
           key={option.id}
           type="button"

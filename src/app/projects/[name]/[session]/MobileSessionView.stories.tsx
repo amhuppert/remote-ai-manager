@@ -35,7 +35,7 @@ function MobileSessionViewDemo({
       ? "This is a multiline prompt that demonstrates the constrained textarea height on mobile. It should not grow beyond 120px, keeping the conversation visible above.\n\nThe user can scroll within the textarea to see all their text, but the conversation area remains usable.\n\nThis is the third paragraph to really push the height."
       : "",
   );
-  const [model, setModel] = useState<"opus" | "sonnet" | "haiku">("sonnet");
+  const [model, setModel] = useState("sonnet");
   const [panel, setPanel] = useState(mobilePanel);
 
   const sampleMessages = [

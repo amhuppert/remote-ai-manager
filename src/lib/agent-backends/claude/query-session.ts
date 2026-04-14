@@ -183,7 +183,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   const sdkOptions: Options = {
     cwd: options.cwd,
     model: options.model ?? undefined,
-    ...(options.effort ? { effort: options.effort } : {}),
+    ...(options.effort ? { effort: options.effort as Options["effort"] } : {}),
     systemPrompt: options.systemPrompt,
     settingSources: options.settingSources,
     permissionMode: "bypassPermissions",

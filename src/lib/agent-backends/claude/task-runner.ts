@@ -16,7 +16,7 @@ import type {
 } from "../task";
 import type { AgentBackendId } from "../types";
 import { translatePortableMcpToClaude } from "../mcp-translation";
-import { effortLevelSchema, type EffortLevel } from "@/lib/schemas";
+import { claudeEffortLevelSchema } from "@/lib/schemas";
 
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/sdk-env";
@@ -39,7 +39,9 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
 
     let validatedReasoningEffort: string | undefined;
     if (input.reasoningEffort !== undefined) {
-      const effortResult = effortLevelSchema.safeParse(input.reasoningEffort);
+      const effortResult = claudeEffortLevelSchema.safeParse(
+        input.reasoningEffort,
+      );
       if (!effortResult.success) {
         const error = `Invalid Claude reasoning effort: "${input.reasoningEffort}"`;
         logger.error("claude-task-runner.invalid_reasoning_effort", {
@@ -169,7 +171,13 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           settingSources: ["user", "project", "local"],
           ...(input.modelId ? { model: input.modelId } : {}),
           ...(validatedReasoningEffort
-            ? { effort: validatedReasoningEffort as EffortLevel }
+            ? {
+                effort: validatedReasoningEffort as
+                  | "low"
+                  | "medium"
+                  | "high"
+                  | "max",
+              }
             : {}),
           maxTurns: 50,
           resume: resumeSessionId,

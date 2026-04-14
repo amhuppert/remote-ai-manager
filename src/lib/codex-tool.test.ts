@@ -129,7 +129,7 @@ describe("codex-tool", () => {
     it("returns null when enabled is false", async () => {
       const { maybeCreateCodexToolServer } = await import("./codex-tool");
       const result = maybeCreateCodexToolServer(
-        { enabled: false },
+        { enabled: false, model: "gpt-5.4" },
         { worktreePath: "/wt", sessionName: "s1" },
       );
       expect(result).toBeNull();
@@ -138,7 +138,7 @@ describe("codex-tool", () => {
     it("returns a server when enabled is true", async () => {
       const { maybeCreateCodexToolServer } = await import("./codex-tool");
       const result = maybeCreateCodexToolServer(
-        { enabled: true },
+        { enabled: true, model: "gpt-5.4" },
         { worktreePath: "/wt", sessionName: "s1" },
       );
       expect(result).not.toBeNull();
@@ -149,7 +149,7 @@ describe("codex-tool", () => {
       const mockDeps = createMockDeps();
 
       maybeCreateCodexToolServer(
-        { enabled: true, timeout: 120 },
+        { enabled: true, model: "gpt-5.4", timeout: 120 },
         { worktreePath: "/wt", sessionName: "s1" },
         mockDeps,
       );
@@ -168,7 +168,7 @@ describe("codex-tool", () => {
       const mockDeps = createMockDeps();
 
       maybeCreateCodexToolServer(
-        { enabled: true },
+        { enabled: true, model: "gpt-5.4" },
         { worktreePath: "/wt", sessionName: "s1" },
         mockDeps,
       );
@@ -187,7 +187,7 @@ describe("codex-tool", () => {
       const mockDeps = createMockDeps();
 
       maybeCreateCodexToolServer(
-        { enabled: true, timeout: null },
+        { enabled: true, model: "gpt-5.4", timeout: null },
         { worktreePath: "/wt", sessionName: "s1" },
         mockDeps,
       );

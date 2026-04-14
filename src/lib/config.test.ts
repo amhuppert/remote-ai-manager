@@ -176,14 +176,14 @@ describe("schema: codex config block", () => {
     const result = globalConfigSchema.partial().safeParse({
       codex: {
         enabled: true,
-        model: "o3",
+        model: "gpt-5.4",
         reasoningEffort: "medium",
       },
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.codex?.enabled).toBe(true);
-      expect(result.data.codex?.model).toBe("o3");
+      expect(result.data.codex?.model).toBe("gpt-5.4");
       expect(result.data.codex?.reasoningEffort).toBe("medium");
     }
   });
@@ -208,7 +208,7 @@ describe("schema: codex config block", () => {
 
   it("enabled defaults to false when omitted inside the block", () => {
     const result = globalConfigSchema.partial().safeParse({
-      codex: { model: "o3" },
+      codex: { model: "gpt-5.4-nano" },
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -282,7 +282,7 @@ describe("schema: codex config block", () => {
       ...original,
       codex: {
         enabled: true,
-        model: "o3",
+        model: "gpt-5.4" as const,
         timeout: 300,
       },
     };
@@ -300,6 +300,7 @@ describe("schema: codex config block", () => {
       ...original,
       codex: {
         enabled: true,
+        model: "gpt-5.4" as const,
         timeout: null,
       },
     };
@@ -317,7 +318,7 @@ describe("schema: codex config block", () => {
       ...original,
       codex: {
         enabled: true,
-        model: "gpt-5-codex",
+        model: "gpt-5.4-mini" as const,
         reasoningEffort: "high" as const,
       },
     };
@@ -325,7 +326,7 @@ describe("schema: codex config block", () => {
 
     const reread = await reader.readConfig();
     expect(reread.codex?.enabled).toBe(true);
-    expect(reread.codex?.model).toBe("gpt-5-codex");
+    expect(reread.codex?.model).toBe("gpt-5.4-mini");
     expect(reread.codex?.reasoningEffort).toBe("high");
   });
 });

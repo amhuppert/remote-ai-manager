@@ -4909,6 +4909,52 @@ textarea {
   cursor: not-allowed;
 }
 
+/* Backend toggle (pill group) */
+.backend-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.backend-toggle-btn {
+  padding: 2px var(--space-sm);
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.backend-toggle-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.backend-toggle-btn.active {
+  background: var(--cyan-glow);
+  color: var(--cyan);
+}
+
+.backend-toggle-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.backend-toggle-badge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
 /* Model selector */
 .model-selector {
   position: relative;

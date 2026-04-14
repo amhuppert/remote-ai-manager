@@ -8,6 +8,7 @@ import type { MessageContentBlock as _MessageContentBlock } from "@/lib/schemas"
 export type {
   ClaudeModel,
   CodexConfig,
+  CodexModel,
   CodexReasoningEffort,
   EffortLevel,
   GlobalConfig,
