@@ -6,6 +6,14 @@ import { useFullConfigQuery } from "@/lib/queries";
 import { useUpdateConfigMutation } from "@/lib/mutations";
 import type { FullConfigResponse } from "@/lib/api-client";
 import type { GlobalConfig } from "@/types";
+import {
+  formatFieldLabel,
+  msToMinutes,
+  minutesToMs,
+  validateNumericInput,
+  getModelOptionsForBackend,
+  getEffortOptionsForBackend,
+} from "./config-helpers";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -192,6 +200,69 @@ function ConfigPillGroup<T extends string>({
   );
 }
 
+function ConfigNumericInput({
+  value,
+  onChange,
+  displayAsMinutes,
+  required,
+  positive,
+  integer,
+  placeholder,
+}: {
+  value: number | null | undefined;
+  onChange: (v: number | null | undefined) => void;
+  displayAsMinutes?: boolean;
+  required?: boolean;
+  positive?: boolean;
+  integer?: boolean;
+  placeholder?: string;
+}) {
+  const toDisplay = (v: number | null | undefined): string => {
+    if (v == null) return "";
+    return String(displayAsMinutes ? msToMinutes(v) : v);
+  };
+
+  const [localStr, setLocalStr] = useState(() => toDisplay(value));
+  const [error, setError] = useState<string | null>(null);
+  const [prevValue, setPrevValue] = useState(value);
+
+  // Sync from props when value changes externally (e.g. after save)
+  if (prevValue !== value) {
+    setPrevValue(value);
+    setLocalStr(toDisplay(value));
+    setError(null);
+  }
+
+  const handleInput = (text: string) => {
+    setLocalStr(text);
+    const result = validateNumericInput(text, { required, positive, integer });
+    if (!result.valid) {
+      setError(result.error ?? null);
+      return;
+    }
+    setError(null);
+    if (result.value === undefined) {
+      onChange(undefined);
+    } else {
+      onChange(displayAsMinutes ? minutesToMs(result.value) : result.value);
+    }
+  };
+
+  return (
+    <>
+      <input
+        className={`form-input${error ? " form-input-error" : ""}`}
+        type="text"
+        inputMode="decimal"
+        value={localStr}
+        onChange={(e) => handleInput(e.target.value)}
+        placeholder={placeholder}
+      />
+      {error && <div className="form-error">{error}</div>}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
@@ -310,6 +381,27 @@ export default function ConfigEditor(): React.JSX.Element {
     [ALL_FIELD_PATHS, isModified],
   );
 
+  // Dynamic model/effort paths and options based on selected backend
+  const isCodexBackend = formState?.defaultAgentBackend === "codex";
+  const coreModelPath = isCodexBackend ? "codex.model" : "defaultModel";
+  const coreEffortPath = isCodexBackend
+    ? "codex.reasoningEffort"
+    : "defaultEffort";
+  const coreModelValue = isCodexBackend
+    ? (formState?.codex?.model ?? "gpt-5.4")
+    : (formState?.defaultModel ?? "opus");
+  const coreEffortValue = isCodexBackend
+    ? (formState?.codex?.reasoningEffort ?? "medium")
+    : (formState?.defaultEffort ?? "medium");
+
+  const effortOptions = useMemo(
+    () =>
+      formState
+        ? getEffortOptionsForBackend(formState.defaultAgentBackend)
+        : [],
+    [formState],
+  );
+
   const handleSave = useCallback(() => {
     if (!formState || !loadedData) return;
 
@@ -398,7 +490,7 @@ export default function ConfigEditor(): React.JSX.Element {
             onToggle={toggleSection}
           >
             <ConfigField
-              label="baseDir"
+              label={formatFieldLabel("baseDir")}
               fieldPath="baseDir"
               isDefault={isDefault("baseDir")}
               isModified={isModified("baseDir")}
@@ -412,20 +504,7 @@ export default function ConfigEditor(): React.JSX.Element {
             </ConfigField>
 
             <ConfigField
-              label="defaultModel"
-              fieldPath="defaultModel"
-              isDefault={isDefault("defaultModel")}
-              isModified={isModified("defaultModel")}
-            >
-              <ConfigPillGroup
-                value={formState.defaultModel}
-                options={["opus", "sonnet", "haiku"] as const}
-                onChange={(v) => handleChange("defaultModel", v)}
-              />
-            </ConfigField>
-
-            <ConfigField
-              label="defaultAgentBackend"
+              label={formatFieldLabel("defaultAgentBackend")}
               fieldPath="defaultAgentBackend"
               isDefault={isDefault("defaultAgentBackend")}
               isModified={isModified("defaultAgentBackend")}
@@ -433,25 +512,48 @@ export default function ConfigEditor(): React.JSX.Element {
               <ConfigPillGroup
                 value={formState.defaultAgentBackend}
                 options={["claude", "codex"] as const}
-                onChange={(v) => handleChange("defaultAgentBackend", v)}
+                onChange={(v) => {
+                  handleChangeMulti([
+                    ["defaultAgentBackend", v],
+                    ["defaultModel", undefined],
+                    ["defaultEffort", undefined],
+                  ]);
+                }}
               />
             </ConfigField>
 
             <ConfigField
-              label="defaultEffort"
-              fieldPath="defaultEffort"
-              isDefault={isDefault("defaultEffort")}
-              isModified={isModified("defaultEffort")}
+              label={formatFieldLabel("defaultModel")}
+              fieldPath={coreModelPath}
+              isDefault={isDefault(coreModelPath)}
+              isModified={isModified(coreModelPath)}
             >
               <ConfigPillGroup
-                value={formState.defaultEffort ?? "medium"}
-                options={["minimal", "low", "medium", "high", "max"] as const}
-                onChange={(v) => handleChange("defaultEffort", v)}
+                value={coreModelValue}
+                options={getModelOptionsForBackend(
+                  formState.defaultAgentBackend,
+                )}
+                onChange={(v) => handleChange(coreModelPath, v)}
               />
             </ConfigField>
 
+            {effortOptions.length > 0 && (
+              <ConfigField
+                label={formatFieldLabel("defaultEffort")}
+                fieldPath={coreEffortPath}
+                isDefault={isDefault(coreEffortPath)}
+                isModified={isModified(coreEffortPath)}
+              >
+                <ConfigPillGroup
+                  value={coreEffortValue}
+                  options={effortOptions}
+                  onChange={(v) => handleChange(coreEffortPath, v)}
+                />
+              </ConfigField>
+            )}
+
             <ConfigField
-              label="branchPrefix"
+              label={formatFieldLabel("branchPrefix")}
               fieldPath="branchPrefix"
               isDefault={isDefault("branchPrefix")}
               isModified={isModified("branchPrefix")}
@@ -478,119 +580,95 @@ export default function ConfigEditor(): React.JSX.Element {
           >
             <div className="config-field-row">
               <ConfigField
-                label="claudeTimeoutMs"
+                label={formatFieldLabel("claudeTimeoutMs")}
                 fieldPath="claudeTimeoutMs"
                 isDefault={isDefault("claudeTimeoutMs")}
                 isModified={isModified("claudeTimeoutMs")}
-                hint="milliseconds"
+                hint="minutes"
               >
-                <input
-                  className="form-input"
-                  type="number"
+                <ConfigNumericInput
                   value={formState.claudeTimeoutMs}
-                  onChange={(e) =>
-                    handleChange("claudeTimeoutMs", Number(e.target.value))
+                  onChange={(v) =>
+                    handleChange("claudeTimeoutMs", v ?? 3_600_000)
                   }
+                  displayAsMinutes
+                  required
+                  positive
                 />
               </ConfigField>
 
               <ConfigField
-                label="maxTurns"
+                label={formatFieldLabel("maxTurns")}
                 fieldPath="maxTurns"
                 isDefault={isDefault("maxTurns")}
                 isModified={isModified("maxTurns")}
               >
-                <input
-                  className="form-input"
-                  type="number"
-                  value={formState.maxTurns ?? ""}
-                  onChange={(e) =>
-                    handleChange(
-                      "maxTurns",
-                      e.target.value ? Number(e.target.value) : undefined,
-                    )
-                  }
+                <ConfigNumericInput
+                  value={formState.maxTurns}
+                  onChange={(v) => handleChange("maxTurns", v)}
+                  positive
+                  integer
                 />
               </ConfigField>
 
               <ConfigField
-                label="maxConcurrentQueries"
+                label={formatFieldLabel("maxConcurrentQueries")}
                 fieldPath="maxConcurrentQueries"
                 isDefault={isDefault("maxConcurrentQueries")}
                 isModified={isModified("maxConcurrentQueries")}
               >
-                <input
-                  className="form-input"
-                  type="number"
-                  value={formState.maxConcurrentQueries ?? ""}
-                  onChange={(e) =>
-                    handleChange(
-                      "maxConcurrentQueries",
-                      e.target.value ? Number(e.target.value) : undefined,
-                    )
-                  }
+                <ConfigNumericInput
+                  value={formState.maxConcurrentQueries}
+                  onChange={(v) => handleChange("maxConcurrentQueries", v)}
+                  positive
+                  integer
                 />
               </ConfigField>
             </div>
 
             <div className="config-field-row">
               <ConfigField
-                label="mergeCheckIntervalMs"
+                label={formatFieldLabel("mergeCheckIntervalMs")}
                 fieldPath="mergeCheckIntervalMs"
                 isDefault={isDefault("mergeCheckIntervalMs")}
                 isModified={isModified("mergeCheckIntervalMs")}
-                hint="milliseconds"
+                hint="minutes"
               >
-                <input
-                  className="form-input"
-                  type="number"
-                  value={formState.mergeCheckIntervalMs ?? ""}
-                  onChange={(e) =>
-                    handleChange(
-                      "mergeCheckIntervalMs",
-                      e.target.value ? Number(e.target.value) : undefined,
-                    )
-                  }
+                <ConfigNumericInput
+                  value={formState.mergeCheckIntervalMs}
+                  onChange={(v) => handleChange("mergeCheckIntervalMs", v)}
+                  displayAsMinutes
+                  positive
                 />
               </ConfigField>
 
               <ConfigField
-                label="preMergeTimeoutMs"
+                label={formatFieldLabel("preMergeTimeoutMs")}
                 fieldPath="preMergeTimeoutMs"
                 isDefault={isDefault("preMergeTimeoutMs")}
                 isModified={isModified("preMergeTimeoutMs")}
-                hint="milliseconds"
+                hint="minutes"
               >
-                <input
-                  className="form-input"
-                  type="number"
-                  value={formState.preMergeTimeoutMs ?? ""}
-                  onChange={(e) =>
-                    handleChange(
-                      "preMergeTimeoutMs",
-                      e.target.value ? Number(e.target.value) : undefined,
-                    )
-                  }
+                <ConfigNumericInput
+                  value={formState.preMergeTimeoutMs}
+                  onChange={(v) => handleChange("preMergeTimeoutMs", v)}
+                  displayAsMinutes
+                  positive
                 />
               </ConfigField>
 
               <ConfigField
-                label="idleQuerySessionTtlMs"
+                label={formatFieldLabel("idleQuerySessionTtlMs")}
                 fieldPath="idleQuerySessionTtlMs"
                 isDefault={isDefault("idleQuerySessionTtlMs")}
                 isModified={isModified("idleQuerySessionTtlMs")}
-                hint="milliseconds"
+                hint="minutes"
               >
-                <input
-                  className="form-input"
-                  type="number"
-                  value={formState.idleQuerySessionTtlMs ?? ""}
-                  onChange={(e) =>
-                    handleChange(
-                      "idleQuerySessionTtlMs",
-                      e.target.value ? Number(e.target.value) : undefined,
-                    )
-                  }
+                <ConfigNumericInput
+                  value={formState.idleQuerySessionTtlMs}
+                  onChange={(v) => handleChange("idleQuerySessionTtlMs", v)}
+                  displayAsMinutes
+                  positive
                 />
               </ConfigField>
             </div>
@@ -604,7 +682,7 @@ export default function ConfigEditor(): React.JSX.Element {
             onToggle={toggleSection}
           >
             <ConfigField
-              label="stateFilePath"
+              label={formatFieldLabel("stateFilePath")}
               fieldPath="stateFilePath"
               isDefault={isDefault("stateFilePath")}
               isModified={false}
@@ -620,7 +698,7 @@ export default function ConfigEditor(): React.JSX.Element {
             </ConfigField>
 
             <ConfigField
-              label="ignorePatterns"
+              label={formatFieldLabel("ignorePatterns")}
               fieldPath="ignorePatterns"
               isDefault={isDefault("ignorePatterns")}
               isModified={false}
@@ -636,7 +714,7 @@ export default function ConfigEditor(): React.JSX.Element {
             </ConfigField>
 
             <ConfigField
-              label="tailscaleEnabled"
+              label={formatFieldLabel("tailscaleEnabled")}
               fieldPath="tailscaleEnabled"
               isDefault={isDefault("tailscaleEnabled")}
               isModified={isModified("tailscaleEnabled")}
@@ -656,7 +734,7 @@ export default function ConfigEditor(): React.JSX.Element {
             onToggle={toggleSection}
           >
             <ConfigField
-              label="enabled"
+              label={formatFieldLabel("enabled")}
               fieldPath="pushNotification.enabled"
               isDefault={isDefault("pushNotification.enabled")}
               isModified={isModified("pushNotification.enabled")}
@@ -668,7 +746,7 @@ export default function ConfigEditor(): React.JSX.Element {
             </ConfigField>
 
             <ConfigField
-              label="provider"
+              label={formatFieldLabel("provider")}
               fieldPath="pushNotification.provider"
               isDefault={isDefault("pushNotification.provider")}
               isModified={isModified("pushNotification.provider")}
@@ -681,7 +759,7 @@ export default function ConfigEditor(): React.JSX.Element {
             </ConfigField>
 
             <ConfigField
-              label="serverUrl"
+              label={formatFieldLabel("serverUrl")}
               fieldPath="pushNotification.serverUrl"
               isDefault={isDefault("pushNotification.serverUrl")}
               isModified={isModified("pushNotification.serverUrl")}
@@ -698,7 +776,7 @@ export default function ConfigEditor(): React.JSX.Element {
             </ConfigField>
 
             <ConfigField
-              label="topic"
+              label={formatFieldLabel("topic")}
               fieldPath="pushNotification.topic"
               isDefault={isDefault("pushNotification.topic")}
               isModified={isModified("pushNotification.topic")}
@@ -728,7 +806,7 @@ export default function ConfigEditor(): React.JSX.Element {
               ).map((trigger) => (
                 <ConfigField
                   key={trigger}
-                  label={trigger}
+                  label={formatFieldLabel(trigger)}
                   fieldPath={`pushNotification.triggers.${trigger}`}
                   isDefault={isDefault(`pushNotification.triggers.${trigger}`)}
                   isModified={isModified(
@@ -756,7 +834,7 @@ export default function ConfigEditor(): React.JSX.Element {
             onToggle={toggleSection}
           >
             <ConfigField
-              label="enabled"
+              label={formatFieldLabel("enabled")}
               fieldPath="codex.enabled"
               isDefault={isDefault("codex.enabled")}
               isModified={isModified("codex.enabled")}
@@ -768,7 +846,7 @@ export default function ConfigEditor(): React.JSX.Element {
             </ConfigField>
 
             <ConfigField
-              label="model"
+              label={formatFieldLabel("model")}
               fieldPath="codex.model"
               isDefault={isDefault("codex.model")}
               isModified={isModified("codex.model")}
@@ -781,7 +859,7 @@ export default function ConfigEditor(): React.JSX.Element {
             </ConfigField>
 
             <ConfigField
-              label="reasoningEffort"
+              label={formatFieldLabel("reasoningEffort")}
               fieldPath="codex.reasoningEffort"
               isDefault={isDefault("codex.reasoningEffort")}
               isModified={isModified("codex.reasoningEffort")}
@@ -794,22 +872,17 @@ export default function ConfigEditor(): React.JSX.Element {
             </ConfigField>
 
             <ConfigField
-              label="timeout"
+              label={formatFieldLabel("timeout")}
               fieldPath="codex.timeout"
               isDefault={isDefault("codex.timeout")}
               isModified={isModified("codex.timeout")}
-              hint="milliseconds (leave empty for no timeout)"
+              hint="minutes (leave empty for no timeout)"
             >
-              <input
-                className="form-input"
-                type="number"
-                value={formState.codex?.timeout ?? ""}
-                onChange={(e) =>
-                  handleChange(
-                    "codex.timeout",
-                    e.target.value ? Number(e.target.value) : null,
-                  )
-                }
+              <ConfigNumericInput
+                value={formState.codex?.timeout}
+                onChange={(v) => handleChange("codex.timeout", v ?? null)}
+                displayAsMinutes
+                positive
               />
             </ConfigField>
           </ConfigSection>
@@ -822,7 +895,7 @@ export default function ConfigEditor(): React.JSX.Element {
             onToggle={toggleSection}
           >
             <WorkflowValidatorFields
-              groupLabel="Execution Validator"
+              groupLabel="Implementation Agent"
               basePath="workflowDefaults.executionValidator"
               validator={formState.workflowDefaults?.executionValidator}
               isDefault={isDefault}
@@ -890,7 +963,7 @@ function WorkflowValidatorFields({
       </div>
 
       <ConfigField
-        label="type"
+        label={formatFieldLabel("type")}
         fieldPath={`${basePath}.type`}
         isDefault={isDefault(`${basePath}.type`)}
         isModified={isModified(`${basePath}.type`)}
@@ -910,7 +983,7 @@ function WorkflowValidatorFields({
       </ConfigField>
 
       <ConfigField
-        label="model"
+        label={formatFieldLabel("model")}
         fieldPath={`${basePath}.model`}
         isDefault={isDefault(`${basePath}.model`)}
         isModified={isModified(`${basePath}.model`)}
@@ -938,7 +1011,7 @@ function WorkflowValidatorFields({
       </ConfigField>
 
       <ConfigField
-        label="reasoningEffort"
+        label={formatFieldLabel("reasoningEffort")}
         fieldPath={`${basePath}.reasoningEffort`}
         isDefault={isDefault(`${basePath}.reasoningEffort`)}
         isModified={isModified(`${basePath}.reasoningEffort`)}
