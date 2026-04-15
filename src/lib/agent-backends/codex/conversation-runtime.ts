@@ -660,13 +660,6 @@ export const codexConversationBackendFactory: ConversationBackendFactory = {
   async createRuntime(
     input: ConversationBackendCreateInput,
   ): Promise<ConversationBackendRuntime> {
-    if (input.tooling.claudeSdkServers) {
-      const droppedServerIds = Object.keys(input.tooling.claudeSdkServers);
-      logger.warn("codex-factory.dropped_claude_sdk_servers", {
-        droppedServerIds,
-      });
-    }
-
     logger.info("codex-factory.create_runtime", {
       conversationId: input.conversationId,
       modelId: input.modelId,

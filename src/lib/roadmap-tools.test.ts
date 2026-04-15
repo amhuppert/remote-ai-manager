@@ -1,79 +1,44 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RoadmapItem } from "@/types";
-import type { RoadmapToolDeps } from "./roadmap-tools";
+import { registerRoadmapTools, type RoadmapToolDeps } from "./roadmap-tools";
 
-/**
- * Tests for the roadmap item MCP tool server.
- *
- * Mocks createSdkMcpServer and tool to capture handlers,
- * then tests each tool directly.
- */
+type ToolHandler = (args: unknown) => Promise<unknown>;
 
 const TOOLS_KEY = "__test_roadmap_tool_captured";
 
 function getCapturedTools(): Map<
   string,
-  { name: string; handler: (args: unknown) => Promise<unknown> }
+  { name: string; handler: ToolHandler }
 > {
-  const g = globalThis as unknown as Record<string, unknown>;
+  const g = globalThis as Record<string, unknown>;
   if (!g[TOOLS_KEY]) {
     g[TOOLS_KEY] = new Map();
   }
-  return g[TOOLS_KEY] as Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  >;
+  return g[TOOLS_KEY] as Map<string, { name: string; handler: ToolHandler }>;
 }
 
-vi.mock("@anthropic-ai/claude-agent-sdk", () => {
-  const TOOLS_KEY_INNER = "__test_roadmap_tool_captured";
-  function getTools(): Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  > {
-    const g = globalThis as unknown as Record<string, unknown>;
-    if (!g[TOOLS_KEY_INNER]) {
-      g[TOOLS_KEY_INNER] = new Map();
-    }
-    return g[TOOLS_KEY_INNER] as Map<
-      string,
-      { name: string; handler: (args: unknown) => Promise<unknown> }
-    >;
-  }
-
+function createCapturingServer() {
   return {
-    createSdkMcpServer: vi.fn(
-      (config: {
-        tools: Array<{
-          name: string;
-          handler: (args: unknown) => Promise<unknown>;
-        }>;
-      }) => {
-        const tools = getTools();
-        for (const t of config.tools) {
-          tools.set(t.name, t);
-        }
-        return { __mock: true, tools: config.tools };
-      },
-    ),
-    tool: vi.fn(
-      (
-        name: string,
-        _description: string,
-        _schema: unknown,
-        handler: (args: unknown) => Promise<unknown>,
-      ) => ({
-        name,
-        handler,
-      }),
-    ),
+    registerTool(name: string, _config: unknown, handler: ToolHandler): void {
+      getCapturedTools().set(name, { name, handler });
+    },
   };
-});
+}
 
-function getHandler(name: string): (args: unknown) => Promise<unknown> {
-  const t = getCapturedTools().get(name);
-  if (!t) throw new Error(`Tool ${name} not found in captured tools`);
-  return t.handler;
+function registerTools(deps: RoadmapToolDeps): void {
+  registerRoadmapTools(
+    createCapturingServer() as never,
+    { projectPath: "/projects/test" },
+    deps,
+  );
+}
+
+function getHandler(name: string): ToolHandler {
+  const tool = getCapturedTools().get(name);
+  if (!tool) {
+    throw new Error(`Tool ${name} not found in captured tools`);
+  }
+  return tool.handler;
 }
 
 function makeItem(overrides?: Partial<RoadmapItem>): RoadmapItem {
@@ -114,16 +79,10 @@ describe("roadmap-tools", () => {
     getCapturedTools().clear();
   });
 
-  it("creates an MCP server with three tools", async () => {
-    const { createRoadmapToolServer } = await import("./roadmap-tools");
+  it("registers the roadmap tools", () => {
     const deps = createMockDeps();
+    registerTools(deps);
 
-    const server = createRoadmapToolServer(
-      { projectPath: "/projects/test" },
-      deps,
-    );
-
-    expect(server).toBeDefined();
     expect(getCapturedTools().has("add_roadmap_item")).toBe(true);
     expect(getCapturedTools().has("remove_roadmap_item")).toBe(true);
     expect(getCapturedTools().has("list_roadmap_items")).toBe(true);
@@ -131,17 +90,14 @@ describe("roadmap-tools", () => {
 
   describe("add_roadmap_item", () => {
     it("creates an item and returns a success summary", async () => {
-      const { createRoadmapToolServer } = await import("./roadmap-tools");
       const deps = createMockDeps();
-
       const createdItem = makeItem({
         id: "new-uuid",
         title: "Add dark mode",
         type: "feature",
       });
       deps.mockCreate.mockResolvedValue(createdItem);
-
-      createRoadmapToolServer({ projectPath: "/projects/test" }, deps);
+      registerTools(deps);
 
       const handler = getHandler("add_roadmap_item");
       const result = (await handler({
@@ -160,14 +116,11 @@ describe("roadmap-tools", () => {
     });
 
     it("passes description when provided", async () => {
-      const { createRoadmapToolServer } = await import("./roadmap-tools");
       const deps = createMockDeps();
-
       deps.mockCreate.mockResolvedValue(
         makeItem({ title: "Bug fix", description: "Detailed desc" }),
       );
-
-      createRoadmapToolServer({ projectPath: "/projects/test" }, deps);
+      registerTools(deps);
 
       const handler = getHandler("add_roadmap_item");
       await handler({
@@ -184,12 +137,9 @@ describe("roadmap-tools", () => {
     });
 
     it("returns isError when state mutation fails", async () => {
-      const { createRoadmapToolServer } = await import("./roadmap-tools");
       const deps = createMockDeps();
-
       deps.mockCreate.mockRejectedValue(new Error("State write failed"));
-
-      createRoadmapToolServer({ projectPath: "/projects/test" }, deps);
+      registerTools(deps);
 
       const handler = getHandler("add_roadmap_item");
       const result = (await handler({
@@ -207,12 +157,9 @@ describe("roadmap-tools", () => {
 
   describe("remove_roadmap_item", () => {
     it("deletes an item and returns confirmation", async () => {
-      const { createRoadmapToolServer } = await import("./roadmap-tools");
       const deps = createMockDeps();
-
       deps.mockDelete.mockResolvedValue(undefined);
-
-      createRoadmapToolServer({ projectPath: "/projects/test" }, deps);
+      registerTools(deps);
 
       const handler = getHandler("remove_roadmap_item");
       const result = (await handler({ item_id: "item-1" })) as {
@@ -224,14 +171,11 @@ describe("roadmap-tools", () => {
     });
 
     it("returns isError when item ID is not found", async () => {
-      const { createRoadmapToolServer } = await import("./roadmap-tools");
       const deps = createMockDeps();
-
       deps.mockDelete.mockRejectedValue(
         new Error('Roadmap item "nonexistent" not found'),
       );
-
-      createRoadmapToolServer({ projectPath: "/projects/test" }, deps);
+      registerTools(deps);
 
       const handler = getHandler("remove_roadmap_item");
       const result = (await handler({ item_id: "nonexistent" })) as {
@@ -246,9 +190,7 @@ describe("roadmap-tools", () => {
 
   describe("list_roadmap_items", () => {
     it("returns formatted list of non-archived items grouped by type", async () => {
-      const { createRoadmapToolServer } = await import("./roadmap-tools");
       const deps = createMockDeps();
-
       deps.mockGet.mockResolvedValue([
         makeItem({ id: "1", title: "Login bug", type: "bug" }),
         makeItem({
@@ -259,8 +201,7 @@ describe("roadmap-tools", () => {
         }),
         makeItem({ id: "3", title: "Refactor idea", type: "idea" }),
       ]);
-
-      createRoadmapToolServer({ projectPath: "/projects/test" }, deps);
+      registerTools(deps);
 
       const handler = getHandler("list_roadmap_items");
       const result = (await handler({})) as {
@@ -277,9 +218,7 @@ describe("roadmap-tools", () => {
     });
 
     it("filters out archived items", async () => {
-      const { createRoadmapToolServer } = await import("./roadmap-tools");
       const deps = createMockDeps();
-
       deps.mockGet.mockResolvedValue([
         makeItem({ id: "1", title: "Active bug", type: "bug" }),
         makeItem({
@@ -289,8 +228,7 @@ describe("roadmap-tools", () => {
           archived: true,
         }),
       ]);
-
-      createRoadmapToolServer({ projectPath: "/projects/test" }, deps);
+      registerTools(deps);
 
       const handler = getHandler("list_roadmap_items");
       const result = (await handler({})) as {
@@ -303,12 +241,9 @@ describe("roadmap-tools", () => {
     });
 
     it("returns empty message when no items exist", async () => {
-      const { createRoadmapToolServer } = await import("./roadmap-tools");
       const deps = createMockDeps();
-
       deps.mockGet.mockResolvedValue([]);
-
-      createRoadmapToolServer({ projectPath: "/projects/test" }, deps);
+      registerTools(deps);
 
       const handler = getHandler("list_roadmap_items");
       const result = (await handler({})) as {
@@ -319,14 +254,11 @@ describe("roadmap-tools", () => {
     });
 
     it("returns empty message when all items are archived", async () => {
-      const { createRoadmapToolServer } = await import("./roadmap-tools");
       const deps = createMockDeps();
-
       deps.mockGet.mockResolvedValue([
         makeItem({ id: "1", title: "Old bug", archived: true }),
       ]);
-
-      createRoadmapToolServer({ projectPath: "/projects/test" }, deps);
+      registerTools(deps);
 
       const handler = getHandler("list_roadmap_items");
       const result = (await handler({})) as {

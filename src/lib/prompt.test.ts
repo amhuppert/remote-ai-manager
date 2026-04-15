@@ -401,8 +401,6 @@ describe("executePromptStream (facade)", () => {
     const executor = createPromptExecutor(deps);
     executePromptStream = executor.executePromptStream;
 
-    const mockToolServer = { name: "graph-workflow" };
-
     await executePromptStream(
       "/projects/repo",
       makeSession(),
@@ -411,14 +409,36 @@ describe("executePromptStream (facade)", () => {
       "conv-123",
       undefined,
       undefined,
-      { tooling: { claudeSdkServers: { "graph-workflow": mockToolServer } } },
+      {
+        tooling: {
+          portableMcp: {
+            servers: [
+              {
+                id: "cc-graph-workflow",
+                transport: "streamable-http",
+                url: "http://127.0.0.1:3000/api/projects/repo/sessions/test-session/mcp/graph-workflow/execution-1/contexts/context-1",
+              },
+            ],
+          },
+        },
+      },
     );
 
     expect(setTooling).toHaveBeenCalledWith(
       "/projects/repo",
       "test-session",
       "conv-123",
-      { claudeSdkServers: { "graph-workflow": mockToolServer } },
+      {
+        portableMcp: {
+          servers: [
+            {
+              id: "cc-graph-workflow",
+              transport: "streamable-http",
+              url: "http://127.0.0.1:3000/api/projects/repo/sessions/test-session/mcp/graph-workflow/execution-1/contexts/context-1",
+            },
+          ],
+        },
+      },
     );
   });
 

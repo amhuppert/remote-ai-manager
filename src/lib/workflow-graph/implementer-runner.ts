@@ -3,6 +3,7 @@ import {
   executePromptStream as defaultExecutePromptStream,
   type PromptStreamResult,
 } from "@/lib/prompt";
+import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
 import type { MessageContentBlock, SessionState } from "@/types";
 
@@ -21,7 +22,7 @@ interface ExecutePromptStreamFn {
       autonomous?: boolean;
       effort?: string;
       backend?: "claude";
-      tooling?: { claudeSdkServers?: Record<string, unknown> };
+      tooling?: { portableMcp?: PortableMcpConfig };
     },
   ): Promise<PromptStreamResult>;
 }
@@ -88,9 +89,7 @@ export function createGraphWorkflowImplementerRunner(
         backend: "claude",
         effort: input.reasoningEffort,
         tooling: {
-          claudeSdkServers: {
-            "graph-workflow": input.toolServer,
-          },
+          portableMcp: input.toolServer as PortableMcpConfig,
         },
       },
     );

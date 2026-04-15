@@ -105,10 +105,6 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     // Build MCP servers from tooling
     const mcpServers: Record<string, unknown> = {};
 
-    if (input.tooling?.claudeSdkServers) {
-      Object.assign(mcpServers, input.tooling.claudeSdkServers);
-    }
-
     if (input.tooling?.portableMcp) {
       const {
         servers: portableServers,

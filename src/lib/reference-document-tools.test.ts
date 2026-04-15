@@ -1,70 +1,53 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReferenceDocument } from "@/types";
-import type { ReferenceDocumentToolDeps } from "./reference-document-tools";
+import {
+  registerReferenceDocumentTools,
+  type ReferenceDocumentToolDeps,
+} from "./reference-document-tools";
+
+type ToolHandler = (args: unknown) => Promise<unknown>;
 
 const TOOLS_KEY = "__test_refdoc_tool_captured";
 
 function getCapturedTools(): Map<
   string,
-  { name: string; handler: (args: unknown) => Promise<unknown> }
+  { name: string; handler: ToolHandler }
 > {
-  const g = globalThis as unknown as Record<string, unknown>;
+  const g = globalThis as Record<string, unknown>;
   if (!g[TOOLS_KEY]) {
     g[TOOLS_KEY] = new Map();
   }
-  return g[TOOLS_KEY] as Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  >;
+  return g[TOOLS_KEY] as Map<string, { name: string; handler: ToolHandler }>;
 }
 
-vi.mock("@anthropic-ai/claude-agent-sdk", () => {
-  const KEY = "__test_refdoc_tool_captured";
-  function getTools(): Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  > {
-    const g = globalThis as unknown as Record<string, unknown>;
-    if (!g[KEY]) g[KEY] = new Map();
-    return g[KEY] as Map<
-      string,
-      { name: string; handler: (args: unknown) => Promise<unknown> }
-    >;
-  }
-
+function createCapturingServer() {
   return {
-    createSdkMcpServer: vi.fn(
-      (config: {
-        tools: Array<{
-          name: string;
-          handler: (args: unknown) => Promise<unknown>;
-        }>;
-      }) => {
-        const tools = getTools();
-        for (const t of config.tools) {
-          tools.set(t.name, t);
-        }
-        return { __mock: true, tools: config.tools };
-      },
-    ),
-    tool: vi.fn(
-      (
-        name: string,
-        _description: string,
-        _schema: unknown,
-        handler: (args: unknown) => Promise<unknown>,
-      ) => ({
-        name,
-        handler,
-      }),
-    ),
+    registerTool(name: string, _config: unknown, handler: ToolHandler): void {
+      getCapturedTools().set(name, { name, handler });
+    },
   };
-});
+}
 
-function getHandler(name: string): (args: unknown) => Promise<unknown> {
-  const t = getCapturedTools().get(name);
-  if (!t) throw new Error(`Tool ${name} not found in captured tools`);
-  return t.handler;
+const CONTEXT = {
+  projectPath: "/projects/test",
+  sessionName: "test-session",
+  worktreePath: "/tmp/wt",
+};
+
+function registerTools(deps: ReferenceDocumentToolDeps): void {
+  registerReferenceDocumentTools(
+    createCapturingServer() as never,
+    CONTEXT,
+    deps,
+  );
+}
+
+function getHandler(name: string): ToolHandler {
+  const tool = getCapturedTools().get(name);
+  if (!tool) {
+    throw new Error(`Tool ${name} not found in captured tools`);
+  }
+  return tool.handler;
 }
 
 function makeDoc(overrides?: Partial<ReferenceDocument>): ReferenceDocument {
@@ -99,26 +82,16 @@ function createMockDeps(): ReferenceDocumentToolDeps & {
   };
 }
 
-const CONTEXT = {
-  projectPath: "/projects/test",
-  sessionName: "test-session",
-  worktreePath: "/tmp/wt",
-};
-
 describe("reference-document-tools", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getCapturedTools().clear();
   });
 
-  it("creates an MCP server with three tools", async () => {
-    const { createReferenceDocumentToolServer } =
-      await import("./reference-document-tools");
+  it("registers the three reference document tools", () => {
     const deps = createMockDeps();
+    registerTools(deps);
 
-    const server = createReferenceDocumentToolServer(CONTEXT, deps);
-
-    expect(server).toBeDefined();
     expect(getCapturedTools().has("register_document")).toBe(true);
     expect(getCapturedTools().has("list_documents")).toBe(true);
     expect(getCapturedTools().has("delete_document")).toBe(true);
@@ -126,14 +99,10 @@ describe("reference-document-tools", () => {
 
   describe("register_document", () => {
     it("registers a document and returns confirmation", async () => {
-      const { createReferenceDocumentToolServer } =
-        await import("./reference-document-tools");
       const deps = createMockDeps();
-
       const doc = makeDoc({ filePath: ".cc/references/plan.md" });
       deps.mockCreate.mockResolvedValue(doc);
-
-      createReferenceDocumentToolServer(CONTEXT, deps);
+      registerTools(deps);
 
       const handler = getHandler("register_document");
       const result = (await handler({
@@ -151,13 +120,9 @@ describe("reference-document-tools", () => {
     });
 
     it("returns isError on failure", async () => {
-      const { createReferenceDocumentToolServer } =
-        await import("./reference-document-tools");
       const deps = createMockDeps();
-
       deps.mockCreate.mockRejectedValue(new Error("State write failed"));
-
-      createReferenceDocumentToolServer(CONTEXT, deps);
+      registerTools(deps);
 
       const handler = getHandler("register_document");
       const result = (await handler({
@@ -175,16 +140,12 @@ describe("reference-document-tools", () => {
 
   describe("list_documents", () => {
     it("returns formatted list of documents", async () => {
-      const { createReferenceDocumentToolServer } =
-        await import("./reference-document-tools");
       const deps = createMockDeps();
-
       deps.mockGet.mockResolvedValue([
         makeDoc({ id: "d1", filePath: "a.md", description: "Doc A" }),
         makeDoc({ id: "d2", filePath: "b.md", description: "Doc B" }),
       ]);
-
-      createReferenceDocumentToolServer(CONTEXT, deps);
+      registerTools(deps);
 
       const handler = getHandler("list_documents");
       const result = (await handler({})) as {
@@ -199,13 +160,9 @@ describe("reference-document-tools", () => {
     });
 
     it("returns empty message when no documents", async () => {
-      const { createReferenceDocumentToolServer } =
-        await import("./reference-document-tools");
       const deps = createMockDeps();
-
       deps.mockGet.mockResolvedValue([]);
-
-      createReferenceDocumentToolServer(CONTEXT, deps);
+      registerTools(deps);
 
       const handler = getHandler("list_documents");
       const result = (await handler({})) as {
@@ -218,16 +175,12 @@ describe("reference-document-tools", () => {
 
   describe("delete_document", () => {
     it("deletes document and file, returns confirmation", async () => {
-      const { createReferenceDocumentToolServer } =
-        await import("./reference-document-tools");
       const deps = createMockDeps();
-
       deps.mockDelete.mockResolvedValue(
         makeDoc({ id: "doc-1", filePath: ".cc/references/old.md" }),
       );
       deps.mockDeleteFile.mockResolvedValue(undefined);
-
-      createReferenceDocumentToolServer(CONTEXT, deps);
+      registerTools(deps);
 
       const handler = getHandler("delete_document");
       const result = (await handler({ document_id: "doc-1" })) as {
@@ -246,13 +199,9 @@ describe("reference-document-tools", () => {
     });
 
     it("returns error when document not found", async () => {
-      const { createReferenceDocumentToolServer } =
-        await import("./reference-document-tools");
       const deps = createMockDeps();
-
       deps.mockDelete.mockResolvedValue(null);
-
-      createReferenceDocumentToolServer(CONTEXT, deps);
+      registerTools(deps);
 
       const handler = getHandler("delete_document");
       const result = (await handler({ document_id: "nonexistent" })) as {
@@ -266,16 +215,12 @@ describe("reference-document-tools", () => {
     });
 
     it("passes absolute filePath directly to deleteFile", async () => {
-      const { createReferenceDocumentToolServer } =
-        await import("./reference-document-tools");
       const deps = createMockDeps();
-
       deps.mockDelete.mockResolvedValue(
         makeDoc({ id: "doc-1", filePath: "/absolute/path/doc.md" }),
       );
       deps.mockDeleteFile.mockResolvedValue(undefined);
-
-      createReferenceDocumentToolServer(CONTEXT, deps);
+      registerTools(deps);
 
       const handler = getHandler("delete_document");
       await handler({ document_id: "doc-1" });
@@ -284,16 +229,12 @@ describe("reference-document-tools", () => {
     });
 
     it("tolerates file already deleted from disk", async () => {
-      const { createReferenceDocumentToolServer } =
-        await import("./reference-document-tools");
       const deps = createMockDeps();
-
       deps.mockDelete.mockResolvedValue(
         makeDoc({ id: "doc-1", filePath: ".cc/references/gone.md" }),
       );
       deps.mockDeleteFile.mockResolvedValue(undefined);
-
-      createReferenceDocumentToolServer(CONTEXT, deps);
+      registerTools(deps);
 
       const handler = getHandler("delete_document");
       const result = (await handler({ document_id: "doc-1" })) as {

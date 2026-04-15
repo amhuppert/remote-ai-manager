@@ -1371,23 +1371,6 @@ describe("codexConversationBackendFactory", () => {
   });
 
   describe("createRuntime", () => {
-    it("ignores claudeSdkServers without error", async () => {
-      const runtime = await codexConversationBackendFactory.createRuntime({
-        conversationId: "conv-1",
-        projectPath: "/p",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/w",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {
-          claudeSdkServers: { "some-server": { config: true } },
-        },
-      });
-
-      expect(runtime.backend).toBe("codex");
-    });
-
     it("creates a runtime with the right model and effort", async () => {
       const runtime = await codexConversationBackendFactory.createRuntime({
         conversationId: "conv-1",

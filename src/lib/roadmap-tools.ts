@@ -1,5 +1,4 @@
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   createRoadmapItem as createRoadmapItemDefault,
@@ -36,176 +35,195 @@ export const defaultRoadmapToolDeps: RoadmapToolDeps = {
   getRoadmapItems: getRoadmapItemsDefault,
 };
 
-/**
- * Creates an in-process MCP server with roadmap item management tools.
- * Registered unconditionally in the prompt pipeline for every conversation.
- */
-export function createRoadmapToolServer(
+const addRoadmapItemInputSchema = {
+  title: z.string().min(1).describe("Title of the roadmap item"),
+  type: roadmapItemTypeSchema.describe("Type of item: bug, feature, or idea"),
+  description: z
+    .string()
+    .optional()
+    .describe("Optional description with more detail"),
+};
+
+const removeRoadmapItemInputSchema = {
+  item_id: z.string().min(1).describe("ID of the roadmap item to remove"),
+};
+
+function createAddRoadmapItemHandler(
+  context: RoadmapToolContext,
+  deps: RoadmapToolDeps,
+) {
+  return async (args: {
+    title: string;
+    type: RoadmapItemType;
+    description?: string;
+  }) => {
+    try {
+      const item = await deps.createRoadmapItem(context.projectPath, {
+        title: args.title,
+        type: args.type,
+        description: args.description,
+      });
+
+      logger.info("tool.add_roadmap_item", {
+        itemId: item.id,
+        type: item.type,
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Roadmap item added successfully:\n- ID: ${item.id}\n- Title: ${item.title}\n- Type: ${item.type}`,
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("tool.add_roadmap_item.error", {
+        error: getErrorMessage(error),
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to add roadmap item: ${getErrorMessage(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  };
+}
+
+function createRemoveRoadmapItemHandler(
+  context: RoadmapToolContext,
+  deps: RoadmapToolDeps,
+) {
+  return async (args: { item_id: string }) => {
+    try {
+      await deps.deleteRoadmapItem(context.projectPath, args.item_id);
+
+      logger.info("tool.remove_roadmap_item", {
+        itemId: args.item_id,
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Roadmap item ${args.item_id} removed successfully.`,
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("tool.remove_roadmap_item.error", {
+        itemId: args.item_id,
+        error: getErrorMessage(error),
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to remove roadmap item: ${getErrorMessage(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  };
+}
+
+function createListRoadmapItemsHandler(
+  context: RoadmapToolContext,
+  deps: RoadmapToolDeps,
+) {
+  return async () => {
+    try {
+      const allItems = await deps.getRoadmapItems(context.projectPath);
+      const items = allItems.filter((item) => !item.archived);
+
+      if (items.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "No roadmap items found for this project.",
+            },
+          ],
+        };
+      }
+
+      const grouped = groupByType(items);
+      const lines: string[] = [
+        `Roadmap items for this project (${items.length} total):`,
+      ];
+
+      for (const [type, typeItems] of grouped) {
+        lines.push(`\n## ${type.charAt(0).toUpperCase() + type.slice(1)}s`);
+        for (const item of typeItems) {
+          const status = item.status === "done" ? "[done]" : "[incomplete]";
+          lines.push(`- ${item.title} (ID: ${item.id}) ${status}`);
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: lines.join("\n"),
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("tool.list_roadmap_items.error", {
+        error: getErrorMessage(error),
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to list roadmap items: ${getErrorMessage(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  };
+}
+
+export function registerRoadmapTools(
+  server: McpServer,
   context: RoadmapToolContext,
   deps: RoadmapToolDeps = defaultRoadmapToolDeps,
-): McpSdkServerConfigWithInstance {
-  const { projectPath } = context;
-
-  return createSdkMcpServer({
-    name: "roadmap-tools",
-    version: "1.0.0",
-    tools: [
-      tool(
-        "add_roadmap_item",
+): void {
+  server.registerTool(
+    "add_roadmap_item",
+    {
+      description:
         "Add a new roadmap item (bug, feature, or idea) to the project's roadmap. Use this to track work items discovered during the coding session.",
-        {
-          title: z.string().min(1).describe("Title of the roadmap item"),
-          type: roadmapItemTypeSchema.describe(
-            "Type of item: bug, feature, or idea",
-          ),
-          description: z
-            .string()
-            .optional()
-            .describe("Optional description with more detail"),
-        },
-        async (args) => {
-          try {
-            const item = await deps.createRoadmapItem(projectPath, {
-              title: args.title,
-              type: args.type,
-              description: args.description,
-            });
+      inputSchema: addRoadmapItemInputSchema,
+    },
+    createAddRoadmapItemHandler(context, deps),
+  );
 
-            logger.info("tool.add_roadmap_item", {
-              itemId: item.id,
-              type: item.type,
-            });
-
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Roadmap item added successfully:\n- ID: ${item.id}\n- Title: ${item.title}\n- Type: ${item.type}`,
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error("tool.add_roadmap_item.error", {
-              error: getErrorMessage(error),
-            });
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Failed to add roadmap item: ${getErrorMessage(error)}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-        },
-      ),
-
-      tool(
-        "remove_roadmap_item",
+  server.registerTool(
+    "remove_roadmap_item",
+    {
+      description:
         "Remove a roadmap item by its ID from the project's roadmap.",
-        {
-          item_id: z
-            .string()
-            .min(1)
-            .describe("ID of the roadmap item to remove"),
-        },
-        async (args) => {
-          try {
-            await deps.deleteRoadmapItem(projectPath, args.item_id);
+      inputSchema: removeRoadmapItemInputSchema,
+    },
+    createRemoveRoadmapItemHandler(context, deps),
+  );
 
-            logger.info("tool.remove_roadmap_item", {
-              itemId: args.item_id,
-            });
-
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Roadmap item ${args.item_id} removed successfully.`,
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error("tool.remove_roadmap_item.error", {
-              itemId: args.item_id,
-              error: getErrorMessage(error),
-            });
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Failed to remove roadmap item: ${getErrorMessage(error)}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-        },
-      ),
-
-      tool(
-        "list_roadmap_items",
+  server.registerTool(
+    "list_roadmap_items",
+    {
+      description:
         "List all active (non-archived) roadmap items for the project. Use this to see existing items before adding new ones.",
-        {},
-        async () => {
-          try {
-            const allItems = await deps.getRoadmapItems(projectPath);
-            const items = allItems.filter((item) => !item.archived);
-
-            if (items.length === 0) {
-              return {
-                content: [
-                  {
-                    type: "text" as const,
-                    text: "No roadmap items found for this project.",
-                  },
-                ],
-              };
-            }
-
-            const grouped = groupByType(items);
-            const lines: string[] = [
-              `Roadmap items for this project (${items.length} total):`,
-            ];
-
-            for (const [type, typeItems] of grouped) {
-              lines.push(
-                `\n## ${type.charAt(0).toUpperCase() + type.slice(1)}s`,
-              );
-              for (const item of typeItems) {
-                const status =
-                  item.status === "done" ? "[done]" : "[incomplete]";
-                lines.push(`- ${item.title} (ID: ${item.id}) ${status}`);
-              }
-            }
-
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: lines.join("\n"),
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error("tool.list_roadmap_items.error", {
-              error: getErrorMessage(error),
-            });
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Failed to list roadmap items: ${getErrorMessage(error)}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-        },
-      ),
-    ],
-  });
+      inputSchema: {},
+    },
+    createListRoadmapItemsHandler(context, deps),
+  );
 }
 
 function groupByType(items: RoadmapItem[]): Map<string, RoadmapItem[]> {

@@ -1,71 +1,34 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registerGraphWorkflowExecutionTools } from "./tool-server";
+
+type ToolHandler = (args: unknown) => Promise<unknown>;
 
 const TOOLS_KEY = "__test_graph_workflow_tools";
 
 function getCapturedTools(): Map<
   string,
-  { name: string; handler: (args: unknown) => Promise<unknown> }
+  { name: string; handler: ToolHandler }
 > {
-  const globalState = globalThis as unknown as Record<string, unknown>;
+  const globalState = globalThis as Record<string, unknown>;
   if (!globalState[TOOLS_KEY]) {
     globalState[TOOLS_KEY] = new Map();
   }
 
   return globalState[TOOLS_KEY] as Map<
     string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
+    { name: string; handler: ToolHandler }
   >;
 }
 
-vi.mock("@anthropic-ai/claude-agent-sdk", () => {
-  const toolsKey = "__test_graph_workflow_tools";
-
-  function getTools(): Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  > {
-    const globalState = globalThis as unknown as Record<string, unknown>;
-    if (!globalState[toolsKey]) {
-      globalState[toolsKey] = new Map();
-    }
-
-    return globalState[toolsKey] as Map<
-      string,
-      { name: string; handler: (args: unknown) => Promise<unknown> }
-    >;
-  }
-
+function createCapturingServer() {
   return {
-    createSdkMcpServer: vi.fn(
-      (config: {
-        tools: Array<{
-          name: string;
-          handler: (args: unknown) => Promise<unknown>;
-        }>;
-      }) => {
-        const tools = getTools();
-        for (const tool of config.tools) {
-          tools.set(tool.name, tool);
-        }
-
-        return { __mock: true, tools: config.tools };
-      },
-    ),
-    tool: vi.fn(
-      (
-        name: string,
-        _description: string,
-        _schema: unknown,
-        handler: (args: unknown) => Promise<unknown>,
-      ) => ({
-        name,
-        handler,
-      }),
-    ),
+    registerTool(name: string, _config: unknown, handler: ToolHandler): void {
+      getCapturedTools().set(name, { name, handler });
+    },
   };
-});
+}
 
-function getHandler(name: string): (args: unknown) => Promise<unknown> {
+function getHandler(name: string): ToolHandler {
   const tool = getCapturedTools().get(name);
   if (!tool) {
     throw new Error(`Tool ${name} not found`);
@@ -81,13 +44,11 @@ describe("graph workflow tool server", () => {
   });
 
   it("registers explicit task and shared-document tools", async () => {
-    const { createGraphWorkflowToolServer } = await import("./tool-server");
-
     const completeTask = vi.fn(async () => undefined);
     const addTask = vi.fn(async () => undefined);
     const upsertSharedDocument = vi.fn(async () => undefined);
 
-    createGraphWorkflowToolServer({
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
       executionContextTitle: "Plan",
       allowAgentTaskAdd: true,
       completeTask,
@@ -135,10 +96,8 @@ describe("graph workflow tool server", () => {
     });
   });
 
-  it("omits add_task when agent task creation is not allowed", async () => {
-    const { createGraphWorkflowToolServer } = await import("./tool-server");
-
-    createGraphWorkflowToolServer({
+  it("omits add_task when agent task creation is not allowed", () => {
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
       executionContextTitle: "Implement",
       allowAgentTaskAdd: false,
       completeTask: vi.fn(async () => undefined),
@@ -150,9 +109,7 @@ describe("graph workflow tool server", () => {
   });
 
   it("fails closed on invalid payloads and callback errors", async () => {
-    const { createGraphWorkflowToolServer } = await import("./tool-server");
-
-    createGraphWorkflowToolServer({
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
       executionContextTitle: "Plan",
       allowAgentTaskAdd: true,
       completeTask: vi.fn(async () => undefined),

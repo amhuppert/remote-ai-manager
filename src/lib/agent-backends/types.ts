@@ -17,5 +17,4 @@ export interface ConversationBackendCapabilities {
 
 export interface ConversationToolingOverrides {
   portableMcp?: PortableMcpConfig;
-  claudeSdkServers?: Record<string, unknown>;
 }

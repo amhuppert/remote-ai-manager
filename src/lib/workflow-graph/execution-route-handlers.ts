@@ -17,13 +17,11 @@ import type {
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
-import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
-import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
 import { createGraphWorkflowValidationService } from "./execution-validation";
 import { createValidatorRunner } from "./validator-runner";
 import { emit as emitGraphWorkflowStreamFrame } from "./stream-registry";
 import { createWorkflowStorageService } from "./storage";
-import { createGraphWorkflowToolServer } from "@/lib/workflows/graph-workflow/tool-server";
+import { buildGraphWorkflowPortableMcp } from "@/lib/mcp-gateway/portable-config";
 import {
   createGraphWorkflowExecutionLoop,
   isExecutionLoopActive,
@@ -61,9 +59,6 @@ const workflowManager = createGraphWorkflowManager({
     workflowStorage.get(projectPath, definitionId),
   isExecutionLoopActive,
 });
-const runtimeEditService = createGraphWorkflowRuntimeEditService();
-const sharedDocumentRegistry =
-  createGraphWorkflowSharedDocumentRegistryService();
 const CODEX_VALIDATOR_TIMEOUT_MS = 300_000;
 
 // In-memory cache of agent session refs for task runner resume within iterations.
@@ -111,68 +106,12 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   createConversation,
   continuityService,
   createToolServer: (input) => ({
-    server: createGraphWorkflowToolServer({
-      executionContextTitle: input.contextTitle,
-      allowAgentTaskAdd: input.allowAgentTaskAdd,
-      completeTask: input.completeTask,
-      addTask: async (task) => {
-        const execution = await executionRepository.getActive(
-          input.projectPath,
-          input.sessionName,
-        );
-        if (!execution) {
-          throw new Error(
-            "Session does not have an active graph workflow execution",
-          );
-        }
-
-        const updated = runtimeEditService.applyAgentTaskAdd(
-          execution,
-          input.contextId,
-          task,
-        );
-        await executionRepository.update(
-          input.projectPath,
-          input.sessionName,
-          updated,
-        );
-        return updated;
-      },
-      upsertSharedDocument: async (document) => {
-        const session = await defaultGetSession(
-          input.projectPath,
-          input.sessionName,
-        );
-        if (!session) {
-          throw new Error("Session not found");
-        }
-
-        const execution = await executionRepository.getActive(
-          input.projectPath,
-          input.sessionName,
-        );
-        if (!execution) {
-          throw new Error(
-            "Session does not have an active graph workflow execution",
-          );
-        }
-
-        const updated = sharedDocumentRegistry.upsert(
-          session.worktreePath,
-          execution,
-          {
-            ...document,
-            conversationId: input.conversationId,
-          },
-        );
-        await executionRepository.update(
-          input.projectPath,
-          input.sessionName,
-          updated,
-        );
-        return updated;
-      },
-    }),
+    server: buildGraphWorkflowPortableMcp(
+      input.projectName,
+      input.sessionName,
+      input.executionId,
+      input.contextId,
+    ),
   }),
   runAgentIteration: async (input) => {
     const session = await defaultGetSession(
@@ -207,10 +146,12 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       autonomous: true,
       timeoutMs: 0,
       resumeRef,
-      tooling:
-        input.backend === "codex"
-          ? undefined
-          : { claudeSdkServers: { "graph-workflow": input.toolServer } },
+      tooling: input.toolServer
+        ? {
+            portableMcp:
+              input.toolServer as import("@/lib/agent-backends/portable-mcp").PortableMcpConfig,
+          }
+        : undefined,
     });
 
     if (result.backendRef) {

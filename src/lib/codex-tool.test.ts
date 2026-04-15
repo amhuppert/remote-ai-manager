@@ -1,72 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-/**
- * Tests for the Codex MCP tool server.
- *
- * Mocks createSdkMcpServer and tool to capture handlers,
- * then tests each component directly.
- */
-
-const TOOLS_KEY = "__test_codex_tool_captured";
-
-function getCapturedTools(): Map<
-  string,
-  { name: string; handler: (args: unknown) => Promise<unknown> }
-> {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (!g[TOOLS_KEY]) {
-    g[TOOLS_KEY] = new Map();
-  }
-  return g[TOOLS_KEY] as Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  >;
-}
-
-vi.mock("@anthropic-ai/claude-agent-sdk", () => {
-  const TOOLS_KEY_INNER = "__test_codex_tool_captured";
-  function getTools(): Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  > {
-    const g = globalThis as unknown as Record<string, unknown>;
-    if (!g[TOOLS_KEY_INNER]) {
-      g[TOOLS_KEY_INNER] = new Map();
-    }
-    return g[TOOLS_KEY_INNER] as Map<
-      string,
-      { name: string; handler: (args: unknown) => Promise<unknown> }
-    >;
-  }
-
-  return {
-    createSdkMcpServer: vi.fn(
-      (config: {
-        tools: Array<{
-          name: string;
-          handler: (args: unknown) => Promise<unknown>;
-        }>;
-      }) => {
-        const tools = getTools();
-        for (const t of config.tools) {
-          tools.set(t.name, t);
-        }
-        return { __mock: true, tools: config.tools };
-      },
-    ),
-    tool: vi.fn(
-      (
-        name: string,
-        _description: string,
-        _schema: unknown,
-        handler: (args: unknown) => Promise<unknown>,
-      ) => ({
-        name,
-        handler,
-      }),
-    ),
-  };
-});
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./logging", () => ({
   createLogger: () => ({
@@ -77,17 +9,66 @@ vi.mock("./logging", () => ({
   }),
 }));
 
-function getHandler(name: string): (args: unknown) => Promise<unknown> {
-  const t = getCapturedTools().get(name);
-  if (!t) throw new Error(`Tool ${name} not found in captured tools`);
-  return t.handler;
+import type { CodexToolDeps } from "./codex-tool";
+import {
+  CODEX_OUTPUT_SCHEMA,
+  getCodexToolPromptHint,
+  parseCodexStructuredResponse,
+  registerCodexTool,
+  wrapCodexPrompt,
+} from "./codex-tool";
+
+type ToolHandler = (args: unknown) => Promise<unknown>;
+
+const TOOLS_KEY = "__test_codex_tool_captured";
+
+function getCapturedTools(): Map<
+  string,
+  { name: string; handler: ToolHandler }
+> {
+  const g = globalThis as Record<string, unknown>;
+  if (!g[TOOLS_KEY]) {
+    g[TOOLS_KEY] = new Map();
+  }
+  return g[TOOLS_KEY] as Map<string, { name: string; handler: ToolHandler }>;
 }
 
-// ============================================================
-// Imports — after mocks
-// ============================================================
+function createCapturingServer() {
+  return {
+    registerTool(name: string, _config: unknown, handler: ToolHandler): void {
+      getCapturedTools().set(name, { name, handler });
+    },
+  };
+}
 
-import type { CodexToolDeps } from "./codex-tool";
+function registerTool(
+  deps: CodexToolDeps,
+  overrides: Partial<{
+    worktreePath: string;
+    sessionName: string;
+    defaultModel: string;
+    defaultReasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh";
+    timeoutMs: number;
+  }> = {},
+): void {
+  registerCodexTool(
+    createCapturingServer() as never,
+    {
+      worktreePath: "/wt",
+      sessionName: "s1",
+      ...overrides,
+    },
+    deps,
+  );
+}
+
+function getHandler(name: string): ToolHandler {
+  const tool = getCapturedTools().get(name);
+  if (!tool) {
+    throw new Error(`Tool ${name} not found in captured tools`);
+  }
+  return tool.handler;
+}
 
 describe("codex-tool", () => {
   beforeEach(() => {
@@ -95,132 +76,22 @@ describe("codex-tool", () => {
     getCapturedTools().clear();
   });
 
-  // ============================================================
-  // 1. MCP server creation
-  // ============================================================
+  describe("registerCodexTool", () => {
+    it("registers one tool named run_codex", () => {
+      registerTool(createMockDeps());
 
-  describe("createCodexToolServer", () => {
-    it("registers one tool named run_codex", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps();
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
       expect(getCapturedTools().has("run_codex")).toBe(true);
       expect(getCapturedTools().size).toBe(1);
     });
   });
 
-  // ============================================================
-  // 2. Feature gating helper
-  // ============================================================
-
-  describe("maybeCreateCodexToolServer", () => {
-    it("returns null when config is undefined", async () => {
-      const { maybeCreateCodexToolServer } = await import("./codex-tool");
-      const result = maybeCreateCodexToolServer(undefined, {
-        worktreePath: "/wt",
-        sessionName: "s1",
-      });
-      expect(result).toBeNull();
-    });
-
-    it("returns null when enabled is false", async () => {
-      const { maybeCreateCodexToolServer } = await import("./codex-tool");
-      const result = maybeCreateCodexToolServer(
-        { enabled: false, model: "gpt-5.4" },
-        { worktreePath: "/wt", sessionName: "s1" },
-      );
-      expect(result).toBeNull();
-    });
-
-    it("returns a server when enabled is true", async () => {
-      const { maybeCreateCodexToolServer } = await import("./codex-tool");
-      const result = maybeCreateCodexToolServer(
-        { enabled: true, model: "gpt-5.4" },
-        { worktreePath: "/wt", sessionName: "s1" },
-      );
-      expect(result).not.toBeNull();
-    });
-
-    it("passes config timeout (seconds) as timeoutMs to context", async () => {
-      const { maybeCreateCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps();
-
-      maybeCreateCodexToolServer(
-        { enabled: true, model: "gpt-5.4", timeout: 120 },
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
-
-      const handler = getHandler("run_codex");
-      await handler({ prompt: "test" });
-
-      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
-        timeoutMs: number;
-      };
-      expect(callArgs.timeoutMs).toBe(120_000);
-    });
-
-    it("uses default timeout when config timeout is undefined", async () => {
-      const { maybeCreateCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps();
-
-      maybeCreateCodexToolServer(
-        { enabled: true, model: "gpt-5.4" },
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
-
-      const handler = getHandler("run_codex");
-      await handler({ prompt: "test" });
-
-      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
-        timeoutMs: number;
-      };
-      expect(callArgs.timeoutMs).toBe(600_000);
-    });
-
-    it("disables timeout when config timeout is null", async () => {
-      const { maybeCreateCodexToolServer } = await import("./codex-tool");
-      const mockDeps = createMockDeps();
-
-      maybeCreateCodexToolServer(
-        { enabled: true, model: "gpt-5.4", timeout: null },
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
-
-      const handler = getHandler("run_codex");
-      await handler({ prompt: "test" });
-
-      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
-        timeoutMs: number;
-      };
-      // null means no timeout — pass 0 to signal "no timeout"
-      expect(callArgs.timeoutMs).toBe(0);
-    });
-  });
-
-  // ============================================================
-  // 3. Handler behavior
-  // ============================================================
-
   describe("run_codex handler", () => {
     it("uses context defaults when tool args omit them", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps();
-
-      createCodexToolServer(
-        {
-          worktreePath: "/wt",
-          sessionName: "s1",
-          defaultModel: "o3",
-          defaultReasoningEffort: "medium",
-        },
-        mockDeps,
-      );
+      registerTool(mockDeps, {
+        defaultModel: "o3",
+        defaultReasoningEffort: "medium",
+      });
 
       const handler = getHandler("run_codex");
       await handler({ prompt: "fix tests" });
@@ -234,18 +105,11 @@ describe("codex-tool", () => {
     });
 
     it("tool args override context defaults", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps();
-
-      createCodexToolServer(
-        {
-          worktreePath: "/wt",
-          sessionName: "s1",
-          defaultModel: "o3",
-          defaultReasoningEffort: "medium",
-        },
-        mockDeps,
-      );
+      registerTool(mockDeps, {
+        defaultModel: "o3",
+        defaultReasoningEffort: "medium",
+      });
 
       const handler = getHandler("run_codex");
       await handler({
@@ -263,13 +127,8 @@ describe("codex-tool", () => {
     });
 
     it("ensures memory-bank/codex dir exists before invocation", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps();
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       await handler({ prompt: "do it" });
@@ -280,13 +139,8 @@ describe("codex-tool", () => {
     });
 
     it("wraps the user prompt with Codex instructions", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps();
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       await handler({ prompt: "fix the login bug" });
@@ -300,14 +154,8 @@ describe("codex-tool", () => {
     });
 
     it("passes outputSchema to runCodex", async () => {
-      const { createCodexToolServer, CODEX_OUTPUT_SCHEMA } =
-        await import("./codex-tool");
       const mockDeps = createMockDeps();
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       await handler({ prompt: "do it" });
@@ -319,13 +167,8 @@ describe("codex-tool", () => {
     });
 
     it("passes workingDirectory to runCodex", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps();
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       await handler({ prompt: "do it" });
@@ -336,8 +179,46 @@ describe("codex-tool", () => {
       expect(callArgs.workingDirectory).toBe("/wt");
     });
 
+    it("uses default timeout when context timeout is undefined", async () => {
+      const mockDeps = createMockDeps();
+      registerTool(mockDeps);
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "test" });
+
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
+        timeoutMs: number;
+      };
+      expect(callArgs.timeoutMs).toBe(600_000);
+    });
+
+    it("passes context timeoutMs through to runCodex", async () => {
+      const mockDeps = createMockDeps();
+      registerTool(mockDeps, { timeoutMs: 120_000 });
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "test" });
+
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
+        timeoutMs: number;
+      };
+      expect(callArgs.timeoutMs).toBe(120_000);
+    });
+
+    it("supports disabling the timeout with timeoutMs 0", async () => {
+      const mockDeps = createMockDeps();
+      registerTool(mockDeps, { timeoutMs: 0 });
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "test" });
+
+      const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
+        timeoutMs: number;
+      };
+      expect(callArgs.timeoutMs).toBe(0);
+    });
+
     it("returns structured JSON when Codex produces valid structured response", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const structured = JSON.stringify({
         summary: "Fixed the bug",
         referenceDocuments: [
@@ -345,11 +226,7 @@ describe("codex-tool", () => {
         ],
       });
       const mockDeps = createMockDeps({ response: structured });
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       const result = (await handler({ prompt: "fix tests" })) as {
@@ -364,13 +241,8 @@ describe("codex-tool", () => {
     });
 
     it("falls back to raw text when response is not valid structured JSON", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps({ response: "All tests pass now." });
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       const result = (await handler({ prompt: "fix tests" })) as {
@@ -383,16 +255,11 @@ describe("codex-tool", () => {
     });
 
     it("returns isError for timeout", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps({
         response: null,
         timedOut: true,
       });
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       const result = (await handler({ prompt: "fix" })) as {
@@ -405,16 +272,11 @@ describe("codex-tool", () => {
     });
 
     it("returns isError when CLI is not found", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps({
         response: null,
         error: "spawn codex ENOENT: not found",
       });
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       const result = (await handler({ prompt: "fix" })) as {
@@ -427,16 +289,11 @@ describe("codex-tool", () => {
     });
 
     it("returns isError for execution errors", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps({
         response: null,
         error: "authentication failed",
       });
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       const result = (await handler({ prompt: "fix" })) as {
@@ -449,16 +306,11 @@ describe("codex-tool", () => {
     });
 
     it("returns isError when no response is returned", async () => {
-      const { createCodexToolServer } = await import("./codex-tool");
       const mockDeps = createMockDeps({
         response: null,
         error: null,
       });
-
-      createCodexToolServer(
-        { worktreePath: "/wt", sessionName: "s1" },
-        mockDeps,
-      );
+      registerTool(mockDeps);
 
       const handler = getHandler("run_codex");
       const result = (await handler({ prompt: "fix" })) as {
@@ -471,17 +323,10 @@ describe("codex-tool", () => {
         "without emitting a final response",
       );
     });
-
-    // env is now handled internally by the task runner — no longer passed through deps
   });
 
-  // ============================================================
-  // 4. Prompt wrapping
-  // ============================================================
-
   describe("wrapCodexPrompt", () => {
-    it("prepends instructions and preserves the original prompt", async () => {
-      const { wrapCodexPrompt } = await import("./codex-tool");
+    it("prepends instructions and preserves the original prompt", () => {
       const wrapped = wrapCodexPrompt("Fix the login bug");
       expect(wrapped).toContain("memory-bank/codex/");
       expect(wrapped).toContain("summary");
@@ -489,14 +334,12 @@ describe("codex-tool", () => {
       expect(wrapped).toContain("Fix the login bug");
     });
 
-    it("includes the 1000-character limit instruction", async () => {
-      const { wrapCodexPrompt } = await import("./codex-tool");
+    it("includes the 1000-character limit instruction", () => {
       const wrapped = wrapCodexPrompt("Do something");
       expect(wrapped).toContain("1000");
     });
 
-    it("places the original prompt after the instructions", async () => {
-      const { wrapCodexPrompt } = await import("./codex-tool");
+    it("places the original prompt after the instructions", () => {
       const wrapped = wrapCodexPrompt("Do something");
       const instructionsEnd = wrapped.indexOf("Task:");
       const promptStart = wrapped.indexOf("Do something");
@@ -505,21 +348,16 @@ describe("codex-tool", () => {
     });
   });
 
-  // ============================================================
-  // 5. Structured response parsing
-  // ============================================================
-
   describe("parseCodexStructuredResponse", () => {
-    it("parses valid structured JSON", async () => {
-      const { parseCodexStructuredResponse } = await import("./codex-tool");
+    it("parses valid structured JSON", () => {
       const input = JSON.stringify({
         summary: "Fixed the bug",
         referenceDocuments: [
           { filePath: "memory-bank/codex/report.md", description: "Details" },
         ],
       });
-      const result = parseCodexStructuredResponse(input);
-      expect(result).toEqual({
+
+      expect(parseCodexStructuredResponse(input)).toEqual({
         summary: "Fixed the bug",
         referenceDocuments: [
           { filePath: "memory-bank/codex/report.md", description: "Details" },
@@ -527,29 +365,25 @@ describe("codex-tool", () => {
       });
     });
 
-    it("returns null for non-JSON text", async () => {
-      const { parseCodexStructuredResponse } = await import("./codex-tool");
+    it("returns null for non-JSON text", () => {
       expect(parseCodexStructuredResponse("just plain text")).toBeNull();
     });
 
-    it("returns null when summary is missing", async () => {
-      const { parseCodexStructuredResponse } = await import("./codex-tool");
+    it("returns null when summary is missing", () => {
       const input = JSON.stringify({
         referenceDocuments: [],
       });
       expect(parseCodexStructuredResponse(input)).toBeNull();
     });
 
-    it("returns null when referenceDocuments is missing", async () => {
-      const { parseCodexStructuredResponse } = await import("./codex-tool");
+    it("returns null when referenceDocuments is missing", () => {
       const input = JSON.stringify({
         summary: "done",
       });
       expect(parseCodexStructuredResponse(input)).toBeNull();
     });
 
-    it("returns null when referenceDocuments items have wrong shape", async () => {
-      const { parseCodexStructuredResponse } = await import("./codex-tool");
+    it("returns null when referenceDocuments items have wrong shape", () => {
       const input = JSON.stringify({
         summary: "done",
         referenceDocuments: [{ path: "wrong-key" }],
@@ -557,32 +391,24 @@ describe("codex-tool", () => {
       expect(parseCodexStructuredResponse(input)).toBeNull();
     });
 
-    it("accepts empty referenceDocuments array", async () => {
-      const { parseCodexStructuredResponse } = await import("./codex-tool");
+    it("accepts empty referenceDocuments array", () => {
       const input = JSON.stringify({
         summary: "No files needed",
         referenceDocuments: [],
       });
-      const result = parseCodexStructuredResponse(input);
-      expect(result).toEqual({
+      expect(parseCodexStructuredResponse(input)).toEqual({
         summary: "No files needed",
         referenceDocuments: [],
       });
     });
   });
 
-  // ============================================================
-  // 6. Prompt hint helper
-  // ============================================================
-
   describe("getCodexToolPromptHint", () => {
-    it("returns null when disabled", async () => {
-      const { getCodexToolPromptHint } = await import("./codex-tool");
+    it("returns null when disabled", () => {
       expect(getCodexToolPromptHint(false)).toBeNull();
     });
 
-    it("returns a hint string when enabled", async () => {
-      const { getCodexToolPromptHint } = await import("./codex-tool");
+    it("returns a hint string when enabled", () => {
       const hint = getCodexToolPromptHint(true);
       expect(hint).not.toBeNull();
       expect(hint).toContain("run_codex");
@@ -590,28 +416,7 @@ describe("codex-tool", () => {
       expect(hint).toContain("referenceDocuments");
     });
   });
-
-  // ============================================================
-  // 7. toStringEnv helper
-  // ============================================================
-
-  describe("toStringEnv", () => {
-    it("strips undefined values from env", async () => {
-      const { toStringEnv } = await import("./codex-tool");
-      const result = toStringEnv({
-        FOO: "bar",
-        BAZ: undefined,
-        QUX: "quux",
-      } as unknown as NodeJS.ProcessEnv);
-      expect(result).toEqual({ FOO: "bar", QUX: "quux" });
-      expect("BAZ" in result).toBe(false);
-    });
-  });
 });
-
-// ============================================================
-// Mock deps factory
-// ============================================================
 
 function createMockDeps(runResult?: {
   response?: string | null;

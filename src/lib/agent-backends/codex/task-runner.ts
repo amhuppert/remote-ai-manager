@@ -106,14 +106,6 @@ export class CodexTaskRunner implements AgentTaskRunner {
       };
     }
 
-    // Handle claudeSdkServers — not supported by Codex, log warning
-    if (input.tooling?.claudeSdkServers) {
-      const droppedServerIds = Object.keys(input.tooling.claudeSdkServers);
-      logger.warn("codex-task-runner.dropped_claude_sdk_servers", {
-        droppedServerIds,
-      });
-    }
-
     // Build MCP config from portable MCP
     let mcpServersConfig: Record<string, unknown> | undefined;
     if (input.tooling?.portableMcp) {

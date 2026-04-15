@@ -7,11 +7,10 @@
 
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { codexReasoningEffortSchema } from "./schemas";
-import type { CodexConfig, CodexReasoningEffort } from "@/types";
+import type { CodexReasoningEffort } from "@/types";
 import { createLogger } from "./logging";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
 
@@ -128,36 +127,6 @@ export const defaultCodexToolDeps: CodexToolDeps = {
 };
 
 // ============================================================
-// Feature-Gated Helper
-// ============================================================
-
-export function maybeCreateCodexToolServer(
-  codexConfig: CodexConfig | undefined,
-  context: CodexToolContext,
-  deps: CodexToolDeps = defaultCodexToolDeps,
-): McpSdkServerConfigWithInstance | null {
-  if (codexConfig?.enabled !== true) return null;
-
-  let timeoutMs: number | undefined;
-  if (codexConfig.timeout === null) {
-    timeoutMs = 0;
-  } else if (codexConfig.timeout !== undefined) {
-    timeoutMs = codexConfig.timeout * 1000;
-  }
-
-  return createCodexToolServer(
-    {
-      ...context,
-      defaultModel: context.defaultModel ?? codexConfig.model,
-      defaultReasoningEffort:
-        context.defaultReasoningEffort ?? codexConfig.reasoningEffort,
-      timeoutMs: context.timeoutMs ?? timeoutMs,
-    },
-    deps,
-  );
-}
-
-// ============================================================
 // Prompt Wrapping
 // ============================================================
 
@@ -228,114 +197,108 @@ export function getCodexToolPromptHint(enabled: boolean): string | null {
   return `The \`run_codex\` tool is available. It runs OpenAI Codex locally in the same worktree as a one-shot stateless invocation. The tool returns a JSON object with a \`summary\` field (concise result summary) and a \`referenceDocuments\` array (files Codex created with \`filePath\` and \`description\`). Use the Read tool to review any reference documents when the summary indicates relevant content.`;
 }
 
-// ============================================================
-// MCP Tool Server
-// ============================================================
+const runCodexInputSchema = {
+  prompt: z.string().trim().min(1).describe("The task instruction for Codex"),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Model override (e.g., o3, gpt-5-codex, o4-mini)"),
+  reasoning_effort: codexReasoningEffortSchema
+    .optional()
+    .describe("Reasoning effort override (minimal, low, medium, high, xhigh)"),
+};
 
-export function createCodexToolServer(
+const CODEX_TOOL_DESCRIPTION =
+  "Run a one-shot OpenAI Codex task in the current session worktree. Codex operates autonomously with full access (no sandbox). It does not resume or persist conversation state. Returns a JSON object with `summary` (concise result summary) and `referenceDocuments` (array of files Codex created for detailed review, each with `filePath` and `description`). If Codex fails to produce structured output, falls back to returning raw text.";
+
+function createRunCodexHandler(context: CodexToolContext, deps: CodexToolDeps) {
+  return async (args: {
+    prompt: string;
+    model?: string;
+    reasoning_effort?: CodexReasoningEffort;
+  }) => {
+    const effectiveModel = args.model ?? context.defaultModel;
+    const effectiveReasoningEffort =
+      args.reasoning_effort ?? context.defaultReasoningEffort;
+
+    // Ensure output directory exists for Codex to write reference files.
+    const outputDir = path.join(context.worktreePath, CODEX_OUTPUT_DIR);
+    await deps.ensureDir(outputDir);
+
+    logger.info("codex.exec", {
+      sessionName: context.sessionName,
+      model: effectiveModel ?? "default",
+      reasoningEffort: effectiveReasoningEffort ?? "default",
+    });
+
+    const effectiveTimeoutMs = context.timeoutMs ?? CODEX_TIMEOUT_MS;
+
+    const result = await deps.runCodex({
+      prompt: wrapCodexPrompt(args.prompt),
+      workingDirectory: context.worktreePath,
+      model: effectiveModel,
+      reasoningEffort: effectiveReasoningEffort,
+      outputSchema: CODEX_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+      timeoutMs: effectiveTimeoutMs,
+    });
+
+    if (result.timedOut) {
+      return errorResult(
+        `Codex execution timed out after ${effectiveTimeoutMs / 1000} seconds.`,
+      );
+    }
+
+    if (result.error) {
+      if (result.error.includes("not found")) {
+        return errorResult(
+          "Codex CLI is not installed or not on PATH. Install @openai/codex on the host machine and authenticate it before enabling this tool.",
+        );
+      }
+      return errorResult(`Codex execution failed: ${result.error}`);
+    }
+
+    if (!result.response) {
+      return errorResult("Codex completed without emitting a final response.");
+    }
+
+    logger.info("codex.success", {
+      sessionName: context.sessionName,
+      responseLength: result.response.length,
+    });
+
+    const structured = parseCodexStructuredResponse(result.response);
+    if (structured) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(structured),
+          },
+        ],
+      };
+    }
+
+    return {
+      content: [{ type: "text" as const, text: result.response }],
+    };
+  };
+}
+
+export function registerCodexTool(
+  server: McpServer,
   context: CodexToolContext,
   deps: CodexToolDeps = defaultCodexToolDeps,
-): McpSdkServerConfigWithInstance {
-  return createSdkMcpServer({
-    name: "codex-tool",
-    version: "1.0.0",
-    tools: [
-      tool(
-        "run_codex",
-        "Run a one-shot OpenAI Codex task in the current session worktree. Codex operates autonomously with full access (no sandbox). It does not resume or persist conversation state. Returns a JSON object with `summary` (concise result summary) and `referenceDocuments` (array of files Codex created for detailed review, each with `filePath` and `description`). If Codex fails to produce structured output, falls back to returning raw text.",
-        {
-          prompt: z
-            .string()
-            .trim()
-            .min(1)
-            .describe("The task instruction for Codex"),
-          model: z
-            .string()
-            .trim()
-            .min(1)
-            .optional()
-            .describe("Model override (e.g., o3, gpt-5-codex, o4-mini)"),
-          reasoning_effort: codexReasoningEffortSchema
-            .optional()
-            .describe(
-              "Reasoning effort override (minimal, low, medium, high, xhigh)",
-            ),
-        },
-        async (args) => {
-          const effectiveModel = args.model ?? context.defaultModel;
-          const effectiveReasoningEffort =
-            args.reasoning_effort ?? context.defaultReasoningEffort;
-
-          // Ensure output directory exists for Codex to write reference files
-          const outputDir = path.join(context.worktreePath, CODEX_OUTPUT_DIR);
-          await deps.ensureDir(outputDir);
-
-          logger.info("codex.exec", {
-            sessionName: context.sessionName,
-            model: effectiveModel ?? "default",
-            reasoningEffort: effectiveReasoningEffort ?? "default",
-          });
-
-          const effectiveTimeoutMs = context.timeoutMs ?? CODEX_TIMEOUT_MS;
-
-          const result = await deps.runCodex({
-            prompt: wrapCodexPrompt(args.prompt),
-            workingDirectory: context.worktreePath,
-            model: effectiveModel,
-            reasoningEffort: effectiveReasoningEffort,
-            outputSchema: CODEX_OUTPUT_SCHEMA as unknown as Record<
-              string,
-              unknown
-            >,
-            timeoutMs: effectiveTimeoutMs,
-          });
-
-          if (result.timedOut) {
-            return errorResult(
-              `Codex execution timed out after ${effectiveTimeoutMs / 1000} seconds.`,
-            );
-          }
-
-          if (result.error) {
-            if (result.error.includes("not found")) {
-              return errorResult(
-                "Codex CLI is not installed or not on PATH. Install @openai/codex on the host machine and authenticate it before enabling this tool.",
-              );
-            }
-            return errorResult(`Codex execution failed: ${result.error}`);
-          }
-
-          if (!result.response) {
-            return errorResult(
-              "Codex completed without emitting a final response.",
-            );
-          }
-
-          logger.info("codex.success", {
-            sessionName: context.sessionName,
-            responseLength: result.response.length,
-          });
-
-          // Try structured response; fall back to raw text
-          const structured = parseCodexStructuredResponse(result.response);
-          if (structured) {
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify(structured),
-                },
-              ],
-            };
-          }
-
-          return {
-            content: [{ type: "text" as const, text: result.response }],
-          };
-        },
-      ),
-    ],
-  });
+): void {
+  server.registerTool(
+    "run_codex",
+    {
+      description: CODEX_TOOL_DESCRIPTION,
+      inputSchema: runCodexInputSchema,
+    },
+    createRunCodexHandler(context, deps),
+  );
 }
 
 function errorResult(message: string) {
@@ -344,14 +307,3 @@ function errorResult(message: string) {
     isError: true,
   };
 }
-
-/** Strip `undefined` values from a `NodeJS.ProcessEnv` to produce a clean `Record<string, string>`. */
-function toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) result[key] = value;
-  }
-  return result;
-}
-
-export { toStringEnv };

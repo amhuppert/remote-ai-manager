@@ -1,5 +1,4 @@
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import { z } from "zod";
+import path from "node:path";
 import type {
   WorkflowDefinitionRecord,
   WorkflowGeneratedDraft,
@@ -14,6 +13,12 @@ import {
   workflowSemanticDefinitionSchema,
 } from "@/lib/schemas";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
+import { buildWorkflowDraftPortableMcp } from "@/lib/mcp-gateway/portable-config";
+import {
+  consumePlannerDraft,
+  createPlannerDraftSubmission,
+  deletePlannerDraft,
+} from "@/lib/mcp-gateway/planner-draft-registry";
 import { generateWorkflowLayout } from "./layout";
 import { createWorkflowStorageService } from "./storage";
 import { validateWorkflowDefinition } from "./validation";
@@ -37,47 +42,13 @@ async function defaultRunPlannerQuery(
   input: WorkflowPlanRequest & { projectPath?: string },
   seedDefinition: WorkflowDefinitionRecord | null,
 ): Promise<WorkflowSemanticDefinition> {
-  let generatedDefinition: WorkflowSemanticDefinition = {
+  const emptyDefinition: WorkflowSemanticDefinition = {
     schemaVersion: 1,
     executionContexts: [],
     tasks: [],
     edges: [],
   };
-
-  const plannerToolServer = createSdkMcpServer({
-    name: "graph-workflow-planner",
-    version: "1.0.0",
-    tools: [
-      tool(
-        "submit_workflow_draft",
-        "Submit the generated workflow draft exactly once with explicit IDs for contexts, tasks, and edges.",
-        {
-          schemaVersion: z.number().int().positive(),
-          executionContexts: z.array(
-            workflowSemanticDefinitionSchema.shape.executionContexts.unwrap()
-              .element,
-          ),
-          tasks: z.array(
-            workflowSemanticDefinitionSchema.shape.tasks.unwrap().element,
-          ),
-          edges: z.array(
-            workflowSemanticDefinitionSchema.shape.edges.unwrap().element,
-          ),
-        },
-        async (args) => {
-          generatedDefinition = workflowSemanticDefinitionSchema.parse(args);
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Workflow draft submitted with ${generatedDefinition.executionContexts.length} execution contexts.`,
-              },
-            ],
-          };
-        },
-      ),
-    ],
-  });
+  const { draftId } = createPlannerDraftSubmission();
 
   const systemInstructions = [
     "Generate a workflow graph draft with execution contexts, flat task records, and dependency edges.",
@@ -117,9 +88,12 @@ async function defaultRunPlannerQuery(
       autonomous: true,
       timeoutMs: 600_000,
       tooling: {
-        claudeSdkServers: {
-          "graph-workflow-planner": plannerToolServer,
-        },
+        portableMcp: input.projectPath
+          ? buildWorkflowDraftPortableMcp(
+              path.basename(input.projectPath),
+              draftId,
+            )
+          : undefined,
       },
     });
 
@@ -133,9 +107,15 @@ async function defaultRunPlannerQuery(
     logger.error("planner.query_failed", {
       error: getErrorMessage(error),
     });
+  } finally {
+    const submittedDraft = consumePlannerDraft(draftId);
+    deletePlannerDraft(draftId);
+    if (submittedDraft) {
+      return workflowSemanticDefinitionSchema.parse(submittedDraft);
+    }
   }
 
-  return generatedDefinition;
+  return emptyDefinition;
 }
 
 const defaultDeps: WorkflowPlannerDeps = {

@@ -303,28 +303,6 @@ describe("ClaudeTaskRunner", () => {
     expect(result.structuredOutput).toEqual({ answer: 42 });
   });
 
-  it("merges claudeSdkServers into mcpServers", async () => {
-    mockQuery.mockReturnValue(
-      makeStream([successResultMessage()]) as ReturnType<typeof query>,
-    );
-
-    const plannerServer = { type: "sdk-instance" };
-    await runner.run(
-      makeRequest({
-        tooling: {
-          claudeSdkServers: { planner: plannerServer },
-        },
-      }),
-    );
-
-    const callArg = mockQuery.mock.calls[0]?.[0] as {
-      options: { mcpServers: Record<string, unknown> };
-    };
-    expect(callArg.options.mcpServers).toMatchObject({
-      planner: plannerServer,
-    });
-  });
-
   it("logs dropped Codex-only fields when non-default values are supplied", async () => {
     mockQuery.mockReturnValue(
       makeStream([successResultMessage()]) as ReturnType<typeof query>,

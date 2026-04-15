@@ -50,6 +50,10 @@ import {
   CC_CONTEXT,
   TDD_INSTRUCTIONS,
 } from "@/lib/prompt";
+import {
+  buildSessionToolsPortableMcp,
+  mergePortableMcpConfigs,
+} from "@/lib/mcp-gateway/portable-config";
 import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
 
 const logger = createLogger("conversation-actor");
@@ -67,6 +71,7 @@ export interface ActorConfig {
   idleQuerySessionTtlMs: number;
   pushNotification?: unknown;
   codex?: {
+    enabled?: boolean;
     model?: string;
     reasoningEffort?: string;
     timeout?: number | null;
@@ -112,21 +117,6 @@ export interface ActorImplementationDeps {
   buildChildEnv(): NodeJS.ProcessEnv;
   resolvePluginPaths(): Promise<Array<{ name: string; path: string }>>;
 
-  // MCP tool factories
-  createNotificationToolServer(
-    context: Record<string, unknown>,
-    deps: Record<string, unknown>,
-  ): unknown;
-  createRoadmapToolServer(context: Record<string, unknown>): unknown;
-  createWiredPlannerToolServer(
-    context: Record<string, unknown>,
-    wireDeps: Record<string, unknown>,
-  ): unknown;
-  createReferenceDocumentToolServer(context: Record<string, unknown>): unknown;
-  maybeCreateCodexToolServer(
-    config: unknown,
-    context: Record<string, unknown>,
-  ): unknown;
   getCodexToolPromptHint(enabled: boolean): string | null;
 
   // State mutations
@@ -191,11 +181,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     runtimeRegistryMod,
     childEnvMod,
     commandsMod,
-    notificationToolMod,
-    roadmapToolsMod,
-    referenceDocumentToolsMod,
     codexToolMod,
-    plannerToolsMod,
     projectResolverMod,
     debugLogMod,
     stateMod,
@@ -210,11 +196,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/agent-backends/runtime-registry"),
     import("@/lib/child-env"),
     import("@/lib/commands"),
-    import("@/lib/agent-notification-tool"),
-    import("@/lib/roadmap-tools"),
-    import("@/lib/reference-document-tools"),
     import("@/lib/codex-tool"),
-    import("@/lib/workflow-graph/planner-tools"),
     import("@/lib/project-resolver"),
     import("@/lib/debug-log"),
     import("@/lib/state"),
@@ -233,13 +215,6 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     unregisterBackendRuntime: runtimeRegistryMod.unregisterRuntime,
     buildChildEnv: childEnvMod.buildChildEnv,
     resolvePluginPaths: commandsMod.resolvePluginPaths,
-    createNotificationToolServer:
-      notificationToolMod.createNotificationToolServer,
-    createRoadmapToolServer: roadmapToolsMod.createRoadmapToolServer,
-    createWiredPlannerToolServer: plannerToolsMod.createWiredPlannerToolServer,
-    createReferenceDocumentToolServer:
-      referenceDocumentToolsMod.createReferenceDocumentToolServer,
-    maybeCreateCodexToolServer: codexToolMod.maybeCreateCodexToolServer,
     getCodexToolPromptHint: codexToolMod.getCodexToolPromptHint,
     getProjectDisplayName: projectResolverMod.getProjectDisplayName,
     getDebugLogUrl: debugLogMod.getDebugLogUrl,
@@ -903,39 +878,6 @@ export async function executePromptForMachine(
       input.sessionName,
     );
 
-    const pushConfig = config.pushNotification as
-      | { enabled?: boolean; topic?: string }
-      | undefined;
-    const notificationToolEnabled = pushConfig?.enabled && pushConfig?.topic;
-    const notificationToolServer = notificationToolEnabled
-      ? deps.createNotificationToolServer(
-          { projectName, sessionName: input.sessionName },
-          {
-            sendNotification: async (
-              title: string,
-              message: string,
-              tags: string,
-            ) => {
-              const { sendAgentNotification } =
-                await import("@/lib/push-notification");
-              await sendAgentNotification(
-                config.pushNotification as never,
-                title,
-                message,
-                tags,
-                projectName,
-                input.sessionName,
-              );
-            },
-          },
-        )
-      : null;
-
-    const codexToolServer = deps.maybeCreateCodexToolServer(config.codex, {
-      worktreePath: input.worktreePath,
-      sessionName: input.sessionName,
-    });
-
     // Auto-register focus.md as a reference document
     const focusPath = `${input.worktreePath}/memory-bank/focus.md`;
     if (deps.fileExists(focusPath)) {
@@ -971,37 +913,13 @@ export async function executePromptForMachine(
         ? `<objective>${sessionState.objective}</objective>`
         : null,
       sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
-      deps.getCodexToolPromptHint(codexToolServer != null),
+      deps.getCodexToolPromptHint(config.codex?.enabled === true),
       referenceDocsPrompt,
     ].filter((s): s is string => s != null && s.length > 0);
-
-    // Build Claude SDK servers for tooling overrides
-    const claudeSdkServers: Record<string, unknown> = {
-      ...(notificationToolServer
-        ? { "agent-notification": notificationToolServer }
-        : {}),
-      ...(codexToolServer ? { "codex-tool": codexToolServer } : {}),
-      "roadmap-tools": deps.createRoadmapToolServer({
-        projectPath: input.projectPath,
-      }),
-      "graph-workflow-planner": deps.createWiredPlannerToolServer(
-        {
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-        },
-        {
-          readConfig: deps.readConfig,
-          getSession: deps.getSessionState,
-        },
-      ),
-      "reference-document-tools": deps.createReferenceDocumentToolServer({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        worktreePath: input.worktreePath,
-      }),
-      // Merge per-conversation tooling overrides (e.g., graph workflow tools)
-      ...(runtimeState.tooling?.claudeSdkServers ?? {}),
-    };
+    const portableMcp = mergePortableMcpConfigs(
+      buildSessionToolsPortableMcp(projectName, input.sessionName),
+      runtimeState.tooling?.portableMcp,
+    );
 
     logger.info("prompt.runtime_create", {
       sessionName: input.sessionName,
@@ -1021,8 +939,7 @@ export async function executePromptForMachine(
       outputFormat: input.outputFormat,
       sessionInstructions,
       tooling: {
-        claudeSdkServers,
-        portableMcp: runtimeState.tooling?.portableMcp,
+        portableMcp,
       },
     });
 

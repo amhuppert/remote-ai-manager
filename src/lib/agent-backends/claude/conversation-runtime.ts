@@ -350,9 +350,7 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
         : undefined;
 
     // Build MCP servers config from tooling overrides
-    const mcpServers: Record<string, unknown> = {
-      ...(input.tooling.claudeSdkServers ?? {}),
-    };
+    const mcpServers: Record<string, unknown> = {};
 
     if (input.tooling.portableMcp) {
       const { servers } = translatePortableMcpToClaude(

@@ -1,78 +1,46 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { NotificationToolDeps } from "./agent-notification-tool";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  registerNotificationTool,
+  type NotificationToolDeps,
+} from "./agent-notification-tool";
 
-/**
- * Tests for the agent notification MCP tool server.
- *
- * Mocks createSdkMcpServer and tool to capture handlers,
- * then tests each tool directly.
- */
+type ToolHandler = (args: unknown) => Promise<unknown>;
 
 const TOOLS_KEY = "__test_notification_tool_captured";
 
 function getCapturedTools(): Map<
   string,
-  { name: string; handler: (args: unknown) => Promise<unknown> }
+  { name: string; handler: ToolHandler }
 > {
-  const g = globalThis as unknown as Record<string, unknown>;
+  const g = globalThis as Record<string, unknown>;
   if (!g[TOOLS_KEY]) {
     g[TOOLS_KEY] = new Map();
   }
-  return g[TOOLS_KEY] as Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  >;
+  return g[TOOLS_KEY] as Map<string, { name: string; handler: ToolHandler }>;
 }
 
-vi.mock("@anthropic-ai/claude-agent-sdk", () => {
-  const TOOLS_KEY_INNER = "__test_notification_tool_captured";
-  function getTools(): Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  > {
-    const g = globalThis as unknown as Record<string, unknown>;
-    if (!g[TOOLS_KEY_INNER]) {
-      g[TOOLS_KEY_INNER] = new Map();
-    }
-    return g[TOOLS_KEY_INNER] as Map<
-      string,
-      { name: string; handler: (args: unknown) => Promise<unknown> }
-    >;
-  }
-
+function createCapturingServer() {
   return {
-    createSdkMcpServer: vi.fn(
-      (config: {
-        tools: Array<{
-          name: string;
-          handler: (args: unknown) => Promise<unknown>;
-        }>;
-      }) => {
-        const tools = getTools();
-        for (const t of config.tools) {
-          tools.set(t.name, t);
-        }
-        return { __mock: true, tools: config.tools };
-      },
-    ),
-    tool: vi.fn(
-      (
-        name: string,
-        _description: string,
-        _schema: unknown,
-        handler: (args: unknown) => Promise<unknown>,
-      ) => ({
-        name,
-        handler,
-      }),
-    ),
+    registerTool(name: string, _config: unknown, handler: ToolHandler): void {
+      getCapturedTools().set(name, { name, handler });
+    },
   };
-});
+}
 
-function getHandler(name: string): (args: unknown) => Promise<unknown> {
-  const t = getCapturedTools().get(name);
-  if (!t) throw new Error(`Tool ${name} not found in captured tools`);
-  return t.handler;
+function registerTools(deps: NotificationToolDeps): void {
+  registerNotificationTool(
+    createCapturingServer() as never,
+    { projectName: "my-project", sessionName: "my-session" },
+    deps,
+  );
+}
+
+function getHandler(name: string): ToolHandler {
+  const tool = getCapturedTools().get(name);
+  if (!tool) {
+    throw new Error(`Tool ${name} not found in captured tools`);
+  }
+  return tool.handler;
 }
 
 function createMockDeps(): NotificationToolDeps & {
@@ -91,30 +59,18 @@ describe("agent-notification-tool", () => {
     getCapturedTools().clear();
   });
 
-  it("creates an MCP server with one tool (send_notification)", async () => {
-    const { createNotificationToolServer } =
-      await import("./agent-notification-tool");
+  it("registers the send_notification tool", () => {
     const deps = createMockDeps();
 
-    const server = createNotificationToolServer(
-      { projectName: "my-project", sessionName: "my-session" },
-      deps,
-    );
+    registerTools(deps);
 
-    expect(server).toBeDefined();
     expect(getCapturedTools().has("send_notification")).toBe(true);
     expect(getCapturedTools().size).toBe(1);
   });
 
   it("calls sendNotification dep with correct args on success", async () => {
-    const { createNotificationToolServer } =
-      await import("./agent-notification-tool");
     const deps = createMockDeps();
-
-    createNotificationToolServer(
-      { projectName: "my-project", sessionName: "my-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const handler = getHandler("send_notification");
     await handler({
@@ -131,14 +87,8 @@ describe("agent-notification-tool", () => {
   });
 
   it("returns success message including the title", async () => {
-    const { createNotificationToolServer } =
-      await import("./agent-notification-tool");
     const deps = createMockDeps();
-
-    createNotificationToolServer(
-      { projectName: "my-project", sessionName: "my-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const handler = getHandler("send_notification");
     const result = (await handler({
@@ -152,15 +102,9 @@ describe("agent-notification-tool", () => {
   });
 
   it("returns isError when sendNotification throws", async () => {
-    const { createNotificationToolServer } =
-      await import("./agent-notification-tool");
     const deps = createMockDeps();
     deps.mockSendNotification.mockRejectedValue(new Error("Network failed"));
-
-    createNotificationToolServer(
-      { projectName: "my-project", sessionName: "my-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const handler = getHandler("send_notification");
     const result = (await handler({
@@ -176,14 +120,8 @@ describe("agent-notification-tool", () => {
   });
 
   it("uses default tag 'robot' when tags not provided", async () => {
-    const { createNotificationToolServer } =
-      await import("./agent-notification-tool");
     const deps = createMockDeps();
-
-    createNotificationToolServer(
-      { projectName: "my-project", sessionName: "my-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const handler = getHandler("send_notification");
     await handler({

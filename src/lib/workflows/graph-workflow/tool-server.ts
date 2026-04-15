@@ -1,5 +1,4 @@
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/errors";
@@ -115,103 +114,127 @@ export interface GraphWorkflowToolServerContext {
   upsertSharedDocument(document: SharedDocumentUpsertInput): Promise<unknown>;
 }
 
-export function createGraphWorkflowToolServer(
-  context: GraphWorkflowToolServerContext,
-): McpSdkServerConfigWithInstance {
-  const completeTaskTool = tool(
-    "complete_task",
-    "Mark the current task as complete. You MUST call this after finishing each task — it is the only way to advance the workflow. A task left without complete_task remains open and blocks progress.",
-    completeTaskSchema.shape,
-    async (args) => {
-      const parsed = completeTaskSchema.safeParse(args);
-      if (!parsed.success) {
-        logger.warn("graph-workflow.tool.validation_error", {
-          tool: "complete_task",
-          error: parsed.error.message,
-        });
-        return createValidationErrorResult(parsed.error.message);
-      }
+const COMPLETE_TASK_DESCRIPTION =
+  "Mark the current task as complete. You MUST call this after finishing each task — it is the only way to advance the workflow. A task left without complete_task remains open and blocks progress.";
+const UPSERT_SHARED_DOCUMENT_DESCRIPTION =
+  "Register or update a shared document so that agents in later workflow iterations can discover and read it. Use this to pass architectural decisions, API contracts, or implementation notes forward to downstream execution contexts.";
+const ADD_TASK_DESCRIPTION =
+  "Append a new task to the end of this execution context. Use this when you discover necessary work not covered by the existing task list.";
 
-      logger.info("graph-workflow.tool.complete_task", {
+function createCompleteTaskHandler(context: GraphWorkflowToolServerContext) {
+  return async (args: unknown) => {
+    const parsed = completeTaskSchema.safeParse(args);
+    if (!parsed.success) {
+      logger.warn("graph-workflow.tool.validation_error", {
+        tool: "complete_task",
+        error: parsed.error.message,
+      });
+      return createValidationErrorResult(parsed.error.message);
+    }
+
+    logger.info("graph-workflow.tool.complete_task", {
+      taskSlug: parsed.data.taskSlug,
+      summaryLength: parsed.data.summary.length,
+    });
+
+    try {
+      await context.completeTask(parsed.data.taskSlug, parsed.data.summary);
+      return createTextResult(
+        `Task ${parsed.data.taskSlug} was completed and recorded for "${context.executionContextTitle}".`,
+      );
+    } catch (error) {
+      logger.warn("graph-workflow.tool.complete_task.error", {
         taskSlug: parsed.data.taskSlug,
-        summaryLength: parsed.data.summary.length,
+        error: getErrorMessage(error),
       });
+      return createToolErrorResult(getErrorMessage(error));
+    }
+  };
+}
 
-      try {
-        await context.completeTask(parsed.data.taskSlug, parsed.data.summary);
-        return createTextResult(
-          `Task ${parsed.data.taskSlug} was completed and recorded for "${context.executionContextTitle}".`,
-        );
-      } catch (error) {
-        logger.warn("graph-workflow.tool.complete_task.error", {
-          taskSlug: parsed.data.taskSlug,
-          error: getErrorMessage(error),
-        });
-        return createToolErrorResult(getErrorMessage(error));
-      }
-    },
-  );
+function createUpsertSharedDocumentHandler(
+  context: GraphWorkflowToolServerContext,
+) {
+  return async (args: unknown) => {
+    const parsed = sharedDocumentSchema.safeParse(args);
+    if (!parsed.success) {
+      return createValidationErrorResult(parsed.error.message);
+    }
 
-  const upsertSharedDocumentTool = tool(
-    "upsert_shared_document",
-    "Register or update a shared document so that agents in later workflow iterations can discover and read it. Use this to pass architectural decisions, API contracts, or implementation notes forward to downstream execution contexts.",
-    sharedDocumentSchema.shape,
-    async (args) => {
-      const parsed = sharedDocumentSchema.safeParse(args);
-      if (!parsed.success) {
-        return createValidationErrorResult(parsed.error.message);
-      }
+    logger.info("graph-workflow.tool.upsert_shared_document", {
+      relativePath: parsed.data.relativePath,
+    });
 
-      logger.info("graph-workflow.tool.upsert_shared_document", {
-        relativePath: parsed.data.relativePath,
-      });
+    try {
+      await context.upsertSharedDocument(parsed.data);
+      return createTextResult(
+        `Shared document ${parsed.data.relativePath} is available to later workflow iterations.`,
+      );
+    } catch (error) {
+      return createToolErrorResult(getErrorMessage(error));
+    }
+  };
+}
 
-      try {
-        await context.upsertSharedDocument(parsed.data);
-        return createTextResult(
-          `Shared document ${parsed.data.relativePath} is available to later workflow iterations.`,
-        );
-      } catch (error) {
-        return createToolErrorResult(getErrorMessage(error));
-      }
-    },
-  );
+function createAddTaskHandler(context: GraphWorkflowToolServerContext) {
+  return async (args: unknown) => {
+    const parsed = addTaskSchema.safeParse(args);
+    if (!parsed.success) {
+      return createValidationErrorResult(parsed.error.message);
+    }
 
-  const addTaskTool = tool(
-    "add_task",
-    "Append a new task to the end of this execution context. Use this when you discover necessary work not covered by the existing task list.",
-    addTaskSchema.shape,
-    async (args) => {
-      const parsed = addTaskSchema.safeParse(args);
-      if (!parsed.success) {
-        return createValidationErrorResult(parsed.error.message);
-      }
+    logger.info("graph-workflow.tool.add_task", {
+      title: parsed.data.title,
+      slug: parsed.data.slug,
+    });
 
-      logger.info("graph-workflow.tool.add_task", {
+    try {
+      await context.addTask(parsed.data);
+      return createTextResult(
+        `Queued a new task at the end of execution context "${context.executionContextTitle}".`,
+      );
+    } catch (error) {
+      logger.warn("graph-workflow.tool.add_task.error", {
         title: parsed.data.title,
-        slug: parsed.data.slug,
+        error: getErrorMessage(error),
       });
+      return createToolErrorResult(getErrorMessage(error));
+    }
+  };
+}
 
-      try {
-        await context.addTask(parsed.data);
-        return createTextResult(
-          `Queued a new task at the end of execution context "${context.executionContextTitle}".`,
-        );
-      } catch (error) {
-        logger.warn("graph-workflow.tool.add_task.error", {
-          title: parsed.data.title,
-          error: getErrorMessage(error),
-        });
-        return createToolErrorResult(getErrorMessage(error));
-      }
+export function registerGraphWorkflowExecutionTools(
+  server: McpServer,
+  context: GraphWorkflowToolServerContext,
+): void {
+  server.registerTool(
+    "complete_task",
+    {
+      description: COMPLETE_TASK_DESCRIPTION,
+      inputSchema: completeTaskSchema.shape,
     },
+    createCompleteTaskHandler(context),
   );
 
-  return createSdkMcpServer({
-    name: "graph-workflow",
-    version: "1.0.0",
-    tools: context.allowAgentTaskAdd
-      ? [completeTaskTool, upsertSharedDocumentTool, addTaskTool]
-      : [completeTaskTool, upsertSharedDocumentTool],
-  });
+  server.registerTool(
+    "upsert_shared_document",
+    {
+      description: UPSERT_SHARED_DOCUMENT_DESCRIPTION,
+      inputSchema: sharedDocumentSchema.shape,
+    },
+    createUpsertSharedDocumentHandler(context),
+  );
+
+  if (!context.allowAgentTaskAdd) {
+    return;
+  }
+
+  server.registerTool(
+    "add_task",
+    {
+      description: ADD_TASK_DESCRIPTION,
+      inputSchema: addTaskSchema.shape,
+    },
+    createAddTaskHandler(context),
+  );
 }

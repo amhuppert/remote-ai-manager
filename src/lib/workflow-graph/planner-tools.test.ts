@@ -1,72 +1,42 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig, WorkflowDefinitionRecord } from "@/types";
-import type { PlannerToolDeps } from "./planner-tools";
+import { registerPlannerTools, type PlannerToolDeps } from "./planner-tools";
 
 const TOOLS_KEY = "__test_planner_tools";
+type ToolHandler = (args: unknown) => Promise<unknown>;
 
 function getCapturedTools(): Map<
   string,
-  { name: string; handler: (args: unknown) => Promise<unknown> }
+  { name: string; handler: ToolHandler }
 > {
-  const globalState = globalThis as unknown as Record<string, unknown>;
+  const globalState = globalThis as Record<string, unknown>;
   if (!globalState[TOOLS_KEY]) {
     globalState[TOOLS_KEY] = new Map();
   }
 
   return globalState[TOOLS_KEY] as Map<
     string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
+    { name: string; handler: ToolHandler }
   >;
 }
 
-vi.mock("@anthropic-ai/claude-agent-sdk", () => {
-  const toolsKey = "__test_planner_tools";
-
-  function getTools(): Map<
-    string,
-    { name: string; handler: (args: unknown) => Promise<unknown> }
-  > {
-    const globalState = globalThis as unknown as Record<string, unknown>;
-    if (!globalState[toolsKey]) {
-      globalState[toolsKey] = new Map();
-    }
-
-    return globalState[toolsKey] as Map<
-      string,
-      { name: string; handler: (args: unknown) => Promise<unknown> }
-    >;
-  }
-
+function createCapturingServer() {
   return {
-    createSdkMcpServer: vi.fn(
-      (config: {
-        tools: Array<{
-          name: string;
-          handler: (args: unknown) => Promise<unknown>;
-        }>;
-      }) => {
-        const tools = getTools();
-        for (const tool of config.tools) {
-          tools.set(tool.name, tool);
-        }
-        return { __mock: true, tools: config.tools };
-      },
-    ),
-    tool: vi.fn(
-      (
-        name: string,
-        _description: string,
-        _schema: unknown,
-        handler: (args: unknown) => Promise<unknown>,
-      ) => ({
-        name,
-        handler,
-      }),
-    ),
+    registerTool(name: string, _config: unknown, handler: ToolHandler): void {
+      getCapturedTools().set(name, { name, handler });
+    },
   };
-});
+}
 
-function getHandler(name: string): (args: unknown) => Promise<unknown> {
+function registerTools(deps: PlannerToolDeps): void {
+  registerPlannerTools(
+    createCapturingServer() as never,
+    { projectPath: "/test", sessionName: "test-session" },
+    deps,
+  );
+}
+
+function getHandler(name: string): ToolHandler {
   const tool = getCapturedTools().get(name);
   if (!tool) {
     throw new Error(`Tool ${name} not found`);
@@ -154,13 +124,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("registers all six planner tools", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     expect(getCapturedTools().has("create_graph_workflow")).toBe(true);
     expect(getCapturedTools().has("replace_graph_workflow")).toBe(true);
@@ -171,13 +137,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("create_graph_workflow inflates slug-based input into internal definition and persists", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const result = (await getHandler("create_graph_workflow")(
       MINIMAL_INPUT,
@@ -216,13 +178,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("create_graph_workflow applies sensible defaults for omitted config", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     await getHandler("create_graph_workflow")(MINIMAL_INPUT);
 
@@ -250,13 +208,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("create_graph_workflow inflates edge slugs to internal contextIds", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     await getHandler("create_graph_workflow")({
       ...MINIMAL_INPUT,
@@ -288,13 +242,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("replace_graph_workflow calls updateWorkflow with full replacement", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const result = (await getHandler("replace_graph_workflow")({
       workflowId: "wf-test-1",
@@ -314,7 +264,6 @@ describe("graph workflow planner tools", () => {
   });
 
   it("list_graph_workflows returns formatted summaries", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps({
       listWorkflows: vi.fn(async () => [
         {
@@ -328,10 +277,7 @@ describe("graph workflow planner tools", () => {
       ]),
     });
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const result = (await getHandler("list_graph_workflows")({})) as {
       content: Array<{ text: string }>;
@@ -343,13 +289,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("list_graph_workflows returns message when empty", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const result = (await getHandler("list_graph_workflows")({})) as {
       content: Array<{ text: string }>;
@@ -359,7 +301,6 @@ describe("graph workflow planner tools", () => {
   });
 
   it("get_graph_workflow returns full definition", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const record: WorkflowDefinitionRecord = {
       id: "wf-1",
       name: "Test",
@@ -384,10 +325,7 @@ describe("graph workflow planner tools", () => {
       getWorkflow: vi.fn(async () => record),
     });
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const result = (await getHandler("get_graph_workflow")({
       workflowId: "wf-1",
@@ -399,13 +337,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("get_graph_workflow returns error for missing workflow", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const result = (await getHandler("get_graph_workflow")({
       workflowId: "nonexistent",
@@ -415,13 +349,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("delete_graph_workflow calls deps and confirms", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const result = (await getHandler("delete_graph_workflow")({
       workflowId: "wf-1",
@@ -433,13 +363,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("get_graph_workflow_status returns no-execution message when idle", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const result = (await getHandler("get_graph_workflow_status")({})) as {
       content: Array<{ text: string }>;
@@ -449,13 +375,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("create_graph_workflow returns validation error for invalid input", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     const result = (await getHandler("create_graph_workflow")({
       name: "",
@@ -465,13 +387,9 @@ describe("graph workflow planner tools", () => {
   });
 
   it("create_graph_workflow inflates codex task validator when type is 'codex'", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps();
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     await getHandler("create_graph_workflow")({
       ...MINIMAL_INPUT,
@@ -515,7 +433,6 @@ describe("graph workflow planner tools", () => {
   });
 
   it("create_graph_workflow uses workflowDefaults from config for validator type", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps({
       readConfig: vi.fn(async () => ({
         ...MOCK_CONFIG,
@@ -526,10 +443,7 @@ describe("graph workflow planner tools", () => {
       })),
     });
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     await getHandler("create_graph_workflow")({
       ...MINIMAL_INPUT,
@@ -560,7 +474,6 @@ describe("graph workflow planner tools", () => {
   });
 
   it("codex validator defaults flow model and effort into definition", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps({
       readConfig: vi.fn(async () => ({
         ...MOCK_CONFIG,
@@ -574,10 +487,7 @@ describe("graph workflow planner tools", () => {
       })),
     });
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     await getHandler("create_graph_workflow")({
       ...MINIMAL_INPUT,
@@ -611,7 +521,6 @@ describe("graph workflow planner tools", () => {
   });
 
   it("explicit per-context type overrides workflowDefaults", async () => {
-    const { createPlannerToolServer } = await import("./planner-tools");
     const deps = createMockDeps({
       readConfig: vi.fn(async () => ({
         ...MOCK_CONFIG,
@@ -621,10 +530,7 @@ describe("graph workflow planner tools", () => {
       })),
     });
 
-    createPlannerToolServer(
-      { projectPath: "/test", sessionName: "test-session" },
-      deps,
-    );
+    registerTools(deps);
 
     await getHandler("create_graph_workflow")({
       ...MINIMAL_INPUT,

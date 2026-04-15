@@ -1,5 +1,4 @@
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   createReferenceDocument as createReferenceDocumentDefault,
@@ -54,187 +53,211 @@ export const defaultReferenceDocumentToolDeps: ReferenceDocumentToolDeps = {
   deleteFile: defaultDeleteFile,
 };
 
-export function createReferenceDocumentToolServer(
+const registerDocumentInputSchema = {
+  file_path: z
+    .string()
+    .min(1)
+    .describe("Path to the file to register as a reference document"),
+  description: z
+    .string()
+    .min(1)
+    .describe("Describes when and why agents should read this document"),
+};
+
+const deleteDocumentInputSchema = {
+  document_id: z
+    .string()
+    .min(1)
+    .describe("ID of the reference document to delete"),
+};
+
+function createRegisterDocumentHandler(
+  context: ReferenceDocumentToolContext,
+  deps: ReferenceDocumentToolDeps,
+) {
+  return async (args: { file_path: string; description: string }) => {
+    try {
+      const doc = await deps.createReferenceDocument(
+        context.projectPath,
+        context.sessionName,
+        args.file_path,
+        args.description,
+      );
+
+      logger.info("tool.register_document", {
+        docId: doc.id,
+        filePath: doc.filePath,
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Reference document registered: ${doc.filePath}`,
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("tool.register_document.error", {
+        error: getErrorMessage(error),
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to register document: ${getErrorMessage(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  };
+}
+
+function createListDocumentsHandler(
+  context: ReferenceDocumentToolContext,
+  deps: ReferenceDocumentToolDeps,
+) {
+  return async () => {
+    try {
+      const docs = await deps.getReferenceDocuments(
+        context.projectPath,
+        context.sessionName,
+      );
+
+      if (docs.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "No reference documents registered for this session.",
+            },
+          ],
+        };
+      }
+
+      const lines = [
+        `Reference documents (${docs.length}):`,
+        ...docs.map(
+          (d) => `- **${d.filePath}** (ID: ${d.id}): ${d.description}`,
+        ),
+      ];
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: lines.join("\n"),
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("tool.list_documents.error", {
+        error: getErrorMessage(error),
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to list documents: ${getErrorMessage(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  };
+}
+
+function createDeleteDocumentHandler(
+  context: ReferenceDocumentToolContext,
+  deps: ReferenceDocumentToolDeps,
+) {
+  return async (args: { document_id: string }) => {
+    try {
+      const removed = await deps.deleteReferenceDocument(
+        context.projectPath,
+        context.sessionName,
+        args.document_id,
+      );
+
+      if (!removed) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Document "${args.document_id}" not found.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const resolvedPath = path.isAbsolute(removed.filePath)
+        ? removed.filePath
+        : path.join(context.worktreePath, removed.filePath);
+      await deps.deleteFile(resolvedPath);
+
+      logger.info("tool.delete_document", {
+        docId: removed.id,
+        filePath: removed.filePath,
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Reference document ${removed.id} deleted (${removed.filePath}).`,
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("tool.delete_document.error", {
+        error: getErrorMessage(error),
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to delete document: ${getErrorMessage(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  };
+}
+
+export function registerReferenceDocumentTools(
+  server: McpServer,
   context: ReferenceDocumentToolContext,
   deps: ReferenceDocumentToolDeps = defaultReferenceDocumentToolDeps,
-): McpSdkServerConfigWithInstance {
-  const { projectPath, sessionName, worktreePath } = context;
-
-  return createSdkMcpServer({
-    name: "reference-document-tools",
-    version: "1.0.0",
-    tools: [
-      tool(
-        "register_document",
+): void {
+  server.registerTool(
+    "register_document",
+    {
+      description:
         "Register a file as a reference document for this session. Other conversations will see it in their system prompt. If the file path is already registered, updates the description.",
-        {
-          file_path: z
-            .string()
-            .min(1)
-            .describe("Path to the file to register as a reference document"),
-          description: z
-            .string()
-            .min(1)
-            .describe(
-              "Describes when and why agents should read this document",
-            ),
-        },
-        async (args) => {
-          try {
-            const doc = await deps.createReferenceDocument(
-              projectPath,
-              sessionName,
-              args.file_path,
-              args.description,
-            );
+      inputSchema: registerDocumentInputSchema,
+    },
+    createRegisterDocumentHandler(context, deps),
+  );
 
-            logger.info("tool.register_document", {
-              docId: doc.id,
-              filePath: doc.filePath,
-            });
+  server.registerTool(
+    "list_documents",
+    {
+      description: "List all registered reference documents for this session.",
+      inputSchema: {},
+    },
+    createListDocumentsHandler(context, deps),
+  );
 
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Reference document registered: ${doc.filePath}`,
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error("tool.register_document.error", {
-              error: getErrorMessage(error),
-            });
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Failed to register document: ${getErrorMessage(error)}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-        },
-      ),
-
-      tool(
-        "list_documents",
-        "List all registered reference documents for this session.",
-        {},
-        async () => {
-          try {
-            const docs = await deps.getReferenceDocuments(
-              projectPath,
-              sessionName,
-            );
-
-            if (docs.length === 0) {
-              return {
-                content: [
-                  {
-                    type: "text" as const,
-                    text: "No reference documents registered for this session.",
-                  },
-                ],
-              };
-            }
-
-            const lines = [
-              `Reference documents (${docs.length}):`,
-              ...docs.map(
-                (d) => `- **${d.filePath}** (ID: ${d.id}): ${d.description}`,
-              ),
-            ];
-
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: lines.join("\n"),
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error("tool.list_documents.error", {
-              error: getErrorMessage(error),
-            });
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Failed to list documents: ${getErrorMessage(error)}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-        },
-      ),
-
-      tool(
-        "delete_document",
+  server.registerTool(
+    "delete_document",
+    {
+      description:
         "Delete a reference document by its ID. Removes the metadata and deletes the file from disk.",
-        {
-          document_id: z
-            .string()
-            .min(1)
-            .describe("ID of the reference document to delete"),
-        },
-        async (args) => {
-          try {
-            const removed = await deps.deleteReferenceDocument(
-              projectPath,
-              sessionName,
-              args.document_id,
-            );
-
-            if (!removed) {
-              return {
-                content: [
-                  {
-                    type: "text" as const,
-                    text: `Document "${args.document_id}" not found.`,
-                  },
-                ],
-                isError: true,
-              };
-            }
-
-            const resolvedPath = path.isAbsolute(removed.filePath)
-              ? removed.filePath
-              : path.join(worktreePath, removed.filePath);
-            await deps.deleteFile(resolvedPath);
-
-            logger.info("tool.delete_document", {
-              docId: removed.id,
-              filePath: removed.filePath,
-            });
-
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Reference document ${removed.id} deleted (${removed.filePath}).`,
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error("tool.delete_document.error", {
-              error: getErrorMessage(error),
-            });
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Failed to delete document: ${getErrorMessage(error)}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-        },
-      ),
-    ],
-  });
+      inputSchema: deleteDocumentInputSchema,
+    },
+    createDeleteDocumentHandler(context, deps),
+  );
 }

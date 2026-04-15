@@ -115,11 +115,6 @@ function createMockDeps(
     unregisterBackendRuntime: vi.fn(),
     buildChildEnv: vi.fn(() => ({ HOME: "/home/test" })),
     resolvePluginPaths: vi.fn(async () => []),
-    createNotificationToolServer: vi.fn(() => null),
-    createRoadmapToolServer: vi.fn(() => ({})),
-    createWiredPlannerToolServer: vi.fn(() => ({})),
-    createReferenceDocumentToolServer: vi.fn(() => ({})),
-    maybeCreateCodexToolServer: vi.fn(() => null),
     getCodexToolPromptHint: vi.fn(() => ""),
     mutateConversation: vi.fn(async () => {}),
     getSessionState: vi.fn(async () => null),
@@ -1302,8 +1297,7 @@ describe("executePromptForMachine", () => {
     expect(result.aborted).toBe(true);
   });
 
-  it("merges tooling overrides from runtime state into factory.createRuntime", async () => {
-    const mockToolServer = { name: "graph-workflow", tools: [] };
+  it("merges portable MCP tooling overrides from runtime state into factory.createRuntime", async () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
@@ -1312,7 +1306,17 @@ describe("executePromptForMachine", () => {
     );
     registerConversationRuntime(key, {
       abortController: new AbortController(),
-      tooling: { claudeSdkServers: { "graph-workflow": mockToolServer } },
+      tooling: {
+        portableMcp: {
+          servers: [
+            {
+              id: "cc-graph-workflow",
+              transport: "streamable-http",
+              url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-1",
+            },
+          ],
+        },
+      },
     });
 
     await executePromptForMachine(input);
@@ -1322,12 +1326,11 @@ describe("executePromptForMachine", () => {
       mockFactory.createRuntime.mock.calls as unknown[][]
     )[0]![0] as Record<string, unknown>;
     const tooling = createCall["tooling"] as {
-      claudeSdkServers?: Record<string, unknown>;
+      portableMcp?: { servers: Array<{ id: string }> };
     };
-    expect(tooling.claudeSdkServers?.["graph-workflow"]).toBe(mockToolServer);
-    // Standard servers should still be present
-    expect(tooling.claudeSdkServers?.["roadmap-tools"]).toBeDefined();
-    expect(tooling.claudeSdkServers?.["graph-workflow-planner"]).toBeDefined();
+    expect(tooling.portableMcp?.servers.map((server) => server.id)).toEqual(
+      expect.arrayContaining(["cc-session-tools", "cc-graph-workflow"]),
+    );
   });
 
   it("applies portable MCP config on a reused runtime before sendTurn", async () => {
@@ -1448,11 +1451,13 @@ describe("executePromptForMachine", () => {
       mockFactory.createRuntime.mock.calls as unknown[][]
     )[0]![0] as Record<string, unknown>;
     const tooling = createCall["tooling"] as {
-      claudeSdkServers?: Record<string, unknown>;
+      portableMcp?: { servers: Array<{ id: string }> };
     };
-    expect(tooling.claudeSdkServers?.["graph-workflow"]).toBeUndefined();
-    // Standard servers still present
-    expect(tooling.claudeSdkServers?.["roadmap-tools"]).toBeDefined();
+    expect(tooling.portableMcp?.servers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "cc-session-tools" }),
+      ]),
+    );
   });
 
   it("propagates structuredOutput from TurnResult to PromptActorResult", async () => {

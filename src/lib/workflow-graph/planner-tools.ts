@@ -1,5 +1,4 @@
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type {
@@ -23,7 +22,6 @@ import type {
 } from "@/types";
 import { getErrorMessage } from "@/lib/errors";
 import { generateWorkflowLayout } from "./layout";
-import { createWorkflowStorageService } from "./storage";
 import type {
   WorkflowDefinitionDraft,
   WorkflowDefinitionSummary,
@@ -487,253 +485,259 @@ Guidelines for planning:
 const REPLACE_DESCRIPTION =
   "Replace the entire definition of an existing workflow. Use this when revising a plan after user feedback — submit the complete updated graph, not a partial diff. The previous definition is fully overwritten.";
 
-export function createPlannerToolServer(
+const LIST_WORKFLOWS_DESCRIPTION =
+  "List all saved workflow definitions for this project. Returns each workflow's ID, name, description, and timestamps.";
+const GET_WORKFLOW_DESCRIPTION =
+  "Retrieve the full definition of a saved workflow, including all execution contexts, tasks, and edges. Use this to inspect an existing workflow before making changes with replace_graph_workflow.";
+const DELETE_WORKFLOW_DESCRIPTION =
+  "Permanently delete a saved workflow definition. This cannot be undone.";
+const GET_EXECUTION_STATUS_DESCRIPTION =
+  "Get the current graph workflow execution status for this session, if any. Returns the execution state including overall status, per-context progress, active task, and halt reason if applicable.";
+
+function createCreateWorkflowHandler(
   context: PlannerToolContext,
   deps: PlannerToolDeps,
-): McpSdkServerConfigWithInstance {
-  const createWorkflowTool = tool(
-    "create_graph_workflow",
-    CREATE_DESCRIPTION,
-    createWorkflowSchema.shape,
-    async (args) => {
-      const parsed = createWorkflowSchema.safeParse(args);
-      if (!parsed.success) {
-        return errorResult(
-          `Validation error: ${parsed.error.message}. Please correct the tool payload and retry.`,
-        );
-      }
+) {
+  return async (args: unknown) => {
+    const parsed = createWorkflowSchema.safeParse(args);
+    if (!parsed.success) {
+      return errorResult(
+        `Validation error: ${parsed.error.message}. Please correct the tool payload and retry.`,
+      );
+    }
 
-      try {
-        const config = await deps.readConfig();
-        const definition = inflateToSemanticDefinition(
-          parsed.data,
-          config.workflowDefaults,
-        );
-        const layout = generateWorkflowLayout(definition);
-        const record = await deps.createWorkflow(context.projectPath, {
+    try {
+      const config = await deps.readConfig();
+      const definition = inflateToSemanticDefinition(
+        parsed.data,
+        config.workflowDefaults,
+      );
+      const layout = generateWorkflowLayout(definition);
+      const record = await deps.createWorkflow(context.projectPath, {
+        name: parsed.data.name,
+        description: parsed.data.description ?? null,
+        definition,
+        layout,
+      });
+      return textResult(
+        `Workflow "${record.name}" created (id: ${record.id}). The user can review and edit it in the visual workflow builder before starting execution.`,
+      );
+    } catch (error) {
+      return errorResult(
+        `Failed to create workflow: ${getErrorMessage(error)}`,
+      );
+    }
+  };
+}
+
+function createReplaceWorkflowHandler(
+  context: PlannerToolContext,
+  deps: PlannerToolDeps,
+) {
+  return async (args: unknown) => {
+    const parsed = replaceWorkflowSchema.safeParse(args);
+    if (!parsed.success) {
+      return errorResult(
+        `Validation error: ${parsed.error.message}. Please correct the tool payload and retry.`,
+      );
+    }
+
+    try {
+      const config = await deps.readConfig();
+      const definition = inflateToSemanticDefinition(
+        parsed.data,
+        config.workflowDefaults,
+      );
+      const layout = generateWorkflowLayout(definition);
+      const record = await deps.updateWorkflow(
+        context.projectPath,
+        parsed.data.workflowId,
+        {
           name: parsed.data.name,
           description: parsed.data.description ?? null,
           definition,
           layout,
-        });
-        return textResult(
-          `Workflow "${record.name}" created (id: ${record.id}). The user can review and edit it in the visual workflow builder before starting execution.`,
-        );
-      } catch (error) {
-        return errorResult(
-          `Failed to create workflow: ${getErrorMessage(error)}`,
-        );
-      }
-    },
-  );
-
-  const replaceWorkflowTool = tool(
-    "replace_graph_workflow",
-    REPLACE_DESCRIPTION,
-    replaceWorkflowSchema.shape,
-    async (args) => {
-      const parsed = replaceWorkflowSchema.safeParse(args);
-      if (!parsed.success) {
-        return errorResult(
-          `Validation error: ${parsed.error.message}. Please correct the tool payload and retry.`,
-        );
-      }
-
-      try {
-        const config = await deps.readConfig();
-        const definition = inflateToSemanticDefinition(
-          parsed.data,
-          config.workflowDefaults,
-        );
-        const layout = generateWorkflowLayout(definition);
-        const record = await deps.updateWorkflow(
-          context.projectPath,
-          parsed.data.workflowId,
-          {
-            name: parsed.data.name,
-            description: parsed.data.description ?? null,
-            definition,
-            layout,
-          },
-        );
-        return textResult(
-          `Workflow "${record.name}" replaced (revision: ${record.revision}). The user can review the changes in the visual workflow builder.`,
-        );
-      } catch (error) {
-        return errorResult(
-          `Failed to replace workflow: ${getErrorMessage(error)}`,
-        );
-      }
-    },
-  );
-
-  const listWorkflowsTool = tool(
-    "list_graph_workflows",
-    "List all saved workflow definitions for this project. Returns each workflow's ID, name, description, and timestamps.",
-    {},
-    async () => {
-      try {
-        const summaries = await deps.listWorkflows(context.projectPath);
-        if (summaries.length === 0) {
-          return textResult("No workflow definitions found for this project.");
-        }
-        const lines = summaries.map(
-          (s) =>
-            `- ${s.name} (id: ${s.id}, revision: ${s.revision}, updated: ${s.updatedAt})${s.description ? `\n  ${s.description}` : ""}`,
-        );
-        return textResult(
-          `Found ${summaries.length} workflow definition(s):\n\n${lines.join("\n")}`,
-        );
-      } catch (error) {
-        return errorResult(
-          `Failed to list workflows: ${getErrorMessage(error)}`,
-        );
-      }
-    },
-  );
-
-  const getWorkflowTool = tool(
-    "get_graph_workflow",
-    "Retrieve the full definition of a saved workflow, including all execution contexts, tasks, and edges. Use this to inspect an existing workflow before making changes with replace_graph_workflow.",
-    workflowIdSchema.shape,
-    async (args) => {
-      const parsed = workflowIdSchema.safeParse(args);
-      if (!parsed.success) {
-        return errorResult(
-          `Validation error: ${parsed.error.message}. Please correct the tool payload and retry.`,
-        );
-      }
-
-      try {
-        const record = await deps.getWorkflow(
-          context.projectPath,
-          parsed.data.workflowId,
-        );
-        if (!record) {
-          return errorResult(`Workflow "${parsed.data.workflowId}" not found.`);
-        }
-        return textResult(JSON.stringify(record, null, 2));
-      } catch (error) {
-        return errorResult(`Failed to get workflow: ${getErrorMessage(error)}`);
-      }
-    },
-  );
-
-  const deleteWorkflowTool = tool(
-    "delete_graph_workflow",
-    "Permanently delete a saved workflow definition. This cannot be undone.",
-    workflowIdSchema.shape,
-    async (args) => {
-      const parsed = workflowIdSchema.safeParse(args);
-      if (!parsed.success) {
-        return errorResult(
-          `Validation error: ${parsed.error.message}. Please correct the tool payload and retry.`,
-        );
-      }
-
-      try {
-        const deleted = await deps.deleteWorkflow(
-          context.projectPath,
-          parsed.data.workflowId,
-        );
-        if (!deleted) {
-          return errorResult(`Workflow "${parsed.data.workflowId}" not found.`);
-        }
-        return textResult(`Workflow "${parsed.data.workflowId}" deleted.`);
-      } catch (error) {
-        return errorResult(
-          `Failed to delete workflow: ${getErrorMessage(error)}`,
-        );
-      }
-    },
-  );
-
-  const getExecutionStatusTool = tool(
-    "get_graph_workflow_status",
-    "Get the current graph workflow execution status for this session, if any. Returns the execution state including overall status, per-context progress, active task, and halt reason if applicable.",
-    {},
-    async () => {
-      try {
-        const execution = await deps.getActiveExecution(
-          context.projectPath,
-          context.sessionName,
-        );
-        if (!execution) {
-          return textResult(
-            "No active graph workflow execution in this session.",
-          );
-        }
-        return textResult(
-          JSON.stringify(
-            {
-              id: execution.id,
-              status: execution.status,
-              activeContextId: execution.activeContextId,
-              contextStates: execution.contextStates,
-              haltReason: execution.haltReason,
-              startedAt: execution.startedAt,
-              completedAt: execution.completedAt,
-            },
-            null,
-            2,
-          ),
-        );
-      } catch (error) {
-        return errorResult(
-          `Failed to get execution status: ${getErrorMessage(error)}`,
-        );
-      }
-    },
-  );
-
-  return createSdkMcpServer({
-    name: "graph-workflow-planner",
-    version: "1.0.0",
-    tools: [
-      createWorkflowTool,
-      replaceWorkflowTool,
-      listWorkflowsTool,
-      getWorkflowTool,
-      deleteWorkflowTool,
-      getExecutionStatusTool,
-    ],
-  });
+        },
+      );
+      return textResult(
+        `Workflow "${record.name}" replaced (revision: ${record.revision}). The user can review the changes in the visual workflow builder.`,
+      );
+    } catch (error) {
+      return errorResult(
+        `Failed to replace workflow: ${getErrorMessage(error)}`,
+      );
+    }
+  };
 }
 
-// ============================================================
-// Convenience factory for production wiring
-// ============================================================
-
-export interface CreateWiredPlannerToolServerDeps {
-  readConfig(): Promise<GlobalConfig>;
-  getSession(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<import("@/types").SessionState | null>;
-}
-
-/**
- * Creates a planner tool server with production storage and execution deps
- * wired from the functions already available in actor-implementations.
- */
-export function createWiredPlannerToolServer(
+function createListWorkflowsHandler(
   context: PlannerToolContext,
-  wireDeps: CreateWiredPlannerToolServerDeps,
-): McpSdkServerConfigWithInstance {
-  const storage = createWorkflowStorageService({
-    readConfig: wireDeps.readConfig,
-  });
+  deps: PlannerToolDeps,
+) {
+  return async () => {
+    try {
+      const summaries = await deps.listWorkflows(context.projectPath);
+      if (summaries.length === 0) {
+        return textResult("No workflow definitions found for this project.");
+      }
+      const lines = summaries.map(
+        (summary) =>
+          `- ${summary.name} (id: ${summary.id}, revision: ${summary.revision}, updated: ${summary.updatedAt})${summary.description ? `\n  ${summary.description}` : ""}`,
+      );
+      return textResult(
+        `Found ${summaries.length} workflow definition(s):\n\n${lines.join("\n")}`,
+      );
+    } catch (error) {
+      return errorResult(`Failed to list workflows: ${getErrorMessage(error)}`);
+    }
+  };
+}
 
-  return createPlannerToolServer(context, {
-    readConfig: wireDeps.readConfig,
-    listWorkflows: storage.list,
-    getWorkflow: storage.get,
-    createWorkflow: storage.create,
-    updateWorkflow: storage.update,
-    deleteWorkflow: storage.delete,
-    getActiveExecution: async (projectPath, sessionName) => {
-      const session = await wireDeps.getSession(projectPath, sessionName);
-      return session?.graphWorkflowExecution ?? null;
+function createGetWorkflowHandler(
+  context: PlannerToolContext,
+  deps: PlannerToolDeps,
+) {
+  return async (args: unknown) => {
+    const parsed = workflowIdSchema.safeParse(args);
+    if (!parsed.success) {
+      return errorResult(
+        `Validation error: ${parsed.error.message}. Please correct the tool payload and retry.`,
+      );
+    }
+
+    try {
+      const record = await deps.getWorkflow(
+        context.projectPath,
+        parsed.data.workflowId,
+      );
+      if (!record) {
+        return errorResult(`Workflow "${parsed.data.workflowId}" not found.`);
+      }
+      return textResult(JSON.stringify(record, null, 2));
+    } catch (error) {
+      return errorResult(`Failed to get workflow: ${getErrorMessage(error)}`);
+    }
+  };
+}
+
+function createDeleteWorkflowHandler(
+  context: PlannerToolContext,
+  deps: PlannerToolDeps,
+) {
+  return async (args: unknown) => {
+    const parsed = workflowIdSchema.safeParse(args);
+    if (!parsed.success) {
+      return errorResult(
+        `Validation error: ${parsed.error.message}. Please correct the tool payload and retry.`,
+      );
+    }
+
+    try {
+      const deleted = await deps.deleteWorkflow(
+        context.projectPath,
+        parsed.data.workflowId,
+      );
+      if (!deleted) {
+        return errorResult(`Workflow "${parsed.data.workflowId}" not found.`);
+      }
+      return textResult(`Workflow "${parsed.data.workflowId}" deleted.`);
+    } catch (error) {
+      return errorResult(
+        `Failed to delete workflow: ${getErrorMessage(error)}`,
+      );
+    }
+  };
+}
+
+function createGetExecutionStatusHandler(
+  context: PlannerToolContext,
+  deps: PlannerToolDeps,
+) {
+  return async () => {
+    try {
+      const execution = await deps.getActiveExecution(
+        context.projectPath,
+        context.sessionName,
+      );
+      if (!execution) {
+        return textResult(
+          "No active graph workflow execution in this session.",
+        );
+      }
+      return textResult(
+        JSON.stringify(
+          {
+            id: execution.id,
+            status: execution.status,
+            activeContextId: execution.activeContextId,
+            contextStates: execution.contextStates,
+            haltReason: execution.haltReason,
+            startedAt: execution.startedAt,
+            completedAt: execution.completedAt,
+          },
+          null,
+          2,
+        ),
+      );
+    } catch (error) {
+      return errorResult(
+        `Failed to get execution status: ${getErrorMessage(error)}`,
+      );
+    }
+  };
+}
+
+export function registerPlannerTools(
+  server: McpServer,
+  context: PlannerToolContext,
+  deps: PlannerToolDeps,
+): void {
+  server.registerTool(
+    "create_graph_workflow",
+    {
+      description: CREATE_DESCRIPTION,
+      inputSchema: createWorkflowSchema.shape,
     },
-  });
+    createCreateWorkflowHandler(context, deps),
+  );
+  server.registerTool(
+    "replace_graph_workflow",
+    {
+      description: REPLACE_DESCRIPTION,
+      inputSchema: replaceWorkflowSchema.shape,
+    },
+    createReplaceWorkflowHandler(context, deps),
+  );
+  server.registerTool(
+    "list_graph_workflows",
+    {
+      description: LIST_WORKFLOWS_DESCRIPTION,
+      inputSchema: {},
+    },
+    createListWorkflowsHandler(context, deps),
+  );
+  server.registerTool(
+    "get_graph_workflow",
+    {
+      description: GET_WORKFLOW_DESCRIPTION,
+      inputSchema: workflowIdSchema.shape,
+    },
+    createGetWorkflowHandler(context, deps),
+  );
+  server.registerTool(
+    "delete_graph_workflow",
+    {
+      description: DELETE_WORKFLOW_DESCRIPTION,
+      inputSchema: workflowIdSchema.shape,
+    },
+    createDeleteWorkflowHandler(context, deps),
+  );
+  server.registerTool(
+    "get_graph_workflow_status",
+    {
+      description: GET_EXECUTION_STATUS_DESCRIPTION,
+      inputSchema: {},
+    },
+    createGetExecutionStatusHandler(context, deps),
+  );
 }

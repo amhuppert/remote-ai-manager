@@ -61,7 +61,15 @@ describe("graph workflow implementer runner", () => {
       contextId: "context-plan",
       model: "opus",
       reasoningEffort: "high",
-      toolServer: { id: "tool-server" },
+      toolServer: {
+        servers: [
+          {
+            id: "cc-graph-workflow",
+            transport: "streamable-http",
+            url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-plan",
+          },
+        ],
+      },
       emitStreamFrame,
     });
 
@@ -78,8 +86,14 @@ describe("graph workflow implementer runner", () => {
         backend: "claude",
         effort: "high",
         tooling: {
-          claudeSdkServers: {
-            "graph-workflow": { id: "tool-server" },
+          portableMcp: {
+            servers: [
+              {
+                id: "cc-graph-workflow",
+                transport: "streamable-http",
+                url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-plan",
+              },
+            ],
           },
         },
       }),
