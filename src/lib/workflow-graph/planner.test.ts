@@ -19,7 +19,11 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
                   id: "context-plan",
                   title: "Plan",
                   description: "Inspect the current implementation surface.",
-                  agent: { model: "opus", reasoningEffort: "high" },
+                  agent: {
+                    backend: "claude",
+                    model: "opus",
+                    reasoningEffort: "high",
+                  },
                   mutability: { allowAgentTaskAdd: true },
                   circuitBreaker: { consecutiveFailureThreshold: 3 },
                   iterationPolicy: { maxIterations: 3 },
@@ -28,7 +32,11 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
                   id: "context-implement",
                   title: "Implement",
                   description: "Apply the changes.",
-                  agent: { model: "sonnet", reasoningEffort: "medium" },
+                  agent: {
+                    backend: "claude",
+                    model: "sonnet",
+                    reasoningEffort: "medium",
+                  },
                   mutability: { allowAgentTaskAdd: false },
                   circuitBreaker: {},
                   iterationPolicy: { maxIterations: 4 },
@@ -108,7 +116,11 @@ describe("workflow graph planner", () => {
               id: "context-plan",
               title: "Plan",
               description: "Inspect the current implementation surface.",
-              agent: { model: "opus", reasoningEffort: "high" },
+              agent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "high",
+              },
               mutability: { allowAgentTaskAdd: true },
               circuitBreaker: {},
               iterationPolicy: {
@@ -120,7 +132,11 @@ describe("workflow graph planner", () => {
               id: "context-implement",
               title: "Implement",
               description: "Apply the changes.",
-              agent: { model: "sonnet", reasoningEffort: "medium" },
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
               mutability: { allowAgentTaskAdd: false },
               circuitBreaker: {},
               iterationPolicy: {
@@ -185,7 +201,11 @@ describe("workflow graph planner", () => {
             {
               id: "context-1",
               title: "Broken",
-              agent: { model: "opus", reasoningEffort: "high" },
+              agent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "high",
+              },
               mutability: { allowAgentTaskAdd: false },
               circuitBreaker: {},
               iterationPolicy: {

@@ -1,7 +1,7 @@
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
-  ClaudeModel,
+  AgentBackendId,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowSharedDocumentEntry,
@@ -69,8 +69,9 @@ export interface GraphWorkflowRunAgentIterationInput {
   conversationId: string;
   contextId: string;
   prompt: string;
-  model: ClaudeModel;
-  reasoningEffort: GraphWorkflowExecutionContextDefinition["agent"]["reasoningEffort"];
+  backend: AgentBackendId;
+  model: string;
+  reasoningEffort: string;
   toolServer: unknown;
   emitStreamFrame?(frame: GraphWorkflowStreamFrame): void;
 }
@@ -579,6 +580,7 @@ export function createGraphWorkflowIterationOrchestrator(
         executionId: seededExecution.id,
         conversationId: conversation.id,
         contextId: input.contextId,
+        backend: context.agent.backend,
         model: context.agent.model,
         reasoningEffort: context.agent.reasoningEffort,
         toolServer: toolServer.server,

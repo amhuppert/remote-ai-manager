@@ -14,6 +14,7 @@ import {
 } from "@/lib/schemas";
 import type {
   ClaudeModel,
+  CodexModel,
   EffortLevel,
   GlobalConfig,
   ValidatorType,
@@ -306,7 +307,7 @@ function buildValidatorConfig(
       enabled: true,
       codex: {
         ...(codexDefaults?.model !== undefined
-          ? { model: codexDefaults.model }
+          ? { model: codexDefaults.model as CodexModel }
           : {}),
         ...(codexDefaults?.reasoningEffort !== undefined
           ? { reasoningEffort: codexDefaults.reasoningEffort }
@@ -323,6 +324,7 @@ function buildValidatorConfig(
     type: "claude" as const,
     enabled: true,
     agent: {
+      backend: "claude" as const,
       model: claudeDefaults?.model ?? claudeFallback.model,
       reasoningEffort:
         claudeDefaults?.reasoningEffort ?? claudeFallback.reasoningEffort,
@@ -347,7 +349,11 @@ function inflateToSemanticDefinition(
       id: ctx.slug,
       title: ctx.title,
       description: ctx.instructions,
-      agent: { model: ctxModel, reasoningEffort: ctxEffort },
+      agent: {
+        backend: "claude" as const,
+        model: ctxModel,
+        reasoningEffort: ctxEffort,
+      },
       mutability: {
         allowAgentTaskAdd: ctx.mutabilityPolicy?.allowAgentTaskAdd ?? false,
       },

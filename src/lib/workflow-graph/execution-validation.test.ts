@@ -18,6 +18,7 @@ describe("graph workflow execution validation service", () => {
                   enabled: true,
                   continuity: { enabled: true },
                   agent: {
+                    backend: "claude",
                     model: "sonnet",
                     reasoningEffort: "medium",
                   },

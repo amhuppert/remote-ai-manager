@@ -25,7 +25,11 @@ function makeExecution(
 - Rate limiting on public endpoints
 
 > Note: The existing \`/api/health\` endpoint pattern should be followed for consistency.`,
-          agent: { model: "sonnet", reasoningEffort: "medium" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
           mutability: { allowAgentTaskAdd: true },
           circuitBreaker: {},
           iterationPolicy: {
@@ -35,7 +39,11 @@ function makeExecution(
           taskValidation: {
             type: "claude",
             enabled: true,
-            agent: { model: "sonnet", reasoningEffort: "medium" },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
             instructions: "Validate task output",
             continuity: { enabled: true },
           },
@@ -44,7 +52,11 @@ function makeExecution(
           id: "ctx-2",
           title: "Frontend Components",
           description: "Build React components for the user management UI.",
-          agent: { model: "sonnet", reasoningEffort: "medium" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -52,7 +64,7 @@ function makeExecution(
         {
           id: "ctx-3",
           title: "Database Migrations",
-          agent: { model: "haiku", reasoningEffort: "low" },
+          agent: { backend: "claude", model: "haiku", reasoningEffort: "low" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 2, continuity: { enabled: true } },

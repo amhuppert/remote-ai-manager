@@ -38,7 +38,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         {
           id: "ctx-1",
           title: "Plan",
-          agent: { model: "opus", reasoningEffort: "high" },
+          agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -68,7 +68,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         {
           id: "ctx-1",
           title: "Plan",
-          agent: { model: "opus", reasoningEffort: "high" },
+          agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {

@@ -22,7 +22,11 @@ function createSingleContextDefinition(
         id: "ctx-1",
         title: "Do work",
         description: "Single context",
-        agent: { model: "sonnet", reasoningEffort: "medium" },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations, continuity: { enabled: true } },

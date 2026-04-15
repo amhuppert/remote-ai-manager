@@ -28,7 +28,11 @@ function makeNode(
       context: {
         id,
         title,
-        agent: { model: "sonnet", reasoningEffort: "medium" },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

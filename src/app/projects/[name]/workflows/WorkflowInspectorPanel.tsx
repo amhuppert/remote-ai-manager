@@ -5,7 +5,12 @@ import ModelSelector, { type ModelId } from "@/components/ModelSelector";
 import ReasoningLevelSelector, {
   type EffortLevel,
 } from "@/components/ReasoningLevelSelector";
-import { getEffortLevelsForModel, clampEffortToModel } from "@/lib/schemas";
+import {
+  getEffortLevelsForModel,
+  clampEffortToModel,
+  getDefaultCodexModel,
+  getCodexReasoningLevelsForModel,
+} from "@/lib/schemas";
 import {
   addTaskToContext,
   moveTaskWithinContext,
@@ -15,7 +20,9 @@ import {
 } from "@/lib/workflow-graph/builder-draft";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import type {
+  AgentBackendId,
   CodexConfig,
+  CodexModel,
   CodexReasoningEffort,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
@@ -57,8 +64,19 @@ function countEnabledValidators(
 
 function createDefaultAgentConfig(
   model: ModelId = "sonnet",
+  backend: AgentBackendId = "claude",
+  codexCfg?: CodexConfig,
 ): GraphWorkflowExecutionContextDefinition["agent"] {
+  if (backend === "codex") {
+    return {
+      backend: "codex",
+      model: (codexCfg?.model ?? getDefaultCodexModel()) as CodexModel,
+      reasoningEffort: (codexCfg?.reasoningEffort ??
+        "high") as CodexReasoningEffort,
+    };
+  }
   return {
+    backend: "claude",
     model,
     reasoningEffort: "medium",
   };
@@ -179,32 +197,26 @@ function AgentConfigFields({
   );
 }
 
-const CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = [
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-];
-
-function ValidatorTypeSelector({
+function BackendTypeSelector({
+  label,
   value,
   onChange,
   codexEnabled,
   disabled = false,
 }: {
-  value: "claude" | "codex";
-  onChange: (type: "claude" | "codex") => void;
+  label: string;
+  value: AgentBackendId;
+  onChange: (type: AgentBackendId) => void;
   codexEnabled: boolean;
   disabled?: boolean;
 }): React.JSX.Element | null {
   if (!codexEnabled) return null;
   return (
     <div className="wb-inline-field">
-      <span className="wb-inline-field-label">Validator Type</span>
+      <span className="wb-inline-field-label">{label}</span>
       <select
         value={value}
-        onChange={(e) => onChange(e.target.value as "claude" | "codex")}
+        onChange={(e) => onChange(e.target.value as AgentBackendId)}
         disabled={disabled}
       >
         <option value="claude">Claude</option>
@@ -214,50 +226,51 @@ function ValidatorTypeSelector({
   );
 }
 
-function CodexValidatorFields({
+function CodexAgentFields({
   model,
   reasoningEffort,
+  defaultModel,
+  defaultReasoningEffort,
   onModelChange,
   onReasoningChange,
   disabled = false,
 }: {
   model?: string;
   reasoningEffort?: CodexReasoningEffort;
-  onModelChange: (model: string | undefined) => void;
-  onReasoningChange: (effort: CodexReasoningEffort | undefined) => void;
+  defaultModel: string;
+  defaultReasoningEffort: string;
+  onModelChange: (model: string) => void;
+  onReasoningChange: (effort: CodexReasoningEffort) => void;
   disabled?: boolean;
 }): React.JSX.Element {
+  const effectiveModel = model ?? defaultModel;
+  const effectiveEffort = reasoningEffort ?? defaultReasoningEffort;
+  const availableLevels = getCodexReasoningLevelsForModel(effectiveModel);
+  const effortSupported =
+    availableLevels !== null && availableLevels.length > 0;
+
   return (
     <>
       <div className="wb-inline-field">
         <span className="wb-inline-field-label">Model</span>
-        <input
-          type="text"
-          value={model ?? ""}
-          onChange={(e) => onModelChange(e.target.value.trim() || undefined)}
-          placeholder="Default from config"
+        <ModelSelector
+          value={effectiveModel}
+          onChange={(m) => onModelChange(m)}
           disabled={disabled}
+          backend="codex"
         />
       </div>
-      <div className="wb-inline-field">
-        <span className="wb-inline-field-label">Reasoning</span>
-        <select
-          value={reasoningEffort ?? ""}
-          onChange={(e) =>
-            onReasoningChange(
-              (e.target.value || undefined) as CodexReasoningEffort | undefined,
-            )
-          }
-          disabled={disabled}
-        >
-          <option value="">Default from config</option>
-          {CODEX_REASONING_EFFORTS.map((effort) => (
-            <option key={effort} value={effort}>
-              {effort}
-            </option>
-          ))}
-        </select>
-      </div>
+      {effortSupported && (
+        <div className="wb-inline-field">
+          <span className="wb-inline-field-label">Reasoning</span>
+          <ReasoningLevelSelector
+            value={effectiveEffort as EffortLevel}
+            onChange={(e) => onReasoningChange(e as CodexReasoningEffort)}
+            disabled={disabled}
+            availableLevels={availableLevels as EffortLevel[]}
+          />
+        </div>
+      )}
     </>
   );
 }
@@ -683,29 +696,91 @@ export default function WorkflowInspectorPanel({
             {renderSection(
               "implementation-agent",
               "Implementation Agent",
-              <AgentConfigFields
-                model={selectedContext.agent.model as ModelId}
-                reasoningEffort={
-                  selectedContext.agent.reasoningEffort as EffortLevel
-                }
-                onModelChange={(model) => {
-                  const clamped = clampEffortToModel(
-                    selectedContext.agent.reasoningEffort as EffortLevel,
-                    model,
-                  );
-                  applyContextUpdate({
-                    agent: { model, reasoningEffort: clamped ?? "medium" },
-                  });
-                }}
-                onReasoningChange={(effort) =>
-                  applyContextUpdate({
-                    agent: {
-                      ...selectedContext.agent,
-                      reasoningEffort: effort as EffortLevel,
-                    },
-                  })
-                }
-              />,
+              <>
+                <BackendTypeSelector
+                  label="Agent Type"
+                  value={selectedContext.agent.backend}
+                  onChange={(backend) => {
+                    applyContextUpdate({
+                      agent: createDefaultAgentConfig(
+                        defaultModel,
+                        backend,
+                        codexConfig,
+                      ),
+                    });
+                  }}
+                  codexEnabled={codexEnabled}
+                />
+                {selectedContext.agent.backend === "codex" ? (
+                  <CodexAgentFields
+                    model={selectedContext.agent.model}
+                    reasoningEffort={
+                      selectedContext.agent
+                        .reasoningEffort as CodexReasoningEffort
+                    }
+                    defaultModel={codexConfig?.model ?? getDefaultCodexModel()}
+                    defaultReasoningEffort={
+                      codexConfig?.reasoningEffort ?? "high"
+                    }
+                    onModelChange={(model) => {
+                      const codexModel = model as CodexModel;
+                      const levels =
+                        getCodexReasoningLevelsForModel(codexModel);
+                      const currentEffort = selectedContext.agent
+                        .reasoningEffort as CodexReasoningEffort;
+                      const validEffort: CodexReasoningEffort =
+                        levels && levels.includes(currentEffort)
+                          ? currentEffort
+                          : (levels?.[levels.length - 1] ?? "high");
+                      applyContextUpdate({
+                        agent: {
+                          backend: "codex" as const,
+                          model: codexModel,
+                          reasoningEffort: validEffort,
+                        },
+                      });
+                    }}
+                    onReasoningChange={(effort) =>
+                      applyContextUpdate({
+                        agent: {
+                          backend: "codex" as const,
+                          model: selectedContext.agent.model as CodexModel,
+                          reasoningEffort: effort,
+                        },
+                      })
+                    }
+                  />
+                ) : (
+                  <AgentConfigFields
+                    model={selectedContext.agent.model as ModelId}
+                    reasoningEffort={
+                      selectedContext.agent.reasoningEffort as EffortLevel
+                    }
+                    onModelChange={(model) => {
+                      const clamped = clampEffortToModel(
+                        selectedContext.agent.reasoningEffort as EffortLevel,
+                        model,
+                      );
+                      applyContextUpdate({
+                        agent: {
+                          backend: "claude" as const,
+                          model,
+                          reasoningEffort: clamped ?? "medium",
+                        },
+                      });
+                    }}
+                    onReasoningChange={(effort) =>
+                      applyContextUpdate({
+                        agent: {
+                          backend: "claude" as const,
+                          model: selectedContext.agent.model as ModelId,
+                          reasoningEffort: effort,
+                        },
+                      })
+                    }
+                  />
+                )}
+              </>,
             )}
 
             {renderSection(
@@ -784,7 +859,8 @@ export default function WorkflowInspectorPanel({
                   );
                 })()}
                 <div className="wb-subsection-label">Validator Agent</div>
-                <ValidatorTypeSelector
+                <BackendTypeSelector
+                  label="Validator Type"
                   value={taskValidation.type ?? "claude"}
                   onChange={(type) => {
                     const preserved = {
@@ -818,7 +894,7 @@ export default function WorkflowInspectorPanel({
                   disabled={!taskValidation.enabled}
                 />
                 {taskValidation.type === "codex" ? (
-                  <CodexValidatorFields
+                  <CodexAgentFields
                     model={
                       (taskValidation as { codex?: { model?: string } }).codex
                         ?.model
@@ -829,6 +905,10 @@ export default function WorkflowInspectorPanel({
                           codex?: { reasoningEffort?: CodexReasoningEffort };
                         }
                       ).codex?.reasoningEffort
+                    }
+                    defaultModel={codexConfig?.model ?? getDefaultCodexModel()}
+                    defaultReasoningEffort={
+                      codexConfig?.reasoningEffort ?? "high"
                     }
                     disabled={!taskValidation.enabled}
                     onModelChange={(model) =>
@@ -841,7 +921,7 @@ export default function WorkflowInspectorPanel({
                                 codex?: Record<string, unknown>;
                               }
                             ).codex,
-                            model,
+                            model: model as CodexModel,
                           },
                         },
                       })
@@ -882,6 +962,7 @@ export default function WorkflowInspectorPanel({
                         taskValidation: {
                           ...taskValidation,
                           agent: {
+                            backend: "claude" as const,
                             model,
                             reasoningEffort: clamped ?? "medium",
                           },
@@ -898,7 +979,8 @@ export default function WorkflowInspectorPanel({
                           ...taskValidation,
                           agent: {
                             ...tv.agent,
-                            reasoningEffort: effort as EffortLevel,
+                            backend: "claude" as const,
+                            reasoningEffort: effort,
                           },
                         },
                       });

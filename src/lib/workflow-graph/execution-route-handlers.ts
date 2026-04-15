@@ -181,7 +181,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       throw new Error("Session not found");
     }
 
-    const runner = getTaskRunner("claude");
+    const runner = getTaskRunner(input.backend ?? "claude");
     const resumeRef = agentBackendRefCache.get(input.conversationId) ?? null;
     const result = await runner.run({
       workingDirectory: session.worktreePath,
@@ -191,9 +191,10 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       autonomous: true,
       timeoutMs: 0,
       resumeRef,
-      tooling: {
-        claudeSdkServers: { "graph-workflow": input.toolServer },
-      },
+      tooling:
+        input.backend === "codex"
+          ? undefined
+          : { claudeSdkServers: { "graph-workflow": input.toolServer } },
     });
 
     if (result.backendRef) {

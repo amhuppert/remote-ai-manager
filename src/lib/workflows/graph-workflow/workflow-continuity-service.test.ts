@@ -25,7 +25,11 @@ function makeDefinition(
       {
         id: "ctx-1",
         title: "Plan",
-        agent: { model: "sonnet", reasoningEffort: "medium" },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
@@ -434,7 +438,7 @@ describe("resolveValidatorCall", () => {
       type: "claude",
       enabled: true,
       continuity: { enabled: false },
-      agent: { model: "sonnet", reasoningEffort: "medium" },
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
       instructions: "Validate.",
     };
 

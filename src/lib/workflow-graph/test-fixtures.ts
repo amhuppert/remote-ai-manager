@@ -18,6 +18,7 @@ export function createWorkflowDefinition(
         title: "Plan",
         description: "Plan the implementation",
         agent: {
+          backend: "claude",
           model: "opus",
           reasoningEffort: "high",
         },
@@ -35,6 +36,7 @@ export function createWorkflowDefinition(
         title: "Implement",
         description: "Implement the feature",
         agent: {
+          backend: "claude",
           model: "sonnet",
           reasoningEffort: "medium",
         },
@@ -52,6 +54,7 @@ export function createWorkflowDefinition(
         title: "Verify",
         description: "Verify the result",
         agent: {
+          backend: "claude",
           model: "opus",
           reasoningEffort: "medium",
         },

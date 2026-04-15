@@ -18,7 +18,7 @@ function makeContext(
     title: "API Integration",
     description:
       "Implement REST API endpoints for user management with authentication and validation.",
-    agent: { model: "sonnet", reasoningEffort: "medium" },
+    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

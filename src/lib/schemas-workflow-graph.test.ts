@@ -334,7 +334,7 @@ describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
     const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
       type: "codex",
       enabled: true,
-      codex: { model: "o3", reasoningEffort: "high" },
+      codex: { model: "gpt-5.4", reasoningEffort: "high" },
       instructions: "Validate with Codex.",
     });
     expect(result.success).toBe(true);
@@ -448,7 +448,7 @@ describe("workflowValidatorDefaultSchema", () => {
   it("parses a codex validator default with model and effort", () => {
     const result = workflowValidatorDefaultSchema.safeParse({
       type: "codex",
-      model: "o3",
+      model: "gpt-5.4",
       reasoningEffort: "high",
     });
     expect(result.success).toBe(true);
@@ -493,7 +493,7 @@ describe("workflowDefaultsSchema", () => {
     const result = workflowDefaultsSchema.safeParse({
       executionValidator: {
         type: "codex",
-        model: "o3",
+        model: "gpt-5.4",
         reasoningEffort: "high",
       },
       taskValidator: {
@@ -653,7 +653,7 @@ describe("globalConfigSchema workflowDefaults", () => {
       stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 3600000,
       workflowDefaults: {
-        executionValidator: { type: "codex", model: "o3" },
+        executionValidator: { type: "codex", model: "gpt-5.4" },
         taskValidator: {
           type: "claude",
           model: "sonnet",

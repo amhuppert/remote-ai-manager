@@ -153,7 +153,11 @@ describe("workflow-graph validation", () => {
                 type: "claude",
                 enabled: true,
                 continuity: { enabled: true },
-                agent: { model: "sonnet", reasoningEffort: "medium" },
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
                 instructions: "",
               },
             }
@@ -179,7 +183,11 @@ describe("workflow-graph validation", () => {
                 type: "claude",
                 enabled: false,
                 continuity: { enabled: true },
-                agent: { model: "sonnet", reasoningEffort: "medium" },
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
                 instructions: "",
               },
             }

@@ -567,7 +567,7 @@ describe("graph workflow planner tools", () => {
         workflowDefaults: {
           taskValidator: {
             type: "codex" as const,
-            model: "o3",
+            model: "gpt-5.4" as const,
             reasoningEffort: "high" as const,
           },
         },
@@ -606,7 +606,7 @@ describe("graph workflow planner tools", () => {
 
     const tv = draft.definition.executionContexts[0]!.taskValidation!;
     expect(tv.type).toBe("codex");
-    expect(tv.codex?.model).toBe("o3");
+    expect(tv.codex?.model).toBe("gpt-5.4");
     expect(tv.codex?.reasoningEffort).toBe("high");
   });
 

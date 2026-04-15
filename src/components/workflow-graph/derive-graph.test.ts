@@ -68,7 +68,11 @@ describe("deriveNodes", () => {
           id: "ctx-1",
           title: "My Context",
           description: "desc",
-          agent: { model: "sonnet", reasoningEffort: "medium" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -95,7 +99,11 @@ describe("deriveNodes", () => {
         {
           id: "ctx-1",
           title: "A",
-          agent: { model: "sonnet", reasoningEffort: "medium" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -103,7 +111,11 @@ describe("deriveNodes", () => {
         {
           id: "ctx-2",
           title: "B",
-          agent: { model: "sonnet", reasoningEffort: "medium" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -129,7 +141,11 @@ describe("deriveNodes", () => {
         {
           id: "ctx-1",
           title: "A",
-          agent: { model: "sonnet", reasoningEffort: "medium" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -182,7 +198,11 @@ describe("deriveNodes", () => {
         {
           id: "ctx-1",
           title: "A",
-          agent: { model: "sonnet", reasoningEffort: "medium" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

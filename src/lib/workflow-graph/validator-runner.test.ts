@@ -145,7 +145,7 @@ const validatorConfig: GraphWorkflowAgentValidatorConfig = {
   type: "claude",
   enabled: true,
   continuity: { enabled: true },
-  agent: { model: "sonnet", reasoningEffort: "medium" },
+  agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
   instructions: "Verify that all files have proper error handling.",
 };
 
@@ -153,7 +153,7 @@ const context: GraphWorkflowExecutionContextDefinition = {
   id: "context-implement",
   title: "Implement Feature",
   description: "Build the widget",
-  agent: { model: "sonnet", reasoningEffort: "medium" },
+  agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
   mutability: { allowAgentTaskAdd: false },
   circuitBreaker: {},
   iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
@@ -250,6 +250,7 @@ function buildExecutionWithTaskValidation(): GraphWorkflowExecution {
                 enabled: true,
                 continuity: { enabled: true },
                 agent: {
+                  backend: "claude" as const,
                   model: "sonnet" as const,
                   reasoningEffort: "medium" as const,
                 },
@@ -456,7 +457,7 @@ describe("createValidatorRunner", () => {
       type: "codex",
       enabled: true,
       continuity: { enabled: true },
-      codex: { model: "o3", reasoningEffort: "high" },
+      codex: { model: "gpt-5.4", reasoningEffort: "high" },
       instructions: "Check for correctness.",
     };
 
@@ -473,7 +474,7 @@ describe("createValidatorRunner", () => {
 
     expect(codexRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        modelId: "o3",
+        modelId: "gpt-5.4",
         reasoningEffort: "high",
         sandboxMode: "workspace-write",
         approvalPolicy: "never",
@@ -510,7 +511,7 @@ describe("continuity service wiring", () => {
       type: "claude",
       enabled: true,
       continuity: { enabled: true },
-      agent: { model: "sonnet", reasoningEffort: "medium" },
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
       instructions: "Validate.",
     };
 
@@ -858,7 +859,7 @@ describe("continuity runtime integration (real service)", () => {
       type: "claude",
       enabled: true,
       continuity: { enabled: true },
-      agent: { model: "sonnet", reasoningEffort: "medium" },
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
       instructions: "Validate.",
     };
     const repo = createInMemoryRepo(execution);

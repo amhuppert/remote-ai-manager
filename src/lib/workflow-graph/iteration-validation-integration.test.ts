@@ -52,6 +52,7 @@ describe("graph workflow iteration validation integration", () => {
                   enabled: true,
                   continuity: { enabled: true },
                   agent: {
+                    backend: "claude",
                     model: "sonnet",
                     reasoningEffort: "medium",
                   },

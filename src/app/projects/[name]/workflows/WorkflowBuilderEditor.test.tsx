@@ -152,7 +152,11 @@ describe("WorkflowBuilderEditor", () => {
         {
           id: "ctx-1",
           title: "",
-          agent: { model: "sonnet", reasoningEffort: "medium" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },

@@ -161,6 +161,7 @@ describe("WorkflowInspectorPanel — task validator continuity controls", () => 
                   type: "claude" as const,
                   enabled: true,
                   agent: {
+                    backend: "claude" as const,
                     model: "sonnet" as const,
                     reasoningEffort: "medium" as const,
                   },

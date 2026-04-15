@@ -96,6 +96,7 @@ export function addExecutionContext(
     title: `Execution Context ${contextNumber}`,
     description: "",
     agent: {
+      backend: "claude",
       model: options?.defaultModel ?? "sonnet",
       reasoningEffort: "medium",
     },

@@ -138,7 +138,7 @@ export const workflowValidatorDefaultClaudeSchema = z.object({
 
 export const workflowValidatorDefaultCodexSchema = z.object({
   type: z.literal("codex"),
-  model: z.string().trim().min(1).optional(),
+  model: z.string().optional(),
   reasoningEffort: codexReasoningEffortSchema.optional(),
 });
 
@@ -396,10 +396,30 @@ export type SessionCreationMode = z.infer<typeof sessionCreationModeSchema>;
 // (defined before sessionStateSchema so it can reference graphWorkflowExecutionSchema)
 // ============================================================
 
-export const graphWorkflowAgentConfigSchema = z.object({
+export const graphWorkflowClaudeAgentConfigSchema = z.object({
+  backend: z.literal("claude"),
   model: claudeModelSchema,
   reasoningEffort: effortLevelSchema,
 });
+
+export const graphWorkflowCodexAgentConfigSchema = z.object({
+  backend: z.literal("codex"),
+  model: codexModelSchema,
+  reasoningEffort: codexReasoningEffortSchema,
+});
+
+export const graphWorkflowAgentConfigSchema = z.preprocess(
+  (val) => {
+    if (typeof val === "object" && val !== null && !("backend" in val)) {
+      return { ...val, backend: "claude" };
+    }
+    return val;
+  },
+  z.discriminatedUnion("backend", [
+    graphWorkflowClaudeAgentConfigSchema,
+    graphWorkflowCodexAgentConfigSchema,
+  ]),
+);
 export type GraphWorkflowAgentConfig = z.infer<
   typeof graphWorkflowAgentConfigSchema
 >;
@@ -462,7 +482,7 @@ export const graphWorkflowCodexValidatorConfigSchema =
     type: z.literal("codex"),
     codex: z
       .object({
-        model: z.string().trim().min(1).optional(),
+        model: codexModelSchema.optional(),
         reasoningEffort: codexReasoningEffortSchema.optional(),
       })
       .default({}),

@@ -14,7 +14,7 @@ function makeContext(
     id: "context-plan",
     title: "Plan",
     description: "Plan the implementation",
-    agent: { model: "opus", reasoningEffort: "high" },
+    agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
     mutability: { allowAgentTaskAdd: true },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
