@@ -9,12 +9,15 @@ interface CopyableIdProps {
   label: string;
   /** Number of characters to show before truncating (default: 8) */
   truncateAt?: number;
+  /** Override the displayed text (copies `value`, shows `displayValue`) */
+  displayValue?: string;
 }
 
 export default function CopyableId({
   value,
   label,
   truncateAt = 8,
+  displayValue,
 }: CopyableIdProps) {
   const [copied, setCopied] = useState(false);
 
@@ -30,7 +33,8 @@ export default function CopyableId({
   );
 
   const display =
-    value.length > truncateAt ? `${value.slice(0, truncateAt)}\u2026` : value;
+    displayValue ??
+    (value.length > truncateAt ? `${value.slice(0, truncateAt)}\u2026` : value);
 
   return (
     <div

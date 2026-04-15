@@ -3388,7 +3388,7 @@ textarea {
   min-height: 500px;
 }
 
-/* Session info strip — ultra-compact */
+/* Session info strip — mission readout */
 .session-info-strip {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
@@ -3408,20 +3408,21 @@ textarea {
   display: flex;
   align-items: center;
   gap: var(--space-lg);
-  padding: 5px var(--space-md);
+  padding: 6px var(--space-md);
 }
 
 .session-info-strip .si-item {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .session-info-strip .si-label {
   color: var(--text-tertiary);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   font-size: 0.7rem;
 }
 
@@ -3429,11 +3430,114 @@ textarea {
   color: var(--text-secondary);
 }
 
-.session-info-strip .si-sep {
-  width: 1px;
-  height: 12px;
-  background: var(--border-subtle);
+/* Bright value variant — draws the eye to important data */
+.session-info-strip .si-val--bright {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Backend badge sits inline in the strip */
+.session-info-strip .cc-badge {
   flex-shrink: 0;
+}
+
+/* Info details trigger + popover */
+.info-details-trigger {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.si-info-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.si-info-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  background: var(--bg-hover);
+}
+
+.info-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 340px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: fadeIn 0.12s ease;
+  font-family: var(--font-mono);
+}
+
+.info-popover-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-xs);
+  border-radius: var(--radius-sm);
+}
+
+.info-popover-row:hover {
+  background: var(--bg-hover);
+}
+
+.info-popover-label {
+  color: var(--text-tertiary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  flex-shrink: 0;
+  min-width: 110px;
+}
+
+.info-popover-val {
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  word-break: break-all;
+  flex: 1;
+  min-width: 0;
+}
+
+.info-popover-copy {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.info-popover-copy:hover {
+  color: var(--cyan);
+  background: var(--bg-elevated);
 }
 
 /* Copyable ID — clickable metadata value with copy-to-clipboard */
@@ -6970,9 +7074,8 @@ textarea {
     grid-template-columns: 1fr;
   }
 
-  .session-info-strip {
-    flex-wrap: wrap;
-    gap: var(--space-xs) var(--space-md);
+  .session-info-strip .si-details {
+    gap: var(--space-md);
   }
 
   .topbar-status-session {

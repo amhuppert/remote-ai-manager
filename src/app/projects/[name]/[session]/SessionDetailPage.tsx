@@ -114,6 +114,7 @@ import ImageAttachmentPreview from "./ImageAttachmentPreview";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import type { ImagePayload } from "@/types";
 import CopyableId from "@/components/CopyableId";
+import InfoDetailsPopover from "./InfoDetailsPopover";
 import { KiroCommandProvider } from "@/components/KiroCommandContext";
 import MobileActionMenu from "@/components/MobileActionMenu";
 import DevServerDrawer from "@/components/DevServerDrawer";
@@ -164,6 +165,14 @@ function formatDate(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/** Extract directory name after `.worktrees/` for compact display. */
+function shortenWorktreePath(fullPath: string): string {
+  const marker = ".worktrees/";
+  const idx = fullPath.indexOf(marker);
+  if (idx === -1) return fullPath;
+  return fullPath.slice(idx + marker.length);
 }
 
 export default function SessionDetailPage({
@@ -1239,49 +1248,47 @@ export default function SessionDetailPage({
               </span>
             </div>
             <div className="si-details">
+              {/* Branch — primary identifier */}
               <CopyableId
                 label="Branch"
                 value={session.branchName}
                 truncateAt={999}
               />
-              <div className="si-sep" />
-              <div className="si-item">
-                <span className="si-label">Created</span>
-                <span className="si-val">{formatDate(session.createdAt)}</span>
-              </div>
-              <div className="si-sep" />
-              <div className="si-item">
-                <span className="si-label">Prompts</span>
-                <span className="si-val">
-                  {deriveSessionPromptCount(session)}
-                </span>
-              </div>
-              <div className="si-sep" />
-              <CopyableId
-                label="Worktree"
-                value={session.worktreePath}
-                truncateAt={999}
-              />
-              <div className="si-sep" />
-              <CopyableId label="Conv ID" value={conversationId} />
+              {/* Backend badge */}
               {(() => {
                 const conv = session.conversations.find(
                   (c) => c.id === conversationId,
                 );
                 if (!conv) return null;
                 return (
-                  <>
-                    <div className="si-sep" />
-                    <CopyableId label="Backend" value={conv.agentBackend} />
-                    <div className="si-sep" />
-                    <CopyableId
-                      label="Session Ref"
-                      value={JSON.stringify(conv.backendRef)}
-                    />
-                  </>
+                  <span
+                    className="cc-badge cc-badge--status"
+                    data-status={
+                      conv.agentBackend === "claude" ? "active" : "awaiting"
+                    }
+                  >
+                    {conv.agentBackend}
+                  </span>
                 );
               })()}
-              <div className="si-sep" />
+              {/* Prompt count */}
+              <div className="si-item">
+                <span className="si-label">Prompts</span>
+                <span className="si-val si-val--bright">
+                  {deriveSessionPromptCount(session)}
+                </span>
+              </div>
+              {/* Worktree — shortened, click copies full path */}
+              <CopyableId
+                label="Worktree"
+                value={session.worktreePath}
+                displayValue={shortenWorktreePath(session.worktreePath)}
+              />
+              {/* Context fill indicator */}
+              {contextPercent != null && (
+                <ContextFillIndicator percentage={contextPercent} />
+              )}
+              {/* Copy context button */}
               <button
                 className="si-copy-context-btn"
                 onClick={handleCopyContext}
@@ -1291,12 +1298,16 @@ export default function SessionDetailPage({
               >
                 {contextCopied ? "\u2713" : "\u2398"} Context
               </button>
-              {contextPercent != null && (
-                <>
-                  <div className="si-sep" />
-                  <ContextFillIndicator percentage={contextPercent} />
-                </>
-              )}
+              {/* Details popover — Conv ID, Session Ref, Created, full Worktree */}
+              <InfoDetailsPopover
+                conversationId={conversationId}
+                backendRef={
+                  session.conversations.find((c) => c.id === conversationId)
+                    ?.backendRef ?? null
+                }
+                createdAt={session.createdAt}
+                worktreePath={session.worktreePath}
+              />
             </div>
           </div>
 
@@ -1851,6 +1862,13 @@ export default function SessionDetailPage({
                     (c) => c.id === conversationId,
                   );
                   if (!conv) return null;
+                  const refDisplay = conv.backendRef
+                    ? conv.backendRef.backend === "claude"
+                      ? conv.backendRef.sessionId
+                      : conv.backendRef.backend === "codex"
+                        ? conv.backendRef.threadId
+                        : "\u2014"
+                    : "\u2014";
                   return (
                     <>
                       <MobileInfoCopyRow
@@ -1859,7 +1877,7 @@ export default function SessionDetailPage({
                       />
                       <MobileInfoCopyRow
                         label="Session Ref"
-                        value={JSON.stringify(conv.backendRef)}
+                        value={refDisplay}
                       />
                     </>
                   );
