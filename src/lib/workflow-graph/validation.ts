@@ -36,9 +36,7 @@ function isRuntimeEditTaskLocked(
   taskId: string,
 ): boolean {
   const status = execution.taskStates[taskId]?.status;
-  return (
-    status === "completed" || status === "running" || status === "interrupted"
-  );
+  return status === "completed" || status === "running";
 }
 
 export function validateWorkflowDefinition(
@@ -260,10 +258,7 @@ export function validateWorkflowRuntimeEdit(
         });
         return;
       }
-      if (
-        contextState?.status === "completed" ||
-        contextState?.status === "halted"
-      ) {
+      if (contextState?.status === "completed") {
         errors.push({
           code: "runtime-edit-context-locked",
           message: `Context "${operation.contextId}" cannot be edited in status "${contextState.status}"`,
@@ -285,10 +280,7 @@ export function validateWorkflowRuntimeEdit(
         });
         return;
       }
-      if (
-        contextState?.status === "completed" ||
-        contextState?.status === "halted"
-      ) {
+      if (contextState?.status === "completed") {
         errors.push({
           code: "runtime-edit-context-locked",
           message: `Context "${operation.contextId}" cannot be reordered in status "${contextState.status}"`,
@@ -361,8 +353,7 @@ export function validateWorkflowRuntimeEdit(
 
     if (
       destinationState?.status === "running" ||
-      destinationState?.status === "completed" ||
-      destinationState?.status === "halted"
+      destinationState?.status === "completed"
     ) {
       errors.push({
         code: "runtime-edit-target-context-locked",

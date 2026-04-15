@@ -148,6 +148,17 @@ function getTaskStatusDotClass(status?: string): string {
   }
 }
 
+function isTaskEditable(
+  executionStatus: GraphWorkflowExecution["status"],
+  taskStatus?: GraphWorkflowExecution["taskStates"][string]["status"],
+): boolean {
+  if (executionStatus === "completed") {
+    return false;
+  }
+
+  return taskStatus !== "completed" && taskStatus !== "running";
+}
+
 function countEnabledValidators(execution: GraphWorkflowExecution): number {
   return execution.workingDefinition.executionContexts.reduce(
     (count, ctx) =>
@@ -566,12 +577,24 @@ function DetailView({
   }
 
   function handleSwapTask(index: number, direction: "up" | "down") {
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-    const reordered = [...tasks];
-    const curr = reordered[index];
+    const editableTasks = tasks.filter((task) =>
+      isTaskEditable(execution.status, execution.taskStates[task.id]?.status),
+    );
+    const currentTask = tasks[index];
+    if (!currentTask) {
+      return;
+    }
+
+    const editableIndex = editableTasks.findIndex(
+      (task) => task.id === currentTask.id,
+    );
+    const targetIndex =
+      direction === "up" ? editableIndex - 1 : editableIndex + 1;
+    const reordered = [...editableTasks];
+    const curr = reordered[editableIndex];
     const target = reordered[targetIndex];
     if (curr && target) {
-      reordered[index] = target;
+      reordered[editableIndex] = target;
       reordered[targetIndex] = curr;
       onReorderTask(
         contextId,
@@ -646,7 +669,10 @@ function DetailView({
                 {tasks.map((task, index) => {
                   const taskState = execution.taskStates[task.id];
                   const isExpanded = expandedTaskId === task.id;
-                  const isEditable = taskState?.status !== "completed";
+                  const isEditable = isTaskEditable(
+                    execution.status,
+                    taskState?.status,
+                  );
                   const hasConversation = !!taskState?.lastConversationId;
                   const isRunning = taskState?.status === "running";
                   const isViewing = viewingTaskId === task.id;

@@ -137,7 +137,8 @@ function respondToRuntimeEditError(error: unknown): Response {
   }
 
   if (
-    message === "User runtime edits are allowed only while execution is running"
+    message ===
+    "User runtime edits are allowed only while execution is running, paused, halted, or aborted"
   ) {
     return NextResponse.json({ error: message } satisfies ApiError, {
       status: 409,

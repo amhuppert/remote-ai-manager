@@ -654,3 +654,131 @@ describe("ExecutionInspectorPanel — shared implementer session task history", 
     expect(onViewTask).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("ExecutionInspectorPanel — task editability", () => {
+  it("does not show edit controls for a running task", () => {
+    const baseExecution = createWorkflowExecution();
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextId: "context-plan",
+      taskStates: {
+        ...baseExecution.taskStates,
+        "task-plan-1": {
+          ...baseExecution.taskStates["task-plan-1"]!,
+          status: "running",
+        },
+      },
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Inspect code"));
+
+    expect(screen.queryByText("Edit Title")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reorders only editable tasks within a context", () => {
+    const onReorderTask = vi.fn();
+    const baseDefinition = createWorkflowDefinition();
+    const definition = {
+      ...baseDefinition,
+      tasks: [
+        {
+          id: "task-plan-1",
+          contextId: "context-plan",
+          order: 1,
+          title: "Inspect code",
+          instructions: "Read the relevant files.",
+          source: "user" as const,
+        },
+        {
+          id: "task-plan-2",
+          contextId: "context-plan",
+          order: 2,
+          title: "Write plan",
+          instructions: "Document the plan.",
+          source: "user" as const,
+        },
+        {
+          id: "task-plan-3",
+          contextId: "context-plan",
+          order: 3,
+          title: "Capture risks",
+          instructions: "Summarize the remaining risks.",
+          source: "user" as const,
+        },
+        ...baseDefinition.tasks.filter(
+          (task) => task.contextId !== "context-plan",
+        ),
+      ],
+    };
+    const baseExecution = createWorkflowExecution({
+      workingDefinition: definition,
+    });
+    const execution = createWorkflowExecution({
+      status: "paused",
+      workingDefinition: definition,
+      taskStates: {
+        ...baseExecution.taskStates,
+        "task-plan-1": {
+          ...baseExecution.taskStates["task-plan-1"]!,
+          status: "completed",
+          completedAt: "2026-03-27T10:05:00.000Z",
+        },
+        "task-plan-2": {
+          ...baseExecution.taskStates["task-plan-2"]!,
+          status: "pending",
+        },
+        "task-plan-3": {
+          taskId: "task-plan-3",
+          contextId: "context-plan",
+          order: 3,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        },
+      },
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...baseExecution.contextStates["context-plan"]!,
+          totalTaskCount: 3,
+          completedTaskCount: 1,
+        },
+      },
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onReorderTask={onReorderTask}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Capture risks"));
+    fireEvent.click(screen.getByRole("button", { name: "▴ Up" }));
+
+    expect(onReorderTask).toHaveBeenCalledWith("context-plan", [
+      "task-plan-3",
+      "task-plan-2",
+    ]);
+  });
+});

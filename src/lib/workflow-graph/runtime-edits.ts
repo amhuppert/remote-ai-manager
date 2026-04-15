@@ -14,6 +14,17 @@ import {
 
 const logger = createLogger("graph-workflow-runtime-edits");
 
+function isRuntimeEditableExecutionStatus(
+  status: GraphWorkflowExecution["status"],
+): boolean {
+  return (
+    status === "running" ||
+    status === "paused" ||
+    status === "halted" ||
+    status === "aborted"
+  );
+}
+
 export interface AgentAddedTask {
   slug?: string;
   title: string;
@@ -274,9 +285,14 @@ export function createGraphWorkflowRuntimeEditService(
     execution: GraphWorkflowExecution,
     request: WorkflowRuntimeEditRequest,
   ): GraphWorkflowExecution {
-    if (execution.status !== "running") {
+    if (!isRuntimeEditableExecutionStatus(execution.status)) {
+      logger.warn("graph-workflow.user_runtime_edit.rejected_status", {
+        executionId: execution.id,
+        status: execution.status,
+        operationCount: request.operations.length,
+      });
       throw new Error(
-        "User runtime edits are allowed only while execution is running",
+        "User runtime edits are allowed only while execution is running, paused, halted, or aborted",
       );
     }
 
@@ -436,6 +452,13 @@ export function createGraphWorkflowRuntimeEditService(
         semanticValidation.errors,
       );
     }
+
+    logger.info("graph-workflow.user_runtime_edit.applied", {
+      executionId: execution.id,
+      status: execution.status,
+      operationCount: request.operations.length,
+      operationTypes: request.operations.map((operation) => operation.type),
+    });
 
     return nextExecution;
   }

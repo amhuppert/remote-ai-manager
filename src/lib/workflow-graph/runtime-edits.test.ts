@@ -333,4 +333,37 @@ describe("graph workflow runtime edit service", () => {
       }),
     ).toThrow(GraphWorkflowRuntimeEditValidationError);
   });
+
+  it.each(["paused", "halted", "aborted"] as const)(
+    "allows user runtime edits while execution is %s",
+    (status) => {
+      const service = createGraphWorkflowRuntimeEditService();
+      const execution = createWorkflowExecution({
+        status,
+        taskStates: {
+          ...createWorkflowExecution().taskStates,
+          "task-plan-1": {
+            ...createWorkflowExecution().taskStates["task-plan-1"]!,
+            status: "pending",
+          },
+        },
+      });
+
+      const updated = service.applyUserEdits(execution, {
+        operations: [
+          {
+            type: "update",
+            taskId: "task-plan-1",
+            instructions: "Read the relevant files and summarize the risks.",
+          },
+        ],
+      });
+
+      expect(
+        updated.workingDefinition.tasks.find(
+          (task) => task.id === "task-plan-1",
+        )?.instructions,
+      ).toBe("Read the relevant files and summarize the risks.");
+    },
+  );
 });
