@@ -508,8 +508,9 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     switch (item.type) {
       case "command_execution": {
         const block: MessageContentBlock = {
-          type: "text",
-          text: `$ ${item.command}`,
+          type: "tool_use",
+          name: "Bash",
+          input: { command: unwrapBashCommand(item.command) },
         };
         contentBlocks.push(block);
         input.onEvent({ type: "content", block });
@@ -552,8 +553,9 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       case "command_execution": {
         if (item.aggregated_output) {
           const block: MessageContentBlock = {
-            type: "text",
-            text: item.aggregated_output,
+            type: "tool_result",
+            tool_use_id: item.id,
+            content: item.aggregated_output,
           };
           contentBlocks.push(block);
           input.onEvent({ type: "content", block });
@@ -598,6 +600,13 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
 
 type ItemStartedEvent = Extract<ThreadEvent, { type: "item.started" }>;
 type ItemCompletedEvent = Extract<ThreadEvent, { type: "item.completed" }>;
+
+/** Strip the `/bin/bash -lc '...'` wrapper Codex adds around commands. */
+const BASH_WRAPPER_RE = /^\/bin\/bash\s+-lc\s+(['"])(.*)\1$/s;
+function unwrapBashCommand(raw: string): string {
+  const m = BASH_WRAPPER_RE.exec(raw);
+  return m ? m[2]! : raw;
+}
 
 function mimeToExt(mediaType: string): string {
   const map: Record<string, string> = {

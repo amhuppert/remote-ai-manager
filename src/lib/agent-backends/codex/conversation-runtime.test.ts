@@ -541,7 +541,7 @@ describe("CodexConversationRuntime", () => {
       });
     });
 
-    it("maps command_execution start to command text and completion to output text", async () => {
+    it("maps command_execution start to tool_use and completion to tool_result", async () => {
       setupThread([
         threadStarted(),
         commandStarted("ls -la"),
@@ -552,19 +552,54 @@ describe("CodexConversationRuntime", () => {
       const onEvent = vi.fn();
       const result = await runtime.sendTurn(makeTurnInput({ onEvent }));
 
-      // Should have text blocks for both the command and its output
-      const textBlocks = result.contentBlocks.filter((b) => b.type === "text");
-      expect(
-        textBlocks.some((b) => b.type === "text" && b.text.includes("ls -la")),
-      ).toBe(true);
-      expect(
-        textBlocks.some(
-          (b) => b.type === "text" && b.text.includes("total 42"),
-        ),
-      ).toBe(true);
+      // Command start → tool_use with name "Bash"
+      expect(result.contentBlocks).toContainEqual({
+        type: "tool_use",
+        name: "Bash",
+        input: { command: "ls -la" },
+      });
+
+      // Command completion → tool_result with the output
+      expect(result.contentBlocks).toContainEqual({
+        type: "tool_result",
+        tool_use_id: "cmd-1",
+        content: "total 42\nfile.txt",
+      });
+
+      // Should emit content events for both
+      expect(onEvent).toHaveBeenCalledWith({
+        type: "content",
+        block: { type: "tool_use", name: "Bash", input: { command: "ls -la" } },
+      });
+      expect(onEvent).toHaveBeenCalledWith({
+        type: "content",
+        block: {
+          type: "tool_result",
+          tool_use_id: "cmd-1",
+          content: "total 42\nfile.txt",
+        },
+      });
     });
 
-    it("skips command output block when aggregated_output is empty", async () => {
+    it("unwraps /bin/bash -lc wrapper from command", async () => {
+      setupThread([
+        threadStarted(),
+        commandStarted("/bin/bash -lc 'pwd && ls -la'"),
+        commandCompleted("/bin/bash -lc 'pwd && ls -la'", "output"),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      const toolUse = result.contentBlocks.find((b) => b.type === "tool_use");
+      expect(toolUse).toEqual({
+        type: "tool_use",
+        name: "Bash",
+        input: { command: "pwd && ls -la" },
+      });
+    });
+
+    it("skips command tool_result when aggregated_output is empty", async () => {
       setupThread([
         threadStarted(),
         commandStarted("mkdir test"),
@@ -574,15 +609,20 @@ describe("CodexConversationRuntime", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(makeTurnInput());
 
-      // Should have command text but not an empty output block
-      const textBlocks = result.contentBlocks.filter((b) => b.type === "text");
-      expect(textBlocks).toHaveLength(1); // Only the command itself
-      expect(textBlocks[0]).toEqual(
-        expect.objectContaining({
-          type: "text",
-          text: expect.stringContaining("mkdir test"),
-        }),
+      // Should have the tool_use but no tool_result for empty output
+      const toolUses = result.contentBlocks.filter(
+        (b) => b.type === "tool_use",
       );
+      const toolResults = result.contentBlocks.filter(
+        (b) => b.type === "tool_result",
+      );
+      expect(toolUses).toHaveLength(1);
+      expect(toolUses[0]).toEqual({
+        type: "tool_use",
+        name: "Bash",
+        input: { command: "mkdir test" },
+      });
+      expect(toolResults).toHaveLength(0);
     });
 
     it("maps mcp_tool_call start to tool_use and completion to tool_result", async () => {
