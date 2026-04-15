@@ -31,6 +31,7 @@ import {
 import { createGraphWorkflowIterationOrchestrator } from "@/lib/workflows/graph-workflow/iteration-orchestrator";
 import { createGraphWorkflowManager } from "@/lib/workflows/graph-workflow/workflow-manager";
 import { createWorkflowContinuityService } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
+import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -101,6 +102,7 @@ const validatorRunner = createValidatorRunner({
   continuityService,
   executionRepository,
 });
+const implementerRunner = createGraphWorkflowImplementerRunner();
 const validationService = createGraphWorkflowValidationService({
   runTaskValidator: validatorRunner.runTaskValidator,
 });
@@ -179,6 +181,20 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
     );
     if (!session) {
       throw new Error("Session not found");
+    }
+
+    if (input.backend === "claude") {
+      return implementerRunner.runClaudeIteration({
+        projectPath: input.projectPath,
+        session,
+        prompt: input.prompt,
+        conversationId: input.conversationId,
+        contextId: input.contextId,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        toolServer: input.toolServer,
+        emitStreamFrame: input.emitStreamFrame,
+      });
     }
 
     const runner = getTaskRunner(input.backend ?? "claude");

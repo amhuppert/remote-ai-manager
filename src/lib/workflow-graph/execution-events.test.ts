@@ -198,6 +198,88 @@ describe("graph workflow execution event publisher", () => {
     );
   });
 
+  it("publishes task status events when task conversation metadata changes", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now() {
+        return "2026-03-28T10:06:00.000Z";
+      },
+    });
+
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      activeContextId: "context-plan",
+      taskStates: {
+        "task-plan-1": {
+          taskId: "task-plan-1",
+          contextId: "context-plan",
+          order: 1,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        },
+        "task-implement-1": {
+          taskId: "task-implement-1",
+          contextId: "context-implement",
+          order: 1,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        },
+        "task-verify-1": {
+          taskId: "task-verify-1",
+          contextId: "context-verify",
+          order: 1,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        },
+      },
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      taskStates: {
+        ...previousExecution.taskStates,
+        "task-plan-1": {
+          ...previousExecution.taskStates["task-plan-1"]!,
+          startedAt: "2026-03-28T10:05:00.000Z",
+          lastConversationId: "conversation-live",
+          failureMessage: "Need follow-up",
+        },
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    expect(broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "graph-workflow-task-status",
+        taskId: "task-plan-1",
+        lastConversationId: "conversation-live",
+        startedAt: "2026-03-28T10:05:00.000Z",
+        failureMessage: "Need follow-up",
+      }),
+    );
+  });
+
   it("dispatches push notification when workflow completes", () => {
     const broadcast = vi.fn();
     const dispatchPush = vi.fn();

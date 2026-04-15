@@ -207,6 +207,23 @@ function countRemainingTasks(
   return getIncompleteTasks(execution, contextId).length;
 }
 
+function bindConversationToIncompleteTasks(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+  conversationId: string,
+  startedAt: string,
+): void {
+  for (const task of getIncompleteTasks(execution, contextId)) {
+    const taskState = execution.taskStates[task.id];
+    if (!taskState) {
+      continue;
+    }
+
+    taskState.lastConversationId = conversationId;
+    taskState.startedAt ??= startedAt;
+  }
+}
+
 const logger = createLogger("graph-workflow-iteration");
 
 export function createGraphWorkflowIterationOrchestrator(
@@ -437,6 +454,12 @@ export function createGraphWorkflowIterationOrchestrator(
     seededExecution.haltReason = null;
     seededContextState.status = "running";
     seededContextState.iterationCount += 1;
+    bindConversationToIncompleteTasks(
+      seededExecution,
+      input.contextId,
+      conversation.id,
+      getNow(deps),
+    );
     seededExecution.machineSnapshot = buildMachineSnapshot(
       seededExecution,
       true,

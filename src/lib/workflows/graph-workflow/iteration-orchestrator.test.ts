@@ -882,6 +882,72 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
   });
+
+  it("binds the live conversation to incomplete tasks before the agent turn begins", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "completed",
+        "task-plan-2": "pending",
+      }),
+    );
+    const seededExecution = repository.read();
+    seededExecution.taskStates["task-plan-1"] = {
+      ...seededExecution.taskStates["task-plan-1"]!,
+      status: "completed",
+      summary: "Already done",
+      startedAt: "2026-03-27T15:50:00.000Z",
+      completedAt: "2026-03-27T15:55:00.000Z",
+      lastConversationId: "conversation-old",
+    };
+    const createConversation = vi.fn(async () => ({ id: "conversation-8" }));
+    const createToolServer = vi.fn(() => ({ server: {} }));
+    const runAgentIteration = vi.fn(async () => {
+      const current = repository.read();
+      expect(current.taskStates["task-plan-1"]).toMatchObject({
+        status: "completed",
+        lastConversationId: "conversation-old",
+        startedAt: "2026-03-27T15:50:00.000Z",
+      });
+      expect(current.taskStates["task-plan-2"]).toMatchObject({
+        status: "pending",
+        lastConversationId: "conversation-8",
+        startedAt: "2026-03-27T16:00:00.000Z",
+      });
+
+      const next = structuredClone(current);
+      next.taskStates["task-plan-2"] = {
+        ...next.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Finished planning",
+        completedAt: "2026-03-27T16:03:00.000Z",
+      };
+      next.contextStates["context-plan"] = {
+        ...next.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.update("/repo", "session-1", next);
+      return { contextTokens: 25_000, contextWindowMax: 200_000 };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(runAgentIteration).toHaveBeenCalledOnce();
+  });
 });
 
 // -- fix-0582fa53: stale execution clobbers validator lane state ---------------

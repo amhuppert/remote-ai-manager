@@ -36,7 +36,7 @@ export default function IterationTranscriptViewer({
     projectName,
     sessionName,
     conversationId,
-    { refetchInterval: isLive ? 2000 : false },
+    { refetchInterval: isLive ? 1000 : false },
   );
 
   const messages = messagesQuery.data ?? [];

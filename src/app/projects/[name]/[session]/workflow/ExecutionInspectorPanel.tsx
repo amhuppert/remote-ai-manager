@@ -9,6 +9,7 @@ import type {
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowLaneKind,
 } from "@/types";
+import { isTaskConversationLive, isTaskEditable } from "./task-runtime-state";
 
 interface ExecutionInspectorPanelProps {
   execution: GraphWorkflowExecution;
@@ -146,17 +147,6 @@ function getTaskStatusDotClass(status?: string): string {
     default:
       return "pending";
   }
-}
-
-function isTaskEditable(
-  executionStatus: GraphWorkflowExecution["status"],
-  taskStatus?: GraphWorkflowExecution["taskStates"][string]["status"],
-): boolean {
-  if (executionStatus === "completed") {
-    return false;
-  }
-
-  return taskStatus !== "completed" && taskStatus !== "running";
 }
 
 function countEnabledValidators(execution: GraphWorkflowExecution): number {
@@ -578,7 +568,7 @@ function DetailView({
 
   function handleSwapTask(index: number, direction: "up" | "down") {
     const editableTasks = tasks.filter((task) =>
-      isTaskEditable(execution.status, execution.taskStates[task.id]?.status),
+      isTaskEditable(execution, task.id),
     );
     const currentTask = tasks[index];
     if (!currentTask) {
@@ -669,12 +659,9 @@ function DetailView({
                 {tasks.map((task, index) => {
                   const taskState = execution.taskStates[task.id];
                   const isExpanded = expandedTaskId === task.id;
-                  const isEditable = isTaskEditable(
-                    execution.status,
-                    taskState?.status,
-                  );
+                  const isEditable = isTaskEditable(execution, task.id);
                   const hasConversation = !!taskState?.lastConversationId;
-                  const isRunning = taskState?.status === "running";
+                  const isRunning = isTaskConversationLive(execution, task.id);
                   const isViewing = viewingTaskId === task.id;
                   const itemClassName = [
                     "wb-task-item",

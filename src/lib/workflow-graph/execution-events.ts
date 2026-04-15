@@ -261,7 +261,12 @@ export function createGraphWorkflowExecutionEventPublisher(
         !previousTask ||
         previousTask.status !== nextTask.status ||
         previousTask.order !== nextTask.order ||
-        previousTask.contextId !== nextTask.contextId
+        previousTask.contextId !== nextTask.contextId ||
+        previousTask.lastConversationId !== nextTask.lastConversationId ||
+        previousTask.startedAt !== nextTask.startedAt ||
+        previousTask.completedAt !== nextTask.completedAt ||
+        previousTask.summary !== nextTask.summary ||
+        previousTask.failureMessage !== nextTask.failureMessage
       ) {
         events.push({
           type: "graph-workflow-task-status",
@@ -273,6 +278,11 @@ export function createGraphWorkflowExecutionEventPublisher(
           status: nextTask.status,
           source: getTaskSource(nextExecution, task.id) ?? "user",
           order: nextTask.order,
+          lastConversationId: nextTask.lastConversationId,
+          startedAt: nextTask.startedAt,
+          completedAt: nextTask.completedAt,
+          summary: nextTask.summary,
+          failureMessage: nextTask.failureMessage,
         });
       }
     }

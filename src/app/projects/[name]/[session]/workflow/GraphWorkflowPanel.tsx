@@ -14,6 +14,7 @@ import ExecutionStatusBar from "./ExecutionStatusBar";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
 import IterationTranscriptViewer from "./IterationTranscriptViewer";
+import { isTaskConversationLive } from "./task-runtime-state";
 
 interface GraphWorkflowPanelProps {
   projectName: string;
@@ -67,7 +68,7 @@ function resolveViewingTask(
     conversationId: taskState.lastConversationId,
     contextTitle: context?.title ?? taskDef.contextId,
     taskTitle: taskDef.title,
-    isLive: taskState.status === "running",
+    isLive: isTaskConversationLive(execution, taskId),
   };
 }
 

@@ -655,6 +655,72 @@ describe("ExecutionInspectorPanel — shared implementer session task history", 
   });
 });
 
+describe("ExecutionInspectorPanel — live implementer viewing", () => {
+  it("shows Watch for an incomplete task when the active iteration is live", () => {
+    const onViewTask = vi.fn();
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextId: "context-plan",
+      taskStates: {
+        "task-plan-1": {
+          taskId: "task-plan-1",
+          contextId: "context-plan",
+          order: 1,
+          status: "pending",
+          summary: null,
+          startedAt: "2026-03-27T10:00:00.000Z",
+          completedAt: null,
+          lastConversationId: "conv-live",
+          failureMessage: null,
+          failureHistory: [],
+        },
+        "task-implement-1": {
+          taskId: "task-implement-1",
+          contextId: "context-implement",
+          order: 1,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        },
+        "task-verify-1": {
+          taskId: "task-verify-1",
+          contextId: "context-verify",
+          order: 1,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        },
+      },
+      machineSnapshot: {
+        schemaVersion: 1,
+        lifecycleStatus: "running",
+        activeContextId: "context-plan",
+        recoveryMode: "none",
+        hasLiveIteration: true,
+      },
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onViewTask={onViewTask}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Watch" })).toBeInTheDocument();
+  });
+});
+
 describe("ExecutionInspectorPanel — task editability", () => {
   it("does not show edit controls for a running task", () => {
     const baseExecution = createWorkflowExecution();
@@ -667,6 +733,47 @@ describe("ExecutionInspectorPanel — task editability", () => {
           ...baseExecution.taskStates["task-plan-1"]!,
           status: "running",
         },
+      },
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Inspect code"));
+
+    expect(screen.queryByText("Edit Title")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show edit controls while a live iteration is active for the task context", () => {
+    const baseExecution = createWorkflowExecution();
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextId: "context-plan",
+      taskStates: {
+        ...baseExecution.taskStates,
+        "task-plan-1": {
+          ...baseExecution.taskStates["task-plan-1"]!,
+          status: "pending",
+          lastConversationId: "conversation-live",
+        },
+      },
+      machineSnapshot: {
+        schemaVersion: 1,
+        lifecycleStatus: "running",
+        activeContextId: "context-plan",
+        recoveryMode: "none",
+        hasLiveIteration: true,
       },
     });
 

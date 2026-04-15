@@ -781,6 +781,11 @@ export const graphWorkflowTaskStatusEventSchema = z.object({
   status: graphWorkflowTaskStatusSchema,
   source: graphWorkflowTaskSourceSchema,
   order: z.number().int().min(1),
+  lastConversationId: z.string().nullable().optional(),
+  startedAt: z.string().nullable().optional(),
+  completedAt: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+  failureMessage: z.string().nullable().optional(),
 });
 export type GraphWorkflowTaskStatusEvent = z.infer<
   typeof graphWorkflowTaskStatusEventSchema
