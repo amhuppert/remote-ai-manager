@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { globalConfigSchema } from "./schemas";
 import type { GlobalConfig, PerRepoConfig } from "@/types";
+import { createLogger } from "@/lib/logging";
 
 /**
  * Resolve the config directory for Command Center.
@@ -67,8 +68,53 @@ function defaultConfig(configDir: string = CONFIG_DIR): GlobalConfig {
 
 export interface ConfigReader {
   readConfig(): Promise<GlobalConfig>;
+  readRawConfig(): Promise<Partial<GlobalConfig>>;
   writeConfig(config: GlobalConfig): Promise<void>;
+  writeRawConfig(config: Partial<GlobalConfig>): Promise<void>;
   getConfigDirPath(): string;
+}
+
+/**
+ * Recursively intersect `validated` with only the keys present in `raw`.
+ * For nested plain objects, recurse so that Zod-injected defaults inside
+ * nested schemas (e.g. codexConfigSchema.enabled) are stripped.
+ */
+export function intersectKeys(raw: unknown, validated: unknown): unknown {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof validated !== "object" ||
+    validated === null ||
+    Array.isArray(raw) ||
+    Array.isArray(validated)
+  ) {
+    return validated;
+  }
+
+  const rawObj = raw as Record<string, unknown>;
+  const validObj = validated as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+
+  for (const key of Object.keys(rawObj)) {
+    if (!(key in validObj)) continue;
+    const rawVal = rawObj[key];
+    const validVal = validObj[key];
+
+    if (
+      typeof rawVal === "object" &&
+      rawVal !== null &&
+      !Array.isArray(rawVal) &&
+      typeof validVal === "object" &&
+      validVal !== null &&
+      !Array.isArray(validVal)
+    ) {
+      result[key] = intersectKeys(rawVal, validVal);
+    } else {
+      result[key] = validVal;
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -77,6 +123,7 @@ export interface ConfigReader {
  */
 export function createConfigReader(configDir: string): ConfigReader {
   const configFile = path.join(configDir, "config.json");
+  const log = createLogger("config");
 
   async function ensureDir(): Promise<void> {
     if (!existsSync(configDir)) {
@@ -103,10 +150,64 @@ export function createConfigReader(configDir: string): ConfigReader {
       };
     },
 
+    async readRawConfig(): Promise<Partial<GlobalConfig>> {
+      if (!existsSync(configFile)) {
+        log.debug("config.raw_read", { exists: false, configDir });
+        return {};
+      }
+
+      let parsed: unknown;
+      try {
+        const contents = await readFile(configFile, "utf-8");
+        parsed = JSON.parse(contents);
+      } catch (err) {
+        log.warn("config.raw_read_error", {
+          error: err instanceof Error ? err.message : String(err),
+          configDir,
+        });
+        return {};
+      }
+
+      const result = globalConfigSchema.partial().safeParse(parsed);
+      if (!result.success) {
+        log.warn("config.raw_validation_error", {
+          error: result.error.message,
+          configDir,
+        });
+        return {};
+      }
+
+      // Zod .default() fills in values for missing keys at every nesting
+      // level. Intersect the validated result with the original JSON keys
+      // recursively so callers can distinguish explicit config from
+      // schema defaults.
+      const filtered = intersectKeys(
+        parsed,
+        result.data,
+      ) as Partial<GlobalConfig>;
+
+      log.debug("config.raw_read", {
+        exists: true,
+        fieldCount: Object.keys(filtered).length,
+        configDir,
+      });
+      return filtered;
+    },
+
     async writeConfig(config: GlobalConfig): Promise<void> {
       await ensureDir();
       const json = JSON.stringify(config, null, 2);
       await writeFile(configFile, json, "utf-8");
+    },
+
+    async writeRawConfig(config: Partial<GlobalConfig>): Promise<void> {
+      await ensureDir();
+      const json = JSON.stringify(config, null, 2);
+      await writeFile(configFile, json, "utf-8");
+      log.info("config.raw_write", {
+        fieldCount: Object.keys(config).length,
+        configDir,
+      });
     },
 
     getConfigDirPath(): string {
@@ -141,6 +242,20 @@ export async function readConfig(): Promise<GlobalConfig> {
 
   // Merge with defaults to handle missing fields from older configs
   return { ...defaultConfig(), ...globalConfigSchema.partial().parse(parsed) };
+}
+
+/** Read the raw config from disk without merging defaults. Returns {} if file doesn't exist. */
+export async function readRawConfig(): Promise<Partial<GlobalConfig>> {
+  const reader = createConfigReader(CONFIG_DIR);
+  return reader.readRawConfig();
+}
+
+/** Write raw (explicit-only) config to disk, replacing the entire file. */
+export async function writeRawConfig(
+  config: Partial<GlobalConfig>,
+): Promise<void> {
+  const reader = createConfigReader(CONFIG_DIR);
+  return reader.writeRawConfig(config);
 }
 
 /** Write the global config to disk */

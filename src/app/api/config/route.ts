@@ -1,16 +1,12 @@
-import { NextResponse } from "next/server";
-import { readConfig } from "@/lib/config";
+import { createConfigRouteHandlers } from "@/lib/config-route-handlers";
 import { withTracing } from "@/lib/logging";
 
 export const dynamic = "force-dynamic";
 
-export const GET = withTracing(async () => {
-  try {
-    const config = await readConfig();
-    return NextResponse.json({ baseDir: config.baseDir });
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to read config";
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-});
+const handlers = createConfigRouteHandlers();
+
+/** GET /api/config — returns full merged config + raw explicit values */
+export const GET = withTracing(handlers.GET);
+
+/** PUT /api/config — update explicit config values */
+export const PUT = withTracing(handlers.PUT);

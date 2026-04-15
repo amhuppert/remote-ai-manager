@@ -14,6 +14,8 @@ import {
   workflowDefinitionRecordSchema,
   workflowGeneratedDraftSchema,
   agentBackendSchema,
+  globalConfigSchema,
+  rawGlobalConfigSchema,
 } from "@/lib/schemas";
 import { tracedFetch } from "@/lib/traced-fetch";
 
@@ -55,6 +57,12 @@ export const projectPreferencesResponseSchema = z.object({
 export const configResponseSchema = z.object({
   baseDir: z.string(),
 });
+
+export const fullConfigResponseSchema = z.object({
+  config: globalConfigSchema,
+  raw: rawGlobalConfigSchema,
+});
+export type FullConfigResponse = z.infer<typeof fullConfigResponseSchema>;
 
 // -- Sessions --
 export const sessionsResponseSchema = z.object({

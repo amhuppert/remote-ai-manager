@@ -11378,3 +11378,324 @@ html[data-dev-tools-enabled] nextjs-portal {
 .collapsible-text-toggle:hover {
   color: var(--cyan);
 }
+
+/* ============================================================
+   Config Editor
+   ============================================================ */
+
+.config-editor {
+  max-width: 720px;
+  margin: 0 auto;
+  padding-bottom: 80px;
+}
+
+.config-editor-header {
+  margin-bottom: var(--space-xl);
+}
+
+.config-editor-title {
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.config-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-lg);
+}
+
+.config-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  border: none;
+  background: none;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+}
+
+.config-section-header:hover {
+  color: var(--text-primary);
+}
+
+.config-section-chevron {
+  font-size: 0.72rem;
+  transition: transform 0.15s ease;
+  display: inline-block;
+  color: var(--text-tertiary);
+}
+
+.config-section.collapsed .config-section-chevron {
+  transform: rotate(-90deg);
+}
+
+.config-section-body {
+  margin-top: var(--space-md);
+}
+
+.config-section.collapsed .config-section-body {
+  display: none;
+}
+
+.config-field {
+  margin-bottom: var(--space-lg);
+  position: relative;
+  padding-left: 0;
+  border-left: 2px solid transparent;
+  transition:
+    border-color 0.15s ease,
+    padding-left 0.15s ease;
+}
+
+.config-field:last-child {
+  margin-bottom: 0;
+}
+
+.config-field.modified {
+  border-left-color: var(--cyan);
+  padding-left: var(--space-md);
+}
+
+.config-field-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.config-field-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.config-badge-default {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--bg-raised);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+.config-field-readonly {
+  opacity: 0.6;
+}
+
+.config-field-readonly .form-input {
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+.config-field-lock {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  margin-left: var(--space-xs);
+}
+
+.config-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-md);
+}
+
+.config-save-bar {
+  position: sticky;
+  bottom: 0;
+  background: rgba(11, 16, 25, 0.9);
+  backdrop-filter: blur(16px) saturate(140%);
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-md) var(--space-lg);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-md);
+  z-index: 10;
+  margin-top: var(--space-xl);
+  border-radius: var(--radius-md);
+}
+
+.config-save-bar-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  margin-right: auto;
+}
+
+.config-save-bar-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan-glow);
+}
+
+.config-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.config-tag {
+  padding: 2px 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.config-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.config-toggle-track {
+  width: 32px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  position: relative;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.config-toggle-track.active {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.config-toggle-knob {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  transition: transform 0.15s ease;
+}
+
+.config-toggle-track.active .config-toggle-knob {
+  transform: translateX(16px);
+}
+
+.config-toggle-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.config-pill-group {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  height: 36px;
+}
+
+.config-pill-btn {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.config-pill-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.config-pill-btn.active {
+  background: var(--cyan-glow-strong);
+  color: var(--cyan);
+  border: 1px solid var(--cyan);
+}
+
+.topbar-config-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+  text-decoration: none;
+}
+
+.topbar-config-link:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.topbar-config-link.active {
+  color: var(--cyan);
+}
+
+@media (max-width: 768px) {
+  .config-editor {
+    padding: 0;
+    max-width: 100%;
+  }
+
+  .config-section {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+
+  .config-save-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: var(--space-md);
+    border-radius: 0;
+  }
+
+  .config-field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-config-link {
+    width: 44px;
+    height: 44px;
+  }
+}

@@ -29,6 +29,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: routerPushMock,
   }),
+  usePathname: vi.fn(() => "/projects/test-project"),
 }));
 
 const mockSessionsData = {

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   projectKeys,
+  configKeys,
   sessionKeys,
   conversationKeys,
   workflowDefinitionKeys,
@@ -18,12 +19,14 @@ import {
 import {
   mutationFetch,
   finalizeInitResponseSchema,
+  fullConfigResponseSchema,
   installPresetResponseSchema,
   roadmapItemMutationResponseSchema,
   workflowDefinitionMutationResponseSchema,
   workflowGeneratedDraftResponseSchema,
 } from "@/lib/api-client";
 import type {
+  GlobalConfig,
   ImagePayload,
   RoadmapItemType,
   RoadmapItemStatus,
@@ -35,6 +38,31 @@ import type {
 
 // Re-export ApiCallError for consumers
 export { ApiCallError } from "@/lib/api-client";
+
+// ---------------------------------------------------------------------------
+// Config Mutations
+// ---------------------------------------------------------------------------
+
+export function useUpdateConfigMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: Partial<GlobalConfig>) =>
+      mutationFetch(
+        "/api/config",
+        "update-config",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        },
+        fullConfigResponseSchema,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: configKeys.all });
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Session Mutations

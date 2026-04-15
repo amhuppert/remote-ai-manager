@@ -70,7 +70,7 @@ export type PushTriggers = z.infer<typeof pushTriggerSchema>;
 
 export const pushNotificationConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  provider: z.enum(["ntfy"]).default("ntfy"),
+  provider: z.enum(["ntfy", "pushover"]).default("ntfy"),
   serverUrl: z.string().default("https://ntfy.sh"),
   topic: z.string().default(""),
   triggers: pushTriggerSchema.default({
@@ -117,7 +117,7 @@ export type CodexReasoningEffort = z.infer<typeof codexReasoningEffortSchema>;
 
 export const codexConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  model: codexModelSchema.optional().default("gpt-5.4"),
+  model: z.string().optional().default("gpt-5.4"),
   reasoningEffort: codexReasoningEffortSchema.optional(),
   timeout: z.number().positive().nullable().optional(),
 });
@@ -211,6 +211,54 @@ export const globalConfigSchema = z.object({
   defaultAgentBackend: agentBackendSchema.default("claude"),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
+
+/**
+ * Raw variants of nested config schemas — all fields optional, no defaults.
+ * Used by the config API to represent only explicitly set values from config.json.
+ */
+const rawPushTriggerSchema = z.object({
+  jobCompleted: z.boolean().optional(),
+  waitingForInput: z.boolean().optional(),
+  workflowCompleted: z.boolean().optional(),
+  workflowHalted: z.boolean().optional(),
+  conversationIdle: z.boolean().optional(),
+});
+
+const rawPushNotificationConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  provider: z.enum(["ntfy", "pushover"]).optional(),
+  serverUrl: z.string().optional(),
+  topic: z.string().optional(),
+  triggers: rawPushTriggerSchema.optional(),
+});
+
+const rawCodexConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  model: z.string().optional(),
+  reasoningEffort: codexReasoningEffortSchema.optional(),
+  timeout: z.number().positive().nullable().optional(),
+});
+
+export const rawGlobalConfigSchema = z.object({
+  baseDir: z.string().optional(),
+  ignorePatterns: z.array(z.string()).optional(),
+  stateFilePath: z.string().optional(),
+  claudeTimeoutMs: z.number().optional(),
+  defaultModel: claudeModelSchema.optional(),
+  defaultEffort: effortLevelSchema.optional(),
+  maxTurns: z.number().int().positive().optional(),
+  mergeCheckIntervalMs: z.number().int().positive().optional(),
+  preMergeTimeoutMs: z.number().int().positive().optional(),
+  maxConcurrentQueries: z.number().int().positive().optional(),
+  tailscaleEnabled: z.boolean().optional(),
+  pushNotification: rawPushNotificationConfigSchema.optional(),
+  codex: rawCodexConfigSchema.optional(),
+  workflowDefaults: workflowDefaultsSchema.optional(),
+  idleQuerySessionTtlMs: z.number().int().positive().optional(),
+  branchPrefix: z.string().optional(),
+  defaultAgentBackend: agentBackendSchema.optional(),
+});
+export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
 
 export const conversationStatusSchema = z
   .enum(["new", "awaiting", "running", "waiting_for_input"])

@@ -92,7 +92,7 @@ function createDefaultTaskValidation(
       type: "codex",
       enabled: false,
       codex: {
-        model: codexCfg?.model,
+        model: codexCfg?.model as CodexModel | undefined,
         reasoningEffort: codexCfg?.reasoningEffort,
       },
       instructions: "",

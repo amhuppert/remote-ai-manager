@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   useUnifiedPanelOpen,
   useToggleUnifiedPanel,
@@ -30,6 +31,7 @@ export default function Topbar({
   sessionControls,
   globalStatus,
 }: TopbarProps): React.JSX.Element {
+  const pathname = usePathname();
   const panelOpen = useUnifiedPanelOpen();
   const togglePanel = useToggleUnifiedPanel();
   const { data: notificationsData } = useNotificationsQuery();
@@ -83,6 +85,34 @@ export default function Topbar({
         </nav>
       </div>
       <div className="topbar-status">
+        <Link
+          href="/config"
+          className={`topbar-config-link${pathname === "/config" ? " active" : ""}`}
+          title="System Configuration"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M6.5 1.5h3l.4 1.9.9.4 1.7-.8 2.1 2.1-.8 1.7.4.9 1.9.4v3l-1.9.4-.4.9.8 1.7-2.1 2.1-1.7-.8-.9.4-.4 1.9h-3l-.4-1.9-.9-.4-1.7.8-2.1-2.1.8-1.7-.4-.9-1.9-.4v-3l1.9-.4.4-.9-.8-1.7 2.1-2.1 1.7.8.9-.4z"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinejoin="round"
+            />
+            <circle
+              cx="8"
+              cy="8"
+              r="2.5"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+          </svg>
+        </Link>
+        <div className="topbar-sep" />
         <button
           className={`unified-panel-toggle${panelOpen ? " active" : ""}`}
           onClick={togglePanel}

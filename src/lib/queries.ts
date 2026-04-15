@@ -21,6 +21,7 @@ import {
   discoveredProjectSchema,
   projectPreferencesResponseSchema,
   configResponseSchema,
+  fullConfigResponseSchema,
   sessionsResponseSchema,
   sessionDiffSchema,
   commitsResponseSchema,
@@ -69,6 +70,13 @@ export function useConfigQuery() {
   return useQuery({
     queryKey: configKeys.all,
     queryFn: () => apiFetch("/api/config", configResponseSchema),
+  });
+}
+
+export function useFullConfigQuery() {
+  return useQuery({
+    queryKey: configKeys.full,
+    queryFn: () => apiFetch("/api/config", fullConfigResponseSchema),
   });
 }
 

@@ -6,6 +6,7 @@ export const projectKeys = {
 
 export const configKeys = {
   all: ["config"] as const,
+  full: ["config", "full"] as const,
 };
 
 export const sessionKeys = {

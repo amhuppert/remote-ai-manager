@@ -331,6 +331,89 @@ describe("schema: codex config block", () => {
   });
 });
 
+describe("readRawConfig", () => {
+  it("returns empty object when config.json doesn't exist", async () => {
+    const emptyDir = path.join(TEST_DIR, "empty-" + Date.now());
+    await mkdir(emptyDir, { recursive: true });
+    const reader = createConfigReader(emptyDir);
+    const raw = await reader.readRawConfig();
+    expect(raw).toEqual({});
+  });
+
+  it("returns only the explicitly written fields (no defaults merged)", async () => {
+    const reader = createConfigReader(TEST_DIR);
+    const configFile = path.join(TEST_DIR, "config.json");
+    await writeFile(
+      configFile,
+      JSON.stringify({ baseDir: "/custom/path", claudeTimeoutMs: 99_000 }),
+      "utf-8",
+    );
+
+    const raw = await reader.readRawConfig();
+    expect(raw).toEqual({ baseDir: "/custom/path", claudeTimeoutMs: 99_000 });
+    // Should NOT have defaults like ignorePatterns or stateFilePath
+    expect(raw).not.toHaveProperty("ignorePatterns");
+    expect(raw).not.toHaveProperty("stateFilePath");
+  });
+
+  it("strips unknown fields via schema validation", async () => {
+    const reader = createConfigReader(TEST_DIR);
+    const configFile = path.join(TEST_DIR, "config.json");
+    await writeFile(
+      configFile,
+      JSON.stringify({ baseDir: "/valid", unknownField: "ignored" }),
+      "utf-8",
+    );
+
+    const raw = await reader.readRawConfig();
+    expect(raw).toEqual({ baseDir: "/valid" });
+    expect(raw).not.toHaveProperty("unknownField");
+  });
+
+  it("does not inject nested schema defaults into raw output", async () => {
+    const reader = createConfigReader(TEST_DIR);
+    const configFile = path.join(TEST_DIR, "config.json");
+    await writeFile(
+      configFile,
+      JSON.stringify({ codex: { model: "gpt-5.4-nano" } }),
+      "utf-8",
+    );
+
+    const raw = await reader.readRawConfig();
+    // codex.enabled has a Zod default of false — should NOT appear
+    expect(raw.codex).toEqual({ model: "gpt-5.4-nano" });
+    expect(raw.codex).not.toHaveProperty("enabled");
+  });
+
+  it("preserves explicitly set nested fields", async () => {
+    const reader = createConfigReader(TEST_DIR);
+    const configFile = path.join(TEST_DIR, "config.json");
+    await writeFile(
+      configFile,
+      JSON.stringify({
+        pushNotification: { enabled: true, topic: "my-topic" },
+      }),
+      "utf-8",
+    );
+
+    const raw = await reader.readRawConfig();
+    expect(raw.pushNotification).toEqual({ enabled: true, topic: "my-topic" });
+    // provider, serverUrl, triggers have Zod defaults — should NOT appear
+    expect(raw.pushNotification).not.toHaveProperty("provider");
+    expect(raw.pushNotification).not.toHaveProperty("serverUrl");
+    expect(raw.pushNotification).not.toHaveProperty("triggers");
+  });
+
+  it("returns empty object for invalid JSON", async () => {
+    const reader = createConfigReader(TEST_DIR);
+    const configFile = path.join(TEST_DIR, "config.json");
+    await writeFile(configFile, "not valid json!!!", "utf-8");
+
+    const raw = await reader.readRawConfig();
+    expect(raw).toEqual({});
+  });
+});
+
 describe("resolveConfigDir", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
