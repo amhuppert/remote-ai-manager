@@ -26,6 +26,7 @@ import {
   type TurnResult,
 } from "./query-session";
 import { createCanUseTool, type CanUseToolTurnContext } from "./native-tooling";
+import { buildChildEnv } from "@/lib/child-env";
 import { createLogger } from "@/lib/logging";
 import { claudeModelSchema, claudeEffortLevelSchema } from "@/lib/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
@@ -377,7 +378,7 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
       forkSession: undefined,
       mcpServers,
       canUseTool: canUseTool as never,
-      env: {},
+      env: buildChildEnv() as Record<string, string>,
       maxTurns: undefined,
       plugins: [],
       settingSources: ["user", "project", "local"],
