@@ -74,6 +74,13 @@ export const CodexDefault = {
   },
 } satisfies Story;
 
+export const CodexXHigh = {
+  args: {
+    value: "xhigh",
+    availableLevels: ["low", "medium", "high", "xhigh"],
+  },
+} satisfies Story;
+
 export const CodexAllLevels = {
   args: {
     value: "medium",
@@ -150,6 +157,23 @@ export const MessageMetadataDemo = {
             <div className="message-role">You</div>
             <div className="message-content">
               Can you try a different approach?
+            </div>
+          </div>
+
+          {/* Codex message with XHigh rainbow effect */}
+          <div className="message assistant">
+            <div className="message-role">
+              Codex
+              <span className="message-meta">
+                <span className="message-meta-sep">&middot;</span>
+                <span className="message-meta-model">GPT-5.4</span>
+                <span className="message-meta-sep">&middot;</span>
+                <span className="message-meta-effort rainbow-text">xhigh</span>
+              </span>
+            </div>
+            <div className="message-content">
+              This response was generated with GPT-5.4 at XHigh reasoning effort
+              — same rainbow effect as Claude&apos;s Max.
             </div>
           </div>
 

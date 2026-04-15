@@ -131,7 +131,7 @@ export default function ReasoningLevelSelector({
       <button
         ref={triggerRef}
         type="button"
-        className={`effort-selector-trigger${open ? " open" : ""}${value === "max" ? " rainbow-border" : ""}`}
+        className={`effort-selector-trigger${open ? " open" : ""}${value === "max" || value === "xhigh" ? " rainbow-border" : ""}`}
         onClick={toggle}
         disabled={disabled}
         title={

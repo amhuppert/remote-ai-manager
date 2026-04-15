@@ -1453,7 +1453,7 @@ export default function SessionDetailPage({
                                       )}
                                       {msg.effort && (
                                         <span
-                                          className={`message-meta-effort${msg.effort === "max" ? " rainbow-text" : ""}`}
+                                          className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
                                         >
                                           {msg.effort}
                                         </span>

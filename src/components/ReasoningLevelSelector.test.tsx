@@ -1,0 +1,46 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi } from "vitest";
+import { render } from "@testing-library/react";
+import ReasoningLevelSelector from "./ReasoningLevelSelector";
+
+describe("ReasoningLevelSelector", () => {
+  const defaultProps = { onChange: vi.fn() };
+
+  describe("rainbow styling", () => {
+    it("applies rainbow-border class when value is 'max'", () => {
+      render(
+        <ReasoningLevelSelector
+          {...defaultProps}
+          value="max"
+          availableLevels={["low", "medium", "high", "max"]}
+        />,
+      );
+      const trigger = document.querySelector(".effort-selector-trigger");
+      expect(trigger?.classList.contains("rainbow-border")).toBe(true);
+    });
+
+    it("applies rainbow-border class when value is 'xhigh'", () => {
+      render(
+        <ReasoningLevelSelector
+          {...defaultProps}
+          value="xhigh"
+          availableLevels={["low", "medium", "high", "xhigh"]}
+        />,
+      );
+      const trigger = document.querySelector(".effort-selector-trigger");
+      expect(trigger?.classList.contains("rainbow-border")).toBe(true);
+    });
+
+    it("does not apply rainbow-border class for non-max levels", () => {
+      render(
+        <ReasoningLevelSelector
+          {...defaultProps}
+          value="high"
+          availableLevels={["low", "medium", "high", "max"]}
+        />,
+      );
+      const trigger = document.querySelector(".effort-selector-trigger");
+      expect(trigger?.classList.contains("rainbow-border")).toBe(false);
+    });
+  });
+});
