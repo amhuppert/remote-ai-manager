@@ -203,3 +203,33 @@ export const FullyConfigured = {
     ),
   ],
 } satisfies Story;
+
+const codexBackendConfig: GlobalConfig = {
+  ...defaultConfig,
+  defaultAgentBackend: "codex",
+  codex: {
+    enabled: true,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+  },
+};
+
+const codexBackendRaw: RawGlobalConfig = {
+  baseDir: "/home/user/projects",
+  defaultAgentBackend: "codex",
+  codex: {
+    enabled: true,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+  },
+};
+
+export const CodexBackend = {
+  decorators: [
+    (Story) => (
+      <WithMockData config={codexBackendConfig} raw={codexBackendRaw}>
+        <Story />
+      </WithMockData>
+    ),
+  ],
+} satisfies Story;
