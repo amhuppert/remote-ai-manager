@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/errors";
-import type { CommandItem } from "@/types";
+import type { AgentBackendId, CommandItem } from "@/types";
 
 const logger = createLogger("commands");
 
@@ -83,7 +83,6 @@ async function scanCommandDir(
       const fullPath = path.join(dirPath, entry.name);
 
       if (entry.isDirectory()) {
-        // Recurse into subdirectories with namespace prefix
         const subItems = await scanCommandDir(fullPath, source, entry.name);
         items.push(...subItems);
       } else if (entry.name.endsWith(".md")) {
@@ -100,7 +99,7 @@ async function scanCommandDir(
             fields["description"] ??
             body
               .split("\n")
-              .find((l) => l.trim().length > 0)
+              .find((line) => line.trim().length > 0)
               ?.trim() ??
             "";
 
@@ -129,68 +128,74 @@ async function scanCommandDir(
   return items;
 }
 
-/**
- * Scan a skills directory — each subdirectory is a skill.
- * The skill name is the directory name, prefixed with /.
- */
+interface ScanSkillsOptions {
+  itemPrefix: "/" | "$";
+  pluginName?: string;
+  ignoreDirNames?: Set<string>;
+}
+
 async function scanSkillsDir(
   dirPath: string,
   source: string,
-  pluginName?: string,
+  options: ScanSkillsOptions,
 ): Promise<CommandItem[]> {
   if (!existsSync(dirPath)) return [];
 
   const items: CommandItem[] = [];
 
-  try {
-    const entries = await readdir(dirPath, { withFileTypes: true });
+  const walk = async (currentDir: string): Promise<void> => {
+    const skillFile = path.join(currentDir, "SKILL.md");
+    if (existsSync(skillFile)) {
+      try {
+        const content = await readFile(skillFile, "utf-8");
+        const { fields, body } = parseFrontmatter(content);
+        const skillId = fields["name"]?.trim() || path.basename(currentDir);
+        const description =
+          fields["description"] ??
+          body
+            .split("\n")
+            .find((line) => line.trim().length > 0)
+            ?.trim() ??
+          "";
+        const name =
+          options.itemPrefix === "$"
+            ? `$${skillId}`
+            : options.pluginName
+              ? `/${options.pluginName}:${skillId}`
+              : `/${skillId}`;
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-
-      const skillDir = path.join(dirPath, entry.name);
-      // Look for SKILL.md or any .md file in the skill directory
-      const skillFile = path.join(skillDir, "SKILL.md");
-
-      let description = "";
-      let argumentHint: string | undefined;
-
-      if (existsSync(skillFile)) {
-        try {
-          const content = await readFile(skillFile, "utf-8");
-          const { fields, body } = parseFrontmatter(content);
-          description =
-            fields["description"] ??
-            body
-              .split("\n")
-              .find((l) => l.trim().length > 0)
-              ?.trim() ??
-            "";
-          argumentHint = fields["argument-hint"];
-        } catch {
-          // Use empty description
-        }
+        items.push({
+          name,
+          description,
+          argumentHint: fields["argument-hint"],
+          type: "skill",
+          source,
+        });
+      } catch (err) {
+        logger.warn("commands.skill_parse_error", {
+          dir: currentDir,
+          error: getErrorMessage(err),
+        });
       }
+      return;
+    }
 
-      const skillName = pluginName
-        ? `/${pluginName}:${entry.name}`
-        : `/${entry.name}`;
-
-      items.push({
-        name: skillName,
-        description,
-        argumentHint,
-        type: "skill",
-        source,
+    try {
+      const entries = await readdir(currentDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (options.ignoreDirNames?.has(entry.name)) continue;
+        await walk(path.join(currentDir, entry.name));
+      }
+    } catch (err) {
+      logger.warn("commands.skills_scan_error", {
+        dir: currentDir,
+        error: getErrorMessage(err),
       });
     }
-  } catch (err) {
-    logger.warn("commands.skills_scan_error", {
-      dir: dirPath,
-      error: getErrorMessage(err),
-    });
-  }
+  };
 
+  await walk(dirPath);
   return items;
 }
 
@@ -219,13 +224,11 @@ export async function resolvePluginPaths(): Promise<
       enabledPlugins?: Record<string, boolean> | string[];
     };
 
-    // Handle both array and object formats for enabledPlugins
     let enabledPluginIds: string[] = [];
     if (settings.enabledPlugins) {
       if (Array.isArray(settings.enabledPlugins)) {
         enabledPluginIds = settings.enabledPlugins;
       } else if (typeof settings.enabledPlugins === "object") {
-        // Object format: { "plugin-id": true/false }
         enabledPluginIds = Object.entries(settings.enabledPlugins)
           .filter(([, enabled]) => enabled)
           .map(([id]) => id);
@@ -236,7 +239,6 @@ export async function resolvePluginPaths(): Promise<
       return [];
     }
 
-    // Read installed plugins for path resolution
     interface InstalledPluginsFile {
       version?: number;
       plugins?: Record<
@@ -260,13 +262,11 @@ export async function resolvePluginPaths(): Promise<
       }
     }
 
-    // Handle both old format (direct object) and new format (nested in plugins)
     const installed = installedData.plugins ?? installedData;
 
     for (const pluginId of enabledPluginIds) {
       const pluginInstalls = installed[pluginId as keyof typeof installed];
       if (pluginInstalls && Array.isArray(pluginInstalls)) {
-        // Use the first (most recent) installation
         const pluginInfo = pluginInstalls[0];
         const pluginPath = pluginInfo?.installPath ?? pluginInfo?.cachePath;
         if (pluginPath && existsSync(pluginPath)) {
@@ -284,57 +284,106 @@ export async function resolvePluginPaths(): Promise<
   return plugins;
 }
 
-/**
- * Discover all available commands and skills from project, user, plugin, and built-in sources.
- * Returns a deduplicated list with priority: project > user > plugin > built-in.
- */
-export async function discoverCommands(
+async function discoverClaudeItems(
   worktreePath: string,
 ): Promise<CommandItem[]> {
   const homeDir = os.homedir();
   const allItems: CommandItem[] = [];
 
-  // 1. Project-level commands
   const projectCmdDir = path.join(worktreePath, ".claude", "commands");
-  const projectItems = await scanCommandDir(projectCmdDir, "project");
-  allItems.push(...projectItems);
+  allItems.push(...(await scanCommandDir(projectCmdDir, "project")));
 
-  // 2. Project-level skills
   const projectSkillsDir = path.join(worktreePath, ".claude", "skills");
-  const projectSkillItems = await scanSkillsDir(projectSkillsDir, "project");
-  allItems.push(...projectSkillItems);
+  allItems.push(
+    ...(await scanSkillsDir(projectSkillsDir, "project", { itemPrefix: "/" })),
+  );
 
-  // 3. User-level commands
   const userCmdDir = path.join(homeDir, ".claude", "commands");
-  const userCmdItems = await scanCommandDir(userCmdDir, "user");
-  allItems.push(...userCmdItems);
+  allItems.push(...(await scanCommandDir(userCmdDir, "user")));
 
-  // 4. User-level skills
   const userSkillsDir = path.join(homeDir, ".claude", "skills");
-  const userSkillItems = await scanSkillsDir(userSkillsDir, "user");
-  allItems.push(...userSkillItems);
+  allItems.push(
+    ...(await scanSkillsDir(userSkillsDir, "user", { itemPrefix: "/" })),
+  );
 
-  // 5. Plugin commands and skills
   const pluginPaths = await resolvePluginPaths();
   for (const plugin of pluginPaths) {
     const pluginCmdDir = path.join(plugin.path, "commands");
-    const pluginCmdItems = await scanCommandDir(
-      pluginCmdDir,
-      plugin.name,
-      plugin.name,
+    allItems.push(
+      ...(await scanCommandDir(pluginCmdDir, plugin.name, plugin.name)),
     );
-    allItems.push(...pluginCmdItems);
 
     const pluginSkillsDir = path.join(plugin.path, "skills");
-    const pluginSkillItems = await scanSkillsDir(
-      pluginSkillsDir,
-      plugin.name,
-      plugin.name,
+    allItems.push(
+      ...(await scanSkillsDir(pluginSkillsDir, plugin.name, {
+        itemPrefix: "/",
+        pluginName: plugin.name,
+      })),
     );
-    allItems.push(...pluginSkillItems);
   }
 
-  // Deduplicate: first occurrence wins (project > user > plugin)
+  return allItems;
+}
+
+async function discoverCodexItems(
+  worktreePath: string,
+): Promise<CommandItem[]> {
+  const homeDir = os.homedir();
+  const allItems: CommandItem[] = [];
+
+  allItems.push(
+    ...(await scanSkillsDir(
+      path.join(worktreePath, ".agents", "skills"),
+      "project",
+      {
+        itemPrefix: "$",
+      },
+    )),
+  );
+  allItems.push(
+    ...(await scanSkillsDir(
+      path.join(worktreePath, ".codex", "skills"),
+      "project",
+      {
+        itemPrefix: "$",
+      },
+    )),
+  );
+  allItems.push(
+    ...(await scanSkillsDir(path.join(homeDir, ".agents", "skills"), "user", {
+      itemPrefix: "$",
+    })),
+  );
+  allItems.push(
+    ...(await scanSkillsDir(path.join(homeDir, ".codex", "skills"), "user", {
+      itemPrefix: "$",
+      ignoreDirNames: new Set([".system"]),
+    })),
+  );
+  allItems.push(
+    ...(await scanSkillsDir(
+      path.join(homeDir, ".codex", "skills", ".system"),
+      "system",
+      { itemPrefix: "$" },
+    )),
+  );
+
+  return allItems;
+}
+
+/**
+ * Discover the prompt autocomplete surface for the active backend.
+ * Returns a deduplicated list with priority based on scan order.
+ */
+export async function discoverCommands(
+  worktreePath: string,
+  backend: AgentBackendId = "claude",
+): Promise<CommandItem[]> {
+  const allItems =
+    backend === "codex"
+      ? await discoverCodexItems(worktreePath)
+      : await discoverClaudeItems(worktreePath);
+
   const seen = new Set<string>();
   const deduplicated: CommandItem[] = [];
   for (const item of allItems) {
@@ -343,6 +392,12 @@ export async function discoverCommands(
       deduplicated.push(item);
     }
   }
+
+  logger.info("commands.discovered", {
+    backend,
+    worktreePath,
+    itemCount: deduplicated.length,
+  });
 
   return deduplicated;
 }

@@ -16,7 +16,7 @@ import {
   useProjectCommandsQuery,
   useKiroDocTreeQuery,
 } from "@/lib/queries";
-import type { CommandItem } from "@/types";
+import type { AgentBackendId, CommandItem } from "@/types";
 
 interface ScoredItem {
   item: CommandItem;
@@ -61,6 +61,7 @@ export interface CommandAutocompleteProps {
   projectName: string;
   /** When omitted, uses the project-level commands query instead of session-level */
   sessionName?: string;
+  backend?: AgentBackendId;
   disabled: boolean;
 }
 
@@ -78,6 +79,7 @@ export const CommandAutocomplete = forwardRef<
     onPlaceholderChange,
     projectName,
     sessionName,
+    backend = "claude",
     disabled,
   },
   ref,
@@ -87,9 +89,14 @@ export const CommandAutocomplete = forwardRef<
 
   // Fetch commands via TanStack Query — session-level when sessionName is provided,
   // otherwise project-level (e.g. in OptimisticDialog before a session exists)
-  const sessionQuery = useCommandsQuery(projectName, sessionName ?? "", {
-    enabled: !!sessionName,
-  });
+  const sessionQuery = useCommandsQuery(
+    projectName,
+    sessionName ?? "",
+    backend,
+    {
+      enabled: !!sessionName,
+    },
+  );
   const projectQuery = useProjectCommandsQuery(projectName, {
     enabled: !sessionName,
   });
@@ -100,14 +107,22 @@ export const CommandAutocomplete = forwardRef<
   );
 
   // Mode detection: command mode vs feature argument mode
+  const commandPrefix = backend === "codex" ? "$" : "/";
   const commandMode =
-    !disabled && promptText.startsWith("/") && !promptText.includes(" ");
+    !disabled &&
+    promptText.startsWith(commandPrefix) &&
+    !promptText.includes(" ");
   const featureArg = useMemo(
-    () => (disabled ? null : detectFeatureArgMode(promptText, items)),
-    [disabled, promptText, items],
+    () =>
+      disabled || backend === "codex"
+        ? null
+        : detectFeatureArgMode(promptText, items),
+    [backend, disabled, promptText, items],
   );
   const visible = commandMode || !!featureArg;
-  const query = commandMode ? promptText.slice(1) : (featureArg?.query ?? "");
+  const query = commandMode
+    ? promptText.slice(commandPrefix.length)
+    : (featureArg?.query ?? "");
 
   // Fetch Kiro features for feature argument mode
   const kiroDocTree = useKiroDocTreeQuery(projectName, sessionName, {
@@ -123,7 +138,10 @@ export const CommandAutocomplete = forwardRef<
     (!!featureArg && kiroDocTree.isPending);
   const error =
     commandMode && commandsQuery.isError
-      ? (commandsQuery.error?.message ?? "Failed to load commands")
+      ? (commandsQuery.error?.message ??
+        (backend === "codex"
+          ? "Failed to load skills"
+          : "Failed to load commands"))
       : !!featureArg && kiroDocTree.isError
         ? (kiroDocTree.error?.message ?? "Failed to load features")
         : null;
@@ -160,7 +178,7 @@ export const CommandAutocomplete = forwardRef<
     const descMatches: ScoredItem[] = [];
 
     for (const item of items) {
-      // Match against name (strip leading /)
+      // Match against the item name without its leading trigger character
       const nameTarget = item.name.slice(1);
       const nameResult = fuzzyMatch(query, nameTarget);
 
@@ -169,7 +187,7 @@ export const CommandAutocomplete = forwardRef<
           item,
           tier: nameResult.tier!,
           coverage: nameResult.coverage,
-          // Shift indices by 1 to account for the leading / in display
+          // Shift indices by 1 to account for the leading trigger character
           nameIndices: nameResult.indices.map((i) => i + 1),
         });
         continue;
@@ -322,10 +340,21 @@ export const CommandAutocomplete = forwardRef<
     return <span className="cmd-name">{chars}</span>;
   }
 
-  const headerLabel = featureArg ? "Features" : "Commands";
+  const headerLabel = featureArg
+    ? "Features"
+    : backend === "codex"
+      ? "Skills"
+      : "Commands";
   const emptyLabel = featureArg
     ? "No matching features"
-    : "No matching commands";
+    : backend === "codex"
+      ? "No matching skills"
+      : "No matching commands";
+  const loadingLabel = featureArg
+    ? "features"
+    : backend === "codex"
+      ? "skills"
+      : "commands";
 
   return (
     <div className="cmd-autocomplete">
@@ -338,9 +367,7 @@ export const CommandAutocomplete = forwardRef<
 
       <div className="cmd-list" ref={listRef}>
         {loading && (
-          <div className="cmd-loading">
-            Loading {featureArg ? "features" : "commands"}...
-          </div>
+          <div className="cmd-loading">Loading {loadingLabel}...</div>
         )}
 
         {error && (

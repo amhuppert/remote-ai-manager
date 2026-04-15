@@ -48,6 +48,21 @@ const mockCommands: CommandItem[] = [
   },
 ];
 
+const mockCodexSkills: CommandItem[] = [
+  {
+    name: "$debug-logs",
+    description: "Analyze recent logs",
+    type: "skill",
+    source: "project",
+  },
+  {
+    name: "$nextjs-mcp",
+    description: "Inspect the Next.js dev server",
+    type: "skill",
+    source: "user",
+  },
+];
+
 const mockFeatures = {
   steering: [],
   specs: {
@@ -57,19 +72,16 @@ const mockFeatures = {
   },
 };
 
+const { mockUseCommandsQuery, mockUseProjectCommandsQuery } = vi.hoisted(
+  () => ({
+    mockUseCommandsQuery: vi.fn(),
+    mockUseProjectCommandsQuery: vi.fn(),
+  }),
+);
+
 vi.mock("@/lib/queries", () => ({
-  useCommandsQuery: () => ({
-    data: { items: mockCommands },
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
-  useProjectCommandsQuery: () => ({
-    data: { items: mockCommands },
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
+  useCommandsQuery: mockUseCommandsQuery,
+  useProjectCommandsQuery: mockUseProjectCommandsQuery,
   useKiroDocTreeQuery: () => ({
     data: mockFeatures,
     isPending: false,
@@ -107,6 +119,23 @@ function renderAutocomplete(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockUseCommandsQuery.mockImplementation(
+    (_projectName: string, _sessionName: string, ...rest: unknown[]) => {
+      const backend = typeof rest[0] === "string" ? rest[0] : "claude";
+      return {
+        data: { items: backend === "codex" ? mockCodexSkills : mockCommands },
+        isPending: false,
+        isError: false,
+        error: null,
+      };
+    },
+  );
+  mockUseProjectCommandsQuery.mockImplementation(() => ({
+    data: { items: mockCommands },
+    isPending: false,
+    isError: false,
+    error: null,
+  }));
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -351,6 +380,63 @@ describe("CommandAutocomplete", () => {
     const types = Array.from(badges).map((b) => b.textContent);
     expect(types).toContain("command");
     expect(types).toContain("skill");
+  });
+
+  it("uses Codex skills when the backend is codex and the prompt starts with $", async () => {
+    await act(async () => {
+      render(
+        <CommandAutocomplete
+          {...({
+            promptText: "$",
+            onPromptChange: vi.fn(),
+            onPlaceholderChange: vi.fn(),
+            projectName: "test-project",
+            sessionName: "test-session",
+            disabled: false,
+            backend: "codex",
+          } as unknown as React.ComponentPropsWithoutRef<
+            typeof CommandAutocomplete
+          >)}
+        />,
+      );
+    });
+
+    expect(screen.getByText("Skills")).toBeInTheDocument();
+    expect(screen.getByText("$debug-logs")).toBeInTheDocument();
+    expect(screen.queryByText("/commit")).toBeNull();
+  });
+
+  it("selects the active Codex skill with Enter", async () => {
+    const onPromptChange = vi.fn();
+    const ref = createRef<CommandAutocompleteHandle>();
+
+    await act(async () => {
+      render(
+        <CommandAutocomplete
+          ref={ref}
+          {...({
+            promptText: "$deb",
+            onPromptChange,
+            onPlaceholderChange: vi.fn(),
+            projectName: "test-project",
+            sessionName: "test-session",
+            disabled: false,
+            backend: "codex",
+          } as unknown as React.ComponentPropsWithoutRef<
+            typeof CommandAutocomplete
+          >)}
+        />,
+      );
+    });
+
+    act(() => {
+      ref.current?.handleKeyDown({
+        key: "Enter",
+        preventDefault: vi.fn(),
+      } as unknown as React.KeyboardEvent);
+    });
+
+    expect(onPromptChange).toHaveBeenCalledWith("$debug-logs ");
   });
 
   it("Tab selects the active item like Enter", async () => {

@@ -1592,13 +1592,16 @@ export default function SessionDetailPage({
                       promptText={promptText}
                       onPromptChange={(text) => {
                         setPromptText(text);
-                        if (!text.startsWith("/")) {
+                        const commandPrefix =
+                          selectedBackend === "codex" ? "$" : "/";
+                        if (!text.startsWith(commandPrefix)) {
                           clearPlaceholder();
                         }
                       }}
                       onPlaceholderChange={showPlaceholder}
                       projectName={projectName}
                       sessionName={session.sessionName}
+                      backend={selectedBackend}
                       disabled={isBusy || isReadOnly}
                     />
                     <FileAutocomplete

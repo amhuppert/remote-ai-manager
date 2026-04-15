@@ -129,6 +129,20 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
     expect(body.error).toBe("Scan failed");
   });
 
+  it("passes the requested backend to command discovery", async () => {
+    const request = new Request(
+      "http://localhost/api/projects/my-project/sessions/test-session/commands?backend=codex",
+      { method: "GET" },
+    ) as unknown as NextRequest;
+
+    await handlers.GET(request, makeParams());
+
+    expect(deps.discoverCommands).toHaveBeenCalledWith(
+      testSession.worktreePath,
+      "codex",
+    );
+  });
+
   it("returns empty items for project with no commands", async () => {
     vi.mocked(deps.discoverCommands).mockResolvedValue([]);
 

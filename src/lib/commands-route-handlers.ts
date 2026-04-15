@@ -10,6 +10,7 @@ import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-r
 import { getSession as defaultGetSession } from "@/lib/state";
 import { discoverCommands as defaultDiscoverCommands } from "@/lib/commands";
 import type {
+  AgentBackendId,
   ApiError,
   CommandItem,
   CommandsResponse,
@@ -26,7 +27,10 @@ export interface CommandsRouteDeps {
     projectPath: string,
     sessionName: string,
   ) => Promise<SessionState | null>;
-  discoverCommands: (worktreePath: string) => Promise<CommandItem[]>;
+  discoverCommands: (
+    worktreePath: string,
+    backend?: AgentBackendId,
+  ) => Promise<CommandItem[]>;
 }
 
 const defaultDeps: CommandsRouteDeps = {
@@ -51,13 +55,16 @@ export function createCommandsRouteHandlers(
   deps: CommandsRouteDeps = defaultDeps,
 ) {
   async function GET(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const resolvedParams = await context.params;
     const name = resolvedParams["name"] ?? "";
     const sessionSlug = resolvedParams["session"] ?? "";
     const sessionName = decodeURIComponent(sessionSlug);
+    const requestedBackend = new URL(request.url).searchParams.get("backend");
+    const backend: AgentBackendId =
+      requestedBackend === "codex" ? "codex" : "claude";
 
     const projectPath = await deps.resolveProjectPath(name);
     if (!projectPath) {
@@ -76,7 +83,7 @@ export function createCommandsRouteHandlers(
     }
 
     try {
-      const items = await deps.discoverCommands(session.worktreePath);
+      const items = await deps.discoverCommands(session.worktreePath, backend);
       const response: CommandsResponse = { items };
       return NextResponse.json(response);
     } catch (err) {

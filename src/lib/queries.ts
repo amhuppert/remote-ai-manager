@@ -40,6 +40,7 @@ import {
   projectFilesResponseSchema,
   notificationsResponseSchema,
 } from "@/lib/schemas";
+import type { AgentBackendId } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Project Queries
@@ -291,13 +292,14 @@ export function useConversationMessagesQuery(
 export function useCommandsQuery(
   projectName: string,
   sessionName: string,
+  backend: AgentBackendId = "claude",
   options?: { enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: commandKeys.list(projectName, sessionName),
+    queryKey: commandKeys.list(projectName, sessionName, backend),
     queryFn: () =>
       apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commands`,
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/commands?backend=${encodeURIComponent(backend)}`,
         commandsResponseSchema,
       ),
     enabled: options?.enabled,

@@ -71,8 +71,11 @@ export const fileKeys = {
 
 export const commandKeys = {
   all: ["commands"] as const,
-  list: (projectName: string, sessionName: string) =>
-    [...commandKeys.all, "list", projectName, sessionName] as const,
+  list: (
+    projectName: string,
+    sessionName: string,
+    backend: "claude" | "codex" = "claude",
+  ) => [...commandKeys.all, "list", projectName, sessionName, backend] as const,
   projectList: (projectName: string) =>
     [...commandKeys.all, "project-list", projectName] as const,
 };
