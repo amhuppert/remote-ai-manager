@@ -66,7 +66,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
 
     const threadOptions: ThreadOptions = {
       workingDirectory: input.workingDirectory,
-      sandboxMode: input.sandboxMode ?? "workspace-write",
+      sandboxMode: input.sandboxMode ?? "danger-full-access",
       approvalPolicy: input.approvalPolicy ?? "never",
       webSearchMode: input.webSearchMode ?? "disabled",
       skipGitRepoCheck: input.skipGitRepoCheck ?? true,

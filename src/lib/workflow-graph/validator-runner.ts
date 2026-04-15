@@ -362,7 +362,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const codexSettings =
       validatorType === "codex"
         ? {
-            sandboxMode: "workspace-write" as const,
+            sandboxMode: "danger-full-access" as const,
             approvalPolicy: "never" as const,
             webSearchMode: "disabled" as const,
             skipGitRepoCheck: true,

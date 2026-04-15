@@ -438,7 +438,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
   private buildThreadOptions(): ThreadOptions {
     const options: ThreadOptions = {
       workingDirectory: this.worktreePath,
-      sandboxMode: "workspace-write",
+      sandboxMode: "danger-full-access",
       approvalPolicy: "never",
       webSearchMode: "disabled",
       skipGitRepoCheck: true,

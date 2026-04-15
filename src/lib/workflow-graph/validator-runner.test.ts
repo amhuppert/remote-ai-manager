@@ -476,7 +476,7 @@ describe("createValidatorRunner", () => {
       expect.objectContaining({
         modelId: "gpt-5.4",
         reasoningEffort: "high",
-        sandboxMode: "workspace-write",
+        sandboxMode: "danger-full-access",
         approvalPolicy: "never",
       }),
     );
@@ -642,7 +642,7 @@ describe("continuity service wiring", () => {
     // Codex runner called with correct settings
     expect(codexRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sandboxMode: "workspace-write",
+        sandboxMode: "danger-full-access",
         approvalPolicy: "never",
       }),
     );

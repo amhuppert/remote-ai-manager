@@ -415,7 +415,7 @@ describe("CodexConversationRuntime", () => {
       expect(startThreadFn).toHaveBeenCalledWith(
         expect.objectContaining({
           workingDirectory: "/test/worktree",
-          sandboxMode: "workspace-write",
+          sandboxMode: "danger-full-access",
           approvalPolicy: "never",
           webSearchMode: "disabled",
           skipGitRepoCheck: true,

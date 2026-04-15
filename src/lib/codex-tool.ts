@@ -100,7 +100,7 @@ export async function runCodexDefault(input: {
       outputSchema: input.outputSchema,
       autonomous: true,
       timeoutMs: input.timeoutMs,
-      sandboxMode: "workspace-write",
+      sandboxMode: "danger-full-access",
       approvalPolicy: "never",
       skipGitRepoCheck: true,
       networkAccessEnabled: true,
@@ -242,7 +242,7 @@ export function createCodexToolServer(
     tools: [
       tool(
         "run_codex",
-        "Run a one-shot OpenAI Codex task in the current session worktree. Codex operates autonomously in a sandboxed environment (workspace-write). It does not resume or persist conversation state. Returns a JSON object with `summary` (concise result summary) and `referenceDocuments` (array of files Codex created for detailed review, each with `filePath` and `description`). If Codex fails to produce structured output, falls back to returning raw text.",
+        "Run a one-shot OpenAI Codex task in the current session worktree. Codex operates autonomously with full access (no sandbox). It does not resume or persist conversation state. Returns a JSON object with `summary` (concise result summary) and `referenceDocuments` (array of files Codex created for detailed review, each with `filePath` and `description`). If Codex fails to produce structured output, falls back to returning raw text.",
         {
           prompt: z
             .string()
