@@ -17,7 +17,10 @@ export interface WorkflowContinuityServiceDeps {
   createConversation(
     projectPath: string,
     sessionName: string,
-    opts: { role: "iteration" | "validator" },
+    opts: {
+      role: "iteration" | "validator";
+      agentBackend?: "claude" | "codex";
+    },
   ): Promise<{ id: string }>;
   getConversation(
     projectPath: string,
@@ -63,6 +66,7 @@ export interface ResolveImplementerCallInput {
   projectPath: string;
   sessionName: string;
   contextId: string;
+  engine?: "claude" | "codex";
 }
 
 export interface ResolveValidatorCallInput {
@@ -104,11 +108,13 @@ function shouldRotate(
   laneState: GraphWorkflowLaneState | undefined,
   contextId: string,
   continuityEnabled: boolean,
+  engine?: "claude" | "codex",
 ): boolean {
   if (!laneState) return true;
   if (laneState.contextId !== contextId) return true;
   if (!continuityEnabled) return true;
   if (laneState.rotateBeforeNextTurn) return true;
+  if (engine !== undefined && laneState.engine !== engine) return true;
   return false;
 }
 
@@ -173,14 +179,13 @@ export function createWorkflowContinuityService(
     const conversation = await deps.createConversation(
       projectPath,
       sessionName,
-      {
-        role,
-      },
+      { role, agentBackend: "claude" },
     );
     const laneState: GraphWorkflowLaneState = {
       engine: "claude",
       lane,
       contextId,
+      workflowConversationId: conversation.id,
       sessionRef: {
         engine: "claude",
         lane,
@@ -208,13 +213,19 @@ export function createWorkflowContinuityService(
     input: ResolveImplementerCallInput,
   ): Promise<ResolvedImplementerCall> {
     const { execution, projectPath, sessionName, contextId } = input;
+    const engine = input.engine ?? "claude";
     const lane: GraphWorkflowLaneKind = "implementer";
     const laneState = getCurrentLane(execution, lane);
     const continuityEnabled = getImplementerContinuityEnabled(
       execution,
       contextId,
     );
-    const rotate = shouldRotate(laneState, contextId, continuityEnabled);
+    const rotate = shouldRotate(
+      laneState,
+      contextId,
+      continuityEnabled,
+      engine,
+    );
     const now = getNow(deps);
 
     if (rotate) {
@@ -224,23 +235,38 @@ export function createWorkflowContinuityService(
           ? "context_changed"
           : !continuityEnabled
             ? "continuity_disabled"
-            : "rotation_scheduled";
+            : laneState.engine !== engine
+              ? "engine_changed"
+              : "rotation_scheduled";
 
       const execLogger = getExecutionLogger(execution.id);
       execLogger?.decision("implementer.rotation", {
         contextId,
+        engine,
         reason,
         continuityEnabled,
         previousContextId: laneState?.contextId ?? null,
+        previousEngine: laneState?.engine ?? null,
       });
 
       if (reason === "context_changed" && laneState) {
         logger.warn("workflow-continuity.stale_session.reset", {
           lane,
-          engine: "claude",
+          engine,
           contextId,
           staleContextId: laneState.contextId,
         });
+      }
+
+      if (engine === "codex") {
+        return createFreshCodexImplementerLane(
+          execution,
+          projectPath,
+          sessionName,
+          contextId,
+          reason,
+          now,
+        );
       }
 
       const { laneState: newLaneState, conversationId } =
@@ -262,13 +288,27 @@ export function createWorkflowContinuityService(
       };
     }
 
-    // Reuse path — validate conversation still exists to guard against stale references
+    // Reuse path — validate both CC conversation and backend session still exist
     const existingLane = laneState!;
+
+    if (engine === "codex") {
+      return reuseCodexImplementerLane(
+        execution,
+        existingLane,
+        projectPath,
+        sessionName,
+        contextId,
+        now,
+      );
+    }
+
+    // Claude reuse path — validate conversation still exists
     const conversationId =
-      existingLane.engine === "claude" &&
+      existingLane.workflowConversationId ??
+      (existingLane.engine === "claude" &&
       existingLane.sessionRef.engine === "claude"
         ? existingLane.sessionRef.conversationId
-        : "";
+        : "");
 
     const existingConversation = await deps.getConversation(
       projectPath,
@@ -277,7 +317,6 @@ export function createWorkflowContinuityService(
     );
 
     if (!existingConversation) {
-      // Stale reference — conversation was deleted or never persisted; fall back to fresh
       logger.warn("workflow-continuity.stale_session.recovery", {
         lane,
         engine: "claude",
@@ -320,6 +359,104 @@ export function createWorkflowContinuityService(
     return {
       execution: withLaneState(execution, lane, updatedLaneState),
       conversationId,
+      sessionAction: "reuse",
+      promptMode: "follow_up",
+    };
+  }
+
+  async function createFreshCodexImplementerLane(
+    execution: GraphWorkflowExecution,
+    projectPath: string,
+    sessionName: string,
+    contextId: string,
+    reason: string,
+    now: string,
+  ): Promise<ResolvedImplementerCall> {
+    const lane: GraphWorkflowLaneKind = "implementer";
+    const conversation = await deps.createConversation(
+      projectPath,
+      sessionName,
+      { role: "iteration", agentBackend: "codex" },
+    );
+
+    const newLaneState: GraphWorkflowLaneState = {
+      engine: "codex",
+      lane,
+      contextId,
+      workflowConversationId: conversation.id,
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: now,
+    };
+
+    logger.info("workflow-continuity.lane.create", {
+      lane,
+      engine: "codex",
+      contextId,
+      conversationId: conversation.id,
+      reason,
+    });
+
+    return {
+      execution: withLaneState(execution, lane, newLaneState),
+      conversationId: conversation.id,
+      sessionAction: "create",
+      promptMode: "iteration_seed",
+    };
+  }
+
+  async function reuseCodexImplementerLane(
+    execution: GraphWorkflowExecution,
+    existingLane: GraphWorkflowLaneState,
+    projectPath: string,
+    sessionName: string,
+    contextId: string,
+    now: string,
+  ): Promise<ResolvedImplementerCall> {
+    const lane: GraphWorkflowLaneKind = "implementer";
+    const ccConversationId = existingLane.workflowConversationId ?? "";
+
+    // Verify the CC conversation still exists
+    const existingConversation = await deps.getConversation(
+      projectPath,
+      sessionName,
+      ccConversationId,
+    );
+
+    if (!existingConversation) {
+      logger.warn("workflow-continuity.stale_session.recovery", {
+        lane,
+        engine: "codex",
+        contextId,
+        ccConversationId,
+        reason: "conversation_not_found",
+      });
+      return createFreshCodexImplementerLane(
+        execution,
+        projectPath,
+        sessionName,
+        contextId,
+        "stale_recovery",
+        now,
+      );
+    }
+
+    const updatedLane: GraphWorkflowLaneState = {
+      ...existingLane,
+      lastUsedAt: now,
+    } as GraphWorkflowLaneState;
+
+    logger.info("workflow-continuity.lane.reuse", {
+      lane,
+      engine: "codex",
+      contextId,
+      conversationId: ccConversationId,
+    });
+
+    return {
+      execution: withLaneState(execution, lane, updatedLane),
+      conversationId: ccConversationId,
       sessionAction: "reuse",
       promptMode: "follow_up",
     };
@@ -370,7 +507,7 @@ export function createWorkflowContinuityService(
       // Reuse path — validate conversation still exists
       const existingRef = laneState!.sessionRef;
       const conversationId =
-        existingRef.engine === "claude" ? existingRef.conversationId : "";
+        existingRef?.engine === "claude" ? existingRef.conversationId : "";
 
       const existingConversation = await deps.getConversation(
         projectPath,
@@ -467,7 +604,7 @@ export function createWorkflowContinuityService(
     // Resume existing Codex thread, with fallback to a fresh thread on failure
     const existingRef = laneState!.sessionRef;
     const storedThreadId =
-      existingRef.engine === "codex" ? existingRef.threadId : "";
+      existingRef?.engine === "codex" ? existingRef.threadId : "";
 
     try {
       const { threadId: resumedThreadId } =
@@ -598,8 +735,12 @@ export function createWorkflowContinuityService(
 
     // Update sessionRef.threadId with the real Codex thread ID if captured post-run
     const sessionRef =
-      newThreadId != null && laneState.sessionRef.engine === "codex"
-        ? { ...laneState.sessionRef, threadId: newThreadId }
+      newThreadId != null
+        ? {
+            engine: "codex" as const,
+            lane,
+            threadId: newThreadId,
+          }
         : laneState.sessionRef;
 
     const updatedLane: GraphWorkflowLaneState = {

@@ -14,6 +14,7 @@ import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-regis
 import type {
   ResolveImplementerCallInput,
   RecordClaudeLaneTurnInput,
+  RecordCodexLaneTurnInput,
 } from "./workflow-continuity-service";
 import { createWorkflowContinuityService } from "./workflow-continuity-service";
 
@@ -209,7 +210,11 @@ describe("graph workflow iteration orchestrator", () => {
       };
 
       await repository.update("/repo", "session-1", current);
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -285,7 +290,11 @@ describe("graph workflow iteration orchestrator", () => {
       };
 
       await repository.update("/repo", "session-1", current);
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -337,7 +346,11 @@ describe("graph workflow iteration orchestrator", () => {
       };
 
       await repository.update("/repo", "session-1", current);
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -403,7 +416,11 @@ describe("graph workflow iteration orchestrator", () => {
       };
 
       await repository.update("/repo", "session-1", current);
-      return { contextTokens: 50_000, contextWindowMax: 200_000 };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: 50_000,
+        contextWindowMax: 200_000,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -479,7 +496,11 @@ describe("graph workflow iteration orchestrator", () => {
         await repository.update("/repo", "session-1", current);
       }
       // First two calls: agent returns without completing any task
-      return { contextTokens: 50_000, contextWindowMax: 200_000 };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: 50_000,
+        contextWindowMax: 200_000,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -534,7 +555,11 @@ describe("graph workflow iteration orchestrator", () => {
     const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
     const runAgentIteration = vi.fn(async () => {
       // Agent returns without completing, and context is nearly full
-      return { contextTokens: 180_000, contextWindowMax: 200_000 };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: 180_000,
+        contextWindowMax: 200_000,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -568,6 +593,7 @@ describe("graph workflow iteration orchestrator", () => {
     const createConversation = vi.fn(async () => ({ id: "conv-rotate" }));
     const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
     const runAgentIteration = vi.fn(async () => ({
+      conversationId: "conv-mock",
       contextTokens: 180_000,
       contextWindowMax: 200_000,
     }));
@@ -610,7 +636,11 @@ describe("graph workflow iteration orchestrator", () => {
       createConversation,
       createToolServer,
       runAgentIteration,
-      continuityService: { resolveImplementerCall, recordClaudeTurnOutcome },
+      continuityService: {
+        resolveImplementerCall,
+        recordClaudeTurnOutcome,
+        recordCodexTurnOutcome: vi.fn(),
+      },
       now() {
         return "2026-03-27T16:00:00.000Z";
       },
@@ -637,6 +667,7 @@ describe("graph workflow iteration orchestrator", () => {
     const createConversation = vi.fn(async () => ({ id: "conv-unused" }));
     const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
     const runAgentIteration = vi.fn(async () => ({
+      conversationId: "conv-mock",
       contextTokens: 50_000,
       contextWindowMax: 200_000,
     }));
@@ -659,7 +690,11 @@ describe("graph workflow iteration orchestrator", () => {
       createConversation,
       createToolServer,
       runAgentIteration,
-      continuityService: { resolveImplementerCall, recordClaudeTurnOutcome },
+      continuityService: {
+        resolveImplementerCall,
+        recordClaudeTurnOutcome,
+        recordCodexTurnOutcome: vi.fn(),
+      },
       now() {
         return "2026-03-27T16:00:00.000Z";
       },
@@ -723,6 +758,7 @@ describe("graph workflow iteration orchestrator", () => {
     const createConversation = vi.fn(async () => ({ id: "conv-unused" }));
     const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
     const runAgentIteration = vi.fn(async () => ({
+      conversationId: "conv-mock",
       contextTokens: 50_000,
       contextWindowMax: 200_000,
     }));
@@ -745,7 +781,11 @@ describe("graph workflow iteration orchestrator", () => {
       createConversation,
       createToolServer,
       runAgentIteration,
-      continuityService: { resolveImplementerCall, recordClaudeTurnOutcome },
+      continuityService: {
+        resolveImplementerCall,
+        recordClaudeTurnOutcome,
+        recordCodexTurnOutcome: vi.fn(),
+      },
       now() {
         return "2026-03-27T16:00:00.000Z";
       },
@@ -784,7 +824,11 @@ describe("graph workflow iteration orchestrator", () => {
     const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
     const runAgentIteration = vi.fn(async () => {
       // Agent never completes any task
-      return { contextTokens: 50_000, contextWindowMax: 200_000 };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: 50_000,
+        contextWindowMax: 200_000,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -836,7 +880,11 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 2,
       };
       await repository.update("/repo", "session-1", current);
-      return { contextTokens: 50000, contextWindowMax: 200000 };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: 50000,
+        contextWindowMax: 200000,
+      };
     });
 
     const resolveImplementerCall = vi.fn(
@@ -856,7 +904,11 @@ describe("graph workflow iteration orchestrator", () => {
       createConversation,
       createToolServer,
       runAgentIteration,
-      continuityService: { resolveImplementerCall, recordClaudeTurnOutcome },
+      continuityService: {
+        resolveImplementerCall,
+        recordClaudeTurnOutcome,
+        recordCodexTurnOutcome: vi.fn(),
+      },
       now() {
         return "2026-03-27T16:00:00.000Z";
       },
@@ -927,7 +979,11 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 2,
       };
       await repository.update("/repo", "session-1", next);
-      return { contextTokens: 25_000, contextWindowMax: 200_000 };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: 25_000,
+        contextWindowMax: 200_000,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1015,7 +1071,11 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
       if (runAgentIteration.mock.calls.length === 1) {
         await capturedCompleteTask!("task-plan-1", "Done");
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1096,7 +1156,11 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         completedAt: NOW,
       };
       await repository.update("/repo", "session-1", current);
-      return { contextTokens: 60_000, contextWindowMax: 200_000 };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: 60_000,
+        contextWindowMax: 200_000,
+      };
     });
 
     const continuityService = createWorkflowContinuityService({
@@ -1179,7 +1243,11 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         };
       }
       await repository.update("/repo", "session-1", current);
-      return { contextTokens: 50_000, contextWindowMax: 200_000 };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: 50_000,
+        contextWindowMax: 200_000,
+      };
     });
 
     const continuityService = createWorkflowContinuityService({
@@ -1265,7 +1333,11 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         completedAt: NOW,
       };
       await repository.update("/repo", "session-1", current);
-      return { contextTokens: 50_000, contextWindowMax: 200_000 };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: 50_000,
+        contextWindowMax: 200_000,
+      };
     });
 
     const continuityService = createWorkflowContinuityService({
@@ -1315,6 +1387,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     );
     const createToolServer = vi.fn(() => ({ server: {} }));
     const runAgentIteration = vi.fn(async () => ({
+      conversationId: "conv-mock",
       contextTokens: 50_000,
       contextWindowMax: 200_000,
     }));
@@ -1394,8 +1467,16 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     const runAgentIteration = vi.fn(async () => {
       callCount++;
       return callCount === 1
-        ? { contextTokens: 120_000, contextWindowMax: 200_000 }
-        : { contextTokens: 50_000, contextWindowMax: 200_000 };
+        ? {
+            conversationId: "conv-mock",
+            contextTokens: 120_000,
+            contextWindowMax: 200_000,
+          }
+        : {
+            conversationId: "conv-mock",
+            contextTokens: 50_000,
+            contextWindowMax: 200_000,
+          };
     });
 
     const continuityService = createWorkflowContinuityService({
@@ -1450,6 +1531,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     );
     const createToolServer = vi.fn(() => ({ server: {} }));
     const runAgentIteration = vi.fn(async () => ({
+      conversationId: "conv-mock",
       contextTokens: 50_000,
       contextWindowMax: 200_000,
     }));
@@ -1545,7 +1627,11 @@ describe("task validation event publishing (fix-30388517)", () => {
       if (runAgentIteration.mock.calls.length === 1) {
         await capturedCompleteTask!("task-plan-1", "Done");
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1634,7 +1720,11 @@ describe("task validation failure handling (circuit breaker)", () => {
         }
         throw error;
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1710,7 +1800,11 @@ describe("task validation failure handling (circuit breaker)", () => {
       if (runAgentIteration.mock.calls.length === 1) {
         await capturedCompleteTask!("task-plan-1", "Done");
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1735,6 +1829,315 @@ describe("task validation failure handling (circuit breaker)", () => {
     expect(
       result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(0);
+  });
+});
+
+// -- Codex implementer continuity ---------------------------------------------
+
+describe("codex implementer continuity", () => {
+  function createCodexExecutionWithPlanTasks(): GraphWorkflowExecution {
+    const definition = createWorkflowDefinition({
+      executionContexts: [
+        {
+          id: "context-plan",
+          title: "Plan",
+          agent: {
+            backend: "codex",
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+          },
+          mutability: { allowAgentTaskAdd: false },
+          circuitBreaker: {},
+          iterationPolicy: {
+            maxIterations: 5,
+            continuity: { enabled: true },
+          },
+        },
+      ],
+      tasks: [
+        {
+          id: "task-plan-1",
+          contextId: "context-plan",
+          order: 1,
+          title: "Inspect code",
+          instructions: "Read the relevant files.",
+          source: "user",
+        },
+        {
+          id: "task-plan-2",
+          contextId: "context-plan",
+          order: 2,
+          title: "Write plan",
+          instructions: "Document the plan.",
+          source: "user",
+        },
+      ],
+      edges: [],
+    });
+
+    return createWorkflowExecution({
+      status: "running",
+      activeContextId: "context-plan",
+      workingDefinition: definition,
+      contextStates: {
+        "context-plan": {
+          contextId: "context-plan",
+          status: "running",
+          totalTaskCount: 2,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+        },
+      },
+      taskStates: {
+        "task-plan-1": {
+          taskId: "task-plan-1",
+          contextId: "context-plan",
+          order: 1,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        },
+        "task-plan-2": {
+          taskId: "task-plan-2",
+          contextId: "context-plan",
+          order: 2,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        },
+      },
+    });
+  }
+
+  it("passes context backend to resolveImplementerCall and records codex turn outcome", async () => {
+    const execution = createCodexExecutionWithPlanTasks();
+    const repository = createRepository(execution);
+    const createConversation = vi.fn(async () => ({ id: "conv-unused" }));
+    const createToolServer = vi.fn(() => ({ server: {} }));
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:00:00.000Z",
+      };
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:01:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.update("/repo", "session-1", current);
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+        sessionRef: { backend: "codex" as const, threadId: "thread-real-123" },
+      };
+    });
+
+    const resolveImplementerCall = vi.fn(
+      async (input: ResolveImplementerCallInput) => ({
+        execution: input.execution,
+        conversationId: "conv-codex-impl",
+        sessionAction: "create" as const,
+        promptMode: "iteration_seed" as const,
+      }),
+    );
+    const recordCodexTurnOutcome = vi.fn(
+      (input: RecordCodexLaneTurnInput) => input.execution,
+    );
+    const recordClaudeTurnOutcome = vi.fn(
+      (input: RecordClaudeLaneTurnInput) => input.execution,
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      continuityService: {
+        resolveImplementerCall,
+        recordClaudeTurnOutcome,
+        recordCodexTurnOutcome,
+      },
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // resolveImplementerCall must receive the context backend
+    expect(resolveImplementerCall).toHaveBeenCalledWith(
+      expect.objectContaining({ engine: "codex" }),
+    );
+    // Codex turn outcome should be recorded, not Claude
+    expect(recordCodexTurnOutcome).toHaveBeenCalledOnce();
+    expect(recordCodexTurnOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        newThreadId: "thread-real-123",
+      }),
+    );
+    expect(recordClaudeTurnOutcome).not.toHaveBeenCalled();
+    expect(result.conversationId).toBe("conv-codex-impl");
+  });
+
+  it("checks rotateBeforeNextTurn without requiring claude engine", async () => {
+    const execution = createCodexExecutionWithPlanTasks();
+    const repository = createRepository(execution);
+    const createConversation = vi.fn(async () => ({ id: "conv-unused" }));
+    const createToolServer = vi.fn(() => ({ server: {} }));
+    const runAgentIteration = vi.fn(async () => ({
+      conversationId: "conv-mock",
+      contextTokens: null,
+      contextWindowMax: null,
+    }));
+
+    const resolveImplementerCall = vi.fn(
+      async (input: ResolveImplementerCallInput) => ({
+        execution: input.execution,
+        conversationId: "conv-codex-rotate",
+        sessionAction: "create" as const,
+        promptMode: "iteration_seed" as const,
+      }),
+    );
+
+    // Codex normally keeps rotateBeforeNextTurn false, but if somehow set, the guard should trigger
+    const recordCodexTurnOutcome = vi.fn((input: RecordCodexLaneTurnInput) => ({
+      ...input.execution,
+      laneStates: {
+        implementer: {
+          engine: "codex" as const,
+          lane: "implementer" as const,
+          contextId: "context-plan",
+          sessionRef: {
+            engine: "codex" as const,
+            lane: "implementer" as const,
+            threadId: "thread-1",
+          },
+          lastTurnUsage: null,
+          // Defense-in-depth: Codex schema defines this as literal false, but
+          // the rotation guard should still stop follow-ups if the value is true
+          rotateBeforeNextTurn: true as boolean as false,
+          limitEvaluation: "disabled" as const,
+          lastUsedAt: "2026-03-27T16:00:00.000Z",
+        },
+      },
+    }));
+    const recordClaudeTurnOutcome = vi.fn();
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      continuityService: {
+        resolveImplementerCall,
+        recordClaudeTurnOutcome,
+        recordCodexTurnOutcome,
+      },
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // The rotation guard should stop follow-ups even for codex engine
+    expect(runAgentIteration).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses codex implementer session across restarts via continuity service E2E", async () => {
+    const NOW = "2026-03-27T16:00:00.000Z";
+    const execution = createCodexExecutionWithPlanTasks();
+    const repository = createRepository(execution);
+
+    let convCounter = 0;
+    const createConversation = vi.fn(async () => {
+      convCounter++;
+      return { id: `conv-cc-${convCounter}` };
+    });
+    const getConversation = vi.fn(
+      async (_p: string, _s: string, id: string) => ({ id }),
+    );
+    const startCodexThread = vi.fn(async () => ({
+      threadId: `thread-${++convCounter}`,
+    }));
+    const resumeCodexThread = vi.fn(async (threadId: string) => ({ threadId }));
+    const createToolServer = vi.fn(() => ({ server: {} }));
+    const runAgentIteration = vi.fn(async () => ({
+      conversationId: "conv-mock",
+      contextTokens: null,
+      contextWindowMax: null,
+      sessionRef: { backend: "codex" as const, threadId: "thread-real-1" },
+    }));
+
+    const continuityService = createWorkflowContinuityService({
+      createConversation,
+      getConversation,
+      startCodexThread,
+      resumeCodexThread,
+      now: () => NOW,
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(),
+      createToolServer,
+      runAgentIteration,
+      continuityService,
+      now: () => NOW,
+    });
+
+    const input = {
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    };
+
+    // First iteration: creates a fresh CC conversation and persists the real thread after the turn
+    const result1 = await orchestrator.runIteration(input);
+
+    // Simulate restart by round-tripping through schema parser
+    const deserialized = graphWorkflowExecutionSchema.parse(
+      JSON.parse(JSON.stringify(repository.read())),
+    );
+    await repository.update("/repo", "session-1", deserialized);
+
+    // Second iteration after restart: should reuse
+    const result2 = await orchestrator.runIteration(input);
+
+    expect(result1.conversationId).toBe(result2.conversationId);
+    // Only one CC conversation created — the second call reused
+    expect(createConversation).toHaveBeenCalledOnce();
+    expect(startCodexThread).not.toHaveBeenCalled();
+    expect(resumeCodexThread).not.toHaveBeenCalled();
   });
 });
 
@@ -1809,7 +2212,11 @@ describe("mid-iteration halt via signalHalt", () => {
         capturedError = error;
         throw error;
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -1916,7 +2323,11 @@ describe("mid-iteration halt via signalHalt", () => {
         capturedError = error;
         throw error;
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -2010,7 +2421,11 @@ describe("mid-iteration halt via signalHalt", () => {
         // follow-up loop would issue additional agent calls and keep failing.
         throw error;
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -2088,7 +2503,11 @@ describe("mid-iteration halt via signalHalt", () => {
         capturedError = error;
         throw error;
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -2162,7 +2581,11 @@ describe("mid-iteration halt via signalHalt", () => {
       } catch (error) {
         capturedError = error;
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -2257,7 +2680,11 @@ describe("mid-iteration halt via signalHalt", () => {
         // on the remaining tasks and the breaker would trip after enough fails.
         throw error;
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -2338,7 +2765,11 @@ describe("mid-iteration halt via signalHalt", () => {
         // Rethrow so the orchestrator's outer catch handles the halted-iteration error
         throw error;
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({

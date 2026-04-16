@@ -148,7 +148,11 @@ describe("graph workflow iteration validation integration", () => {
         status: "pending",
         failureMessage: expect.stringContaining("Missing validation artifact"),
       });
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     };
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -219,7 +223,11 @@ describe("graph workflow iteration validation integration", () => {
         thrown = error as Error;
       }
       expect(thrown).not.toBeNull();
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     };
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -301,7 +309,11 @@ describe("graph workflow iteration validation integration", () => {
       } catch {
         // swallow validation/halt errors; orchestrator drives next turns
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     };
 
     const validateTaskCompletion = vi.fn(async () => ({
@@ -376,7 +388,11 @@ describe("graph workflow iteration validation integration", () => {
           // intentionally swallow fail error
         }
       }
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     };
 
     const validateTaskCompletion = vi.fn(async () => ({
@@ -453,7 +469,11 @@ describe("graph workflow iteration validation integration", () => {
       expect(secondResult.taskStates["task-plan-1"]?.completedAt).toBe(
         firstCallCompletedAt,
       );
-      return { contextTokens: null, contextWindowMax: null };
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
     };
 
     const validateTaskCompletion = vi.fn(async () => ({

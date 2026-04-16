@@ -863,6 +863,86 @@ describe("graphWorkflowLaneStateSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("parses a codex implementer lane state with workflowConversationId", () => {
+    const result = graphWorkflowLaneStateSchema.safeParse({
+      engine: "codex",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-cc-123",
+      sessionRef: {
+        engine: "codex",
+        lane: "implementer",
+        threadId: "thread-impl",
+      },
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.engine === "codex") {
+      expect(result.data.workflowConversationId).toBe("conv-cc-123");
+      expect(result.data.lane).toBe("implementer");
+      expect(result.data.sessionRef).toEqual({
+        engine: "codex",
+        lane: "implementer",
+        threadId: "thread-impl",
+      });
+    }
+  });
+
+  it("allows a codex implementer lane state to omit sessionRef before the first turn", () => {
+    const result = graphWorkflowLaneStateSchema.safeParse({
+      engine: "codex",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-cc-123",
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.engine === "codex") {
+      expect(result.data.workflowConversationId).toBe("conv-cc-123");
+      expect(result.data.sessionRef).toBeUndefined();
+    }
+  });
+
+  it("allows workflowConversationId on claude lane state", () => {
+    const result = graphWorkflowLaneStateSchema.safeParse({
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-123",
+      sessionRef: claudeSessionRef,
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.engine === "claude") {
+      expect(result.data.workflowConversationId).toBe("conv-123");
+    }
+  });
+
+  it("defaults workflowConversationId to undefined when omitted", () => {
+    const result = graphWorkflowLaneStateSchema.safeParse({
+      engine: "codex",
+      lane: "task_validator",
+      contextId: "ctx-1",
+      sessionRef: codexSessionRef,
+      limitEvaluation: "disabled",
+      lastUsedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.workflowConversationId).toBeUndefined();
+    }
+  });
 });
 
 describe("graphWorkflowExecutionSchema laneStates", () => {

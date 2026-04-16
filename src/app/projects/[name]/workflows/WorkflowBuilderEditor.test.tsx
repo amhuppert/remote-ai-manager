@@ -12,6 +12,8 @@ import {
   createWorkflowDefinitionRecord,
 } from "@/lib/workflow-graph/test-fixtures";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
+import type { GlobalConfig } from "@/types";
+import { buildDefaultImplementerConfig } from "./page";
 import WorkflowBuilderEditor from "./WorkflowBuilderEditor";
 
 const defaultHeaderProps = {
@@ -208,6 +210,30 @@ describe("WorkflowBuilderEditor", () => {
     expect(codes).toContain("empty-task-instructions");
   });
 
+  it("adds a codex context when defaultImplementerConfig is codex", () => {
+    resetStore();
+    render(
+      <WorkflowBuilderEditor
+        record={createWorkflowDefinitionRecord()}
+        {...defaultHeaderProps}
+        defaultImplementerConfig={{
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Context/i }));
+
+    const contexts =
+      _useGraphWorkflowBuilderStore.getState().draftDefinition
+        ?.executionContexts ?? [];
+    const added = contexts.at(-1);
+    expect(added?.agent.backend).toBe("codex");
+    expect(added?.agent.model).toBe("gpt-5.4");
+  });
+
   it("save payload includes the new continuity shape and no legacy limit fields", async () => {
     resetStore();
     const onSave = vi.fn();
@@ -244,5 +270,69 @@ describe("WorkflowBuilderEditor", () => {
         "contextHardLimitTokens",
       );
     }
+  });
+});
+
+const BASE_CONFIG: GlobalConfig = {
+  baseDir: "/projects",
+  ignorePatterns: [],
+  stateFilePath: "/tmp/state.json",
+  claudeTimeoutMs: 3600000,
+  defaultModel: "opus",
+  defaultAgentBackend: "claude",
+};
+
+describe("buildDefaultImplementerConfig", () => {
+  it("returns claude config when defaultAgentBackend is claude", () => {
+    const result = buildDefaultImplementerConfig(BASE_CONFIG);
+
+    expect(result.backend).toBe("claude");
+    expect(result.model).toBe("opus");
+    expect(result.reasoningEffort).toBe("medium");
+  });
+
+  it("returns codex config with validated model when defaultAgentBackend is codex", () => {
+    const result = buildDefaultImplementerConfig({
+      ...BASE_CONFIG,
+      defaultAgentBackend: "codex",
+      codex: { enabled: true, model: "gpt-5.4-mini" },
+    });
+
+    expect(result.backend).toBe("codex");
+    expect(result.model).toBe("gpt-5.4-mini");
+    expect(result.reasoningEffort).toBe("high");
+  });
+
+  it("falls back to default codex model when config model is invalid", () => {
+    const result = buildDefaultImplementerConfig({
+      ...BASE_CONFIG,
+      defaultAgentBackend: "codex",
+      codex: { enabled: true, model: "invalid-model" },
+    });
+
+    expect(result.backend).toBe("codex");
+    expect(result.model).toBe("gpt-5.4");
+  });
+
+  it("uses codex reasoning effort from config when valid", () => {
+    const result = buildDefaultImplementerConfig({
+      ...BASE_CONFIG,
+      defaultAgentBackend: "codex",
+      codex: { enabled: true, model: "gpt-5.4", reasoningEffort: "xhigh" },
+    });
+
+    expect(result.backend).toBe("codex");
+    expect(result.reasoningEffort).toBe("xhigh");
+  });
+
+  it("falls back to default codex model and effort when codex config is absent", () => {
+    const result = buildDefaultImplementerConfig({
+      ...BASE_CONFIG,
+      defaultAgentBackend: "codex",
+    });
+
+    expect(result.backend).toBe("codex");
+    expect(result.model).toBe("gpt-5.4");
+    expect(result.reasoningEffort).toBe("high");
   });
 });

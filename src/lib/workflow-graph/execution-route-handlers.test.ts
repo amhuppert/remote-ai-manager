@@ -545,3 +545,212 @@ describe("graph workflow execution route handlers", () => {
     expect(archiveExecution).not.toHaveBeenCalled();
   });
 });
+
+// -- Implementer runner wiring: unified executePromptStream path ---------------
+// These tests exercise the same wiring pattern used by execution-route-handlers.ts
+// to wire implementer turns through createGraphWorkflowImplementerRunner, verifying
+// that both Claude and Codex backends use executePromptStream and that no
+// implementer-only in-memory resume cache is needed.
+
+import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
+import {
+  createGraphWorkflowIterationOrchestrator,
+  type GraphWorkflowRunAgentIterationInput,
+} from "@/lib/workflows/graph-workflow/iteration-orchestrator";
+import { createWorkflowDefinition } from "./test-fixtures";
+import type { GraphWorkflowExecution } from "@/types";
+
+function createCodexWorkflowExecution(): GraphWorkflowExecution {
+  const definition = createWorkflowDefinition({
+    executionContexts: [
+      {
+        id: "context-codex",
+        title: "Codex Implement",
+        agent: {
+          backend: "codex",
+          model: "gpt-5.4-mini",
+          reasoningEffort: "medium",
+        },
+        mutability: { allowAgentTaskAdd: false },
+        circuitBreaker: {},
+        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      },
+    ],
+    tasks: [
+      {
+        id: "task-codex-1",
+        contextId: "context-codex",
+        order: 1,
+        title: "Build feature",
+        instructions: "Implement the feature.",
+        source: "user",
+      },
+    ],
+    edges: [],
+  });
+
+  return createWorkflowExecution({
+    status: "running",
+    activeContextId: "context-codex",
+    workingDefinition: definition,
+    contextStates: {
+      "context-codex": {
+        contextId: "context-codex",
+        status: "running",
+        totalTaskCount: 1,
+        completedTaskCount: 0,
+        iterationCount: 0,
+        consecutiveFailureCount: 0,
+      },
+    },
+    taskStates: {
+      "task-codex-1": {
+        taskId: "task-codex-1",
+        contextId: "context-codex",
+        order: 1,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
+      },
+    },
+  });
+}
+
+describe("implementer runner wiring (unified executePromptStream path)", () => {
+  it("codex implementer turns flow through executePromptStream without a resume cache", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conv-codex-1",
+      contextTokens: null,
+      contextWindowMax: null,
+    }));
+    const implementerRunner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+    });
+
+    const execution = createCodexWorkflowExecution();
+    let activeExecution = execution;
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: {
+        async getActive() {
+          return activeExecution;
+        },
+        async update(_p, _s, exec) {
+          activeExecution = exec;
+        },
+      },
+      createConversation: vi.fn(async () => ({ id: "conv-codex-1" })),
+      createToolServer: vi.fn(() => ({ server: { servers: [] } })),
+      // Wire runAgentIteration the same way execution-route-handlers.ts does
+      async runAgentIteration(input: GraphWorkflowRunAgentIterationInput) {
+        return implementerRunner.runIteration({
+          projectPath: input.projectPath,
+          session: makeSession(),
+          prompt: input.prompt,
+          conversationId: input.conversationId,
+          contextId: input.contextId,
+          backend: input.backend,
+          model: input.model,
+          reasoningEffort: input.reasoningEffort,
+          toolServer: input.toolServer,
+          emitStreamFrame: input.emitStreamFrame,
+        });
+      },
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-codex",
+    });
+
+    // executePromptStream must be called with codex backend — no task runner fallback
+    expect(executePromptStream).toHaveBeenCalledWith(
+      expect.anything(), // projectPath
+      expect.anything(), // session
+      expect.anything(), // prompt
+      expect.anything(), // emit
+      expect.anything(), // conversationId
+      "gpt-5.4-mini", // modelId
+      undefined, // images
+      expect.objectContaining({ backend: "codex", autonomous: true }),
+    );
+  });
+
+  it("consecutive codex implementer turns each go through executePromptStream (no in-memory cache)", async () => {
+    let callCount = 0;
+    const executePromptStream = vi.fn(async () => {
+      callCount++;
+      return {
+        conversationId: `conv-codex-${callCount}`,
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+    const implementerRunner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+    });
+
+    const execution = createCodexWorkflowExecution();
+    let activeExecution = execution;
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: {
+        async getActive() {
+          return activeExecution;
+        },
+        async update(_p, _s, exec) {
+          activeExecution = exec;
+        },
+      },
+      createConversation: vi.fn(async () => ({ id: "conv-codex-1" })),
+      createToolServer: vi.fn(() => ({ server: { servers: [] } })),
+      async runAgentIteration(input: GraphWorkflowRunAgentIterationInput) {
+        return implementerRunner.runIteration({
+          projectPath: input.projectPath,
+          session: makeSession(),
+          prompt: input.prompt,
+          conversationId: input.conversationId,
+          contextId: input.contextId,
+          backend: input.backend,
+          model: input.model,
+          reasoningEffort: input.reasoningEffort,
+          toolServer: input.toolServer,
+          emitStreamFrame: input.emitStreamFrame,
+        });
+      },
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-codex",
+    });
+
+    // Initial call + 2 follow-ups = 3 calls, all through executePromptStream.
+    // Each call proves no in-memory resume cache is used — the runner delegates
+    // every turn to executePromptStream rather than caching a backend ref.
+    expect(executePromptStream).toHaveBeenCalledTimes(3);
+    for (let i = 0; i < 3; i++) {
+      expect(executePromptStream).toHaveBeenNthCalledWith(
+        i + 1,
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        "gpt-5.4-mini",
+        undefined,
+        expect.objectContaining({ backend: "codex", autonomous: true }),
+      );
+    }
+  });
+});

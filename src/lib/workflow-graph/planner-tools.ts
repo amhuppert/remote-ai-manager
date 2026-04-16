@@ -7,13 +7,19 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/types";
 import {
+  agentBackendSchema,
   claudeModelSchema,
+  codexModelSchema,
+  codexReasoningEffortSchema,
   effortLevelSchema,
+  getDefaultCodexModel,
   validatorTypeSchema,
 } from "@/lib/schemas";
 import type {
+  AgentBackendId,
   ClaudeModel,
   CodexModel,
+  CodexReasoningEffort,
   EffortLevel,
   GlobalConfig,
   ValidatorType,
@@ -53,12 +59,24 @@ const executionContextInputSchema = z.object({
     ),
   agentConfig: z
     .object({
-      model: claudeModelSchema.optional(),
-      reasoningEffort: effortLevelSchema.optional(),
+      backend: agentBackendSchema
+        .optional()
+        .describe(
+          "Agent backend: 'claude' or 'codex'. Omit to use the project's default agent backend.",
+        ),
+      model: z
+        .string()
+        .optional()
+        .describe(
+          "Model to use. Claude: 'opus', 'sonnet', 'haiku'. Codex: 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano'. Omit for backend default.",
+        ),
+      reasoningEffort: effortLevelSchema
+        .optional()
+        .describe("Reasoning effort level. Omit for backend default."),
     })
     .optional()
     .describe(
-      "Override the model or reasoning effort for this context's agent. Omit to use project defaults.",
+      "Override the agent backend, model, or reasoning effort for this context's implementer. Omit to use project defaults.",
     ),
   circuitBreakerPolicy: z
     .object({
@@ -271,9 +289,51 @@ type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 // Inflate agent input → internal semantic definition
 // ============================================================
 
-const DEFAULT_MODEL = "sonnet" as const;
-const DEFAULT_EFFORT = "high" as const;
+const DEFAULT_CLAUDE_MODEL: ClaudeModel = "sonnet";
+const DEFAULT_CLAUDE_EFFORT: EffortLevel = "high";
+const DEFAULT_CODEX_EFFORT = "high" as const;
 const DEFAULT_MAX_ITERATIONS = 20;
+
+type InflatedAgentConfig =
+  | { backend: "claude"; model: ClaudeModel; reasoningEffort: EffortLevel }
+  | {
+      backend: "codex";
+      model: CodexModel;
+      reasoningEffort: CodexReasoningEffort;
+    };
+
+/**
+ * Inflate raw agentConfig input into a typed agent config.
+ * Validates model/effort against the resolved backend.
+ */
+function inflateAgentConfig(
+  input:
+    | {
+        backend?: AgentBackendId;
+        model?: string;
+        reasoningEffort?: EffortLevel;
+      }
+    | undefined,
+  defaultBackend: AgentBackendId,
+): InflatedAgentConfig {
+  const backend = input?.backend ?? defaultBackend;
+
+  if (backend === "codex") {
+    const model = input?.model
+      ? codexModelSchema.parse(input.model)
+      : getDefaultCodexModel();
+    const reasoningEffort = input?.reasoningEffort
+      ? codexReasoningEffortSchema.parse(input.reasoningEffort)
+      : DEFAULT_CODEX_EFFORT;
+    return { backend: "codex", model, reasoningEffort };
+  }
+
+  const model = input?.model
+    ? claudeModelSchema.parse(input.model)
+    : DEFAULT_CLAUDE_MODEL;
+  const reasoningEffort = input?.reasoningEffort ?? DEFAULT_CLAUDE_EFFORT;
+  return { backend: "claude", model, reasoningEffort };
+}
 
 /**
  * Build a validator config for the workflow definition.
@@ -335,23 +395,33 @@ function buildValidatorConfig(
 function inflateToSemanticDefinition(
   input: CreateWorkflowInput,
   workflowDefaults?: WorkflowDefaults,
+  defaultAgentBackend: AgentBackendId = "claude",
 ): WorkflowSemanticDefinition {
   const taskValidatorDefault = workflowDefaults?.taskValidator;
 
   const executionContexts = input.executionContexts.map((ctx) => {
-    const ctxModel = ctx.agentConfig?.model ?? DEFAULT_MODEL;
-    const ctxEffort = ctx.agentConfig?.reasoningEffort ?? DEFAULT_EFFORT;
-    const claudeFallback = { model: ctxModel, reasoningEffort: ctxEffort };
+    const agentConfig = inflateAgentConfig(
+      ctx.agentConfig,
+      defaultAgentBackend,
+    );
+
+    // Claude validator fallback: use context values when Claude, otherwise Claude defaults
+    const claudeFallback =
+      agentConfig.backend === "claude"
+        ? {
+            model: agentConfig.model,
+            reasoningEffort: agentConfig.reasoningEffort,
+          }
+        : {
+            model: DEFAULT_CLAUDE_MODEL,
+            reasoningEffort: DEFAULT_CLAUDE_EFFORT,
+          };
 
     return {
       id: ctx.slug,
       title: ctx.title,
       description: ctx.instructions,
-      agent: {
-        backend: "claude" as const,
-        model: ctxModel,
-        reasoningEffort: ctxEffort,
-      },
+      agent: agentConfig,
       mutability: {
         allowAgentTaskAdd: ctx.mutabilityPolicy?.allowAgentTaskAdd ?? false,
       },
@@ -511,6 +581,7 @@ function createCreateWorkflowHandler(
       const definition = inflateToSemanticDefinition(
         parsed.data,
         config.workflowDefaults,
+        config.defaultAgentBackend,
       );
       const layout = generateWorkflowLayout(definition);
       const record = await deps.createWorkflow(context.projectPath, {
@@ -547,6 +618,7 @@ function createReplaceWorkflowHandler(
       const definition = inflateToSemanticDefinition(
         parsed.data,
         config.workflowDefaults,
+        config.defaultAgentBackend,
       );
       const layout = generateWorkflowLayout(definition);
       const record = await deps.updateWorkflow(

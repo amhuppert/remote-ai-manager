@@ -900,7 +900,7 @@ export default function ConfigEditor(): React.JSX.Element {
             onToggle={toggleSection}
           >
             <WorkflowValidatorFields
-              groupLabel="Implementation Agent"
+              groupLabel="Execution Validator"
               basePath="workflowDefaults.executionValidator"
               validator={formState.workflowDefaults?.executionValidator}
               isDefault={isDefault}

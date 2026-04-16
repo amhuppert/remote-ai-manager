@@ -888,7 +888,7 @@ export const graphWorkflowValidationReviewArtifactSchema = z.discriminatedUnion(
     }),
     z.object({
       engine: z.literal("codex"),
-      threadId: z.string().trim().min(1),
+      threadId: z.string().trim(),
       response: z.string(),
       usage: z
         .object({
@@ -985,6 +985,7 @@ export const graphWorkflowLaneStateSchema = z.discriminatedUnion("engine", [
     lane: graphWorkflowLaneKindSchema,
     contextId: z.string().trim().min(1),
     engine: z.literal("claude"),
+    workflowConversationId: z.string().trim().min(1).optional(),
     sessionRef: graphWorkflowExecutionSessionRefSchema,
     lastContextTokens: z.number().int().nullable().default(null),
     lastContextWindowMax: z.number().int().nullable().default(null),
@@ -996,7 +997,8 @@ export const graphWorkflowLaneStateSchema = z.discriminatedUnion("engine", [
     lane: graphWorkflowLaneKindSchema,
     contextId: z.string().trim().min(1),
     engine: z.literal("codex"),
-    sessionRef: graphWorkflowExecutionSessionRefSchema,
+    workflowConversationId: z.string().trim().min(1).optional(),
+    sessionRef: graphWorkflowExecutionSessionRefSchema.optional(),
     lastTurnUsage: graphWorkflowLaneTurnUsageSchema.nullable().default(null),
     rotateBeforeNextTurn: z.literal(false).default(false),
     limitEvaluation: z.enum(["disabled", "unsupported"]),

@@ -2,6 +2,7 @@ import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   AgentBackendId,
+  AgentSessionRef,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowHaltReason,
@@ -13,6 +14,7 @@ import type {
   ResolveImplementerCallInput,
   ResolvedImplementerCall,
   RecordClaudeLaneTurnInput,
+  RecordCodexLaneTurnInput,
 } from "./workflow-continuity-service";
 import { buildIterationPrompt, buildFollowUpPrompt } from "./iteration-prompt";
 import {
@@ -79,8 +81,10 @@ export interface GraphWorkflowRunAgentIterationInput {
 }
 
 export interface GraphWorkflowAgentIterationResult {
+  conversationId: string;
   contextTokens: number | null;
   contextWindowMax: number | null;
+  sessionRef?: AgentSessionRef | null;
 }
 
 export interface IterationOrchestratorContinuityService {
@@ -89,6 +93,9 @@ export interface IterationOrchestratorContinuityService {
   ): Promise<ResolvedImplementerCall>;
   recordClaudeTurnOutcome(
     input: RecordClaudeLaneTurnInput,
+  ): GraphWorkflowExecution;
+  recordCodexTurnOutcome(
+    input: RecordCodexLaneTurnInput,
   ): GraphWorkflowExecution;
 }
 
@@ -473,6 +480,7 @@ export function createGraphWorkflowIterationOrchestrator(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         contextId: input.contextId,
+        engine: context.agent.backend,
       });
       conversationId = resolved.conversationId;
       executionWithLaneState = resolved.execution;
@@ -808,14 +816,27 @@ export function createGraphWorkflowIterationOrchestrator(
           input.projectPath,
           input.sessionName,
         );
-        const updated = deps.continuityService.recordClaudeTurnOutcome({
-          execution: current,
-          lane: "implementer",
-          contextTokens: agentResult.contextTokens,
-          contextWindowMax: agentResult.contextWindowMax,
-          contextLimitTokens:
-            context.iterationPolicy.continuity.contextLimitTokens,
-        });
+        const contextLimitTokens =
+          context.iterationPolicy.continuity.contextLimitTokens;
+        const updated =
+          context.agent.backend === "codex"
+            ? deps.continuityService.recordCodexTurnOutcome({
+                execution: current,
+                lane: "implementer",
+                usage: null,
+                contextLimitTokens,
+                newThreadId:
+                  agentResult.sessionRef?.backend === "codex"
+                    ? agentResult.sessionRef.threadId
+                    : null,
+              })
+            : deps.continuityService.recordClaudeTurnOutcome({
+                execution: current,
+                lane: "implementer",
+                contextTokens: agentResult.contextTokens,
+                contextWindowMax: agentResult.contextWindowMax,
+                contextLimitTokens,
+              });
         await persistExecution(input.projectPath, input.sessionName, updated);
       }
 
@@ -904,10 +925,7 @@ export function createGraphWorkflowIterationOrchestrator(
         // Stop if the continuity service has scheduled a rotation due to context limit
         if (deps.continuityService) {
           const laneState = midExecution.laneStates["implementer"];
-          if (
-            laneState?.engine === "claude" &&
-            laneState.rotateBeforeNextTurn
-          ) {
+          if (laneState?.rotateBeforeNextTurn) {
             execLogger?.iteration(
               input.contextId,
               "iteration.follow_up_skipped",

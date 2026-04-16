@@ -5,8 +5,8 @@ import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
 import type {
-  ClaudeModel,
   CodexConfig,
+  GraphWorkflowAgentConfig,
   WorkflowDefinitionRecord,
 } from "@/types";
 import {
@@ -34,7 +34,7 @@ interface WorkflowBuilderEditorProps {
     layout: WorkflowDefinitionRecord["layout"];
   }) => void | Promise<void>;
   saveError?: string | null;
-  defaultModel?: ClaudeModel;
+  defaultImplementerConfig?: GraphWorkflowAgentConfig;
   codexConfig?: CodexConfig;
   isMobile?: boolean;
   onAutoSwitchPanel?: (panel: BuilderMobilePanel) => void;
@@ -58,7 +58,7 @@ function WorkflowBuilderEditorInner({
   onDelete,
   onSave,
   saveError,
-  defaultModel,
+  defaultImplementerConfig,
   codexConfig,
   isMobile,
   onAutoSwitchPanel,
@@ -129,7 +129,7 @@ function WorkflowBuilderEditorInner({
     if (!draftDefinition || !draftLayout) return;
     const result = addExecutionContext(
       { definition: draftDefinition, layout: draftLayout },
-      { defaultModel },
+      { defaultAgentConfig: defaultImplementerConfig },
     );
     updateDefinition(result.definition);
     updateLayout(result.layout);
@@ -195,7 +195,7 @@ function WorkflowBuilderEditorInner({
           onSave={handleSave}
           onDelete={handleDeleteContext}
           saving={isSaving}
-          defaultModel={defaultModel}
+          defaultImplementerConfig={defaultImplementerConfig}
           codexConfig={codexConfig}
         />
       </div>

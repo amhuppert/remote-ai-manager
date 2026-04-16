@@ -1,5 +1,5 @@
 import type {
-  ClaudeModel,
+  GraphWorkflowAgentConfig,
   GraphWorkflowVisualLayout,
   GraphWorkflowTaskDefinition,
   WorkflowSemanticDefinition,
@@ -80,7 +80,7 @@ function createTaskId(contextId: string, order: number): string {
 
 export function addExecutionContext(
   draft: WorkflowBuilderDraftData,
-  options?: { defaultModel?: ClaudeModel },
+  options?: { defaultAgentConfig?: GraphWorkflowAgentConfig },
 ): WorkflowBuilderDraftData & { contextId: string } {
   const definition = cloneValue(draft.definition);
   const layout = cloneValue(draft.layout);
@@ -91,15 +91,17 @@ export function addExecutionContext(
     0,
   );
 
+  const agentConfig: GraphWorkflowAgentConfig = options?.defaultAgentConfig ?? {
+    backend: "claude",
+    model: "sonnet",
+    reasoningEffort: "medium",
+  };
+
   definition.executionContexts.push({
     id: contextId,
     title: `Execution Context ${contextNumber}`,
     description: "",
-    agent: {
-      backend: "claude",
-      model: options?.defaultModel ?? "sonnet",
-      reasoningEffort: "medium",
-    },
+    agent: agentConfig,
     mutability: {
       allowAgentTaskAdd: false,
     },

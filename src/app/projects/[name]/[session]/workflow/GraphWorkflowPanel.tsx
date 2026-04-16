@@ -14,7 +14,7 @@ import ExecutionStatusBar from "./ExecutionStatusBar";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
 import IterationTranscriptViewer from "./IterationTranscriptViewer";
-import { isTaskConversationLive } from "./task-runtime-state";
+import { resolveViewingTask } from "./view-task-resolver";
 
 interface GraphWorkflowPanelProps {
   projectName: string;
@@ -42,34 +42,6 @@ interface GraphWorkflowPanelProps {
   isMobile: boolean;
   mobilePanel: ExecutionMobilePanel;
   autoSwitchPanel: (panel: ExecutionMobilePanel) => void;
-}
-
-/** Resolve task info needed by the transcript viewer. */
-function resolveViewingTask(
-  execution: GraphWorkflowExecution,
-  taskId: string,
-): {
-  conversationId: string;
-  contextTitle: string;
-  taskTitle: string;
-  isLive: boolean;
-} | null {
-  const taskDef = execution.workingDefinition.tasks.find(
-    (t) => t.id === taskId,
-  );
-  const taskState = execution.taskStates[taskId];
-  if (!taskDef || !taskState?.lastConversationId) return null;
-
-  const context = execution.workingDefinition.executionContexts.find(
-    (ctx) => ctx.id === taskDef.contextId,
-  );
-
-  return {
-    conversationId: taskState.lastConversationId,
-    contextTitle: context?.title ?? taskDef.contextId,
-    taskTitle: taskDef.title,
-    isLive: isTaskConversationLive(execution, taskId),
-  };
 }
 
 export default function GraphWorkflowPanel({

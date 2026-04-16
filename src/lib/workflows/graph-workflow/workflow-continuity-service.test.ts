@@ -127,7 +127,10 @@ describe("resolveImplementerCall", () => {
       contextId: "ctx-1",
     });
 
-    expect(deps.createConversation).toHaveBeenCalledOnce();
+    expect(deps.createConversation).toHaveBeenCalledWith("/proj", "sess", {
+      role: "iteration",
+      agentBackend: "claude",
+    });
     expect(result.sessionAction).toBe("create");
     expect(result.promptMode).toBe("iteration_seed");
     expect(result.conversationId).toBe("conv-new");
@@ -297,6 +300,271 @@ describe("resolveImplementerCall", () => {
 });
 
 // ---------------------------------------------------------------------------
+// resolveImplementerCall — Codex backend
+// ---------------------------------------------------------------------------
+
+describe("resolveImplementerCall (codex)", () => {
+  it("creates a fresh CC conversation without fabricating a codex thread when no lane state exists", async () => {
+    const deps = makeDeps({
+      createConversation: vi.fn().mockResolvedValue({ id: "conv-cc-new" }),
+      startCodexThread: vi
+        .fn()
+        .mockResolvedValue({ threadId: "thread-impl-new" }),
+    });
+    const svc = createWorkflowContinuityService(deps);
+    const execution = makeExecution();
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      engine: "codex",
+    });
+
+    expect(deps.createConversation).toHaveBeenCalledWith("/proj", "sess", {
+      role: "iteration",
+      agentBackend: "codex",
+    });
+    expect(deps.startCodexThread).not.toHaveBeenCalled();
+    expect(result.sessionAction).toBe("create");
+    expect(result.promptMode).toBe("iteration_seed");
+    expect(result.conversationId).toBe("conv-cc-new");
+    const lane = result.execution.laneStates["implementer"];
+    expect(lane?.engine).toBe("codex");
+    if (lane?.engine === "codex") {
+      expect(lane.sessionRef).toBeUndefined();
+      expect(lane.workflowConversationId).toBe("conv-cc-new");
+    }
+  });
+
+  it("resumes codex thread and reuses CC conversation when continuity enabled", async () => {
+    const deps = makeDeps({
+      getConversation: vi.fn().mockResolvedValue({ id: "conv-cc-existing" }),
+      resumeCodexThread: vi
+        .fn()
+        .mockResolvedValue({ threadId: "thread-impl-existing" }),
+    });
+    const svc = createWorkflowContinuityService(deps);
+
+    const existingLane: GraphWorkflowLaneState = {
+      engine: "codex",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-cc-existing",
+      sessionRef: {
+        engine: "codex",
+        lane: "implementer",
+        threadId: "thread-impl-existing",
+      },
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: { implementer: existingLane },
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      engine: "codex",
+    });
+
+    expect(deps.getConversation).toHaveBeenCalledWith(
+      "/proj",
+      "sess",
+      "conv-cc-existing",
+    );
+    expect(deps.resumeCodexThread).not.toHaveBeenCalled();
+    expect(result.sessionAction).toBe("reuse");
+    expect(result.promptMode).toBe("follow_up");
+    expect(result.conversationId).toBe("conv-cc-existing");
+  });
+
+  it("falls back to fresh session when resumeCodexThread throws", async () => {
+    const deps = makeDeps({
+      getConversation: vi.fn().mockResolvedValue({ id: "conv-cc-existing" }),
+      resumeCodexThread: vi.fn().mockRejectedValue(new Error("Thread expired")),
+      createConversation: vi.fn().mockResolvedValue({ id: "conv-cc-fresh" }),
+      startCodexThread: vi
+        .fn()
+        .mockResolvedValue({ threadId: "thread-impl-fresh" }),
+    });
+    const svc = createWorkflowContinuityService(deps);
+
+    const existingLane: GraphWorkflowLaneState = {
+      engine: "codex",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-cc-existing",
+      sessionRef: {
+        engine: "codex",
+        lane: "implementer",
+        threadId: "thread-impl-gone",
+      },
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: { implementer: existingLane },
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      engine: "codex",
+    });
+
+    expect(result.sessionAction).toBe("reuse");
+    expect(result.promptMode).toBe("follow_up");
+    expect(result.conversationId).toBe("conv-cc-existing");
+  });
+
+  it("rotates when engine changes from claude to codex", async () => {
+    const deps = makeDeps({
+      createConversation: vi.fn().mockResolvedValue({ id: "conv-cc-codex" }),
+      startCodexThread: vi
+        .fn()
+        .mockResolvedValue({ threadId: "thread-impl-new" }),
+    });
+    const svc = createWorkflowContinuityService(deps);
+
+    const claudeLane: GraphWorkflowLaneState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-claude-old",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: { implementer: claudeLane },
+    });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      engine: "codex",
+    });
+
+    expect(result.sessionAction).toBe("create");
+    expect(result.promptMode).toBe("iteration_seed");
+    expect(result.execution.laneStates["implementer"]?.engine).toBe("codex");
+  });
+
+  it("resumes codex implementer after execution state is deserialized through the schema (restart recovery)", async () => {
+    const deps = makeDeps({
+      getConversation: vi.fn().mockResolvedValue({ id: "conv-cc-persisted" }),
+      resumeCodexThread: vi
+        .fn()
+        .mockResolvedValue({ threadId: "thread-impl-abc" }),
+      startCodexThread: vi.fn(),
+      createConversation: vi.fn(),
+    });
+    const svc = createWorkflowContinuityService(deps);
+
+    const codexLane: GraphWorkflowLaneState = {
+      engine: "codex",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-cc-persisted",
+      sessionRef: {
+        engine: "codex",
+        lane: "implementer",
+        threadId: "thread-impl-abc",
+      },
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({ laneStates: { implementer: codexLane } });
+
+    // Simulate restart by round-tripping through the schema parser
+    const deserialized = graphWorkflowExecutionSchema.parse(
+      JSON.parse(JSON.stringify(execution)),
+    );
+
+    const result = await svc.resolveImplementerCall({
+      execution: deserialized,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      engine: "codex",
+    });
+
+    expect(deps.resumeCodexThread).not.toHaveBeenCalled();
+    expect(deps.startCodexThread).not.toHaveBeenCalled();
+    expect(deps.createConversation).not.toHaveBeenCalled();
+    expect(result.sessionAction).toBe("reuse");
+    expect(result.promptMode).toBe("follow_up");
+    expect(result.conversationId).toBe("conv-cc-persisted");
+  });
+
+  it("falls back to fresh when CC conversation is gone but thread still exists", async () => {
+    const deps = makeDeps({
+      getConversation: vi.fn().mockResolvedValue(null),
+      createConversation: vi.fn().mockResolvedValue({ id: "conv-cc-recovery" }),
+      startCodexThread: vi
+        .fn()
+        .mockResolvedValue({ threadId: "thread-impl-recovery" }),
+    });
+    const svc = createWorkflowContinuityService(deps);
+
+    const codexLane: GraphWorkflowLaneState = {
+      engine: "codex",
+      lane: "implementer",
+      contextId: "ctx-1",
+      workflowConversationId: "conv-cc-gone",
+      sessionRef: {
+        engine: "codex",
+        lane: "implementer",
+        threadId: "thread-still-alive",
+      },
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({ laneStates: { implementer: codexLane } });
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      engine: "codex",
+    });
+
+    expect(result.sessionAction).toBe("create");
+    expect(result.promptMode).toBe("iteration_seed");
+    expect(result.conversationId).toBe("conv-cc-recovery");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // resolveValidatorCall
 // ---------------------------------------------------------------------------
 
@@ -315,7 +583,10 @@ describe("resolveValidatorCall", () => {
       engine: "claude",
     });
 
-    expect(deps.createConversation).toHaveBeenCalledOnce();
+    expect(deps.createConversation).toHaveBeenCalledWith("/proj", "sess", {
+      role: "validator",
+      agentBackend: "claude",
+    });
     expect(result.sessionAction).toBe("create");
     expect(result.engine).toBe("claude");
     if (result.engine === "claude") {
@@ -792,8 +1063,44 @@ describe("recordCodexTurnOutcome", () => {
     });
 
     const updated = result.laneStates["task_validator"];
-    if (updated?.engine === "codex" && updated.sessionRef.engine === "codex") {
+    if (updated?.engine === "codex" && updated.sessionRef?.engine === "codex") {
       expect(updated.sessionRef.threadId).toBe("real-thread-abc");
+    }
+  });
+
+  it("creates a codex sessionRef when the implementer lane starts without one", () => {
+    const svc = createWorkflowContinuityService(makeDeps());
+    const execution = makeExecution({
+      laneStates: {
+        implementer: {
+          engine: "codex",
+          lane: "implementer",
+          contextId: "ctx-1",
+          workflowConversationId: "conv-cc-new",
+          lastTurnUsage: null,
+          rotateBeforeNextTurn: false,
+          limitEvaluation: "disabled",
+          lastUsedAt: NOW,
+        },
+      },
+    });
+
+    const result = svc.recordCodexTurnOutcome({
+      execution,
+      lane: "implementer",
+      usage: null,
+      contextLimitTokens: undefined,
+      newThreadId: "real-thread-123",
+    });
+
+    const updated = result.laneStates["implementer"];
+    expect(updated?.engine).toBe("codex");
+    if (updated?.engine === "codex") {
+      expect(updated.sessionRef).toEqual({
+        engine: "codex",
+        lane: "implementer",
+        threadId: "real-thread-123",
+      });
     }
   });
 
@@ -829,7 +1136,7 @@ describe("recordCodexTurnOutcome", () => {
     });
 
     const updated = result.laneStates["task_validator"];
-    if (updated?.engine === "codex" && updated.sessionRef.engine === "codex") {
+    if (updated?.engine === "codex" && updated.sessionRef?.engine === "codex") {
       expect(updated.sessionRef.threadId).toBe("thread-keep");
     }
   });

@@ -549,7 +549,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       const codexThreadId =
         taskResult.backendRef?.backend === "codex"
           ? taskResult.backendRef.threadId
-          : (newThreadId ?? "");
+          : (newThreadId ?? null);
       const reviewArtifact: GraphWorkflowValidationReviewArtifact | null =
         codexThreadId
           ? { engine: "codex", threadId: codexThreadId, response: text, usage }

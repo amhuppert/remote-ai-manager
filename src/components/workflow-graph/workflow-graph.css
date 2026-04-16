@@ -205,6 +205,31 @@
   border: 1px solid rgba(255, 61, 90, 0.25);
 }
 
+/* ---- Node Backend Badge ---- */
+
+.graph-node-backend-badge {
+  display: inline-block;
+  font-size: 0.64rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  margin-bottom: 6px;
+  position: relative;
+  z-index: 1;
+}
+
+.graph-node-backend-badge.claude {
+  background: rgba(0, 229, 255, 0.08);
+  color: var(--cyan-dim);
+}
+
+.graph-node-backend-badge.codex {
+  background: rgba(255, 179, 0, 0.1);
+  color: var(--amber);
+}
+
 /* ---- Node Description ---- */
 
 .graph-node-desc {
@@ -871,6 +896,18 @@
   background: var(--bg-raised);
   color: var(--text-tertiary);
   border: 1px solid var(--border-dim);
+}
+
+.wb-overview-config-badge.claude {
+  background: rgba(0, 229, 255, 0.08);
+  color: var(--cyan-dim);
+  border: 1px solid rgba(0, 229, 255, 0.2);
+}
+
+.wb-overview-config-badge.codex {
+  background: rgba(255, 179, 0, 0.1);
+  color: var(--amber);
+  border: 1px solid rgba(255, 179, 0, 0.2);
 }
 
 /* ---- Inspector Form Fields ---- */

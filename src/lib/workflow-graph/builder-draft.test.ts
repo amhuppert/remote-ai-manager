@@ -111,4 +111,46 @@ describe("workflow builder draft helpers", () => {
     });
     expect(result.contextPositions["context-plan"]).toEqual({ x: 0, y: 0 });
   });
+
+  it("adds execution context with codex agent config when provided", () => {
+    const result = addExecutionContext(
+      {
+        definition: createWorkflowDefinition(),
+        layout: createWorkflowLayout(),
+      },
+      {
+        defaultAgentConfig: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+        },
+      },
+    );
+
+    const added = result.definition.executionContexts.at(-1);
+    expect(added?.agent.backend).toBe("codex");
+    expect(added?.agent.model).toBe("gpt-5.4");
+    expect(added?.agent.reasoningEffort).toBe("high");
+  });
+
+  it("adds execution context with claude agent config when provided", () => {
+    const result = addExecutionContext(
+      {
+        definition: createWorkflowDefinition(),
+        layout: createWorkflowLayout(),
+      },
+      {
+        defaultAgentConfig: {
+          backend: "claude",
+          model: "opus",
+          reasoningEffort: "high",
+        },
+      },
+    );
+
+    const added = result.definition.executionContexts.at(-1);
+    expect(added?.agent.backend).toBe("claude");
+    expect(added?.agent.model).toBe("opus");
+    expect(added?.agent.reasoningEffort).toBe("high");
+  });
 });

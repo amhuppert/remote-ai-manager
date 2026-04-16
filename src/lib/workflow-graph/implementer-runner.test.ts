@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SessionState } from "@/types";
+import type { ConversationState, SessionState } from "@/types";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 
 function makeSession(overrides: Partial<SessionState> = {}): SessionState {
@@ -21,6 +21,37 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     graphWorkflowExecution: null,
     graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
+    ...overrides,
+  };
+}
+
+function makeConversation(
+  overrides: Partial<ConversationState> = {},
+): ConversationState {
+  return {
+    id: "conversation-1",
+    name: "Conversation 1",
+    transcriptPath: null,
+    status: "new",
+    promptCount: 0,
+    createdAt: "2026-03-27T12:00:00.000Z",
+    lastActivityAt: "2026-03-27T12:00:00.000Z",
+    source: "cc",
+    summary: null,
+    archived: false,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    forkedFrom: null,
+    role: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    debugMode: null,
+    machineSnapshot: null,
+    agentBackend: "claude",
+    backendRef: null,
     ...overrides,
   };
 }
@@ -48,17 +79,24 @@ describe("graph workflow implementer runner", () => {
         };
       },
     );
+    const getConversation = vi.fn(async () =>
+      makeConversation({
+        backendRef: { backend: "claude" as const, sessionId: "sdk-session-1" },
+      }),
+    );
 
     const runner = createGraphWorkflowImplementerRunner({
       executePromptStream,
+      getConversation,
     });
 
-    const result = await runner.runClaudeIteration({
+    const result = await runner.runIteration({
       projectPath: "/repo",
       session: makeSession(),
       prompt: "Inspect the codebase",
       conversationId: "conversation-1",
       contextId: "context-plan",
+      backend: "claude",
       model: "opus",
       reasoningEffort: "high",
       toolServer: {
@@ -108,8 +146,129 @@ describe("graph workflow implementer runner", () => {
       },
     });
     expect(result).toEqual({
+      conversationId: "conversation-1",
       contextTokens: 12_345,
       contextWindowMax: 200_000,
+      sessionRef: { backend: "claude", sessionId: "sdk-session-1" },
+    });
+  });
+
+  it("propagates codex backend to executePromptStream", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-codex",
+      contextTokens: null,
+      contextWindowMax: null,
+    }));
+    const getConversation = vi.fn(async () =>
+      makeConversation({
+        agentBackend: "codex",
+        backendRef: { backend: "codex" as const, threadId: "thread-codex-1" },
+      }),
+    );
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    const result = await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Implement feature",
+      conversationId: "conversation-codex",
+      contextId: "context-impl",
+      backend: "codex",
+      model: "codex-mini",
+      reasoningEffort: "medium",
+      toolServer: {
+        servers: [
+          {
+            id: "cc-graph-workflow",
+            transport: "streamable-http",
+            url: "http://127.0.0.1:3000/mcp",
+          },
+        ],
+      },
+    });
+
+    expect(executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ sessionName: "session-1" }),
+      "Implement feature",
+      expect.any(Function),
+      "conversation-codex",
+      "codex-mini",
+      undefined,
+      expect.objectContaining({
+        autonomous: true,
+        backend: "codex",
+        effort: "medium",
+      }),
+    );
+    expect(result).toEqual({
+      conversationId: "conversation-codex",
+      contextTokens: null,
+      contextWindowMax: null,
+      sessionRef: { backend: "codex", threadId: "thread-codex-1" },
+    });
+  });
+
+  it("forwards content frames for codex backend", async () => {
+    const emitStreamFrame = vi.fn();
+    const executePromptStream = vi.fn(
+      async (
+        _projectPath: string,
+        _session: SessionState,
+        _promptText: string,
+        emit: (event: string, data: unknown) => void,
+      ) => {
+        emit("content", {
+          type: "text",
+          text: "Codex output",
+        });
+        emit("status", { phase: "thinking" });
+
+        return {
+          conversationId: "conversation-codex",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
+      },
+    );
+    const getConversation = vi.fn(async () =>
+      makeConversation({
+        agentBackend: "codex",
+        backendRef: { backend: "codex" as const, threadId: "thread-codex-2" },
+      }),
+    );
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Implement feature",
+      conversationId: "conversation-codex",
+      contextId: "context-impl",
+      backend: "codex",
+      model: "codex-mini",
+      reasoningEffort: "medium",
+      toolServer: { servers: [] },
+      emitStreamFrame,
+    });
+
+    expect(emitStreamFrame).toHaveBeenCalledTimes(1);
+    expect(emitStreamFrame).toHaveBeenCalledWith({
+      type: "content",
+      conversationId: "conversation-codex",
+      contextId: "context-impl",
+      content: {
+        type: "text",
+        text: "Codex output",
+      },
     });
   });
 });

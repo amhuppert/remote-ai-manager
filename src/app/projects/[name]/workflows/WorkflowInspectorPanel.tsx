@@ -8,6 +8,8 @@ import ReasoningLevelSelector, {
 import {
   getEffortLevelsForModel,
   clampEffortToModel,
+  codexModelSchema,
+  codexReasoningEffortSchema,
   getDefaultCodexModel,
   getCodexReasoningLevelsForModel,
 } from "@/lib/schemas";
@@ -24,6 +26,7 @@ import type {
   CodexConfig,
   CodexModel,
   CodexReasoningEffort,
+  GraphWorkflowAgentConfig,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
   WorkflowGraphValidationError,
@@ -34,7 +37,7 @@ interface WorkflowInspectorPanelProps {
   onSave: () => Promise<void>;
   onDelete: (contextId: string) => void;
   saving: boolean;
-  defaultModel?: ModelId;
+  defaultImplementerConfig?: GraphWorkflowAgentConfig;
   codexConfig?: CodexConfig;
 }
 
@@ -62,47 +65,69 @@ function countEnabledValidators(
   return [context.taskValidation?.enabled].filter(Boolean).length;
 }
 
-function createDefaultAgentConfig(
-  model: ModelId = "sonnet",
-  backend: AgentBackendId = "claude",
+/**
+ * Build the default agent config for a given backend.
+ * When the requested backend matches `defaultConfig`, use it directly.
+ * Otherwise construct from codexConfig or Claude defaults.
+ */
+function resolveAgentConfigForBackend(
+  backend: AgentBackendId,
+  defaultConfig: GraphWorkflowAgentConfig,
   codexCfg?: CodexConfig,
 ): GraphWorkflowExecutionContextDefinition["agent"] {
+  if (backend === defaultConfig.backend) {
+    return { ...defaultConfig };
+  }
   if (backend === "codex") {
+    const modelResult = codexModelSchema.safeParse(codexCfg?.model);
+    const effortResult = codexReasoningEffortSchema.safeParse(
+      codexCfg?.reasoningEffort,
+    );
     return {
       backend: "codex",
-      model: (codexCfg?.model ?? getDefaultCodexModel()) as CodexModel,
-      reasoningEffort: (codexCfg?.reasoningEffort ??
-        "high") as CodexReasoningEffort,
+      model: modelResult.success ? modelResult.data : getDefaultCodexModel(),
+      reasoningEffort: effortResult.success ? effortResult.data : "high",
     };
   }
   return {
     backend: "claude",
-    model,
+    model: "sonnet",
     reasoningEffort: "medium",
   };
 }
 
 function createDefaultTaskValidation(
-  model?: ModelId,
+  defaultConfig: GraphWorkflowAgentConfig,
   validatorType: "claude" | "codex" = "claude",
   codexCfg?: CodexConfig,
 ): NonNullable<GraphWorkflowExecutionContextDefinition["taskValidation"]> {
   if (validatorType === "codex") {
+    const modelResult = codexModelSchema.safeParse(codexCfg?.model);
+    const effortResult = codexReasoningEffortSchema.safeParse(
+      codexCfg?.reasoningEffort,
+    );
     return {
       type: "codex",
       enabled: false,
       codex: {
-        model: codexCfg?.model as CodexModel | undefined,
-        reasoningEffort: codexCfg?.reasoningEffort,
+        model: modelResult.success ? modelResult.data : undefined,
+        reasoningEffort: effortResult.success ? effortResult.data : undefined,
       },
       instructions: "",
       continuity: { enabled: true },
     };
   }
+  // Claude validator uses the implementer's Claude model when available
+  const claudeModel: ModelId =
+    defaultConfig.backend === "claude" ? defaultConfig.model : "sonnet";
   return {
     type: "claude",
     enabled: false,
-    agent: createDefaultAgentConfig(model),
+    agent: {
+      backend: "claude",
+      model: claudeModel,
+      reasoningEffort: "medium",
+    },
     instructions: "",
     continuity: { enabled: true },
   };
@@ -275,11 +300,17 @@ function CodexAgentFields({
   );
 }
 
+const DEFAULT_IMPLEMENTER_CONFIG: GraphWorkflowAgentConfig = {
+  backend: "claude",
+  model: "sonnet",
+  reasoningEffort: "medium",
+};
+
 export default function WorkflowInspectorPanel({
   onSave,
   onDelete,
   saving,
-  defaultModel = "sonnet",
+  defaultImplementerConfig = DEFAULT_IMPLEMENTER_CONFIG,
   codexConfig,
 }: WorkflowInspectorPanelProps): React.JSX.Element {
   const codexEnabled = codexConfig?.enabled === true;
@@ -508,6 +539,11 @@ export default function WorkflowInspectorPanel({
                         justifyContent: "flex-end",
                       }}
                     >
+                      <span
+                        className={`wb-overview-config-badge ${context.agent.backend === "codex" ? "codex" : "claude"}`}
+                      >
+                        {context.agent.backend === "codex" ? "Codex" : "Claude"}
+                      </span>
                       {badges.length > 0 ? (
                         badges.map((badge) => (
                           <span
@@ -561,7 +597,8 @@ export default function WorkflowInspectorPanel({
   }
 
   const taskValidation =
-    selectedContext.taskValidation ?? createDefaultTaskValidation(defaultModel);
+    selectedContext.taskValidation ??
+    createDefaultTaskValidation(defaultImplementerConfig);
 
   return (
     <aside className="wb-inspector">
@@ -590,6 +627,11 @@ export default function WorkflowInspectorPanel({
             }}
           >
             {selectedContext.title}
+          </span>
+          <span
+            className={`wb-overview-config-badge ${selectedContext.agent.backend === "codex" ? "codex" : "claude"}`}
+          >
+            {selectedContext.agent.backend === "codex" ? "Codex" : "Claude"}
           </span>
         </div>
         <button
@@ -702,9 +744,9 @@ export default function WorkflowInspectorPanel({
                   value={selectedContext.agent.backend}
                   onChange={(backend) => {
                     applyContextUpdate({
-                      agent: createDefaultAgentConfig(
-                        defaultModel,
+                      agent: resolveAgentConfigForBackend(
                         backend,
+                        defaultImplementerConfig,
                         codexConfig,
                       ),
                     });
@@ -799,7 +841,9 @@ export default function WorkflowInspectorPanel({
                               enabled: !selectedContext.taskValidation.enabled,
                             }
                           : {
-                              ...createDefaultTaskValidation(defaultModel),
+                              ...createDefaultTaskValidation(
+                                defaultImplementerConfig,
+                              ),
                               enabled: true,
                             },
                       })
@@ -817,7 +861,9 @@ export default function WorkflowInspectorPanel({
                                   !selectedContext.taskValidation.enabled,
                               }
                             : {
-                                ...createDefaultTaskValidation(defaultModel),
+                                ...createDefaultTaskValidation(
+                                  defaultImplementerConfig,
+                                ),
                                 enabled: true,
                               },
                         });
@@ -871,7 +917,7 @@ export default function WorkflowInspectorPanel({
                       applyContextUpdate({
                         taskValidation: {
                           ...createDefaultTaskValidation(
-                            defaultModel,
+                            defaultImplementerConfig,
                             "codex",
                             codexConfig,
                           ),
@@ -882,7 +928,7 @@ export default function WorkflowInspectorPanel({
                       applyContextUpdate({
                         taskValidation: {
                           ...createDefaultTaskValidation(
-                            defaultModel,
+                            defaultImplementerConfig,
                             "claude",
                           ),
                           ...preserved,

@@ -1,8 +1,13 @@
 import { createLogger } from "@/lib/logging";
+import { getConversation as defaultGetConversation } from "@/lib/conversations";
 import {
   executePromptStream as defaultExecutePromptStream,
   type PromptStreamResult,
 } from "@/lib/prompt";
+import type {
+  AgentBackendId,
+  AgentSessionRef,
+} from "@/lib/agent-backends/types";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
 import type { MessageContentBlock, SessionState } from "@/types";
@@ -21,7 +26,7 @@ interface ExecutePromptStreamFn {
     options?: {
       autonomous?: boolean;
       effort?: string;
-      backend?: "claude";
+      backend?: AgentBackendId;
       tooling?: { portableMcp?: PortableMcpConfig };
     },
   ): Promise<PromptStreamResult>;
@@ -29,14 +34,16 @@ interface ExecutePromptStreamFn {
 
 export interface GraphWorkflowImplementerRunnerDeps {
   executePromptStream?: ExecutePromptStreamFn;
+  getConversation?: typeof defaultGetConversation;
 }
 
-export interface RunClaudeIterationInput {
+export interface RunIterationInput {
   projectPath: string;
   session: SessionState;
   prompt: string;
   conversationId: string;
   contextId: string;
+  backend: AgentBackendId;
   model: string;
   reasoningEffort: string;
   toolServer: unknown;
@@ -52,15 +59,19 @@ export function createGraphWorkflowImplementerRunner(
 ) {
   const executePromptStream =
     deps.executePromptStream ?? defaultExecutePromptStream;
+  const getConversation = deps.getConversation ?? defaultGetConversation;
 
-  async function runClaudeIteration(input: RunClaudeIterationInput): Promise<{
+  async function runIteration(input: RunIterationInput): Promise<{
+    conversationId: string;
     contextTokens: number | null;
     contextWindowMax: number | null;
+    sessionRef: AgentSessionRef | null;
   }> {
     logger.info("graph-workflow.implementer.turn_started", {
       sessionName: input.session.sessionName,
       conversationId: input.conversationId,
       contextId: input.contextId,
+      backend: input.backend,
       model: input.model,
       reasoningEffort: input.reasoningEffort,
     });
@@ -86,7 +97,7 @@ export function createGraphWorkflowImplementerRunner(
       undefined,
       {
         autonomous: true,
-        backend: "claude",
+        backend: input.backend,
         effort: input.reasoningEffort,
         tooling: {
           portableMcp: input.toolServer as PortableMcpConfig,
@@ -102,13 +113,21 @@ export function createGraphWorkflowImplementerRunner(
       contextWindowMax: result.contextWindowMax,
     });
 
+    const conversation = await getConversation(
+      input.projectPath,
+      input.session.sessionName,
+      result.conversationId,
+    );
+
     return {
+      conversationId: result.conversationId,
       contextTokens: result.contextTokens,
       contextWindowMax: result.contextWindowMax,
+      sessionRef: conversation?.backendRef ?? null,
     };
   }
 
   return {
-    runClaudeIteration,
+    runIteration,
   };
 }

@@ -6,7 +6,6 @@ import { createLogger } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
 import { getSession as defaultGetSession, mutateSession } from "@/lib/state";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
-import type { AgentSessionRef } from "@/lib/agent-backends/types";
 import type {
   ApiError,
   GraphWorkflowExecution,
@@ -60,10 +59,6 @@ const workflowManager = createGraphWorkflowManager({
   isExecutionLoopActive,
 });
 const CODEX_VALIDATOR_TIMEOUT_MS = 300_000;
-
-// In-memory cache of agent session refs for task runner resume within iterations.
-// Keyed by conversationId, stores the backendRef from the last task result.
-const agentBackendRefCache = new Map<string, AgentSessionRef>();
 
 const continuityService = createWorkflowContinuityService({
   createConversation,
@@ -128,50 +123,18 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       throw new Error("Session not found");
     }
 
-    if (input.backend === "claude") {
-      return implementerRunner.runClaudeIteration({
-        projectPath: input.projectPath,
-        session,
-        prompt: input.prompt,
-        conversationId: input.conversationId,
-        contextId: input.contextId,
-        model: input.model,
-        reasoningEffort: input.reasoningEffort,
-        toolServer: input.toolServer,
-        emitStreamFrame: input.emitStreamFrame,
-      });
-    }
-
-    const runner = getTaskRunner(input.backend ?? "claude");
-    const resumeRef = agentBackendRefCache.get(input.conversationId) ?? null;
-    const result = await runner.run({
-      workingDirectory: session.worktreePath,
+    return implementerRunner.runIteration({
+      projectPath: input.projectPath,
+      session,
       prompt: input.prompt,
-      modelId: input.model,
+      conversationId: input.conversationId,
+      contextId: input.contextId,
+      backend: input.backend,
+      model: input.model,
       reasoningEffort: input.reasoningEffort,
-      autonomous: true,
-      timeoutMs: 0,
-      resumeRef,
-      tooling: input.toolServer
-        ? {
-            portableMcp:
-              input.toolServer as import("@/lib/agent-backends/portable-mcp").PortableMcpConfig,
-          }
-        : undefined,
+      toolServer: input.toolServer,
+      emitStreamFrame: input.emitStreamFrame,
     });
-
-    if (result.backendRef) {
-      agentBackendRefCache.set(input.conversationId, result.backendRef);
-    }
-
-    if (result.error) {
-      throw new Error(result.error);
-    }
-
-    return {
-      contextTokens: null,
-      contextWindowMax: null,
-    };
   },
   validationService,
   emitStreamFrame: emitGraphWorkflowStreamFrame,

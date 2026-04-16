@@ -560,4 +560,379 @@ describe("graph workflow planner tools", () => {
     const ctx = draft.definition.executionContexts[0]!;
     expect(ctx.taskValidation?.type).toBe("claude");
   });
+
+  it("create_graph_workflow inflates codex implementer when backend is 'codex'", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+          },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            agent: { backend: string; model: string; reasoningEffort: string };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.agent.backend).toBe("codex");
+    expect(ctx.agent.model).toBe("gpt-5.4");
+    expect(ctx.agent.reasoningEffort).toBe("high");
+  });
+
+  it("create_graph_workflow defaults to codex when config.defaultAgentBackend is 'codex'", async () => {
+    const deps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        ...MOCK_CONFIG,
+        defaultAgentBackend: "codex" as const,
+      })),
+    });
+
+    registerTools(deps);
+
+    await getHandler("create_graph_workflow")(MINIMAL_INPUT);
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            agent: { backend: string; model: string; reasoningEffort: string };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.agent.backend).toBe("codex");
+    expect(ctx.agent.model).toBe("gpt-5.4");
+  });
+
+  it("create_graph_workflow defaults codex model and effort when omitted", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "codex",
+          },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            agent: { backend: string; model: string; reasoningEffort: string };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.agent.backend).toBe("codex");
+    expect(ctx.agent.model).toBe("gpt-5.4");
+    expect(ctx.agent.reasoningEffort).toBe("high");
+  });
+
+  it("codex implementer with claude task validator uses claude defaults for validator", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+          },
+          taskValidation: {
+            type: "claude",
+            instructions: "Validate tasks.",
+          },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            agent: { backend: string; model: string };
+            taskValidation?: {
+              type: string;
+              agent?: { model: string; reasoningEffort: string };
+            };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.agent.backend).toBe("codex");
+    expect(ctx.taskValidation?.type).toBe("claude");
+    // Validator uses Claude defaults, not Codex model
+    expect(ctx.taskValidation?.agent?.model).toBe("sonnet");
+    expect(ctx.taskValidation?.agent?.reasoningEffort).toBe("high");
+  });
+
+  it("codex implementer accepts codex-specific reasoning effort 'xhigh'", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    const result = (await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "xhigh",
+          },
+        },
+      ],
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            agent: { backend: string; model: string; reasoningEffort: string };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.agent.backend).toBe("codex");
+    expect(ctx.agent.reasoningEffort).toBe("xhigh");
+  });
+
+  it("codex implementer accepts codex-specific reasoning effort 'minimal'", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    const result = (await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "codex",
+            model: "gpt-5.4-mini",
+            reasoningEffort: "minimal",
+          },
+        },
+      ],
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            agent: { backend: string; model: string; reasoningEffort: string };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.agent.backend).toBe("codex");
+    expect(ctx.agent.model).toBe("gpt-5.4-mini");
+    expect(ctx.agent.reasoningEffort).toBe("minimal");
+  });
+
+  it("codex implementer rejects claude-only reasoning effort 'max'", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    const result = (await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "max",
+          },
+        },
+      ],
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+  });
+
+  it("replace_graph_workflow inflates codex implementer config", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    const result = (await getHandler("replace_graph_workflow")({
+      workflowId: "wf-test-1",
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "codex",
+            model: "gpt-5.4-mini",
+            reasoningEffort: "xhigh",
+          },
+        },
+      ],
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain("replaced");
+
+    expect(deps.updateWorkflow).toHaveBeenCalledOnce();
+    const [, , draft] = (deps.updateWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            agent: { backend: string; model: string; reasoningEffort: string };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.agent.backend).toBe("codex");
+    expect(ctx.agent.model).toBe("gpt-5.4-mini");
+    expect(ctx.agent.reasoningEffort).toBe("xhigh");
+  });
+
+  it("codex implementer rejects invalid codex model", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    const result = (await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "codex",
+            model: "not-a-real-model",
+            reasoningEffort: "high",
+          },
+        },
+      ],
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+  });
+
+  it("claude implementer rejects invalid claude model", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    const result = (await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "claude",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+          },
+        },
+      ],
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+  });
+
+  it("explicit claude backend overrides codex defaultAgentBackend", async () => {
+    const deps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        ...MOCK_CONFIG,
+        defaultAgentBackend: "codex" as const,
+      })),
+    });
+
+    registerTools(deps);
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          agentConfig: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [
+      string,
+      {
+        definition: {
+          executionContexts: Array<{
+            agent: { backend: string; model: string };
+          }>;
+        };
+      },
+    ];
+
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.agent.backend).toBe("claude");
+    expect(ctx.agent.model).toBe("opus");
+  });
 });

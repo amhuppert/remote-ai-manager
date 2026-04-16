@@ -221,6 +221,141 @@ describe("WorkflowInspectorPanel — task validator continuity controls", () => 
   });
 });
 
+describe("WorkflowInspectorPanel — codex-backed defaults", () => {
+  it("renders codex implementer fields when context agent is codex", () => {
+    resetStore();
+    const definition = createWorkflowDefinition({
+      executionContexts: createWorkflowDefinition().executionContexts.map(
+        (ctx) =>
+          ctx.id === "context-plan"
+            ? {
+                ...ctx,
+                agent: {
+                  backend: "codex" as const,
+                  model: "gpt-5.4" as const,
+                  reasoningEffort: "high" as const,
+                },
+              }
+            : ctx,
+      ),
+    });
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        draftDefinition: definition,
+        draftLayout: createWorkflowLayout(),
+        selectedContextId: "context-plan",
+        dirty: false,
+        validationErrors: [],
+      });
+    });
+
+    render(
+      <WorkflowInspectorPanel
+        {...defaultProps}
+        defaultImplementerConfig={{
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+        }}
+        codexConfig={{ enabled: true, model: "gpt-5.4" }}
+      />,
+    );
+
+    const section = findSection("Implementation Agent");
+    expect(section).toBeTruthy();
+    // Should show the backend selector with "codex" selected
+    const select = section!.querySelector("select");
+    expect(select?.value).toBe("codex");
+  });
+
+  it("switching backend to codex uses defaultImplementerConfig values when backend matches", () => {
+    resetStore();
+    setupStoreWithContext();
+
+    render(
+      <WorkflowInspectorPanel
+        {...defaultProps}
+        defaultImplementerConfig={{
+          backend: "codex",
+          model: "gpt-5.4-mini",
+          reasoningEffort: "xhigh",
+        }}
+        codexConfig={{ enabled: true, model: "gpt-5.4" }}
+      />,
+    );
+
+    const section = findSection("Implementation Agent");
+    expect(section).toBeTruthy();
+    const select = section!.querySelector("select") as HTMLSelectElement;
+    expect(select).toBeTruthy();
+
+    // Switch backend to codex
+    fireEvent.change(select, { target: { value: "codex" } });
+
+    // The store should use the shared defaultImplementerConfig values directly
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.agent.backend).toBe("codex");
+    expect(ctx?.agent.model).toBe("gpt-5.4-mini");
+    expect(ctx?.agent.reasoningEffort).toBe("xhigh");
+  });
+
+  it("switching backend to claude uses defaultImplementerConfig values when backend matches", () => {
+    resetStore();
+    // Start with a codex context
+    const definition = createWorkflowDefinition({
+      executionContexts: createWorkflowDefinition().executionContexts.map(
+        (ctx) =>
+          ctx.id === "context-plan"
+            ? {
+                ...ctx,
+                agent: {
+                  backend: "codex" as const,
+                  model: "gpt-5.4" as const,
+                  reasoningEffort: "high" as const,
+                },
+              }
+            : ctx,
+      ),
+    });
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        draftDefinition: definition,
+        draftLayout: createWorkflowLayout(),
+        selectedContextId: "context-plan",
+        dirty: false,
+        validationErrors: [],
+      });
+    });
+
+    render(
+      <WorkflowInspectorPanel
+        {...defaultProps}
+        defaultImplementerConfig={{
+          backend: "claude",
+          model: "opus",
+          reasoningEffort: "medium",
+        }}
+        codexConfig={{ enabled: true, model: "gpt-5.4" }}
+      />,
+    );
+
+    const section = findSection("Implementation Agent");
+    const select = section!.querySelector("select") as HTMLSelectElement;
+
+    // Switch backend to claude
+    fireEvent.change(select, { target: { value: "claude" } });
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.agent.backend).toBe("claude");
+    expect(ctx?.agent.model).toBe("opus");
+    expect(ctx?.agent.reasoningEffort).toBe("medium");
+  });
+});
+
 describe("WorkflowInspectorPanel — schema shape assertions", () => {
   it("definition never contains legacy soft/hard limit fields", () => {
     resetStore();

@@ -18,8 +18,8 @@ import {
 import { useWorkflowMobilePanel } from "@/components/workflow-graph/useWorkflowMobilePanel";
 import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobileTabBar";
 import type {
-  ClaudeModel,
   CodexConfig,
+  GraphWorkflowAgentConfig,
   GraphWorkflowVisualLayout,
   WorkflowSemanticDefinition,
 } from "@/types";
@@ -29,7 +29,7 @@ import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
 
 interface ConnectedWorkflowBuilderPageProps {
   projectName: string;
-  defaultModel: ClaudeModel;
+  defaultImplementerConfig: GraphWorkflowAgentConfig;
   codexConfig?: CodexConfig;
 }
 
@@ -48,7 +48,7 @@ const emptyLayout: GraphWorkflowVisualLayout = {
 
 export default function ConnectedWorkflowBuilderPage({
   projectName,
-  defaultModel,
+  defaultImplementerConfig,
   codexConfig,
 }: ConnectedWorkflowBuilderPageProps): React.JSX.Element {
   const { isMobile, mobilePanel, setMobilePanel, autoSwitchPanel } =
@@ -220,7 +220,7 @@ export default function ConnectedWorkflowBuilderPage({
                 onRename={(name) => void handleRenameWorkflow(name)}
                 onDelete={() => void handleDeleteWorkflow()}
                 saveError={saveError}
-                defaultModel={defaultModel}
+                defaultImplementerConfig={defaultImplementerConfig}
                 codexConfig={codexConfig}
                 isMobile={isMobile}
                 onAutoSwitchPanel={autoSwitchPanel}

@@ -109,6 +109,10 @@ export default function ExecutionContextNode({
         </span>
       </div>
 
+      <span className={`graph-node-backend-badge ${context.agent.backend}`}>
+        {context.agent.backend === "codex" ? "Codex" : "Claude"}
+      </span>
+
       {context.description && (
         <div className="graph-node-desc">{context.description}</div>
       )}
