@@ -17,7 +17,6 @@ import { resolveConfigDir } from "@/lib/config";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-  WorkflowAgentValidatorResult,
   WorkflowSemanticDefinition,
 } from "@/types";
 
@@ -128,7 +127,7 @@ export interface ExecutionLogger {
     filename: string,
     data: {
       raw: string;
-      parsed: WorkflowAgentValidatorResult;
+      parsed: unknown;
       parsePath: string;
     },
   ): void;
@@ -263,7 +262,7 @@ export function createExecutionLogger(
       filename: string,
       data: {
         raw: string;
-        parsed: WorkflowAgentValidatorResult;
+        parsed: unknown;
         parsePath: string;
       },
     ): void {

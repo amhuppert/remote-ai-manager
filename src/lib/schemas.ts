@@ -746,6 +746,15 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("aborted"),
   }),
+  z.object({
+    type: z.literal("validator_infra_error"),
+    contextId: z.string().trim().min(1),
+    taskId: z.string().trim().min(1),
+    engine: z.enum(["claude", "codex"]),
+    infraReason: z.enum(["exception", "unparseable", "schema_mismatch"]),
+    message: z.string(),
+    summary: z.string().nullable().default(null),
+  }),
 ]);
 export type GraphWorkflowHaltReason = z.infer<
   typeof graphWorkflowHaltReasonSchema

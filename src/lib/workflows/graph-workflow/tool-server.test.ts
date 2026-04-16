@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerGraphWorkflowExecutionTools } from "./tool-server";
+import { IterationHaltedError } from "./iteration-orchestrator";
 
 type ToolHandler = (args: unknown) => Promise<unknown>;
 
@@ -106,6 +107,103 @@ describe("graph workflow tool server", () => {
     });
 
     expect(getCapturedTools().has("add_task")).toBe(false);
+  });
+
+  it("returns a halt-aware tool error result when completeTask raises IterationHaltedError", async () => {
+    const haltError = new IterationHaltedError({
+      type: "circuit_breaker",
+      contextId: "context-plan",
+      condition: "retry_exhaustion",
+      failureCount: 3,
+      summary: null,
+    });
+
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
+      executionContextTitle: "Plan",
+      allowAgentTaskAdd: true,
+      completeTask: vi.fn(async () => {
+        throw haltError;
+      }),
+      addTask: vi.fn(async () => undefined),
+      upsertSharedDocument: vi.fn(async () => undefined),
+    });
+
+    const result = (await getHandler("complete_task")({
+      taskSlug: "setup-auth",
+      summary: "Finished.",
+    })) as { content: Array<{ text: string }>; isError: boolean };
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("halted");
+    expect(text).toContain("circuit_breaker");
+    expect(text).toContain("no further tool calls");
+  });
+
+  it("returns a halt-aware tool error result when upsertSharedDocument raises IterationHaltedError", async () => {
+    const haltError = new IterationHaltedError({
+      type: "validator_infra_error",
+      contextId: "context-plan",
+      taskId: "task-plan-1",
+      engine: "codex",
+      infraReason: "unparseable",
+      message: "Codex returned invalid JSON",
+      summary: null,
+    });
+
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
+      executionContextTitle: "Plan",
+      allowAgentTaskAdd: true,
+      completeTask: vi.fn(async () => undefined),
+      addTask: vi.fn(async () => undefined),
+      upsertSharedDocument: vi.fn(async () => {
+        throw haltError;
+      }),
+    });
+
+    const result = (await getHandler("upsert_shared_document")({
+      relativePath: ".cc/graph-workflow-docs/plan.md",
+      description: "Planning notes",
+      readWhen: "Read before implementation.",
+    })) as { content: Array<{ text: string }>; isError: boolean };
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("halted");
+    expect(text).toContain("validator_infra_error");
+    expect(text).toContain("no further tool calls");
+  });
+
+  it("returns a halt-aware tool error result when addTask raises IterationHaltedError", async () => {
+    const haltError = new IterationHaltedError({
+      type: "circuit_breaker",
+      contextId: "context-plan",
+      condition: "retry_exhaustion",
+      failureCount: 3,
+      summary: null,
+    });
+
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
+      executionContextTitle: "Plan",
+      allowAgentTaskAdd: true,
+      completeTask: vi.fn(async () => undefined),
+      addTask: vi.fn(async () => {
+        throw haltError;
+      }),
+      upsertSharedDocument: vi.fn(async () => undefined),
+    });
+
+    const result = (await getHandler("add_task")({
+      slug: "new-task",
+      title: "New task",
+      instructions: "Do something.",
+    })) as { content: Array<{ text: string }>; isError: boolean };
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("halted");
+    expect(text).toContain("circuit_breaker");
+    expect(text).toContain("no further tool calls");
   });
 
   it("fails closed on invalid payloads and callback errors", async () => {

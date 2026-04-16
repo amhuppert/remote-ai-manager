@@ -216,7 +216,20 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
           );
         }
 
-        if (!validation.pass) {
+        if (validation.kind !== "pass") {
+          const failureFeedback =
+            validation.kind === "fail"
+              ? validation.feedback
+              : `Validator infra error (${validation.reason}): ${validation.message}`;
+          const failureIssues =
+            validation.kind === "fail" ? validation.issues : [];
+          const failureSessionRef =
+            validation.kind === "fail" ? (validation.sessionRef ?? null) : null;
+          const failureReviewArtifact =
+            validation.kind === "fail"
+              ? (validation.reviewArtifact ?? null)
+              : null;
+
           const failedExecution = cloneExecution(postValidationExecution);
           const failedTaskState = failedExecution.taskStates[taskId];
           if (!failedTaskState) {
@@ -229,17 +242,17 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
           }
 
           failedTaskState.lastConversationId = conversationId;
-          failedTaskState.failureMessage = validation.feedback;
+          failedTaskState.failureMessage = failureFeedback;
           failedTaskState.failureHistory = [
             ...(failedTaskState.failureHistory ?? []),
             {
-              message: validation.feedback,
+              message: failureFeedback,
               timestamp: new Date().toISOString(),
             },
           ];
 
           const failedContextState = failedExecution.contextStates[contextId];
-          if (failedContextState) {
+          if (failedContextState && validation.kind === "fail") {
             failedContextState.consecutiveFailureCount =
               (failedContextState.consecutiveFailureCount ?? 0) + 1;
           }
@@ -254,17 +267,17 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
               contextId,
               validatorType: "task",
               pass: false,
-              summary: validation.feedback,
-              issues: validation.issues,
-              sessionRef: validation.sessionRef,
-              reviewArtifact: validation.reviewArtifact,
+              summary: failureFeedback,
+              issues: failureIssues,
+              sessionRef: failureSessionRef,
+              reviewArtifact: failureReviewArtifact,
             });
           await executionRepository.update(
             projectPath,
             sessionName,
             executionWithValidationEvent,
           );
-          throw new Error(validation.feedback);
+          throw new Error(failureFeedback);
         }
 
         const executionWithValidationEvent =
@@ -277,8 +290,8 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
             pass: true,
             summary: validation.summary,
             issues: validation.issues,
-            sessionRef: validation.sessionRef,
-            reviewArtifact: validation.reviewArtifact,
+            sessionRef: validation.sessionRef ?? null,
+            reviewArtifact: validation.reviewArtifact ?? null,
           });
         await executionRepository.update(
           projectPath,

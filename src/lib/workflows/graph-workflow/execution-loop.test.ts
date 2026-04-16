@@ -770,4 +770,74 @@ describe("execution loop", () => {
     expect(iterationCallCount).toBe(2);
     expect(result.status).toBe("completed");
   });
+
+  it("emits done with validator_infra_error when iteration returns a pre-halted execution", async () => {
+    const definition = createSingleContextDefinition(10);
+    const initialExecution = createRunningExecution(definition, {
+      activeContextId: "ctx-1",
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+        },
+      },
+    });
+
+    const haltedExecution: GraphWorkflowExecution = {
+      ...structuredClone(initialExecution),
+      status: "halted",
+      haltReason: {
+        type: "validator_infra_error",
+        contextId: "ctx-1",
+        taskId: "task-1",
+        engine: "codex",
+        infraReason: "exception",
+        message: "Codex API rate limit exceeded",
+        summary: null,
+      },
+      completedAt: "2026-03-27T12:10:00.000Z",
+    };
+
+    const sendSpy = vi.fn();
+    const emitStreamFrame = vi.fn();
+
+    const deps: GraphWorkflowExecutionLoopDeps = {
+      workflowManager: {
+        async scheduleNextContext() {
+          return initialExecution;
+        },
+        send: sendSpy,
+      },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          return {
+            conversationId: "conv-1",
+            execution: haltedExecution,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+      emitStreamFrame,
+    };
+
+    const loop = createGraphWorkflowExecutionLoop(deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initialExecution,
+    });
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(emitStreamFrame).toHaveBeenCalledWith("/repo", "session-1", {
+      type: "done",
+      reason: "validator_infra_error",
+    });
+    expect(result.status).toBe("halted");
+    expect(result.haltReason?.type).toBe("validator_infra_error");
+  });
 });

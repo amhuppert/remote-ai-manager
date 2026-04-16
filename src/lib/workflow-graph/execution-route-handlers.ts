@@ -105,6 +105,12 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository,
   createConversation,
   continuityService,
+  async signalHalt({ projectPath, sessionName, reason }) {
+    return workflowManager.send(projectPath, sessionName, {
+      type: "halt",
+      reason,
+    });
+  },
   createToolServer: (input) => ({
     server: buildGraphWorkflowPortableMcp(
       input.projectName,

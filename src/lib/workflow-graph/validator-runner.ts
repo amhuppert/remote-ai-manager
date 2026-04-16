@@ -8,7 +8,7 @@ import type {
   GraphWorkflowLaneKind,
   GraphWorkflowTaskDefinition,
   GraphWorkflowValidationReviewArtifact,
-  WorkflowAgentValidatorResult,
+  WorkflowValidatorIssue,
 } from "@/types";
 import type {
   AgentBackendId,
@@ -106,19 +106,61 @@ export function buildTaskValidationPrompt(
 // -- Result parsing -----------------------------------------------------------
 
 /**
- * Extract and parse a WorkflowAgentValidatorResult from agent text output.
+ * Discriminated outcome produced by the validator runner. `pass` and `fail`
+ * represent legitimate validator decisions; `infra_error` represents transport
+ * or parsing failures that must not count against the circuit breaker.
+ */
+export type ValidatorOutcome =
+  | {
+      kind: "pass";
+      summary: string;
+      issues: WorkflowValidatorIssue[];
+    }
+  | {
+      kind: "fail";
+      summary: string;
+      issues: WorkflowValidatorIssue[];
+    }
+  | {
+      kind: "infra_error";
+      reason: "exception" | "unparseable" | "schema_mismatch";
+      message: string;
+      engine: "claude" | "codex";
+    };
+
+/**
+ * Map a schema-valid wire result into a pass/fail outcome. Preserves the
+ * existing `pass: true + issues non-empty → fail` normalization semantics.
+ */
+function wireResultToOutcome(result: {
+  pass: boolean;
+  summary: string;
+  issues: WorkflowValidatorIssue[];
+}): ValidatorOutcome {
+  const isPass = result.pass && result.issues.length === 0;
+  if (isPass) {
+    return { kind: "pass", summary: result.summary, issues: result.issues };
+  }
+  return { kind: "fail", summary: result.summary, issues: result.issues };
+}
+
+/**
+ * Extract and parse a validator outcome from agent text output.
  * Looks for the last ```json fenced block and parses it with the schema.
- * Returns a synthetic failing result when extraction or parsing fails.
+ * Returns an infra_error outcome when extraction, JSON parsing, or schema
+ * validation fails.
  */
 export function extractValidatorResult(
   text: string,
-): WorkflowAgentValidatorResult {
+  engine: "claude" | "codex",
+): ValidatorOutcome {
   const jsonBlocks = [...text.matchAll(/```json\s*\n([\s\S]*?)```/g)];
   if (jsonBlocks.length === 0) {
     return {
-      pass: false,
-      summary: "Validator agent did not return structured output",
-      issues: [],
+      kind: "infra_error",
+      reason: "unparseable",
+      message: "Validator agent did not return a JSON block",
+      engine,
     };
   }
 
@@ -128,28 +170,33 @@ export function extractValidatorResult(
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
+  } catch (error) {
     return {
-      pass: false,
-      summary: "Validator agent returned invalid structured output",
-      issues: [],
+      kind: "infra_error",
+      reason: "unparseable",
+      message:
+        error instanceof Error
+          ? `JSON parse failed: ${error.message}`
+          : "JSON parse failed",
+      engine,
     };
   }
 
   const result = workflowAgentValidatorResultSchema.safeParse(parsed);
   if (!result.success) {
     return {
-      pass: false,
-      summary: "Validator agent returned invalid structured output",
-      issues: [],
+      kind: "infra_error",
+      reason: "schema_mismatch",
+      message: `Validator output did not match schema: ${result.error.message}`,
+      engine,
     };
   }
 
-  return result.data;
+  return wireResultToOutcome(result.data);
 }
 
 export interface ParsedValidatorResponse {
-  result: WorkflowAgentValidatorResult;
+  result: ValidatorOutcome;
   parsePath:
     | "structured_output"
     | "raw_json"
@@ -160,10 +207,11 @@ export interface ParsedValidatorResponse {
 /**
  * Parse a validator response, trying structured output first, then raw JSON,
  * then fenced ```json block extraction as a fallback.
- * Returns both the result and which parse path succeeded.
+ * Returns both the outcome and which parse path succeeded.
  */
 export function parseValidatorResponse(
   text: string,
+  engine: "claude" | "codex",
   structuredOutput?: unknown,
 ): ParsedValidatorResponse {
   // Path 1: structured output from SDK (both Claude and Codex)
@@ -171,21 +219,28 @@ export function parseValidatorResponse(
     const result =
       workflowAgentValidatorResultSchema.safeParse(structuredOutput);
     if (result.success)
-      return { result: result.data, parsePath: "structured_output" };
+      return {
+        result: wireResultToOutcome(result.data),
+        parsePath: "structured_output",
+      };
   }
 
   // Path 2: raw JSON string (Codex outputSchema response)
   try {
     const parsed = JSON.parse(text);
     const result = workflowAgentValidatorResultSchema.safeParse(parsed);
-    if (result.success) return { result: result.data, parsePath: "raw_json" };
+    if (result.success)
+      return {
+        result: wireResultToOutcome(result.data),
+        parsePath: "raw_json",
+      };
   } catch {
     /* not raw JSON, try fenced block */
   }
 
   // Path 3: fenced ```json block (legacy fallback)
   return {
-    result: extractValidatorResult(text),
+    result: extractValidatorResult(text, engine),
     parsePath: "fenced_json_block",
   };
 }
@@ -200,7 +255,7 @@ export interface ValidatorExecutionMetadata {
 }
 
 export interface ValidatorRunResult {
-  result: WorkflowAgentValidatorResult;
+  result: ValidatorOutcome;
   metadata: ValidatorExecutionMetadata;
 }
 
@@ -376,6 +431,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       const text = taskResult.text ?? "";
       const { result: parsed, parsePath } = parseValidatorResponse(
         text,
+        validatorType,
         taskResult.structuredOutput,
       );
 
@@ -383,9 +439,23 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         lane,
         engine: validatorType,
         parsePath,
-        pass: parsed.pass,
-        issueCount: parsed.issues.length,
+        kind: parsed.kind,
+        issueCount: parsed.kind === "infra_error" ? 0 : parsed.issues.length,
       });
+      if (parsed.kind === "infra_error") {
+        execLogger?.validation(contextId, "validator.infra_error", {
+          lane,
+          engine: validatorType,
+          reason: parsed.reason,
+          message: parsed.message,
+        });
+        validatorLogger.warn("graph-workflow.validator.infra_error", {
+          executionId: execution.id,
+          lane,
+          engine: validatorType,
+          reason: parsed.reason,
+        });
+      }
 
       return {
         result: parsed,
@@ -430,8 +500,23 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const text = taskResult.text ?? "";
     const { result: parsed, parsePath } = parseValidatorResponse(
       text,
+      validatorType,
       taskResult.structuredOutput,
     );
+    if (parsed.kind === "infra_error") {
+      execLogger?.validation(contextId, "validator.infra_error", {
+        lane,
+        engine: validatorType,
+        reason: parsed.reason,
+        message: parsed.message,
+      });
+      validatorLogger.warn("graph-workflow.validator.infra_error", {
+        executionId: execution.id,
+        lane,
+        engine: validatorType,
+        reason: parsed.reason,
+      });
+    }
 
     // Record outcome with the continuity service for rotation tracking
     if (validatorType === "codex") {
@@ -474,9 +559,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         lane,
         engine: "codex",
         parsePath,
-        pass: parsed.pass,
-        issueCount: parsed.issues.length,
-        summary: parsed.summary,
+        kind: parsed.kind,
+        issueCount: parsed.kind === "infra_error" ? 0 : parsed.issues.length,
+        summary:
+          parsed.kind === "infra_error" ? parsed.message : parsed.summary,
         sessionAction: resolved.sessionAction,
         threadId: codexThreadId,
         usage,
@@ -526,9 +612,9 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       lane,
       engine: "claude",
       parsePath,
-      pass: parsed.pass,
-      issueCount: parsed.issues.length,
-      summary: parsed.summary,
+      kind: parsed.kind,
+      issueCount: parsed.kind === "infra_error" ? 0 : parsed.issues.length,
+      summary: parsed.kind === "infra_error" ? parsed.message : parsed.summary,
       sessionAction: resolved.sessionAction,
       backendSessionId: backendSessionId || null,
     });
@@ -614,17 +700,30 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         engine: input.validator.type,
         error: errorMessage,
       });
+      execLogger?.validation(input.context.id, "validator.infra_error", {
+        lane: "task_validator",
+        engine: input.validator.type,
+        reason: "exception",
+        message: errorMessage,
+      });
       validatorLogger.error("graph-workflow.task_validator.error", {
         executionId: input.execution.id,
         contextId: input.context.id,
         taskId: input.task.id,
         error: errorMessage,
       });
+      validatorLogger.warn("graph-workflow.validator.infra_error", {
+        executionId: input.execution.id,
+        lane: "task_validator",
+        engine: input.validator.type,
+        reason: "exception",
+      });
       return {
         result: {
-          pass: false,
-          summary: `Validator agent failed: ${errorMessage}`,
-          issues: [],
+          kind: "infra_error",
+          reason: "exception",
+          message: errorMessage,
+          engine: input.validator.type,
         },
         metadata: buildNoServiceMetadata(),
       };

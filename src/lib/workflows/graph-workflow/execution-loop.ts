@@ -6,6 +6,7 @@ import {
   type GraphWorkflowStreamFrame,
 } from "@/lib/workflow-graph/stream-registry";
 import type { GraphWorkflowExecution, GraphWorkflowHaltReason } from "@/types";
+import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 
 export interface GraphWorkflowExecutionLoopInput {
@@ -81,10 +82,6 @@ export function isExecutionLoopActive(
 export function _resetActiveLoopsForTesting(): void {
   activeLoops.clear();
 }
-
-// -- Constants ----------------------------------------------------------------
-
-const DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD = 3;
 
 // -- Helpers ------------------------------------------------------------------
 

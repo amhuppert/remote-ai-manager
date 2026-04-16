@@ -56,7 +56,7 @@ const stubTimeoutMs = async () => 300_000;
 // -- Pure function tests ------------------------------------------------------
 
 describe("extractValidatorResult", () => {
-  it("extracts a valid result from a ```json fenced block", () => {
+  it("returns kind=pass for valid JSON with pass=true and empty issues", () => {
     const text = [
       "I reviewed the task output carefully.",
       "",
@@ -69,15 +69,15 @@ describe("extractValidatorResult", () => {
       "```",
     ].join("\n");
 
-    const result = extractValidatorResult(text);
-    expect(result).toEqual({
-      pass: true,
-      summary: "All checks passed",
-      issues: [],
-    });
+    const outcome = extractValidatorResult(text, "claude");
+    expect(outcome.kind).toBe("pass");
+    if (outcome.kind === "pass") {
+      expect(outcome.summary).toBe("All checks passed");
+      expect(outcome.issues).toEqual([]);
+    }
   });
 
-  it("extracts the last JSON block when multiple are present", () => {
+  it("returns kind=fail using the last JSON block when multiple are present", () => {
     const text = [
       "Here is some analysis:",
       "```json",
@@ -93,51 +93,85 @@ describe("extractValidatorResult", () => {
       "```",
     ].join("\n");
 
-    const result = extractValidatorResult(text);
-    expect(result).toEqual({
-      pass: false,
-      summary: "Missing test coverage",
-      issues: [{ title: "No tests", description: "Add unit tests." }],
-    });
+    const outcome = extractValidatorResult(text, "claude");
+    expect(outcome.kind).toBe("fail");
+    if (outcome.kind === "fail") {
+      expect(outcome.summary).toBe("Missing test coverage");
+      expect(outcome.issues).toEqual([
+        { title: "No tests", description: "Add unit tests." },
+      ]);
+    }
   });
 
-  it("applies Zod defaults for omitted optional fields", () => {
+  it("returns kind=pass applying Zod defaults for omitted optional fields", () => {
     const text = [
       "```json",
       JSON.stringify({ pass: true, summary: "Looks good" }),
       "```",
     ].join("\n");
 
-    const result = extractValidatorResult(text);
-    expect(result.issues).toEqual([]);
+    const outcome = extractValidatorResult(text, "claude");
+    expect(outcome.kind).toBe("pass");
+    if (outcome.kind === "pass") {
+      expect(outcome.issues).toEqual([]);
+    }
   });
 
-  it("returns a failing result when no JSON block is found", () => {
-    const result = extractValidatorResult(
+  it("returns kind=fail when pass=true but issues is non-empty (normalization)", () => {
+    const text = [
+      "```json",
+      JSON.stringify({
+        pass: true,
+        summary: "Looks mostly good, but…",
+        issues: [{ title: "Minor", description: "Nit" }],
+      }),
+      "```",
+    ].join("\n");
+
+    const outcome = extractValidatorResult(text, "claude");
+    expect(outcome.kind).toBe("fail");
+    if (outcome.kind === "fail") {
+      expect(outcome.issues).toHaveLength(1);
+    }
+  });
+
+  it("returns infra_error reason=unparseable when no JSON block is found", () => {
+    const outcome = extractValidatorResult(
       "I could not produce a structured result.",
+      "claude",
     );
-    expect(result.pass).toBe(false);
-    expect(result.summary).toContain("did not return structured output");
+    expect(outcome.kind).toBe("infra_error");
+    if (outcome.kind === "infra_error") {
+      expect(outcome.reason).toBe("unparseable");
+      expect(outcome.engine).toBe("claude");
+      expect(outcome.message.length).toBeGreaterThan(0);
+    }
   });
 
-  it("returns a failing result when JSON is malformed", () => {
+  it("returns infra_error reason=unparseable when JSON is malformed", () => {
     const text = ["```json", "{ not valid json }", "```"].join("\n");
 
-    const result = extractValidatorResult(text);
-    expect(result.pass).toBe(false);
-    expect(result.summary).toContain("returned invalid structured output");
+    const outcome = extractValidatorResult(text, "codex");
+    expect(outcome.kind).toBe("infra_error");
+    if (outcome.kind === "infra_error") {
+      expect(outcome.reason).toBe("unparseable");
+      expect(outcome.engine).toBe("codex");
+    }
   });
 
-  it("returns a failing result when JSON does not match the schema", () => {
+  it("returns infra_error reason=schema_mismatch when JSON does not match the schema", () => {
     const text = [
       "```json",
       JSON.stringify({ pass: "maybe", summary: 42 }),
       "```",
     ].join("\n");
 
-    const result = extractValidatorResult(text);
-    expect(result.pass).toBe(false);
-    expect(result.summary).toContain("returned invalid structured output");
+    const outcome = extractValidatorResult(text, "claude");
+    expect(outcome.kind).toBe("infra_error");
+    if (outcome.kind === "infra_error") {
+      expect(outcome.reason).toBe("schema_mismatch");
+      expect(outcome.engine).toBe("claude");
+    }
   });
 });
 
@@ -314,11 +348,13 @@ describe("createValidatorRunner", () => {
         autonomous: true,
       }),
     );
-    expect(result.result.pass).toBe(true);
-    expect(result.result.summary).toBe("Task completed correctly");
+    expect(result.result.kind).toBe("pass");
+    if (result.result.kind === "pass") {
+      expect(result.result.summary).toBe("Task completed correctly");
+    }
   });
 
-  it("runTaskValidator returns a failing result when the agent produces no JSON", async () => {
+  it("runTaskValidator returns infra_error unparseable when the agent produces no JSON", async () => {
     const claudeRun = vi.fn(async () =>
       taskResult("I could not find anything to review."),
     );
@@ -347,11 +383,14 @@ describe("createValidatorRunner", () => {
       validator: contextDef.taskValidation!,
     });
 
-    expect(result.result.pass).toBe(false);
-    expect(result.result.summary).toContain("did not return structured output");
+    expect(result.result.kind).toBe("infra_error");
+    if (result.result.kind === "infra_error") {
+      expect(result.result.reason).toBe("unparseable");
+      expect(result.result.engine).toBe("claude");
+    }
   });
 
-  it("runTaskValidator propagates executor errors as a failing result", async () => {
+  it("runTaskValidator returns infra_error exception when the runner throws (claude)", async () => {
     const claudeRun = vi.fn(async () => {
       throw new Error("SDK connection failed");
     });
@@ -380,8 +419,57 @@ describe("createValidatorRunner", () => {
       validator: contextDef.taskValidation!,
     });
 
-    expect(result.result.pass).toBe(false);
-    expect(result.result.summary).toContain("SDK connection failed");
+    expect(result.result.kind).toBe("infra_error");
+    if (result.result.kind === "infra_error") {
+      expect(result.result.reason).toBe("exception");
+      expect(result.result.engine).toBe("claude");
+      expect(result.result.message).toContain("SDK connection failed");
+    }
+  });
+
+  it("runTaskValidator returns infra_error exception with engine=codex when codex runner throws", async () => {
+    const codexRun = vi.fn(async () => {
+      throw new Error("Codex rate limit exceeded");
+    });
+    const runner = createValidatorRunner({
+      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+    });
+
+    const execution = buildExecutionWithTaskValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const taskDef = execution.workingDefinition.tasks.find(
+      (t) => t.id === "task-plan-1",
+    )!;
+
+    const codexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      continuity: { enabled: true },
+      codex: {},
+      instructions: "Check.",
+    };
+
+    const result = await runner.runTaskValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      task: taskDef,
+      conversationId: "conversation-1",
+      summary: "Done.",
+      validator: codexValidator,
+    });
+
+    expect(result.result.kind).toBe("infra_error");
+    if (result.result.kind === "infra_error") {
+      expect(result.result.reason).toBe("exception");
+      expect(result.result.engine).toBe("codex");
+      expect(result.result.message).toContain("Codex rate limit exceeded");
+    }
   });
 
   it("runTaskValidator passes outputSchema to the task runner for claude type", async () => {
@@ -481,8 +569,10 @@ describe("createValidatorRunner", () => {
       }),
     );
     expect(claudeRun).not.toHaveBeenCalled();
-    expect(result.result.pass).toBe(true);
-    expect(result.result.summary).toBe("Codex OK");
+    expect(result.result.kind).toBe("pass");
+    if (result.result.kind === "pass") {
+      expect(result.result.summary).toBe("Codex OK");
+    }
   });
 });
 
@@ -575,7 +665,7 @@ describe("continuity service wiring", () => {
       }),
     );
     expect(repositoryUpdate).toHaveBeenCalledOnce();
-    expect(result.result.pass).toBe(true);
+    expect(result.result.kind).toBe("pass");
   });
 
   it("routes codex task validator through continuity service and records thread outcome", async () => {
@@ -653,7 +743,7 @@ describe("continuity service wiring", () => {
       }),
     );
     expect(repositoryUpdate).toHaveBeenCalledOnce();
-    expect(result.result.pass).toBe(true);
+    expect(result.result.kind).toBe("pass");
     expect(result.metadata.reviewArtifact).toMatchObject({
       engine: "codex",
       threadId: "real-thread-123",
@@ -761,14 +851,18 @@ describe("continuity service wiring", () => {
 });
 
 describe("parseValidatorResponse", () => {
-  it("prefers structuredOutput when available", () => {
+  it("prefers structuredOutput when available and returns kind=pass", () => {
     const structured = {
       pass: true,
       summary: "All good",
       issues: [],
     };
-    const result = parseValidatorResponse("some text", structured);
-    expect(result.result).toEqual(structured);
+    const result = parseValidatorResponse("some text", "claude", structured);
+    expect(result.result.kind).toBe("pass");
+    if (result.result.kind === "pass") {
+      expect(result.result.summary).toBe("All good");
+      expect(result.result.issues).toEqual([]);
+    }
     expect(result.parsePath).toBe("structured_output");
   });
 
@@ -778,9 +872,11 @@ describe("parseValidatorResponse", () => {
       summary: "Needs work",
       issues: [{ title: "Bug", description: "Fix" }],
     });
-    const result = parseValidatorResponse(json);
-    expect(result.result.pass).toBe(false);
-    expect(result.result.issues).toHaveLength(1);
+    const result = parseValidatorResponse(json, "claude");
+    expect(result.result.kind).toBe("fail");
+    if (result.result.kind === "fail") {
+      expect(result.result.issues).toHaveLength(1);
+    }
     expect(result.parsePath).toBe("raw_json");
   });
 
@@ -795,16 +891,33 @@ describe("parseValidatorResponse", () => {
       }),
       "```",
     ].join("\n");
-    const result = parseValidatorResponse(text);
-    expect(result.result.pass).toBe(true);
+    const result = parseValidatorResponse(text, "claude");
+    expect(result.result.kind).toBe("pass");
     expect(result.parsePath).toBe("fenced_json_block");
   });
 
-  it("returns failing result when all parsing paths fail", () => {
-    const result = parseValidatorResponse("no json here");
-    expect(result.result.pass).toBe(false);
-    expect(result.result.summary).toContain("did not return structured output");
+  it("returns infra_error reason=unparseable when all parsing paths fail", () => {
+    const result = parseValidatorResponse("no json here", "claude");
+    expect(result.result.kind).toBe("infra_error");
+    if (result.result.kind === "infra_error") {
+      expect(result.result.reason).toBe("unparseable");
+      expect(result.result.engine).toBe("claude");
+    }
     expect(result.parsePath).toBe("fenced_json_block");
+  });
+
+  it("returns infra_error reason=schema_mismatch when fenced JSON fails schema validation", () => {
+    const text = [
+      "```json",
+      JSON.stringify({ pass: "bad", summary: 42 }),
+      "```",
+    ].join("\n");
+    const result = parseValidatorResponse(text, "codex");
+    expect(result.result.kind).toBe("infra_error");
+    if (result.result.kind === "infra_error") {
+      expect(result.result.reason).toBe("schema_mismatch");
+      expect(result.result.engine).toBe("codex");
+    }
   });
 
   it("ignores invalid structuredOutput and falls back to text", () => {
@@ -813,9 +926,11 @@ describe("parseValidatorResponse", () => {
       summary: "Text parse",
       issues: [],
     });
-    const result = parseValidatorResponse(json, { invalid: true });
-    expect(result.result.pass).toBe(true);
-    expect(result.result.summary).toBe("Text parse");
+    const result = parseValidatorResponse(json, "claude", { invalid: true });
+    expect(result.result.kind).toBe("pass");
+    if (result.result.kind === "pass") {
+      expect(result.result.summary).toBe("Text parse");
+    }
     expect(result.parsePath).toBe("raw_json");
   });
 });
@@ -1130,7 +1245,7 @@ describe("continuity runtime integration (real service)", () => {
     // With no backendRef, the review artifact should be null rather than
     // containing an empty threadId that fails schema validation.
     expect(result.metadata.reviewArtifact).toBeNull();
-    expect(result.result.pass).toBe(true);
+    expect(result.result.kind).toBe("pass");
   });
 
   it("Codex review artifact survives schema round-trip and thread resumes on next validator call", async () => {

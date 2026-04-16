@@ -5,6 +5,7 @@ import {
   graphWorkflowAgentValidatorConfigSchema,
   graphWorkflowExecutionSchema,
   graphWorkflowExecutionSessionRefSchema,
+  graphWorkflowHaltReasonSchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowLaneContinuityPolicySchema,
   graphWorkflowLaneStateSchema,
@@ -934,5 +935,87 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
     if (result.success) {
       expect(Object.keys(result.data.laneStates)).toHaveLength(2);
     }
+  });
+});
+
+describe("graphWorkflowHaltReasonSchema", () => {
+  it("accepts a validator_infra_error halt reason", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "validator_infra_error",
+      contextId: "ctx-1",
+      taskId: "task-1",
+      engine: "codex",
+      infraReason: "exception",
+      message: "Codex process terminated unexpectedly",
+      summary: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "validator_infra_error") {
+      expect(result.data.engine).toBe("codex");
+      expect(result.data.infraReason).toBe("exception");
+      expect(result.data.message).toBe("Codex process terminated unexpectedly");
+      expect(result.data.contextId).toBe("ctx-1");
+      expect(result.data.taskId).toBe("task-1");
+    }
+  });
+
+  it("accepts all infraReason variants", () => {
+    for (const infraReason of [
+      "exception",
+      "unparseable",
+      "schema_mismatch",
+    ] as const) {
+      const result = graphWorkflowHaltReasonSchema.safeParse({
+        type: "validator_infra_error",
+        contextId: "ctx-1",
+        taskId: "task-1",
+        engine: "claude",
+        infraReason,
+        message: "msg",
+        summary: null,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("accepts both engines for validator_infra_error", () => {
+    for (const engine of ["claude", "codex"] as const) {
+      const result = graphWorkflowHaltReasonSchema.safeParse({
+        type: "validator_infra_error",
+        contextId: "ctx-1",
+        taskId: "task-1",
+        engine,
+        infraReason: "exception",
+        message: "msg",
+        summary: null,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects validator_infra_error with an unknown engine", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "validator_infra_error",
+      contextId: "ctx-1",
+      taskId: "task-1",
+      engine: "nonsense",
+      infraReason: "exception",
+      message: "msg",
+      summary: null,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects validator_infra_error with an unknown infraReason", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "validator_infra_error",
+      contextId: "ctx-1",
+      taskId: "task-1",
+      engine: "codex",
+      infraReason: "nonsense",
+      message: "msg",
+      summary: null,
+    });
+    expect(result.success).toBe(false);
   });
 });

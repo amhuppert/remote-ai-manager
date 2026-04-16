@@ -7,6 +7,7 @@ import {
 import { graphWorkflowExecutionSchema } from "@/lib/schemas";
 import {
   createGraphWorkflowIterationOrchestrator,
+  IterationHaltedError,
   TaskValidationFailedError,
 } from "./iteration-orchestrator";
 import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
@@ -1000,7 +1001,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
       current.laneStates = { task_validator: validatorLaneState };
       await repository.update("/repo", "session-1", current);
       return {
-        pass: true,
+        kind: "pass" as const,
         summary: "Task passed",
         feedback: "Task validation passed.",
         issues: [] as never[],
@@ -1528,7 +1529,7 @@ describe("task validation event publishing (fix-30388517)", () => {
     };
 
     const validateTaskCompletion = vi.fn(async () => ({
-      pass: true,
+      kind: "pass" as const,
       summary: "All checks passed",
       feedback: "Task validation passed.",
       issues: [] as never[],
@@ -1614,7 +1615,7 @@ describe("task validation failure handling (circuit breaker)", () => {
     const createConversation = vi.fn(async () => ({ id: "conv-fail" }));
 
     const validateTaskCompletion = vi.fn(async () => ({
-      pass: false,
+      kind: "fail" as const,
       summary: "Validation failed",
       feedback: "Missing test coverage for edge case.",
       issues: [{ title: "Missing tests", description: "Add edge case tests." }],
@@ -1697,7 +1698,7 @@ describe("task validation failure handling (circuit breaker)", () => {
     const createConversation = vi.fn(async () => ({ id: "conv-pass" }));
 
     const validateTaskCompletion = vi.fn(async () => ({
-      pass: true,
+      kind: "pass" as const,
       summary: "Task passed",
       feedback: "Task validation passed.",
       issues: [] as never[],
@@ -1734,5 +1735,543 @@ describe("task validation failure handling (circuit breaker)", () => {
     expect(
       result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(0);
+  });
+});
+
+// -- Mid-iteration halt: infra_error and circuit breaker ----------------------
+
+describe("mid-iteration halt via signalHalt", () => {
+  const NOW = "2026-03-27T16:00:00.000Z";
+
+  function seedRepoWithConsecutiveFailures(
+    consecutiveFailureCount: number,
+  ): ReturnType<typeof createRepository> {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    execution.contextStates["context-plan"]!.consecutiveFailureCount =
+      consecutiveFailureCount;
+    return createRepository(execution);
+  }
+
+  it("calls signalHalt with validator_infra_error reason and throws IterationHaltedError on infra_error outcome", async () => {
+    const repository = seedRepoWithConsecutiveFailures(0);
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return {
+          server: {},
+          close: vi.fn(async () => undefined),
+        };
+      },
+    );
+    const createConversation = vi.fn(async () => ({ id: "conv-infra" }));
+
+    const validateTaskCompletion = vi.fn(async () => ({
+      kind: "infra_error" as const,
+      reason: "exception" as const,
+      message: "Codex rate limit exceeded",
+      engine: "codex" as const,
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: unknown;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason =
+          input.reason as GraphWorkflowExecution["haltReason"];
+        await repository.update("/repo", "session-1", current);
+        return current;
+      },
+    );
+
+    let capturedError: unknown;
+    const runAgentIteration = vi.fn(async () => {
+      try {
+        await capturedCompleteTask!("task-plan-1", "Done");
+      } catch (error) {
+        capturedError = error;
+        throw error;
+      }
+      return { contextTokens: null, contextWindowMax: null };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateTaskCompletion },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // signalHalt invoked with the validator_infra_error reason
+    expect(signalHalt).toHaveBeenCalledTimes(1);
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        reason: expect.objectContaining({
+          type: "validator_infra_error",
+          contextId: "context-plan",
+          taskId: "task-plan-1",
+          engine: "codex",
+          infraReason: "exception",
+          message: "Codex rate limit exceeded",
+          summary: null,
+        }),
+      }),
+    );
+
+    // The completeTask closure threw IterationHaltedError, not TaskValidationFailedError
+    expect(capturedError).toBeInstanceOf(IterationHaltedError);
+
+    // consecutiveFailureCount is NOT incremented on infra_error
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(0);
+
+    // Execution ends halted
+    expect(result.execution.status).toBe("halted");
+    expect(result.execution.haltReason?.type).toBe("validator_infra_error");
+    expect(result.shouldContinueInContext).toBe(false);
+  });
+
+  it("triggers mid-iteration circuit_breaker halt when failure count crosses threshold inside a single iteration", async () => {
+    // Seed with count = 2; threshold is default 3. A third fail should trip.
+    const repository = seedRepoWithConsecutiveFailures(2);
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return {
+          server: {},
+          close: vi.fn(async () => undefined),
+        };
+      },
+    );
+    const createConversation = vi.fn(async () => ({ id: "conv-breaker" }));
+
+    const validateTaskCompletion = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "Still failing",
+      feedback: "Needs more evidence.",
+      issues: [{ title: "Missing", description: "add coverage" }],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: unknown;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason =
+          input.reason as GraphWorkflowExecution["haltReason"];
+        await repository.update("/repo", "session-1", current);
+        return current;
+      },
+    );
+
+    let capturedError: unknown;
+    const runAgentIteration = vi.fn(async () => {
+      try {
+        await capturedCompleteTask!("task-plan-1", "Done");
+      } catch (error) {
+        capturedError = error;
+        throw error;
+      }
+      return { contextTokens: null, contextWindowMax: null };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateTaskCompletion },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // signalHalt invoked with circuit_breaker reason referencing the crossed count
+    expect(signalHalt).toHaveBeenCalledTimes(1);
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          type: "circuit_breaker",
+          contextId: "context-plan",
+          condition: "retry_exhaustion",
+          failureCount: 3,
+          summary: null,
+        }),
+      }),
+    );
+
+    // completeTask threw IterationHaltedError (not TaskValidationFailedError) once the breaker tripped
+    expect(capturedError).toBeInstanceOf(IterationHaltedError);
+
+    // consecutiveFailureCount incremented to 3 (the threshold)
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(3);
+
+    // Execution ends halted
+    expect(result.execution.status).toBe("halted");
+    expect(result.execution.haltReason?.type).toBe("circuit_breaker");
+    expect(result.shouldContinueInContext).toBe(false);
+  });
+
+  it("does NOT call signalHalt when failure count remains below threshold", async () => {
+    // Seed with count = 0; one fail makes it 1, still below default threshold 3.
+    const repository = seedRepoWithConsecutiveFailures(0);
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return {
+          server: {},
+          close: vi.fn(async () => undefined),
+        };
+      },
+    );
+    const createConversation = vi.fn(async () => ({
+      id: "conv-belowthreshold",
+    }));
+
+    const validateTaskCompletion = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "Failing",
+      feedback: "Try harder.",
+      issues: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const signalHalt = vi.fn();
+
+    let capturedError: unknown;
+    const runAgentIteration = vi.fn(async () => {
+      try {
+        await capturedCompleteTask!("task-plan-1", "Done");
+      } catch (error) {
+        capturedError = error;
+        // Rethrow so the orchestrator's outer catch handles it; otherwise the
+        // follow-up loop would issue additional agent calls and keep failing.
+        throw error;
+      }
+      return { contextTokens: null, contextWindowMax: null };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateTaskCompletion },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(signalHalt).not.toHaveBeenCalled();
+
+    // completeTask threw TaskValidationFailedError (existing semantics preserved)
+    expect(capturedError).toBeInstanceOf(TaskValidationFailedError);
+
+    // consecutiveFailureCount incremented to 1, below threshold
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(1);
+
+    // Execution remains running
+    expect(result.execution.status).toBe("running");
+    expect(result.shouldContinueInContext).toBe(true);
+  });
+
+  it("short-circuits completeTask with IterationHaltedError when execution is halted mid-flight", async () => {
+    const repository = seedRepoWithConsecutiveFailures(0);
+
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return {
+          server: {},
+          close: vi.fn(async () => undefined),
+        };
+      },
+    );
+    const createConversation = vi.fn(async () => ({ id: "conv-halt" }));
+
+    const validateTaskCompletion = vi.fn();
+    const signalHalt = vi.fn();
+
+    let capturedError: unknown;
+    const runAgentIteration = vi.fn(async () => {
+      // Simulate a prior halt persisted between the orchestrator's seed and
+      // the agent's first completeTask call (e.g., by another concurrent path).
+      const current = structuredClone(repository.read());
+      current.status = "halted";
+      current.haltReason = {
+        type: "recovery_error",
+        message: "Pre-existing halt",
+      };
+      await repository.update("/repo", "session-1", current);
+      try {
+        await capturedCompleteTask!("task-plan-1", "Done");
+      } catch (error) {
+        capturedError = error;
+        throw error;
+      }
+      return { contextTokens: null, contextWindowMax: null };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateTaskCompletion },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // completeTask threw IterationHaltedError; validator and signalHalt never invoked
+    expect(capturedError).toBeInstanceOf(IterationHaltedError);
+    expect(validateTaskCompletion).not.toHaveBeenCalled();
+    expect(signalHalt).not.toHaveBeenCalled();
+  });
+
+  it("respects custom circuit breaker threshold from context definition", async () => {
+    const baseExecution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    // Override the threshold on context-plan to 5
+    const contextPlan = baseExecution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    contextPlan.circuitBreaker.consecutiveFailureThreshold = 5;
+    // Seed with count = 2; one failing completion makes it 3, below threshold 5.
+    baseExecution.contextStates["context-plan"]!.consecutiveFailureCount = 2;
+    const repository = createRepository(baseExecution);
+
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return {
+          server: {},
+          close: vi.fn(async () => undefined),
+        };
+      },
+    );
+    const createConversation = vi.fn(async () => ({ id: "conv-thresh" }));
+
+    const validateTaskCompletion = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "Failing",
+      feedback: "Not yet.",
+      issues: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const signalHalt = vi.fn();
+
+    const runAgentIteration = vi.fn(async () => {
+      try {
+        await capturedCompleteTask!("task-plan-1", "Done");
+      } catch (error) {
+        // Rethrow — otherwise the follow-up loop will re-trigger completeTask
+        // on the remaining tasks and the breaker would trip after enough fails.
+        throw error;
+      }
+      return { contextTokens: null, contextWindowMax: null };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateTaskCompletion },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // 3 < 5 → breaker should NOT trip
+    expect(signalHalt).not.toHaveBeenCalled();
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(3);
+    expect(result.execution.status).toBe("running");
+  });
+
+  it("returns halted execution without re-running finalization when execution is halted at finalize-time", async () => {
+    const repository = seedRepoWithConsecutiveFailures(2);
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return {
+          server: {},
+          close: vi.fn(async () => undefined),
+        };
+      },
+    );
+    const createConversation = vi.fn(async () => ({ id: "conv-final-halt" }));
+
+    const validateTaskCompletion = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "Failing",
+      feedback: "Needs more.",
+      issues: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: unknown;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason =
+          input.reason as GraphWorkflowExecution["haltReason"];
+        await repository.update("/repo", "session-1", current);
+        return current;
+      },
+    );
+
+    const runAgentIteration = vi.fn(async () => {
+      try {
+        await capturedCompleteTask!("task-plan-1", "Done");
+      } catch (error) {
+        // Rethrow so the orchestrator's outer catch handles the halted-iteration error
+        throw error;
+      }
+      return { contextTokens: null, contextWindowMax: null };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateTaskCompletion },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // Finalization short-circuits: shouldContinueInContext is false and status halted
+    expect(result.execution.status).toBe("halted");
+    expect(result.shouldContinueInContext).toBe(false);
+    // The active context should still be "context-plan" since no finalize happened
+    expect(result.execution.activeContextId).toBe("context-plan");
   });
 });

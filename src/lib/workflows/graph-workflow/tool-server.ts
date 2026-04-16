@@ -4,6 +4,7 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/errors";
 import type { AgentAddedTask } from "@/lib/workflow-graph/runtime-edits";
 import type { SharedDocumentUpsertInput } from "@/lib/workflow-graph/shared-documents";
+import { IterationHaltedError } from "./iteration-orchestrator";
 
 const logger = createLogger("graph-workflow-tools");
 
@@ -95,6 +96,13 @@ function createToolErrorResult(message: string) {
   };
 }
 
+function createHaltedToolErrorResult(error: IterationHaltedError) {
+  const reasonType = error.haltReason.type;
+  return createToolErrorResult(
+    `Iteration halted (${reasonType}): no further tool calls will be accepted in this iteration.`,
+  );
+}
+
 function createTextResult(message: string) {
   return {
     content: [
@@ -143,6 +151,13 @@ function createCompleteTaskHandler(context: GraphWorkflowToolServerContext) {
         `Task ${parsed.data.taskSlug} was completed and recorded for "${context.executionContextTitle}".`,
       );
     } catch (error) {
+      if (error instanceof IterationHaltedError) {
+        logger.warn("graph-workflow.tool.complete_task.halted", {
+          taskSlug: parsed.data.taskSlug,
+          haltReasonType: error.haltReason.type,
+        });
+        return createHaltedToolErrorResult(error);
+      }
       logger.warn("graph-workflow.tool.complete_task.error", {
         taskSlug: parsed.data.taskSlug,
         error: getErrorMessage(error),
@@ -171,6 +186,13 @@ function createUpsertSharedDocumentHandler(
         `Shared document ${parsed.data.relativePath} is available to later workflow iterations.`,
       );
     } catch (error) {
+      if (error instanceof IterationHaltedError) {
+        logger.warn("graph-workflow.tool.upsert_shared_document.halted", {
+          relativePath: parsed.data.relativePath,
+          haltReasonType: error.haltReason.type,
+        });
+        return createHaltedToolErrorResult(error);
+      }
       return createToolErrorResult(getErrorMessage(error));
     }
   };
@@ -194,6 +216,13 @@ function createAddTaskHandler(context: GraphWorkflowToolServerContext) {
         `Queued a new task at the end of execution context "${context.executionContextTitle}".`,
       );
     } catch (error) {
+      if (error instanceof IterationHaltedError) {
+        logger.warn("graph-workflow.tool.add_task.halted", {
+          title: parsed.data.title,
+          haltReasonType: error.haltReason.type,
+        });
+        return createHaltedToolErrorResult(error);
+      }
       logger.warn("graph-workflow.tool.add_task.error", {
         title: parsed.data.title,
         error: getErrorMessage(error),

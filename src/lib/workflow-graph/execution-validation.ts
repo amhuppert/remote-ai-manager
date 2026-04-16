@@ -6,11 +6,10 @@ import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
   GraphWorkflowValidationReviewArtifact,
-  WorkflowAgentValidatorResult,
   WorkflowValidatorIssue,
 } from "@/types";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
-import type { ValidatorRunResult } from "./validator-runner";
+import type { ValidatorOutcome, ValidatorRunResult } from "./validator-runner";
 
 export interface GraphWorkflowTaskValidatorInput {
   projectPath: string;
@@ -33,14 +32,31 @@ export interface GraphWorkflowTaskValidationInput {
   summary: string;
 }
 
-export interface GraphWorkflowTaskValidationOutcome {
-  pass: boolean;
-  summary: string;
-  feedback: string;
-  issues: WorkflowValidatorIssue[];
-  sessionRef?: AgentSessionRef | null;
-  reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
-}
+export type GraphWorkflowTaskValidationOutcome =
+  | {
+      kind: "pass";
+      summary: string;
+      feedback: string;
+      issues: WorkflowValidatorIssue[];
+      sessionRef?: AgentSessionRef | null;
+      reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
+    }
+  | {
+      kind: "fail";
+      summary: string;
+      feedback: string;
+      issues: WorkflowValidatorIssue[];
+      sessionRef?: AgentSessionRef | null;
+      reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
+    }
+  | {
+      kind: "infra_error";
+      reason: "exception" | "unparseable" | "schema_mismatch";
+      message: string;
+      engine: "claude" | "codex";
+      sessionRef: null;
+      reviewArtifact: null;
+    };
 
 export interface GraphWorkflowValidationServiceDeps {
   runTaskValidator(
@@ -88,23 +104,43 @@ function formatFeedback(
   ].join("\n");
 }
 
-function normalizeValidatorResult(result: WorkflowAgentValidatorResult): {
-  pass: boolean;
-  summary: string;
-  feedback: string;
-  issues: WorkflowValidatorIssue[];
-} {
-  const pass = result.pass && result.issues.length === 0;
+function mapRunnerOutcomeToTaskOutcome(
+  outcome: ValidatorOutcome,
+  metadata: ValidatorRunResult["metadata"],
+): GraphWorkflowTaskValidationOutcome {
+  if (outcome.kind === "pass") {
+    return {
+      kind: "pass",
+      summary: outcome.summary,
+      feedback: formatFeedback("Task validation passed.", outcome.summary, []),
+      issues: [],
+      sessionRef: metadata.sessionRef,
+      reviewArtifact: metadata.reviewArtifact,
+    };
+  }
+
+  if (outcome.kind === "fail") {
+    return {
+      kind: "fail",
+      summary: outcome.summary,
+      feedback: formatFeedback(
+        "Task validation blocked completion.",
+        outcome.summary,
+        outcome.issues,
+      ),
+      issues: outcome.issues,
+      sessionRef: metadata.sessionRef,
+      reviewArtifact: metadata.reviewArtifact,
+    };
+  }
 
   return {
-    pass,
-    summary: result.summary,
-    feedback: formatFeedback(
-      pass ? "Task validation passed." : "Task validation blocked completion.",
-      result.summary,
-      result.issues,
-    ),
-    issues: result.issues,
+    kind: "infra_error",
+    reason: outcome.reason,
+    message: outcome.message,
+    engine: outcome.engine,
+    sessionRef: null,
+    reviewArtifact: null,
   };
 }
 
@@ -136,7 +172,7 @@ export function createGraphWorkflowValidationService(
         reason: "not_enabled",
       });
       return {
-        pass: true,
+        kind: "pass",
         summary: "Task validation is not enabled",
         feedback: "Task validation is not enabled.",
         issues: [],
@@ -160,26 +196,43 @@ export function createGraphWorkflowValidationService(
       validator,
     });
 
-    const normalized = normalizeValidatorResult(runResult.result);
+    const outcome = mapRunnerOutcomeToTaskOutcome(
+      runResult.result,
+      runResult.metadata,
+    );
 
-    execLogger?.validation(input.contextId, "task_validation.completed", {
-      taskId: input.taskId,
-      pass: normalized.pass,
-      summary: normalized.summary,
-      issueCount: normalized.issues.length,
-    });
-    validationLogger.info("graph-workflow.task_validation.completed", {
-      executionId: input.execution.id,
-      contextId: input.contextId,
-      taskId: input.taskId,
-      pass: normalized.pass,
-    });
+    if (outcome.kind === "infra_error") {
+      execLogger?.validation(input.contextId, "task_validation.completed", {
+        taskId: input.taskId,
+        kind: outcome.kind,
+        reason: outcome.reason,
+        engine: outcome.engine,
+        message: outcome.message,
+      });
+      validationLogger.warn("graph-workflow.task_validation.completed", {
+        executionId: input.execution.id,
+        contextId: input.contextId,
+        taskId: input.taskId,
+        kind: outcome.kind,
+        reason: outcome.reason,
+        engine: outcome.engine,
+      });
+    } else {
+      execLogger?.validation(input.contextId, "task_validation.completed", {
+        taskId: input.taskId,
+        kind: outcome.kind,
+        summary: outcome.summary,
+        issueCount: outcome.issues.length,
+      });
+      validationLogger.info("graph-workflow.task_validation.completed", {
+        executionId: input.execution.id,
+        contextId: input.contextId,
+        taskId: input.taskId,
+        kind: outcome.kind,
+      });
+    }
 
-    return {
-      ...normalized,
-      sessionRef: runResult.metadata.sessionRef,
-      reviewArtifact: runResult.metadata.reviewArtifact,
-    };
+    return outcome;
   }
 
   return {
