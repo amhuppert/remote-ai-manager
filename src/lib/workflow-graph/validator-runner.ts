@@ -465,12 +465,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         taskResult.backendRef?.backend === "codex"
           ? taskResult.backendRef.threadId
           : (newThreadId ?? "");
-      const reviewArtifact: GraphWorkflowValidationReviewArtifact = {
-        engine: "codex",
-        threadId: codexThreadId,
-        response: text,
-        usage,
-      };
+      const reviewArtifact: GraphWorkflowValidationReviewArtifact | null =
+        codexThreadId
+          ? { engine: "codex", threadId: codexThreadId, response: text, usage }
+          : null;
 
       execLogger?.validation(contextId, "validator.result_parsed", {
         lane,

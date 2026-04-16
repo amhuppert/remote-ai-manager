@@ -1052,6 +1052,87 @@ describe("continuity runtime integration (real service)", () => {
     });
   });
 
+  it("codex review artifact is null when task runner returns no backendRef", async () => {
+    const definition = createWorkflowDefinition({
+      executionContexts: createWorkflowDefinition().executionContexts.map(
+        (ctx) =>
+          ctx.id === "context-plan"
+            ? {
+                ...ctx,
+                taskValidation: {
+                  type: "codex" as const,
+                  enabled: true,
+                  continuity: { enabled: true },
+                  codex: {},
+                  instructions: "Validate.",
+                },
+              }
+            : ctx,
+      ),
+    });
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextId: "context-plan",
+      workingDefinition: definition,
+    });
+    const contextDef = definition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const taskDef = definition.tasks.find((t) => t.id === "task-plan-1")!;
+    const validator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      continuity: { enabled: true },
+      codex: {},
+      instructions: "Validate.",
+    };
+    const repo = createInMemoryRepo(execution);
+
+    const startCodexThread = vi.fn(async () => ({
+      threadId: "thread-placeholder",
+    }));
+
+    const continuityService = createWorkflowContinuityService({
+      createConversation: vi.fn(),
+      getConversation: vi.fn(),
+      startCodexThread,
+      resumeCodexThread: vi.fn(),
+      now: () => NOW,
+    });
+
+    // Codex runner returns NO backendRef (e.g. API didn't provide a thread ID)
+    const codexRun = vi.fn().mockResolvedValue(
+      taskResult(passResponseJson, {
+        backendRef: undefined,
+        usage: null,
+      }),
+    );
+
+    const runner = createValidatorRunner({
+      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      continuityService,
+      executionRepository: repo,
+    });
+
+    const result = await runner.runTaskValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      task: taskDef,
+      conversationId: "impl-conv",
+      summary: "Done.",
+      validator,
+    });
+
+    // With no backendRef, the review artifact should be null rather than
+    // containing an empty threadId that fails schema validation.
+    expect(result.metadata.reviewArtifact).toBeNull();
+    expect(result.result.pass).toBe(true);
+  });
+
   it("Codex review artifact survives schema round-trip and thread resumes on next validator call", async () => {
     // Build a definition with a Codex task validator
     const definition = createWorkflowDefinition({
