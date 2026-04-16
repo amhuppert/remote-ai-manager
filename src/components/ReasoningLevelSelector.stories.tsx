@@ -56,7 +56,21 @@ export const Disabled = {
 export const ClaudeOpus = {
   args: {
     value: "high",
-    availableLevels: ["low", "medium", "high", "max"],
+    availableLevels: ["low", "medium", "high", "xhigh", "max"],
+  },
+} satisfies Story;
+
+export const ClaudeOpusXHigh = {
+  args: {
+    value: "xhigh",
+    availableLevels: ["low", "medium", "high", "xhigh", "max"],
+  },
+} satisfies Story;
+
+export const ClaudeSonnet = {
+  args: {
+    value: "high",
+    availableLevels: ["low", "medium", "high"],
   },
 } satisfies Story;
 

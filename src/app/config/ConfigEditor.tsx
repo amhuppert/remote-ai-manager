@@ -397,7 +397,12 @@ export default function ConfigEditor(): React.JSX.Element {
   const effortOptions = useMemo(
     () =>
       formState
-        ? getEffortOptionsForBackend(formState.defaultAgentBackend)
+        ? getEffortOptionsForBackend(
+            formState.defaultAgentBackend,
+            formState.defaultAgentBackend === "codex"
+              ? (formState.codex?.model ?? "gpt-5.4")
+              : formState.defaultModel,
+          )
         : [],
     [formState],
   );
@@ -955,6 +960,12 @@ function WorkflowValidatorFields({
   onChangeMulti: (changes: Array<[FieldPath, unknown]>) => void;
 }) {
   const validatorType = (validator?.type ?? "claude") as "claude" | "codex";
+  const validatorModel =
+    validator?.model ?? (validatorType === "codex" ? "gpt-5.4" : "opus");
+  const validatorEffortOptions = getEffortOptionsForBackend(
+    validatorType,
+    validatorModel,
+  );
 
   return (
     <div className="config-field" style={{ marginBottom: "var(--space-xl)" }}>
@@ -1018,11 +1029,7 @@ function WorkflowValidatorFields({
       >
         <ConfigPillGroup
           value={(validator?.reasoningEffort ?? "medium") as string}
-          options={
-            validatorType === "codex"
-              ? (["minimal", "low", "medium", "high", "xhigh"] as const)
-              : (["low", "medium", "high", "max"] as const)
-          }
+          options={validatorEffortOptions}
           onChange={(v) => {
             const changes: Array<[FieldPath, unknown]> = [
               [`${basePath}.reasoningEffort`, v],

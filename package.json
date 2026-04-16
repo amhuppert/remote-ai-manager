@@ -22,7 +22,7 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.81",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.111",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@openai/codex-sdk": "^0.118.0",
     "@tanstack/react-query": "^5.90.21",

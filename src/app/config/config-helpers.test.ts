@@ -214,14 +214,23 @@ describe("getModelOptionsForBackend", () => {
 });
 
 describe("getEffortOptionsForBackend", () => {
-  it("returns Claude effort levels for claude backend", () => {
-    const result = getEffortOptionsForBackend("claude");
+  it("returns Claude effort levels (including xhigh for Opus) for claude backend", () => {
+    const result = getEffortOptionsForBackend("claude", "opus");
     expect(result).toContain("low");
     expect(result).toContain("medium");
     expect(result).toContain("high");
+    expect(result).toContain("xhigh");
     expect(result).toContain("max");
-    expect(result).not.toContain("xhigh");
     expect(result).not.toContain("minimal");
+  });
+
+  it("excludes xhigh for Sonnet", () => {
+    const result = getEffortOptionsForBackend("claude", "sonnet");
+    expect(result).toContain("low");
+    expect(result).toContain("medium");
+    expect(result).toContain("high");
+    expect(result).not.toContain("xhigh");
+    expect(result).not.toContain("max");
   });
 
   it("returns Codex effort levels for codex backend", () => {

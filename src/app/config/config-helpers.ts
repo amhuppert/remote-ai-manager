@@ -106,6 +106,7 @@ export function getModelOptionsForBackend(
 
 export function getEffortOptionsForBackend(
   backend: AgentBackendId,
+  model?: string,
 ): EffortLevel[] {
-  return getEffortLevelsForBackend(backend);
+  return getEffortLevelsForBackend(backend, model);
 }

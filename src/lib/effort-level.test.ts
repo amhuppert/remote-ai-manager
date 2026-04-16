@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  claudeEffortLevelSchema,
   effortLevelSchema,
   getEffortLevelsForModel,
   clampEffortToModel,
@@ -21,17 +22,35 @@ describe("effortLevelSchema", () => {
   });
 });
 
+describe("claudeEffortLevelSchema", () => {
+  it("accepts xhigh (Opus 4.7)", () => {
+    expect(claudeEffortLevelSchema.parse("xhigh")).toBe("xhigh");
+  });
+
+  it("accepts standard Claude effort levels", () => {
+    expect(claudeEffortLevelSchema.parse("low")).toBe("low");
+    expect(claudeEffortLevelSchema.parse("medium")).toBe("medium");
+    expect(claudeEffortLevelSchema.parse("high")).toBe("high");
+    expect(claudeEffortLevelSchema.parse("max")).toBe("max");
+  });
+
+  it("rejects minimal (Codex-only)", () => {
+    expect(claudeEffortLevelSchema.safeParse("minimal").success).toBe(false);
+  });
+});
+
 describe("getEffortLevelsForModel", () => {
-  it("returns all levels for opus", () => {
+  it("returns all levels for opus (including xhigh between high and max)", () => {
     expect(getEffortLevelsForModel("opus")).toEqual([
       "low",
       "medium",
       "high",
+      "xhigh",
       "max",
     ]);
   });
 
-  it("returns low/medium/high for sonnet", () => {
+  it("returns low/medium/high for sonnet (no xhigh)", () => {
     expect(getEffortLevelsForModel("sonnet")).toEqual([
       "low",
       "medium",
@@ -48,6 +67,14 @@ describe("clampEffortToModel", () => {
   it("returns the effort unchanged when supported by the model", () => {
     expect(clampEffortToModel("high", "opus")).toBe("high");
     expect(clampEffortToModel("low", "sonnet")).toBe("low");
+  });
+
+  it("returns xhigh unchanged for opus", () => {
+    expect(clampEffortToModel("xhigh", "opus")).toBe("xhigh");
+  });
+
+  it("clamps xhigh down to high for sonnet", () => {
+    expect(clampEffortToModel("xhigh", "sonnet")).toBe("high");
   });
 
   it("clamps max down to high for sonnet", () => {

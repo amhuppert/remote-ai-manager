@@ -23,8 +23,8 @@ const EFFORT_OPTIONS: EffortOption[] = [
   { id: "low", label: "Low", description: "Minimal" },
   { id: "medium", label: "Medium", description: "Moderate" },
   { id: "high", label: "High", description: "Default" },
+  { id: "xhigh", label: "XHigh", description: "Extra high" },
   { id: "max", label: "Max", description: "Maximum" },
-  { id: "xhigh", label: "XHigh", description: "Maximum (Codex)" },
 ];
 
 interface ReasoningLevelSelectorProps {

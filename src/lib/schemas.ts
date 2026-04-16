@@ -27,11 +27,17 @@ export const effortLevelSchema = z.enum([
 export type EffortLevel = z.infer<typeof effortLevelSchema>;
 
 /** Claude-specific effort levels (subset of EffortLevel accepted by the Claude SDK). */
-export const claudeEffortLevelSchema = z.enum(["low", "medium", "high", "max"]);
+export const claudeEffortLevelSchema = z.enum([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 export type ClaudeEffortLevel = z.infer<typeof claudeEffortLevelSchema>;
 
 const MODEL_EFFORT_LEVELS: Record<ClaudeModel, EffortLevel[]> = {
-  opus: ["low", "medium", "high", "max"],
+  opus: ["low", "medium", "high", "xhigh", "max"],
   sonnet: ["low", "medium", "high"],
   haiku: [],
 };
