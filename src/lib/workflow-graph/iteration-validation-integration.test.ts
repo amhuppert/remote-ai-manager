@@ -421,4 +421,79 @@ describe("graph workflow iteration validation integration", () => {
       result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(1);
   });
+
+  it("does not re-run the validator when the implementer calls completeTask twice on the same task", async () => {
+    // Regression: a follow-up iteration that listed an already-validated task as
+    // remaining (because the first validator hadn't yet returned) previously caused
+    // a second validator run whose late result could corrupt persisted state.
+    const repository = createRepository(createValidatorEnabledExecution());
+
+    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
+    let firstCallCompletedAt: string | null = null;
+    const runAgentIteration = async () => {
+      if (!toolInput) throw new Error("Tool server input was not captured");
+
+      // Turn 0: implementer completes the task (validator returns PASS).
+      const firstResult = await toolInput.completeTask(
+        "task-plan-1",
+        "First completion",
+      );
+      firstCallCompletedAt =
+        firstResult.taskStates["task-plan-1"]?.completedAt ?? null;
+      expect(firstResult.taskStates["task-plan-1"]?.status).toBe("completed");
+
+      // Turn 1 (simulated follow-up): implementer re-invokes completeTask on the
+      // already-completed task. This must be a no-op; the validator must NOT run
+      // a second time.
+      const secondResult = await toolInput.completeTask(
+        "task-plan-1",
+        "Second completion (should be idempotent)",
+      );
+      expect(secondResult.taskStates["task-plan-1"]?.status).toBe("completed");
+      expect(secondResult.taskStates["task-plan-1"]?.completedAt).toBe(
+        firstCallCompletedAt,
+      );
+      return { contextTokens: null, contextWindowMax: null };
+    };
+
+    const validateTaskCompletion = vi.fn(async () => ({
+      kind: "pass" as const,
+      summary: "Task passed",
+      feedback: "Looks good.",
+      issues: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: async () => ({ id: "conversation-1" }),
+      createToolServer: (input) => {
+        toolInput = input;
+        return { server: { id: "tool-server" } };
+      },
+      runAgentIteration,
+      validationService: { validateTaskCompletion },
+      now: () => "2026-03-27T16:30:00.000Z",
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(validateTaskCompletion).toHaveBeenCalledTimes(1);
+    expect(result.execution.taskStates["task-plan-1"]?.status).toBe(
+      "completed",
+    );
+    expect(result.execution.taskStates["task-plan-1"]?.completedAt).toBe(
+      firstCallCompletedAt,
+    );
+    // The second call must NOT have incremented consecutive failures.
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(0);
+  });
 });

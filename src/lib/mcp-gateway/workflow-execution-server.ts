@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { readConfig } from "@/lib/config";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
+import { createLogger } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession, mutateSession } from "@/lib/state";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-dispatcher";
@@ -20,6 +21,8 @@ import type { GraphWorkflowExecution } from "@/types";
 import { McpRouteError } from "./route-handler";
 
 const CODEX_VALIDATOR_TIMEOUT_MS = 300_000;
+
+const logger = createLogger("workflow-execution-server");
 
 export interface WorkflowExecutionMcpServerParams {
   name: string;
@@ -187,6 +190,18 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
           throw new Error(
             "Session does not have the requested graph workflow execution",
           );
+        }
+
+        const taskStateBeforeValidation =
+          preValidationExecution.taskStates[taskId];
+        if (taskStateBeforeValidation?.status === "completed") {
+          logger.info("graph-workflow.task.completion_idempotent", {
+            executionId: preValidationExecution.id,
+            contextId,
+            taskId,
+            firstCompletedAt: taskStateBeforeValidation.completedAt,
+          });
+          return preValidationExecution;
         }
 
         const conversationId = resolveConversationId(

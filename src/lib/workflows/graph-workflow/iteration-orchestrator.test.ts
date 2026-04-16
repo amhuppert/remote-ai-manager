@@ -2114,6 +2114,96 @@ describe("mid-iteration halt via signalHalt", () => {
     expect(signalHalt).not.toHaveBeenCalled();
   });
 
+  it("short-circuits completeTask as idempotent no-op when task is already completed (no validator re-run)", async () => {
+    const baseExecution = createExecutionWithPlanTasks({
+      "task-plan-1": "completed",
+      "task-plan-2": "pending",
+    });
+    const originalCompletedAt = "2026-03-27T15:55:00.000Z";
+    const originalSummary = "Original completion summary";
+    const originalConversationId = "conv-original";
+    baseExecution.taskStates["task-plan-1"]!.completedAt = originalCompletedAt;
+    baseExecution.taskStates["task-plan-1"]!.summary = originalSummary;
+    baseExecution.taskStates["task-plan-1"]!.lastConversationId =
+      originalConversationId;
+    const repository = createRepository(baseExecution);
+
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return {
+          server: {},
+          close: vi.fn(async () => undefined),
+        };
+      },
+    );
+    const createConversation = vi.fn(async () => ({ id: "conv-redo" }));
+
+    const validateTaskCompletion = vi.fn();
+    const signalHalt = vi.fn();
+
+    let capturedResult: GraphWorkflowExecution | undefined;
+    let capturedError: unknown;
+    const runAgentIteration = vi.fn(async () => {
+      try {
+        capturedResult = await capturedCompleteTask!(
+          "task-plan-1",
+          "Re-doing the already-completed task",
+        );
+      } catch (error) {
+        capturedError = error;
+      }
+      return { contextTokens: null, contextWindowMax: null };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateTaskCompletion },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // Guard short-circuits before validation: validator must NOT be invoked
+    expect(validateTaskCompletion).not.toHaveBeenCalled();
+    expect(signalHalt).not.toHaveBeenCalled();
+
+    // completeTask returned normally (idempotent success, not error)
+    expect(capturedError).toBeUndefined();
+    expect(capturedResult).toBeDefined();
+
+    // Original completion data on the task is preserved — no clobber
+    const persisted = repository.read().taskStates["task-plan-1"]!;
+    expect(persisted.status).toBe("completed");
+    expect(persisted.completedAt).toBe(originalCompletedAt);
+    expect(persisted.summary).toBe(originalSummary);
+    expect(persisted.lastConversationId).toBe(originalConversationId);
+
+    // Returned execution also reflects preserved state
+    const returned = capturedResult!.taskStates["task-plan-1"]!;
+    expect(returned.status).toBe("completed");
+    expect(returned.completedAt).toBe(originalCompletedAt);
+    expect(returned.summary).toBe(originalSummary);
+  });
+
   it("respects custom circuit breaker threshold from context definition", async () => {
     const baseExecution = createExecutionWithPlanTasks({
       "task-plan-1": "pending",

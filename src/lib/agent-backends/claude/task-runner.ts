@@ -1,5 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  Options,
   SDKMessage,
   SDKResultSuccess,
   SDKResultError,
@@ -167,7 +168,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           settingSources: ["user", "project", "local"],
           ...(input.modelId ? { model: input.modelId } : {}),
           ...(validatedReasoningEffort
-            ? { effort: validatedReasoningEffort }
+            ? { effort: validatedReasoningEffort as Options["effort"] }
             : {}),
           maxTurns: 50,
           resume: resumeSessionId,

@@ -593,6 +593,21 @@ export function createGraphWorkflowIterationOrchestrator(
             },
           );
         }
+        const taskStateBeforeValidation =
+          preValidationExecution.taskStates[taskId];
+        if (taskStateBeforeValidation?.status === "completed") {
+          execLogger?.task(input.contextId, "task.completion_short_circuit", {
+            taskId,
+            reason: "already_completed",
+            firstCompletedAt: taskStateBeforeValidation.completedAt,
+          });
+          logger.info("graph-workflow.task.completion_idempotent", {
+            executionId: preValidationExecution.id,
+            contextId: input.contextId,
+            taskId,
+          });
+          return preValidationExecution;
+        }
         const validation = await validationService.validateTaskCompletion({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
