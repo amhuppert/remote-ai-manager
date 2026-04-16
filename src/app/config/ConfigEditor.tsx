@@ -366,9 +366,6 @@ export default function ConfigEditor(): React.JSX.Element {
       "codex.model",
       "codex.reasoningEffort",
       "codex.timeout",
-      "workflowDefaults.executionValidator.type",
-      "workflowDefaults.executionValidator.model",
-      "workflowDefaults.executionValidator.reasoningEffort",
       "workflowDefaults.taskValidator.type",
       "workflowDefaults.taskValidator.model",
       "workflowDefaults.taskValidator.reasoningEffort",
@@ -899,14 +896,6 @@ export default function ConfigEditor(): React.JSX.Element {
             collapsed={collapsedSections.has("workflowDefaults")}
             onToggle={toggleSection}
           >
-            <WorkflowValidatorFields
-              groupLabel="Execution Validator"
-              basePath="workflowDefaults.executionValidator"
-              validator={formState.workflowDefaults?.executionValidator}
-              isDefault={isDefault}
-              isModified={isModified}
-              onChangeMulti={handleChangeMulti}
-            />
             <WorkflowValidatorFields
               groupLabel="Task Validator"
               basePath="workflowDefaults.taskValidator"

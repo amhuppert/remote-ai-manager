@@ -490,13 +490,8 @@ describe("workflowValidatorDefaultSchema", () => {
 });
 
 describe("workflowDefaultsSchema", () => {
-  it("parses with both validators specified", () => {
+  it("parses with taskValidator specified", () => {
     const result = workflowDefaultsSchema.safeParse({
-      executionValidator: {
-        type: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
-      },
       taskValidator: {
         type: "claude",
         model: "sonnet",
@@ -505,7 +500,6 @@ describe("workflowDefaultsSchema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.executionValidator?.type).toBe("codex");
       expect(result.data.taskValidator?.type).toBe("claude");
     }
   });
@@ -654,7 +648,6 @@ describe("globalConfigSchema workflowDefaults", () => {
       stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 3600000,
       workflowDefaults: {
-        executionValidator: { type: "codex", model: "gpt-5.4" },
         taskValidator: {
           type: "claude",
           model: "sonnet",
@@ -664,9 +657,7 @@ describe("globalConfigSchema workflowDefaults", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.workflowDefaults?.executionValidator?.type).toBe(
-        "codex",
-      );
+      expect(result.data.workflowDefaults?.taskValidator?.type).toBe("claude");
     }
   });
 

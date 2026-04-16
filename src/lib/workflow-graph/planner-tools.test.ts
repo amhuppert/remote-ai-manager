@@ -437,7 +437,6 @@ describe("graph workflow planner tools", () => {
       readConfig: vi.fn(async () => ({
         ...MOCK_CONFIG,
         workflowDefaults: {
-          executionValidator: { type: "codex" as const },
           taskValidator: { type: "codex" as const },
         },
       })),

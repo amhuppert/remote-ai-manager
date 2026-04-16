@@ -157,7 +157,6 @@ export type WorkflowValidatorDefault = z.infer<
 >;
 
 export const workflowDefaultsSchema = z.object({
-  executionValidator: workflowValidatorDefaultSchema.optional(),
   taskValidator: workflowValidatorDefaultSchema.optional(),
 });
 export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;

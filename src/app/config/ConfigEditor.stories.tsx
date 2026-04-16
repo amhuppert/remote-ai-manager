@@ -67,7 +67,6 @@ const fullyConfiguredRaw: RawGlobalConfig = {
     reasoningEffort: "high",
   },
   workflowDefaults: {
-    executionValidator: { type: "claude", model: "sonnet" },
     taskValidator: {
       type: "codex",
       model: "gpt-5.4",
@@ -98,7 +97,6 @@ const fullyConfiguredConfig: GlobalConfig = {
     reasoningEffort: "high",
   },
   workflowDefaults: {
-    executionValidator: { type: "claude", model: "sonnet" },
     taskValidator: {
       type: "codex",
       model: "gpt-5.4",

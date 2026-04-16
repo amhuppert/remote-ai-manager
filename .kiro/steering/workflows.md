@@ -293,11 +293,6 @@ Each validator default is an object with `type`, `model`, and `reasoningEffort`.
 ```json
 {
   "workflowDefaults": {
-    "executionValidator": {
-      "type": "codex",
-      "model": "gpt-5.4",
-      "reasoningEffort": "high"
-    },
     "taskValidator": {
       "type": "claude",
       "model": "sonnet",
@@ -309,7 +304,6 @@ Each validator default is an object with `type`, `model`, and `reasoningEffort`.
 
 | Field | Controls | Fallback |
 |-------|----------|----------|
-| `executionValidator` | Default config for context-level validators | `{ type: "claude" }` |
 | `taskValidator` | Default config for task-level validators | `{ type: "claude" }` |
 | `.type` | Validator engine | `"claude"` |
 | `.model` | Model (Claude: `"opus"\|"sonnet"\|"haiku"`, Codex: any string) | Context agent model (Claude) or global codex config (Codex) |
@@ -317,10 +311,7 @@ Each validator default is an object with `type`, `model`, and `reasoningEffort`.
 
 ### Where validators live in the definition
 
-- **Task validation** (`executionContext.taskValidation`) — Runs after each task completes within a context
-- **Context validation** (`executionContext.contextValidation.agentValidator`) — Runs after all tasks in a context complete, gates downstream contexts
-
-Both support the same `type` discriminator (`"claude"` or `"codex"`).
+- **Task validation** (`executionContext.taskValidation`) — Runs after each task completes within a context. The `type` discriminator selects `"claude"` or `"codex"`.
 
 ---
 
