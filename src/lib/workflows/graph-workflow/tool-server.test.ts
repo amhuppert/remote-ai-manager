@@ -144,7 +144,6 @@ describe("graph workflow tool server", () => {
     const haltError = new IterationHaltedError({
       type: "validator_infra_error",
       contextId: "context-plan",
-      taskId: "task-plan-1",
       engine: "codex",
       infraReason: "unparseable",
       message: "Codex returned invalid JSON",

@@ -157,7 +157,7 @@ export type WorkflowValidatorDefault = z.infer<
 >;
 
 export const workflowDefaultsSchema = z.object({
-  taskValidator: workflowValidatorDefaultSchema.optional(),
+  contextValidator: workflowValidatorDefaultSchema.optional(),
 });
 export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
 
@@ -518,7 +518,7 @@ export type GraphWorkflowIterationPolicy = z.infer<
 
 const graphWorkflowValidatorBaseSchema = z.object({
   enabled: z.boolean(),
-  instructions: z.string().trim().min(1),
+  acceptanceCriteria: z.string().trim().min(1),
   continuity: graphWorkflowLaneContinuityPolicySchema.default({
     enabled: true,
   }),
@@ -541,22 +541,12 @@ export const graphWorkflowCodexValidatorConfigSchema =
       .default({}),
   });
 
-export const graphWorkflowAgentValidatorConfigSchema = z.preprocess(
-  (val) => {
-    if (
-      typeof val === "object" &&
-      val !== null &&
-      !("type" in val) &&
-      "agent" in val
-    ) {
-      return { ...val, type: "claude" };
-    }
-    return val;
-  },
-  z.discriminatedUnion("type", [
+export const graphWorkflowAgentValidatorConfigSchema = z.discriminatedUnion(
+  "type",
+  [
     graphWorkflowClaudeValidatorConfigSchema,
     graphWorkflowCodexValidatorConfigSchema,
-  ]),
+  ],
 );
 export type GraphWorkflowAgentValidatorConfig = z.infer<
   typeof graphWorkflowAgentValidatorConfigSchema
@@ -568,10 +558,10 @@ export type GraphWorkflowCodexValidatorConfig = z.infer<
   typeof graphWorkflowCodexValidatorConfigSchema
 >;
 
-export const graphWorkflowTaskValidationSchema =
+export const graphWorkflowContextValidationSchema =
   graphWorkflowAgentValidatorConfigSchema;
-export type GraphWorkflowTaskValidation = z.infer<
-  typeof graphWorkflowTaskValidationSchema
+export type GraphWorkflowContextValidation = z.infer<
+  typeof graphWorkflowContextValidationSchema
 >;
 
 export const graphWorkflowExecutionContextDefinitionSchema = z.object({
@@ -585,7 +575,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   mutability: graphWorkflowMutabilityPolicySchema,
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
-  taskValidation: graphWorkflowTaskValidationSchema.optional(),
+  contextValidation: graphWorkflowContextValidationSchema.optional(),
 });
 export type GraphWorkflowExecutionContextDefinition = z.infer<
   typeof graphWorkflowExecutionContextDefinitionSchema
@@ -670,6 +660,7 @@ export type WorkflowDefinitionRecord = z.infer<
 >;
 
 export const workflowValidatorIssueSchema = z.object({
+  taskId: z.string().trim().min(1).optional(),
   title: z.string().trim().min(1),
   description: z.string().trim().min(1),
 });
@@ -680,6 +671,7 @@ export type WorkflowValidatorIssue = z.infer<
 export const workflowAgentValidatorResultSchema = z.object({
   pass: z.boolean(),
   summary: z.string(),
+  reopenTaskIds: z.array(z.string().trim().min(1)).default([]),
   issues: z.array(workflowValidatorIssueSchema).default([]),
 });
 export type WorkflowAgentValidatorResult = z.infer<
@@ -754,7 +746,6 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("validator_infra_error"),
     contextId: z.string().trim().min(1),
-    taskId: z.string().trim().min(1),
     engine: z.enum(["claude", "codex"]),
     infraReason: z.enum(["exception", "unparseable", "schema_mismatch"]),
     message: z.string(),
@@ -801,7 +792,7 @@ export type GraphWorkflowTaskState = z.infer<
   typeof graphWorkflowTaskStateSchema
 >;
 
-export const graphWorkflowValidatorTypeSchema = z.enum(["task"]);
+export const graphWorkflowValidatorTypeSchema = z.enum(["context"]);
 export type GraphWorkflowValidatorType = z.infer<
   typeof graphWorkflowValidatorTypeSchema
 >;
@@ -855,7 +846,7 @@ export type GraphWorkflowTaskStatusEvent = z.infer<
 
 export const graphWorkflowLaneKindSchema = z.enum([
   "implementer",
-  "task_validator",
+  "context_validator",
 ]);
 export type GraphWorkflowLaneKind = z.infer<typeof graphWorkflowLaneKindSchema>;
 
@@ -913,6 +904,7 @@ export const graphWorkflowValidationResultEventSchema = z.object({
   validatorType: graphWorkflowValidatorTypeSchema,
   pass: z.boolean(),
   summary: z.string(),
+  reopenTaskIds: z.array(z.string().trim().min(1)).default([]),
   issues: z.array(workflowValidatorIssueSchema).default([]),
   sessionRef: graphWorkflowExecutionSessionRefSchema.nullable().optional(),
   reviewArtifact: graphWorkflowValidationReviewArtifactSchema

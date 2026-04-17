@@ -629,6 +629,12 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
     }));
     const implementerRunner = createGraphWorkflowImplementerRunner({
       executePromptStream,
+      getConversation: vi.fn(async () => ({
+        backendRef: {
+          backend: "codex" as const,
+          threadId: "thread-codex-1",
+        },
+      })) as never,
     });
 
     const execution = createCodexWorkflowExecution();
@@ -695,6 +701,12 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
     });
     const implementerRunner = createGraphWorkflowImplementerRunner({
       executePromptStream,
+      getConversation: vi.fn(async () => ({
+        backendRef: {
+          backend: "codex" as const,
+          threadId: "thread-codex-seeded",
+        },
+      })) as never,
     });
 
     const execution = createCodexWorkflowExecution();

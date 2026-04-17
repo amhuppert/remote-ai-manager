@@ -6,26 +6,27 @@ import {
 import { createGraphWorkflowValidationService } from "./execution-validation";
 import type { ValidatorRunResult } from "./validator-runner";
 
-function buildExecutionWithTaskValidator() {
+function buildExecutionWithContextValidator() {
+  const baseDefinition = createWorkflowDefinition();
   const definition = createWorkflowDefinition({
-    executionContexts: createWorkflowDefinition().executionContexts.map(
-      (context) =>
-        context.id === "context-plan"
-          ? {
-              ...context,
-              taskValidation: {
-                type: "claude",
-                enabled: true,
-                continuity: { enabled: true },
-                agent: {
-                  backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
-                },
-                instructions: "Review task completion before it can close.",
+    executionContexts: baseDefinition.executionContexts.map((context) =>
+      context.id === "context-plan"
+        ? {
+            ...context,
+            contextValidation: {
+              type: "claude",
+              enabled: true,
+              continuity: { enabled: true },
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
               },
-            }
-          : context,
+              acceptanceCriteria:
+                "Every task summary is complete and the plan document is updated.",
+            },
+          }
+        : context,
     ),
     tasks: [
       {
@@ -41,14 +42,15 @@ function buildExecutionWithTaskValidator() {
         contextId: "context-plan",
         order: 2,
         title: "Write plan",
-        instructions: "Document the plan.",
+        instructions: "Document the implementation plan.",
         source: "user",
       },
-      ...createWorkflowDefinition().tasks.filter(
+      ...baseDefinition.tasks.filter(
         (task) => task.contextId !== "context-plan",
       ),
     ],
   });
+
   const execution = createWorkflowExecution({
     workingDefinition: definition,
     contextStates: {
@@ -56,29 +58,33 @@ function buildExecutionWithTaskValidator() {
       "context-plan": {
         ...createWorkflowExecution().contextStates["context-plan"]!,
         totalTaskCount: 2,
-        completedTaskCount: 1,
+        completedTaskCount: 2,
       },
     },
     taskStates: {
       ...createWorkflowExecution().taskStates,
       "task-plan-1": {
         ...createWorkflowExecution().taskStates["task-plan-1"]!,
-        status: "running",
+        status: "completed",
+        summary: "Inspected the codebase and documented the current behavior.",
+        startedAt: "2026-03-27T16:00:00.000Z",
+        completedAt: "2026-03-27T16:05:00.000Z",
       },
       "task-plan-2": {
         taskId: "task-plan-2",
         contextId: "context-plan",
         order: 2,
         status: "completed",
-        summary: "Initial draft written",
-        startedAt: "2026-03-27T16:00:00.000Z",
-        completedAt: "2026-03-27T16:05:00.000Z",
+        summary: "Drafted the implementation plan and linked the updated doc.",
+        startedAt: "2026-03-27T16:05:00.000Z",
+        completedAt: "2026-03-27T16:10:00.000Z",
         lastConversationId: "conversation-seed",
         failureMessage: null,
         failureHistory: [],
       },
     },
   });
+
   return { definition, execution };
 }
 
@@ -92,101 +98,95 @@ function emptyMetadata(): ValidatorRunResult["metadata"] {
 }
 
 describe("graph workflow execution validation service", () => {
-  it("returns kind=fail when runner produces a fail outcome and builds feedback from issues", async () => {
-    const { execution } = buildExecutionWithTaskValidator();
-    const runTaskValidator = vi.fn(
+  it("returns kind=fail with reopened tasks when runner blocks context completion", async () => {
+    const { execution } = buildExecutionWithContextValidator();
+    const runContextValidator = vi.fn(
       async (): Promise<ValidatorRunResult> => ({
         result: {
           kind: "fail",
-          summary: "Needs more evidence",
+          summary: "The plan document is still missing key migration notes.",
           issues: [
             {
-              title: "Missing artifact",
+              title: "Plan incomplete",
               description:
-                "Attach the architecture notes before closing the task.",
+                "The migration rollback steps are not documented in the plan.",
             },
           ],
+          reopenTaskIds: ["task-plan-2"],
         },
         metadata: emptyMetadata(),
       }),
     );
     const service = createGraphWorkflowValidationService({
-      runTaskValidator,
+      runContextValidator,
     });
 
-    const result = await service.validateTaskCompletion({
+    const result = await service.validateContextCompletion({
       projectPath: "/repo",
       sessionName: "session-1",
       execution,
       contextId: "context-plan",
-      taskId: "task-plan-1",
-      conversationId: "conversation-1",
-      summary: "Finished the planning pass.",
     });
 
-    expect(runTaskValidator).toHaveBeenCalledWith(
+    expect(runContextValidator).toHaveBeenCalledWith(
       expect.objectContaining({
         context: expect.objectContaining({
           id: "context-plan",
         }),
-        task: expect.objectContaining({
-          id: "task-plan-1",
-        }),
         validator: expect.objectContaining({
-          instructions: "Review task completion before it can close.",
+          acceptanceCriteria:
+            "Every task summary is complete and the plan document is updated.",
         }),
       }),
     );
     expect(result.kind).toBe("fail");
     if (result.kind === "fail") {
-      expect(result.summary).toBe("Needs more evidence");
-      expect(result.issues).toEqual([
-        {
-          title: "Missing artifact",
-          description: "Attach the architecture notes before closing the task.",
-        },
-      ]);
-      expect(result.feedback).toContain("Task validation blocked completion");
-      expect(result.feedback).toContain("Missing artifact");
+      expect(result.summary).toBe(
+        "The plan document is still missing key migration notes.",
+      );
+      expect(result.reopenTaskIds).toEqual(["task-plan-2"]);
+      expect(result.feedback).toContain(
+        "Context validation blocked completion",
+      );
+      expect(result.feedback).toContain("task-plan-2");
     }
   });
 
-  it("returns kind=pass when runner produces a pass outcome", async () => {
-    const { execution } = buildExecutionWithTaskValidator();
-    const runTaskValidator = vi.fn(
+  it("returns kind=pass when runner approves the completed context", async () => {
+    const { execution } = buildExecutionWithContextValidator();
+    const runContextValidator = vi.fn(
       async (): Promise<ValidatorRunResult> => ({
         result: {
           kind: "pass",
-          summary: "Looks good",
+          summary: "All acceptance criteria were satisfied.",
           issues: [],
+          reopenTaskIds: [],
         },
         metadata: emptyMetadata(),
       }),
     );
     const service = createGraphWorkflowValidationService({
-      runTaskValidator,
+      runContextValidator,
     });
 
-    const result = await service.validateTaskCompletion({
+    const result = await service.validateContextCompletion({
       projectPath: "/repo",
       sessionName: "session-1",
       execution,
       contextId: "context-plan",
-      taskId: "task-plan-1",
-      conversationId: "conversation-1",
-      summary: "Done.",
     });
 
     expect(result.kind).toBe("pass");
     if (result.kind === "pass") {
-      expect(result.summary).toBe("Looks good");
-      expect(result.feedback).toContain("Task validation passed");
+      expect(result.summary).toBe("All acceptance criteria were satisfied.");
+      expect(result.reopenTaskIds).toEqual([]);
+      expect(result.feedback).toContain("Context validation passed");
     }
   });
 
-  it("returns kind=infra_error with reason, message, engine when runner produces infra_error outcome", async () => {
-    const { execution } = buildExecutionWithTaskValidator();
-    const runTaskValidator = vi.fn(
+  it("returns kind=infra_error when runner fails before producing a valid result", async () => {
+    const { execution } = buildExecutionWithContextValidator();
+    const runContextValidator = vi.fn(
       async (): Promise<ValidatorRunResult> => ({
         result: {
           kind: "infra_error",
@@ -198,17 +198,14 @@ describe("graph workflow execution validation service", () => {
       }),
     );
     const service = createGraphWorkflowValidationService({
-      runTaskValidator,
+      runContextValidator,
     });
 
-    const result = await service.validateTaskCompletion({
+    const result = await service.validateContextCompletion({
       projectPath: "/repo",
       sessionName: "session-1",
       execution,
       contextId: "context-plan",
-      taskId: "task-plan-1",
-      conversationId: "conversation-1",
-      summary: "Done.",
     });
 
     expect(result.kind).toBe("infra_error");
@@ -216,32 +213,28 @@ describe("graph workflow execution validation service", () => {
       expect(result.reason).toBe("exception");
       expect(result.message).toBe("Codex rate limit exceeded");
       expect(result.engine).toBe("codex");
-      expect(result.sessionRef).toBeNull();
-      expect(result.reviewArtifact).toBeNull();
     }
   });
 
-  it("returns kind=pass with disabled-feedback when validator is not enabled", async () => {
+  it("returns kind=pass with disabled feedback when context validation is not enabled", async () => {
     const execution = createWorkflowExecution();
-    const runTaskValidator = vi.fn();
+    const runContextValidator = vi.fn();
     const service = createGraphWorkflowValidationService({
-      runTaskValidator,
+      runContextValidator,
     });
 
-    const result = await service.validateTaskCompletion({
+    const result = await service.validateContextCompletion({
       projectPath: "/repo",
       sessionName: "session-1",
       execution,
       contextId: "context-plan",
-      taskId: "task-plan-1",
-      conversationId: "conversation-1",
-      summary: "Done.",
     });
 
-    expect(runTaskValidator).not.toHaveBeenCalled();
+    expect(runContextValidator).not.toHaveBeenCalled();
     expect(result.kind).toBe("pass");
     if (result.kind === "pass") {
-      expect(result.feedback).toBe("Task validation is not enabled.");
+      expect(result.reopenTaskIds).toEqual([]);
+      expect(result.feedback).toBe("Context validation is not enabled.");
     }
   });
 });

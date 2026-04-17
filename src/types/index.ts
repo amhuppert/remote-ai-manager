@@ -131,7 +131,7 @@ export type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowClaudeValidatorConfig,
   GraphWorkflowCodexValidatorConfig,
-  GraphWorkflowTaskValidation,
+  GraphWorkflowContextValidation,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskSource,
   GraphWorkflowTaskDefinition,

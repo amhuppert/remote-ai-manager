@@ -8,6 +8,8 @@ import type {
   GraphWorkflowHaltReason,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
+  GraphWorkflowValidationResultEvent,
+  WorkflowValidatorIssue,
 } from "@/types";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
 import type {
@@ -16,7 +18,11 @@ import type {
   RecordClaudeLaneTurnInput,
   RecordCodexLaneTurnInput,
 } from "./workflow-continuity-service";
-import { buildIterationPrompt, buildFollowUpPrompt } from "./iteration-prompt";
+import {
+  buildIterationPrompt,
+  buildFollowUpPrompt,
+  type LatestContextValidationFailureFeedback,
+} from "./iteration-prompt";
 import {
   createGraphWorkflowValidationService,
   type GraphWorkflowValidationService,
@@ -141,13 +147,6 @@ export interface GraphWorkflowIterationResult {
   shouldContinueInContext: boolean;
 }
 
-export class TaskValidationFailedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "TaskValidationFailedError";
-  }
-}
-
 export class IterationHaltedError extends Error {
   readonly haltReason: GraphWorkflowHaltReason;
 
@@ -250,6 +249,148 @@ function bindConversationToIncompleteTasks(
     taskState.lastConversationId = conversationId;
     taskState.startedAt ??= startedAt;
   }
+}
+
+function getLatestFailedContextValidationEvent(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): GraphWorkflowValidationResultEvent | null {
+  for (let index = execution.history.length - 1; index >= 0; index -= 1) {
+    const entry = execution.history[index];
+    if (!entry) {
+      continue;
+    }
+
+    const { event } = entry;
+    if (
+      event.type === "graph-workflow-validation-result" &&
+      event.contextId === contextId &&
+      event.validatorType === "context" &&
+      event.pass === false &&
+      event.reopenTaskIds.length > 0
+    ) {
+      return event;
+    }
+  }
+
+  return null;
+}
+
+function buildLatestContextValidationFailureFeedback(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): LatestContextValidationFailureFeedback | undefined {
+  const latestFailure = getLatestFailedContextValidationEvent(
+    execution,
+    contextId,
+  );
+  if (!latestFailure) {
+    return undefined;
+  }
+
+  const contextTasks = getContextTasks(execution, contextId);
+  const taskTitles = new Map(
+    contextTasks.map((task) => [task.id, task.title] as const),
+  );
+  const reopenedTasks = latestFailure.reopenTaskIds.map((taskId) => ({
+    taskId,
+    title: taskTitles.get(taskId) ?? taskId,
+  }));
+
+  const scopedIssues = new Map<string, WorkflowValidatorIssue[]>();
+  const generalIssues: WorkflowValidatorIssue[] = [];
+  for (const issue of latestFailure.issues) {
+    if (issue.taskId && taskTitles.has(issue.taskId)) {
+      const existing = scopedIssues.get(issue.taskId) ?? [];
+      existing.push(issue);
+      scopedIssues.set(issue.taskId, existing);
+      continue;
+    }
+    generalIssues.push(issue);
+  }
+
+  const groupedIssues: LatestContextValidationFailureFeedback["groupedIssues"] =
+    reopenedTasks.flatMap((task) => {
+      const issues = scopedIssues.get(task.taskId);
+      if (!issues || issues.length === 0) {
+        return [];
+      }
+      return [
+        {
+          heading: `Task \`${task.taskId}\` - ${task.title}`,
+          issues: issues.map((issue) => ({
+            title: issue.title,
+            description: issue.description,
+          })),
+        },
+      ];
+    });
+  const groupedTaskIds = new Set(reopenedTasks.map((task) => task.taskId));
+  for (const [taskId, issues] of scopedIssues.entries()) {
+    if (groupedTaskIds.has(taskId)) {
+      continue;
+    }
+
+    groupedIssues.push({
+      heading: `Task \`${taskId}\` - ${taskTitles.get(taskId) ?? taskId}`,
+      issues: issues.map((issue) => ({
+        title: issue.title,
+        description: issue.description,
+      })),
+    });
+  }
+
+  if (generalIssues.length > 0) {
+    groupedIssues.push({
+      heading: "General Issues",
+      issues: generalIssues.map((issue) => ({
+        title: issue.title,
+        description: issue.description,
+      })),
+    });
+  }
+
+  return {
+    summary: latestFailure.summary,
+    reopenedTasks,
+    groupedIssues,
+  };
+}
+
+function buildTaskFailureMessages(input: {
+  summary: string;
+  issues: WorkflowValidatorIssue[];
+  reopenTaskIds: string[];
+}): Record<string, string> {
+  const scopedIssuesByTaskId = new Map<string, WorkflowValidatorIssue[]>();
+  for (const issue of input.issues) {
+    if (!issue.taskId) {
+      continue;
+    }
+
+    const issues = scopedIssuesByTaskId.get(issue.taskId) ?? [];
+    issues.push(issue);
+    scopedIssuesByTaskId.set(issue.taskId, issues);
+  }
+
+  return Object.fromEntries(
+    input.reopenTaskIds.map((taskId) => {
+      const scopedIssues = scopedIssuesByTaskId.get(taskId);
+      if (!scopedIssues || scopedIssues.length === 0) {
+        return [taskId, input.summary];
+      }
+
+      return [
+        taskId,
+        [
+          input.summary,
+          ...scopedIssues.map(
+            (issue) => `- ${issue.title}: ${issue.description}`,
+          ),
+        ].join("\n"),
+      ];
+    }),
+  );
 }
 
 const logger = createLogger("graph-workflow-iteration");
@@ -380,6 +521,29 @@ export function createGraphWorkflowIterationOrchestrator(
       nextExecution,
       taskState.contextId,
     );
+    nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
+
+    return persistExecution(
+      input.projectPath,
+      input.sessionName,
+      nextExecution,
+    );
+  }
+
+  async function resetContextFailureCount(input: {
+    projectPath: string;
+    sessionName: string;
+    execution: GraphWorkflowExecution;
+    contextId: string;
+  }): Promise<GraphWorkflowExecution> {
+    const nextExecution = cloneExecution(input.execution);
+    const contextState = nextExecution.contextStates[input.contextId];
+    if (!contextState) {
+      throw new Error(
+        `Execution context "${input.contextId}" does not exist in runtime state`,
+      );
+    }
+
     contextState.consecutiveFailureCount = 0;
     nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
 
@@ -390,39 +554,66 @@ export function createGraphWorkflowIterationOrchestrator(
     );
   }
 
-  async function markTaskValidationFailed(input: {
+  async function reopenTasksAfterContextValidationFailure(input: {
     projectPath: string;
     sessionName: string;
     execution: GraphWorkflowExecution;
     contextId: string;
-    taskId: string;
-    conversationId: string;
-    failureMessage: string;
+    reopenTaskIds: string[];
+    taskFailureMessages: Record<string, string>;
   }): Promise<GraphWorkflowExecution> {
     const nextExecution = cloneExecution(input.execution);
-    const taskState = nextExecution.taskStates[input.taskId];
-    if (!taskState) {
-      throw new Error(`Task "${input.taskId}" does not exist in runtime state`);
-    }
+    const failureTimestamp = getNow(deps);
+    const execLogger = getExecutionLogger(input.execution.id);
 
-    if (taskState.contextId !== input.contextId) {
-      throw new Error(
-        `Task "${input.taskId}" does not belong to context "${input.contextId}"`,
-      );
-    }
+    for (const taskId of input.reopenTaskIds) {
+      const taskState = nextExecution.taskStates[taskId];
+      if (!taskState) {
+        throw new Error(`Task "${taskId}" does not exist in runtime state`);
+      }
 
-    taskState.lastConversationId = input.conversationId;
-    taskState.failureMessage = input.failureMessage;
-    taskState.failureHistory = [
-      ...(taskState.failureHistory ?? []),
-      {
-        message: input.failureMessage,
-        timestamp: getNow(deps),
-      },
-    ];
+      if (taskState.contextId !== input.contextId) {
+        throw new Error(
+          `Task "${taskId}" does not belong to context "${input.contextId}"`,
+        );
+      }
+
+      const failureMessage = input.taskFailureMessages[taskId];
+      if (!failureMessage) {
+        throw new Error(
+          `Missing failure message for reopened task "${taskId}"`,
+        );
+      }
+
+      taskState.status = "pending";
+      taskState.summary = null;
+      taskState.completedAt = null;
+      taskState.failureMessage = failureMessage;
+      taskState.failureHistory = [
+        ...(taskState.failureHistory ?? []),
+        {
+          message: failureMessage,
+          timestamp: failureTimestamp,
+        },
+      ];
+
+      execLogger?.task(input.contextId, "task.reopened", {
+        taskId,
+        failureMessage,
+      });
+      logger.info("graph-workflow.task.reopened", {
+        executionId: input.execution.id,
+        contextId: input.contextId,
+        taskId,
+      });
+    }
 
     const contextState = nextExecution.contextStates[input.contextId];
     if (contextState) {
+      contextState.completedTaskCount = countCompletedTasks(
+        nextExecution,
+        input.contextId,
+      );
       contextState.consecutiveFailureCount =
         (contextState.consecutiveFailureCount ?? 0) + 1;
     }
@@ -444,6 +635,11 @@ export function createGraphWorkflowIterationOrchestrator(
       input.sessionName,
     );
     const context = getContextDefinition(initialExecution, input.contextId);
+    const latestContextValidationFailure =
+      buildLatestContextValidationFailureFeedback(
+        initialExecution,
+        input.contextId,
+      );
     const incompleteTasks = getIncompleteTasks(
       initialExecution,
       input.contextId,
@@ -616,170 +812,26 @@ export function createGraphWorkflowIterationOrchestrator(
           });
           return preValidationExecution;
         }
-        const validation = await validationService.validateTaskCompletion({
+        const completedExecution = await markTaskCompleted({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           execution: preValidationExecution,
-          contextId: input.contextId,
-          taskId,
-          conversationId: conversation.id,
-          summary,
-        });
-
-        // Reload after validation to capture any lane state updates the validator runner persisted
-        const postValidationExecution = await requireExecution(
-          input.projectPath,
-          input.sessionName,
-        );
-
-        if (validation.kind === "infra_error") {
-          execLogger?.task(input.contextId, "task.validation_infra_error", {
-            taskId,
-            engine: validation.engine,
-            reason: validation.reason,
-            message: validation.message,
-          });
-          logger.warn("graph-workflow.task.validation_infra_error", {
-            executionId: preValidationExecution.id,
-            contextId: input.contextId,
-            taskId,
-            engine: validation.engine,
-            reason: validation.reason,
-          });
-          const infraErrorSummary = `Validator infra error (${validation.reason}): ${validation.message}`;
-          const executionWithValidationEvent =
-            eventPublisher.publishValidationResult({
-              projectPath: input.projectPath,
-              sessionName: input.sessionName,
-              execution: postValidationExecution,
-              contextId: input.contextId,
-              validatorType: "task",
-              pass: false,
-              summary: infraErrorSummary,
-              issues: [],
-              sessionRef: null,
-              reviewArtifact: null,
-            });
-          await persistExecution(
-            input.projectPath,
-            input.sessionName,
-            executionWithValidationEvent,
-          );
-          const haltReason: GraphWorkflowHaltReason = {
-            type: "validator_infra_error",
-            contextId: input.contextId,
-            taskId,
-            engine: validation.engine,
-            infraReason: validation.reason,
-            message: validation.message,
-            summary: null,
-          };
-          await haltIteration(haltReason);
-          throw new IterationHaltedError(haltReason);
-        }
-
-        if (validation.kind === "fail") {
-          execLogger?.task(input.contextId, "task.validation_failed", {
-            taskId,
-            feedback: validation.feedback,
-            issueCount: validation.issues.length,
-          });
-          logger.info("graph-workflow.task.validation_failed", {
-            executionId: preValidationExecution.id,
-            contextId: input.contextId,
-            taskId,
-          });
-          const failedExecution = await markTaskValidationFailed({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            execution: postValidationExecution,
-            contextId: input.contextId,
-            taskId,
-            conversationId: conversation.id,
-            failureMessage: validation.feedback,
-          });
-          const executionWithValidationEvent =
-            eventPublisher.publishValidationResult({
-              projectPath: input.projectPath,
-              sessionName: input.sessionName,
-              execution: failedExecution,
-              contextId: input.contextId,
-              validatorType: "task",
-              pass: false,
-              summary: validation.feedback,
-              issues: validation.issues,
-              sessionRef: validation.sessionRef ?? null,
-              reviewArtifact: validation.reviewArtifact ?? null,
-            });
-          await persistExecution(
-            input.projectPath,
-            input.sessionName,
-            executionWithValidationEvent,
-          );
-
-          const contextDef =
-            executionWithValidationEvent.workingDefinition.executionContexts.find(
-              (entry) => entry.id === input.contextId,
-            );
-          const threshold = getConsecutiveFailureThreshold(contextDef);
-          const failureCount =
-            executionWithValidationEvent.contextStates[input.contextId]
-              ?.consecutiveFailureCount ?? 0;
-          if (failureCount >= threshold) {
-            execLogger?.decision("circuit_breaker.tripped_mid_iteration", {
-              contextId: input.contextId,
-              consecutiveFailureCount: failureCount,
-              threshold,
-            });
-            const haltReason: GraphWorkflowHaltReason = {
-              type: "circuit_breaker",
-              contextId: input.contextId,
-              condition: "retry_exhaustion",
-              failureCount,
-              summary: null,
-            };
-            await haltIteration(haltReason);
-            throw new IterationHaltedError(haltReason);
-          }
-
-          throw new TaskValidationFailedError(validation.feedback);
-        }
-
-        execLogger?.task(input.contextId, "task.validation_passed", {
-          taskId,
-          summary: validation.summary,
-        });
-
-        // Publish the passing validation event before marking the task complete so
-        // session refs written to execution state remain visible in the history
-        const executionWithValidationEvent =
-          eventPublisher.publishValidationResult({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            execution: postValidationExecution,
-            contextId: input.contextId,
-            validatorType: "task",
-            pass: true,
-            summary: validation.summary,
-            sessionRef: validation.sessionRef ?? null,
-            reviewArtifact: validation.reviewArtifact ?? null,
-          });
-        await persistExecution(
-          input.projectPath,
-          input.sessionName,
-          executionWithValidationEvent,
-        );
-
-        return markTaskCompleted({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          execution: executionWithValidationEvent,
           contextId: input.contextId,
           taskId,
           summary,
           conversationId: conversation.id,
           completedAt: getNow(deps),
         });
+        execLogger?.task(input.contextId, "task.completed", {
+          taskId,
+          summaryLength: summary.length,
+        });
+        logger.info("graph-workflow.task.completed", {
+          executionId: preValidationExecution.id,
+          contextId: input.contextId,
+          taskId,
+        });
+        return completedExecution;
       },
     });
 
@@ -849,6 +901,7 @@ export function createGraphWorkflowIterationOrchestrator(
               taskStates: seededExecution.taskStates,
               attemptNumber: 1,
               maxAttempts: MAX_FOLLOW_UPS,
+              latestContextValidationFailure,
             })
           : buildIterationPrompt({
               context,
@@ -856,9 +909,11 @@ export function createGraphWorkflowIterationOrchestrator(
               taskStates: seededExecution.taskStates,
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
-              taskValidationInstructions: context.taskValidation?.enabled
-                ? context.taskValidation.instructions
+              contextValidationAcceptanceCriteria: context.contextValidation
+                ?.enabled
+                ? context.contextValidation.acceptanceCriteria
                 : undefined,
+              latestContextValidationFailure,
             });
 
       // Log the prompt sent to the agent
@@ -949,6 +1004,11 @@ export function createGraphWorkflowIterationOrchestrator(
           taskStates: midExecution.taskStates,
           attemptNumber: attempt,
           maxAttempts: MAX_FOLLOW_UPS,
+          latestContextValidationFailure:
+            buildLatestContextValidationFailureFeedback(
+              midExecution,
+              input.contextId,
+            ),
         });
         execLogger?.writePrompt(
           input.contextId,
@@ -978,6 +1038,197 @@ export function createGraphWorkflowIterationOrchestrator(
         );
       }
 
+      const preContextValidationExecution = await loadCurrentExecution(
+        input.projectPath,
+        input.sessionName,
+      );
+
+      if (preContextValidationExecution.status === "running") {
+        const remainingTasks = getIncompleteTasks(
+          preContextValidationExecution,
+          input.contextId,
+        );
+
+        if (remainingTasks.length === 0) {
+          const validation = await validationService.validateContextCompletion({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            execution: preContextValidationExecution,
+            contextId: input.contextId,
+          });
+
+          const postValidationExecution = await requireExecution(
+            input.projectPath,
+            input.sessionName,
+          );
+
+          if (validation.kind === "infra_error") {
+            execLogger?.validation(
+              input.contextId,
+              "context.validation_infra_error",
+              {
+                engine: validation.engine,
+                reason: validation.reason,
+                message: validation.message,
+              },
+            );
+            logger.warn("graph-workflow.context_validation.infra_error", {
+              executionId: preContextValidationExecution.id,
+              contextId: input.contextId,
+              engine: validation.engine,
+              reason: validation.reason,
+            });
+            const infraErrorSummary = `Validator infra error (${validation.reason}): ${validation.message}`;
+            const executionWithValidationEvent =
+              eventPublisher.publishValidationResult({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                execution: postValidationExecution,
+                contextId: input.contextId,
+                validatorType: "context",
+                pass: false,
+                summary: infraErrorSummary,
+                issues: [],
+                reopenTaskIds: [],
+                sessionRef: null,
+                reviewArtifact: null,
+              });
+            await persistExecution(
+              input.projectPath,
+              input.sessionName,
+              executionWithValidationEvent,
+            );
+            const haltReason: GraphWorkflowHaltReason = {
+              type: "validator_infra_error",
+              contextId: input.contextId,
+              engine: validation.engine,
+              infraReason: validation.reason,
+              message: validation.message,
+              summary: null,
+            };
+            await haltIteration(haltReason);
+            throw new IterationHaltedError(haltReason);
+          }
+
+          if (validation.kind === "fail") {
+            execLogger?.validation(
+              input.contextId,
+              "context.validation_reopened",
+              {
+                issueCount: validation.issues.length,
+                reopenTaskIds: validation.reopenTaskIds,
+              },
+            );
+            logger.info("graph-workflow.context_validation.reopened", {
+              executionId: preContextValidationExecution.id,
+              contextId: input.contextId,
+              reopenTaskIds: validation.reopenTaskIds,
+            });
+
+            const taskFailureMessages = buildTaskFailureMessages({
+              summary: validation.summary,
+              issues: validation.issues,
+              reopenTaskIds: validation.reopenTaskIds,
+            });
+
+            const failedExecution =
+              await reopenTasksAfterContextValidationFailure({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                execution: postValidationExecution,
+                contextId: input.contextId,
+                reopenTaskIds: validation.reopenTaskIds,
+                taskFailureMessages,
+              });
+
+            const executionWithValidationEvent =
+              eventPublisher.publishValidationResult({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                execution: failedExecution,
+                contextId: input.contextId,
+                validatorType: "context",
+                pass: false,
+                summary: validation.summary,
+                issues: validation.issues,
+                reopenTaskIds: validation.reopenTaskIds,
+                sessionRef: validation.sessionRef ?? null,
+                reviewArtifact: validation.reviewArtifact ?? null,
+              });
+            await persistExecution(
+              input.projectPath,
+              input.sessionName,
+              executionWithValidationEvent,
+            );
+
+            const contextDef =
+              executionWithValidationEvent.workingDefinition.executionContexts.find(
+                (entry) => entry.id === input.contextId,
+              );
+            const threshold = getConsecutiveFailureThreshold(contextDef);
+            const failureCount =
+              executionWithValidationEvent.contextStates[input.contextId]
+                ?.consecutiveFailureCount ?? 0;
+            if (failureCount >= threshold) {
+              execLogger?.decision("circuit_breaker.tripped", {
+                contextId: input.contextId,
+                consecutiveFailureCount: failureCount,
+                threshold,
+              });
+              const haltReason: GraphWorkflowHaltReason = {
+                type: "circuit_breaker",
+                contextId: input.contextId,
+                condition: "retry_exhaustion",
+                failureCount,
+                summary: null,
+              };
+              await haltIteration(haltReason);
+              throw new IterationHaltedError(haltReason);
+            }
+          } else {
+            execLogger?.validation(
+              input.contextId,
+              "context_validation.passed",
+              {
+                summary: validation.summary,
+              },
+            );
+            logger.info("graph-workflow.context_validation.completed", {
+              executionId: preContextValidationExecution.id,
+              contextId: input.contextId,
+              kind: validation.kind,
+            });
+
+            const executionWithResetFailureCount =
+              await resetContextFailureCount({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                execution: postValidationExecution,
+                contextId: input.contextId,
+              });
+            const executionWithValidationEvent =
+              eventPublisher.publishValidationResult({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                execution: executionWithResetFailureCount,
+                contextId: input.contextId,
+                validatorType: "context",
+                pass: true,
+                summary: validation.summary,
+                issues: [],
+                reopenTaskIds: [],
+                sessionRef: validation.sessionRef ?? null,
+                reviewArtifact: validation.reviewArtifact ?? null,
+              });
+            await persistExecution(
+              input.projectPath,
+              input.sessionName,
+              executionWithValidationEvent,
+            );
+          }
+        }
+      }
+
       emitStreamFrame(input.projectPath, input.sessionName, {
         type: "iteration-boundary",
         conversationId: conversation.id,
@@ -985,10 +1236,7 @@ export function createGraphWorkflowIterationOrchestrator(
         status: "completed",
       });
     } catch (error) {
-      if (
-        !(error instanceof TaskValidationFailedError) &&
-        !(error instanceof IterationHaltedError)
-      ) {
+      if (!(error instanceof IterationHaltedError)) {
         throw error;
       }
       execLogger?.iteration(

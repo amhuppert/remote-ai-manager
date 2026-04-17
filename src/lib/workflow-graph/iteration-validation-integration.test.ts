@@ -45,31 +45,54 @@ function createRepository(
   };
 }
 
-function createValidatorEnabledExecution(
+function createContextValidatorExecution(
   circuitBreaker: { consecutiveFailureThreshold?: number } = {},
 ) {
+  const baseDefinition = createWorkflowDefinition();
   const definition = createWorkflowDefinition({
-    executionContexts: createWorkflowDefinition().executionContexts.map(
-      (context) =>
-        context.id === "context-plan"
-          ? {
-              ...context,
-              circuitBreaker,
-              taskValidation: {
-                type: "claude",
-                enabled: true,
-                continuity: { enabled: true },
-                agent: {
-                  backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
-                },
-                instructions: "Review task output before completion.",
+    executionContexts: baseDefinition.executionContexts.map((context) =>
+      context.id === "context-plan"
+        ? {
+            ...context,
+            circuitBreaker,
+            contextValidation: {
+              type: "claude",
+              enabled: true,
+              continuity: { enabled: true },
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
               },
-            }
-          : context,
+              acceptanceCriteria:
+                "The plan must include implementation steps, rollback notes, and test coverage.",
+            },
+          }
+        : context,
     ),
+    tasks: [
+      {
+        id: "task-plan-1",
+        contextId: "context-plan",
+        order: 1,
+        title: "Inspect code",
+        instructions: "Read the relevant files.",
+        source: "user",
+      },
+      {
+        id: "task-plan-2",
+        contextId: "context-plan",
+        order: 2,
+        title: "Write plan",
+        instructions: "Document the implementation plan.",
+        source: "user",
+      },
+      ...baseDefinition.tasks.filter(
+        (task) => task.contextId !== "context-plan",
+      ),
+    ],
   });
+
   return createWorkflowExecution({
     status: "running",
     activeContextId: "context-plan",
@@ -79,107 +102,107 @@ function createValidatorEnabledExecution(
       "context-plan": {
         ...createWorkflowExecution().contextStates["context-plan"]!,
         status: "running",
+        totalTaskCount: 2,
+        completedTaskCount: 0,
         iterationCount: 0,
+        consecutiveFailureCount: 0,
+      },
+    },
+    taskStates: {
+      ...createWorkflowExecution().taskStates,
+      "task-plan-1": {
+        ...createWorkflowExecution().taskStates["task-plan-1"]!,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
+      },
+      "task-plan-2": {
+        taskId: "task-plan-2",
+        contextId: "context-plan",
+        order: 2,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
       },
     },
   });
 }
 
-describe("graph workflow iteration validation integration", () => {
-  it("surfaces task-validator feedback without marking the task complete", async () => {
-    const definition = createWorkflowDefinition({
-      executionContexts: createWorkflowDefinition().executionContexts.map(
-        (context) =>
-          context.id === "context-plan"
-            ? {
-                ...context,
-                circuitBreaker: { consecutiveFailureThreshold: 10 },
-                taskValidation: {
-                  type: "claude",
-                  enabled: true,
-                  continuity: { enabled: true },
-                  agent: {
-                    backend: "claude",
-                    model: "sonnet",
-                    reasoningEffort: "medium",
-                  },
-                  instructions: "Review task output before completion.",
-                },
-              }
-            : context,
-      ),
-    });
-    const repository = createRepository(
-      createWorkflowExecution({
-        status: "running",
-        activeContextId: "context-plan",
-        workingDefinition: definition,
-        contextStates: {
-          ...createWorkflowExecution().contextStates,
-          "context-plan": {
-            ...createWorkflowExecution().contextStates["context-plan"]!,
-            status: "running",
-            iterationCount: 0,
-          },
-        },
-      }),
-    );
+function createSignalHalt(
+  repository: ReturnType<typeof createRepository>,
+  completedAt = "2026-03-27T16:30:00.000Z",
+) {
+  return vi.fn(async ({ reason }: { reason: GraphWorkflowHaltReason }) => {
+    const current = repository.read();
+    const halted: GraphWorkflowExecution = {
+      ...current,
+      status: "halted",
+      haltReason: reason,
+      completedAt,
+    };
+    repository.write(halted);
+    return halted;
+  });
+}
+
+describe("graph workflow iteration context validation integration", () => {
+  it("reopens named tasks after end-of-context validation fails and preserves failure history", async () => {
+    const repository = createRepository(createContextValidatorExecution());
 
     let toolInput: GraphWorkflowIterationToolServerInput | null = null;
-    const createConversation = async () => ({ id: "conversation-1" });
-    const createToolServer = (input: GraphWorkflowIterationToolServerInput) => {
-      toolInput = input;
-      return { server: { id: "tool-server" } };
-    };
-    const runAgentIteration = async () => {
-      if (!toolInput) {
-        throw new Error("Tool server input was not captured");
-      }
-
-      let thrown: Error | null = null;
-      try {
-        await toolInput.completeTask("task-plan-1", "Finished planning.");
-      } catch (error) {
-        thrown = error as Error;
-      }
-
-      expect(thrown?.message).toContain("Task validation blocked completion");
-      expect(repository.read().taskStates["task-plan-1"]).toMatchObject({
-        status: "pending",
-        failureMessage: expect.stringContaining("Missing validation artifact"),
-      });
-      return {
-        conversationId: "conv-mock",
-        contextTokens: null,
-        contextWindowMax: null,
-      };
-    };
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "The plan document is missing rollback notes.",
+      feedback:
+        "Context validation blocked completion.\nThe plan document is missing rollback notes.\nReopened tasks:\n- task-plan-2\n- Missing rollback notes: Add rollback guidance to the plan.",
+      issues: [
+        {
+          title: "Missing rollback notes",
+          description: "Add rollback guidance to the plan.",
+          taskId: "task-plan-2",
+        },
+      ],
+      reopenTaskIds: ["task-plan-2"],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
-      createConversation,
-      createToolServer,
-      runAgentIteration,
-      validationService: {
-        async validateTaskCompletion() {
-          return {
-            kind: "fail" as const,
-            summary: "Validation failed",
-            issues: [
-              {
-                title: "Missing validation artifact",
-                description:
-                  "Add the evidence file before completing the task.",
-              },
-            ],
-            feedback:
-              "Task validation blocked completion.\n- Missing validation artifact: Add the evidence file before completing the task.",
-          };
-        },
+      createConversation: async () => ({ id: "conversation-1" }),
+      createToolServer: (input) => {
+        toolInput = input;
+        return { server: { id: "tool-server" } };
       },
-      now() {
-        return "2026-03-27T16:30:00.000Z";
+      runAgentIteration: async () => {
+        if (!toolInput) {
+          throw new Error("Tool server input was not captured");
+        }
+
+        await toolInput.completeTask(
+          "task-plan-1",
+          "Inspected the codebase and gathered requirements.",
+        );
+        await toolInput.completeTask(
+          "task-plan-2",
+          "Drafted the implementation plan.",
+        );
+        return {
+          conversationId: "conversation-1",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
       },
+      validationService: { validateContextCompletion },
+      now: () => "2026-03-27T16:30:00.000Z",
     });
 
     const result = await orchestrator.runIteration({
@@ -189,46 +212,43 @@ describe("graph workflow iteration validation integration", () => {
       contextId: "context-plan",
     });
 
+    expect(validateContextCompletion).toHaveBeenCalledTimes(1);
     expect(result.shouldContinueInContext).toBe(true);
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "running",
+    );
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(1);
     expect(result.execution.taskStates["task-plan-1"]).toMatchObject({
+      status: "completed",
+      failureHistory: [],
+    });
+    expect(result.execution.taskStates["task-plan-2"]).toMatchObject({
       status: "pending",
-      failureMessage: expect.stringContaining("Missing validation artifact"),
+      completedAt: null,
+      failureMessage: expect.stringContaining("Missing rollback notes"),
+    });
+    expect(
+      result.execution.taskStates["task-plan-2"]?.failureHistory,
+    ).toHaveLength(1);
+
+    const validationEvent = result.execution.history.find(
+      (entry) => entry.event.type === "graph-workflow-validation-result",
+    );
+    expect(validationEvent?.event).toMatchObject({
+      type: "graph-workflow-validation-result",
+      validatorType: "context",
+      pass: false,
+      reopenTaskIds: ["task-plan-2"],
     });
   });
 
-  it("halts execution with validator_infra_error and does NOT increment consecutiveFailureCount when validator returns infra_error", async () => {
-    const repository = createRepository(createValidatorEnabledExecution());
-
-    const signalHalt = vi.fn(
-      async ({ reason }: { reason: GraphWorkflowHaltReason }) => {
-        const current = repository.read();
-        const halted: GraphWorkflowExecution = {
-          ...current,
-          status: "halted",
-          haltReason: reason,
-          completedAt: "2026-03-27T16:30:00.000Z",
-        };
-        repository.write(halted);
-        return halted;
-      },
-    );
+  it("does not run context validation until every task in the context is completed", async () => {
+    const repository = createRepository(createContextValidatorExecution());
 
     let toolInput: GraphWorkflowIterationToolServerInput | null = null;
-    const runAgentIteration = async () => {
-      if (!toolInput) throw new Error("Tool server input was not captured");
-      let thrown: Error | null = null;
-      try {
-        await toolInput.completeTask("task-plan-1", "Finished planning.");
-      } catch (error) {
-        thrown = error as Error;
-      }
-      expect(thrown).not.toBeNull();
-      return {
-        conversationId: "conversation-1",
-        contextTokens: null,
-        contextWindowMax: null,
-      };
-    };
+    const validateContextCompletion = vi.fn();
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
@@ -237,20 +257,76 @@ describe("graph workflow iteration validation integration", () => {
         toolInput = input;
         return { server: { id: "tool-server" } };
       },
-      runAgentIteration,
-      signalHalt,
-      validationService: {
-        async validateTaskCompletion() {
-          return {
-            kind: "infra_error" as const,
-            reason: "exception" as const,
-            message: "Codex API rate limit exceeded",
-            engine: "codex" as const,
-            sessionRef: null,
-            reviewArtifact: null,
-          };
-        },
+      runAgentIteration: async () => {
+        if (!toolInput) {
+          throw new Error("Tool server input was not captured");
+        }
+
+        await toolInput.completeTask(
+          "task-plan-1",
+          "Inspected the codebase and gathered requirements.",
+        );
+        return {
+          conversationId: "conversation-1",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
       },
+      validationService: { validateContextCompletion },
+      now: () => "2026-03-27T16:30:00.000Z",
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(validateContextCompletion).not.toHaveBeenCalled();
+    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.execution.taskStates["task-plan-1"]?.status).toBe(
+      "completed",
+    );
+    expect(result.execution.taskStates["task-plan-2"]?.status).toBe("pending");
+  });
+
+  it("halts execution on context validator infra_error without incrementing consecutiveFailureCount", async () => {
+    const repository = createRepository(createContextValidatorExecution());
+    const signalHalt = createSignalHalt(repository);
+
+    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "infra_error" as const,
+      reason: "exception" as const,
+      message: "Codex API rate limit exceeded",
+      engine: "codex" as const,
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: async () => ({ id: "conversation-1" }),
+      createToolServer: (input) => {
+        toolInput = input;
+        return { server: { id: "tool-server" } };
+      },
+      runAgentIteration: async () => {
+        if (!toolInput) {
+          throw new Error("Tool server input was not captured");
+        }
+
+        await toolInput.completeTask("task-plan-1", "Inspected the codebase.");
+        await toolInput.completeTask("task-plan-2", "Drafted the plan.");
+        return {
+          conversationId: "conversation-1",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
+      },
+      signalHalt,
+      validationService: { validateContextCompletion },
       now: () => "2026-03-27T16:30:00.000Z",
     });
 
@@ -266,11 +342,10 @@ describe("graph workflow iteration validation integration", () => {
       expect.objectContaining({
         reason: expect.objectContaining({
           type: "validator_infra_error",
+          contextId: "context-plan",
           engine: "codex",
           infraReason: "exception",
           message: "Codex API rate limit exceeded",
-          contextId: "context-plan",
-          taskId: "task-plan-1",
         }),
       }),
     );
@@ -282,205 +357,26 @@ describe("graph workflow iteration validation integration", () => {
     ).toBe(0);
   });
 
-  it("halts execution with circuit_breaker when consecutive failures cross the threshold mid-iteration", async () => {
+  it("trips the circuit breaker after repeated context validation failures across iterations", async () => {
     const repository = createRepository(
-      createValidatorEnabledExecution({ consecutiveFailureThreshold: 3 }),
+      createContextValidatorExecution({ consecutiveFailureThreshold: 2 }),
     );
-
-    const signalHalt = vi.fn(
-      async ({ reason }: { reason: GraphWorkflowHaltReason }) => {
-        const current = repository.read();
-        const halted: GraphWorkflowExecution = {
-          ...current,
-          status: "halted",
-          haltReason: reason,
-          completedAt: "2026-03-27T16:30:00.000Z",
-        };
-        repository.write(halted);
-        return halted;
-      },
-    );
+    const signalHalt = createSignalHalt(repository);
 
     let toolInput: GraphWorkflowIterationToolServerInput | null = null;
-    const runAgentIteration = async () => {
-      if (!toolInput) throw new Error("Tool server input was not captured");
-      try {
-        await toolInput.completeTask("task-plan-1", "Finished planning.");
-      } catch {
-        // swallow validation/halt errors; orchestrator drives next turns
-      }
-      return {
-        conversationId: "conversation-1",
-        contextTokens: null,
-        contextWindowMax: null,
-      };
-    };
-
-    const validateTaskCompletion = vi.fn(async () => ({
+    const validateContextCompletion = vi.fn(async () => ({
       kind: "fail" as const,
-      summary: "Validation failed",
+      summary: "Rollback notes are still missing.",
+      feedback:
+        "Context validation blocked completion.\nRollback notes are still missing.\nReopened tasks:\n- task-plan-2\n- Missing rollback notes: Add rollback guidance to the plan.",
       issues: [
         {
-          title: "Missing artifact",
-          description: "Add the evidence file.",
+          title: "Missing rollback notes",
+          description: "Add rollback guidance to the plan.",
+          taskId: "task-plan-2",
         },
       ],
-      feedback:
-        "Task validation blocked completion.\n- Missing artifact: Add the evidence file.",
-    }));
-
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
-      executionRepository: repository,
-      createConversation: async () => ({ id: "conversation-1" }),
-      createToolServer: (input) => {
-        toolInput = input;
-        return { server: { id: "tool-server" } };
-      },
-      runAgentIteration,
-      signalHalt,
-      validationService: {
-        validateTaskCompletion,
-      },
-      now: () => "2026-03-27T16:30:00.000Z",
-    });
-
-    const result = await orchestrator.runIteration({
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-1",
-      contextId: "context-plan",
-    });
-
-    // Validator ran exactly 3 times before breaker tripped (follow-ups beyond that are skipped)
-    expect(validateTaskCompletion).toHaveBeenCalledTimes(3);
-    expect(signalHalt).toHaveBeenCalledTimes(1);
-    expect(signalHalt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        reason: expect.objectContaining({
-          type: "circuit_breaker",
-          contextId: "context-plan",
-          condition: "retry_exhaustion",
-          failureCount: 3,
-        }),
-      }),
-    );
-    expect(result.shouldContinueInContext).toBe(false);
-    expect(result.execution.status).toBe("halted");
-    expect(result.execution.haltReason?.type).toBe("circuit_breaker");
-  });
-
-  it("keeps execution running and increments counter to 1 when validator fails once (below threshold)", async () => {
-    const repository = createRepository(
-      createValidatorEnabledExecution({ consecutiveFailureThreshold: 10 }),
-    );
-
-    const signalHalt = vi.fn();
-
-    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
-    let completeTaskCalled = false;
-    const runAgentIteration = async () => {
-      if (!toolInput) throw new Error("Tool server input was not captured");
-      if (!completeTaskCalled) {
-        completeTaskCalled = true;
-        try {
-          await toolInput.completeTask("task-plan-1", "Finished planning.");
-        } catch {
-          // intentionally swallow fail error
-        }
-      }
-      return {
-        conversationId: "conversation-1",
-        contextTokens: null,
-        contextWindowMax: null,
-      };
-    };
-
-    const validateTaskCompletion = vi.fn(async () => ({
-      kind: "fail" as const,
-      summary: "Validation failed",
-      issues: [
-        {
-          title: "Missing artifact",
-          description: "Add the evidence file.",
-        },
-      ],
-      feedback:
-        "Task validation blocked completion.\n- Missing artifact: Add the evidence file.",
-    }));
-
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
-      executionRepository: repository,
-      createConversation: async () => ({ id: "conversation-1" }),
-      createToolServer: (input) => {
-        toolInput = input;
-        return { server: { id: "tool-server" } };
-      },
-      runAgentIteration,
-      signalHalt,
-      validationService: {
-        validateTaskCompletion,
-      },
-      now: () => "2026-03-27T16:30:00.000Z",
-    });
-
-    const result = await orchestrator.runIteration({
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-1",
-      contextId: "context-plan",
-    });
-
-    expect(validateTaskCompletion).toHaveBeenCalledTimes(1);
-    expect(signalHalt).not.toHaveBeenCalled();
-    expect(result.execution.status).toBe("running");
-    expect(
-      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
-    ).toBe(1);
-  });
-
-  it("does not re-run the validator when the implementer calls completeTask twice on the same task", async () => {
-    // Regression: a follow-up iteration that listed an already-validated task as
-    // remaining (because the first validator hadn't yet returned) previously caused
-    // a second validator run whose late result could corrupt persisted state.
-    const repository = createRepository(createValidatorEnabledExecution());
-
-    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
-    let firstCallCompletedAt: string | null = null;
-    const runAgentIteration = async () => {
-      if (!toolInput) throw new Error("Tool server input was not captured");
-
-      // Turn 0: implementer completes the task (validator returns PASS).
-      const firstResult = await toolInput.completeTask(
-        "task-plan-1",
-        "First completion",
-      );
-      firstCallCompletedAt =
-        firstResult.taskStates["task-plan-1"]?.completedAt ?? null;
-      expect(firstResult.taskStates["task-plan-1"]?.status).toBe("completed");
-
-      // Turn 1 (simulated follow-up): implementer re-invokes completeTask on the
-      // already-completed task. This must be a no-op; the validator must NOT run
-      // a second time.
-      const secondResult = await toolInput.completeTask(
-        "task-plan-1",
-        "Second completion (should be idempotent)",
-      );
-      expect(secondResult.taskStates["task-plan-1"]?.status).toBe("completed");
-      expect(secondResult.taskStates["task-plan-1"]?.completedAt).toBe(
-        firstCallCompletedAt,
-      );
-      return {
-        conversationId: "conversation-1",
-        contextTokens: null,
-        contextWindowMax: null,
-      };
-    };
-
-    const validateTaskCompletion = vi.fn(async () => ({
-      kind: "pass" as const,
-      summary: "Task passed",
-      feedback: "Looks good.",
-      issues: [],
+      reopenTaskIds: ["task-plan-2"],
       sessionRef: null,
       reviewArtifact: null,
     }));
@@ -492,28 +388,149 @@ describe("graph workflow iteration validation integration", () => {
         toolInput = input;
         return { server: { id: "tool-server" } };
       },
-      runAgentIteration,
-      validationService: { validateTaskCompletion },
+      runAgentIteration: async () => {
+        if (!toolInput) {
+          throw new Error("Tool server input was not captured");
+        }
+
+        await toolInput.completeTask(
+          "task-plan-1",
+          "Inspected the codebase and gathered requirements.",
+        );
+        await toolInput.completeTask(
+          "task-plan-2",
+          "Drafted the implementation plan.",
+        );
+        return {
+          conversationId: "conversation-1",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
+      },
+      signalHalt,
+      validationService: { validateContextCompletion },
       now: () => "2026-03-27T16:30:00.000Z",
     });
 
-    const result = await orchestrator.runIteration({
+    const firstResult = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+    const secondResult = await orchestrator.runIteration({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-1",
       contextId: "context-plan",
     });
 
-    expect(validateTaskCompletion).toHaveBeenCalledTimes(1);
-    expect(result.execution.taskStates["task-plan-1"]?.status).toBe(
+    expect(firstResult.shouldContinueInContext).toBe(true);
+    expect(validateContextCompletion).toHaveBeenCalledTimes(2);
+    expect(signalHalt).toHaveBeenCalledTimes(1);
+    expect(secondResult.shouldContinueInContext).toBe(false);
+    expect(secondResult.execution.status).toBe("halted");
+    expect(secondResult.execution.haltReason).toMatchObject({
+      type: "circuit_breaker",
+      contextId: "context-plan",
+      condition: "retry_exhaustion",
+      failureCount: 2,
+    });
+    expect(
+      secondResult.execution.taskStates["task-plan-2"]?.failureHistory,
+    ).toHaveLength(2);
+  });
+
+  it("resets consecutiveFailureCount on a later passing context validation while preserving failure history", async () => {
+    const repository = createRepository(createContextValidatorExecution());
+
+    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
+    const validateContextCompletion = vi
+      .fn()
+      .mockImplementationOnce(async () => ({
+        kind: "fail" as const,
+        summary: "Rollback notes are missing.",
+        feedback:
+          "Context validation blocked completion.\nRollback notes are missing.\nReopened tasks:\n- task-plan-2\n- Missing rollback notes: Add rollback guidance to the plan.",
+        issues: [
+          {
+            title: "Missing rollback notes",
+            description: "Add rollback guidance to the plan.",
+            taskId: "task-plan-2",
+          },
+        ],
+        reopenTaskIds: ["task-plan-2"],
+        sessionRef: null,
+        reviewArtifact: null,
+      }))
+      .mockImplementationOnce(async () => ({
+        kind: "pass" as const,
+        summary: "All acceptance criteria are satisfied.",
+        feedback:
+          "Context validation passed.\nAll acceptance criteria are satisfied.",
+        issues: [],
+        reopenTaskIds: [],
+        sessionRef: null,
+        reviewArtifact: null,
+      }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: async () => ({ id: "conversation-1" }),
+      createToolServer: (input) => {
+        toolInput = input;
+        return { server: { id: "tool-server" } };
+      },
+      runAgentIteration: async () => {
+        if (!toolInput) {
+          throw new Error("Tool server input was not captured");
+        }
+
+        await toolInput.completeTask(
+          "task-plan-1",
+          "Inspected the codebase and gathered requirements.",
+        );
+        await toolInput.completeTask(
+          "task-plan-2",
+          "Updated the plan with the missing details.",
+        );
+        return {
+          conversationId: "conversation-1",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
+      },
+      validationService: { validateContextCompletion },
+      now: () => "2026-03-27T16:30:00.000Z",
+    });
+
+    const firstResult = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+    const secondResult = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(firstResult.shouldContinueInContext).toBe(true);
+    expect(secondResult.shouldContinueInContext).toBe(false);
+    expect(secondResult.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
     );
-    expect(result.execution.taskStates["task-plan-1"]?.completedAt).toBe(
-      firstCallCompletedAt,
-    );
-    // The second call must NOT have incremented consecutive failures.
     expect(
-      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+      secondResult.execution.contextStates["context-plan"]
+        ?.consecutiveFailureCount,
     ).toBe(0);
+    expect(secondResult.execution.taskStates["task-plan-2"]?.status).toBe(
+      "completed",
+    );
+    expect(
+      secondResult.execution.taskStates["task-plan-2"]?.failureHistory,
+    ).toHaveLength(1);
   });
 });

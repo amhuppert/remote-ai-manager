@@ -152,7 +152,7 @@ function getTaskStatusDotClass(status?: string): string {
 function countEnabledValidators(execution: GraphWorkflowExecution): number {
   return execution.workingDefinition.executionContexts.reduce(
     (count, ctx) =>
-      count + [ctx.taskValidation?.enabled].filter(Boolean).length,
+      count + [ctx.contextValidation?.enabled].filter(Boolean).length,
     0,
   );
 }
@@ -220,7 +220,7 @@ function parseCodexValidatorResponse(
 // ---- Structured Validation Result Card ----
 
 function getLaneBadgeLabel(lane: GraphWorkflowLaneKind | undefined): string {
-  if (lane === "task_validator") return "Task";
+  if (lane === "context_validator") return "Context";
   return "";
 }
 
@@ -372,6 +372,22 @@ function ValidationCard({
               ))}
             </ul>
           </CollapsibleText>
+        </div>
+      )}
+      {event.reopenTaskIds.length > 0 && (
+        <div className="wb-validation-body">
+          <div className="wb-validation-section-label">
+            Reopened Tasks ({event.reopenTaskIds.length})
+          </div>
+          <ul className="wb-validation-issues-list">
+            {event.reopenTaskIds.map((taskId) => (
+              <li key={taskId} className="wb-validation-issue">
+                <div className="wb-validation-issue-title">
+                  <code>{taskId}</code>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

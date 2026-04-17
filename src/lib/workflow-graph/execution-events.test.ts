@@ -169,7 +169,7 @@ describe("graph workflow execution event publisher", () => {
       sessionName: "session-1",
       execution,
       contextId: "context-plan",
-      validatorType: "task",
+      validatorType: "context",
       pass: false,
       summary: "Validation failed because the fix task was incomplete.",
       issues: [
@@ -178,6 +178,7 @@ describe("graph workflow execution event publisher", () => {
           description: "The remediation task did not update the plan document.",
         },
       ],
+      reopenTaskIds: ["task-plan-1"],
     });
 
     expect(broadcast).toHaveBeenCalledWith(
@@ -187,13 +188,15 @@ describe("graph workflow execution event publisher", () => {
         sessionName: "session-1",
         contextId: "context-plan",
         pass: false,
+        reopenTaskIds: ["task-plan-1"],
       }),
     );
     expect(updatedExecution.history).toHaveLength(1);
     expect(updatedExecution.history[0]?.event).toEqual(
       expect.objectContaining({
         type: "graph-workflow-validation-result",
-        validatorType: "task",
+        validatorType: "context",
+        reopenTaskIds: ["task-plan-1"],
       }),
     );
   });

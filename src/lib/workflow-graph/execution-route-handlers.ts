@@ -94,7 +94,7 @@ const validatorRunner = createValidatorRunner({
 });
 const implementerRunner = createGraphWorkflowImplementerRunner();
 const validationService = createGraphWorkflowValidationService({
-  runTaskValidator: validatorRunner.runTaskValidator,
+  runContextValidator: validatorRunner.runContextValidator,
 });
 const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository,

@@ -148,8 +148,8 @@ describe("WorkflowInspectorPanel — implementer continuity controls", () => {
   });
 });
 
-describe("WorkflowInspectorPanel — task validator continuity controls", () => {
-  it("task validator continuity toggle defaults to enabled when validator is configured", () => {
+describe("WorkflowInspectorPanel — context validator controls", () => {
+  it("context validator continuity toggle defaults to enabled when validator is configured", () => {
     resetStore();
     const definition = createWorkflowDefinition({
       executionContexts: createWorkflowDefinition().executionContexts.map(
@@ -157,7 +157,7 @@ describe("WorkflowInspectorPanel — task validator continuity controls", () => 
           ctx.id === "context-plan"
             ? {
                 ...ctx,
-                taskValidation: {
+                contextValidation: {
                   type: "claude" as const,
                   enabled: true,
                   agent: {
@@ -165,7 +165,7 @@ describe("WorkflowInspectorPanel — task validator continuity controls", () => 
                     model: "sonnet" as const,
                     reasoningEffort: "medium" as const,
                   },
-                  instructions: "Verify task.",
+                  acceptanceCriteria: "Verify the completed context.",
                   continuity: { enabled: true },
                 },
               }
@@ -187,9 +187,9 @@ describe("WorkflowInspectorPanel — task validator continuity controls", () => 
     const ctx = _useGraphWorkflowBuilderStore
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.taskValidation?.continuity.enabled).toBe(true);
+    expect(ctx?.contextValidation?.continuity.enabled).toBe(true);
 
-    const section = findSection("Task Validation");
+    const section = findSection("Context Validation");
     expect(section).toBeTruthy();
     // Find the toggle in the section that follows the "Session Continuity" label
     const subsectionLabel = Array.from(
@@ -198,16 +198,15 @@ describe("WorkflowInspectorPanel — task validator continuity controls", () => 
     expect(subsectionLabel).toBeTruthy();
   });
 
-  it("task validator continuity.enabled defaults to true in createDefaultTaskValidation output", () => {
-    // Verify the default factory creates continuity.enabled = true
+  it("context validator continuity.enabled defaults to true in createDefaultContextValidation output", () => {
     resetStore();
     setupStoreWithContext();
     render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    // When no taskValidation is set, the panel derives from createDefaultTaskValidation
+    // When no contextValidation is set, the panel derives from createDefaultContextValidation
     // which sets continuity.enabled = true. After we enable the validator, the store
     // should reflect that default.
-    const section = findSection("Task Validation");
+    const section = findSection("Context Validation");
     expect(section).toBeTruthy();
     // Click "Enabled" toggle to create the default validator in the store
     const enabledToggle = section!.querySelector(".wb-toggle");
@@ -217,7 +216,33 @@ describe("WorkflowInspectorPanel — task validator continuity controls", () => 
     const ctx = _useGraphWorkflowBuilderStore
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.taskValidation?.continuity.enabled).toBe(true);
+    expect(ctx?.contextValidation?.continuity.enabled).toBe(true);
+  });
+
+  it("editing acceptance criteria updates the selected context in the store", () => {
+    resetStore();
+    setupStoreWithContext();
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const section = findSection("Context Validation");
+    expect(section).toBeTruthy();
+
+    const enabledToggle = section!.querySelector(".wb-toggle");
+    expect(enabledToggle).toBeTruthy();
+    fireEvent.click(enabledToggle!);
+
+    const textarea = section!.querySelector("textarea");
+    expect(textarea).toBeTruthy();
+    fireEvent.change(textarea!, {
+      target: { value: "Every task is complete and verified." },
+    });
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.contextValidation?.acceptanceCriteria).toBe(
+      "Every task is complete and verified.",
+    );
   });
 });
 

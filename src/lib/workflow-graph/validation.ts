@@ -68,12 +68,12 @@ export function validateWorkflowDefinition(
     }
 
     if (
-      context.taskValidation?.enabled &&
-      !context.taskValidation.instructions.trim()
+      context.contextValidation?.enabled &&
+      !context.contextValidation.acceptanceCriteria.trim()
     ) {
       errors.push({
-        code: "empty-task-validator-instructions",
-        message: `Task validator on "${context.id}" is enabled but has no instructions`,
+        code: "empty-context-validator-acceptance-criteria",
+        message: `Context validator on "${context.id}" is enabled but has no acceptance criteria`,
         contextId: context.id,
       });
     }

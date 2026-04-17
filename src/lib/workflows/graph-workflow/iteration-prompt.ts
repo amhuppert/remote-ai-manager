@@ -5,13 +5,30 @@ import type {
   GraphWorkflowTaskState,
 } from "@/types";
 
+export interface LatestContextValidationFailureFeedbackIssue {
+  title: string;
+  description: string;
+}
+
+export interface LatestContextValidationFailureFeedbackIssueGroup {
+  heading: string;
+  issues: LatestContextValidationFailureFeedbackIssue[];
+}
+
+export interface LatestContextValidationFailureFeedback {
+  summary: string;
+  reopenedTasks: Array<{ taskId: string; title: string }>;
+  groupedIssues: LatestContextValidationFailureFeedbackIssueGroup[];
+}
+
 export interface BuildIterationPromptInput {
   context: GraphWorkflowExecutionContextDefinition;
   tasks: GraphWorkflowTaskDefinition[];
   taskStates: Record<string, GraphWorkflowTaskState>;
   sharedDocuments: GraphWorkflowSharedDocumentEntry[];
   allowAgentTaskAdd: boolean;
-  taskValidationInstructions?: string;
+  contextValidationAcceptanceCriteria?: string;
+  latestContextValidationFailure?: LatestContextValidationFailureFeedback;
 }
 
 function buildTaskLines(
@@ -56,6 +73,47 @@ function buildTaskLines(
   });
 }
 
+function buildLatestContextValidationFailureSection(
+  latestContextValidationFailure?: LatestContextValidationFailureFeedback,
+): string | null {
+  if (!latestContextValidationFailure) {
+    return null;
+  }
+
+  const sections = [
+    "## Latest Context Validation Failure",
+    "You are retrying this execution context after a failed context validation.",
+    "",
+    "Summary:",
+    latestContextValidationFailure.summary,
+  ];
+
+  if (latestContextValidationFailure.reopenedTasks.length > 0) {
+    sections.push(
+      "",
+      "Reopened Tasks:",
+      ...latestContextValidationFailure.reopenedTasks.map(
+        (task) => `- \`${task.taskId}\` - ${task.title}`,
+      ),
+    );
+  }
+
+  if (latestContextValidationFailure.groupedIssues.length > 0) {
+    sections.push("", "Issues:");
+    for (const group of latestContextValidationFailure.groupedIssues) {
+      sections.push(
+        `### ${group.heading}`,
+        ...group.issues.map(
+          (issue) => `- ${issue.title}: ${issue.description}`,
+        ),
+        "",
+      );
+    }
+  }
+
+  return sections.join("\n").trimEnd();
+}
+
 export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   const sections: string[] = [];
 
@@ -75,6 +133,14 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     ].join("\n"),
   );
 
+  const latestContextValidationFailureSection =
+    buildLatestContextValidationFailureSection(
+      input.latestContextValidationFailure,
+    );
+  if (latestContextValidationFailureSection) {
+    sections.push(latestContextValidationFailureSection);
+  }
+
   // Task list with failure feedback inline
   const taskLines = buildTaskLines(input.tasks, input.taskStates);
 
@@ -82,14 +148,15 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     ["## Tasks (work through them in order)", ...taskLines].join("\n"),
   );
 
-  // Validation criteria (auto-injected from task validation config)
-  if (input.taskValidationInstructions) {
+  // Acceptance criteria are shared between the implementer and the context validator.
+  if (input.contextValidationAcceptanceCriteria) {
     sections.push(
       [
-        "## Validation Criteria",
-        "Each completed task will be validated against these criteria before it is accepted. If validation fails, you will need to address the issues and call `complete_task` again.",
+        "## Acceptance Criteria",
+        "When every task in this execution context is marked complete, a context validator will review the whole context against these exact acceptance criteria.",
+        "If the validator reopens any tasks, address the feedback and call `complete_task` again for those reopened tasks.",
         "",
-        input.taskValidationInstructions,
+        input.contextValidationAcceptanceCriteria,
       ].join("\n"),
     );
   }
@@ -157,15 +224,29 @@ export interface BuildFollowUpPromptInput {
   taskStates: Record<string, GraphWorkflowTaskState>;
   attemptNumber: number;
   maxAttempts: number;
+  latestContextValidationFailure?: LatestContextValidationFailureFeedback;
 }
 
 export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
   const taskLines = buildTaskLines(input.remainingTasks, input.taskStates);
-  return [
+  const sections = [
     `You still have ${input.remainingTasks.length} incomplete task(s):`,
+  ];
+
+  const latestContextValidationFailureSection =
+    buildLatestContextValidationFailureSection(
+      input.latestContextValidationFailure,
+    );
+  if (latestContextValidationFailureSection) {
+    sections.push(latestContextValidationFailureSection);
+  }
+
+  sections.push(
     ["## Remaining Tasks", ...taskLines].join("\n"),
     `Please continue working through them in order, calling \`complete_task\` for each.`,
     `This is follow-up attempt ${input.attemptNumber} of ${input.maxAttempts}.`,
     "The workflow cannot progress until tasks are completed via the complete_task MCP tool. Without it, the workflow will stall.",
-  ].join("\n\n");
+  );
+
+  return sections.join("\n\n");
 }

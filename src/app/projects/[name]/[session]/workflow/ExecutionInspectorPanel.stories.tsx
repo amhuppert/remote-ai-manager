@@ -36,7 +36,7 @@ function makeExecution(
             maxIterations: 5,
             continuity: { enabled: true },
           },
-          taskValidation: {
+          contextValidation: {
             type: "claude",
             enabled: true,
             agent: {
@@ -44,7 +44,7 @@ function makeExecution(
               model: "sonnet",
               reasoningEffort: "medium",
             },
-            instructions: "Validate task output",
+            acceptanceCriteria: "Validate the completed context output",
             continuity: { enabled: true },
           },
         },
@@ -240,13 +240,14 @@ const createUserSchema = z.object({
           sessionName: "test",
           executionId: "exec-1",
           contextId: "ctx-3",
-          validatorType: "task" as const,
+          validatorType: "context" as const,
           pass: true,
           summary: "All database migrations applied successfully",
           issues: [],
+          reopenTaskIds: [],
           sessionRef: {
             engine: "claude" as const,
-            lane: "task_validator" as const,
+            lane: "context_validator" as const,
             conversationId: "conv-val-1",
           },
         },
@@ -259,9 +260,9 @@ const createUserSchema = z.object({
           sessionName: "test",
           executionId: "exec-1",
           contextId: "ctx-1",
-          validatorType: "task" as const,
+          validatorType: "context" as const,
           pass: false,
-          summary: "Task validation failed: missing error handling",
+          summary: "Context validation failed: missing error handling",
           issues: [
             {
               title: "Missing error handler",
@@ -274,9 +275,10 @@ const createUserSchema = z.object({
                 "Email format validation is not strict enough — accepts strings without TLD",
             },
           ],
+          reopenTaskIds: ["task-1", "task-2"],
           sessionRef: {
             engine: "codex" as const,
-            lane: "task_validator" as const,
+            lane: "context_validator" as const,
             threadId: "thread-abc123",
           },
           reviewArtifact: {
@@ -397,10 +399,11 @@ function makeHaltedExecution(): GraphWorkflowExecution {
           sessionName: "test",
           executionId: "exec-1",
           contextId: "ctx-3",
-          validatorType: "task",
+          validatorType: "context",
           pass: true,
           summary: "Migrations passed",
           issues: [],
+          reopenTaskIds: [],
         },
       },
       {
@@ -411,7 +414,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
           sessionName: "test",
           executionId: "exec-1",
           contextId: "ctx-1",
-          validatorType: "task",
+          validatorType: "context",
           pass: false,
           summary: "Missing error handling in endpoints",
           issues: [
@@ -420,6 +423,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
               description: "POST /api/users does not handle duplicate emails",
             },
           ],
+          reopenTaskIds: ["task-2"],
         },
       },
       {
@@ -430,7 +434,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
           sessionName: "test",
           executionId: "exec-1",
           contextId: "ctx-1",
-          validatorType: "task",
+          validatorType: "context",
           pass: false,
           summary: "JWT middleware still broken",
           issues: [
@@ -449,6 +453,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
                 "Endpoints return 500 instead of 401 when token is invalid",
             },
           ],
+          reopenTaskIds: ["task-2", "task-3"],
         },
       },
       {

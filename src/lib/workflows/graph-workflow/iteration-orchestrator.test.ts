@@ -8,7 +8,6 @@ import { graphWorkflowExecutionSchema } from "@/lib/schemas";
 import {
   createGraphWorkflowIterationOrchestrator,
   IterationHaltedError,
-  TaskValidationFailedError,
 } from "./iteration-orchestrator";
 import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
 import type {
@@ -183,6 +182,46 @@ function createExecutionWithPlanTasks(
       },
     ],
   });
+}
+
+function appendFailedContextValidationEvent(
+  execution: GraphWorkflowExecution,
+  overrides: Partial<{
+    summary: string;
+    reopenTaskIds: string[];
+    issues: Array<{
+      taskId?: string;
+      title: string;
+      description: string;
+    }>;
+  }> = {},
+): GraphWorkflowExecution {
+  execution.history.push({
+    occurredAt: "2026-03-27T15:55:00.000Z",
+    event: {
+      type: "graph-workflow-validation-result",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+      contextId: "context-plan",
+      validatorType: "context",
+      pass: false,
+      summary:
+        overrides.summary ??
+        "Validation failed because rollback notes are missing.",
+      reopenTaskIds: overrides.reopenTaskIds ?? ["task-plan-2"],
+      issues: overrides.issues ?? [
+        {
+          taskId: "task-plan-2",
+          title: "Missing rollback notes",
+          description: "Add rollback guidance to the plan.",
+        },
+      ],
+      sessionRef: null,
+      reviewArtifact: null,
+    },
+  });
+  return execution;
 }
 
 describe("graph workflow iteration orchestrator", () => {
@@ -1037,11 +1076,11 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
     // Simulate validator-runner persisting updated lane states mid-validation
     const validatorLaneState: GraphWorkflowLaneState = {
       engine: "claude",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "context-plan",
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: "validator-conv",
       },
       lastContextTokens: 10_000,
@@ -1051,25 +1090,26 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
       lastUsedAt: "2026-03-27T16:01:00.000Z",
     };
 
-    const validateTaskCompletion = vi.fn(async () => {
+    const validateContextCompletion = vi.fn(async () => {
       // Simulate validator-runner persisting updated lane states
       const current = structuredClone(repository.read());
-      current.laneStates = { task_validator: validatorLaneState };
+      current.laneStates = { context_validator: validatorLaneState };
       await repository.update("/repo", "session-1", current);
       return {
         kind: "pass" as const,
-        summary: "Task passed",
-        feedback: "Task validation passed.",
+        summary: "Context passed",
+        feedback: "Context validation passed.",
         issues: [] as never[],
+        reopenTaskIds: [],
         sessionRef: { backend: "claude" as const, sessionId: "validator-conv" },
         reviewArtifact: null,
       };
     });
 
     const runAgentIteration = vi.fn(async () => {
-      // Only complete task on the first call — follow-up calls do nothing
       if (runAgentIteration.mock.calls.length === 1) {
         await capturedCompleteTask!("task-plan-1", "Done");
+        await capturedCompleteTask!("task-plan-2", "Done");
       }
       return {
         conversationId: "conv-mock",
@@ -1084,7 +1124,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
       createToolServer,
       runAgentIteration,
       validationService: {
-        validateTaskCompletion,
+        validateContextCompletion,
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -1100,13 +1140,13 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
 
     // Lane states written by the validator-runner must survive subsequent orchestrator writes
     const final = repository.read();
-    expect(final.laneStates["task_validator"]).toBeDefined();
+    expect(final.laneStates["context_validator"]).toBeDefined();
     expect(
-      (final.laneStates["task_validator"] as typeof validatorLaneState)
+      (final.laneStates["context_validator"] as typeof validatorLaneState)
         .sessionRef,
     ).toEqual({
       engine: "claude",
-      lane: "task_validator",
+      lane: "context_validator",
       conversationId: "validator-conv",
     });
   });
@@ -1610,11 +1650,12 @@ describe("task validation event publishing (fix-30388517)", () => {
       sessionId: "validator-conv",
     };
 
-    const validateTaskCompletion = vi.fn(async () => ({
+    const validateContextCompletion = vi.fn(async () => ({
       kind: "pass" as const,
       summary: "All checks passed",
-      feedback: "Task validation passed.",
+      feedback: "Context validation passed.",
       issues: [] as never[],
+      reopenTaskIds: [],
       sessionRef,
       reviewArtifact: {
         engine: "claude" as const,
@@ -1623,9 +1664,9 @@ describe("task validation event publishing (fix-30388517)", () => {
     }));
 
     const runAgentIteration = vi.fn(async () => {
-      // Only complete task on the first call — follow-up calls do nothing
       if (runAgentIteration.mock.calls.length === 1) {
         await capturedCompleteTask!("task-plan-1", "Done");
+        await capturedCompleteTask!("task-plan-2", "Done");
       }
       return {
         conversationId: "conv-mock",
@@ -1640,7 +1681,7 @@ describe("task validation event publishing (fix-30388517)", () => {
       createToolServer,
       runAgentIteration,
       validationService: {
-        validateTaskCompletion,
+        validateContextCompletion,
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -1662,11 +1703,11 @@ describe("task validation event publishing (fix-30388517)", () => {
     // The persisted event uses GraphWorkflowExecutionSessionRef (converted from AgentSessionRef)
     expect(validationHistoryEntry?.event).toMatchObject({
       type: "graph-workflow-validation-result",
-      validatorType: "task",
+      validatorType: "context",
       pass: true,
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: "validator-conv",
       },
     });
@@ -1700,26 +1741,26 @@ describe("task validation failure handling (circuit breaker)", () => {
     );
     const createConversation = vi.fn(async () => ({ id: "conv-fail" }));
 
-    const validateTaskCompletion = vi.fn(async () => ({
+    const validateContextCompletion = vi.fn(async () => ({
       kind: "fail" as const,
       summary: "Validation failed",
-      feedback: "Missing test coverage for edge case.",
-      issues: [{ title: "Missing tests", description: "Add edge case tests." }],
+      feedback:
+        "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing tests: Add edge case tests.",
+      issues: [
+        {
+          taskId: "task-plan-2",
+          title: "Missing tests",
+          description: "Add edge case tests.",
+        },
+      ],
+      reopenTaskIds: ["task-plan-2"],
       sessionRef: null,
       reviewArtifact: null,
     }));
 
     const runAgentIteration = vi.fn(async () => {
-      // Agent attempts to complete a task — validation will fail
-      try {
-        await capturedCompleteTask!("task-plan-1", "Implemented the feature");
-      } catch (error) {
-        // TaskValidationFailedError escapes to the iteration orchestrator
-        if (!(error instanceof TaskValidationFailedError)) {
-          throw error;
-        }
-        throw error;
-      }
+      await capturedCompleteTask!("task-plan-1", "Implemented the feature");
+      await capturedCompleteTask!("task-plan-2", "Added the rollout plan");
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -1732,7 +1773,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       createConversation,
       createToolServer,
       runAgentIteration,
-      validationService: { validateTaskCompletion },
+      validationService: { validateContextCompletion },
       now() {
         return "2026-03-27T16:00:00.000Z";
       },
@@ -1754,11 +1795,57 @@ describe("task validation failure handling (circuit breaker)", () => {
     ).toBe(1);
 
     // Task should be marked with failure info
-    const taskState = result.execution.taskStates["task-plan-1"];
+    const taskState = result.execution.taskStates["task-plan-2"];
+    expect(taskState?.startedAt).toBe("2026-03-27T16:00:00.000Z");
+    expect(taskState?.lastConversationId).toBe("conv-fail");
     expect(taskState?.failureMessage).toBe(
-      "Missing test coverage for edge case.",
+      "Validation failed\n- Missing tests: Add edge case tests.",
     );
     expect(taskState?.failureHistory).toHaveLength(1);
+  });
+
+  it("includes the latest failed context validation feedback in both initial and follow-up prompts during a retry", async () => {
+    const repository = createRepository(
+      appendFailedContextValidationEvent(
+        createExecutionWithPlanTasks({
+          "task-plan-1": "pending",
+          "task-plan-2": "pending",
+        }),
+      ),
+    );
+    const prompts: string[] = [];
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-retry" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(async (agentInput) => {
+        prompts.push(agentInput.prompt);
+        return {
+          conversationId: "conversation-retry",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
+      }),
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(result.shouldContinueInContext).toBe(true);
+    expect(prompts[0]).toContain("Latest Context Validation Failure");
+    expect(prompts[0]).toContain(
+      "Validation failed because rollback notes are missing.",
+    );
+    expect(prompts[0]).toContain("`task-plan-2` - Write plan");
+    expect(prompts[0]).toContain("Missing rollback notes");
+    expect(prompts[1]).toContain("Latest Context Validation Failure");
+    expect(prompts[1]).toContain("`task-plan-2` - Write plan");
   });
 
   it("resets consecutiveFailureCount when a task completes successfully", async () => {
@@ -1787,11 +1874,12 @@ describe("task validation failure handling (circuit breaker)", () => {
     );
     const createConversation = vi.fn(async () => ({ id: "conv-pass" }));
 
-    const validateTaskCompletion = vi.fn(async () => ({
+    const validateContextCompletion = vi.fn(async () => ({
       kind: "pass" as const,
-      summary: "Task passed",
-      feedback: "Task validation passed.",
+      summary: "Context passed",
+      feedback: "Context validation passed.",
       issues: [] as never[],
+      reopenTaskIds: [],
       sessionRef: null,
       reviewArtifact: null,
     }));
@@ -1799,6 +1887,7 @@ describe("task validation failure handling (circuit breaker)", () => {
     const runAgentIteration = vi.fn(async () => {
       if (runAgentIteration.mock.calls.length === 1) {
         await capturedCompleteTask!("task-plan-1", "Done");
+        await capturedCompleteTask!("task-plan-2", "Done");
       }
       return {
         conversationId: "conv-mock",
@@ -1812,7 +1901,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       createConversation,
       createToolServer,
       runAgentIteration,
-      validationService: { validateTaskCompletion },
+      validationService: { validateContextCompletion },
       now() {
         return "2026-03-27T16:00:00.000Z";
       },
@@ -2180,7 +2269,7 @@ describe("mid-iteration halt via signalHalt", () => {
     );
     const createConversation = vi.fn(async () => ({ id: "conv-infra" }));
 
-    const validateTaskCompletion = vi.fn(async () => ({
+    const validateContextCompletion = vi.fn(async () => ({
       kind: "infra_error" as const,
       reason: "exception" as const,
       message: "Codex rate limit exceeded",
@@ -2204,14 +2293,9 @@ describe("mid-iteration halt via signalHalt", () => {
       },
     );
 
-    let capturedError: unknown;
     const runAgentIteration = vi.fn(async () => {
-      try {
-        await capturedCompleteTask!("task-plan-1", "Done");
-      } catch (error) {
-        capturedError = error;
-        throw error;
-      }
+      await capturedCompleteTask!("task-plan-1", "Done");
+      await capturedCompleteTask!("task-plan-2", "Done");
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -2225,7 +2309,7 @@ describe("mid-iteration halt via signalHalt", () => {
       createToolServer,
       runAgentIteration,
       signalHalt,
-      validationService: { validateTaskCompletion },
+      validationService: { validateContextCompletion },
       now: () => NOW,
     });
 
@@ -2245,7 +2329,6 @@ describe("mid-iteration halt via signalHalt", () => {
         reason: expect.objectContaining({
           type: "validator_infra_error",
           contextId: "context-plan",
-          taskId: "task-plan-1",
           engine: "codex",
           infraReason: "exception",
           message: "Codex rate limit exceeded",
@@ -2253,9 +2336,6 @@ describe("mid-iteration halt via signalHalt", () => {
         }),
       }),
     );
-
-    // The completeTask closure threw IterationHaltedError, not TaskValidationFailedError
-    expect(capturedError).toBeInstanceOf(IterationHaltedError);
 
     // consecutiveFailureCount is NOT incremented on infra_error
     expect(
@@ -2291,11 +2371,13 @@ describe("mid-iteration halt via signalHalt", () => {
     );
     const createConversation = vi.fn(async () => ({ id: "conv-breaker" }));
 
-    const validateTaskCompletion = vi.fn(async () => ({
+    const validateContextCompletion = vi.fn(async () => ({
       kind: "fail" as const,
       summary: "Still failing",
-      feedback: "Needs more evidence.",
+      feedback:
+        "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing: add coverage",
       issues: [{ title: "Missing", description: "add coverage" }],
+      reopenTaskIds: ["task-plan-2"],
       sessionRef: null,
       reviewArtifact: null,
     }));
@@ -2315,14 +2397,9 @@ describe("mid-iteration halt via signalHalt", () => {
       },
     );
 
-    let capturedError: unknown;
     const runAgentIteration = vi.fn(async () => {
-      try {
-        await capturedCompleteTask!("task-plan-1", "Done");
-      } catch (error) {
-        capturedError = error;
-        throw error;
-      }
+      await capturedCompleteTask!("task-plan-1", "Done");
+      await capturedCompleteTask!("task-plan-2", "Done");
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -2336,7 +2413,7 @@ describe("mid-iteration halt via signalHalt", () => {
       createToolServer,
       runAgentIteration,
       signalHalt,
-      validationService: { validateTaskCompletion },
+      validationService: { validateContextCompletion },
       now: () => NOW,
     });
 
@@ -2360,9 +2437,6 @@ describe("mid-iteration halt via signalHalt", () => {
         }),
       }),
     );
-
-    // completeTask threw IterationHaltedError (not TaskValidationFailedError) once the breaker tripped
-    expect(capturedError).toBeInstanceOf(IterationHaltedError);
 
     // consecutiveFailureCount incremented to 3 (the threshold)
     expect(
@@ -2400,27 +2474,22 @@ describe("mid-iteration halt via signalHalt", () => {
       id: "conv-belowthreshold",
     }));
 
-    const validateTaskCompletion = vi.fn(async () => ({
+    const validateContextCompletion = vi.fn(async () => ({
       kind: "fail" as const,
       summary: "Failing",
-      feedback: "Try harder.",
+      feedback:
+        "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing details: Try harder.",
       issues: [],
+      reopenTaskIds: ["task-plan-2"],
       sessionRef: null,
       reviewArtifact: null,
     }));
 
     const signalHalt = vi.fn();
 
-    let capturedError: unknown;
     const runAgentIteration = vi.fn(async () => {
-      try {
-        await capturedCompleteTask!("task-plan-1", "Done");
-      } catch (error) {
-        capturedError = error;
-        // Rethrow so the orchestrator's outer catch handles it; otherwise the
-        // follow-up loop would issue additional agent calls and keep failing.
-        throw error;
-      }
+      await capturedCompleteTask!("task-plan-1", "Done");
+      await capturedCompleteTask!("task-plan-2", "Done");
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -2434,7 +2503,7 @@ describe("mid-iteration halt via signalHalt", () => {
       createToolServer,
       runAgentIteration,
       signalHalt,
-      validationService: { validateTaskCompletion },
+      validationService: { validateContextCompletion },
       now: () => NOW,
     });
 
@@ -2446,9 +2515,6 @@ describe("mid-iteration halt via signalHalt", () => {
     });
 
     expect(signalHalt).not.toHaveBeenCalled();
-
-    // completeTask threw TaskValidationFailedError (existing semantics preserved)
-    expect(capturedError).toBeInstanceOf(TaskValidationFailedError);
 
     // consecutiveFailureCount incremented to 1, below threshold
     expect(
@@ -2483,7 +2549,7 @@ describe("mid-iteration halt via signalHalt", () => {
     );
     const createConversation = vi.fn(async () => ({ id: "conv-halt" }));
 
-    const validateTaskCompletion = vi.fn();
+    const validateContextCompletion = vi.fn();
     const signalHalt = vi.fn();
 
     let capturedError: unknown;
@@ -2516,7 +2582,7 @@ describe("mid-iteration halt via signalHalt", () => {
       createToolServer,
       runAgentIteration,
       signalHalt,
-      validationService: { validateTaskCompletion },
+      validationService: { validateContextCompletion },
       now: () => NOW,
     });
 
@@ -2529,7 +2595,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     // completeTask threw IterationHaltedError; validator and signalHalt never invoked
     expect(capturedError).toBeInstanceOf(IterationHaltedError);
-    expect(validateTaskCompletion).not.toHaveBeenCalled();
+    expect(validateContextCompletion).not.toHaveBeenCalled();
     expect(signalHalt).not.toHaveBeenCalled();
   });
 
@@ -2567,7 +2633,7 @@ describe("mid-iteration halt via signalHalt", () => {
     );
     const createConversation = vi.fn(async () => ({ id: "conv-redo" }));
 
-    const validateTaskCompletion = vi.fn();
+    const validateContextCompletion = vi.fn();
     const signalHalt = vi.fn();
 
     let capturedResult: GraphWorkflowExecution | undefined;
@@ -2594,7 +2660,7 @@ describe("mid-iteration halt via signalHalt", () => {
       createToolServer,
       runAgentIteration,
       signalHalt,
-      validationService: { validateTaskCompletion },
+      validationService: { validateContextCompletion },
       now: () => NOW,
     });
 
@@ -2606,7 +2672,7 @@ describe("mid-iteration halt via signalHalt", () => {
     });
 
     // Guard short-circuits before validation: validator must NOT be invoked
-    expect(validateTaskCompletion).not.toHaveBeenCalled();
+    expect(validateContextCompletion).not.toHaveBeenCalled();
     expect(signalHalt).not.toHaveBeenCalled();
 
     // completeTask returned normally (idempotent success, not error)
@@ -2661,11 +2727,13 @@ describe("mid-iteration halt via signalHalt", () => {
     );
     const createConversation = vi.fn(async () => ({ id: "conv-thresh" }));
 
-    const validateTaskCompletion = vi.fn(async () => ({
+    const validateContextCompletion = vi.fn(async () => ({
       kind: "fail" as const,
       summary: "Failing",
-      feedback: "Not yet.",
+      feedback:
+        "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing details: Not yet.",
       issues: [],
+      reopenTaskIds: ["task-plan-2"],
       sessionRef: null,
       reviewArtifact: null,
     }));
@@ -2673,13 +2741,8 @@ describe("mid-iteration halt via signalHalt", () => {
     const signalHalt = vi.fn();
 
     const runAgentIteration = vi.fn(async () => {
-      try {
-        await capturedCompleteTask!("task-plan-1", "Done");
-      } catch (error) {
-        // Rethrow — otherwise the follow-up loop will re-trigger completeTask
-        // on the remaining tasks and the breaker would trip after enough fails.
-        throw error;
-      }
+      await capturedCompleteTask!("task-plan-1", "Done");
+      await capturedCompleteTask!("task-plan-2", "Done");
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -2693,7 +2756,7 @@ describe("mid-iteration halt via signalHalt", () => {
       createToolServer,
       runAgentIteration,
       signalHalt,
-      validationService: { validateTaskCompletion },
+      validationService: { validateContextCompletion },
       now: () => NOW,
     });
 
@@ -2734,11 +2797,13 @@ describe("mid-iteration halt via signalHalt", () => {
     );
     const createConversation = vi.fn(async () => ({ id: "conv-final-halt" }));
 
-    const validateTaskCompletion = vi.fn(async () => ({
+    const validateContextCompletion = vi.fn(async () => ({
       kind: "fail" as const,
       summary: "Failing",
-      feedback: "Needs more.",
+      feedback:
+        "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing details: Needs more.",
       issues: [],
+      reopenTaskIds: ["task-plan-2"],
       sessionRef: null,
       reviewArtifact: null,
     }));
@@ -2759,12 +2824,8 @@ describe("mid-iteration halt via signalHalt", () => {
     );
 
     const runAgentIteration = vi.fn(async () => {
-      try {
-        await capturedCompleteTask!("task-plan-1", "Done");
-      } catch (error) {
-        // Rethrow so the orchestrator's outer catch handles the halted-iteration error
-        throw error;
-      }
+      await capturedCompleteTask!("task-plan-1", "Done");
+      await capturedCompleteTask!("task-plan-2", "Done");
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -2778,7 +2839,7 @@ describe("mid-iteration halt via signalHalt", () => {
       createToolServer,
       runAgentIteration,
       signalHalt,
-      validationService: { validateTaskCompletion },
+      validationService: { validateContextCompletion },
       now: () => NOW,
     });
 

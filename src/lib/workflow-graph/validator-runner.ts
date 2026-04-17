@@ -15,15 +15,13 @@ import type {
   AgentSessionRef,
 } from "@/lib/agent-backends/types";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
-import type { GraphWorkflowTaskValidatorInput } from "./execution-validation";
+import type { GraphWorkflowContextValidatorInput } from "./execution-validation";
 import type {
   ResolveValidatorCallInput,
   ResolvedValidatorCall,
   RecordClaudeLaneTurnInput,
   RecordCodexLaneTurnInput,
 } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
-
-// -- JSON Schema for structured output (used by both Claude and Codex) --------
 
 export const VALIDATOR_OUTPUT_SCHEMA = {
   type: "object",
@@ -35,6 +33,7 @@ export const VALIDATOR_OUTPUT_SCHEMA = {
       items: {
         type: "object",
         properties: {
+          taskId: { type: "string" },
           title: { type: "string" },
           description: { type: "string" },
         },
@@ -42,37 +41,56 @@ export const VALIDATOR_OUTPUT_SCHEMA = {
         additionalProperties: false,
       },
     },
+    reopenTaskIds: {
+      type: "array",
+      items: { type: "string" },
+    },
   },
-  required: ["pass", "summary", "issues"],
+  required: ["pass", "summary", "issues", "reopenTaskIds"],
   additionalProperties: false,
 } as const;
 
-// -- Prompt builders ----------------------------------------------------------
-
-export interface BuildTaskValidationPromptInput {
+export interface BuildContextValidationPromptInput {
   context: GraphWorkflowExecutionContextDefinition;
-  task: GraphWorkflowTaskDefinition;
   tasks: GraphWorkflowTaskDefinition[];
-  summary: string;
+  taskStates: GraphWorkflowExecution["taskStates"];
   validator: GraphWorkflowAgentValidatorConfig;
 }
 
-export function buildTaskValidationPrompt(
-  input: BuildTaskValidationPromptInput,
+function formatTaskBlock(
+  task: GraphWorkflowTaskDefinition,
+  taskStates: GraphWorkflowExecution["taskStates"],
 ): string {
-  const taskList = input.tasks
-    .map((t) => `- \`${t.id}\`: ${t.title}`)
+  const taskState = taskStates[task.id];
+  const summary = taskState?.summary?.trim() || "No summary recorded.";
+  return [
+    `- **Task ID**: \`${task.id}\``,
+    `  - Title: ${task.title}`,
+    `  - Instructions: ${task.instructions}`,
+    `  - Stored Summary: ${summary}`,
+  ].join("\n");
+}
+
+export function buildContextValidationPrompt(
+  input: BuildContextValidationPromptInput,
+): string {
+  const orderedTasks = [...input.tasks].sort(
+    (left, right) => left.order - right.order,
+  );
+  const taskList = orderedTasks
+    .map((task) => formatTaskBlock(task, input.taskStates))
     .join("\n");
 
   return [
-    "# Task Validation",
+    "# Context Validation",
     "",
-    "You are a validation agent reviewing a completed task in a graph workflow.",
-    "Your job is to assess whether the task was completed correctly and thoroughly.",
+    "You are a validation agent reviewing a completed execution context in a graph workflow.",
+    "You must inspect files and verify the agent's claims.",
+    "Check the completed context against the exact acceptance criteria below.",
     "",
-    "## Your Validation Instructions",
+    "## Acceptance Criteria",
     "",
-    input.validator.instructions,
+    input.validator.acceptanceCriteria,
     "",
     "## Context",
     "",
@@ -81,45 +99,36 @@ export function buildTaskValidationPrompt(
       ? [`Goal: ${input.context.description}`]
       : []),
     "",
-    "## Task Under Review",
-    "",
-    `- **Task ID**: \`${input.task.id}\``,
-    `- **Title**: ${input.task.title}`,
-    `- **Instructions**: ${input.task.instructions}`,
-    `- **Agent Summary**: ${input.summary}`,
-    "",
-    "## All Tasks in This Context",
+    "## Completed Tasks In This Context",
     "",
     taskList,
     "",
     "## Required Output",
     "",
-    "You MUST review the work the agent did — read files, check for correctness, verify the agent's claims.",
-    "Then output your assessment as a JSON object with these fields:",
-    "",
-    "- `pass` (boolean): `true` if the task meets all validation criteria, `false` otherwise",
+    "Output a JSON object with these fields:",
+    "- `pass` (boolean): `true` only when the entire context meets the acceptance criteria",
     "- `summary` (string): Brief explanation of your assessment",
-    "- `issues` (array of `{ title, description }`): Specific problems found (empty array if pass is true)",
+    "- `issues` (array of `{ title, description, taskId? }`): Specific problems found. Set `taskId` when the problem clearly belongs to one task in this context.",
+    "- `reopenTaskIds` (array of task IDs): Tasks that must be reopened",
+    "",
+    "Response contract:",
+    "- If `pass` is `true`, `reopenTaskIds` must be an empty array.",
+    "- If `pass` is `false`, `reopenTaskIds` must contain one or more task IDs from this context.",
   ].join("\n");
 }
 
-// -- Result parsing -----------------------------------------------------------
-
-/**
- * Discriminated outcome produced by the validator runner. `pass` and `fail`
- * represent legitimate validator decisions; `infra_error` represents transport
- * or parsing failures that must not count against the circuit breaker.
- */
 export type ValidatorOutcome =
   | {
       kind: "pass";
       summary: string;
       issues: WorkflowValidatorIssue[];
+      reopenTaskIds: string[];
     }
   | {
       kind: "fail";
       summary: string;
       issues: WorkflowValidatorIssue[];
+      reopenTaskIds: string[];
     }
   | {
       kind: "infra_error";
@@ -128,31 +137,113 @@ export type ValidatorOutcome =
       engine: "claude" | "codex";
     };
 
-/**
- * Map a schema-valid wire result into a pass/fail outcome. Preserves the
- * existing `pass: true + issues non-empty → fail` normalization semantics.
- */
-function wireResultToOutcome(result: {
-  pass: boolean;
-  summary: string;
-  issues: WorkflowValidatorIssue[];
-}): ValidatorOutcome {
-  const isPass = result.pass && result.issues.length === 0;
-  if (isPass) {
-    return { kind: "pass", summary: result.summary, issues: result.issues };
+function validateReopenedTaskIds(
+  reopenTaskIds: string[],
+  allowedTaskIds: Set<string> | null,
+): string | null {
+  if (!allowedTaskIds) return null;
+  const invalidTaskIds = reopenTaskIds.filter(
+    (taskId) => !allowedTaskIds.has(taskId),
+  );
+  if (invalidTaskIds.length === 0) {
+    return null;
   }
-  return { kind: "fail", summary: result.summary, issues: result.issues };
+  return `Validator output referenced tasks outside the context: ${invalidTaskIds.join(", ")}`;
 }
 
-/**
- * Extract and parse a validator outcome from agent text output.
- * Looks for the last ```json fenced block and parses it with the schema.
- * Returns an infra_error outcome when extraction, JSON parsing, or schema
- * validation fails.
- */
+function validateIssueTaskIds(
+  issues: WorkflowValidatorIssue[],
+  allowedTaskIds: Set<string> | null,
+): string | null {
+  if (!allowedTaskIds) return null;
+  const invalidTaskIds = issues
+    .map((issue) => issue.taskId)
+    .filter(
+      (taskId): taskId is string =>
+        typeof taskId === "string" && !allowedTaskIds.has(taskId),
+    );
+  if (invalidTaskIds.length === 0) {
+    return null;
+  }
+  return `Validator issues referenced tasks outside the context: ${invalidTaskIds.join(", ")}`;
+}
+
+function wireResultToOutcome(
+  result: {
+    pass: boolean;
+    summary: string;
+    issues: WorkflowValidatorIssue[];
+    reopenTaskIds: string[];
+  },
+  engine: "claude" | "codex",
+  allowedTaskIds: Set<string> | null,
+): ValidatorOutcome {
+  const invalidReopenTaskIds = validateReopenedTaskIds(
+    result.reopenTaskIds,
+    allowedTaskIds,
+  );
+  if (invalidReopenTaskIds) {
+    return {
+      kind: "infra_error",
+      reason: "schema_mismatch",
+      message: invalidReopenTaskIds,
+      engine,
+    };
+  }
+
+  const invalidIssueTaskIds = validateIssueTaskIds(
+    result.issues,
+    allowedTaskIds,
+  );
+  if (invalidIssueTaskIds) {
+    return {
+      kind: "infra_error",
+      reason: "schema_mismatch",
+      message: invalidIssueTaskIds,
+      engine,
+    };
+  }
+
+  if (result.pass) {
+    if (result.reopenTaskIds.length > 0 || result.issues.length > 0) {
+      return {
+        kind: "infra_error",
+        reason: "schema_mismatch",
+        message:
+          "Validator output marked pass=true but still reported issues or reopened tasks.",
+        engine,
+      };
+    }
+    return {
+      kind: "pass",
+      summary: result.summary,
+      issues: [],
+      reopenTaskIds: [],
+    };
+  }
+
+  if (result.reopenTaskIds.length === 0) {
+    return {
+      kind: "infra_error",
+      reason: "schema_mismatch",
+      message:
+        "Validator output marked pass=false but did not provide reopenTaskIds.",
+      engine,
+    };
+  }
+
+  return {
+    kind: "fail",
+    summary: result.summary,
+    issues: result.issues,
+    reopenTaskIds: result.reopenTaskIds,
+  };
+}
+
 export function extractValidatorResult(
   text: string,
   engine: "claude" | "codex",
+  allowedTaskIds?: string[],
 ): ValidatorOutcome {
   const jsonBlocks = [...text.matchAll(/```json\s*\n([\s\S]*?)```/g)];
   if (jsonBlocks.length === 0) {
@@ -192,7 +283,11 @@ export function extractValidatorResult(
     };
   }
 
-  return wireResultToOutcome(result.data);
+  return wireResultToOutcome(
+    result.data,
+    engine,
+    allowedTaskIds ? new Set(allowedTaskIds) : null,
+  );
 }
 
 export interface ParsedValidatorResponse {
@@ -204,48 +299,43 @@ export interface ParsedValidatorResponse {
     | "fenced_json_block_fallback";
 }
 
-/**
- * Parse a validator response, trying structured output first, then raw JSON,
- * then fenced ```json block extraction as a fallback.
- * Returns both the outcome and which parse path succeeded.
- */
 export function parseValidatorResponse(
   text: string,
   engine: "claude" | "codex",
   structuredOutput?: unknown,
+  allowedTaskIds?: string[],
 ): ParsedValidatorResponse {
-  // Path 1: structured output from SDK (both Claude and Codex)
+  const allowedTaskIdSet = allowedTaskIds ? new Set(allowedTaskIds) : null;
+
   if (structuredOutput != null) {
     const result =
       workflowAgentValidatorResultSchema.safeParse(structuredOutput);
-    if (result.success)
+    if (result.success) {
       return {
-        result: wireResultToOutcome(result.data),
+        result: wireResultToOutcome(result.data, engine, allowedTaskIdSet),
         parsePath: "structured_output",
       };
+    }
   }
 
-  // Path 2: raw JSON string (Codex outputSchema response)
   try {
     const parsed = JSON.parse(text);
     const result = workflowAgentValidatorResultSchema.safeParse(parsed);
-    if (result.success)
+    if (result.success) {
       return {
-        result: wireResultToOutcome(result.data),
+        result: wireResultToOutcome(result.data, engine, allowedTaskIdSet),
         parsePath: "raw_json",
       };
+    }
   } catch {
-    /* not raw JSON, try fenced block */
+    // Fall through to fenced JSON extraction.
   }
 
-  // Path 3: fenced ```json block (legacy fallback)
   return {
-    result: extractValidatorResult(text, engine),
+    result: extractValidatorResult(text, engine, allowedTaskIds),
     parsePath: "fenced_json_block",
   };
 }
-
-// -- Validator runner ---------------------------------------------------------
 
 export interface ValidatorExecutionMetadata {
   sessionRef: AgentSessionRef | null;
@@ -286,14 +376,10 @@ export interface ValidatorRunnerDeps {
     sessionName: string,
   ): Promise<string>;
   resolveTimeoutMs(validatorType: "claude" | "codex"): Promise<number>;
-  /** When provided, validator runs route through the continuity service for session reuse. */
   continuityService?: ValidatorContinuityService;
-  /** Required when continuityService is provided — persists updated lane state. */
   executionRepository?: ValidatorContinuityRepository;
 }
 
-// In-memory cache of backend session refs for task runner resume.
-// Keyed by "executionId:lane", stores the backendRef from the last task result.
 const backendRefCache = new Map<string, AgentSessionRef>();
 
 function refCacheKey(executionId: string, lane: string): string {
@@ -302,10 +388,6 @@ function refCacheKey(executionId: string, lane: string): string {
 
 const validatorLogger = createLogger("graph-workflow-validator");
 
-/**
- * Convert a continuity service resolve result to an AgentSessionRef for resume.
- * Returns null when no valid resume ref is available.
- */
 function resolvedCallToResumeRef(
   resolved: ResolvedValidatorCall,
   executionId: string,
@@ -316,18 +398,23 @@ function resolvedCallToResumeRef(
     return null;
   }
 
-  // Prefer cached backend ref from previous task runner result
   const cached = backendRefCache.get(refCacheKey(executionId, lane));
   if (cached) return cached;
 
-  // For Codex, the continuity service threadId maps directly to AgentSessionRef
   if (resolved.engine === "codex") {
     return { backend: "codex", threadId: resolved.threadId };
   }
 
-  // For Claude, the continuity service stores a CC conversationId which
-  // cannot be used as a Claude SDK sessionId for task runner resume
   return null;
+}
+
+function getContextTaskIds(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): string[] {
+  return execution.workingDefinition.tasks
+    .filter((task) => task.contextId === contextId)
+    .map((task) => task.id);
 }
 
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
@@ -372,17 +459,17 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     projectPath: string,
     sessionName: string,
     execution: GraphWorkflowExecution,
-    lane: "task_validator",
+    lane: "context_validator",
     validatorType: "claude" | "codex",
     prompt: string,
     modelId: string | undefined,
     reasoningEffort: string | undefined,
     contextLimitTokens: number | undefined,
+    allowedTaskIds: string[],
   ): Promise<ValidatorRunResult> {
     const contextId = execution.activeContextId ?? "";
     const execLogger = getExecutionLogger(execution.id);
     const runner = deps.getTaskRunner(validatorType);
-
     const worktreePath = await deps.resolveWorktreePath(
       projectPath,
       sessionName,
@@ -413,7 +500,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       >,
     };
 
-    // Codex-specific execution controls — explicit, not relying on runner defaults
     const codexSettings =
       validatorType === "codex"
         ? {
@@ -426,13 +512,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         : {};
 
     if (!deps.continuityService) {
-      // One-shot without lane tracking
       const taskResult = await runner.run({ ...baseRequest, ...codexSettings });
       const text = taskResult.text ?? "";
       const { result: parsed, parsePath } = parseValidatorResponse(
         text,
         validatorType,
         taskResult.structuredOutput,
+        allowedTaskIds,
       );
 
       execLogger?.validation(contextId, "validator.result_parsed", {
@@ -441,21 +527,9 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         parsePath,
         kind: parsed.kind,
         issueCount: parsed.kind === "infra_error" ? 0 : parsed.issues.length,
+        reopenTaskIds:
+          parsed.kind === "infra_error" ? [] : parsed.reopenTaskIds,
       });
-      if (parsed.kind === "infra_error") {
-        execLogger?.validation(contextId, "validator.infra_error", {
-          lane,
-          engine: validatorType,
-          reason: parsed.reason,
-          message: parsed.message,
-        });
-        validatorLogger.warn("graph-workflow.validator.infra_error", {
-          executionId: execution.id,
-          lane,
-          engine: validatorType,
-          reason: parsed.reason,
-        });
-      }
 
       return {
         result: parsed,
@@ -463,7 +537,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       };
     }
 
-    // With continuity service — resolve session action and resume ref
     const resolved = await deps.continuityService.resolveValidatorCall({
       execution,
       projectPath,
@@ -474,22 +547,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     });
 
     const resumeRef = resolvedCallToResumeRef(resolved, execution.id, lane);
-
-    validatorLogger.info("graph-workflow.validator.session_resolved", {
-      executionId: execution.id,
-      lane,
-      engine: validatorType,
-      sessionAction: resolved.sessionAction,
-      hasResumeRef: !!resumeRef,
-    });
-
     const taskResult = await runner.run({
       ...baseRequest,
       ...codexSettings,
       resumeRef,
     });
 
-    // Cache the backend ref for future resume
     if (taskResult.backendRef) {
       backendRefCache.set(
         refCacheKey(execution.id, lane),
@@ -502,23 +565,9 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       text,
       validatorType,
       taskResult.structuredOutput,
+      allowedTaskIds,
     );
-    if (parsed.kind === "infra_error") {
-      execLogger?.validation(contextId, "validator.infra_error", {
-        lane,
-        engine: validatorType,
-        reason: parsed.reason,
-        message: parsed.message,
-      });
-      validatorLogger.warn("graph-workflow.validator.infra_error", {
-        executionId: execution.id,
-        lane,
-        engine: validatorType,
-        reason: parsed.reason,
-      });
-    }
 
-    // Record outcome with the continuity service for rotation tracking
     if (validatorType === "codex") {
       const newThreadId =
         taskResult.backendRef?.backend === "codex"
@@ -561,17 +610,16 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         parsePath,
         kind: parsed.kind,
         issueCount: parsed.kind === "infra_error" ? 0 : parsed.issues.length,
-        summary:
-          parsed.kind === "infra_error" ? parsed.message : parsed.summary,
+        reopenTaskIds:
+          parsed.kind === "infra_error" ? [] : parsed.reopenTaskIds,
         sessionAction: resolved.sessionAction,
         threadId: codexThreadId,
-        usage,
       });
-      execLogger?.writeValidatorResponse(
-        contextId,
-        `${lane}-codex-response.json`,
-        { raw: text, parsed, parsePath },
-      );
+      execLogger?.writeValidatorResponse(contextId, "context-validator.json", {
+        raw: text,
+        parsed,
+        parsePath,
+      });
 
       return {
         result: parsed,
@@ -584,7 +632,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       };
     }
 
-    // Claude path
     const updatedExecution = deps.continuityService.recordClaudeTurnOutcome({
       execution: resolved.execution,
       lane,
@@ -614,15 +661,15 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       parsePath,
       kind: parsed.kind,
       issueCount: parsed.kind === "infra_error" ? 0 : parsed.issues.length,
-      summary: parsed.kind === "infra_error" ? parsed.message : parsed.summary,
+      reopenTaskIds: parsed.kind === "infra_error" ? [] : parsed.reopenTaskIds,
       sessionAction: resolved.sessionAction,
       backendSessionId: backendSessionId || null,
     });
-    execLogger?.writeValidatorResponse(
-      contextId,
-      `${lane}-claude-response.json`,
-      { raw: text, parsed, parsePath },
-    );
+    execLogger?.writeValidatorResponse(contextId, "context-validator.json", {
+      raw: text,
+      parsed,
+      parsePath,
+    });
 
     return {
       result: parsed,
@@ -635,89 +682,78 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     };
   }
 
-  async function runTaskValidator(
-    input: GraphWorkflowTaskValidatorInput,
+  async function runContextValidator(
+    input: GraphWorkflowContextValidatorInput,
   ): Promise<ValidatorRunResult> {
-    const contextTasks = input.execution.workingDefinition.tasks.filter(
-      (t) => t.contextId === input.context.id,
-    );
+    const contextTasks = input.execution.workingDefinition.tasks
+      .filter((task) => task.contextId === input.context.id)
+      .sort((left, right) => left.order - right.order);
 
-    const prompt = buildTaskValidationPrompt({
+    const prompt = buildContextValidationPrompt({
       context: input.context,
-      task: input.task,
       tasks: contextTasks,
-      summary: input.summary,
+      taskStates: input.execution.taskStates,
       validator: input.validator,
     });
 
     const execLogger = getExecutionLogger(input.execution.id);
-    execLogger?.writePrompt(
-      input.context.id,
-      `task-validation-${input.task.id}.md`,
-      prompt,
-    );
-    execLogger?.validation(input.context.id, "task_validator.started", {
-      taskId: input.task.id,
+    execLogger?.writePrompt(input.context.id, "context-validator.md", prompt);
+    execLogger?.validation(input.context.id, "context_validator.started", {
       engine: input.validator.type,
       promptLength: prompt.length,
+      taskCount: contextTasks.length,
     });
 
     const contextLimitTokens = input.validator.continuity.contextLimitTokens;
+    const allowedTaskIds = getContextTaskIds(input.execution, input.context.id);
 
     try {
       if (input.validator.type === "codex") {
-        const validator = input.validator;
         return await runValidatorTurn(
           input.projectPath,
           input.sessionName,
           input.execution,
-          "task_validator",
+          "context_validator",
           "codex",
           prompt,
-          validator.codex.model,
-          validator.codex.reasoningEffort,
+          input.validator.codex.model,
+          input.validator.codex.reasoningEffort,
           contextLimitTokens,
+          allowedTaskIds,
         );
       }
 
-      const validator = input.validator;
       return await runValidatorTurn(
         input.projectPath,
         input.sessionName,
         input.execution,
-        "task_validator",
+        "context_validator",
         "claude",
         prompt,
-        validator.agent.model,
-        validator.agent.reasoningEffort,
+        input.validator.agent.model,
+        input.validator.agent.reasoningEffort,
         contextLimitTokens,
+        allowedTaskIds,
       );
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      execLogger?.validation(input.context.id, "task_validator.error", {
-        taskId: input.task.id,
+      execLogger?.validation(input.context.id, "context_validator.error", {
         engine: input.validator.type,
         error: errorMessage,
       });
       execLogger?.validation(input.context.id, "validator.infra_error", {
-        lane: "task_validator",
+        lane: "context_validator",
         engine: input.validator.type,
         reason: "exception",
         message: errorMessage,
       });
-      validatorLogger.error("graph-workflow.task_validator.error", {
+      validatorLogger.error("graph-workflow.context_validator.error", {
         executionId: input.execution.id,
         contextId: input.context.id,
-        taskId: input.task.id,
         error: errorMessage,
       });
-      validatorLogger.warn("graph-workflow.validator.infra_error", {
-        executionId: input.execution.id,
-        lane: "task_validator",
-        engine: input.validator.type,
-        reason: "exception",
-      });
+
       return {
         result: {
           kind: "infra_error",
@@ -730,5 +766,5 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     }
   }
 
-  return { runTaskValidator };
+  return { runContextValidator };
 }

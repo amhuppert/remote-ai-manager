@@ -142,14 +142,14 @@ describe("workflow-graph validation", () => {
     );
   });
 
-  it("rejects empty validator instructions when validator is enabled", () => {
+  it("rejects empty acceptance criteria when context validator is enabled", () => {
     const base = createWorkflowDefinition();
     const definition = createWorkflowDefinition({
       executionContexts: base.executionContexts.map((ctx) =>
         ctx.id === "context-plan"
           ? {
               ...ctx,
-              taskValidation: {
+              contextValidation: {
                 type: "claude",
                 enabled: true,
                 continuity: { enabled: true },
@@ -158,7 +158,7 @@ describe("workflow-graph validation", () => {
                   model: "sonnet",
                   reasoningEffort: "medium",
                 },
-                instructions: "",
+                acceptanceCriteria: "",
               },
             }
           : ctx,
@@ -168,18 +168,20 @@ describe("workflow-graph validation", () => {
     const result = validateWorkflowDefinition(definition);
     expect(result.ok).toBe(false);
     expect(
-      result.errors.some((e) => e.code === "empty-task-validator-instructions"),
+      result.errors.some(
+        (e) => e.code === "empty-context-validator-acceptance-criteria",
+      ),
     ).toBe(true);
   });
 
-  it("accepts empty validator instructions when validator is disabled", () => {
+  it("accepts empty acceptance criteria when context validator is disabled", () => {
     const base = createWorkflowDefinition();
     const definition = createWorkflowDefinition({
       executionContexts: base.executionContexts.map((ctx) =>
         ctx.id === "context-plan"
           ? {
               ...ctx,
-              taskValidation: {
+              contextValidation: {
                 type: "claude",
                 enabled: false,
                 continuity: { enabled: true },
@@ -188,7 +190,7 @@ describe("workflow-graph validation", () => {
                   model: "sonnet",
                   reasoningEffort: "medium",
                 },
-                instructions: "",
+                acceptanceCriteria: "",
               },
             }
           : ctx,
@@ -197,7 +199,9 @@ describe("workflow-graph validation", () => {
 
     const result = validateWorkflowDefinition(definition);
     expect(
-      result.errors.some((e) => e.code === "empty-task-validator-instructions"),
+      result.errors.some(
+        (e) => e.code === "empty-context-validator-acceptance-criteria",
+      ),
     ).toBe(false);
   });
 

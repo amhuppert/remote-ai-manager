@@ -31,13 +31,14 @@ interface PublishValidationResultInput {
   pass: boolean;
   summary: string;
   issues?: WorkflowValidatorIssue[];
+  reopenTaskIds?: string[];
   sessionRef?: AgentSessionRef | null;
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 
 /**
  * Convert an AgentSessionRef to a GraphWorkflowExecutionSessionRef for event persistence.
- * The lane is set to "task_validator" since validation events are the only consumer.
+ * The lane is set to "context_validator" since validation events are the only consumer.
  */
 function toExecutionSessionRef(
   ref: AgentSessionRef | null | undefined,
@@ -46,11 +47,11 @@ function toExecutionSessionRef(
   if (ref.backend === "claude") {
     return {
       engine: "claude",
-      lane: "task_validator",
+      lane: "context_validator",
       conversationId: ref.sessionId,
     };
   }
-  return { engine: "codex", lane: "task_validator", threadId: ref.threadId };
+  return { engine: "codex", lane: "context_validator", threadId: ref.threadId };
 }
 
 export interface GraphWorkflowPushInfo {
@@ -345,6 +346,7 @@ export function createGraphWorkflowExecutionEventPublisher(
       pass: input.pass,
       summary: input.summary,
       issues: input.issues ?? [],
+      reopenTaskIds: input.reopenTaskIds ?? [],
       sessionRef: toExecutionSessionRef(input.sessionRef),
       reviewArtifact: input.reviewArtifact ?? null,
     };

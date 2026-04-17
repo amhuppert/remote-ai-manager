@@ -101,7 +101,7 @@ export default function GraphWorkflowPanel({
         (ctx) => ctx.id === contextId,
       );
       const label =
-        lane === "task_validator" ? "Task Validator" : "Context Validator";
+        lane === "context_validator" ? "Context Validator" : "Implementer";
       setViewingConversation({
         conversationId,
         contextTitle: contextDef?.title ?? contextId,

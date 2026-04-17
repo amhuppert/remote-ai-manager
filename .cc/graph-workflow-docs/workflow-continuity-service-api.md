@@ -57,7 +57,7 @@ Decision flow:
 6. Otherwise → reuse existing conversation
 
 ### resolveValidatorCall(input)
-Decides reuse or fresh for `task_validator` or `context_validator` lanes. Reads continuity policy from the execution context definition (not hardcoded).
+Decides reuse or fresh for the `context_validator` lane. Reads continuity policy from the execution context definition (not hardcoded).
 
 ```typescript
 input: {
@@ -65,7 +65,7 @@ input: {
   projectPath: string;
   sessionName: string;
   contextId: string;
-  lane: "task_validator" | "context_validator";
+  lane: "context_validator";
   engine: "claude" | "codex";
 }
 returns: Promise<
@@ -75,8 +75,7 @@ returns: Promise<
 ```
 
 Policy source:
-- `task_validator` → `ctx.taskValidation?.continuity.enabled` (defaults to `true`)
-- `context_validator` → `ctx.contextValidation?.agentValidator?.continuity.enabled` (defaults to `true`)
+- `context_validator` → `ctx.contextValidation?.continuity.enabled` (defaults to `true`)
 
 Claude stale recovery: if `getConversation()` returns null for a stored conversation ID, falls back to fresh.
 Codex resume failures fall back to `startCodexThread` (logs warn + recovers).
@@ -129,7 +128,7 @@ clearForNewContext(
 ## Lane State Schema
 
 Stored in `execution.laneStates` as `Record<string, GraphWorkflowLaneState>`.
-Keys are `GraphWorkflowLaneKind` values: `"implementer"`, `"task_validator"`, `"context_validator"`.
+Keys are `GraphWorkflowLaneKind` values: `"implementer"`, `"context_validator"`.
 
 Each value is a `GraphWorkflowLaneState` discriminated by `engine: "claude" | "codex"`.
 

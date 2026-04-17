@@ -31,10 +31,11 @@ function makeValidationEvent(
     sessionName: "session-1",
     executionId: "execution-1",
     contextId: "context-plan",
-    validatorType: "task",
+    validatorType: "context",
     pass: true,
     summary: "All good",
     issues: [],
+    reopenTaskIds: [],
     ...overrides,
   };
 }
@@ -56,7 +57,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
         summary: "All 23 tests passed via `bunx vitest run`",
         sessionRef: {
           engine: "claude",
-          lane: "task_validator",
+          lane: "context_validator",
           conversationId: "conv-md",
         },
       }),
@@ -86,7 +87,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
         ],
         sessionRef: {
           engine: "claude",
-          lane: "task_validator",
+          lane: "context_validator",
           conversationId: "conv-md-2",
         },
       }),
@@ -105,12 +106,12 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
 });
 
 describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", () => {
-  it("renders Task badge for task_validator lane", () => {
+  it("renders Context badge for context_validator lane", () => {
     const execution = makeExecutionWithHistory([
       makeValidationEvent({
         sessionRef: {
           engine: "claude",
-          lane: "task_validator",
+          lane: "context_validator",
           conversationId: "conv-1",
         },
       }),
@@ -124,7 +125,7 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
       />,
     );
 
-    expect(screen.getByText("Task")).toBeInTheDocument();
+    expect(screen.getByText("Context")).toBeInTheDocument();
   });
 
   it("renders engine badge showing claude", () => {
@@ -132,7 +133,7 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
       makeValidationEvent({
         sessionRef: {
           engine: "claude",
-          lane: "task_validator",
+          lane: "context_validator",
           conversationId: "conv-1",
         },
       }),
@@ -160,7 +161,7 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
         },
         sessionRef: {
           engine: "codex",
-          lane: "task_validator",
+          lane: "context_validator",
           threadId: "thread-xyz",
         },
       }),
@@ -185,7 +186,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
       makeValidationEvent({
         sessionRef: {
           engine: "claude",
-          lane: "task_validator",
+          lane: "context_validator",
           conversationId: "conv-abc",
         },
       }),
@@ -212,7 +213,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
         contextId: "context-plan",
         sessionRef: {
           engine: "claude",
-          lane: "task_validator",
+          lane: "context_validator",
           conversationId: "conv-abc",
         },
       }),
@@ -231,7 +232,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
 
     expect(onViewConversation).toHaveBeenCalledWith(
       "conv-abc",
-      "task_validator",
+      "context_validator",
       "context-plan",
     );
   });
@@ -241,7 +242,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
       makeValidationEvent({
         sessionRef: {
           engine: "claude",
-          lane: "task_validator",
+          lane: "context_validator",
           conversationId: "conv-abc",
         },
       }),
@@ -273,7 +274,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
         },
         sessionRef: {
           engine: "codex",
-          lane: "task_validator",
+          lane: "context_validator",
           threadId: "thread-codex-99",
         },
       }),
@@ -301,7 +302,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
         },
         sessionRef: {
           engine: "codex",
-          lane: "task_validator",
+          lane: "context_validator",
           threadId: "thread-1",
         },
       }),
@@ -334,7 +335,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
         },
         sessionRef: {
           engine: "codex",
-          lane: "task_validator",
+          lane: "context_validator",
           threadId: "thread-json-1",
         },
       }),
@@ -381,7 +382,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
         },
         sessionRef: {
           engine: "codex",
-          lane: "task_validator",
+          lane: "context_validator",
           threadId: "thread-json-2",
         },
       }),
@@ -414,7 +415,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
         },
         sessionRef: {
           engine: "codex",
-          lane: "task_validator",
+          lane: "context_validator",
           threadId: "thread-plain",
         },
       }),
@@ -440,14 +441,14 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
     const olderEvent = makeValidationEvent({
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: "conv-shared",
       },
     });
     const newerEvent = makeValidationEvent({
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: "conv-shared",
       },
     });
@@ -473,14 +474,14 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
     const firstEvent = makeValidationEvent({
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: "conv-1",
       },
     });
     const secondEvent = makeValidationEvent({
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: "conv-2",
       },
     });
@@ -509,7 +510,7 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
       contextId: "context-plan",
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: sharedConvId,
       },
     });
@@ -517,7 +518,7 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
       contextId: "context-plan",
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: sharedConvId,
       },
     });
@@ -544,11 +545,39 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
     fireEvent.click(buttons[0]!);
     expect(onViewConversation).toHaveBeenCalledWith(
       sharedConvId,
-      "task_validator",
+      "context_validator",
       "context-plan",
     );
     fireEvent.click(buttons[1]!);
     expect(onViewConversation).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("ExecutionInspectorPanel — reopened tasks", () => {
+  it("renders reopened task ids for failed context validation", () => {
+    const execution = makeExecutionWithHistory([
+      makeValidationEvent({
+        pass: false,
+        reopenTaskIds: ["task-plan-1", "task-implement-1"],
+        sessionRef: {
+          engine: "claude",
+          lane: "context_validator",
+          conversationId: "conv-reopen",
+        },
+      }),
+    ]);
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByText("Reopened Tasks (2)")).toBeInTheDocument();
+    expect(screen.getByText("task-plan-1")).toBeInTheDocument();
+    expect(screen.getByText("task-implement-1")).toBeInTheDocument();
   });
 });
 

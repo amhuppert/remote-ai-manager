@@ -46,7 +46,7 @@ type InspectorTab = "config" | "tasks";
 const DEFAULT_SECTION_IDS = [
   "title-description",
   "implementation-agent",
-  "task-validation",
+  "context-validation",
   "circuit-breaker",
   "iteration-policy",
   "mutability",
@@ -62,7 +62,7 @@ function sortTasks(
 function countEnabledValidators(
   context: GraphWorkflowExecutionContextDefinition,
 ): number {
-  return [context.taskValidation?.enabled].filter(Boolean).length;
+  return [context.contextValidation?.enabled].filter(Boolean).length;
 }
 
 /**
@@ -96,11 +96,11 @@ function resolveAgentConfigForBackend(
   };
 }
 
-function createDefaultTaskValidation(
+function createDefaultContextValidation(
   defaultConfig: GraphWorkflowAgentConfig,
   validatorType: "claude" | "codex" = "claude",
   codexCfg?: CodexConfig,
-): NonNullable<GraphWorkflowExecutionContextDefinition["taskValidation"]> {
+): NonNullable<GraphWorkflowExecutionContextDefinition["contextValidation"]> {
   if (validatorType === "codex") {
     const modelResult = codexModelSchema.safeParse(codexCfg?.model);
     const effortResult = codexReasoningEffortSchema.safeParse(
@@ -113,7 +113,7 @@ function createDefaultTaskValidation(
         model: modelResult.success ? modelResult.data : undefined,
         reasoningEffort: effortResult.success ? effortResult.data : undefined,
       },
-      instructions: "",
+      acceptanceCriteria: "",
       continuity: { enabled: true },
     };
   }
@@ -128,7 +128,7 @@ function createDefaultTaskValidation(
       model: claudeModel,
       reasoningEffort: "medium",
     },
-    instructions: "",
+    acceptanceCriteria: "",
     continuity: { enabled: true },
   };
 }
@@ -525,7 +525,7 @@ export default function WorkflowInspectorPanel({
             {draftDefinition.executionContexts.length > 0 ? (
               draftDefinition.executionContexts.map((context) => {
                 const badges = [
-                  context.taskValidation?.enabled ? "Task" : null,
+                  context.contextValidation?.enabled ? "Context" : null,
                 ].filter((value): value is string => value !== null);
 
                 return (
@@ -596,9 +596,9 @@ export default function WorkflowInspectorPanel({
     );
   }
 
-  const taskValidation =
-    selectedContext.taskValidation ??
-    createDefaultTaskValidation(defaultImplementerConfig);
+  const contextValidation =
+    selectedContext.contextValidation ??
+    createDefaultContextValidation(defaultImplementerConfig);
 
   return (
     <aside className="wb-inspector">
@@ -826,22 +826,23 @@ export default function WorkflowInspectorPanel({
             )}
 
             {renderSection(
-              "task-validation",
-              "Task Validation",
+              "context-validation",
+              "Context Validation",
               <>
                 <div className="wb-inline-field">
                   <span className="wb-inline-field-label">Enabled</span>
                   <div
-                    className={`wb-toggle${taskValidation.enabled ? " on" : ""}`}
+                    className={`wb-toggle${contextValidation.enabled ? " on" : ""}`}
                     onClick={() =>
                       applyContextUpdate({
-                        taskValidation: selectedContext.taskValidation
+                        contextValidation: selectedContext.contextValidation
                           ? {
-                              ...selectedContext.taskValidation,
-                              enabled: !selectedContext.taskValidation.enabled,
+                              ...selectedContext.contextValidation,
+                              enabled:
+                                !selectedContext.contextValidation.enabled,
                             }
                           : {
-                              ...createDefaultTaskValidation(
+                              ...createDefaultContextValidation(
                                 defaultImplementerConfig,
                               ),
                               enabled: true,
@@ -854,14 +855,14 @@ export default function WorkflowInspectorPanel({
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         applyContextUpdate({
-                          taskValidation: selectedContext.taskValidation
+                          contextValidation: selectedContext.contextValidation
                             ? {
-                                ...selectedContext.taskValidation,
+                                ...selectedContext.contextValidation,
                                 enabled:
-                                  !selectedContext.taskValidation.enabled,
+                                  !selectedContext.contextValidation.enabled,
                               }
                             : {
-                                ...createDefaultTaskValidation(
+                                ...createDefaultContextValidation(
                                   defaultImplementerConfig,
                                 ),
                                 enabled: true,
@@ -874,31 +875,31 @@ export default function WorkflowInspectorPanel({
                 {(() => {
                   const instrError = findFieldError(
                     validationErrors,
-                    "empty-task-validator-instructions",
+                    "empty-context-validator-acceptance-criteria",
                     selectedContext.id,
                   );
                   return (
                     <div className="wb-field">
                       <label
                         className="wb-field-label"
-                        htmlFor="workflow-task-validation-instructions"
+                        htmlFor="workflow-context-validation-acceptance-criteria"
                       >
-                        Instructions{" "}
-                        {taskValidation.enabled && <RequiredMark />}
+                        Acceptance Criteria{" "}
+                        {contextValidation.enabled && <RequiredMark />}
                       </label>
                       <textarea
                         className={instrError ? "invalid" : undefined}
-                        disabled={!taskValidation.enabled}
-                        id="workflow-task-validation-instructions"
+                        disabled={!contextValidation.enabled}
+                        id="workflow-context-validation-acceptance-criteria"
                         onChange={(event) =>
                           applyContextUpdate({
-                            taskValidation: {
-                              ...taskValidation,
-                              instructions: event.target.value,
+                            contextValidation: {
+                              ...contextValidation,
+                              acceptanceCriteria: event.target.value,
                             },
                           })
                         }
-                        value={taskValidation.instructions}
+                        value={contextValidation.acceptanceCriteria}
                       />
                       <FieldError error={instrError} />
                     </div>
@@ -907,16 +908,16 @@ export default function WorkflowInspectorPanel({
                 <div className="wb-subsection-label">Validator Agent</div>
                 <BackendTypeSelector
                   label="Validator Type"
-                  value={taskValidation.type ?? "claude"}
+                  value={contextValidation.type ?? "claude"}
                   onChange={(type) => {
                     const preserved = {
-                      enabled: taskValidation.enabled,
-                      instructions: taskValidation.instructions,
+                      enabled: contextValidation.enabled,
+                      acceptanceCriteria: contextValidation.acceptanceCriteria,
                     };
                     if (type === "codex") {
                       applyContextUpdate({
-                        taskValidation: {
-                          ...createDefaultTaskValidation(
+                        contextValidation: {
+                          ...createDefaultContextValidation(
                             defaultImplementerConfig,
                             "codex",
                             codexConfig,
@@ -926,8 +927,8 @@ export default function WorkflowInspectorPanel({
                       });
                     } else {
                       applyContextUpdate({
-                        taskValidation: {
-                          ...createDefaultTaskValidation(
+                        contextValidation: {
+                          ...createDefaultContextValidation(
                             defaultImplementerConfig,
                             "claude",
                           ),
@@ -937,17 +938,17 @@ export default function WorkflowInspectorPanel({
                     }
                   }}
                   codexEnabled={codexEnabled}
-                  disabled={!taskValidation.enabled}
+                  disabled={!contextValidation.enabled}
                 />
-                {taskValidation.type === "codex" ? (
+                {contextValidation.type === "codex" ? (
                   <CodexAgentFields
                     model={
-                      (taskValidation as { codex?: { model?: string } }).codex
-                        ?.model
+                      (contextValidation as { codex?: { model?: string } })
+                        .codex?.model
                     }
                     reasoningEffort={
                       (
-                        taskValidation as {
+                        contextValidation as {
                           codex?: { reasoningEffort?: CodexReasoningEffort };
                         }
                       ).codex?.reasoningEffort
@@ -956,14 +957,14 @@ export default function WorkflowInspectorPanel({
                     defaultReasoningEffort={
                       codexConfig?.reasoningEffort ?? "high"
                     }
-                    disabled={!taskValidation.enabled}
+                    disabled={!contextValidation.enabled}
                     onModelChange={(model) =>
                       applyContextUpdate({
-                        taskValidation: {
-                          ...taskValidation,
+                        contextValidation: {
+                          ...contextValidation,
                           codex: {
                             ...(
-                              taskValidation as {
+                              contextValidation as {
                                 codex?: Record<string, unknown>;
                               }
                             ).codex,
@@ -974,11 +975,11 @@ export default function WorkflowInspectorPanel({
                     }
                     onReasoningChange={(effort) =>
                       applyContextUpdate({
-                        taskValidation: {
-                          ...taskValidation,
+                        contextValidation: {
+                          ...contextValidation,
                           codex: {
                             ...(
-                              taskValidation as {
+                              contextValidation as {
                                 codex?: Record<string, unknown>;
                               }
                             ).codex,
@@ -991,22 +992,27 @@ export default function WorkflowInspectorPanel({
                 ) : (
                   <AgentConfigFields
                     model={
-                      (taskValidation as { agent: { model: string } }).agent
+                      (contextValidation as { agent: { model: string } }).agent
                         .model as ModelId
                     }
                     reasoningEffort={
-                      (taskValidation as { agent: { reasoningEffort: string } })
-                        .agent.reasoningEffort as EffortLevel
+                      (
+                        contextValidation as {
+                          agent: { reasoningEffort: string };
+                        }
+                      ).agent.reasoningEffort as EffortLevel
                     }
-                    disabled={!taskValidation.enabled}
+                    disabled={!contextValidation.enabled}
                     onModelChange={(model) => {
                       const currentEffort = (
-                        taskValidation as { agent: { reasoningEffort: string } }
+                        contextValidation as {
+                          agent: { reasoningEffort: string };
+                        }
                       ).agent.reasoningEffort as EffortLevel;
                       const clamped = clampEffortToModel(currentEffort, model);
                       applyContextUpdate({
-                        taskValidation: {
-                          ...taskValidation,
+                        contextValidation: {
+                          ...contextValidation,
                           agent: {
                             backend: "claude" as const,
                             model,
@@ -1016,13 +1022,13 @@ export default function WorkflowInspectorPanel({
                       });
                     }}
                     onReasoningChange={(effort) => {
-                      const tv = taskValidation as {
+                      const tv = contextValidation as {
                         type: "claude";
                         agent: { model: ModelId; reasoningEffort: EffortLevel };
                       };
                       applyContextUpdate({
-                        taskValidation: {
-                          ...taskValidation,
+                        contextValidation: {
+                          ...contextValidation,
                           agent: {
                             ...tv.agent,
                             backend: "claude" as const,
@@ -1037,14 +1043,14 @@ export default function WorkflowInspectorPanel({
                 <div className="wb-inline-field">
                   <span className="wb-inline-field-label">Enabled</span>
                   <div
-                    className={`wb-toggle${taskValidation.continuity.enabled ? " on" : ""}`}
+                    className={`wb-toggle${contextValidation.continuity.enabled ? " on" : ""}`}
                     onClick={() =>
                       applyContextUpdate({
-                        taskValidation: {
-                          ...taskValidation,
+                        contextValidation: {
+                          ...contextValidation,
                           continuity: {
-                            ...taskValidation.continuity,
-                            enabled: !taskValidation.continuity.enabled,
+                            ...contextValidation.continuity,
+                            enabled: !contextValidation.continuity.enabled,
                           },
                         },
                       })
@@ -1055,11 +1061,11 @@ export default function WorkflowInspectorPanel({
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         applyContextUpdate({
-                          taskValidation: {
-                            ...taskValidation,
+                          contextValidation: {
+                            ...contextValidation,
                             continuity: {
-                              ...taskValidation.continuity,
-                              enabled: !taskValidation.continuity.enabled,
+                              ...contextValidation.continuity,
+                              enabled: !contextValidation.continuity.enabled,
                             },
                           },
                         });
@@ -1075,10 +1081,10 @@ export default function WorkflowInspectorPanel({
                     min={1}
                     onChange={(event) =>
                       applyContextUpdate({
-                        taskValidation: {
-                          ...taskValidation,
+                        contextValidation: {
+                          ...contextValidation,
                           continuity: {
-                            ...taskValidation.continuity,
+                            ...contextValidation.continuity,
                             contextLimitTokens: getOptionalPositiveNumber(
                               event.target.value,
                             ),
@@ -1087,7 +1093,9 @@ export default function WorkflowInspectorPanel({
                       })
                     }
                     type="number"
-                    value={taskValidation.continuity.contextLimitTokens ?? ""}
+                    value={
+                      contextValidation.continuity.contextLimitTokens ?? ""
+                    }
                   />
                 </div>
               </>,

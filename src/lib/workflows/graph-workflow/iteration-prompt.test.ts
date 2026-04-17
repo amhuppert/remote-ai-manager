@@ -69,6 +69,36 @@ function makeTaskState(
   };
 }
 
+function makeLatestContextValidationFailure() {
+  return {
+    summary: "Validation failed because rollback notes are missing.",
+    reopenedTasks: [
+      { taskId: "task-plan-2", title: "Write plan" },
+      { taskId: "task-plan-3", title: "Add rollout checklist" },
+    ],
+    groupedIssues: [
+      {
+        heading: "Task `task-plan-2` - Write plan",
+        issues: [
+          {
+            title: "Missing rollback notes",
+            description: "Add rollback guidance to the plan.",
+          },
+        ],
+      },
+      {
+        heading: "General Issues",
+        issues: [
+          {
+            title: "Incomplete validation",
+            description: "Verify the rollout checklist against the runbook.",
+          },
+        ],
+      },
+    ],
+  };
+}
+
 describe("buildIterationPrompt", () => {
   it("includes execution context title and goal", () => {
     const prompt = buildIterationPrompt({
@@ -307,18 +337,18 @@ describe("buildIterationPrompt", () => {
     expect(prompt).not.toContain("Your Active Task");
   });
 
-  it("includes validation criteria when taskValidationInstructions is provided", () => {
+  it("includes acceptance criteria when contextValidationAcceptanceCriteria is provided", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
       taskStates: {},
       sharedDocuments: [],
       allowAgentTaskAdd: false,
-      taskValidationInstructions:
+      contextValidationAcceptanceCriteria:
         "Verify test coverage exists and all tests pass.",
     });
 
-    expect(prompt).toContain("Validation Criteria");
+    expect(prompt).toContain("Acceptance Criteria");
     expect(prompt).toContain("Verify test coverage exists and all tests pass.");
   });
 
@@ -332,6 +362,26 @@ describe("buildIterationPrompt", () => {
     });
 
     expect(prompt).not.toContain("Validation Criteria");
+  });
+
+  it("includes the latest failed context validation summary, reopened tasks, and grouped issues", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      latestContextValidationFailure: makeLatestContextValidationFailure(),
+    });
+
+    expect(prompt).toContain("Latest Context Validation Failure");
+    expect(prompt).toContain(
+      "Validation failed because rollback notes are missing.",
+    );
+    expect(prompt).toContain("`task-plan-2` - Write plan");
+    expect(prompt).toContain("Task `task-plan-2` - Write plan");
+    expect(prompt).toContain("Missing rollback notes");
+    expect(prompt).toContain("General Issues");
   });
 });
 
@@ -417,5 +467,21 @@ describe("buildFollowUpPrompt", () => {
 
     expect(prompt).toContain("Previous Attempt Failed");
     expect(prompt).toContain("Previous patch missed regression coverage.");
+  });
+
+  it("includes latest failed context validation feedback during follow-up prompts", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask({ id: "task-plan-2", title: "Write plan" })],
+      taskStates: {
+        "task-plan-2": makeTaskState({ taskId: "task-plan-2" }),
+      },
+      attemptNumber: 1,
+      maxAttempts: 2,
+      latestContextValidationFailure: makeLatestContextValidationFailure(),
+    });
+
+    expect(prompt).toContain("Latest Context Validation Failure");
+    expect(prompt).toContain("`task-plan-2` - Write plan");
+    expect(prompt).toContain("Missing rollback notes");
   });
 });

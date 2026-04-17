@@ -579,7 +579,7 @@ describe("resolveValidatorCall", () => {
       projectPath: "/proj",
       sessionName: "sess",
       contextId: "ctx-1",
-      lane: "task_validator",
+      lane: "context_validator",
       engine: "claude",
     });
 
@@ -592,8 +592,8 @@ describe("resolveValidatorCall", () => {
     if (result.engine === "claude") {
       expect(result.conversationId).toBe("conv-new");
     }
-    expect(result.execution.laneStates["task_validator"]?.lane).toBe(
-      "task_validator",
+    expect(result.execution.laneStates["context_validator"]?.lane).toBe(
+      "context_validator",
     );
   });
 
@@ -603,11 +603,11 @@ describe("resolveValidatorCall", () => {
 
     const existingLane: GraphWorkflowLaneState = {
       engine: "claude",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: "conv-val",
       },
       lastContextTokens: null,
@@ -618,7 +618,7 @@ describe("resolveValidatorCall", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { task_validator: existingLane },
+      laneStates: { context_validator: existingLane },
     });
 
     const result = await svc.resolveValidatorCall({
@@ -626,7 +626,7 @@ describe("resolveValidatorCall", () => {
       projectPath: "/proj",
       sessionName: "sess",
       contextId: "ctx-1",
-      lane: "task_validator",
+      lane: "context_validator",
       engine: "claude",
     });
 
@@ -648,7 +648,7 @@ describe("resolveValidatorCall", () => {
       projectPath: "/proj",
       sessionName: "sess",
       contextId: "ctx-1",
-      lane: "task_validator",
+      lane: "context_validator",
       engine: "codex",
     });
 
@@ -666,11 +666,11 @@ describe("resolveValidatorCall", () => {
 
     const existingLane: GraphWorkflowLaneState = {
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "codex",
-        lane: "task_validator",
+        lane: "context_validator",
         threadId: "thread-existing",
       },
       lastTurnUsage: null,
@@ -680,7 +680,7 @@ describe("resolveValidatorCall", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { task_validator: existingLane },
+      laneStates: { context_validator: existingLane },
     });
 
     const result = await svc.resolveValidatorCall({
@@ -688,7 +688,7 @@ describe("resolveValidatorCall", () => {
       projectPath: "/proj",
       sessionName: "sess",
       contextId: "ctx-1",
-      lane: "task_validator",
+      lane: "context_validator",
       engine: "codex",
     });
 
@@ -700,26 +700,26 @@ describe("resolveValidatorCall", () => {
     }
   });
 
-  it("creates fresh session when task_validator continuity is disabled", async () => {
+  it("creates fresh session when context_validator continuity is disabled", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
     const definition = makeDefinition();
-    definition.executionContexts[0]!.taskValidation = {
+    definition.executionContexts[0]!.contextValidation = {
       type: "claude",
       enabled: true,
       continuity: { enabled: false },
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
-      instructions: "Validate.",
+      acceptanceCriteria: "Validate.",
     };
 
     const existingLane: GraphWorkflowLaneState = {
       engine: "claude",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: "conv-existing-val",
       },
       lastContextTokens: null,
@@ -731,7 +731,7 @@ describe("resolveValidatorCall", () => {
 
     const execution = makeExecution({
       workingDefinition: definition,
-      laneStates: { task_validator: existingLane },
+      laneStates: { context_validator: existingLane },
     });
 
     const result = await svc.resolveValidatorCall({
@@ -739,7 +739,7 @@ describe("resolveValidatorCall", () => {
       projectPath: "/proj",
       sessionName: "sess",
       contextId: "ctx-1",
-      lane: "task_validator",
+      lane: "context_validator",
       engine: "claude",
     });
 
@@ -769,7 +769,7 @@ describe("resolveValidatorCall", () => {
       projectPath: "/proj",
       sessionName: "sess",
       contextId: "ctx-1",
-      lane: "task_validator",
+      lane: "context_validator",
       engine: "claude",
     });
 
@@ -780,7 +780,7 @@ describe("resolveValidatorCall", () => {
     expect(valResult.execution.laneStates["implementer"]?.engine).toBe(
       "claude",
     );
-    expect(valResult.execution.laneStates["task_validator"]?.engine).toBe(
+    expect(valResult.execution.laneStates["context_validator"]?.engine).toBe(
       "claude",
     );
   });
@@ -962,11 +962,11 @@ describe("recordCodexTurnOutcome", () => {
 
     const existingLane: GraphWorkflowLaneState = {
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "codex",
-        lane: "task_validator",
+        lane: "context_validator",
         threadId: "thread-1",
       },
       lastTurnUsage: null,
@@ -976,17 +976,17 @@ describe("recordCodexTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { task_validator: existingLane },
+      laneStates: { context_validator: existingLane },
     });
 
     const result = svc.recordCodexTurnOutcome({
       execution,
-      lane: "task_validator",
+      lane: "context_validator",
       usage: { inputTokens: 1000, cachedInputTokens: 200, outputTokens: 300 },
       contextLimitTokens: 50000,
     });
 
-    const updated = result.laneStates["task_validator"];
+    const updated = result.laneStates["context_validator"];
     if (updated?.engine === "codex") {
       expect(updated.lastTurnUsage?.inputTokens).toBe(1000);
       expect(updated.rotateBeforeNextTurn).toBe(false);
@@ -1001,11 +1001,11 @@ describe("recordCodexTurnOutcome", () => {
 
     const existingLane: GraphWorkflowLaneState = {
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "codex",
-        lane: "task_validator",
+        lane: "context_validator",
         threadId: "thread-1",
       },
       lastTurnUsage: null,
@@ -1015,17 +1015,17 @@ describe("recordCodexTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { task_validator: existingLane },
+      laneStates: { context_validator: existingLane },
     });
 
     const result = svc.recordCodexTurnOutcome({
       execution,
-      lane: "task_validator",
+      lane: "context_validator",
       usage: null,
       contextLimitTokens: undefined,
     });
 
-    const updated = result.laneStates["task_validator"];
+    const updated = result.laneStates["context_validator"];
     if (updated?.engine === "codex") {
       expect(updated.limitEvaluation).toBe("disabled");
     }
@@ -1037,11 +1037,11 @@ describe("recordCodexTurnOutcome", () => {
 
     const existingLane: GraphWorkflowLaneState = {
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "codex",
-        lane: "task_validator",
+        lane: "context_validator",
         threadId: "thread-placeholder",
       },
       lastTurnUsage: null,
@@ -1051,18 +1051,18 @@ describe("recordCodexTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { task_validator: existingLane },
+      laneStates: { context_validator: existingLane },
     });
 
     const result = svc.recordCodexTurnOutcome({
       execution,
-      lane: "task_validator",
+      lane: "context_validator",
       usage: null,
       contextLimitTokens: undefined,
       newThreadId: "real-thread-abc",
     });
 
-    const updated = result.laneStates["task_validator"];
+    const updated = result.laneStates["context_validator"];
     if (updated?.engine === "codex" && updated.sessionRef?.engine === "codex") {
       expect(updated.sessionRef.threadId).toBe("real-thread-abc");
     }
@@ -1110,11 +1110,11 @@ describe("recordCodexTurnOutcome", () => {
 
     const existingLane: GraphWorkflowLaneState = {
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "codex",
-        lane: "task_validator",
+        lane: "context_validator",
         threadId: "thread-keep",
       },
       lastTurnUsage: null,
@@ -1124,18 +1124,18 @@ describe("recordCodexTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { task_validator: existingLane },
+      laneStates: { context_validator: existingLane },
     });
 
     const result = svc.recordCodexTurnOutcome({
       execution,
-      lane: "task_validator",
+      lane: "context_validator",
       usage: null,
       contextLimitTokens: undefined,
       newThreadId: null,
     });
 
-    const updated = result.laneStates["task_validator"];
+    const updated = result.laneStates["context_validator"];
     if (updated?.engine === "codex" && updated.sessionRef?.engine === "codex") {
       expect(updated.sessionRef.threadId).toBe("thread-keep");
     }
@@ -1306,11 +1306,11 @@ describe("recovery behaviors", () => {
 
     const existingLane: GraphWorkflowLaneState = {
       engine: "claude",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "claude",
-        lane: "task_validator",
+        lane: "context_validator",
         conversationId: "conv-val-gone",
       },
       lastContextTokens: null,
@@ -1321,7 +1321,7 @@ describe("recovery behaviors", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { task_validator: existingLane },
+      laneStates: { context_validator: existingLane },
     });
 
     const result = await svc.resolveValidatorCall({
@@ -1329,7 +1329,7 @@ describe("recovery behaviors", () => {
       projectPath: "/proj",
       sessionName: "sess",
       contextId: "ctx-1",
-      lane: "task_validator",
+      lane: "context_validator",
       engine: "claude",
     });
 
@@ -1358,11 +1358,11 @@ describe("recovery behaviors", () => {
 
     const existingLane: GraphWorkflowLaneState = {
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "codex",
-        lane: "task_validator",
+        lane: "context_validator",
         threadId: "thread-gone",
       },
       lastTurnUsage: null,
@@ -1372,7 +1372,7 @@ describe("recovery behaviors", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { task_validator: existingLane },
+      laneStates: { context_validator: existingLane },
     });
 
     const result = await svc.resolveValidatorCall({
@@ -1380,7 +1380,7 @@ describe("recovery behaviors", () => {
       projectPath: "/proj",
       sessionName: "sess",
       contextId: "ctx-1",
-      lane: "task_validator",
+      lane: "context_validator",
       engine: "codex",
     });
 
@@ -1404,11 +1404,11 @@ describe("recovery behaviors", () => {
 
     const codexLane: GraphWorkflowLaneState = {
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: {
         engine: "codex",
-        lane: "task_validator",
+        lane: "context_validator",
         threadId: "thread-codex-abc",
       },
       lastTurnUsage: null,
@@ -1418,7 +1418,7 @@ describe("recovery behaviors", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { task_validator: codexLane },
+      laneStates: { context_validator: codexLane },
     });
 
     // Simulate a restart by round-tripping the execution through the schema parser
@@ -1431,7 +1431,7 @@ describe("recovery behaviors", () => {
       projectPath: "/proj",
       sessionName: "sess",
       contextId: "ctx-1",
-      lane: "task_validator",
+      lane: "context_validator",
       engine: "codex",
     });
 

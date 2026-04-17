@@ -1,26 +1,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { randomUUID } from "node:crypto";
-import { readConfig } from "@/lib/config";
-import { getTaskRunner } from "@/lib/agent-backends/registry";
 import { createLogger } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession, mutateSession } from "@/lib/state";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
-import { createGraphWorkflowValidationService } from "@/lib/workflow-graph/execution-validation";
 import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
-import { createValidatorRunner } from "@/lib/workflow-graph/validator-runner";
-import { createWorkflowContinuityService } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
 import {
   registerGraphWorkflowExecutionTools,
   type GraphWorkflowToolServerContext,
 } from "@/lib/workflows/graph-workflow/tool-server";
 import type { GraphWorkflowExecution } from "@/types";
 import { McpRouteError } from "./route-handler";
-
-const CODEX_VALIDATOR_TIMEOUT_MS = 300_000;
 
 const logger = createLogger("workflow-execution-server");
 
@@ -110,51 +102,6 @@ const runtimeEditService = createGraphWorkflowRuntimeEditService();
 const sharedDocumentRegistry =
   createGraphWorkflowSharedDocumentRegistryService();
 
-const continuityService = createWorkflowContinuityService({
-  async createConversation() {
-    throw new Error(
-      "Conversation creation is not supported in MCP route handlers",
-    );
-  },
-  async getConversation() {
-    throw new Error(
-      "Conversation lookup is not supported in MCP route handlers",
-    );
-  },
-  startCodexThread: async () => ({ threadId: randomUUID() }),
-  resumeCodexThread: async (threadId) => ({ threadId }),
-});
-
-const validatorRunner = createValidatorRunner({
-  getTaskRunner,
-  async resolveWorktreePath(projectPath, sessionName) {
-    const session = await getSession(projectPath, sessionName);
-    if (!session) throw new Error("Session not found");
-    return session.worktreePath;
-  },
-  async resolveTimeoutMs(validatorType) {
-    const config = await readConfig();
-    if (validatorType === "codex") {
-      const codexConfig = config.codex;
-      if (codexConfig?.enabled !== true) {
-        throw new Error(
-          "Codex validator is configured for this workflow, but Codex is disabled in global config",
-        );
-      }
-      if (codexConfig.timeout === null) return 0;
-      if (codexConfig.timeout !== undefined) return codexConfig.timeout * 1000;
-      return CODEX_VALIDATOR_TIMEOUT_MS;
-    }
-    return config.claudeTimeoutMs;
-  },
-  continuityService,
-  executionRepository,
-});
-
-const validationService = createGraphWorkflowValidationService({
-  runTaskValidator: validatorRunner.runTaskValidator,
-});
-
 const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
   resolveProjectPath,
   async loadExecutionContext(projectPath, sessionName, executionId, contextId) {
@@ -208,113 +155,7 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
           preValidationExecution,
           taskId,
         );
-        const validation = await validationService.validateTaskCompletion({
-          projectPath,
-          sessionName,
-          execution: preValidationExecution,
-          contextId,
-          taskId,
-          conversationId,
-          summary,
-        });
-
-        const postValidationExecution = await executionRepository.getActive(
-          projectPath,
-          sessionName,
-        );
-        if (
-          !postValidationExecution ||
-          postValidationExecution.id !== executionId
-        ) {
-          throw new Error(
-            "Session does not have the requested graph workflow execution",
-          );
-        }
-
-        if (validation.kind !== "pass") {
-          const failureFeedback =
-            validation.kind === "fail"
-              ? validation.feedback
-              : `Validator infra error (${validation.reason}): ${validation.message}`;
-          const failureIssues =
-            validation.kind === "fail" ? validation.issues : [];
-          const failureSessionRef =
-            validation.kind === "fail" ? (validation.sessionRef ?? null) : null;
-          const failureReviewArtifact =
-            validation.kind === "fail"
-              ? (validation.reviewArtifact ?? null)
-              : null;
-
-          const failedExecution = cloneExecution(postValidationExecution);
-          const failedTaskState = failedExecution.taskStates[taskId];
-          if (!failedTaskState) {
-            throw new Error(`Task "${taskId}" does not exist in runtime state`);
-          }
-          if (failedTaskState.contextId !== contextId) {
-            throw new Error(
-              `Task "${taskId}" does not belong to context "${contextId}"`,
-            );
-          }
-
-          failedTaskState.lastConversationId = conversationId;
-          failedTaskState.failureMessage = failureFeedback;
-          failedTaskState.failureHistory = [
-            ...(failedTaskState.failureHistory ?? []),
-            {
-              message: failureFeedback,
-              timestamp: new Date().toISOString(),
-            },
-          ];
-
-          const failedContextState = failedExecution.contextStates[contextId];
-          if (failedContextState && validation.kind === "fail") {
-            failedContextState.consecutiveFailureCount =
-              (failedContextState.consecutiveFailureCount ?? 0) + 1;
-          }
-          failedExecution.machineSnapshot =
-            buildMachineSnapshot(failedExecution);
-
-          const executionWithValidationEvent =
-            eventPublisher.publishValidationResult({
-              projectPath,
-              sessionName,
-              execution: failedExecution,
-              contextId,
-              validatorType: "task",
-              pass: false,
-              summary: failureFeedback,
-              issues: failureIssues,
-              sessionRef: failureSessionRef,
-              reviewArtifact: failureReviewArtifact,
-            });
-          await executionRepository.update(
-            projectPath,
-            sessionName,
-            executionWithValidationEvent,
-          );
-          throw new Error(failureFeedback);
-        }
-
-        const executionWithValidationEvent =
-          eventPublisher.publishValidationResult({
-            projectPath,
-            sessionName,
-            execution: postValidationExecution,
-            contextId,
-            validatorType: "task",
-            pass: true,
-            summary: validation.summary,
-            issues: validation.issues,
-            sessionRef: validation.sessionRef ?? null,
-            reviewArtifact: validation.reviewArtifact ?? null,
-          });
-        await executionRepository.update(
-          projectPath,
-          sessionName,
-          executionWithValidationEvent,
-        );
-
-        const nextExecution = cloneExecution(executionWithValidationEvent);
+        const nextExecution = cloneExecution(preValidationExecution);
         const taskState = nextExecution.taskStates[taskId];
         if (!taskState) {
           throw new Error(`Task "${taskId}" does not exist in runtime state`);
@@ -344,7 +185,6 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
           nextExecution,
           taskState.contextId,
         );
-        contextState.consecutiveFailureCount = 0;
         nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution);
 
         await executionRepository.update(

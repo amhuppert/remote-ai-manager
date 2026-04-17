@@ -74,7 +74,7 @@ export interface ResolveValidatorCallInput {
   projectPath: string;
   sessionName: string;
   contextId: string;
-  lane: "task_validator";
+  lane: "context_validator";
   engine: "claude" | "codex";
 }
 
@@ -136,7 +136,7 @@ function getValidatorContinuityEnabled(
     (c) => c.id === contextId,
   );
   if (!ctx) return true;
-  return ctx.taskValidation?.continuity.enabled ?? true;
+  return ctx.contextValidation?.continuity.enabled ?? true;
 }
 
 function withLaneState(
@@ -472,7 +472,12 @@ export function createWorkflowContinuityService(
       execution,
       contextId,
     );
-    const rotate = shouldRotate(laneState, contextId, continuityEnabled);
+    const rotate = shouldRotate(
+      laneState,
+      contextId,
+      continuityEnabled,
+      engine,
+    );
     const now = getNow(deps);
 
     if (engine === "claude") {

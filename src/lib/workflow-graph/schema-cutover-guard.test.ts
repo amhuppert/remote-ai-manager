@@ -142,6 +142,23 @@ describe("assertDefinitionRecordSupported", () => {
 
     expect(() => assertDefinitionRecordSupported(record)).toThrow(/recreate/i);
   });
+
+  it("rejects a record with taskValidation", () => {
+    const record = makeValidDefinitionRecord();
+    (
+      record.definition.executionContexts[0]! as Record<string, unknown>
+    ).taskValidation = {
+      type: "claude",
+      enabled: true,
+      acceptanceCriteria: "legacy",
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      continuity: { enabled: true },
+    };
+
+    expect(() => assertDefinitionRecordSupported(record)).toThrow(
+      LegacyWorkflowSchemaError,
+    );
+  });
 });
 
 describe("assertExecutionSupported", () => {
@@ -175,14 +192,83 @@ describe("assertExecutionSupported", () => {
     );
   });
 
-  it("error message instructs operator to clear the stale execution", () => {
+  it("error message instructs operator to run the one-time cleanup", () => {
     const execution = makeValidExecution();
     (
       execution.workingDefinition.executionContexts[0]!
         .iterationPolicy as Record<string, unknown>
     ).contextSoftLimitTokens = 100000;
 
-    expect(() => assertExecutionSupported(execution)).toThrow(/clear/i);
+    expect(() => assertExecutionSupported(execution)).toThrow(/cleanup/i);
+  });
+
+  it("rejects an execution whose workingDefinition has taskValidation", () => {
+    const execution = makeValidExecution();
+    (
+      execution.workingDefinition.executionContexts[0]! as Record<
+        string,
+        unknown
+      >
+    ).taskValidation = {
+      type: "claude",
+      enabled: true,
+      acceptanceCriteria: "legacy",
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      continuity: { enabled: true },
+    };
+
+    expect(() => assertExecutionSupported(execution)).toThrow(
+      LegacyWorkflowSchemaError,
+    );
+  });
+
+  it("rejects an execution with a task validator lane", () => {
+    const execution = makeValidExecution();
+    (execution as Record<string, unknown>).laneStates = {
+      task_validator: {
+        engine: "codex",
+        lane: "task_validator",
+        contextId: "ctx-1",
+        sessionRef: {
+          engine: "codex",
+          lane: "task_validator",
+          threadId: "thread-1",
+        },
+        lastTurnUsage: null,
+        rotateBeforeNextTurn: false,
+        limitEvaluation: "disabled",
+        lastUsedAt: timestamp,
+      },
+    };
+
+    expect(() => assertExecutionSupported(execution)).toThrow(
+      LegacyWorkflowSchemaError,
+    );
+  });
+
+  it("rejects an execution with a task validation event", () => {
+    const execution = makeValidExecution();
+    (execution as Record<string, unknown>).history = [
+      {
+        occurredAt: timestamp,
+        event: {
+          type: "graph-workflow-validation-result",
+          projectName: "proj",
+          sessionName: "session",
+          executionId: "exec-1",
+          contextId: "ctx-1",
+          validatorType: "task",
+          pass: false,
+          summary: "legacy",
+          issues: [],
+          reopenTaskIds: ["task-1"],
+        },
+      },
+    ];
+
+    expect(() => assertExecutionSupported(execution)).toThrow(
+      LegacyWorkflowSchemaError,
+    );
   });
 });
 
@@ -239,6 +325,43 @@ describe("checkRawStateForLegacyWorkflowPayloads", () => {
         },
       },
     };
+    expect(() => checkRawStateForLegacyWorkflowPayloads(rawState)).toThrow(
+      LegacyWorkflowSchemaError,
+    );
+  });
+
+  it("throws LegacyWorkflowSchemaError when archived history contains a legacy execution", () => {
+    const legacyExecution = makeValidExecution();
+    (legacyExecution as Record<string, unknown>).laneStates = {
+      task_validator: {
+        engine: "codex",
+        lane: "task_validator",
+        contextId: "ctx-1",
+        sessionRef: {
+          engine: "codex",
+          lane: "task_validator",
+          threadId: "thread-1",
+        },
+        lastTurnUsage: null,
+        rotateBeforeNextTurn: false,
+        limitEvaluation: "disabled",
+        lastUsedAt: timestamp,
+      },
+    };
+
+    const rawState = {
+      projects: {
+        "proj-1": {
+          sessions: {
+            "session-1": {
+              graphWorkflowExecution: null,
+              graphWorkflowExecutionHistory: [legacyExecution],
+            },
+          },
+        },
+      },
+    };
+
     expect(() => checkRawStateForLegacyWorkflowPayloads(rawState)).toThrow(
       LegacyWorkflowSchemaError,
     );

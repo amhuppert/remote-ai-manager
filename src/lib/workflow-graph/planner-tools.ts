@@ -134,19 +134,19 @@ const executionContextInputSchema = z.object({
     })
     .optional()
     .describe("Mutability permissions. Defaults: allowAgentTaskAdd false."),
-  taskValidation: z
+  contextValidation: z
     .object({
       type: validatorTypeSchema
         .optional()
         .describe(
           "Validator type: 'claude' (Claude agent) or 'codex' (OpenAI Codex, runs locally). Omit to use the project's workflow defaults.",
         ),
-      instructions: z
+      acceptanceCriteria: z
         .string()
         .trim()
         .min(1)
         .describe(
-          "Instructions the validator uses to check each completed task.",
+          "Shared acceptance criteria used by both the implementer and the validator for this execution context.",
         ),
       continuity: z
         .object({
@@ -154,7 +154,7 @@ const executionContextInputSchema = z.object({
             .boolean()
             .optional()
             .describe(
-              "Whether the task validator reuses the same session within this execution context. Defaults to true.",
+              "Whether the context validator reuses the same session within this execution context. Defaults to true.",
             ),
           contextLimitTokens: z
             .number()
@@ -162,15 +162,15 @@ const executionContextInputSchema = z.object({
             .positive()
             .optional()
             .describe(
-              "Token threshold after which the task validator session rotates. Omit to disable limit-based rotation.",
+              "Token threshold after which the context validator session rotates. Omit to disable limit-based rotation.",
             ),
         })
         .optional()
-        .describe("Task validator session continuity policy."),
+        .describe("Context validator session continuity policy."),
     })
     .optional()
     .describe(
-      "Per-task validation after each task completes. Omit if no per-task validation is needed.",
+      "Execution-context validation that runs after all tasks in the context are completed. Omit if no validation is needed.",
     ),
 });
 
@@ -342,7 +342,7 @@ function inflateAgentConfig(
  * - claudeFallback: model/effort from the execution context agent config
  */
 function buildValidatorConfig(
-  instructions: string,
+  acceptanceCriteria: string,
   inputType: ValidatorType | undefined,
   validatorDefault: WorkflowValidatorDefault | undefined,
   claudeFallback: { model: ClaudeModel; reasoningEffort: EffortLevel },
@@ -371,7 +371,7 @@ function buildValidatorConfig(
           ? { reasoningEffort: codexDefaults.reasoningEffort }
           : {}),
       },
-      instructions,
+      acceptanceCriteria,
       continuity,
     };
   }
@@ -387,7 +387,7 @@ function buildValidatorConfig(
       reasoningEffort:
         claudeDefaults?.reasoningEffort ?? claudeFallback.reasoningEffort,
     },
-    instructions,
+    acceptanceCriteria,
     continuity,
   };
 }
@@ -397,7 +397,7 @@ function inflateToSemanticDefinition(
   workflowDefaults?: WorkflowDefaults,
   defaultAgentBackend: AgentBackendId = "claude",
 ): WorkflowSemanticDefinition {
-  const taskValidatorDefault = workflowDefaults?.taskValidator;
+  const contextValidatorDefault = workflowDefaults?.contextValidator;
 
   const executionContexts = input.executionContexts.map((ctx) => {
     const agentConfig = inflateAgentConfig(
@@ -445,14 +445,14 @@ function inflateToSemanticDefinition(
             : {}),
         },
       },
-      ...(ctx.taskValidation
+      ...(ctx.contextValidation
         ? {
-            taskValidation: buildValidatorConfig(
-              ctx.taskValidation.instructions,
-              ctx.taskValidation.type,
-              taskValidatorDefault,
+            contextValidation: buildValidatorConfig(
+              ctx.contextValidation.acceptanceCriteria,
+              ctx.contextValidation.type,
+              contextValidatorDefault,
               claudeFallback,
-              ctx.taskValidation.continuity,
+              ctx.contextValidation.continuity,
             ),
           }
         : {}),
@@ -550,6 +550,7 @@ Guidelines for planning:
 - Edges express dependencies: context B waits for context A to complete. Do not create edges between contexts that can run independently.
 - Use kebab-case slugs that describe the content (e.g. 'auth-setup', 'create-user-schema'), not generic names like 'step-1'.
 - Validation is optional. When needed, set the validator type directly: 'claude' (Claude agent) or 'codex' (OpenAI Codex, runs locally). Codex is a first-class validator — set it via the type field. Do NOT configure a Claude validator with instructions to invoke Codex via tools. Omit type to use project defaults.
+- Use 'contextValidation.acceptanceCriteria' to define the shared acceptance criteria the implementer and validator must both follow.
 - The user will review and edit the workflow in the visual builder before starting execution.`;
 
 const REPLACE_DESCRIPTION =

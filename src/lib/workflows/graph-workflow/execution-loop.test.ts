@@ -793,7 +793,6 @@ describe("execution loop", () => {
       haltReason: {
         type: "validator_infra_error",
         contextId: "ctx-1",
-        taskId: "task-1",
         engine: "codex",
         infraReason: "exception",
         message: "Codex API rate limit exceeded",

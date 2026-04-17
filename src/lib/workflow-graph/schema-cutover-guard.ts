@@ -7,13 +7,17 @@ import type { GraphWorkflowExecution, WorkflowDefinitionRecord } from "@/types";
 const REMOVED_FIELDS = [
   "contextSoftLimitTokens",
   "contextHardLimitTokens",
+  "taskValidation",
 ] as const;
+
+const REMOVED_LANE_VALUES = ["task_validator"] as const;
+const REMOVED_VALIDATOR_TYPES = ["task"] as const;
 
 const REMOVED_FIELD_LIST = REMOVED_FIELDS.join(", ");
 
 const OPERATOR_INSTRUCTIONS =
-  "These fields were removed in the workflow continuity schema cutover. " +
-  "Please recreate the workflow definition and clear any stale executions manually.";
+  "These fields were removed in the execution-context validator cutover. " +
+  "Use the one-time graph workflow cleanup to delete stale definitions and executions, then recreate workflows.";
 
 export class LegacyWorkflowSchemaError extends Error {
   constructor(context: string) {
@@ -30,6 +34,24 @@ function hasLegacyFields(value: unknown): boolean {
   const obj = value as Record<string, unknown>;
   for (const field of REMOVED_FIELDS) {
     if (field in obj) return true;
+  }
+  if (
+    obj.lane &&
+    typeof obj.lane === "string" &&
+    REMOVED_LANE_VALUES.includes(
+      obj.lane as (typeof REMOVED_LANE_VALUES)[number],
+    )
+  ) {
+    return true;
+  }
+  if (
+    obj.validatorType &&
+    typeof obj.validatorType === "string" &&
+    REMOVED_VALIDATOR_TYPES.includes(
+      obj.validatorType as (typeof REMOVED_VALIDATOR_TYPES)[number],
+    )
+  ) {
+    return true;
   }
   return Object.values(obj).some(hasLegacyFields);
 }
@@ -104,10 +126,17 @@ export function checkRawStateForLegacyWorkflowPayloads(
     if (typeof sessions !== "object" || sessions === null) continue;
     for (const session of Object.values(sessions as Record<string, unknown>)) {
       if (typeof session !== "object" || session === null) continue;
-      const exec = (session as Record<string, unknown>).graphWorkflowExecution;
+      const sessionRecord = session as Record<string, unknown>;
+      const exec = sessionRecord.graphWorkflowExecution;
       if (exec != null && hasLegacyFields(exec)) {
         throw new LegacyWorkflowSchemaError(
           "Graph workflow execution in state",
+        );
+      }
+      const history = sessionRecord.graphWorkflowExecutionHistory;
+      if (Array.isArray(history) && history.some(hasLegacyFields)) {
+        throw new LegacyWorkflowSchemaError(
+          "Archived graph workflow execution in state",
         );
       }
     }

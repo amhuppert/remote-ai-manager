@@ -43,13 +43,15 @@ function createSemanticDefinition() {
           maxIterations: 5,
           continuity: { enabled: true, contextLimitTokens: 120000 },
         },
-        taskValidation: {
+        contextValidation: {
           enabled: true,
-          instructions: "Validate each completed task.",
+          acceptanceCriteria: "All tasks are complete and verified.",
           agent: {
             model: "sonnet",
             reasoningEffort: "medium",
           },
+          continuity: { enabled: true },
+          type: "claude",
         },
       },
       {
@@ -238,11 +240,13 @@ describe("workflow graph execution schemas", () => {
             sessionName: "validator-loop-design-f93878",
             executionId: "execution-1",
             contextId: "context-1",
-            validatorType: "task",
+            validatorType: "context",
             pass: false,
             summary: "Validation requested fixes",
+            reopenTaskIds: ["task-1"],
             issues: [
               {
+                taskId: "task-1",
                 title: "Missing assertions",
                 description:
                   "The schema tests do not cover session persistence.",
@@ -276,12 +280,15 @@ describe("workflow graph validator and request schemas", () => {
       summary: "Looks good",
     });
     expect(emptyResult.issues).toEqual([]);
+    expect(emptyResult.reopenTaskIds).toEqual([]);
 
     const issueResult = workflowAgentValidatorResultSchema.parse({
       pass: false,
       summary: "Needs fixes",
+      reopenTaskIds: ["task-1"],
       issues: [
         {
+          taskId: "task-1",
           title: "Missing coverage",
           description: "Add tests for the new graph workflow state fields.",
         },
@@ -322,7 +329,7 @@ describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
       type: "claude",
       enabled: true,
       agent: { model: "sonnet", reasoningEffort: "medium" },
-      instructions: "Validate each task.",
+      acceptanceCriteria: "All tasks are complete and verified.",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -336,7 +343,7 @@ describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
       type: "codex",
       enabled: true,
       codex: { model: "gpt-5.4", reasoningEffort: "high" },
-      instructions: "Validate with Codex.",
+      acceptanceCriteria: "All tasks are complete and verified.",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -345,23 +352,11 @@ describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
     }
   });
 
-  it("parses legacy format without type as claude (backward compat)", () => {
-    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
-      enabled: true,
-      agent: { model: "opus", reasoningEffort: "high" },
-      instructions: "Review the context.",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe("claude");
-    }
-  });
-
   it("defaults codex field to empty object when omitted", () => {
     const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
       type: "codex",
       enabled: false,
-      instructions: "Check it.",
+      acceptanceCriteria: "Check it.",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -374,7 +369,7 @@ describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
     const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
       type: "gpt",
       enabled: true,
-      instructions: "Nope.",
+      acceptanceCriteria: "Nope.",
     });
     expect(result.success).toBe(false);
   });
@@ -407,7 +402,6 @@ describe("workflow graph session state and SSE schemas", () => {
       executionId: "execution-1",
       workflowStatus: "running",
       activeContextId: "context-1",
-      activeTaskId: "task-1",
       haltReason: null,
     });
     expect(statusEvent.success).toBe(true);
@@ -490,9 +484,9 @@ describe("workflowValidatorDefaultSchema", () => {
 });
 
 describe("workflowDefaultsSchema", () => {
-  it("parses with taskValidator specified", () => {
+  it("parses with contextValidator specified", () => {
     const result = workflowDefaultsSchema.safeParse({
-      taskValidator: {
+      contextValidator: {
         type: "claude",
         model: "sonnet",
         reasoningEffort: "medium",
@@ -500,7 +494,7 @@ describe("workflowDefaultsSchema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.taskValidator?.type).toBe("claude");
+      expect(result.data.contextValidator?.type).toBe("claude");
     }
   });
 
@@ -612,7 +606,7 @@ describe("graphWorkflowAgentValidatorConfigSchema with continuity", () => {
     const result = graphWorkflowAgentValidatorConfigSchema.parse({
       type: "claude",
       enabled: true,
-      instructions: "Validate the task.",
+      acceptanceCriteria: "Validate the context.",
       agent: { model: "sonnet", reasoningEffort: "medium" },
     });
     expect(result.continuity.enabled).toBe(true);
@@ -623,7 +617,7 @@ describe("graphWorkflowAgentValidatorConfigSchema with continuity", () => {
     const result = graphWorkflowAgentValidatorConfigSchema.parse({
       type: "codex",
       enabled: true,
-      instructions: "Validate with Codex.",
+      acceptanceCriteria: "Validate with Codex.",
     });
     expect(result.continuity.enabled).toBe(true);
   });
@@ -632,7 +626,7 @@ describe("graphWorkflowAgentValidatorConfigSchema with continuity", () => {
     const result = graphWorkflowAgentValidatorConfigSchema.parse({
       type: "claude",
       enabled: true,
-      instructions: "Check it.",
+      acceptanceCriteria: "Check it.",
       agent: { model: "opus", reasoningEffort: "high" },
       continuity: { enabled: false },
     });
@@ -648,7 +642,7 @@ describe("globalConfigSchema workflowDefaults", () => {
       stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 3600000,
       workflowDefaults: {
-        taskValidator: {
+        contextValidator: {
           type: "claude",
           model: "sonnet",
           reasoningEffort: "high",
@@ -657,7 +651,9 @@ describe("globalConfigSchema workflowDefaults", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.workflowDefaults?.taskValidator?.type).toBe("claude");
+      expect(result.data.workflowDefaults?.contextValidator?.type).toBe(
+        "claude",
+      );
     }
   });
 
@@ -695,13 +691,13 @@ describe("graphWorkflowExecutionSessionRefSchema", () => {
   it("parses a codex session ref", () => {
     const result = graphWorkflowExecutionSessionRefSchema.safeParse({
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       threadId: "thread-abc",
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.engine).toBe("codex");
-      expect(result.data.lane).toBe("task_validator");
+      expect(result.data.lane).toBe("context_validator");
       if (result.data.engine === "codex") {
         expect(result.data.threadId).toBe("thread-abc");
       }
@@ -709,7 +705,7 @@ describe("graphWorkflowExecutionSessionRefSchema", () => {
   });
 
   it("accepts all lane kinds", () => {
-    const lanes = ["implementer", "task_validator"] as const;
+    const lanes = ["implementer", "context_validator"] as const;
     for (const lane of lanes) {
       const result = graphWorkflowExecutionSessionRefSchema.safeParse({
         engine: "claude",
@@ -738,7 +734,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   };
   const codexSessionRef = {
     engine: "codex" as const,
-    lane: "task_validator" as const,
+    lane: "context_validator" as const,
     threadId: "thread-abc",
   };
 
@@ -796,7 +792,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   it("parses a codex lane state", () => {
     const result = graphWorkflowLaneStateSchema.safeParse({
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: codexSessionRef,
       lastTurnUsage: {
@@ -818,7 +814,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   it("defaults codex lane fields when omitted", () => {
     const result = graphWorkflowLaneStateSchema.safeParse({
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: codexSessionRef,
       limitEvaluation: "disabled",
@@ -846,7 +842,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   it("rejects codex lane state with supported limitEvaluation", () => {
     const result = graphWorkflowLaneStateSchema.safeParse({
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: codexSessionRef,
       limitEvaluation: "supported",
@@ -923,7 +919,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   it("defaults workflowConversationId to undefined when omitted", () => {
     const result = graphWorkflowLaneStateSchema.safeParse({
       engine: "codex",
-      lane: "task_validator",
+      lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: codexSessionRef,
       limitEvaluation: "disabled",
@@ -986,13 +982,13 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
           limitEvaluation: "supported",
           lastUsedAt: timestamp,
         },
-        task_validator: {
+        context_validator: {
           engine: "codex",
-          lane: "task_validator",
+          lane: "context_validator",
           contextId: "ctx-1",
           sessionRef: {
             engine: "codex",
-            lane: "task_validator",
+            lane: "context_validator",
             threadId: "thread-xyz",
           },
           lastTurnUsage: null,
@@ -1014,7 +1010,6 @@ describe("graphWorkflowHaltReasonSchema", () => {
     const result = graphWorkflowHaltReasonSchema.safeParse({
       type: "validator_infra_error",
       contextId: "ctx-1",
-      taskId: "task-1",
       engine: "codex",
       infraReason: "exception",
       message: "Codex process terminated unexpectedly",
@@ -1026,7 +1021,6 @@ describe("graphWorkflowHaltReasonSchema", () => {
       expect(result.data.infraReason).toBe("exception");
       expect(result.data.message).toBe("Codex process terminated unexpectedly");
       expect(result.data.contextId).toBe("ctx-1");
-      expect(result.data.taskId).toBe("task-1");
     }
   });
 
@@ -1039,7 +1033,6 @@ describe("graphWorkflowHaltReasonSchema", () => {
       const result = graphWorkflowHaltReasonSchema.safeParse({
         type: "validator_infra_error",
         contextId: "ctx-1",
-        taskId: "task-1",
         engine: "claude",
         infraReason,
         message: "msg",
@@ -1054,7 +1047,6 @@ describe("graphWorkflowHaltReasonSchema", () => {
       const result = graphWorkflowHaltReasonSchema.safeParse({
         type: "validator_infra_error",
         contextId: "ctx-1",
-        taskId: "task-1",
         engine,
         infraReason: "exception",
         message: "msg",
@@ -1068,7 +1060,6 @@ describe("graphWorkflowHaltReasonSchema", () => {
     const result = graphWorkflowHaltReasonSchema.safeParse({
       type: "validator_infra_error",
       contextId: "ctx-1",
-      taskId: "task-1",
       engine: "nonsense",
       infraReason: "exception",
       message: "msg",
@@ -1081,7 +1072,6 @@ describe("graphWorkflowHaltReasonSchema", () => {
     const result = graphWorkflowHaltReasonSchema.safeParse({
       type: "validator_infra_error",
       contextId: "ctx-1",
-      taskId: "task-1",
       engine: "codex",
       infraReason: "nonsense",
       message: "msg",

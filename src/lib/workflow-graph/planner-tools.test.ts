@@ -386,7 +386,7 @@ describe("graph workflow planner tools", () => {
     expect(result.isError).toBe(true);
   });
 
-  it("create_graph_workflow inflates codex task validator when type is 'codex'", async () => {
+  it("create_graph_workflow inflates a codex context validator when type is 'codex'", async () => {
     const deps = createMockDeps();
 
     registerTools(deps);
@@ -396,9 +396,9 @@ describe("graph workflow planner tools", () => {
       executionContexts: [
         {
           ...MINIMAL_INPUT.executionContexts[0],
-          taskValidation: {
+          contextValidation: {
             type: "codex",
-            instructions: "Validate each task with Codex.",
+            acceptanceCriteria: "Validate the completed context with Codex.",
           },
         },
       ],
@@ -410,10 +410,10 @@ describe("graph workflow planner tools", () => {
       {
         definition: {
           executionContexts: Array<{
-            taskValidation?: {
+            contextValidation?: {
               type: string;
               enabled: boolean;
-              instructions: string;
+              acceptanceCriteria: string;
               codex?: Record<string, unknown>;
               agent?: { model: string; reasoningEffort: string };
             };
@@ -423,21 +423,21 @@ describe("graph workflow planner tools", () => {
     ];
 
     const ctx = draft.definition.executionContexts[0]!;
-    expect(ctx.taskValidation).toBeDefined();
-    expect(ctx.taskValidation!.type).toBe("codex");
-    expect(ctx.taskValidation!.codex).toEqual({});
-    expect(ctx.taskValidation!.agent).toBeUndefined();
-    expect(ctx.taskValidation!.instructions).toBe(
-      "Validate each task with Codex.",
+    expect(ctx.contextValidation).toBeDefined();
+    expect(ctx.contextValidation!.type).toBe("codex");
+    expect(ctx.contextValidation!.codex).toEqual({});
+    expect(ctx.contextValidation!.agent).toBeUndefined();
+    expect(ctx.contextValidation!.acceptanceCriteria).toBe(
+      "Validate the completed context with Codex.",
     );
   });
 
-  it("create_graph_workflow uses workflowDefaults from config for validator type", async () => {
+  it("create_graph_workflow uses workflowDefaults from config for context validator type", async () => {
     const deps = createMockDeps({
       readConfig: vi.fn(async () => ({
         ...MOCK_CONFIG,
         workflowDefaults: {
-          taskValidator: { type: "codex" as const },
+          contextValidator: { type: "codex" as const },
         },
       })),
     });
@@ -449,8 +449,8 @@ describe("graph workflow planner tools", () => {
       executionContexts: [
         {
           ...MINIMAL_INPUT.executionContexts[0],
-          taskValidation: {
-            instructions: "Validate tasks.",
+          contextValidation: {
+            acceptanceCriteria: "Validate the context.",
           },
         },
       ],
@@ -462,14 +462,14 @@ describe("graph workflow planner tools", () => {
       {
         definition: {
           executionContexts: Array<{
-            taskValidation?: { type: string };
+            contextValidation?: { type: string };
           }>;
         };
       },
     ];
 
     const ctx = draft.definition.executionContexts[0]!;
-    expect(ctx.taskValidation?.type).toBe("codex");
+    expect(ctx.contextValidation?.type).toBe("codex");
   });
 
   it("codex validator defaults flow model and effort into definition", async () => {
@@ -477,7 +477,7 @@ describe("graph workflow planner tools", () => {
       readConfig: vi.fn(async () => ({
         ...MOCK_CONFIG,
         workflowDefaults: {
-          taskValidator: {
+          contextValidator: {
             type: "codex" as const,
             model: "gpt-5.4" as const,
             reasoningEffort: "high" as const,
@@ -493,7 +493,7 @@ describe("graph workflow planner tools", () => {
       executionContexts: [
         {
           ...MINIMAL_INPUT.executionContexts[0],
-          taskValidation: { instructions: "Validate." },
+          contextValidation: { acceptanceCriteria: "Validate." },
         },
       ],
     });
@@ -504,7 +504,7 @@ describe("graph workflow planner tools", () => {
       {
         definition: {
           executionContexts: Array<{
-            taskValidation?: {
+            contextValidation?: {
               type: string;
               codex?: { model?: string; reasoningEffort?: string };
             };
@@ -513,7 +513,7 @@ describe("graph workflow planner tools", () => {
       },
     ];
 
-    const tv = draft.definition.executionContexts[0]!.taskValidation!;
+    const tv = draft.definition.executionContexts[0]!.contextValidation!;
     expect(tv.type).toBe("codex");
     expect(tv.codex?.model).toBe("gpt-5.4");
     expect(tv.codex?.reasoningEffort).toBe("high");
@@ -524,7 +524,7 @@ describe("graph workflow planner tools", () => {
       readConfig: vi.fn(async () => ({
         ...MOCK_CONFIG,
         workflowDefaults: {
-          taskValidator: { type: "codex" as const },
+          contextValidator: { type: "codex" as const },
         },
       })),
     });
@@ -536,9 +536,9 @@ describe("graph workflow planner tools", () => {
       executionContexts: [
         {
           ...MINIMAL_INPUT.executionContexts[0],
-          taskValidation: {
+          contextValidation: {
             type: "claude",
-            instructions: "Use Claude explicitly.",
+            acceptanceCriteria: "Use Claude explicitly.",
           },
         },
       ],
@@ -550,14 +550,14 @@ describe("graph workflow planner tools", () => {
       {
         definition: {
           executionContexts: Array<{
-            taskValidation?: { type: string };
+            contextValidation?: { type: string };
           }>;
         };
       },
     ];
 
     const ctx = draft.definition.executionContexts[0]!;
-    expect(ctx.taskValidation?.type).toBe("claude");
+    expect(ctx.contextValidation?.type).toBe("claude");
   });
 
   it("create_graph_workflow inflates codex implementer when backend is 'codex'", async () => {
@@ -661,7 +661,7 @@ describe("graph workflow planner tools", () => {
     expect(ctx.agent.reasoningEffort).toBe("high");
   });
 
-  it("codex implementer with claude task validator uses claude defaults for validator", async () => {
+  it("codex implementer with claude context validator uses claude defaults for validation", async () => {
     const deps = createMockDeps();
 
     registerTools(deps);
@@ -676,9 +676,9 @@ describe("graph workflow planner tools", () => {
             model: "gpt-5.4",
             reasoningEffort: "high",
           },
-          taskValidation: {
+          contextValidation: {
             type: "claude",
-            instructions: "Validate tasks.",
+            acceptanceCriteria: "Validate tasks.",
           },
         },
       ],
@@ -691,7 +691,7 @@ describe("graph workflow planner tools", () => {
         definition: {
           executionContexts: Array<{
             agent: { backend: string; model: string };
-            taskValidation?: {
+            contextValidation?: {
               type: string;
               agent?: { model: string; reasoningEffort: string };
             };
@@ -702,10 +702,10 @@ describe("graph workflow planner tools", () => {
 
     const ctx = draft.definition.executionContexts[0]!;
     expect(ctx.agent.backend).toBe("codex");
-    expect(ctx.taskValidation?.type).toBe("claude");
+    expect(ctx.contextValidation?.type).toBe("claude");
     // Validator uses Claude defaults, not Codex model
-    expect(ctx.taskValidation?.agent?.model).toBe("sonnet");
-    expect(ctx.taskValidation?.agent?.reasoningEffort).toBe("high");
+    expect(ctx.contextValidation?.agent?.model).toBe("sonnet");
+    expect(ctx.contextValidation?.agent?.reasoningEffort).toBe("high");
   });
 
   it("codex implementer accepts codex-specific reasoning effort 'xhigh'", async () => {

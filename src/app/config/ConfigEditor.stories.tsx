@@ -67,7 +67,7 @@ const fullyConfiguredRaw: RawGlobalConfig = {
     reasoningEffort: "high",
   },
   workflowDefaults: {
-    taskValidator: {
+    contextValidator: {
       type: "codex",
       model: "gpt-5.4",
       reasoningEffort: "medium",
@@ -97,7 +97,7 @@ const fullyConfiguredConfig: GlobalConfig = {
     reasoningEffort: "high",
   },
   workflowDefaults: {
-    taskValidator: {
+    contextValidator: {
       type: "codex",
       model: "gpt-5.4",
       reasoningEffort: "medium",

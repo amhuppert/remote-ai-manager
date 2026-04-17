@@ -366,9 +366,9 @@ export default function ConfigEditor(): React.JSX.Element {
       "codex.model",
       "codex.reasoningEffort",
       "codex.timeout",
-      "workflowDefaults.taskValidator.type",
-      "workflowDefaults.taskValidator.model",
-      "workflowDefaults.taskValidator.reasoningEffort",
+      "workflowDefaults.contextValidator.type",
+      "workflowDefaults.contextValidator.model",
+      "workflowDefaults.contextValidator.reasoningEffort",
     ],
     [],
   );
@@ -897,9 +897,9 @@ export default function ConfigEditor(): React.JSX.Element {
             onToggle={toggleSection}
           >
             <WorkflowValidatorFields
-              groupLabel="Task Validator"
-              basePath="workflowDefaults.taskValidator"
-              validator={formState.workflowDefaults?.taskValidator}
+              groupLabel="Context Validator"
+              basePath="workflowDefaults.contextValidator"
+              validator={formState.workflowDefaults?.contextValidator}
               isDefault={isDefault}
               isModified={isModified}
               onChangeMulti={handleChangeMulti}

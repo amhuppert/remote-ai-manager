@@ -85,7 +85,7 @@ export default function ExecutionContextNode({
   const progressPercent = getProgressPercent(mode, completedCount, totalCount);
   const progressStatus = status ?? "pending";
 
-  const validatorCount = [context.taskValidation?.enabled].filter(
+  const validatorCount = [context.contextValidation?.enabled].filter(
     Boolean,
   ).length;
 
