@@ -188,14 +188,12 @@ function buildExecutionWithContextValidation(
 }
 
 describe("extractValidatorResult", () => {
-  it("returns kind=pass for valid JSON with empty reopenTaskIds", () => {
+  it("returns kind=pass with empty reopenTaskIds when issues is empty", () => {
     const text = [
       "```json",
       JSON.stringify({
-        pass: true,
         summary: "All checks passed",
         issues: [],
-        reopenTaskIds: [],
       }),
       "```",
     ].join("\n");
@@ -207,17 +205,22 @@ describe("extractValidatorResult", () => {
     expect(outcome.kind).toBe("pass");
     if (outcome.kind === "pass") {
       expect(outcome.reopenTaskIds).toEqual([]);
+      expect(outcome.issues).toEqual([]);
     }
   });
 
-  it("returns kind=fail when validation reopens specific tasks in the context", () => {
+  it("returns kind=fail with reopenTaskIds derived from issue taskIds", () => {
     const text = [
       "```json",
       JSON.stringify({
-        pass: false,
         summary: "Tests are incomplete.",
-        issues: [{ title: "Coverage gap", description: "Add missing tests." }],
-        reopenTaskIds: ["task-2"],
+        issues: [
+          {
+            taskId: "task-2",
+            title: "Coverage gap",
+            description: "Add missing tests.",
+          },
+        ],
       }),
       "```",
     ].join("\n");
@@ -232,38 +235,28 @@ describe("extractValidatorResult", () => {
     }
   });
 
-  it("returns infra_error when fail output omits reopenTaskIds", () => {
+  it("dedupes reopenTaskIds when multiple issues target the same task", () => {
     const text = [
       "```json",
       JSON.stringify({
-        pass: false,
-        summary: "Missing reopened tasks",
-        issues: [{ title: "Coverage gap", description: "Add missing tests." }],
-        reopenTaskIds: [],
-      }),
-      "```",
-    ].join("\n");
-
-    const outcome = extractValidatorResult(text, "claude", [
-      "task-1",
-      "task-2",
-    ]);
-    expect(outcome.kind).toBe("infra_error");
-    if (outcome.kind === "infra_error") {
-      expect(outcome.reason).toBe("schema_mismatch");
-    }
-  });
-
-  it("returns infra_error when reopenTaskIds reference tasks outside the context", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        pass: false,
-        summary: "Wrong task reopened",
+        summary: "Two problems in one task.",
         issues: [
-          { title: "Wrong task", description: "Task is outside context." },
+          {
+            taskId: "task-2",
+            title: "Coverage gap",
+            description: "Add missing tests.",
+          },
+          {
+            taskId: "task-2",
+            title: "Edge cases",
+            description: "Handle empty input.",
+          },
+          {
+            taskId: "task-1",
+            title: "Doc drift",
+            description: "README is stale.",
+          },
         ],
-        reopenTaskIds: ["task-missing"],
       }),
       "```",
     ].join("\n");
@@ -272,17 +265,16 @@ describe("extractValidatorResult", () => {
       "task-1",
       "task-2",
     ]);
-    expect(outcome.kind).toBe("infra_error");
-    if (outcome.kind === "infra_error") {
-      expect(outcome.reason).toBe("schema_mismatch");
+    expect(outcome.kind).toBe("fail");
+    if (outcome.kind === "fail") {
+      expect(outcome.reopenTaskIds).toEqual(["task-2", "task-1"]);
     }
   });
 
-  it("returns infra_error when issues reference tasks outside the context", () => {
+  it("returns infra_error when an issue references a task outside the context", () => {
     const text = [
       "```json",
       JSON.stringify({
-        pass: false,
         summary: "Wrong issue task",
         issues: [
           {
@@ -291,7 +283,31 @@ describe("extractValidatorResult", () => {
             description: "Issue points outside the context.",
           },
         ],
-        reopenTaskIds: ["task-2"],
+      }),
+      "```",
+    ].join("\n");
+
+    const outcome = extractValidatorResult(text, "claude", [
+      "task-1",
+      "task-2",
+    ]);
+    expect(outcome.kind).toBe("infra_error");
+    if (outcome.kind === "infra_error") {
+      expect(outcome.reason).toBe("schema_mismatch");
+    }
+  });
+
+  it("returns infra_error schema_mismatch when an issue omits taskId", () => {
+    const text = [
+      "```json",
+      JSON.stringify({
+        summary: "Coverage gap",
+        issues: [
+          {
+            title: "Coverage gap",
+            description: "Add missing tests.",
+          },
+        ],
       }),
       "```",
     ].join("\n");
@@ -327,7 +343,7 @@ describe("buildContextValidationPrompt", () => {
     );
   });
 
-  it("documents the reopenTaskIds response contract", () => {
+  it("documents the issues-only response contract", () => {
     const prompt = buildContextValidationPrompt({
       context,
       tasks,
@@ -335,27 +351,41 @@ describe("buildContextValidationPrompt", () => {
       validator: validatorConfig,
     });
 
-    expect(prompt).toContain("`reopenTaskIds`");
+    expect(prompt).toContain("`issues`");
     expect(prompt).toContain("`taskId`");
+    expect(prompt).toContain("empty");
     expect(prompt).toContain("inspect files and verify the agent's claims");
+    expect(prompt).not.toContain("`pass`");
+    expect(prompt).not.toContain("`reopenTaskIds`");
   });
 
-  it("includes optional taskId in the structured output schema", () => {
+  it("requires taskId on each issue in the structured output schema", () => {
     const issueSchema = VALIDATOR_OUTPUT_SCHEMA.properties.issues.items;
     expect(issueSchema.properties).toHaveProperty("taskId");
+    expect(issueSchema.required).toEqual(
+      expect.arrayContaining(["taskId", "title", "description"]),
+    );
+    expect(VALIDATOR_OUTPUT_SCHEMA.required).toEqual(
+      expect.arrayContaining(["summary", "issues"]),
+    );
+    expect(VALIDATOR_OUTPUT_SCHEMA.required).not.toEqual(
+      expect.arrayContaining(["pass"]),
+    );
+    expect(VALIDATOR_OUTPUT_SCHEMA.properties).not.toHaveProperty("pass");
+    expect(VALIDATOR_OUTPUT_SCHEMA.properties).not.toHaveProperty(
+      "reopenTaskIds",
+    );
   });
 });
 
 describe("parseValidatorResponse", () => {
-  it("prefers structuredOutput and preserves reopenTaskIds", () => {
+  it("prefers structuredOutput and derives reopenTaskIds from issue taskIds", () => {
     const result = parseValidatorResponse(
       "ignored",
       "claude",
       {
-        pass: false,
         summary: "Needs work",
-        issues: [{ title: "Bug", description: "Fix" }],
-        reopenTaskIds: ["task-1"],
+        issues: [{ taskId: "task-1", title: "Bug", description: "Fix" }],
       },
       ["task-1", "task-2"],
     );
@@ -371,10 +401,8 @@ describe("parseValidatorResponse", () => {
 describe("createValidatorRunner", () => {
   it("runContextValidator passes the prompt to the task runner and returns the parsed result", async () => {
     const agentResponse = JSON.stringify({
-      pass: true,
       summary: "Context completed correctly",
       issues: [],
-      reopenTaskIds: [],
     });
 
     const claudeRun = vi.fn(async () => taskResult(agentResponse));
@@ -481,12 +509,14 @@ describe("createValidatorRunner", () => {
 
   it("runContextValidator calls the codex task runner with hardened execution settings", async () => {
     const codexResponse = JSON.stringify({
-      pass: false,
       summary: "Reopen one task.",
       issues: [
-        { title: "Missing tests", description: "Add the missing tests." },
+        {
+          taskId: "task-plan-2",
+          title: "Missing tests",
+          description: "Add the missing tests.",
+        },
       ],
-      reopenTaskIds: ["task-plan-2"],
     });
 
     const codexRun = vi.fn(async () => taskResult(codexResponse));
@@ -533,10 +563,8 @@ describe("createValidatorRunner", () => {
 
 describe("context validator continuity runtime integration", () => {
   const passResponseJson = JSON.stringify({
-    pass: true,
     summary: "All good",
     issues: [],
-    reopenTaskIds: [],
   });
   const NOW = "2026-04-01T10:00:00.000Z";
 

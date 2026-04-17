@@ -274,18 +274,14 @@ describe("workflow graph execution schemas", () => {
 });
 
 describe("workflow graph validator and request schemas", () => {
-  it("defaults validator directives collections while preserving issues", () => {
+  it("defaults issues to an empty array and requires taskId on each issue", () => {
     const emptyResult = workflowAgentValidatorResultSchema.parse({
-      pass: true,
       summary: "Looks good",
     });
     expect(emptyResult.issues).toEqual([]);
-    expect(emptyResult.reopenTaskIds).toEqual([]);
 
     const issueResult = workflowAgentValidatorResultSchema.parse({
-      pass: false,
       summary: "Needs fixes",
-      reopenTaskIds: ["task-1"],
       issues: [
         {
           taskId: "task-1",
@@ -296,6 +292,18 @@ describe("workflow graph validator and request schemas", () => {
     });
 
     expect(issueResult.issues[0]?.title).toBe("Missing coverage");
+    expect(issueResult.issues[0]?.taskId).toBe("task-1");
+
+    const missingTaskId = workflowAgentValidatorResultSchema.safeParse({
+      summary: "Needs fixes",
+      issues: [
+        {
+          title: "Missing coverage",
+          description: "Add tests for the new graph workflow state fields.",
+        },
+      ],
+    });
+    expect(missingTaskId.success).toBe(false);
   });
 
   it("parses runtime edit operations for add and move workflows", () => {

@@ -26,7 +26,6 @@ import type {
 export const VALIDATOR_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
-    pass: { type: "boolean" },
     summary: { type: "string" },
     issues: {
       type: "array",
@@ -37,16 +36,12 @@ export const VALIDATOR_OUTPUT_SCHEMA = {
           title: { type: "string" },
           description: { type: "string" },
         },
-        required: ["title", "description"],
+        required: ["taskId", "title", "description"],
         additionalProperties: false,
       },
     },
-    reopenTaskIds: {
-      type: "array",
-      items: { type: "string" },
-    },
   },
-  required: ["pass", "summary", "issues", "reopenTaskIds"],
+  required: ["summary", "issues"],
   additionalProperties: false,
 } as const;
 
@@ -106,14 +101,10 @@ export function buildContextValidationPrompt(
     "## Required Output",
     "",
     "Output a JSON object with these fields:",
-    "- `pass` (boolean): `true` only when the entire context meets the acceptance criteria",
-    "- `summary` (string): Brief explanation of your assessment",
-    "- `issues` (array of `{ title, description, taskId? }`): Specific problems found. Set `taskId` when the problem clearly belongs to one task in this context.",
-    "- `reopenTaskIds` (array of task IDs): Tasks that must be reopened",
+    "- `summary` (string): Brief explanation of your assessment.",
+    "- `issues` (array of `{ taskId, title, description }`): Each issue must reference the `taskId` of the task that needs to be reopened to address it. If the same problem touches multiple tasks in this context, include one issue entry per affected task (duplicate the entry with each distinct `taskId`).",
     "",
-    "Response contract:",
-    "- If `pass` is `true`, `reopenTaskIds` must be an empty array.",
-    "- If `pass` is `false`, `reopenTaskIds` must contain one or more task IDs from this context.",
+    "An empty `issues` array means the context passes validation. A non-empty `issues` array means every referenced task will be reopened.",
   ].join("\n");
 }
 
@@ -137,20 +128,6 @@ export type ValidatorOutcome =
       engine: "claude" | "codex";
     };
 
-function validateReopenedTaskIds(
-  reopenTaskIds: string[],
-  allowedTaskIds: Set<string> | null,
-): string | null {
-  if (!allowedTaskIds) return null;
-  const invalidTaskIds = reopenTaskIds.filter(
-    (taskId) => !allowedTaskIds.has(taskId),
-  );
-  if (invalidTaskIds.length === 0) {
-    return null;
-  }
-  return `Validator output referenced tasks outside the context: ${invalidTaskIds.join(", ")}`;
-}
-
 function validateIssueTaskIds(
   issues: WorkflowValidatorIssue[],
   allowedTaskIds: Set<string> | null,
@@ -158,39 +135,32 @@ function validateIssueTaskIds(
   if (!allowedTaskIds) return null;
   const invalidTaskIds = issues
     .map((issue) => issue.taskId)
-    .filter(
-      (taskId): taskId is string =>
-        typeof taskId === "string" && !allowedTaskIds.has(taskId),
-    );
+    .filter((taskId) => !allowedTaskIds.has(taskId));
   if (invalidTaskIds.length === 0) {
     return null;
   }
   return `Validator issues referenced tasks outside the context: ${invalidTaskIds.join(", ")}`;
 }
 
+function deriveReopenTaskIds(issues: WorkflowValidatorIssue[]): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const issue of issues) {
+    if (seen.has(issue.taskId)) continue;
+    seen.add(issue.taskId);
+    ordered.push(issue.taskId);
+  }
+  return ordered;
+}
+
 function wireResultToOutcome(
   result: {
-    pass: boolean;
     summary: string;
     issues: WorkflowValidatorIssue[];
-    reopenTaskIds: string[];
   },
   engine: "claude" | "codex",
   allowedTaskIds: Set<string> | null,
 ): ValidatorOutcome {
-  const invalidReopenTaskIds = validateReopenedTaskIds(
-    result.reopenTaskIds,
-    allowedTaskIds,
-  );
-  if (invalidReopenTaskIds) {
-    return {
-      kind: "infra_error",
-      reason: "schema_mismatch",
-      message: invalidReopenTaskIds,
-      engine,
-    };
-  }
-
   const invalidIssueTaskIds = validateIssueTaskIds(
     result.issues,
     allowedTaskIds,
@@ -204,16 +174,7 @@ function wireResultToOutcome(
     };
   }
 
-  if (result.pass) {
-    if (result.reopenTaskIds.length > 0 || result.issues.length > 0) {
-      return {
-        kind: "infra_error",
-        reason: "schema_mismatch",
-        message:
-          "Validator output marked pass=true but still reported issues or reopened tasks.",
-        engine,
-      };
-    }
+  if (result.issues.length === 0) {
     return {
       kind: "pass",
       summary: result.summary,
@@ -222,21 +183,11 @@ function wireResultToOutcome(
     };
   }
 
-  if (result.reopenTaskIds.length === 0) {
-    return {
-      kind: "infra_error",
-      reason: "schema_mismatch",
-      message:
-        "Validator output marked pass=false but did not provide reopenTaskIds.",
-      engine,
-    };
-  }
-
   return {
     kind: "fail",
     summary: result.summary,
     issues: result.issues,
-    reopenTaskIds: result.reopenTaskIds,
+    reopenTaskIds: deriveReopenTaskIds(result.issues),
   };
 }
 

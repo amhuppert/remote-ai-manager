@@ -660,7 +660,7 @@ export type WorkflowDefinitionRecord = z.infer<
 >;
 
 export const workflowValidatorIssueSchema = z.object({
-  taskId: z.string().trim().min(1).optional(),
+  taskId: z.string().trim().min(1),
   title: z.string().trim().min(1),
   description: z.string().trim().min(1),
 });
@@ -669,9 +669,7 @@ export type WorkflowValidatorIssue = z.infer<
 >;
 
 export const workflowAgentValidatorResultSchema = z.object({
-  pass: z.boolean(),
   summary: z.string(),
-  reopenTaskIds: z.array(z.string().trim().min(1)).default([]),
   issues: z.array(workflowValidatorIssueSchema).default([]),
 });
 export type WorkflowAgentValidatorResult = z.infer<

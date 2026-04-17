@@ -81,6 +81,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
         summary: "Failed",
         issues: [
           {
+            taskId: "task-1",
             title: "Missing coverage",
             description: "No tests for `handleSubmit` function",
           },

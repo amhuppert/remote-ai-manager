@@ -190,7 +190,7 @@ function appendFailedContextValidationEvent(
     summary: string;
     reopenTaskIds: string[];
     issues: Array<{
-      taskId?: string;
+      taskId: string;
       title: string;
       description: string;
     }>;
@@ -2376,7 +2376,13 @@ describe("mid-iteration halt via signalHalt", () => {
       summary: "Still failing",
       feedback:
         "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing: add coverage",
-      issues: [{ title: "Missing", description: "add coverage" }],
+      issues: [
+        {
+          taskId: "task-plan-2",
+          title: "Missing",
+          description: "add coverage",
+        },
+      ],
       reopenTaskIds: ["task-plan-2"],
       sessionRef: null,
       reviewArtifact: null,

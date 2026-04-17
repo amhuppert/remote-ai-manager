@@ -174,6 +174,7 @@ describe("graph workflow execution event publisher", () => {
       summary: "Validation failed because the fix task was incomplete.",
       issues: [
         {
+          taskId: "task-plan-1",
           title: "Fix task incomplete",
           description: "The remediation task did not update the plan document.",
         },

@@ -107,6 +107,7 @@ describe("graph workflow execution validation service", () => {
           summary: "The plan document is still missing key migration notes.",
           issues: [
             {
+              taskId: "task-plan-2",
               title: "Plan incomplete",
               description:
                 "The migration rollback steps are not documented in the plan.",

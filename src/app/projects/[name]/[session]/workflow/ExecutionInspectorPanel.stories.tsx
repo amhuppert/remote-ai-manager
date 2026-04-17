@@ -265,11 +265,13 @@ const createUserSchema = z.object({
           summary: "Context validation failed: missing error handling",
           issues: [
             {
+              taskId: "task-1",
               title: "Missing error handler",
               description:
                 "POST /api/users does not handle duplicate email errors. The endpoint should return 409 Conflict with a descriptive message.",
             },
             {
+              taskId: "task-2",
               title: "Missing input validation",
               description:
                 "Email format validation is not strict enough — accepts strings without TLD",
@@ -419,6 +421,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
           summary: "Missing error handling in endpoints",
           issues: [
             {
+              taskId: "task-2",
               title: "Missing error handler",
               description: "POST /api/users does not handle duplicate emails",
             },
@@ -439,15 +442,18 @@ function makeHaltedExecution(): GraphWorkflowExecution {
           summary: "JWT middleware still broken",
           issues: [
             {
+              taskId: "task-2",
               title: "Dependency missing",
               description: "jsonwebtoken not installed",
             },
             {
+              taskId: "task-2",
               title: "Token verification incomplete",
               description:
                 "Middleware does not check token expiration or validate issuer claim",
             },
             {
+              taskId: "task-3",
               title: "Missing auth error responses",
               description:
                 "Endpoints return 500 instead of 401 when token is invalid",
