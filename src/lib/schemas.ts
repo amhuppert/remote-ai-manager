@@ -989,7 +989,7 @@ export const graphWorkflowLaneStateSchema = z.discriminatedUnion("engine", [
     workflowConversationId: z.string().trim().min(1).optional(),
     sessionRef: graphWorkflowExecutionSessionRefSchema.optional(),
     lastTurnUsage: graphWorkflowLaneTurnUsageSchema.nullable().default(null),
-    rotateBeforeNextTurn: z.literal(false).default(false),
+    rotateBeforeNextTurn: z.boolean().default(false),
     limitEvaluation: z.enum(["disabled", "unsupported"]),
     lastUsedAt: z.string(),
   }),

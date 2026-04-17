@@ -1140,6 +1140,42 @@ describe("recordCodexTurnOutcome", () => {
       expect(updated.sessionRef.threadId).toBe("thread-keep");
     }
   });
+
+  it("sets rotateBeforeNextTurn=true when failed is true to recover from phantom threads", () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const existingLane: GraphWorkflowLaneState = {
+      engine: "codex",
+      lane: "context_validator",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "codex",
+        lane: "context_validator",
+        threadId: "thread-phantom",
+      },
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: { context_validator: existingLane },
+    });
+
+    const result = svc.recordCodexTurnOutcome({
+      execution,
+      lane: "context_validator",
+      usage: null,
+      contextLimitTokens: undefined,
+      newThreadId: null,
+      failed: true,
+    });
+
+    const updated = result.laneStates["context_validator"];
+    expect(updated?.rotateBeforeNextTurn).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

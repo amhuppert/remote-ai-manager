@@ -247,7 +247,8 @@ export interface ParsedValidatorResponse {
     | "structured_output"
     | "raw_json"
     | "fenced_json_block"
-    | "fenced_json_block_fallback";
+    | "fenced_json_block_fallback"
+    | "runner_error";
 }
 
 export function parseValidatorResponse(
@@ -464,6 +465,28 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
 
     if (!deps.continuityService) {
       const taskResult = await runner.run({ ...baseRequest, ...codexSettings });
+
+      if (taskResult.error) {
+        const outcome: ValidatorOutcome = {
+          kind: "infra_error",
+          reason: "exception",
+          message: taskResult.error,
+          engine: validatorType,
+        };
+        execLogger?.validation(contextId, "validator.result_parsed", {
+          lane,
+          engine: validatorType,
+          parsePath: "runner_error" as const,
+          kind: outcome.kind,
+          issueCount: 0,
+          reopenTaskIds: [],
+        });
+        return {
+          result: outcome,
+          metadata: buildNoServiceMetadata(),
+        };
+      }
+
       const text = taskResult.text ?? "";
       const { result: parsed, parsePath } = parseValidatorResponse(
         text,
@@ -511,13 +534,24 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       );
     }
 
+    const runnerError = taskResult.error;
     const text = taskResult.text ?? "";
-    const { result: parsed, parsePath } = parseValidatorResponse(
-      text,
-      validatorType,
-      taskResult.structuredOutput,
-      allowedTaskIds,
-    );
+    const { result: parsed, parsePath }: ParsedValidatorResponse = runnerError
+      ? {
+          result: {
+            kind: "infra_error",
+            reason: "exception",
+            message: runnerError,
+            engine: validatorType,
+          },
+          parsePath: "runner_error",
+        }
+      : parseValidatorResponse(
+          text,
+          validatorType,
+          taskResult.structuredOutput,
+          allowedTaskIds,
+        );
 
     if (validatorType === "codex") {
       const newThreadId =
@@ -538,6 +572,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         usage,
         contextLimitTokens,
         newThreadId,
+        failed: runnerError != null,
       });
       await persistLaneState(projectPath, sessionName, updatedExecution);
 

@@ -93,6 +93,8 @@ export interface RecordCodexLaneTurnInput {
   contextLimitTokens: number | undefined;
   /** Real Codex thread ID captured after the turn completes. Updates sessionRef when provided. */
   newThreadId?: string | null;
+  /** True when the turn failed before producing a real thread. Forces the next call to rotate so phantom thread IDs are not reused. */
+  failed?: boolean;
 }
 
 // ============================================================
@@ -730,7 +732,8 @@ export function createWorkflowContinuityService(
   function recordCodexTurnOutcome(
     input: RecordCodexLaneTurnInput,
   ): GraphWorkflowExecution {
-    const { execution, lane, usage, contextLimitTokens, newThreadId } = input;
+    const { execution, lane, usage, contextLimitTokens, newThreadId, failed } =
+      input;
     const laneState = getCurrentLane(execution, lane);
     if (!laneState || laneState.engine !== "codex") return execution;
 
@@ -752,7 +755,7 @@ export function createWorkflowContinuityService(
       ...laneState,
       sessionRef,
       lastTurnUsage: usage,
-      rotateBeforeNextTurn: false,
+      rotateBeforeNextTurn: failed === true,
       limitEvaluation,
       lastUsedAt: getNow(deps),
     };

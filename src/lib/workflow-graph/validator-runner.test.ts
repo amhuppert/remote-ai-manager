@@ -507,6 +507,47 @@ describe("createValidatorRunner", () => {
     }
   });
 
+  it("runContextValidator returns infra_error exception when codex returns a non-null error without throwing", async () => {
+    const codexRun = vi.fn(async () =>
+      taskResult(null, {
+        error:
+          "thread/resume failed: no rollout found for thread id phantom-123",
+      }),
+    );
+    const runner = createValidatorRunner({
+      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+    });
+
+    const codexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      continuity: { enabled: true },
+      codex: {},
+      acceptanceCriteria: "Check the completed context.",
+    };
+    const execution = buildExecutionWithContextValidation(codexValidator);
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: codexValidator,
+    });
+
+    expect(result.result.kind).toBe("infra_error");
+    if (result.result.kind === "infra_error") {
+      expect(result.result.reason).toBe("exception");
+      expect(result.result.engine).toBe("codex");
+      expect(result.result.message).toContain("no rollout found");
+    }
+  });
+
   it("runContextValidator calls the codex task runner with hardened execution settings", async () => {
     const codexResponse = JSON.stringify({
       summary: "Reopen one task.",
@@ -726,5 +767,64 @@ describe("context validator continuity runtime integration", () => {
       engine: "codex",
       threadId: "thread-real-1",
     });
+  });
+
+  it("marks the Codex lane for rotation after a failed turn so phantom threads are not reused", async () => {
+    const codexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      continuity: { enabled: true },
+      codex: {},
+      acceptanceCriteria: "Validate.",
+    };
+    const execution = buildExecutionWithContextValidation(codexValidator);
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const repo = createInMemoryRepo(execution);
+
+    const startCodexThread = vi.fn(async () => ({
+      threadId: "thread-placeholder",
+    }));
+    const resumeCodexThread = vi.fn(async (id: string) => ({ threadId: id }));
+
+    const continuityService = createWorkflowContinuityService({
+      createConversation: vi.fn(),
+      getConversation: vi.fn(),
+      startCodexThread,
+      resumeCodexThread,
+      now: () => NOW,
+    });
+
+    const codexRun = vi.fn().mockResolvedValue(
+      taskResult(null, {
+        error: "Codex Exec exited with code 1: schema invalid",
+      }),
+    );
+
+    const runner = createValidatorRunner({
+      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      continuityService,
+      executionRepository: repo,
+    });
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: codexValidator,
+    });
+
+    expect(result.result.kind).toBe("infra_error");
+    if (result.result.kind === "infra_error") {
+      expect(result.result.reason).toBe("exception");
+      expect(result.result.engine).toBe("codex");
+    }
+    expect(
+      repo.read().laneStates["context_validator"]?.rotateBeforeNextTurn,
+    ).toBe(true);
   });
 });
