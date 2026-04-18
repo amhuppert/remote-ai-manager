@@ -8,6 +8,7 @@ import {
 } from "@/lib/workflow-graph/layout";
 import type {
   GraphWorkflowVisualLayout,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
 
@@ -25,7 +26,7 @@ export function collectNodeDimensions(nodes: Node[]): NodeDimensions {
 }
 
 interface AutoLayoutProps {
-  definition: WorkflowSemanticDefinition;
+  definition: WorkflowSemanticDefinition | ResolvedWorkflowSemanticDefinition;
   onLayout: (layout: GraphWorkflowVisualLayout) => void;
 }
 

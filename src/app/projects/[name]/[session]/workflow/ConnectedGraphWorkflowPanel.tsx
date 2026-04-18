@@ -127,7 +127,7 @@ export default function ConnectedGraphWorkflowPanel({
       sessionName={sessionName}
       execution={session?.graphWorkflowExecution ?? null}
       archivedExecutions={session?.graphWorkflowExecutionHistory ?? []}
-      layout={seedDefinitionQuery.data?.layout ?? null}
+      layout={seedDefinitionQuery.data?.item.layout ?? null}
       onPause={() => pauseMutation.mutate()}
       onResume={() => resumeMutation.mutate()}
       onAbort={() => abortMutation.mutate()}

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
 import {
@@ -17,12 +18,14 @@ function createSingleContextDefinition(
 ): WorkflowSemanticDefinition {
   return {
     schemaVersion: 1,
+    workflowConfig: {},
     executionContexts: [
       {
         id: "ctx-1",
         title: "Do work",
         description: "Single context",
-        agent: {
+        acceptanceCriteria: "TBD",
+        implementer: {
           backend: "claude",
           model: "sonnet",
           reasoningEffort: "medium",
@@ -54,7 +57,8 @@ function createRunningExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
-    workingDefinition: definition,
+    workingDefinition:
+      definition as unknown as ResolvedWorkflowSemanticDefinition,
     status: "running",
     activeContextId: null,
     contextStates: {

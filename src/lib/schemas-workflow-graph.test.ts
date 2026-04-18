@@ -16,7 +16,6 @@ import {
   workflowDefaultsSchema,
   workflowDefinitionRecordSchema,
   workflowRuntimeEditRequestSchema,
-  workflowValidatorDefaultSchema,
 } from "./schemas";
 
 const timestamp = "2026-03-27T12:00:00.000Z";
@@ -24,12 +23,15 @@ const timestamp = "2026-03-27T12:00:00.000Z";
 function createSemanticDefinition() {
   return {
     schemaVersion: 1,
+    workflowConfig: {},
     executionContexts: [
       {
         id: "context-1",
         title: "Plan",
         description: "Plan the implementation",
-        agent: {
+        acceptanceCriteria: "All tasks are complete and verified.",
+        implementer: {
+          backend: "claude",
           model: "opus",
           reasoningEffort: "high",
         },
@@ -43,22 +45,27 @@ function createSemanticDefinition() {
           maxIterations: 5,
           continuity: { enabled: true, contextLimitTokens: 120000 },
         },
-        contextValidation: {
-          enabled: true,
-          acceptanceCriteria: "All tasks are complete and verified.",
-          agent: {
-            model: "sonnet",
-            reasoningEffort: "medium",
+        contextValidator: {
+          kind: "use",
+          value: {
+            type: "claude",
+            enabled: true,
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
           },
-          continuity: { enabled: true },
-          type: "claude",
         },
       },
       {
         id: "context-2",
         title: "Implement",
         description: "Write the code",
-        agent: {
+        acceptanceCriteria: "Code compiles and tests pass.",
+        implementer: {
+          backend: "claude",
           model: "opus",
           reasoningEffort: "medium",
         },
@@ -83,6 +90,82 @@ function createSemanticDefinition() {
         metadata: {
           area: "schemas",
         },
+        source: "user",
+      },
+      {
+        id: "task-2",
+        contextId: "context-2",
+        order: 1,
+        title: "Implement the slice",
+        instructions: "Make the tests pass.",
+        source: "agent",
+      },
+    ],
+    edges: [
+      {
+        id: "edge-1",
+        sourceContextId: "context-1",
+        targetContextId: "context-2",
+      },
+    ],
+  };
+}
+
+function createResolvedDefinition() {
+  return {
+    schemaVersion: 1,
+    executionContexts: [
+      {
+        id: "context-1",
+        title: "Plan",
+        description: "Plan the implementation",
+        acceptanceCriteria: "All tasks are complete and verified.",
+        implementer: {
+          backend: "claude",
+          model: "opus",
+          reasoningEffort: "high",
+        },
+        mutability: { allowAgentTaskAdd: true },
+        circuitBreaker: { consecutiveFailureThreshold: 3 },
+        iterationPolicy: {
+          maxIterations: 5,
+          continuity: { enabled: true, contextLimitTokens: 120000 },
+        },
+        contextValidator: {
+          type: "claude",
+          enabled: true,
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: true },
+        },
+      },
+      {
+        id: "context-2",
+        title: "Implement",
+        description: "Write the code",
+        acceptanceCriteria: "Code compiles and tests pass.",
+        implementer: {
+          backend: "claude",
+          model: "opus",
+          reasoningEffort: "medium",
+        },
+        mutability: { allowAgentTaskAdd: false },
+        circuitBreaker: { consecutiveFailureThreshold: 2 },
+        iterationPolicy: { maxIterations: 3 },
+        contextValidator: null,
+      },
+    ],
+    tasks: [
+      {
+        id: "task-1",
+        contextId: "context-1",
+        order: 1,
+        title: "Inspect the current state",
+        instructions: "Read the relevant files.",
+        metadata: { area: "schemas" },
         source: "user",
       },
       {
@@ -172,7 +255,7 @@ describe("workflow graph execution schemas", () => {
       id: "execution-1",
       seedDefinitionId: "workflow-1",
       seedDefinitionRevision: 4,
-      workingDefinition: createSemanticDefinition(),
+      workingDefinition: createResolvedDefinition(),
       status: "running",
       activeContextId: "context-1",
       activeTaskId: "task-1",
@@ -435,80 +518,44 @@ describe("workflow graph session state and SSE schemas", () => {
   });
 });
 
-describe("workflowValidatorDefaultSchema", () => {
-  it("parses a claude validator default with model and effort", () => {
-    const result = workflowValidatorDefaultSchema.safeParse({
-      type: "claude",
-      model: "sonnet",
+function createWorkflowDefaults() {
+  return {
+    implementer: {
+      backend: "claude",
+      model: "opus",
       reasoningEffort: "high",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe("claude");
-    }
-  });
-
-  it("parses a codex validator default with model and effort", () => {
-    const result = workflowValidatorDefaultSchema.safeParse({
-      type: "codex",
-      model: "gpt-5.4",
-      reasoningEffort: "high",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe("codex");
-    }
-  });
-
-  it("allows model and effort to be optional", () => {
-    const result = workflowValidatorDefaultSchema.safeParse({
-      type: "codex",
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects invalid type", () => {
-    const result = workflowValidatorDefaultSchema.safeParse({
-      type: "gpt",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects invalid claude model", () => {
-    const result = workflowValidatorDefaultSchema.safeParse({
+    },
+    contextValidator: {
       type: "claude",
-      model: "gpt-4",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("codex allows free-form model strings", () => {
-    const result = workflowValidatorDefaultSchema.safeParse({
-      type: "codex",
-      model: "o4-mini",
-    });
-    expect(result.success).toBe(true);
-  });
-});
-
-describe("workflowDefaultsSchema", () => {
-  it("parses with contextValidator specified", () => {
-    const result = workflowDefaultsSchema.safeParse({
-      contextValidator: {
-        type: "claude",
+      enabled: true,
+      agent: {
+        backend: "claude",
         model: "sonnet",
         reasoningEffort: "medium",
       },
-    });
+      continuity: { enabled: true },
+    },
+    iterationPolicy: {
+      maxIterations: 20,
+      continuity: { enabled: true },
+    },
+    circuitBreaker: { consecutiveFailureThreshold: 3 },
+    mutability: { allowAgentTaskAdd: false },
+  };
+}
+
+describe("workflowDefaultsSchema", () => {
+  it("parses with all five blocks specified", () => {
+    const result = workflowDefaultsSchema.safeParse(createWorkflowDefaults());
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.contextValidator?.type).toBe("claude");
+      expect(result.data.contextValidator.type).toBe("claude");
     }
   });
 
-  it("allows all fields to be optional", () => {
+  it("requires all five blocks", () => {
     const result = workflowDefaultsSchema.safeParse({});
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 });
 
@@ -649,13 +696,7 @@ describe("globalConfigSchema workflowDefaults", () => {
       ignorePatterns: [],
       stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 3600000,
-      workflowDefaults: {
-        contextValidator: {
-          type: "claude",
-          model: "sonnet",
-          reasoningEffort: "high",
-        },
-      },
+      workflowDefaults: createWorkflowDefaults(),
     });
     expect(result.success).toBe(true);
     if (result.success) {

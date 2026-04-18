@@ -247,71 +247,116 @@ afterEach(() => {
 
 ---
 
-## Graph Workflows — Validator Configuration
+## Graph Workflows — Configuration Cascade
 
-Graph workflows support two validator types for both task-level and execution-context-level validation:
+Graph workflow configuration is resolved through a **three-tier cascade**. Each tier overrides the one above it:
+
+1. **Global** — `workflowDefaults` in `config.json` (the base values for every workflow).
+2. **Workflow** — `workflowConfig` on the workflow definition (overrides any global block for this workflow).
+3. **Per-context** — individual blocks on an `executionContext` (overrides both global and workflow for that context only).
+
+Resolution happens at seed time (in `src/lib/workflow-graph/resolve-config.ts`) — the resolved context is snapshotted into the execution's `workingDefinition`, so later edits to global or workflow configs do not mutate a running execution.
+
+```jsonc
+// config.json — global tier
+{
+  "workflowDefaults": {
+    "implementer":      { "backend": "claude", "model": "opus",   "reasoningEffort": "medium" },
+    "contextValidator": { "type": "claude", "enabled": true, "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "continuity": { "enabled": true } },
+    "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
+    "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
+    "mutability":       { "allowAgentTaskAdd": false }
+  }
+}
+```
+
+```jsonc
+// workflow definition — workflow tier overrides global, per-context overrides both
+{
+  "workflowConfig": {
+    "implementer": { "model": "sonnet" }      // every context uses sonnet implementer unless it overrides
+  },
+  "executionContexts": [
+    {
+      "id": "plan",
+      "title": "Plan",
+      "acceptanceCriteria": "A plan.md file exists describing the approach.",
+      "contextValidator": { "kind": "disabled" }   // opt out of validation for this context
+    },
+    {
+      "id": "impl",
+      "title": "Implement",
+      "acceptanceCriteria": "Feature implemented and tests pass.",
+      "implementer": { "model": "opus", "reasoningEffort": "high" }   // per-context override
+    }
+  ]
+}
+```
+
+### `workflowDefaults` block shape
+
+`workflowDefaults` in `config.json` has exactly **five blocks**, all independent and individually overridable at each tier:
+
+| Block | Purpose |
+|-------|---------|
+| `implementer`       | Agent config for the implementer (backend, model, reasoning effort). |
+| `contextValidator`  | Validator that reviews the whole context against its acceptance criteria. Discriminated on `type: "claude" \| "codex"`. |
+| `iterationPolicy`   | Iteration caps and continuity policy (`maxIterations`, `continuity.enabled`, optional `contextLimitTokens`). |
+| `circuitBreaker`    | Failure-threshold policy (`consecutiveFailureThreshold`). |
+| `mutability`        | What the implementer is allowed to change (e.g. `allowAgentTaskAdd`). |
+
+### Acceptance criteria is context-level
+
+`acceptanceCriteria` is a **required field on every execution context** (`executionContext.acceptanceCriteria`). It is:
+- Passed to the **implementer** as the success condition the context is working toward.
+- Passed to the **context validator** (when enabled) as the rubric to evaluate against.
+
+AC lives on the context — never on the validator. A single statement of "done" is the source of truth for both roles.
+
+### Opting out of context validation
+
+To skip validation for a specific context, set:
+
+```jsonc
+{ "contextValidator": { "kind": "disabled" } }
+```
+
+This is the `contextValidatorOverride` discriminated union. The two shapes are:
+- `{ "kind": "use", "value": <validator config> }` — use this validator config instead of the inherited one.
+- `{ "kind": "disabled" }` — explicitly skip validation; the context completes when AC is claimed satisfied without validator review.
+
+Omitting `contextValidator` entirely means "inherit from workflow / global" — which is the usual case.
+
+### Validator engines
+
+Validators (global default or per-context override's `value`) are discriminated on `type`:
 
 | Type | Engine | Runs where | When to use |
 |------|--------|-----------|-------------|
 | `claude` | Claude agent (via SDK) | Cloud | Nuanced reviews, subjective quality checks |
 | `codex` | OpenAI Codex | Local | Fast, deterministic checks (tests pass, types check, lint clean) |
 
-### Codex is a first-class validator
+Set the validator type directly — do **NOT** configure a Claude validator and instruct it to call Codex via MCP tools.
 
-Set the validator type directly via the `type` field in the workflow definition. **Do NOT** configure a Claude validator and instruct it to call Codex via MCP tools — that creates unnecessary indirection.
+```jsonc
+// Codex validator
+{ "type": "codex", "enabled": true, "codex": { "reasoningEffort": "high" }, "continuity": { "enabled": true } }
 
-```json
-{
-  "taskValidation": {
-    "type": "codex",
-    "enabled": true,
-    "codex": {},
-    "instructions": "Run tests and typecheck. Fail if either has errors."
-  }
-}
+// Claude validator
+{ "type": "claude", "enabled": true, "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "high" }, "continuity": { "enabled": true } }
 ```
 
-For Claude validators:
+Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns the allowed levels for a given model.
 
-```json
-{
-  "taskValidation": {
-    "type": "claude",
-    "enabled": true,
-    "agent": { "model": "sonnet", "reasoningEffort": "high" },
-    "instructions": "Review code quality and architecture."
-  }
-}
+### Clearing existing workflow state
+
+The cascade refactor removed legacy fields (`agent`, `contextValidation`, `taskValidation`, `contextSoftLimitTokens`, `contextHardLimitTokens`). The schema-cutover guard rejects legacy shapes at read time. Existing workflow state must be cleared before the app will start:
+
+```bash
+bun scripts/clean-graph-workflow-state.ts
 ```
 
-### Global defaults via `config.json`
-
-The `workflowDefaults` section in global config sets defaults for workflows created via the planner MCP tools. Per-context overrides always take precedence.
-
-Each validator default is an object with `type`, `model`, and `reasoningEffort`. Model and reasoning effort are type-specific: Claude uses `ClaudeModel` + `EffortLevel`, Codex uses free-form model strings + `CodexReasoningEffort`. Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns the allowed levels for a given model (currently only `gpt-5.4` is mapped: `low`, `medium`, `high`, `xhigh`).
-
-```json
-{
-  "workflowDefaults": {
-    "taskValidator": {
-      "type": "claude",
-      "model": "sonnet",
-      "reasoningEffort": "high"
-    }
-  }
-}
-```
-
-| Field | Controls | Fallback |
-|-------|----------|----------|
-| `taskValidator` | Default config for task-level validators | `{ type: "claude" }` |
-| `.type` | Validator engine | `"claude"` |
-| `.model` | Model (Claude: `"opus"\|"sonnet"\|"haiku"`, Codex: any string) | Context agent model (Claude) or global codex config (Codex) |
-| `.reasoningEffort` | Reasoning level (Claude: `"low"\|"medium"\|"high"\|"max"`, Codex: `"minimal"\|"low"\|"medium"\|"high"\|"xhigh"`) | Context agent effort (Claude) or global codex config (Codex) |
-
-### Where validators live in the definition
-
-- **Task validation** (`executionContext.taskValidation`) — Runs after each task completes within a context. The `type` discriminator selects `"claude"` or `"codex"`.
+The script clears `graphWorkflowExecution` / `graphWorkflowExecutionHistory` from every session in `state.json` and deletes the `workflows/` directory alongside the state file. It is idempotent and safe to rerun. Recreate workflows afterward via the UI or MCP tools.
 
 ---
 

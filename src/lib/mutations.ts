@@ -264,10 +264,9 @@ export function useCreateWorkflowDefinitionMutation(projectName: string) {
       void queryClient.invalidateQueries({
         queryKey: workflowDefinitionKeys.list(projectName),
       });
-      void queryClient.setQueryData(
-        workflowDefinitionKeys.detail(projectName, data.item.id),
-        data.item,
-      );
+      void queryClient.invalidateQueries({
+        queryKey: workflowDefinitionKeys.detail(projectName, data.item.id),
+      });
     },
   });
 }
@@ -295,14 +294,13 @@ export function useUpdateWorkflowDefinitionMutation(
         },
         workflowDefinitionMutationResponseSchema,
       ),
-    onSuccess: (data) => {
+    onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: workflowDefinitionKeys.list(projectName),
       });
-      void queryClient.setQueryData(
-        workflowDefinitionKeys.detail(projectName, workflowId),
-        data.item,
-      );
+      void queryClient.invalidateQueries({
+        queryKey: workflowDefinitionKeys.detail(projectName, workflowId),
+      });
     },
   });
 }

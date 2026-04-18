@@ -9,7 +9,7 @@ import {
 import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
-  GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowResolvedContext,
   GraphWorkflowTaskDefinition,
 } from "@/types";
 import type { AgentBackendId } from "@/lib/agent-backends/types";
@@ -18,7 +18,7 @@ import type {
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
 import {
-  createWorkflowDefinition,
+  createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "./test-fixtures";
 import { createWorkflowContinuityService } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
@@ -55,19 +55,23 @@ const validatorConfig: GraphWorkflowAgentValidatorConfig = {
   enabled: true,
   continuity: { enabled: true },
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
-  acceptanceCriteria:
-    "Every task summary is complete and the final plan document is updated.",
 };
 
-const context: GraphWorkflowExecutionContextDefinition = {
+const context: GraphWorkflowResolvedContext = {
   id: "context-implement",
   title: "Implement Feature",
   description: "Build the widget",
-  agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  acceptanceCriteria:
+    "Every task summary is complete and the final plan document is updated.",
+  implementer: {
+    backend: "claude",
+    model: "sonnet",
+    reasoningEffort: "medium",
+  },
+  contextValidator: validatorConfig,
   mutability: { allowAgentTaskAdd: false },
   circuitBreaker: {},
   iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
-  contextValidation: validatorConfig,
 };
 
 const tasks: GraphWorkflowTaskDefinition[] = [
@@ -119,13 +123,15 @@ const taskStates: GraphWorkflowExecution["taskStates"] = {
 function buildExecutionWithContextValidation(
   validator: GraphWorkflowAgentValidatorConfig = validatorConfig,
 ): GraphWorkflowExecution {
-  const definition = createWorkflowDefinition({
-    executionContexts: createWorkflowDefinition().executionContexts.map(
+  const definition = createResolvedWorkflowDefinition({
+    executionContexts: createResolvedWorkflowDefinition().executionContexts.map(
       (ctx) =>
         ctx.id === "context-plan"
           ? {
               ...ctx,
-              contextValidation: validator,
+              acceptanceCriteria:
+                "Every task summary is complete and the final plan document is updated.",
+              contextValidator: validator,
             }
           : ctx,
     ),
@@ -146,7 +152,7 @@ function buildExecutionWithContextValidation(
         instructions: "Document the implementation plan.",
         source: "user",
       },
-      ...createWorkflowDefinition().tasks.filter(
+      ...createResolvedWorkflowDefinition().tasks.filter(
         (task) => task.contextId !== "context-plan",
       ),
     ],
@@ -422,7 +428,7 @@ describe("createValidatorRunner", () => {
       sessionName: "session-1",
       execution,
       context: contextDef,
-      validator: contextDef.contextValidation!,
+      validator: contextDef.contextValidator!,
     });
 
     expect(claudeRun).toHaveBeenCalledWith(
@@ -460,7 +466,7 @@ describe("createValidatorRunner", () => {
       sessionName: "session-1",
       execution,
       context: contextDef,
-      validator: contextDef.contextValidation!,
+      validator: contextDef.contextValidator!,
     });
 
     expect(result.result.kind).toBe("infra_error");
@@ -485,7 +491,6 @@ describe("createValidatorRunner", () => {
       enabled: true,
       continuity: { enabled: true },
       codex: {},
-      acceptanceCriteria: "Check the completed context.",
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -525,7 +530,6 @@ describe("createValidatorRunner", () => {
       enabled: true,
       continuity: { enabled: true },
       codex: {},
-      acceptanceCriteria: "Check the completed context.",
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -572,7 +576,6 @@ describe("createValidatorRunner", () => {
       enabled: true,
       continuity: { enabled: true },
       codex: { model: "gpt-5.4", reasoningEffort: "high" },
-      acceptanceCriteria: "Check for correctness.",
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -663,7 +666,7 @@ describe("context validator continuity runtime integration", () => {
       sessionName: "session-1",
       execution,
       context: contextDef,
-      validator: contextDef.contextValidation!,
+      validator: contextDef.contextValidator!,
     });
 
     expect(result1.metadata.sessionRef).toMatchObject({
@@ -678,7 +681,7 @@ describe("context validator continuity runtime integration", () => {
       sessionName: "session-1",
       execution: repo.read(),
       context: contextDef,
-      validator: contextDef.contextValidation!,
+      validator: contextDef.contextValidator!,
     });
 
     expect(createConversation).toHaveBeenCalledOnce();
@@ -699,7 +702,6 @@ describe("context validator continuity runtime integration", () => {
       enabled: true,
       continuity: { enabled: true },
       codex: {},
-      acceptanceCriteria: "Validate.",
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -775,7 +777,6 @@ describe("context validator continuity runtime integration", () => {
       enabled: true,
       continuity: { enabled: true },
       codex: {},
-      acceptanceCriteria: "Validate.",
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(

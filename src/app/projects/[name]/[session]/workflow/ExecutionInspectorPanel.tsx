@@ -152,7 +152,7 @@ function getTaskStatusDotClass(status?: string): string {
 function countEnabledValidators(execution: GraphWorkflowExecution): number {
   return execution.workingDefinition.executionContexts.reduce(
     (count, ctx) =>
-      count + [ctx.contextValidation?.enabled].filter(Boolean).length,
+      count + [ctx.contextValidator?.enabled].filter(Boolean).length,
     0,
   );
 }

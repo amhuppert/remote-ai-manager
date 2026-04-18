@@ -12,6 +12,7 @@ describe("mcp-gateway/planner-draft-registry", () => {
     const { draftId } = createPlannerDraftSubmission();
     const definition = {
       schemaVersion: 1,
+      workflowConfig: {},
       executionContexts: [],
       tasks: [],
       edges: [],

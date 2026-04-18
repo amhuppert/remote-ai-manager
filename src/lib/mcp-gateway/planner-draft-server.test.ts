@@ -56,6 +56,7 @@ describe("mcp-gateway/planner-draft-server", () => {
     const handler = tools.get("submit_workflow_draft")?.handler;
     const definition = {
       schemaVersion: 1,
+      workflowConfig: {},
       executionContexts: [],
       tasks: [],
       edges: [],

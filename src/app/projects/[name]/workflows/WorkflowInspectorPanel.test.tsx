@@ -26,14 +26,17 @@ function resetStore() {
   });
 }
 
-function setupStoreWithContext(contextId = "context-plan") {
-  const definition = createWorkflowDefinition();
+function setupStore(options?: {
+  selectedContextId?: string | null;
+  definition?: ReturnType<typeof createWorkflowDefinition>;
+}) {
+  const definition = options?.definition ?? createWorkflowDefinition();
   const layout = createWorkflowLayout();
   act(() => {
     _useGraphWorkflowBuilderStore.setState({
       draftDefinition: definition,
       draftLayout: layout,
-      selectedContextId: contextId,
+      selectedContextId: options?.selectedContextId ?? null,
       dirty: false,
       validationErrors: [],
     });
@@ -41,398 +44,392 @@ function setupStoreWithContext(contextId = "context-plan") {
   return { definition, layout };
 }
 
-/** Find a named section element by its title text. */
-function findSection(titleText: string): Element | null {
-  const titles = document.querySelectorAll(".wb-section-title");
-  const match = Array.from(titles).find((el) => el.textContent === titleText);
-  return match?.closest(".wb-section") ?? null;
+function getTabs(container: HTMLElement): HTMLButtonElement[] {
+  return Array.from(
+    container.querySelectorAll(".cc-tab"),
+  ) as HTMLButtonElement[];
 }
 
-/** Find an input inside a section's inline field by label text. */
-function findFieldInput(
-  section: Element,
-  labelText: string,
-): HTMLInputElement | null {
-  const fields = section.querySelectorAll(".wb-inline-field");
-  for (const field of Array.from(fields)) {
-    const label = field.querySelector(".wb-inline-field-label");
-    if (label?.textContent === labelText) {
-      return field.querySelector("input") as HTMLInputElement | null;
-    }
-  }
-  return null;
-}
-
-/** Find the toggle div inside a section's inline field by label text. */
-function findFieldToggle(
-  section: Element,
-  labelText: string,
+function findBlockByLabel(
+  container: HTMLElement,
+  label: string,
 ): HTMLElement | null {
-  const fields = section.querySelectorAll(".wb-inline-field");
-  for (const field of Array.from(fields)) {
-    const label = field.querySelector(".wb-inline-field-label");
-    if (label?.textContent === labelText) {
-      return field.querySelector(".wb-toggle") as HTMLElement | null;
-    }
+  const blocks = container.querySelectorAll(".wb-inspector-block");
+  for (const block of Array.from(blocks)) {
+    const labelEl = block.querySelector(".cc-section-label");
+    if (labelEl?.textContent === label) return block as HTMLElement;
   }
   return null;
 }
 
-describe("WorkflowInspectorPanel — implementer continuity controls", () => {
-  it("implementer continuity toggle is enabled by default", () => {
+function footButtons(block: HTMLElement): HTMLButtonElement[] {
+  return Array.from(
+    block.querySelectorAll(".wb-inspector-block__foot button"),
+  ) as HTMLButtonElement[];
+}
+
+describe("WorkflowInspectorPanel — persistent tab strip", () => {
+  it("renders two tabs with Workflow active and Context disabled when no selection", () => {
     resetStore();
-    setupStoreWithContext();
-    render(<WorkflowInspectorPanel {...defaultProps} />);
+    setupStore({ selectedContextId: null });
 
-    const ctx =
-      _useGraphWorkflowBuilderStore.getState().draftDefinition
-        ?.executionContexts[0];
-    expect(ctx?.iterationPolicy.continuity.enabled).toBe(true);
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+    const tabs = getTabs(container);
+    expect(tabs).toHaveLength(2);
 
-    const section = findSection("Iteration Policy");
-    expect(section).toBeTruthy();
-    const toggle = findFieldToggle(section!, "Session Continuity");
-    expect(toggle).toBeTruthy();
-    expect(toggle!.className).toContain("on");
+    const [workflowTab, contextTab] = tabs as [
+      HTMLButtonElement,
+      HTMLButtonElement,
+    ];
+    expect(workflowTab.textContent).toBe("Workflow");
+    expect(workflowTab.className).toContain("active");
+    expect(contextTab.textContent).toBe("Context");
+    expect(contextTab.disabled).toBe(true);
+    expect(contextTab.getAttribute("title")).toBe(
+      "Select a context in the graph",
+    );
   });
 
-  it("context limit input starts empty when no limit is configured", () => {
+  it("renders Context tab label from selected context title and enables it", () => {
     resetStore();
-    setupStoreWithContext();
-    render(<WorkflowInspectorPanel {...defaultProps} />);
+    setupStore({ selectedContextId: "context-plan" });
 
-    const section = findSection("Iteration Policy");
-    expect(section).toBeTruthy();
-    const input = findFieldInput(section!, "Context Limit (tokens)");
-    expect(input).toBeTruthy();
-    expect(input!.value).toBe("");
-
-    const ctx =
-      _useGraphWorkflowBuilderStore.getState().draftDefinition
-        ?.executionContexts[0];
-    expect(ctx?.iterationPolicy.continuity.contextLimitTokens).toBeUndefined();
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+    const tabs = getTabs(container);
+    const contextTab = tabs[1]!;
+    expect(contextTab.disabled).toBe(false);
+    expect(contextTab.textContent).toBe("Context: Plan");
   });
 
-  it("toggling implementer session continuity off updates the store", () => {
+  it("context selection switches the active tab to Context", () => {
     resetStore();
-    setupStoreWithContext();
-    render(<WorkflowInspectorPanel {...defaultProps} />);
+    setupStore({ selectedContextId: null });
+    const { container, rerender } = render(
+      <WorkflowInspectorPanel {...defaultProps} />,
+    );
+    expect(getTabs(container)[0]!.className).toContain("active");
 
-    const section = findSection("Iteration Policy");
-    const toggle = findFieldToggle(section!, "Session Continuity");
-    expect(toggle).toBeTruthy();
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        selectedContextId: "context-plan",
+      });
+    });
+    rerender(<WorkflowInspectorPanel {...defaultProps} />);
 
-    fireEvent.click(toggle!);
-
-    const ctx =
-      _useGraphWorkflowBuilderStore.getState().draftDefinition
-        ?.executionContexts[0];
-    expect(ctx?.iterationPolicy.continuity.enabled).toBe(false);
+    const [workflowTab, contextTab] = getTabs(container);
+    expect(contextTab!.className).toContain("active");
+    expect(workflowTab!.className).not.toContain("active");
   });
 
-  it("typing a context limit value in Iteration Policy stores it as an integer", () => {
+  it("clicking Workflow tab does not clear selection", () => {
     resetStore();
-    setupStoreWithContext();
-    render(<WorkflowInspectorPanel {...defaultProps} />);
+    setupStore({ selectedContextId: "context-plan" });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const section = findSection("Iteration Policy");
-    const input = findFieldInput(section!, "Context Limit (tokens)");
-    expect(input).toBeTruthy();
-
-    fireEvent.change(input!, { target: { value: "150000" } });
-
-    const ctx =
-      _useGraphWorkflowBuilderStore.getState().draftDefinition
-        ?.executionContexts[0];
-    expect(ctx?.iterationPolicy.continuity.contextLimitTokens).toBe(150000);
+    const workflowTab = getTabs(container)[0]!;
+    fireEvent.click(workflowTab);
+    expect(workflowTab.className).toContain("active");
+    expect(_useGraphWorkflowBuilderStore.getState().selectedContextId).toBe(
+      "context-plan",
+    );
   });
 });
 
-describe("WorkflowInspectorPanel — context validator controls", () => {
-  it("context validator continuity toggle defaults to enabled when validator is configured", () => {
+describe("WorkflowInspectorPanel — workflow tab body", () => {
+  it("renders exactly five InspectorConfigBlocks and no AC, tasks, or delete", () => {
     resetStore();
-    const definition = createWorkflowDefinition({
-      executionContexts: createWorkflowDefinition().executionContexts.map(
-        (ctx) =>
-          ctx.id === "context-plan"
-            ? {
-                ...ctx,
-                contextValidation: {
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const blocks = container.querySelectorAll(".wb-inspector-block");
+    expect(blocks).toHaveLength(5);
+    const labels = Array.from(
+      container.querySelectorAll(".cc-section-label"),
+    ).map((el) => el.textContent);
+    expect(labels).toEqual([
+      "Implementer",
+      "Context validator",
+      "Iteration policy",
+      "Circuit breaker",
+      "Mutability",
+    ]);
+
+    expect(container.querySelector("#context-acceptance-criteria")).toBeNull();
+    expect(container.querySelector(".wb-task-list")).toBeNull();
+    expect(
+      container.querySelector('[data-section="delete-context"]'),
+    ).toBeNull();
+  });
+
+  it("clicking Override then Reset on a workflow block mutates workflowConfig", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const implementer = findBlockByLabel(container, "Implementer")!;
+    fireEvent.click(
+      footButtons(implementer).find((b) => b.textContent === "Override")!,
+    );
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .implementer,
+    ).toBeDefined();
+
+    const implementerAfter = findBlockByLabel(container, "Implementer")!;
+    const resetBtn = footButtons(implementerAfter).find(
+      (b) => b.textContent === "Reset to inherit",
+    )!;
+    fireEvent.click(resetBtn);
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .implementer,
+    ).toBeUndefined();
+  });
+});
+
+describe("WorkflowInspectorPanel — context tab body", () => {
+  it("renders AC header, five blocks, tasks editor, and delete button", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    expect(
+      container.querySelector("#context-acceptance-criteria"),
+    ).not.toBeNull();
+    const blocks = container.querySelectorAll(".wb-inspector-block");
+    expect(blocks).toHaveLength(5);
+
+    expect(container.querySelector(".wb-task-list")).not.toBeNull();
+    expect(
+      container.querySelector('[data-section="delete-context"]'),
+    ).not.toBeNull();
+  });
+
+  it("editing acceptance criteria updates the context in the store", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const textarea = container.querySelector(
+      "#context-acceptance-criteria",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: { value: "Updated acceptance criteria." },
+    });
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.acceptanceCriteria).toBe("Updated acceptance criteria.");
+  });
+
+  it("shows FieldError for empty-context-acceptance-criteria", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        validationErrors: [
+          {
+            code: "empty-context-acceptance-criteria",
+            message: "Acceptance criteria is required",
+            contextId: "context-plan",
+          },
+        ],
+      });
+    });
+
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+    const error = container.querySelector(".wb-field-error");
+    expect(error?.textContent).toBe("Acceptance criteria is required");
+  });
+
+  it("override/reset on context iteration policy uses setContextBlockOverride/clearContextBlockOverride", () => {
+    resetStore();
+    const def = createWorkflowDefinition();
+    const withoutPolicy = {
+      ...def,
+      executionContexts: def.executionContexts.map((ctx) =>
+        ctx.id === "context-plan"
+          ? { ...ctx, iterationPolicy: undefined }
+          : ctx,
+      ),
+    };
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: withoutPolicy,
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Iteration policy")!;
+    fireEvent.click(
+      footButtons(block).find((b) => b.textContent === "Override")!,
+    );
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.iterationPolicy).toBeDefined();
+
+    const blockAfter = findBlockByLabel(container, "Iteration policy")!;
+    fireEvent.click(
+      footButtons(blockAfter).find(
+        (b) => b.textContent === "Reset to inherit",
+      )!,
+    );
+    const ctx2 = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx2?.iterationPolicy).toBeUndefined();
+  });
+});
+
+describe("WorkflowInspectorPanel — validator three-state footer", () => {
+  it("inherited → Override creates a use-kind override, Disable creates disabled marker", () => {
+    resetStore();
+    const def = createWorkflowDefinition();
+    const withoutValidator = {
+      ...def,
+      executionContexts: def.executionContexts.map((ctx) =>
+        ctx.id === "context-plan"
+          ? { ...ctx, contextValidator: undefined }
+          : ctx,
+      ),
+    };
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: withoutValidator,
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Context validator")!;
+    const buttons = footButtons(block);
+    const override = buttons.find((b) => b.textContent === "Override")!;
+    const disable = buttons.find(
+      (b) => b.textContent === "Disable for this context",
+    )!;
+    expect(override).toBeDefined();
+    expect(disable).toBeDefined();
+
+    fireEvent.click(override);
+    let ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.contextValidator?.kind).toBe("use");
+
+    // Reset back to inherit, then click Disable
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        draftDefinition: withoutValidator,
+      });
+    });
+    const block2 = findBlockByLabel(container, "Context validator")!;
+    const disable2 = footButtons(block2).find(
+      (b) => b.textContent === "Disable for this context",
+    )!;
+    fireEvent.click(disable2);
+
+    ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.contextValidator?.kind).toBe("disabled");
+  });
+
+  it("overridden validator shows Reset to inherit + Disable for this context", () => {
+    resetStore();
+    const def = createWorkflowDefinition();
+    const overridden = {
+      ...def,
+      executionContexts: def.executionContexts.map((ctx) =>
+        ctx.id === "context-plan"
+          ? {
+              ...ctx,
+              contextValidator: {
+                kind: "use" as const,
+                value: {
                   type: "claude" as const,
                   enabled: true,
+                  continuity: { enabled: true },
                   agent: {
                     backend: "claude" as const,
                     model: "sonnet" as const,
                     reasoningEffort: "medium" as const,
                   },
-                  acceptanceCriteria: "Verify the completed context.",
-                  continuity: { enabled: true },
                 },
-              }
-            : ctx,
+              },
+            }
+          : ctx,
       ),
+    };
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: overridden,
     });
-    act(() => {
-      _useGraphWorkflowBuilderStore.setState({
-        draftDefinition: definition,
-        draftLayout: createWorkflowLayout(),
-        selectedContextId: "context-plan",
-        dirty: false,
-        validationErrors: [],
-      });
-    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    render(<WorkflowInspectorPanel {...defaultProps} />);
+    const block = findBlockByLabel(container, "Context validator")!;
+    const texts = footButtons(block).map((b) => b.textContent);
+    expect(texts).toContain("Reset to inherit");
+    expect(texts).toContain("Disable for this context");
 
+    const reset = footButtons(block).find(
+      (b) => b.textContent === "Reset to inherit",
+    )!;
+    fireEvent.click(reset);
     const ctx = _useGraphWorkflowBuilderStore
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.contextValidation?.continuity.enabled).toBe(true);
-
-    const section = findSection("Context Validation");
-    expect(section).toBeTruthy();
-    // Find the toggle in the section that follows the "Session Continuity" label
-    const subsectionLabel = Array.from(
-      section!.querySelectorAll(".wb-subsection-label"),
-    ).find((el) => el.textContent === "Session Continuity");
-    expect(subsectionLabel).toBeTruthy();
+    expect(ctx?.contextValidator).toBeUndefined();
   });
 
-  it("context validator continuity.enabled defaults to true in createDefaultContextValidation output", () => {
+  it("disabled validator shows Re-enable (inherit) + Override with custom validator", () => {
     resetStore();
-    setupStoreWithContext();
-    render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    // When no contextValidation is set, the panel derives from createDefaultContextValidation
-    // which sets continuity.enabled = true. After we enable the validator, the store
-    // should reflect that default.
-    const section = findSection("Context Validation");
-    expect(section).toBeTruthy();
-    // Click "Enabled" toggle to create the default validator in the store
-    const enabledToggle = section!.querySelector(".wb-toggle");
-    expect(enabledToggle).toBeTruthy();
-    fireEvent.click(enabledToggle!);
-
-    const ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.contextValidation?.continuity.enabled).toBe(true);
-  });
-
-  it("editing acceptance criteria updates the selected context in the store", () => {
-    resetStore();
-    setupStoreWithContext();
-    render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const section = findSection("Context Validation");
-    expect(section).toBeTruthy();
-
-    const enabledToggle = section!.querySelector(".wb-toggle");
-    expect(enabledToggle).toBeTruthy();
-    fireEvent.click(enabledToggle!);
-
-    const textarea = section!.querySelector("textarea");
-    expect(textarea).toBeTruthy();
-    fireEvent.change(textarea!, {
-      target: { value: "Every task is complete and verified." },
-    });
-
-    const ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.contextValidation?.acceptanceCriteria).toBe(
-      "Every task is complete and verified.",
-    );
-  });
-});
-
-describe("WorkflowInspectorPanel — codex-backed defaults", () => {
-  it("renders codex implementer fields when context agent is codex", () => {
-    resetStore();
-    const definition = createWorkflowDefinition({
-      executionContexts: createWorkflowDefinition().executionContexts.map(
-        (ctx) =>
-          ctx.id === "context-plan"
-            ? {
-                ...ctx,
-                agent: {
-                  backend: "codex" as const,
-                  model: "gpt-5.4" as const,
-                  reasoningEffort: "high" as const,
-                },
-              }
-            : ctx,
+    const def = createWorkflowDefinition();
+    const disabled = {
+      ...def,
+      executionContexts: def.executionContexts.map((ctx) =>
+        ctx.id === "context-plan"
+          ? {
+              ...ctx,
+              contextValidator: { kind: "disabled" as const },
+            }
+          : ctx,
       ),
+    };
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: disabled,
     });
-    act(() => {
-      _useGraphWorkflowBuilderStore.setState({
-        draftDefinition: definition,
-        draftLayout: createWorkflowLayout(),
-        selectedContextId: "context-plan",
-        dirty: false,
-        validationErrors: [],
-      });
-    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    render(
-      <WorkflowInspectorPanel
-        {...defaultProps}
-        defaultImplementerConfig={{
-          backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-        }}
-        codexConfig={{ enabled: true, model: "gpt-5.4" }}
-      />,
-    );
+    const block = findBlockByLabel(container, "Context validator")!;
+    const texts = footButtons(block).map((b) => b.textContent);
+    expect(texts).toContain("Re-enable (inherit)");
+    expect(texts).toContain("Override with custom validator");
 
-    const section = findSection("Implementation Agent");
-    expect(section).toBeTruthy();
-    // Should show the backend selector with "codex" selected
-    const select = section!.querySelector("select");
-    expect(select?.value).toBe("codex");
-  });
-
-  it("switching backend to codex uses defaultImplementerConfig values when backend matches", () => {
-    resetStore();
-    setupStoreWithContext();
-
-    render(
-      <WorkflowInspectorPanel
-        {...defaultProps}
-        defaultImplementerConfig={{
-          backend: "codex",
-          model: "gpt-5.4-mini",
-          reasoningEffort: "xhigh",
-        }}
-        codexConfig={{ enabled: true, model: "gpt-5.4" }}
-      />,
-    );
-
-    const section = findSection("Implementation Agent");
-    expect(section).toBeTruthy();
-    const select = section!.querySelector("select") as HTMLSelectElement;
-    expect(select).toBeTruthy();
-
-    // Switch backend to codex
-    fireEvent.change(select, { target: { value: "codex" } });
-
-    // The store should use the shared defaultImplementerConfig values directly
+    const reenable = footButtons(block).find(
+      (b) => b.textContent === "Re-enable (inherit)",
+    )!;
+    fireEvent.click(reenable);
     const ctx = _useGraphWorkflowBuilderStore
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.agent.backend).toBe("codex");
-    expect(ctx?.agent.model).toBe("gpt-5.4-mini");
-    expect(ctx?.agent.reasoningEffort).toBe("xhigh");
-  });
-
-  it("switching backend to claude uses defaultImplementerConfig values when backend matches", () => {
-    resetStore();
-    // Start with a codex context
-    const definition = createWorkflowDefinition({
-      executionContexts: createWorkflowDefinition().executionContexts.map(
-        (ctx) =>
-          ctx.id === "context-plan"
-            ? {
-                ...ctx,
-                agent: {
-                  backend: "codex" as const,
-                  model: "gpt-5.4" as const,
-                  reasoningEffort: "high" as const,
-                },
-              }
-            : ctx,
-      ),
-    });
-    act(() => {
-      _useGraphWorkflowBuilderStore.setState({
-        draftDefinition: definition,
-        draftLayout: createWorkflowLayout(),
-        selectedContextId: "context-plan",
-        dirty: false,
-        validationErrors: [],
-      });
-    });
-
-    render(
-      <WorkflowInspectorPanel
-        {...defaultProps}
-        defaultImplementerConfig={{
-          backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
-        }}
-        codexConfig={{ enabled: true, model: "gpt-5.4" }}
-      />,
-    );
-
-    const section = findSection("Implementation Agent");
-    const select = section!.querySelector("select") as HTMLSelectElement;
-
-    // Switch backend to claude
-    fireEvent.change(select, { target: { value: "claude" } });
-
-    const ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.agent.backend).toBe("claude");
-    expect(ctx?.agent.model).toBe("opus");
-    expect(ctx?.agent.reasoningEffort).toBe("medium");
+    expect(ctx?.contextValidator).toBeUndefined();
   });
 });
 
 describe("WorkflowInspectorPanel — schema shape assertions", () => {
   it("definition never contains legacy soft/hard limit fields", () => {
     resetStore();
-    setupStoreWithContext();
+    setupStore({ selectedContextId: "context-plan" });
 
     const def = _useGraphWorkflowBuilderStore.getState().draftDefinition;
     const ctx = def?.executionContexts[0];
 
-    expect(ctx?.iterationPolicy.continuity).toHaveProperty("enabled");
-    const raw = ctx?.iterationPolicy as Record<string, unknown>;
+    expect(ctx?.iterationPolicy?.continuity).toHaveProperty("enabled");
+    const raw = ctx?.iterationPolicy as unknown as Record<string, unknown>;
     expect(raw).not.toHaveProperty("contextSoftLimitTokens");
     expect(raw).not.toHaveProperty("contextHardLimitTokens");
-  });
-
-  it("continuity shape uses contextLimitTokens not legacy field names", () => {
-    resetStore();
-    const definition = createWorkflowDefinition({
-      executionContexts: createWorkflowDefinition().executionContexts.map(
-        (ctx) =>
-          ctx.id === "context-plan"
-            ? {
-                ...ctx,
-                iterationPolicy: {
-                  ...ctx.iterationPolicy,
-                  continuity: {
-                    enabled: true,
-                    contextLimitTokens: 80000,
-                  },
-                },
-              }
-            : ctx,
-      ),
-    });
-    act(() => {
-      _useGraphWorkflowBuilderStore.setState({
-        draftDefinition: definition,
-        draftLayout: createWorkflowLayout(),
-        selectedContextId: "context-plan",
-        dirty: false,
-        validationErrors: [],
-      });
-    });
-
-    render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.iterationPolicy.continuity.contextLimitTokens).toBe(80000);
-
-    const continuityKeys = Object.keys(ctx?.iterationPolicy.continuity ?? {});
-    expect(continuityKeys).not.toContain("contextSoftLimitTokens");
-    expect(continuityKeys).not.toContain("contextHardLimitTokens");
   });
 });

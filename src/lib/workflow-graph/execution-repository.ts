@@ -1,11 +1,20 @@
+import { readConfig } from "@/lib/config";
 import { graphWorkflowExecutionSchema } from "@/lib/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import { resolveWorkflowDefinition } from "./resolve-config";
 import { assertNoLegacyWorkflowFields } from "./schema-cutover-guard";
+import {
+  GraphWorkflowValidationError,
+  validateResolvedWorkflow,
+} from "./validation";
 import type {
+  GlobalConfig,
   GraphWorkflowExecution,
   SessionState,
   WorkflowSemanticDefinition,
 } from "@/types";
+
+export { GraphWorkflowValidationError } from "./validation";
 
 export interface GraphWorkflowExecutionSeed {
   definition: WorkflowSemanticDefinition;
@@ -29,15 +38,28 @@ export interface GraphWorkflowExecutionRepositoryDeps {
   eventPublisher?: ReturnType<
     typeof createGraphWorkflowExecutionEventPublisher
   >;
+  readConfig?: () => Promise<GlobalConfig>;
 }
 
-function createExecutionFromSeed(
+async function createExecutionFromSeed(
   seed: GraphWorkflowExecutionSeed,
-): GraphWorkflowExecution {
+  readConfigDep: () => Promise<GlobalConfig>,
+): Promise<GraphWorkflowExecution> {
   assertNoLegacyWorkflowFields(
     seed.definition,
     "Workflow definition (execution start)",
   );
+  const global = await readConfigDep();
+  const workingDefinition = resolveWorkflowDefinition(global, seed.definition);
+
+  const resolvedValidation = validateResolvedWorkflow(workingDefinition);
+  if (!resolvedValidation.ok) {
+    throw new GraphWorkflowValidationError(
+      resolvedValidation.errors,
+      "Workflow definition failed resolved validation",
+    );
+  }
+
   const contextStates: GraphWorkflowExecution["contextStates"] = {};
   const taskStates: GraphWorkflowExecution["taskStates"] = {};
 
@@ -75,7 +97,7 @@ function createExecutionFromSeed(
     id: seed.executionId,
     seedDefinitionId: seed.definitionId,
     seedDefinitionRevision: seed.definitionRevision,
-    workingDefinition: seed.definition,
+    workingDefinition,
     status: "pending",
     activeContextId: null,
     activeTaskId: null,
@@ -95,6 +117,7 @@ export function createGraphWorkflowExecutionRepository(
 ) {
   const eventPublisher =
     deps.eventPublisher ?? createGraphWorkflowExecutionEventPublisher();
+  const readConfigDep = deps.readConfig ?? readConfig;
 
   async function getActive(
     projectPath: string,
@@ -109,7 +132,7 @@ export function createGraphWorkflowExecutionRepository(
     sessionName: string,
     seed: GraphWorkflowExecutionSeed,
   ): Promise<GraphWorkflowExecution> {
-    const execution = createExecutionFromSeed(seed);
+    const execution = await createExecutionFromSeed(seed, readConfigDep);
     let storedExecution = execution;
 
     await deps.mutateSession(

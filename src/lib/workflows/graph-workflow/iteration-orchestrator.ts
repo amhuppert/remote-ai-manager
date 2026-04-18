@@ -4,7 +4,7 @@ import type {
   AgentBackendId,
   AgentSessionRef,
   GraphWorkflowExecution,
-  GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowResolvedContext,
   GraphWorkflowHaltReason,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
@@ -189,7 +189,7 @@ function buildMachineSnapshot(
 function getContextDefinition(
   execution: GraphWorkflowExecution,
   contextId: string,
-): GraphWorkflowExecutionContextDefinition {
+): GraphWorkflowResolvedContext {
   const context = execution.workingDefinition.executionContexts.find(
     (entry) => entry.id === contextId,
   );
@@ -411,7 +411,7 @@ export function createGraphWorkflowIterationOrchestrator(
     });
 
   function getConsecutiveFailureThreshold(
-    contextDef: GraphWorkflowExecutionContextDefinition | undefined,
+    contextDef: GraphWorkflowResolvedContext | undefined,
   ): number {
     return (
       contextDef?.circuitBreaker.consecutiveFailureThreshold ??
@@ -1027,8 +1027,8 @@ export function createGraphWorkflowIterationOrchestrator(
         1,
       incompleteTaskCount: incompleteTasks.length,
       incompleteTaskIds: incompleteTasks.map((t) => t.id),
-      model: context.agent.model,
-      reasoningEffort: context.agent.reasoningEffort,
+      model: context.implementer.model,
+      reasoningEffort: context.implementer.reasoningEffort,
     });
     logger.info("graph-workflow.iteration.started", {
       executionId: initialExecution.id,
@@ -1046,7 +1046,7 @@ export function createGraphWorkflowIterationOrchestrator(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         contextId: input.contextId,
-        engine: context.agent.backend,
+        engine: context.implementer.backend,
       });
       conversationId = resolved.conversationId;
       executionWithLaneState = resolved.execution;
@@ -1222,9 +1222,9 @@ export function createGraphWorkflowIterationOrchestrator(
         executionId: seededExecution.id,
         conversationId: conversation.id,
         contextId: input.contextId,
-        backend: context.agent.backend,
-        model: context.agent.model,
-        reasoningEffort: context.agent.reasoningEffort,
+        backend: context.implementer.backend,
+        model: context.implementer.model,
+        reasoningEffort: context.implementer.reasoningEffort,
         toolServer: toolServer.server,
         emitStreamFrame: (frame: GraphWorkflowStreamFrame) =>
           emitStreamFrame(input.projectPath, input.sessionName, frame),
@@ -1241,7 +1241,7 @@ export function createGraphWorkflowIterationOrchestrator(
         const contextLimitTokens =
           context.iterationPolicy.continuity.contextLimitTokens;
         const updated =
-          context.agent.backend === "codex"
+          context.implementer.backend === "codex"
             ? deps.continuityService.recordCodexTurnOutcome({
                 execution: current,
                 lane: "implementer",
@@ -1279,10 +1279,11 @@ export function createGraphWorkflowIterationOrchestrator(
               taskStates: seededExecution.taskStates,
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
-              contextValidationAcceptanceCriteria: context.contextValidation
-                ?.enabled
-                ? context.contextValidation.acceptanceCriteria
-                : undefined,
+              contextValidationAcceptanceCriteria:
+                context.contextValidator !== null &&
+                context.contextValidator.enabled
+                  ? context.acceptanceCriteria
+                  : undefined,
               latestContextValidationFailure,
             });
 
@@ -1298,8 +1299,8 @@ export function createGraphWorkflowIterationOrchestrator(
       execLogger?.iteration(input.contextId, "iteration.prompt_sent", {
         promptMode,
         promptLength: initialPrompt.length,
-        model: context.agent.model,
-        reasoningEffort: context.agent.reasoningEffort,
+        model: context.implementer.model,
+        reasoningEffort: context.implementer.reasoningEffort,
       });
 
       let agentResult = await deps.runAgentIteration({

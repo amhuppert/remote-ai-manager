@@ -1,19 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  createWorkflowDefinition,
+  createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "./test-fixtures";
 import { createGraphWorkflowValidationService } from "./execution-validation";
 import type { ValidatorRunResult } from "./validator-runner";
 
 function buildExecutionWithContextValidator() {
-  const baseDefinition = createWorkflowDefinition();
-  const definition = createWorkflowDefinition({
+  const baseDefinition = createResolvedWorkflowDefinition();
+  const definition = createResolvedWorkflowDefinition({
     executionContexts: baseDefinition.executionContexts.map((context) =>
       context.id === "context-plan"
         ? {
             ...context,
-            contextValidation: {
+            acceptanceCriteria:
+              "Every task summary is complete and the plan document is updated.",
+            contextValidator: {
               type: "claude",
               enabled: true,
               continuity: { enabled: true },
@@ -22,8 +24,6 @@ function buildExecutionWithContextValidator() {
                 model: "sonnet",
                 reasoningEffort: "medium",
               },
-              acceptanceCriteria:
-                "Every task summary is complete and the plan document is updated.",
             },
           }
         : context,
@@ -133,8 +133,6 @@ describe("graph workflow execution validation service", () => {
       expect.objectContaining({
         context: expect.objectContaining({
           id: "context-plan",
-        }),
-        validator: expect.objectContaining({
           acceptanceCriteria:
             "Every task summary is complete and the plan document is updated.",
         }),

@@ -11,6 +11,7 @@ interface WorkflowToolbarProps {
   onSave: () => void;
   onReset: () => void;
   onRelayout: () => void;
+  onOpenWorkflowSettings?: () => void;
   dirty: boolean;
   saving: boolean;
   hasValidationErrors: boolean;
@@ -26,6 +27,7 @@ export default function WorkflowToolbar({
   onSave,
   onReset,
   onRelayout,
+  onOpenWorkflowSettings,
   dirty,
   saving,
   hasValidationErrors,
@@ -164,6 +166,19 @@ export default function WorkflowToolbar({
                 >
                   Re-layout
                 </button>
+                {onOpenWorkflowSettings && (
+                  <button
+                    className="wb-mobile-toolbar-menu-item"
+                    onClick={() => {
+                      onOpenWorkflowSettings();
+                      setOverflowOpen(false);
+                    }}
+                    type="button"
+                    aria-label="Workflow settings"
+                  >
+                    <span aria-hidden="true">⚙</span> Workflow settings
+                  </button>
+                )}
                 <button
                   className="wb-mobile-toolbar-menu-item wb-mobile-toolbar-menu-danger"
                   onClick={() => {
@@ -224,6 +239,17 @@ export default function WorkflowToolbar({
         >
           Re-layout
         </button>
+        {onOpenWorkflowSettings && (
+          <button
+            className="wb-btn wb-btn-sm wb-btn-default"
+            onClick={onOpenWorkflowSettings}
+            type="button"
+            aria-label="Workflow settings"
+            title="Workflow settings"
+          >
+            <span aria-hidden="true">⚙</span> Workflow settings
+          </button>
+        )}
       </div>
 
       {statusElement}

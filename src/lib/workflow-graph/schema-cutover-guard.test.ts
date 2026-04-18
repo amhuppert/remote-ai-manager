@@ -24,11 +24,17 @@ function makeValidDefinitionRecord() {
     },
     definition: {
       schemaVersion: 1,
+      workflowConfig: {},
       executionContexts: [
         {
           id: "ctx-1",
           title: "Plan",
-          agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+          acceptanceCriteria: "All tasks complete",
+          implementer: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -64,7 +70,13 @@ function makeValidExecution() {
         {
           id: "ctx-1",
           title: "Plan",
-          agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+          acceptanceCriteria: "All tasks complete",
+          implementer: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
+          contextValidator: null,
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -154,6 +166,76 @@ describe("assertDefinitionRecordSupported", () => {
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
       continuity: { enabled: true },
     };
+
+    expect(() => assertDefinitionRecordSupported(record)).toThrow(
+      LegacyWorkflowSchemaError,
+    );
+  });
+
+  it("rejects a record with a legacy context (agent + contextValidation old shape)", () => {
+    const record = makeValidDefinitionRecord();
+    const context = record.definition.executionContexts[0]! as Record<
+      string,
+      unknown
+    >;
+    delete context.implementer;
+    context.agent = {
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+    };
+    context.contextValidation = {
+      type: "claude",
+      enabled: true,
+      agent: {
+        backend: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
+      continuity: { enabled: true },
+    };
+
+    expect(() => assertDefinitionRecordSupported(record)).toThrow(
+      LegacyWorkflowSchemaError,
+    );
+    expect(() => assertDefinitionRecordSupported(record)).toThrow(
+      /cascade refactor/,
+    );
+  });
+
+  it("rejects a record whose validator carries acceptanceCriteria", () => {
+    const record = makeValidDefinitionRecord();
+    const context = record.definition.executionContexts[0]! as Record<
+      string,
+      unknown
+    >;
+    context.contextValidator = {
+      kind: "use",
+      value: {
+        type: "claude",
+        enabled: true,
+        acceptanceCriteria: "legacy AC on validator",
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        continuity: { enabled: true },
+      },
+    };
+
+    expect(() => assertDefinitionRecordSupported(record)).toThrow(
+      LegacyWorkflowSchemaError,
+    );
+  });
+
+  it("rejects a record whose context has implementer but no acceptanceCriteria", () => {
+    const record = makeValidDefinitionRecord();
+    const context = record.definition.executionContexts[0]! as Record<
+      string,
+      unknown
+    >;
+    delete context.acceptanceCriteria;
 
     expect(() => assertDefinitionRecordSupported(record)).toThrow(
       LegacyWorkflowSchemaError,

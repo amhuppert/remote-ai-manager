@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GraphWorkflowExecution, GraphWorkflowLaneState } from "@/types";
 import {
-  createWorkflowDefinition,
+  createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
 import { graphWorkflowExecutionSchema } from "@/lib/schemas";
@@ -53,7 +53,7 @@ function createExecutionWithPlanTasks(
     GraphWorkflowExecution["taskStates"][string]["status"]
   >,
 ): GraphWorkflowExecution {
-  const definition = createWorkflowDefinition({
+  const definition = createResolvedWorkflowDefinition({
     tasks: [
       {
         id: "task-plan-1",
@@ -1330,11 +1330,14 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
   it("creates a fresh conversation even when a prior lane state exists and continuity is disabled", async () => {
     // Pre-populate with an existing lane state AND disable continuity to verify
     // that continuity=false forces a fresh session regardless of saved lane state.
-    const definition = createWorkflowDefinition();
+    const definition = createResolvedWorkflowDefinition();
     const ctxPlan = definition.executionContexts.find(
       (c) => c.id === "context-plan",
     )!;
-    ctxPlan.iterationPolicy.continuity = { enabled: false };
+    ctxPlan.iterationPolicy = {
+      ...ctxPlan.iterationPolicy,
+      continuity: { enabled: false },
+    };
 
     const execution = createWorkflowExecution({
       status: "running",
@@ -1919,22 +1922,160 @@ describe("task validation failure handling (circuit breaker)", () => {
       result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(0);
   });
+
+  it("omits acceptance criteria from iteration prompt when contextValidator is null (disabled)", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (ctx) => ctx.id === "context-plan",
+    )!;
+    planContext.acceptanceCriteria =
+      "Never-include-me-sentinel: plan review complete.";
+    planContext.contextValidator = null;
+
+    const repository = createRepository(execution);
+    const prompts: string[] = [];
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-null" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(async (agentInput) => {
+        prompts.push(agentInput.prompt);
+        return {
+          conversationId: "conversation-null",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
+      }),
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(prompts[0]).not.toContain("Never-include-me-sentinel");
+    expect(prompts[0]).not.toContain("Acceptance Criteria");
+  });
+
+  it("omits acceptance criteria when contextValidator.enabled is false (same path as null)", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (ctx) => ctx.id === "context-plan",
+    )!;
+    planContext.acceptanceCriteria =
+      "Never-include-me-sentinel: plan review complete.";
+    planContext.contextValidator = {
+      type: "claude",
+      enabled: false,
+      continuity: { enabled: true },
+      agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+    };
+
+    const repository = createRepository(execution);
+    const prompts: string[] = [];
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-disabled" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(async (agentInput) => {
+        prompts.push(agentInput.prompt);
+        return {
+          conversationId: "conversation-disabled",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
+      }),
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(prompts[0]).not.toContain("Never-include-me-sentinel");
+    expect(prompts[0]).not.toContain("Acceptance Criteria");
+  });
+
+  it("includes acceptance criteria in iteration prompt when contextValidator.enabled is true", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (ctx) => ctx.id === "context-plan",
+    )!;
+    planContext.acceptanceCriteria =
+      "Include-me-sentinel: plan review complete.";
+    planContext.contextValidator = {
+      type: "claude",
+      enabled: true,
+      continuity: { enabled: true },
+      agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+    };
+
+    const repository = createRepository(execution);
+    const prompts: string[] = [];
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-enabled" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(async (agentInput) => {
+        prompts.push(agentInput.prompt);
+        return {
+          conversationId: "conversation-enabled",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
+      }),
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(prompts[0]).toContain("Acceptance Criteria");
+    expect(prompts[0]).toContain("Include-me-sentinel");
+  });
 });
 
 // -- Codex implementer continuity ---------------------------------------------
 
 describe("codex implementer continuity", () => {
   function createCodexExecutionWithPlanTasks(): GraphWorkflowExecution {
-    const definition = createWorkflowDefinition({
+    const definition = createResolvedWorkflowDefinition({
       executionContexts: [
         {
           id: "context-plan",
           title: "Plan",
-          agent: {
+          acceptanceCriteria: "TBD",
+          implementer: {
             backend: "codex",
             model: "gpt-5.4-mini",
             reasoningEffort: "medium",
           },
+          contextValidator: null,
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {

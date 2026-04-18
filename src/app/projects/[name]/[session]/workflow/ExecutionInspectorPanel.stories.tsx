@@ -25,7 +25,8 @@ function makeExecution(
 - Rate limiting on public endpoints
 
 > Note: The existing \`/api/health\` endpoint pattern should be followed for consistency.`,
-          agent: {
+          acceptanceCriteria: "Validate the completed context output",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
@@ -36,7 +37,7 @@ function makeExecution(
             maxIterations: 5,
             continuity: { enabled: true },
           },
-          contextValidation: {
+          contextValidator: {
             type: "claude",
             enabled: true,
             agent: {
@@ -44,7 +45,6 @@ function makeExecution(
               model: "sonnet",
               reasoningEffort: "medium",
             },
-            acceptanceCriteria: "Validate the completed context output",
             continuity: { enabled: true },
           },
         },
@@ -52,11 +52,13 @@ function makeExecution(
           id: "ctx-2",
           title: "Frontend Components",
           description: "Build React components for the user management UI.",
-          agent: {
+          acceptanceCriteria: "UI components render and handle edit flows.",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
           },
+          contextValidator: null,
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -64,7 +66,13 @@ function makeExecution(
         {
           id: "ctx-3",
           title: "Database Migrations",
-          agent: { backend: "claude", model: "haiku", reasoningEffort: "low" },
+          acceptanceCriteria: "Schema changes applied and reversible.",
+          implementer: {
+            backend: "claude",
+            model: "haiku",
+            reasoningEffort: "low",
+          },
+          contextValidator: null,
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 2, continuity: { enabled: true } },

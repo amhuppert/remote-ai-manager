@@ -17,6 +17,7 @@ import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowValidationService } from "./execution-validation";
+import { GraphWorkflowValidationError } from "./validation";
 import { createValidatorRunner } from "./validator-runner";
 import { emit as emitGraphWorkflowStreamFrame } from "./stream-registry";
 import { createWorkflowStorageService } from "./storage";
@@ -300,6 +301,23 @@ async function resolveSession(
 function respondToManagerError(error: unknown): Response {
   const message =
     error instanceof Error ? error.message : "Graph workflow request failed";
+
+  if (
+    error instanceof GraphWorkflowValidationError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name?: string }).name === "GraphWorkflowValidationError" &&
+      "errors" in error)
+  ) {
+    return NextResponse.json(
+      {
+        error: message,
+        errors: (error as GraphWorkflowValidationError).errors,
+      } satisfies ApiError & { errors: unknown },
+      { status: 422 },
+    );
+  }
 
   if (
     message === "Session does not have an active graph workflow execution" ||

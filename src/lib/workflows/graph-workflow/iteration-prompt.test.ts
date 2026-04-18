@@ -1,20 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { buildIterationPrompt, buildFollowUpPrompt } from "./iteration-prompt";
 import type {
-  GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
   GraphWorkflowTaskState,
 } from "@/types";
 
 function makeContext(
-  overrides: Partial<GraphWorkflowExecutionContextDefinition> = {},
-): GraphWorkflowExecutionContextDefinition {
+  overrides: Partial<GraphWorkflowResolvedContext> = {},
+): GraphWorkflowResolvedContext {
   return {
     id: "context-plan",
     title: "Plan",
     description: "Plan the implementation",
-    agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    acceptanceCriteria: "Planning complete.",
+    implementer: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    contextValidator: null,
     mutability: { allowAgentTaskAdd: true },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },

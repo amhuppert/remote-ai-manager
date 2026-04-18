@@ -1,37 +1,37 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import ModelSelector, { type ModelId } from "@/components/ModelSelector";
-import ReasoningLevelSelector, {
-  type EffortLevel,
-} from "@/components/ReasoningLevelSelector";
-import {
-  getEffortLevelsForModel,
-  clampEffortToModel,
-  codexModelSchema,
-  codexReasoningEffortSchema,
-  getDefaultCodexModel,
-  getCodexReasoningLevelsForModel,
-} from "@/lib/schemas";
 import {
   addTaskToContext,
+  clearContextBlockOverride,
+  clearWorkflowConfigOverride,
+  disableContextValidator,
+  enableContextValidator,
   moveTaskWithinContext,
   removeTask,
+  setContextBlockOverride,
+  setWorkflowConfigOverride,
   updateExecutionContext,
   updateTask,
 } from "@/lib/workflow-graph/builder-draft";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import type {
-  AgentBackendId,
   CodexConfig,
-  CodexModel,
-  CodexReasoningEffort,
+  ContextValidatorOverride,
   GraphWorkflowAgentConfig,
+  GraphWorkflowAgentValidatorConfig,
+  GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowIterationPolicy,
+  GraphWorkflowMutabilityPolicy,
   GraphWorkflowTaskDefinition,
+  WorkflowConfigOverride,
+  WorkflowDefaults,
   WorkflowGraphValidationError,
-  WorkflowSemanticDefinition,
 } from "@/types";
+import InspectorConfigBlock, {
+  type InspectorConfigBlockSource,
+} from "./InspectorConfigBlock";
 
 interface WorkflowInspectorPanelProps {
   onSave: () => Promise<void>;
@@ -39,119 +39,56 @@ interface WorkflowInspectorPanelProps {
   saving: boolean;
   defaultImplementerConfig?: GraphWorkflowAgentConfig;
   codexConfig?: CodexConfig;
+  globalDefaults?: WorkflowDefaults;
+  activeTab?: InspectorTab;
+  onTabChange?: (tab: InspectorTab) => void;
 }
 
-type InspectorTab = "config" | "tasks";
+export type InspectorTab = "workflow" | "context";
 
-const DEFAULT_SECTION_IDS = [
-  "title-description",
-  "implementation-agent",
-  "context-validation",
-  "circuit-breaker",
+export const DEFAULT_SECTION_IDS = [
+  "header",
+  "implementer",
+  "context-validator",
   "iteration-policy",
+  "circuit-breaker",
   "mutability",
+  "tasks",
   "delete-context",
 ] as const;
+
+const SEEDED_DEFAULTS: WorkflowDefaults = {
+  implementer: {
+    backend: "claude",
+    model: "opus",
+    reasoningEffort: "medium",
+  },
+  contextValidator: {
+    type: "claude",
+    enabled: true,
+    continuity: { enabled: true },
+    agent: {
+      backend: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+    },
+  },
+  iterationPolicy: {
+    maxIterations: 20,
+    continuity: { enabled: true },
+  },
+  circuitBreaker: {
+    consecutiveFailureThreshold: 3,
+  },
+  mutability: {
+    allowAgentTaskAdd: false,
+  },
+};
 
 function sortTasks(
   tasks: GraphWorkflowTaskDefinition[],
 ): GraphWorkflowTaskDefinition[] {
   return [...tasks].sort((left, right) => left.order - right.order);
-}
-
-function countEnabledValidators(
-  context: GraphWorkflowExecutionContextDefinition,
-): number {
-  return [context.contextValidation?.enabled].filter(Boolean).length;
-}
-
-/**
- * Build the default agent config for a given backend.
- * When the requested backend matches `defaultConfig`, use it directly.
- * Otherwise construct from codexConfig or Claude defaults.
- */
-function resolveAgentConfigForBackend(
-  backend: AgentBackendId,
-  defaultConfig: GraphWorkflowAgentConfig,
-  codexCfg?: CodexConfig,
-): GraphWorkflowExecutionContextDefinition["agent"] {
-  if (backend === defaultConfig.backend) {
-    return { ...defaultConfig };
-  }
-  if (backend === "codex") {
-    const modelResult = codexModelSchema.safeParse(codexCfg?.model);
-    const effortResult = codexReasoningEffortSchema.safeParse(
-      codexCfg?.reasoningEffort,
-    );
-    return {
-      backend: "codex",
-      model: modelResult.success ? modelResult.data : getDefaultCodexModel(),
-      reasoningEffort: effortResult.success ? effortResult.data : "high",
-    };
-  }
-  return {
-    backend: "claude",
-    model: "sonnet",
-    reasoningEffort: "medium",
-  };
-}
-
-function createDefaultContextValidation(
-  defaultConfig: GraphWorkflowAgentConfig,
-  validatorType: "claude" | "codex" = "claude",
-  codexCfg?: CodexConfig,
-): NonNullable<GraphWorkflowExecutionContextDefinition["contextValidation"]> {
-  if (validatorType === "codex") {
-    const modelResult = codexModelSchema.safeParse(codexCfg?.model);
-    const effortResult = codexReasoningEffortSchema.safeParse(
-      codexCfg?.reasoningEffort,
-    );
-    return {
-      type: "codex",
-      enabled: false,
-      codex: {
-        model: modelResult.success ? modelResult.data : undefined,
-        reasoningEffort: effortResult.success ? effortResult.data : undefined,
-      },
-      acceptanceCriteria: "",
-      continuity: { enabled: true },
-    };
-  }
-  // Claude validator uses the implementer's Claude model when available
-  const claudeModel: ModelId =
-    defaultConfig.backend === "claude" ? defaultConfig.model : "sonnet";
-  return {
-    type: "claude",
-    enabled: false,
-    agent: {
-      backend: "claude",
-      model: claudeModel,
-      reasoningEffort: "medium",
-    },
-    acceptanceCriteria: "",
-    continuity: { enabled: true },
-  };
-}
-
-function getPositiveNumber(value: string, fallback: number): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return fallback;
-  }
-  return parsed;
-}
-
-function getOptionalPositiveNumber(value: string): number | undefined {
-  if (value.trim().length === 0) {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return undefined;
-  }
-
-  return parsed;
 }
 
 function findFieldError(
@@ -181,139 +118,193 @@ function RequiredMark(): React.JSX.Element {
   return <span className="wb-required">*</span>;
 }
 
-function AgentConfigFields({
-  model,
-  reasoningEffort,
-  onModelChange,
-  onReasoningChange,
-  disabled = false,
-}: {
-  model: ModelId;
-  reasoningEffort: EffortLevel;
-  onModelChange: (model: ModelId) => void;
-  onReasoningChange: (effort: EffortLevel) => void;
-  disabled?: boolean;
-}): React.JSX.Element {
-  const availableLevels = getEffortLevelsForModel(model);
-  const effortSupported = availableLevels.length > 0;
-
-  return (
-    <>
-      <div className="wb-inline-field">
-        <span className="wb-inline-field-label">Model</span>
-        <ModelSelector
-          value={model}
-          onChange={onModelChange}
-          disabled={disabled}
-        />
-      </div>
-      {effortSupported && (
-        <div className="wb-inline-field">
-          <span className="wb-inline-field-label">Reasoning</span>
-          <ReasoningLevelSelector
-            value={reasoningEffort}
-            onChange={onReasoningChange}
-            disabled={disabled}
-            availableLevels={availableLevels}
-          />
-        </div>
-      )}
-    </>
-  );
+function summarizeImplementer(config: GraphWorkflowAgentConfig): string {
+  const parts: string[] = [config.backend, config.model];
+  if (config.reasoningEffort) parts.push(config.reasoningEffort);
+  return parts.join(" · ");
 }
 
-function BackendTypeSelector({
-  label,
-  value,
-  onChange,
-  codexEnabled,
-  disabled = false,
-}: {
-  label: string;
-  value: AgentBackendId;
-  onChange: (type: AgentBackendId) => void;
-  codexEnabled: boolean;
-  disabled?: boolean;
-}): React.JSX.Element | null {
-  if (!codexEnabled) return null;
-  return (
-    <div className="wb-inline-field">
-      <span className="wb-inline-field-label">{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value as AgentBackendId)}
-        disabled={disabled}
-      >
-        <option value="claude">Claude</option>
-        <option value="codex">Codex</option>
-      </select>
-    </div>
-  );
+function summarizeValidator(
+  validator: GraphWorkflowAgentValidatorConfig,
+): string {
+  const enabledLabel = validator.enabled ? "enabled" : "off";
+  if (validator.type === "claude") {
+    return `claude · ${validator.agent.model} · ${enabledLabel}`;
+  }
+  const model = validator.codex?.model ?? "default";
+  return `codex · ${model} · ${enabledLabel}`;
 }
 
-function CodexAgentFields({
-  model,
-  reasoningEffort,
-  defaultModel,
-  defaultReasoningEffort,
-  onModelChange,
-  onReasoningChange,
-  disabled = false,
-}: {
-  model?: string;
-  reasoningEffort?: CodexReasoningEffort;
-  defaultModel: string;
-  defaultReasoningEffort: string;
-  onModelChange: (model: string) => void;
-  onReasoningChange: (effort: CodexReasoningEffort) => void;
-  disabled?: boolean;
-}): React.JSX.Element {
-  const effectiveModel = model ?? defaultModel;
-  const effectiveEffort = reasoningEffort ?? defaultReasoningEffort;
-  const availableLevels = getCodexReasoningLevelsForModel(effectiveModel);
-  const effortSupported =
-    availableLevels !== null && availableLevels.length > 0;
-
-  return (
-    <>
-      <div className="wb-inline-field">
-        <span className="wb-inline-field-label">Model</span>
-        <ModelSelector
-          value={effectiveModel}
-          onChange={(m) => onModelChange(m)}
-          disabled={disabled}
-          backend="codex"
-        />
-      </div>
-      {effortSupported && (
-        <div className="wb-inline-field">
-          <span className="wb-inline-field-label">Reasoning</span>
-          <ReasoningLevelSelector
-            value={effectiveEffort as EffortLevel}
-            onChange={(e) => onReasoningChange(e as CodexReasoningEffort)}
-            disabled={disabled}
-            availableLevels={availableLevels as EffortLevel[]}
-          />
-        </div>
-      )}
-    </>
-  );
+function summarizeIterationPolicy(
+  policy: GraphWorkflowIterationPolicy,
+): string {
+  const continuity = policy.continuity.enabled
+    ? `continuity on${policy.continuity.contextLimitTokens ? ` · limit ${policy.continuity.contextLimitTokens}` : ""}`
+    : "continuity off";
+  return `max ${policy.maxIterations} · ${continuity}`;
 }
 
-const DEFAULT_IMPLEMENTER_CONFIG: GraphWorkflowAgentConfig = {
-  backend: "claude",
-  model: "sonnet",
-  reasoningEffort: "medium",
+function summarizeCircuitBreaker(
+  policy: GraphWorkflowCircuitBreakerPolicy,
+): string {
+  return `threshold ${policy.consecutiveFailureThreshold ?? "default"}`;
+}
+
+function summarizeMutability(policy: GraphWorkflowMutabilityPolicy): string {
+  return `agent-add ${policy.allowAgentTaskAdd ? "on" : "off"}`;
+}
+
+type ResolvedContextCascade = {
+  implementer: {
+    value: GraphWorkflowAgentConfig;
+    source: InspectorConfigBlockSource;
+  };
+  contextValidator:
+    | {
+        value: GraphWorkflowAgentValidatorConfig;
+        source: Exclude<InspectorConfigBlockSource, "disabled">;
+      }
+    | { source: "disabled" };
+  iterationPolicy: {
+    value: GraphWorkflowIterationPolicy;
+    source: InspectorConfigBlockSource;
+  };
+  circuitBreaker: {
+    value: GraphWorkflowCircuitBreakerPolicy;
+    source: InspectorConfigBlockSource;
+  };
+  mutability: {
+    value: GraphWorkflowMutabilityPolicy;
+    source: InspectorConfigBlockSource;
+  };
 };
+
+function computeContextCascade(
+  context: GraphWorkflowExecutionContextDefinition,
+  workflowConfig: WorkflowConfigOverride,
+  globalDefaults: WorkflowDefaults,
+): ResolvedContextCascade {
+  function resolvePlain<
+    K extends
+      | "implementer"
+      | "iterationPolicy"
+      | "circuitBreaker"
+      | "mutability",
+  >(key: K): ResolvedContextCascade[K] {
+    const contextOverride = context[key];
+    if (contextOverride !== undefined) {
+      return {
+        value: contextOverride,
+        source: "context-override",
+      } as ResolvedContextCascade[K];
+    }
+    const workflowOverride = workflowConfig[key];
+    if (workflowOverride !== undefined) {
+      return {
+        value: workflowOverride,
+        source: "workflow",
+      } as ResolvedContextCascade[K];
+    }
+    return {
+      value: globalDefaults[key],
+      source: "global",
+    } as ResolvedContextCascade[K];
+  }
+
+  let validator: ResolvedContextCascade["contextValidator"];
+  if (context.contextValidator?.kind === "disabled") {
+    validator = { source: "disabled" };
+  } else if (context.contextValidator?.kind === "use") {
+    validator = {
+      value: context.contextValidator.value,
+      source: "context-override",
+    };
+  } else if (workflowConfig.contextValidator !== undefined) {
+    validator = {
+      value: workflowConfig.contextValidator,
+      source: "workflow",
+    };
+  } else {
+    validator = {
+      value: globalDefaults.contextValidator,
+      source: "global",
+    };
+  }
+
+  return {
+    implementer: resolvePlain("implementer"),
+    contextValidator: validator,
+    iterationPolicy: resolvePlain("iterationPolicy"),
+    circuitBreaker: resolvePlain("circuitBreaker"),
+    mutability: resolvePlain("mutability"),
+  };
+}
+
+type WorkflowCascade = {
+  implementer: {
+    value: GraphWorkflowAgentConfig;
+    source: "global" | "context-override";
+  };
+  contextValidator: {
+    value: GraphWorkflowAgentValidatorConfig;
+    source: "global" | "context-override";
+  };
+  iterationPolicy: {
+    value: GraphWorkflowIterationPolicy;
+    source: "global" | "context-override";
+  };
+  circuitBreaker: {
+    value: GraphWorkflowCircuitBreakerPolicy;
+    source: "global" | "context-override";
+  };
+  mutability: {
+    value: GraphWorkflowMutabilityPolicy;
+    source: "global" | "context-override";
+  };
+};
+
+function computeWorkflowCascade(
+  workflowConfig: WorkflowConfigOverride,
+  globalDefaults: WorkflowDefaults,
+): WorkflowCascade {
+  function resolve<K extends keyof WorkflowCascade>(
+    key: K,
+  ): WorkflowCascade[K] {
+    const override = workflowConfig[key];
+    if (override !== undefined) {
+      return {
+        value: override,
+        source: "context-override",
+      } as WorkflowCascade[K];
+    }
+    return {
+      value: globalDefaults[key],
+      source: "global",
+    } as WorkflowCascade[K];
+  }
+
+  return {
+    implementer: resolve("implementer"),
+    contextValidator: resolve("contextValidator"),
+    iterationPolicy: resolve("iterationPolicy"),
+    circuitBreaker: resolve("circuitBreaker"),
+    mutability: resolve("mutability"),
+  };
+}
+
+function deepClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 export default function WorkflowInspectorPanel({
   onSave,
   onDelete,
   saving,
-  defaultImplementerConfig = DEFAULT_IMPLEMENTER_CONFIG,
-  codexConfig,
+  globalDefaults,
+  activeTab: controlledActiveTab,
+  onTabChange,
 }: WorkflowInspectorPanelProps): React.JSX.Element {
-  const codexEnabled = codexConfig?.enabled === true;
+  const defaults = globalDefaults ?? SEEDED_DEFAULTS;
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (state) => state.draftDefinition,
   );
@@ -333,17 +324,29 @@ export default function WorkflowInspectorPanel({
   const updateDefinition = _useGraphWorkflowBuilderStore(
     (state) => state.updateDefinition,
   );
-  const setSelectedContextId = _useGraphWorkflowBuilderStore(
-    (state) => state.setSelectedContextId,
-  );
   const setSelectedTaskId = _useGraphWorkflowBuilderStore(
     (state) => state.setSelectedTaskId,
   );
 
-  const [activeTab, setActiveTab] = useState<InspectorTab>("config");
-  const [openSections, setOpenSections] = useState<Set<string>>(
-    () => new Set(DEFAULT_SECTION_IDS),
-  );
+  const [internalActiveTab, setInternalActiveTab] =
+    useState<InspectorTab>("workflow");
+  const activeTab = controlledActiveTab ?? internalActiveTab;
+
+  function setActiveTab(tab: InspectorTab) {
+    if (onTabChange) onTabChange(tab);
+    if (controlledActiveTab === undefined) setInternalActiveTab(tab);
+  }
+
+  useEffect(() => {
+    if (selectedContextId && activeTab !== "context") {
+      if (controlledActiveTab === undefined) {
+        setInternalActiveTab("context");
+      }
+      if (onTabChange) onTabChange("context");
+    }
+    // Only react to selection changes, not tab flips
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedContextId]);
 
   const selectedContext = useMemo(() => {
     return draftDefinition?.executionContexts.find(
@@ -355,7 +358,6 @@ export default function WorkflowInspectorPanel({
     if (!draftDefinition || !selectedContextId) {
       return [];
     }
-
     return sortTasks(
       draftDefinition.tasks.filter(
         (task) => task.contextId === selectedContextId,
@@ -363,276 +365,54 @@ export default function WorkflowInspectorPanel({
     );
   }, [draftDefinition, selectedContextId]);
 
-  const contextTitleById = useMemo(() => {
-    return new Map(
-      draftDefinition?.executionContexts.map((context) => [
-        context.id,
-        context.title,
-      ]) ?? [],
-    );
-  }, [draftDefinition]);
-
-  const validatorCount = useMemo(() => {
-    return (
-      draftDefinition?.executionContexts.reduce(
-        (count, context) => count + countEnabledValidators(context),
-        0,
-      ) ?? 0
-    );
-  }, [draftDefinition]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setActiveTab("config");
-    setOpenSections(new Set(DEFAULT_SECTION_IDS));
-  }, [selectedContextId]);
-
-  useEffect(() => {
-    if (selectedContextId && !selectedContext) {
-      setSelectedContextId(null);
-    }
-  }, [selectedContext, selectedContextId, setSelectedContextId]);
-
-  useEffect(() => {
-    if (
-      selectedTaskId &&
-      !selectedContextTasks.some((task) => task.id === selectedTaskId)
-    ) {
-      setSelectedTaskId(null);
-    }
-  }, [selectedContextTasks, selectedTaskId, setSelectedTaskId]);
-
-  function toggleSection(sectionId: string) {
-    setOpenSections((current) => {
-      const next = new Set(current);
-      if (next.has(sectionId)) {
-        next.delete(sectionId);
-      } else {
-        next.add(sectionId);
-      }
-      return next;
-    });
-  }
-
-  function isSectionOpen(sectionId: string): boolean {
-    return openSections.has(sectionId);
-  }
-
-  function applyContextUpdate(
-    updates: Partial<WorkflowSemanticDefinition["executionContexts"][number]>,
-  ) {
-    if (!draftDefinition || !selectedContextId) {
-      return;
-    }
-
-    updateDefinition(
-      updateExecutionContext(draftDefinition, selectedContextId, updates),
-    );
-  }
-
-  function handleTaskSelection(taskId: string) {
-    setSelectedTaskId(selectedTaskId === taskId ? null : taskId);
-  }
-
-  function renderSection(
-    sectionId: string,
-    title: string,
-    content: React.JSX.Element,
-  ): React.JSX.Element {
-    const open = isSectionOpen(sectionId);
-
-    return (
-      <section className="wb-section" key={sectionId}>
-        <div
-          className="wb-section-header"
-          onClick={() => toggleSection(sectionId)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              toggleSection(sectionId);
-            }
-          }}
-        >
-          <span className="wb-section-title">{title}</span>
-          <span className={`wb-section-toggle${open ? " open" : ""}`}>▸</span>
-        </div>
-        {open ? <div className="wb-section-content">{content}</div> : null}
-      </section>
-    );
-  }
-
   if (!draftDefinition || !draftLayout) {
     return (
-      <aside className="wb-inspector">
-        <header className="wb-inspector-header">
-          <span className="wb-inspector-title">Overview</span>
-        </header>
+      <aside className="wb-inspector wb-inspector-panel">
         <div className="wb-inspector-body">Loading workflow definition...</div>
       </aside>
     );
   }
 
-  if (!selectedContextId || !selectedContext) {
-    return (
-      <aside className="wb-inspector">
-        <header className="wb-inspector-header">
-          <span className="wb-inspector-title">Overview</span>
-          <button
-            className={`wb-btn wb-btn-sm ${dirty ? "wb-btn-primary" : "wb-btn-default"}`}
-            disabled={!dirty || saving}
-            onClick={() => void onSave()}
-            title={
-              validationErrors.length > 0
-                ? `${validationErrors.length} validation issue${validationErrors.length === 1 ? "" : "s"} present`
-                : undefined
-            }
-            type="button"
-          >
-            {saving ? "Saving..." : dirty ? "Save" : "Saved"}
-          </button>
-        </header>
+  const contextTabEnabled = selectedContext != null;
+  const contextTabLabel = selectedContext
+    ? `Context: ${selectedContext.title}`
+    : "Context";
 
-        <div className="wb-inspector-body">
-          <div className="wb-overview-stat-grid">
-            <div className="wb-overview-stat">
-              <div className="wb-overview-stat-value">
-                {draftDefinition.executionContexts.length}
-              </div>
-              <div className="wb-overview-stat-label">Contexts</div>
-            </div>
-            <div className="wb-overview-stat">
-              <div className="wb-overview-stat-value">
-                {draftDefinition.tasks.length}
-              </div>
-              <div className="wb-overview-stat-label">Tasks</div>
-            </div>
-            <div className="wb-overview-stat">
-              <div className="wb-overview-stat-value">
-                {draftDefinition.edges.length}
-              </div>
-              <div className="wb-overview-stat-label">Edges</div>
-            </div>
-            <div className="wb-overview-stat">
-              <div className="wb-overview-stat-value">{validatorCount}</div>
-              <div className="wb-overview-stat-label">Validators</div>
-            </div>
-          </div>
-
-          <section className="wb-overview-section">
-            <div className="wb-overview-section-title">Validation</div>
-            {draftDefinition.executionContexts.length > 0 ? (
-              draftDefinition.executionContexts.map((context) => {
-                const badges = [
-                  context.contextValidation?.enabled ? "Context" : null,
-                ].filter((value): value is string => value !== null);
-
-                return (
-                  <div className="wb-overview-config-row" key={context.id}>
-                    <span>{context.title}</span>
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 6,
-                        flexWrap: "wrap",
-                        justifyContent: "flex-end",
-                      }}
-                    >
-                      <span
-                        className={`wb-overview-config-badge ${context.agent.backend === "codex" ? "codex" : "claude"}`}
-                      >
-                        {context.agent.backend === "codex" ? "Codex" : "Claude"}
-                      </span>
-                      {badges.length > 0 ? (
-                        badges.map((badge) => (
-                          <span
-                            className="wb-overview-config-badge enabled"
-                            key={`${context.id}-${badge}`}
-                          >
-                            {badge}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="wb-overview-config-badge disabled">
-                          None
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="wb-overview-config-row">
-                <span>No execution contexts configured.</span>
-              </div>
-            )}
-          </section>
-
-          <section className="wb-overview-section">
-            <div className="wb-overview-section-title">Edges</div>
-            {draftDefinition.edges.length > 0 ? (
-              draftDefinition.edges.map((edge) => (
-                <div className="wb-overview-edge" key={edge.id}>
-                  <span>
-                    {contextTitleById.get(edge.sourceContextId) ??
-                      edge.sourceContextId}
-                  </span>
-                  <span className="wb-overview-edge-arrow">→</span>
-                  <span>
-                    {contextTitleById.get(edge.targetContextId) ??
-                      edge.targetContextId}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <div className="wb-overview-config-row">
-                <span>No dependencies configured.</span>
-              </div>
-            )}
-          </section>
-        </div>
-      </aside>
-    );
-  }
-
-  const contextValidation =
-    selectedContext.contextValidation ??
-    createDefaultContextValidation(defaultImplementerConfig);
+  const workflowConfig = draftDefinition.workflowConfig ?? {};
 
   return (
-    <aside className="wb-inspector">
+    <aside className="wb-inspector wb-inspector-panel">
       <header className="wb-inspector-header">
         <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            minWidth: 0,
-          }}
+          className="cc-tabs wb-inspector-tabs"
+          role="tablist"
+          aria-label="Inspector scope"
         >
           <button
-            className="wb-inspector-back"
-            onClick={() => setSelectedContextId(null)}
             type="button"
+            role="tab"
+            aria-selected={activeTab === "workflow"}
+            className={`cc-tab${activeTab === "workflow" ? " active" : ""}`}
+            onClick={() => setActiveTab("workflow")}
           >
-            ← Overview
+            Workflow
           </button>
-          <span
-            className="wb-inspector-title"
-            style={{
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "context"}
+            aria-disabled={!contextTabEnabled}
+            disabled={!contextTabEnabled}
+            title={
+              contextTabEnabled ? undefined : "Select a context in the graph"
+            }
+            className={`cc-tab${activeTab === "context" ? " active" : ""}`}
+            onClick={() => {
+              if (contextTabEnabled) setActiveTab("context");
             }}
           >
-            {selectedContext.title}
-          </span>
-          <span
-            className={`wb-overview-config-badge ${selectedContext.agent.backend === "codex" ? "codex" : "claude"}`}
-          >
-            {selectedContext.agent.backend === "codex" ? "Codex" : "Claude"}
-          </span>
+            {contextTabLabel}
+          </button>
         </div>
         <button
           className={`wb-btn wb-btn-sm ${dirty ? "wb-btn-primary" : "wb-btn-default"}`}
@@ -649,719 +429,502 @@ export default function WorkflowInspectorPanel({
         </button>
       </header>
 
-      <div className="wb-inspector-tabs">
-        <button
-          className={`wb-inspector-tab${activeTab === "config" ? " active" : ""}`}
-          onClick={() => setActiveTab("config")}
-          type="button"
-        >
-          Config
-        </button>
-        <button
-          className={`wb-inspector-tab${activeTab === "tasks" ? " active" : ""}`}
-          onClick={() => setActiveTab("tasks")}
-          type="button"
-        >
-          Tasks
-        </button>
-      </div>
-
-      {(() => {
-        const contextErrorCount = validationErrors.filter(
-          (e) => e.contextId === selectedContextId,
-        ).length;
-        if (contextErrorCount === 0) return null;
-        return (
-          <div className="wb-validation-banner">
-            {contextErrorCount} validation{" "}
-            {contextErrorCount === 1 ? "issue" : "issues"}
-          </div>
-        );
-      })()}
-
       <div className="wb-inspector-body">
-        {activeTab === "config" ? (
-          <>
-            {renderSection(
-              "title-description",
-              "Title & Description",
-              (() => {
-                const titleError = findFieldError(
-                  validationErrors,
-                  "empty-context-title",
-                  selectedContext.id,
-                );
-                return (
-                  <>
-                    <div className="wb-field">
-                      <label
-                        className="wb-field-label"
-                        htmlFor="workflow-context-title"
-                      >
-                        Title <RequiredMark />
-                      </label>
-                      <input
-                        className={titleError ? "invalid" : undefined}
-                        id="workflow-context-title"
-                        onChange={(event) =>
-                          applyContextUpdate({
-                            title: event.target.value,
-                          })
-                        }
-                        type="text"
-                        value={selectedContext.title}
-                      />
-                      <FieldError error={titleError} />
-                    </div>
-                    <div className="wb-field">
-                      <label
-                        className="wb-field-label"
-                        htmlFor="workflow-context-description"
-                      >
-                        Description
-                      </label>
-                      <textarea
-                        id="workflow-context-description"
-                        onChange={(event) =>
-                          applyContextUpdate({
-                            description: event.target.value,
-                          })
-                        }
-                        value={selectedContext.description ?? ""}
-                      />
-                    </div>
-                  </>
-                );
-              })(),
-            )}
-
-            {renderSection(
-              "implementation-agent",
-              "Implementation Agent",
-              <>
-                <BackendTypeSelector
-                  label="Agent Type"
-                  value={selectedContext.agent.backend}
-                  onChange={(backend) => {
-                    applyContextUpdate({
-                      agent: resolveAgentConfigForBackend(
-                        backend,
-                        defaultImplementerConfig,
-                        codexConfig,
-                      ),
-                    });
-                  }}
-                  codexEnabled={codexEnabled}
-                />
-                {selectedContext.agent.backend === "codex" ? (
-                  <CodexAgentFields
-                    model={selectedContext.agent.model}
-                    reasoningEffort={
-                      selectedContext.agent
-                        .reasoningEffort as CodexReasoningEffort
-                    }
-                    defaultModel={codexConfig?.model ?? getDefaultCodexModel()}
-                    defaultReasoningEffort={
-                      codexConfig?.reasoningEffort ?? "high"
-                    }
-                    onModelChange={(model) => {
-                      const codexModel = model as CodexModel;
-                      const levels =
-                        getCodexReasoningLevelsForModel(codexModel);
-                      const currentEffort = selectedContext.agent
-                        .reasoningEffort as CodexReasoningEffort;
-                      const validEffort: CodexReasoningEffort =
-                        levels && levels.includes(currentEffort)
-                          ? currentEffort
-                          : (levels?.[levels.length - 1] ?? "high");
-                      applyContextUpdate({
-                        agent: {
-                          backend: "codex" as const,
-                          model: codexModel,
-                          reasoningEffort: validEffort,
-                        },
-                      });
-                    }}
-                    onReasoningChange={(effort) =>
-                      applyContextUpdate({
-                        agent: {
-                          backend: "codex" as const,
-                          model: selectedContext.agent.model as CodexModel,
-                          reasoningEffort: effort,
-                        },
-                      })
-                    }
-                  />
-                ) : (
-                  <AgentConfigFields
-                    model={selectedContext.agent.model as ModelId}
-                    reasoningEffort={
-                      selectedContext.agent.reasoningEffort as EffortLevel
-                    }
-                    onModelChange={(model) => {
-                      const clamped = clampEffortToModel(
-                        selectedContext.agent.reasoningEffort as EffortLevel,
-                        model,
-                      );
-                      applyContextUpdate({
-                        agent: {
-                          backend: "claude" as const,
-                          model,
-                          reasoningEffort: clamped ?? "medium",
-                        },
-                      });
-                    }}
-                    onReasoningChange={(effort) =>
-                      applyContextUpdate({
-                        agent: {
-                          backend: "claude" as const,
-                          model: selectedContext.agent.model as ModelId,
-                          reasoningEffort: effort,
-                        },
-                      })
-                    }
-                  />
-                )}
-              </>,
-            )}
-
-            {renderSection(
-              "context-validation",
-              "Context Validation",
-              <>
-                <div className="wb-inline-field">
-                  <span className="wb-inline-field-label">Enabled</span>
-                  <div
-                    className={`wb-toggle${contextValidation.enabled ? " on" : ""}`}
-                    onClick={() =>
-                      applyContextUpdate({
-                        contextValidation: selectedContext.contextValidation
-                          ? {
-                              ...selectedContext.contextValidation,
-                              enabled:
-                                !selectedContext.contextValidation.enabled,
-                            }
-                          : {
-                              ...createDefaultContextValidation(
-                                defaultImplementerConfig,
-                              ),
-                              enabled: true,
-                            },
-                      })
-                    }
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        applyContextUpdate({
-                          contextValidation: selectedContext.contextValidation
-                            ? {
-                                ...selectedContext.contextValidation,
-                                enabled:
-                                  !selectedContext.contextValidation.enabled,
-                              }
-                            : {
-                                ...createDefaultContextValidation(
-                                  defaultImplementerConfig,
-                                ),
-                                enabled: true,
-                              },
-                        });
-                      }
-                    }}
-                  />
-                </div>
-                {(() => {
-                  const instrError = findFieldError(
-                    validationErrors,
-                    "empty-context-validator-acceptance-criteria",
-                    selectedContext.id,
-                  );
-                  return (
-                    <div className="wb-field">
-                      <label
-                        className="wb-field-label"
-                        htmlFor="workflow-context-validation-acceptance-criteria"
-                      >
-                        Acceptance Criteria{" "}
-                        {contextValidation.enabled && <RequiredMark />}
-                      </label>
-                      <textarea
-                        className={instrError ? "invalid" : undefined}
-                        disabled={!contextValidation.enabled}
-                        id="workflow-context-validation-acceptance-criteria"
-                        onChange={(event) =>
-                          applyContextUpdate({
-                            contextValidation: {
-                              ...contextValidation,
-                              acceptanceCriteria: event.target.value,
-                            },
-                          })
-                        }
-                        value={contextValidation.acceptanceCriteria}
-                      />
-                      <FieldError error={instrError} />
-                    </div>
-                  );
-                })()}
-                <div className="wb-subsection-label">Validator Agent</div>
-                <BackendTypeSelector
-                  label="Validator Type"
-                  value={contextValidation.type ?? "claude"}
-                  onChange={(type) => {
-                    const preserved = {
-                      enabled: contextValidation.enabled,
-                      acceptanceCriteria: contextValidation.acceptanceCriteria,
-                    };
-                    if (type === "codex") {
-                      applyContextUpdate({
-                        contextValidation: {
-                          ...createDefaultContextValidation(
-                            defaultImplementerConfig,
-                            "codex",
-                            codexConfig,
-                          ),
-                          ...preserved,
-                        },
-                      });
-                    } else {
-                      applyContextUpdate({
-                        contextValidation: {
-                          ...createDefaultContextValidation(
-                            defaultImplementerConfig,
-                            "claude",
-                          ),
-                          ...preserved,
-                        },
-                      });
-                    }
-                  }}
-                  codexEnabled={codexEnabled}
-                  disabled={!contextValidation.enabled}
-                />
-                {contextValidation.type === "codex" ? (
-                  <CodexAgentFields
-                    model={
-                      (contextValidation as { codex?: { model?: string } })
-                        .codex?.model
-                    }
-                    reasoningEffort={
-                      (
-                        contextValidation as {
-                          codex?: { reasoningEffort?: CodexReasoningEffort };
-                        }
-                      ).codex?.reasoningEffort
-                    }
-                    defaultModel={codexConfig?.model ?? getDefaultCodexModel()}
-                    defaultReasoningEffort={
-                      codexConfig?.reasoningEffort ?? "high"
-                    }
-                    disabled={!contextValidation.enabled}
-                    onModelChange={(model) =>
-                      applyContextUpdate({
-                        contextValidation: {
-                          ...contextValidation,
-                          codex: {
-                            ...(
-                              contextValidation as {
-                                codex?: Record<string, unknown>;
-                              }
-                            ).codex,
-                            model: model as CodexModel,
-                          },
-                        },
-                      })
-                    }
-                    onReasoningChange={(effort) =>
-                      applyContextUpdate({
-                        contextValidation: {
-                          ...contextValidation,
-                          codex: {
-                            ...(
-                              contextValidation as {
-                                codex?: Record<string, unknown>;
-                              }
-                            ).codex,
-                            reasoningEffort: effort,
-                          },
-                        },
-                      })
-                    }
-                  />
-                ) : (
-                  <AgentConfigFields
-                    model={
-                      (contextValidation as { agent: { model: string } }).agent
-                        .model as ModelId
-                    }
-                    reasoningEffort={
-                      (
-                        contextValidation as {
-                          agent: { reasoningEffort: string };
-                        }
-                      ).agent.reasoningEffort as EffortLevel
-                    }
-                    disabled={!contextValidation.enabled}
-                    onModelChange={(model) => {
-                      const currentEffort = (
-                        contextValidation as {
-                          agent: { reasoningEffort: string };
-                        }
-                      ).agent.reasoningEffort as EffortLevel;
-                      const clamped = clampEffortToModel(currentEffort, model);
-                      applyContextUpdate({
-                        contextValidation: {
-                          ...contextValidation,
-                          agent: {
-                            backend: "claude" as const,
-                            model,
-                            reasoningEffort: clamped ?? "medium",
-                          },
-                        },
-                      });
-                    }}
-                    onReasoningChange={(effort) => {
-                      const tv = contextValidation as {
-                        type: "claude";
-                        agent: { model: ModelId; reasoningEffort: EffortLevel };
-                      };
-                      applyContextUpdate({
-                        contextValidation: {
-                          ...contextValidation,
-                          agent: {
-                            ...tv.agent,
-                            backend: "claude" as const,
-                            reasoningEffort: effort,
-                          },
-                        },
-                      });
-                    }}
-                  />
-                )}
-                <div className="wb-subsection-label">Session Continuity</div>
-                <div className="wb-inline-field">
-                  <span className="wb-inline-field-label">Enabled</span>
-                  <div
-                    className={`wb-toggle${contextValidation.continuity.enabled ? " on" : ""}`}
-                    onClick={() =>
-                      applyContextUpdate({
-                        contextValidation: {
-                          ...contextValidation,
-                          continuity: {
-                            ...contextValidation.continuity,
-                            enabled: !contextValidation.continuity.enabled,
-                          },
-                        },
-                      })
-                    }
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        applyContextUpdate({
-                          contextValidation: {
-                            ...contextValidation,
-                            continuity: {
-                              ...contextValidation.continuity,
-                              enabled: !contextValidation.continuity.enabled,
-                            },
-                          },
-                        });
-                      }
-                    }}
-                  />
-                </div>
-                <div className="wb-inline-field">
-                  <span className="wb-inline-field-label">
-                    Context Limit (tokens)
-                  </span>
-                  <input
-                    min={1}
-                    onChange={(event) =>
-                      applyContextUpdate({
-                        contextValidation: {
-                          ...contextValidation,
-                          continuity: {
-                            ...contextValidation.continuity,
-                            contextLimitTokens: getOptionalPositiveNumber(
-                              event.target.value,
-                            ),
-                          },
-                        },
-                      })
-                    }
-                    type="number"
-                    value={
-                      contextValidation.continuity.contextLimitTokens ?? ""
-                    }
-                  />
-                </div>
-              </>,
-            )}
-
-            {renderSection(
-              "circuit-breaker",
-              "Circuit Breaker",
-              <span className="wb-inline-field-label">
-                Circuit breaker is enabled for this context.
-              </span>,
-            )}
-
-            {renderSection(
-              "iteration-policy",
-              "Iteration Policy",
-              <>
-                <div className="wb-inline-field">
-                  <span className="wb-inline-field-label">Max Iterations</span>
-                  <input
-                    min={1}
-                    onChange={(event) =>
-                      applyContextUpdate({
-                        iterationPolicy: {
-                          ...selectedContext.iterationPolicy,
-                          maxIterations: getPositiveNumber(
-                            event.target.value,
-                            selectedContext.iterationPolicy.maxIterations,
-                          ),
-                        },
-                      })
-                    }
-                    type="number"
-                    value={selectedContext.iterationPolicy.maxIterations}
-                  />
-                </div>
-                <div className="wb-inline-field">
-                  <span className="wb-inline-field-label">
-                    Session Continuity
-                  </span>
-                  <div
-                    className={`wb-toggle${selectedContext.iterationPolicy.continuity.enabled ? " on" : ""}`}
-                    onClick={() =>
-                      applyContextUpdate({
-                        iterationPolicy: {
-                          ...selectedContext.iterationPolicy,
-                          continuity: {
-                            ...selectedContext.iterationPolicy.continuity,
-                            enabled:
-                              !selectedContext.iterationPolicy.continuity
-                                .enabled,
-                          },
-                        },
-                      })
-                    }
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        applyContextUpdate({
-                          iterationPolicy: {
-                            ...selectedContext.iterationPolicy,
-                            continuity: {
-                              ...selectedContext.iterationPolicy.continuity,
-                              enabled:
-                                !selectedContext.iterationPolicy.continuity
-                                  .enabled,
-                            },
-                          },
-                        });
-                      }
-                    }}
-                  />
-                </div>
-                <div className="wb-inline-field">
-                  <span className="wb-inline-field-label">
-                    Context Limit (tokens)
-                  </span>
-                  <input
-                    min={1}
-                    onChange={(event) =>
-                      applyContextUpdate({
-                        iterationPolicy: {
-                          ...selectedContext.iterationPolicy,
-                          continuity: {
-                            ...selectedContext.iterationPolicy.continuity,
-                            contextLimitTokens: getOptionalPositiveNumber(
-                              event.target.value,
-                            ),
-                          },
-                        },
-                      })
-                    }
-                    type="number"
-                    value={
-                      selectedContext.iterationPolicy.continuity
-                        .contextLimitTokens ?? ""
-                    }
-                  />
-                </div>
-              </>,
-            )}
-
-            {renderSection(
-              "mutability",
-              "Mutability",
-              <div className="wb-inline-field">
-                <span className="wb-inline-field-label">
-                  Allow Agent Task Add
-                </span>
-                <div
-                  className={`wb-toggle${selectedContext.mutability.allowAgentTaskAdd ? " on" : ""}`}
-                  onClick={() =>
-                    applyContextUpdate({
-                      mutability: {
-                        ...selectedContext.mutability,
-                        allowAgentTaskAdd:
-                          !selectedContext.mutability.allowAgentTaskAdd,
-                      },
-                    })
-                  }
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      applyContextUpdate({
-                        mutability: {
-                          ...selectedContext.mutability,
-                          allowAgentTaskAdd:
-                            !selectedContext.mutability.allowAgentTaskAdd,
-                        },
-                      });
-                    }
-                  }}
-                />
-              </div>,
-            )}
-
-            {renderSection(
-              "delete-context",
-              "Delete Context",
-              <button
-                className="wb-btn wb-btn-sm wb-btn-danger"
-                onClick={() => onDelete(selectedContext.id)}
-                type="button"
-              >
-                Delete Context
-              </button>,
-            )}
-          </>
+        {activeTab === "workflow" || !selectedContext ? (
+          <WorkflowTabBody
+            workflowConfig={workflowConfig}
+            globalDefaults={defaults}
+            onSetOverride={(block, value) => {
+              updateDefinition(
+                setWorkflowConfigOverride(draftDefinition, block, value),
+              );
+            }}
+            onClearOverride={(block) => {
+              updateDefinition(
+                clearWorkflowConfigOverride(draftDefinition, block),
+              );
+            }}
+          />
         ) : (
-          <>
-            <div className="wb-task-list">
-              {selectedContextTasks.map((task, index) => {
-                const expanded = selectedTaskId === task.id;
-                const firstTask = index === 0;
-                const lastTask = index === selectedContextTasks.length - 1;
-                const hasTaskErrors = validationErrors.some(
-                  (e) => e.taskId === task.id,
-                );
+          <ContextTabBody
+            context={selectedContext}
+            tasks={selectedContextTasks}
+            validationErrors={validationErrors}
+            workflowConfig={workflowConfig}
+            globalDefaults={defaults}
+            selectedTaskId={selectedTaskId}
+            onUpdateContext={(updates) => {
+              updateDefinition(
+                updateExecutionContext(
+                  draftDefinition,
+                  selectedContext.id,
+                  updates,
+                ),
+              );
+            }}
+            onSetContextOverride={(block, value) => {
+              updateDefinition(
+                setContextBlockOverride(
+                  draftDefinition,
+                  selectedContext.id,
+                  block,
+                  value,
+                ),
+              );
+            }}
+            onClearContextOverride={(block) => {
+              updateDefinition(
+                clearContextBlockOverride(
+                  draftDefinition,
+                  selectedContext.id,
+                  block,
+                ),
+              );
+            }}
+            onDisableValidator={() => {
+              updateDefinition(
+                disableContextValidator(draftDefinition, selectedContext.id),
+              );
+            }}
+            onEnableValidator={() => {
+              updateDefinition(
+                enableContextValidator(draftDefinition, selectedContext.id),
+              );
+            }}
+            onAddTask={() => {
+              const result = addTaskToContext(
+                draftDefinition,
+                selectedContext.id,
+              );
+              updateDefinition(result.definition);
+              setSelectedTaskId(result.taskId);
+            }}
+            onUpdateTask={(taskId, updates) => {
+              updateDefinition(updateTask(draftDefinition, taskId, updates));
+            }}
+            onRemoveTask={(taskId) => {
+              updateDefinition(
+                removeTask(draftDefinition, selectedContext.id, taskId),
+              );
+              setSelectedTaskId(null);
+            }}
+            onMoveTask={(taskId, direction) => {
+              updateDefinition(
+                moveTaskWithinContext(
+                  draftDefinition,
+                  selectedContext.id,
+                  taskId,
+                  direction,
+                ),
+              );
+            }}
+            onSelectTask={(taskId) => {
+              setSelectedTaskId(selectedTaskId === taskId ? null : taskId);
+            }}
+            onDelete={() => onDelete(selectedContext.id)}
+          />
+        )}
+      </div>
+    </aside>
+  );
+}
 
-                return (
+function WorkflowTabBody({
+  workflowConfig,
+  globalDefaults,
+  onSetOverride,
+  onClearOverride,
+}: {
+  workflowConfig: WorkflowConfigOverride;
+  globalDefaults: WorkflowDefaults;
+  onSetOverride: <K extends keyof WorkflowConfigOverride>(
+    block: K,
+    value: NonNullable<WorkflowConfigOverride[K]>,
+  ) => void;
+  onClearOverride: (block: keyof WorkflowConfigOverride) => void;
+}): React.JSX.Element {
+  const cascade = computeWorkflowCascade(workflowConfig, globalDefaults);
+
+  return (
+    <div className="wb-inspector-blocks" data-scope="workflow">
+      <InspectorConfigBlock
+        label="Implementer"
+        summary={summarizeImplementer(cascade.implementer.value)}
+        source={cascade.implementer.source}
+        onOverride={() =>
+          onSetOverride("implementer", deepClone(cascade.implementer.value))
+        }
+        onReset={() => onClearOverride("implementer")}
+      >
+        <ReadonlyBlockPreview
+          entries={implementerEntries(cascade.implementer.value)}
+        />
+      </InspectorConfigBlock>
+
+      <InspectorConfigBlock
+        label="Context validator"
+        summary={summarizeValidator(cascade.contextValidator.value)}
+        source={cascade.contextValidator.source}
+        onOverride={() =>
+          onSetOverride(
+            "contextValidator",
+            deepClone(cascade.contextValidator.value),
+          )
+        }
+        onReset={() => onClearOverride("contextValidator")}
+      >
+        <ReadonlyBlockPreview
+          entries={validatorEntries(cascade.contextValidator.value)}
+        />
+      </InspectorConfigBlock>
+
+      <InspectorConfigBlock
+        label="Iteration policy"
+        summary={summarizeIterationPolicy(cascade.iterationPolicy.value)}
+        source={cascade.iterationPolicy.source}
+        onOverride={() =>
+          onSetOverride(
+            "iterationPolicy",
+            deepClone(cascade.iterationPolicy.value),
+          )
+        }
+        onReset={() => onClearOverride("iterationPolicy")}
+      >
+        <ReadonlyBlockPreview
+          entries={iterationPolicyEntries(cascade.iterationPolicy.value)}
+        />
+      </InspectorConfigBlock>
+
+      <InspectorConfigBlock
+        label="Circuit breaker"
+        summary={summarizeCircuitBreaker(cascade.circuitBreaker.value)}
+        source={cascade.circuitBreaker.source}
+        onOverride={() =>
+          onSetOverride(
+            "circuitBreaker",
+            deepClone(cascade.circuitBreaker.value),
+          )
+        }
+        onReset={() => onClearOverride("circuitBreaker")}
+      >
+        <ReadonlyBlockPreview
+          entries={circuitBreakerEntries(cascade.circuitBreaker.value)}
+        />
+      </InspectorConfigBlock>
+
+      <InspectorConfigBlock
+        label="Mutability"
+        summary={summarizeMutability(cascade.mutability.value)}
+        source={cascade.mutability.source}
+        onOverride={() =>
+          onSetOverride("mutability", deepClone(cascade.mutability.value))
+        }
+        onReset={() => onClearOverride("mutability")}
+      >
+        <ReadonlyBlockPreview
+          entries={mutabilityEntries(cascade.mutability.value)}
+        />
+      </InspectorConfigBlock>
+    </div>
+  );
+}
+
+type ContextBlock =
+  | "implementer"
+  | "contextValidator"
+  | "iterationPolicy"
+  | "circuitBreaker"
+  | "mutability";
+
+function ContextTabBody({
+  context,
+  tasks,
+  validationErrors,
+  workflowConfig,
+  globalDefaults,
+  selectedTaskId,
+  onUpdateContext,
+  onSetContextOverride,
+  onClearContextOverride,
+  onDisableValidator,
+  onEnableValidator,
+  onAddTask,
+  onUpdateTask,
+  onRemoveTask,
+  onMoveTask,
+  onSelectTask,
+  onDelete,
+}: {
+  context: GraphWorkflowExecutionContextDefinition;
+  tasks: GraphWorkflowTaskDefinition[];
+  validationErrors: WorkflowGraphValidationError[];
+  workflowConfig: WorkflowConfigOverride;
+  globalDefaults: WorkflowDefaults;
+  selectedTaskId: string | null;
+  onUpdateContext: (
+    updates: Partial<GraphWorkflowExecutionContextDefinition>,
+  ) => void;
+  onSetContextOverride: <K extends ContextBlock>(
+    block: K,
+    value: NonNullable<GraphWorkflowExecutionContextDefinition[K]>,
+  ) => void;
+  onClearContextOverride: (block: ContextBlock) => void;
+  onDisableValidator: () => void;
+  onEnableValidator: () => void;
+  onAddTask: () => void;
+  onUpdateTask: (
+    taskId: string,
+    updates: Partial<GraphWorkflowTaskDefinition>,
+  ) => void;
+  onRemoveTask: (taskId: string) => void;
+  onMoveTask: (taskId: string, direction: "up" | "down") => void;
+  onSelectTask: (taskId: string) => void;
+  onDelete: () => void;
+}): React.JSX.Element {
+  const cascade = computeContextCascade(
+    context,
+    workflowConfig,
+    globalDefaults,
+  );
+  const acError = findFieldError(
+    validationErrors,
+    "empty-context-acceptance-criteria",
+    context.id,
+  );
+
+  return (
+    <div className="wb-inspector-blocks" data-scope="context">
+      <section className="wb-inspector-header-group" data-section="header">
+        <div className="wb-inline-field">
+          <label className="wb-inline-field-label" htmlFor="context-title">
+            Title <RequiredMark />
+          </label>
+          <input
+            id="context-title"
+            type="text"
+            value={context.title}
+            onChange={(event) => onUpdateContext({ title: event.target.value })}
+          />
+        </div>
+        <div className="wb-inline-field">
+          <label
+            className="wb-inline-field-label"
+            htmlFor="context-description"
+          >
+            Description
+          </label>
+          <textarea
+            id="context-description"
+            value={context.description ?? ""}
+            onChange={(event) =>
+              onUpdateContext({ description: event.target.value })
+            }
+          />
+        </div>
+        <div className="wb-inline-field">
+          <label
+            className="wb-inline-field-label"
+            htmlFor="context-acceptance-criteria"
+          >
+            Acceptance Criteria <RequiredMark />
+          </label>
+          <textarea
+            id="context-acceptance-criteria"
+            className={acError ? "invalid" : undefined}
+            value={context.acceptanceCriteria}
+            onChange={(event) =>
+              onUpdateContext({ acceptanceCriteria: event.target.value })
+            }
+          />
+          <FieldError error={acError} />
+          <div className="wb-field-hint">
+            Acceptance criteria is passed to the implementer, and — when the
+            validator is enabled — to the validator as well.
+          </div>
+        </div>
+      </section>
+
+      <InspectorConfigBlock
+        label="Implementer"
+        summary={summarizeImplementer(cascade.implementer.value)}
+        source={cascade.implementer.source}
+        onOverride={() =>
+          onSetContextOverride(
+            "implementer",
+            deepClone(cascade.implementer.value),
+          )
+        }
+        onReset={() => onClearContextOverride("implementer")}
+      >
+        <ReadonlyBlockPreview
+          entries={implementerEntries(cascade.implementer.value)}
+        />
+      </InspectorConfigBlock>
+
+      <ContextValidatorBlock
+        cascade={cascade.contextValidator}
+        onOverride={(value) => {
+          const override: ContextValidatorOverride = {
+            kind: "use",
+            value: deepClone(value),
+          };
+          onSetContextOverride("contextValidator", override);
+        }}
+        onReset={() => onClearContextOverride("contextValidator")}
+        onDisable={onDisableValidator}
+        onEnable={onEnableValidator}
+      />
+
+      <InspectorConfigBlock
+        label="Iteration policy"
+        summary={summarizeIterationPolicy(cascade.iterationPolicy.value)}
+        source={cascade.iterationPolicy.source}
+        onOverride={() =>
+          onSetContextOverride(
+            "iterationPolicy",
+            deepClone(cascade.iterationPolicy.value),
+          )
+        }
+        onReset={() => onClearContextOverride("iterationPolicy")}
+      >
+        <ReadonlyBlockPreview
+          entries={iterationPolicyEntries(cascade.iterationPolicy.value)}
+        />
+      </InspectorConfigBlock>
+
+      <InspectorConfigBlock
+        label="Circuit breaker"
+        summary={summarizeCircuitBreaker(cascade.circuitBreaker.value)}
+        source={cascade.circuitBreaker.source}
+        onOverride={() =>
+          onSetContextOverride(
+            "circuitBreaker",
+            deepClone(cascade.circuitBreaker.value),
+          )
+        }
+        onReset={() => onClearContextOverride("circuitBreaker")}
+      >
+        <ReadonlyBlockPreview
+          entries={circuitBreakerEntries(cascade.circuitBreaker.value)}
+        />
+      </InspectorConfigBlock>
+
+      <InspectorConfigBlock
+        label="Mutability"
+        summary={summarizeMutability(cascade.mutability.value)}
+        source={cascade.mutability.source}
+        onOverride={() =>
+          onSetContextOverride(
+            "mutability",
+            deepClone(cascade.mutability.value),
+          )
+        }
+        onReset={() => onClearContextOverride("mutability")}
+      >
+        <ReadonlyBlockPreview
+          entries={mutabilityEntries(cascade.mutability.value)}
+        />
+      </InspectorConfigBlock>
+
+      <section className="wb-section" data-section="tasks">
+        <div className="wb-section-header">
+          <span className="wb-section-title">Tasks</span>
+        </div>
+        <div className="wb-section-content">
+          <div className="wb-task-list">
+            {tasks.map((task, index) => {
+              const expanded = selectedTaskId === task.id;
+              const firstTask = index === 0;
+              const lastTask = index === tasks.length - 1;
+              const hasTaskErrors = validationErrors.some(
+                (e) => e.taskId === task.id,
+              );
+              const titleError = findFieldError(
+                validationErrors,
+                "empty-task-title",
+                undefined,
+                task.id,
+              );
+              const instrError = findFieldError(
+                validationErrors,
+                "empty-task-instructions",
+                undefined,
+                task.id,
+              );
+
+              return (
+                <div
+                  className={`wb-task-item${expanded ? " expanded active-task" : ""}${hasTaskErrors ? " has-errors" : ""}`}
+                  key={task.id}
+                >
                   <div
-                    className={`wb-task-item${expanded ? " expanded active-task" : ""}${hasTaskErrors ? " has-errors" : ""}`}
-                    key={task.id}
+                    className="wb-task-item-main"
+                    onClick={() => onSelectTask(task.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelectTask(task.id);
+                      }
+                    }}
                   >
-                    <div
-                      className="wb-task-item-main"
-                      onClick={() => handleTaskSelection(task.id)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          handleTaskSelection(task.id);
-                        }
-                      }}
-                    >
-                      <span className="wb-task-order">{task.order}</span>
-                      <span className="wb-task-title">
-                        {task.title || "(untitled)"}
-                      </span>
-                      {hasTaskErrors && <span className="wb-task-error-dot" />}
-                      <span className="wb-task-expand">▸</span>
-                    </div>
+                    <span className="wb-task-order">{task.order}</span>
+                    <span className="wb-task-title">
+                      {task.title || "(untitled)"}
+                    </span>
+                    {hasTaskErrors && <span className="wb-task-error-dot" />}
+                    <span className="wb-task-expand">▸</span>
+                  </div>
 
+                  {expanded ? (
                     <div className="wb-task-detail">
-                      {(() => {
-                        const titleError = findFieldError(
-                          validationErrors,
-                          "empty-task-title",
-                          undefined,
-                          task.id,
-                        );
-                        const instrError = findFieldError(
-                          validationErrors,
-                          "empty-task-instructions",
-                          undefined,
-                          task.id,
-                        );
-                        return (
-                          <>
-                            <div className="wb-task-detail-field">
-                              <label
-                                className="wb-task-detail-label"
-                                htmlFor={`task-title-${task.id}`}
-                              >
-                                Title <RequiredMark />
-                              </label>
-                              <input
-                                className={titleError ? "invalid" : undefined}
-                                id={`task-title-${task.id}`}
-                                onChange={(event) =>
-                                  updateDefinition(
-                                    updateTask(draftDefinition, task.id, {
-                                      title: event.target.value,
-                                    }),
-                                  )
-                                }
-                                type="text"
-                                value={task.title}
-                              />
-                              <FieldError error={titleError} />
-                            </div>
+                      <div className="wb-task-detail-field">
+                        <label
+                          className="wb-task-detail-label"
+                          htmlFor={`task-title-${task.id}`}
+                        >
+                          Title <RequiredMark />
+                        </label>
+                        <input
+                          className={titleError ? "invalid" : undefined}
+                          id={`task-title-${task.id}`}
+                          onChange={(event) =>
+                            onUpdateTask(task.id, {
+                              title: event.target.value,
+                            })
+                          }
+                          type="text"
+                          value={task.title}
+                        />
+                        <FieldError error={titleError} />
+                      </div>
 
-                            <div className="wb-task-detail-field">
-                              <label
-                                className="wb-task-detail-label"
-                                htmlFor={`task-instructions-${task.id}`}
-                              >
-                                Instructions <RequiredMark />
-                              </label>
-                              <textarea
-                                className={instrError ? "invalid" : undefined}
-                                id={`task-instructions-${task.id}`}
-                                onChange={(event) =>
-                                  updateDefinition(
-                                    updateTask(draftDefinition, task.id, {
-                                      instructions: event.target.value,
-                                    }),
-                                  )
-                                }
-                                value={task.instructions}
-                              />
-                              <FieldError error={instrError} />
-                            </div>
-                          </>
-                        );
-                      })()}
+                      <div className="wb-task-detail-field">
+                        <label
+                          className="wb-task-detail-label"
+                          htmlFor={`task-instructions-${task.id}`}
+                        >
+                          Instructions <RequiredMark />
+                        </label>
+                        <textarea
+                          className={instrError ? "invalid" : undefined}
+                          id={`task-instructions-${task.id}`}
+                          onChange={(event) =>
+                            onUpdateTask(task.id, {
+                              instructions: event.target.value,
+                            })
+                          }
+                          value={task.instructions}
+                        />
+                        <FieldError error={instrError} />
+                      </div>
 
                       <div className="wb-task-detail-actions">
                         <button
                           className="wb-btn wb-btn-xs wb-btn-default"
                           disabled={firstTask}
-                          onClick={() =>
-                            updateDefinition(
-                              moveTaskWithinContext(
-                                draftDefinition,
-                                selectedContext.id,
-                                task.id,
-                                "up",
-                              ),
-                            )
-                          }
+                          onClick={() => onMoveTask(task.id, "up")}
                           type="button"
                         >
                           Move Up
@@ -1369,60 +932,195 @@ export default function WorkflowInspectorPanel({
                         <button
                           className="wb-btn wb-btn-xs wb-btn-default"
                           disabled={lastTask}
-                          onClick={() =>
-                            updateDefinition(
-                              moveTaskWithinContext(
-                                draftDefinition,
-                                selectedContext.id,
-                                task.id,
-                                "down",
-                              ),
-                            )
-                          }
+                          onClick={() => onMoveTask(task.id, "down")}
                           type="button"
                         >
                           Move Down
                         </button>
                         <button
                           className="wb-btn wb-btn-xs wb-btn-danger"
-                          onClick={() => {
-                            updateDefinition(
-                              removeTask(
-                                draftDefinition,
-                                selectedContext.id,
-                                task.id,
-                              ),
-                            );
-                            setSelectedTaskId(null);
-                          }}
+                          onClick={() => onRemoveTask(task.id)}
                           type="button"
                         >
                           Delete
                         </button>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
 
-            <button
-              className="wb-btn-add-task"
-              onClick={() => {
-                const result = addTaskToContext(
-                  draftDefinition,
-                  selectedContext.id,
-                );
-                updateDefinition(result.definition);
-                setSelectedTaskId(result.taskId);
-              }}
-              type="button"
-            >
-              + Add Task
-            </button>
-          </>
-        )}
-      </div>
-    </aside>
+          <button className="wb-btn-add-task" onClick={onAddTask} type="button">
+            + Add Task
+          </button>
+        </div>
+      </section>
+
+      <section className="wb-section" data-section="delete-context">
+        <div className="wb-section-content">
+          <button
+            className="wb-btn wb-btn-sm wb-btn-danger"
+            onClick={onDelete}
+            type="button"
+          >
+            Delete Context
+          </button>
+        </div>
+      </section>
+    </div>
   );
+}
+
+function ContextValidatorBlock({
+  cascade,
+  onOverride,
+  onReset,
+  onDisable,
+  onEnable,
+}: {
+  cascade: ResolvedContextCascade["contextValidator"];
+  onOverride: (value: GraphWorkflowAgentValidatorConfig) => void;
+  onReset: () => void;
+  onDisable: () => void;
+  onEnable: () => void;
+}): React.JSX.Element {
+  if (cascade.source === "disabled") {
+    return (
+      <InspectorConfigBlock
+        label="Context validator"
+        summary="disabled"
+        source="disabled"
+        onOverride={() => {
+          // Re-enable then transition to override with seeded claude validator
+          const seedValidator: GraphWorkflowAgentValidatorConfig = {
+            type: "claude",
+            enabled: true,
+            continuity: { enabled: true },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+          };
+          onOverride(seedValidator);
+        }}
+        onToggleDisabled={onEnable}
+      >
+        <ReadonlyBlockPreview
+          entries={[["status", "disabled for this context"]]}
+        />
+      </InspectorConfigBlock>
+    );
+  }
+
+  const validator = cascade.value;
+
+  return (
+    <InspectorConfigBlock
+      label="Context validator"
+      summary={summarizeValidator(validator)}
+      source={cascade.source}
+      onOverride={() => onOverride(validator)}
+      onReset={cascade.source === "context-override" ? onReset : undefined}
+      onToggleDisabled={onDisable}
+    >
+      <ReadonlyBlockPreview entries={validatorEntries(validator)} />
+    </InspectorConfigBlock>
+  );
+}
+
+function ReadonlyBlockPreview({
+  entries,
+}: {
+  entries: Array<[string, string]>;
+}): React.JSX.Element {
+  return (
+    <dl className="wb-inspector-block__preview">
+      {entries.map(([key, value]) => (
+        <div className="wb-inspector-block__preview-row" key={key}>
+          <dt>{key}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function implementerEntries(
+  value: GraphWorkflowAgentConfig,
+): Array<[string, string]> {
+  const entries: Array<[string, string]> = [
+    ["backend", value.backend],
+    ["model", value.model],
+  ];
+  if (value.reasoningEffort) {
+    entries.push(["reasoningEffort", value.reasoningEffort]);
+  }
+  return entries;
+}
+
+function validatorEntries(
+  value: GraphWorkflowAgentValidatorConfig,
+): Array<[string, string]> {
+  const entries: Array<[string, string]> = [
+    ["type", value.type],
+    ["enabled", String(value.enabled)],
+    ["continuity.enabled", String(value.continuity.enabled)],
+  ];
+  if (value.continuity.contextLimitTokens !== undefined) {
+    entries.push([
+      "continuity.contextLimitTokens",
+      String(value.continuity.contextLimitTokens),
+    ]);
+  }
+  if (value.type === "claude") {
+    entries.push(["agent.backend", value.agent.backend]);
+    entries.push(["agent.model", value.agent.model]);
+    if (value.agent.reasoningEffort) {
+      entries.push(["agent.reasoningEffort", value.agent.reasoningEffort]);
+    }
+  } else {
+    if (value.codex?.model) entries.push(["codex.model", value.codex.model]);
+    if (value.codex?.reasoningEffort) {
+      entries.push(["codex.reasoningEffort", value.codex.reasoningEffort]);
+    }
+  }
+  return entries;
+}
+
+function iterationPolicyEntries(
+  value: GraphWorkflowIterationPolicy,
+): Array<[string, string]> {
+  const entries: Array<[string, string]> = [
+    ["maxIterations", String(value.maxIterations)],
+    ["continuity.enabled", String(value.continuity.enabled)],
+  ];
+  if (value.continuity.contextLimitTokens !== undefined) {
+    entries.push([
+      "continuity.contextLimitTokens",
+      String(value.continuity.contextLimitTokens),
+    ]);
+  }
+  return entries;
+}
+
+function circuitBreakerEntries(
+  value: GraphWorkflowCircuitBreakerPolicy,
+): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  if (value.consecutiveFailureThreshold !== undefined) {
+    entries.push([
+      "consecutiveFailureThreshold",
+      String(value.consecutiveFailureThreshold),
+    ]);
+  }
+  return entries;
+}
+
+function mutabilityEntries(
+  value: GraphWorkflowMutabilityPolicy,
+): Array<[string, string]> {
+  return [["allowAgentTaskAdd", String(value.allowAgentTaskAdd)]];
 }

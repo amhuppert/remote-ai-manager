@@ -5,6 +5,7 @@ import type {
   GraphWorkflowExecutionContextState,
   GraphWorkflowTaskState,
   GraphWorkflowVisualLayout,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
 import { deriveEdges, deriveNodes } from "./derive-graph";
@@ -14,6 +15,7 @@ function makeDefinition(
 ): WorkflowSemanticDefinition {
   return {
     schemaVersion: 1,
+    workflowConfig: {},
     executionContexts: [],
     tasks: [],
     edges: [],
@@ -39,7 +41,8 @@ function makeExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
-    workingDefinition: makeDefinition(),
+    workingDefinition:
+      makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,
     status: "running",
     activeContextId: null,
     activeTaskId: null,
@@ -68,7 +71,8 @@ describe("deriveNodes", () => {
           id: "ctx-1",
           title: "My Context",
           description: "desc",
-          agent: {
+          acceptanceCriteria: "TBD",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
@@ -99,7 +103,8 @@ describe("deriveNodes", () => {
         {
           id: "ctx-1",
           title: "A",
-          agent: {
+          acceptanceCriteria: "TBD",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
@@ -111,7 +116,8 @@ describe("deriveNodes", () => {
         {
           id: "ctx-2",
           title: "B",
-          agent: {
+          acceptanceCriteria: "TBD",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
@@ -141,7 +147,8 @@ describe("deriveNodes", () => {
         {
           id: "ctx-1",
           title: "A",
-          agent: {
+          acceptanceCriteria: "TBD",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
@@ -198,7 +205,8 @@ describe("deriveNodes", () => {
         {
           id: "ctx-1",
           title: "A",
-          agent: {
+          acceptanceCriteria: "TBD",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
@@ -243,7 +251,7 @@ describe("deriveNodes", () => {
     };
 
     const execution = makeExecution({
-      workingDefinition: def,
+      workingDefinition: def as unknown as ResolvedWorkflowSemanticDefinition,
       contextStates: { "ctx-1": ctxState },
       taskStates: { t1: taskState },
     });

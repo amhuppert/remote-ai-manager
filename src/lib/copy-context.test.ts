@@ -72,11 +72,13 @@ function makeGraphWorkflowExecution(
           id: "ctx-1",
           title: "Implementation",
           description: "Implement the feature",
-          agent: {
+          acceptanceCriteria: "TBD",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
           },
+          contextValidator: null,
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 10, continuity: { enabled: true } },
@@ -84,11 +86,13 @@ function makeGraphWorkflowExecution(
         {
           id: "ctx-2",
           title: "Testing",
-          agent: {
+          acceptanceCriteria: "TBD",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
           },
+          contextValidator: null,
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },

@@ -1,7 +1,12 @@
 import type {
   GraphWorkflowVisualLayout,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
+
+type LayoutInputDefinition =
+  | WorkflowSemanticDefinition
+  | ResolvedWorkflowSemanticDefinition;
 
 export type NodeDimensions = Map<string, { width: number; height: number }>;
 
@@ -10,9 +15,7 @@ const DEFAULT_NODE_HEIGHT = 200;
 const MIN_X_GAP = 112;
 const MIN_Y_GAP = 40;
 
-function computeDepths(
-  definition: WorkflowSemanticDefinition,
-): Map<string, number> {
+function computeDepths(definition: LayoutInputDefinition): Map<string, number> {
   const incoming = new Map<string, number>();
   const outgoing = new Map<string, string[]>();
 
@@ -64,7 +67,7 @@ function computeDepths(
 }
 
 export function generateWorkflowLayout(
-  definition: WorkflowSemanticDefinition,
+  definition: LayoutInputDefinition,
   existingLayout?: GraphWorkflowVisualLayout | null,
   nodeDimensions?: NodeDimensions,
 ): GraphWorkflowVisualLayout {

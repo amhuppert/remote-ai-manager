@@ -72,8 +72,9 @@ describe("WorkflowBuilderEditor", () => {
       />,
     );
 
-    // Make the store dirty by adding a context
-    fireEvent.click(screen.getByRole("button", { name: /Add Context/i }));
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
 
     fireEvent.click(screen.getByRole("button", { name: /Save Draft/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
@@ -154,7 +155,8 @@ describe("WorkflowBuilderEditor", () => {
         {
           id: "ctx-1",
           title: "",
-          agent: {
+          acceptanceCriteria: "Some criteria",
+          implementer: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
@@ -210,7 +212,7 @@ describe("WorkflowBuilderEditor", () => {
     expect(codes).toContain("empty-task-instructions");
   });
 
-  it("adds a codex context when defaultImplementerConfig is codex", () => {
+  it("adds a context with no implementer block so it inherits from workflow defaults", () => {
     resetStore();
     render(
       <WorkflowBuilderEditor
@@ -230,11 +232,16 @@ describe("WorkflowBuilderEditor", () => {
       _useGraphWorkflowBuilderStore.getState().draftDefinition
         ?.executionContexts ?? [];
     const added = contexts.at(-1);
-    expect(added?.agent.backend).toBe("codex");
-    expect(added?.agent.model).toBe("gpt-5.4");
+    expect(added).toBeDefined();
+    expect(added?.implementer).toBeUndefined();
+    expect(added?.contextValidator).toBeUndefined();
+    expect(added?.iterationPolicy).toBeUndefined();
+    expect(added?.circuitBreaker).toBeUndefined();
+    expect(added?.mutability).toBeUndefined();
+    expect(added?.acceptanceCriteria).toBe("");
   });
 
-  it("save payload includes the new continuity shape and no legacy limit fields", async () => {
+  it("save payload preserves the existing continuity shape on seeded contexts", async () => {
     resetStore();
     const onSave = vi.fn();
 
@@ -246,7 +253,10 @@ describe("WorkflowBuilderEditor", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Add Context/i }));
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
+
     fireEvent.click(screen.getByRole("button", { name: /Save Draft/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
 
@@ -254,14 +264,14 @@ describe("WorkflowBuilderEditor", () => {
       {
         definition: {
           executionContexts: Array<{
-            iterationPolicy: { continuity: Record<string, unknown> };
+            iterationPolicy?: { continuity?: Record<string, unknown> };
           }>;
         };
       },
     ];
 
-    // Every context must carry the new continuity object with an enabled flag
     for (const ctx of payload.definition.executionContexts) {
+      if (!ctx.iterationPolicy) continue;
       expect(ctx.iterationPolicy.continuity).toHaveProperty("enabled");
       expect(ctx.iterationPolicy.continuity).not.toHaveProperty(
         "contextSoftLimitTokens",

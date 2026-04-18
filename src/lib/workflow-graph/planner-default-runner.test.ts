@@ -3,12 +3,14 @@ import type { WorkflowSemanticDefinition } from "@/types";
 
 const submittedDefinition: WorkflowSemanticDefinition = {
   schemaVersion: 1,
+  workflowConfig: {},
   executionContexts: [
     {
       id: "context-plan",
       title: "Plan",
       description: "Inspect the implementation surface.",
-      agent: {
+      acceptanceCriteria: "TBD",
+      implementer: {
         backend: "claude",
         model: "opus",
         reasoningEffort: "high",

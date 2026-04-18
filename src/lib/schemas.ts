@@ -130,38 +130,6 @@ export const codexConfigSchema = z.object({
 export type CodexConfig = z.infer<typeof codexConfigSchema>;
 
 // ============================================================
-// Workflow Defaults
-// ============================================================
-
-export const validatorTypeSchema = z.enum(["claude", "codex"]);
-export type ValidatorType = z.infer<typeof validatorTypeSchema>;
-
-export const workflowValidatorDefaultClaudeSchema = z.object({
-  type: z.literal("claude"),
-  model: claudeModelSchema.optional(),
-  reasoningEffort: effortLevelSchema.optional(),
-});
-
-export const workflowValidatorDefaultCodexSchema = z.object({
-  type: z.literal("codex"),
-  model: z.string().optional(),
-  reasoningEffort: codexReasoningEffortSchema.optional(),
-});
-
-export const workflowValidatorDefaultSchema = z.discriminatedUnion("type", [
-  workflowValidatorDefaultClaudeSchema,
-  workflowValidatorDefaultCodexSchema,
-]);
-export type WorkflowValidatorDefault = z.infer<
-  typeof workflowValidatorDefaultSchema
->;
-
-export const workflowDefaultsSchema = z.object({
-  contextValidator: workflowValidatorDefaultSchema.optional(),
-});
-export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
-
-// ============================================================
 // Codex Model Reasoning Levels
 // ============================================================
 
@@ -195,75 +163,6 @@ export function getEffortLevelsForBackend(
   }
   return getEffortLevelsForModel((model ?? "opus") as ClaudeModel);
 }
-
-export const globalConfigSchema = z.object({
-  baseDir: z.string(),
-  ignorePatterns: z.array(z.string()),
-  stateFilePath: z.string(),
-  claudeTimeoutMs: z.number(),
-  defaultModel: claudeModelSchema.default("opus"),
-  defaultEffort: effortLevelSchema.optional(),
-  maxTurns: z.number().int().positive().optional(),
-  mergeCheckIntervalMs: z.number().int().positive().optional(),
-  preMergeTimeoutMs: z.number().int().positive().optional(),
-  maxConcurrentQueries: z.number().int().positive().optional(),
-  tailscaleEnabled: z.boolean().optional(),
-  pushNotification: pushNotificationConfigSchema.optional(),
-  codex: codexConfigSchema.optional(),
-  workflowDefaults: workflowDefaultsSchema.optional(),
-  idleQuerySessionTtlMs: z.number().int().positive().optional(),
-  branchPrefix: z.string().optional(),
-  defaultAgentBackend: agentBackendSchema.default("claude"),
-});
-export type GlobalConfig = z.infer<typeof globalConfigSchema>;
-
-/**
- * Raw variants of nested config schemas — all fields optional, no defaults.
- * Used by the config API to represent only explicitly set values from config.json.
- */
-const rawPushTriggerSchema = z.object({
-  jobCompleted: z.boolean().optional(),
-  waitingForInput: z.boolean().optional(),
-  workflowCompleted: z.boolean().optional(),
-  workflowHalted: z.boolean().optional(),
-  conversationIdle: z.boolean().optional(),
-});
-
-const rawPushNotificationConfigSchema = z.object({
-  enabled: z.boolean().optional(),
-  provider: z.enum(["ntfy", "pushover"]).optional(),
-  serverUrl: z.string().optional(),
-  topic: z.string().optional(),
-  triggers: rawPushTriggerSchema.optional(),
-});
-
-const rawCodexConfigSchema = z.object({
-  enabled: z.boolean().optional(),
-  model: z.string().optional(),
-  reasoningEffort: codexReasoningEffortSchema.optional(),
-  timeout: z.number().positive().nullable().optional(),
-});
-
-export const rawGlobalConfigSchema = z.object({
-  baseDir: z.string().optional(),
-  ignorePatterns: z.array(z.string()).optional(),
-  stateFilePath: z.string().optional(),
-  claudeTimeoutMs: z.number().optional(),
-  defaultModel: claudeModelSchema.optional(),
-  defaultEffort: effortLevelSchema.optional(),
-  maxTurns: z.number().int().positive().optional(),
-  mergeCheckIntervalMs: z.number().int().positive().optional(),
-  preMergeTimeoutMs: z.number().int().positive().optional(),
-  maxConcurrentQueries: z.number().int().positive().optional(),
-  tailscaleEnabled: z.boolean().optional(),
-  pushNotification: rawPushNotificationConfigSchema.optional(),
-  codex: rawCodexConfigSchema.optional(),
-  workflowDefaults: workflowDefaultsSchema.optional(),
-  idleQuerySessionTtlMs: z.number().int().positive().optional(),
-  branchPrefix: z.string().optional(),
-  defaultAgentBackend: agentBackendSchema.optional(),
-});
-export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
 
 export const conversationStatusSchema = z
   .enum(["new", "awaiting", "running", "waiting_for_input"])
@@ -517,8 +416,7 @@ export type GraphWorkflowIterationPolicy = z.infer<
 >;
 
 const graphWorkflowValidatorBaseSchema = z.object({
-  enabled: z.boolean(),
-  acceptanceCriteria: z.string().trim().min(1),
+  enabled: z.boolean().default(true),
   continuity: graphWorkflowLaneContinuityPolicySchema.default({
     enabled: true,
   }),
@@ -564,6 +462,17 @@ export type GraphWorkflowContextValidation = z.infer<
   typeof graphWorkflowContextValidationSchema
 >;
 
+export const contextValidatorOverrideSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("use"),
+    value: graphWorkflowAgentValidatorConfigSchema,
+  }),
+  z.object({ kind: z.literal("disabled") }),
+]);
+export type ContextValidatorOverride = z.infer<
+  typeof contextValidatorOverrideSchema
+>;
+
 export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
@@ -571,11 +480,12 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
     (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
     z.string().trim().min(1).optional(),
   ),
-  agent: graphWorkflowAgentConfigSchema,
-  mutability: graphWorkflowMutabilityPolicySchema,
-  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
-  iterationPolicy: graphWorkflowIterationPolicySchema,
-  contextValidation: graphWorkflowContextValidationSchema.optional(),
+  acceptanceCriteria: z.string().trim().min(1),
+  implementer: graphWorkflowAgentConfigSchema.optional(),
+  contextValidator: contextValidatorOverrideSchema.optional(),
+  mutability: graphWorkflowMutabilityPolicySchema.optional(),
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
+  iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
 });
 export type GraphWorkflowExecutionContextDefinition = z.infer<
   typeof graphWorkflowExecutionContextDefinitionSchema
@@ -608,8 +518,20 @@ export type GraphWorkflowContextEdge = z.infer<
   typeof graphWorkflowContextEdgeSchema
 >;
 
+export const workflowConfigOverrideSchema = z.object({
+  implementer: graphWorkflowAgentConfigSchema.optional(),
+  contextValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
+  iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
+  mutability: graphWorkflowMutabilityPolicySchema.optional(),
+});
+export type WorkflowConfigOverride = z.infer<
+  typeof workflowConfigOverrideSchema
+>;
+
 export const workflowSemanticDefinitionSchema = z.object({
   schemaVersion: z.number().int().positive().default(1),
+  workflowConfig: workflowConfigOverrideSchema.default({}),
   executionContexts: z
     .array(graphWorkflowExecutionContextDefinitionSchema)
     .default([]),
@@ -618,6 +540,31 @@ export const workflowSemanticDefinitionSchema = z.object({
 });
 export type WorkflowSemanticDefinition = z.infer<
   typeof workflowSemanticDefinitionSchema
+>;
+
+export const graphWorkflowResolvedContextSchema = z.object({
+  id: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  description: z.string().trim().min(1).optional(),
+  acceptanceCriteria: z.string().trim().min(1),
+  implementer: graphWorkflowAgentConfigSchema,
+  contextValidator: graphWorkflowAgentValidatorConfigSchema.nullable(),
+  mutability: graphWorkflowMutabilityPolicySchema,
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
+  iterationPolicy: graphWorkflowIterationPolicySchema,
+});
+export type GraphWorkflowResolvedContext = z.infer<
+  typeof graphWorkflowResolvedContextSchema
+>;
+
+export const resolvedWorkflowSemanticDefinitionSchema = z.object({
+  schemaVersion: z.number().int().positive().default(1),
+  executionContexts: z.array(graphWorkflowResolvedContextSchema).default([]),
+  tasks: z.array(graphWorkflowTaskDefinitionSchema).default([]),
+  edges: z.array(graphWorkflowContextEdgeSchema).default([]),
+});
+export type ResolvedWorkflowSemanticDefinition = z.infer<
+  typeof resolvedWorkflowSemanticDefinitionSchema
 >;
 
 export const graphWorkflowPositionSchema = z.object({
@@ -1002,7 +949,7 @@ export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
   seedDefinitionId: z.string().trim().min(1),
   seedDefinitionRevision: z.number().int().min(1),
-  workingDefinition: workflowSemanticDefinitionSchema,
+  workingDefinition: resolvedWorkflowSemanticDefinitionSchema,
   status: graphWorkflowStatusSchema,
   activeContextId: z.string().nullable().default(null),
   contextStates: z
@@ -1150,6 +1097,94 @@ export const referenceDocumentSchema = z.object({
   createdAt: z.string(),
 });
 export type ReferenceDocument = z.infer<typeof referenceDocumentSchema>;
+
+// ============================================================
+// Workflow Defaults + Global Config
+// (defined after graph workflow schemas so workflowDefaultsSchema can
+// reference agent/validator/policy building blocks)
+// ============================================================
+
+export const workflowDefaultsSchema = z.object({
+  implementer: graphWorkflowAgentConfigSchema,
+  contextValidator: graphWorkflowAgentValidatorConfigSchema,
+  iterationPolicy: graphWorkflowIterationPolicySchema,
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
+  mutability: graphWorkflowMutabilityPolicySchema,
+});
+export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
+
+const rawWorkflowDefaultsSchema = z.object({
+  implementer: graphWorkflowAgentConfigSchema.optional(),
+  contextValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
+  iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
+  mutability: graphWorkflowMutabilityPolicySchema.optional(),
+});
+
+export const globalConfigSchema = z.object({
+  baseDir: z.string(),
+  ignorePatterns: z.array(z.string()),
+  stateFilePath: z.string(),
+  claudeTimeoutMs: z.number(),
+  defaultModel: claudeModelSchema.default("opus"),
+  defaultEffort: effortLevelSchema.optional(),
+  maxTurns: z.number().int().positive().optional(),
+  mergeCheckIntervalMs: z.number().int().positive().optional(),
+  preMergeTimeoutMs: z.number().int().positive().optional(),
+  maxConcurrentQueries: z.number().int().positive().optional(),
+  tailscaleEnabled: z.boolean().optional(),
+  pushNotification: pushNotificationConfigSchema.optional(),
+  codex: codexConfigSchema.optional(),
+  workflowDefaults: workflowDefaultsSchema.optional(),
+  idleQuerySessionTtlMs: z.number().int().positive().optional(),
+  branchPrefix: z.string().optional(),
+  defaultAgentBackend: agentBackendSchema.default("claude"),
+});
+export type GlobalConfig = z.infer<typeof globalConfigSchema>;
+
+const rawPushTriggerSchema = z.object({
+  jobCompleted: z.boolean().optional(),
+  waitingForInput: z.boolean().optional(),
+  workflowCompleted: z.boolean().optional(),
+  workflowHalted: z.boolean().optional(),
+  conversationIdle: z.boolean().optional(),
+});
+
+const rawPushNotificationConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  provider: z.enum(["ntfy", "pushover"]).optional(),
+  serverUrl: z.string().optional(),
+  topic: z.string().optional(),
+  triggers: rawPushTriggerSchema.optional(),
+});
+
+const rawCodexConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  model: z.string().optional(),
+  reasoningEffort: codexReasoningEffortSchema.optional(),
+  timeout: z.number().positive().nullable().optional(),
+});
+
+export const rawGlobalConfigSchema = z.object({
+  baseDir: z.string().optional(),
+  ignorePatterns: z.array(z.string()).optional(),
+  stateFilePath: z.string().optional(),
+  claudeTimeoutMs: z.number().optional(),
+  defaultModel: claudeModelSchema.optional(),
+  defaultEffort: effortLevelSchema.optional(),
+  maxTurns: z.number().int().positive().optional(),
+  mergeCheckIntervalMs: z.number().int().positive().optional(),
+  preMergeTimeoutMs: z.number().int().positive().optional(),
+  maxConcurrentQueries: z.number().int().positive().optional(),
+  tailscaleEnabled: z.boolean().optional(),
+  pushNotification: rawPushNotificationConfigSchema.optional(),
+  codex: rawCodexConfigSchema.optional(),
+  workflowDefaults: rawWorkflowDefaultsSchema.optional(),
+  idleQuerySessionTtlMs: z.number().int().positive().optional(),
+  branchPrefix: z.string().optional(),
+  defaultAgentBackend: agentBackendSchema.optional(),
+});
+export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
 
 // ============================================================
 // Session & Project State

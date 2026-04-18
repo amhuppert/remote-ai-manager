@@ -16,6 +16,7 @@ import {
   agentBackendSchema,
   globalConfigSchema,
   rawGlobalConfigSchema,
+  resolvedWorkflowSemanticDefinitionSchema,
 } from "@/lib/schemas";
 import { tracedFetch } from "@/lib/traced-fetch";
 
@@ -199,6 +200,11 @@ export const workflowDefinitionsResponseSchema = z.object({
 
 export const workflowDefinitionMutationResponseSchema = z.object({
   item: workflowDefinitionRecordSchema,
+});
+
+export const workflowDefinitionGetResponseSchema = z.object({
+  item: workflowDefinitionRecordSchema,
+  resolved: resolvedWorkflowSemanticDefinitionSchema,
 });
 
 export const workflowGeneratedDraftResponseSchema =

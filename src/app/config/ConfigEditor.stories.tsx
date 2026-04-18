@@ -69,8 +69,12 @@ const fullyConfiguredRaw: RawGlobalConfig = {
   workflowDefaults: {
     contextValidator: {
       type: "codex",
-      model: "gpt-5.4",
-      reasoningEffort: "medium",
+      enabled: true,
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+      },
+      continuity: { enabled: true },
     },
   },
 };
@@ -97,10 +101,29 @@ const fullyConfiguredConfig: GlobalConfig = {
     reasoningEffort: "high",
   },
   workflowDefaults: {
+    implementer: {
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "medium",
+    },
     contextValidator: {
       type: "codex",
-      model: "gpt-5.4",
-      reasoningEffort: "medium",
+      enabled: true,
+      codex: {
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+      },
+      continuity: { enabled: true },
+    },
+    iterationPolicy: {
+      maxIterations: 20,
+      continuity: { enabled: true },
+    },
+    circuitBreaker: {
+      consecutiveFailureThreshold: 3,
+    },
+    mutability: {
+      allowAgentTaskAdd: false,
     },
   },
 };

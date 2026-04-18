@@ -138,7 +138,7 @@ function getValidatorContinuityEnabled(
     (c) => c.id === contextId,
   );
   if (!ctx) return true;
-  return ctx.contextValidation?.continuity.enabled ?? true;
+  return ctx.contextValidator?.continuity.enabled ?? true;
 }
 
 function withLaneState(

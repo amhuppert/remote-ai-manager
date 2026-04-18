@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readConfig } from "@/lib/config";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
-import type { ApiError } from "@/types";
+import type { ApiError, GlobalConfig, WorkflowDefinitionRecord } from "@/types";
 import {
   createWorkflowStorageService,
   type WorkflowDefinitionDraft,
@@ -12,6 +12,7 @@ import {
   workflowSemanticDefinitionSchema,
   graphWorkflowVisualLayoutSchema,
 } from "@/lib/schemas";
+import { resolveWorkflowDefinition } from "./resolve-config";
 
 const workflowDefinitionMutationSchema = z.object({
   name: z.string().trim().min(1),
@@ -26,11 +27,12 @@ type RouteContext = {
 
 export interface WorkflowDefinitionRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
+  readConfig(): Promise<GlobalConfig>;
   listDefinitions(projectPath: string): Promise<WorkflowDefinitionSummary[]>;
   getDefinition(
     projectPath: string,
     workflowId: string,
-  ): Promise<unknown | null>;
+  ): Promise<WorkflowDefinitionRecord | null>;
   createDefinition(
     projectPath: string,
     draft: WorkflowDefinitionDraft,
@@ -47,6 +49,7 @@ const defaultStorage = createWorkflowStorageService({ readConfig });
 
 const defaultDeps: WorkflowDefinitionRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
+  readConfig,
   listDefinitions: (projectPath) => defaultStorage.list(projectPath),
   getDefinition: (projectPath, workflowId) =>
     defaultStorage.get(projectPath, workflowId),
@@ -155,7 +158,10 @@ export function createWorkflowDefinitionRouteHandlers(
       );
     }
 
-    return NextResponse.json({ item });
+    const globalConfig = await deps.readConfig();
+    const resolved = resolveWorkflowDefinition(globalConfig, item.definition);
+
+    return NextResponse.json({ item, resolved });
   }
 
   async function UPDATE(

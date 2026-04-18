@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createResolvedWorkflowDefinition,
   createWorkflowDefinition,
   createWorkflowExecution,
 } from "./test-fixtures";
@@ -7,6 +8,7 @@ import {
   getEligibleContextIds,
   getEntryContextIds,
   getTerminalContextIds,
+  validateResolvedWorkflow,
   validateWorkflowDefinition,
   validateWorkflowRuntimeEdit,
 } from "./validation";
@@ -142,26 +144,11 @@ describe("workflow-graph validation", () => {
     );
   });
 
-  it("rejects empty acceptance criteria when context validator is enabled", () => {
+  it("rejects empty context-level acceptanceCriteria", () => {
     const base = createWorkflowDefinition();
     const definition = createWorkflowDefinition({
       executionContexts: base.executionContexts.map((ctx) =>
-        ctx.id === "context-plan"
-          ? {
-              ...ctx,
-              contextValidation: {
-                type: "claude",
-                enabled: true,
-                continuity: { enabled: true },
-                agent: {
-                  backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
-                },
-                acceptanceCriteria: "",
-              },
-            }
-          : ctx,
+        ctx.id === "context-plan" ? { ...ctx, acceptanceCriteria: "" } : ctx,
       ),
     });
 
@@ -169,34 +156,15 @@ describe("workflow-graph validation", () => {
     expect(result.ok).toBe(false);
     expect(
       result.errors.some(
-        (e) => e.code === "empty-context-validator-acceptance-criteria",
+        (e) =>
+          e.code === "empty-context-acceptance-criteria" &&
+          e.contextId === "context-plan",
       ),
     ).toBe(true);
   });
 
-  it("accepts empty acceptance criteria when context validator is disabled", () => {
-    const base = createWorkflowDefinition();
-    const definition = createWorkflowDefinition({
-      executionContexts: base.executionContexts.map((ctx) =>
-        ctx.id === "context-plan"
-          ? {
-              ...ctx,
-              contextValidation: {
-                type: "claude",
-                enabled: false,
-                continuity: { enabled: true },
-                agent: {
-                  backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
-                },
-                acceptanceCriteria: "",
-              },
-            }
-          : ctx,
-      ),
-    });
-
+  it("does not emit the removed validator-AC rule", () => {
+    const definition = createWorkflowDefinition();
     const result = validateWorkflowDefinition(definition);
     expect(
       result.errors.some(
@@ -222,5 +190,70 @@ describe("workflow-graph validation", () => {
     expect(getEligibleContextIds(definition, execution)).toEqual([
       "context-implement",
     ]);
+  });
+});
+
+describe("validateResolvedWorkflow", () => {
+  it("passes when every resolved context's implementer effort is supported", () => {
+    const resolved = createResolvedWorkflowDefinition();
+    const result = validateResolvedWorkflow(resolved);
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("flags implementer-effort-unsupported for a claude model that does not support the effort", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              implementer: {
+                backend: "claude",
+                model: "haiku",
+                reasoningEffort: "xhigh",
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved);
+    expect(result.ok).toBe(false);
+    expect(
+      result.errors.some(
+        (e) =>
+          e.code === "implementer-effort-unsupported" &&
+          e.contextId === resolved.executionContexts[0]?.id,
+      ),
+    ).toBe(true);
+  });
+
+  it("flags implementer-effort-unsupported for a codex model that does not support the effort", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              implementer: {
+                backend: "codex",
+                model: "gpt-5.4",
+                reasoningEffort: "minimal",
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved);
+    expect(result.ok).toBe(false);
+    expect(
+      result.errors.some(
+        (e) =>
+          e.code === "implementer-effort-unsupported" &&
+          e.contextId === resolved.executionContexts[0]?.id,
+      ),
+    ).toBe(true);
   });
 });

@@ -2,30 +2,19 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type {
+  GlobalConfig,
   GraphWorkflowExecution,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/types";
 import {
-  agentBackendSchema,
-  claudeModelSchema,
-  codexModelSchema,
-  codexReasoningEffortSchema,
-  effortLevelSchema,
-  getDefaultCodexModel,
-  validatorTypeSchema,
+  contextValidatorOverrideSchema,
+  graphWorkflowAgentConfigSchema,
+  graphWorkflowCircuitBreakerPolicySchema,
+  graphWorkflowIterationPolicySchema,
+  graphWorkflowMutabilityPolicySchema,
+  workflowConfigOverrideSchema,
 } from "@/lib/schemas";
-import type {
-  AgentBackendId,
-  ClaudeModel,
-  CodexModel,
-  CodexReasoningEffort,
-  EffortLevel,
-  GlobalConfig,
-  ValidatorType,
-  WorkflowDefaults,
-  WorkflowValidatorDefault,
-} from "@/types";
 import { getErrorMessage } from "@/lib/errors";
 import { generateWorkflowLayout } from "./layout";
 import type {
@@ -33,158 +22,72 @@ import type {
   WorkflowDefinitionSummary,
 } from "./storage";
 
-// ============================================================
-// Tool Input Schemas (agent-facing, uses "slug" naming)
-// ============================================================
-
 const executionContextInputSchema = z.object({
-  slug: z
+  id: z
     .string()
     .trim()
     .min(1)
     .describe(
-      "Unique kebab-case identifier (e.g. 'auth-setup'). Referenced by tasks and edges.",
+      "Unique kebab-case identifier for this context (e.g. 'auth-setup'). Referenced by tasks and edges.",
     ),
   title: z
     .string()
     .trim()
     .min(1)
     .describe("Display name for this context (e.g. 'Authentication Setup')."),
-  instructions: z
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional short summary of the context's intent, shown in the workflow UI.",
+    ),
+  acceptanceCriteria: z
     .string()
     .trim()
     .min(1)
     .describe(
-      "High-level goal and constraints for the agent session running this context.",
+      "Required. The shared 'done' statement for this context. Passed to the implementer and, when validation is enabled, to the context validator.",
     ),
-  agentConfig: z
-    .object({
-      backend: agentBackendSchema
-        .optional()
-        .describe(
-          "Agent backend: 'claude' or 'codex'. Omit to use the project's default agent backend.",
-        ),
-      model: z
-        .string()
-        .optional()
-        .describe(
-          "Model to use. Claude: 'opus', 'sonnet', 'haiku'. Codex: 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano'. Omit for backend default.",
-        ),
-      reasoningEffort: effortLevelSchema
-        .optional()
-        .describe("Reasoning effort level. Omit for backend default."),
-    })
+  implementer: graphWorkflowAgentConfigSchema
     .optional()
     .describe(
-      "Override the agent backend, model, or reasoning effort for this context's implementer. Omit to use project defaults.",
+      "Optional per-context override for the implementer agent backend/model/reasoningEffort. Omit to inherit workflow-level or project defaults.",
     ),
-  circuitBreakerPolicy: z
-    .object({
-      consecutiveFailureThreshold: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe(
-          "Number of consecutive task validation failures before the circuit breaker halts the context. Defaults to 3.",
-        ),
-    })
+  contextValidator: contextValidatorOverrideSchema
     .optional()
     .describe(
-      "Circuit breaker configuration. Halts the context after repeated validation failures.",
+      "Optional per-context validator override. Use { kind: 'use', value: ... } to specify a custom validator, or { kind: 'disabled' } to opt this context out of validation. Omit to inherit the workflow-level validator.",
     ),
-  iterationPolicy: z
-    .object({
-      maxIterations: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe("Maximum agent iterations before halting."),
-      continuity: z
-        .object({
-          enabled: z
-            .boolean()
-            .optional()
-            .describe(
-              "Whether the implementer reuses the same session within this execution context. Defaults to true.",
-            ),
-          contextLimitTokens: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .describe(
-              "Token threshold after which the implementer session rotates before the next iteration. Omit to disable limit-based rotation.",
-            ),
-        })
-        .optional()
-        .describe("Implementer session continuity policy."),
-    })
-    .optional()
-    .describe("Iteration limits. Defaults: maxIterations 20."),
-  mutabilityPolicy: z
-    .object({
-      allowAgentTaskAdd: z
-        .boolean()
-        .optional()
-        .describe(
-          "Whether the executing agent can dynamically add tasks to this context.",
-        ),
-    })
-    .optional()
-    .describe("Mutability permissions. Defaults: allowAgentTaskAdd false."),
-  contextValidation: z
-    .object({
-      type: validatorTypeSchema
-        .optional()
-        .describe(
-          "Validator type: 'claude' (Claude agent) or 'codex' (OpenAI Codex, runs locally). Omit to use the project's workflow defaults.",
-        ),
-      acceptanceCriteria: z
-        .string()
-        .trim()
-        .min(1)
-        .describe(
-          "Shared acceptance criteria used by both the implementer and the validator for this execution context.",
-        ),
-      continuity: z
-        .object({
-          enabled: z
-            .boolean()
-            .optional()
-            .describe(
-              "Whether the context validator reuses the same session within this execution context. Defaults to true.",
-            ),
-          contextLimitTokens: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .describe(
-              "Token threshold after which the context validator session rotates. Omit to disable limit-based rotation.",
-            ),
-        })
-        .optional()
-        .describe("Context validator session continuity policy."),
-    })
+  mutability: graphWorkflowMutabilityPolicySchema
     .optional()
     .describe(
-      "Execution-context validation that runs after all tasks in the context are completed. Omit if no validation is needed.",
+      "Optional per-context mutability override (e.g. allowAgentTaskAdd). Omit to inherit.",
+    ),
+  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema
+    .optional()
+    .describe(
+      "Optional per-context circuit breaker override (consecutiveFailureThreshold). Omit to inherit.",
+    ),
+  iterationPolicy: graphWorkflowIterationPolicySchema
+    .optional()
+    .describe(
+      "Optional per-context iteration policy override (maxIterations, continuity). Omit to inherit.",
     ),
 });
 
 const taskInputSchema = z.object({
-  slug: z
+  id: z
     .string()
     .trim()
     .min(1)
     .describe("Unique kebab-case identifier (e.g. 'create-user-schema')."),
-  contextSlug: z
+  contextId: z
     .string()
     .trim()
     .min(1)
-    .describe("Which execution context this task belongs to."),
+    .describe("The id of the execution context this task belongs to."),
   title: z
     .string()
     .trim()
@@ -200,16 +103,16 @@ const taskInputSchema = z.object({
 });
 
 const edgeInputSchema = z.object({
-  sourceContextSlug: z
+  sourceContextId: z
     .string()
     .trim()
     .min(1)
-    .describe("The upstream context that must complete first."),
-  targetContextSlug: z
+    .describe("The id of the upstream context that must complete first."),
+  targetContextId: z
     .string()
     .trim()
     .min(1)
-    .describe("The downstream context that depends on the source."),
+    .describe("The id of the downstream context that depends on the source."),
 });
 
 const createWorkflowSchema = z.object({
@@ -224,6 +127,11 @@ const createWorkflowSchema = z.object({
     .min(1)
     .optional()
     .describe("What this workflow achieves. Shown in the workflow list."),
+  workflowConfig: workflowConfigOverrideSchema
+    .optional()
+    .describe(
+      "Optional workflow-level config overrides. Only include when the user explicitly asked for non-default backend/model/effort or non-default policies; otherwise omit to inherit global defaults.",
+    ),
   executionContexts: z
     .array(executionContextInputSchema)
     .min(1)
@@ -240,7 +148,7 @@ const createWorkflowSchema = z.object({
     .array(edgeInputSchema)
     .default([])
     .describe(
-      "Dependency edges between execution contexts. Context at targetContextSlug waits for sourceContextSlug to complete.",
+      "Dependency edges between execution contexts. Context at targetContextId waits for sourceContextId to complete.",
     ),
 });
 
@@ -259,6 +167,11 @@ const replaceWorkflowSchema = z.object({
     .min(1)
     .optional()
     .describe("What this workflow achieves."),
+  workflowConfig: workflowConfigOverrideSchema
+    .optional()
+    .describe(
+      "Optional workflow-level config overrides. Only include when the user explicitly asked for non-default backend/model/effort or non-default policies; otherwise omit to inherit global defaults.",
+    ),
   executionContexts: z
     .array(executionContextInputSchema)
     .min(1)
@@ -285,188 +198,34 @@ const workflowIdSchema = z.object({
 
 type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 
-// ============================================================
-// Inflate agent input → internal semantic definition
-// ============================================================
-
-const DEFAULT_CLAUDE_MODEL: ClaudeModel = "sonnet";
-const DEFAULT_CLAUDE_EFFORT: EffortLevel = "high";
-const DEFAULT_CODEX_EFFORT = "high" as const;
-const DEFAULT_MAX_ITERATIONS = 20;
-
-type InflatedAgentConfig =
-  | { backend: "claude"; model: ClaudeModel; reasoningEffort: EffortLevel }
-  | {
-      backend: "codex";
-      model: CodexModel;
-      reasoningEffort: CodexReasoningEffort;
-    };
-
-/**
- * Inflate raw agentConfig input into a typed agent config.
- * Validates model/effort against the resolved backend.
- */
-function inflateAgentConfig(
-  input:
-    | {
-        backend?: AgentBackendId;
-        model?: string;
-        reasoningEffort?: EffortLevel;
-      }
-    | undefined,
-  defaultBackend: AgentBackendId,
-): InflatedAgentConfig {
-  const backend = input?.backend ?? defaultBackend;
-
-  if (backend === "codex") {
-    const model = input?.model
-      ? codexModelSchema.parse(input.model)
-      : getDefaultCodexModel();
-    const reasoningEffort = input?.reasoningEffort
-      ? codexReasoningEffortSchema.parse(input.reasoningEffort)
-      : DEFAULT_CODEX_EFFORT;
-    return { backend: "codex", model, reasoningEffort };
-  }
-
-  const model = input?.model
-    ? claudeModelSchema.parse(input.model)
-    : DEFAULT_CLAUDE_MODEL;
-  const reasoningEffort = input?.reasoningEffort ?? DEFAULT_CLAUDE_EFFORT;
-  return { backend: "claude", model, reasoningEffort };
-}
-
-/**
- * Build a validator config for the workflow definition.
- * - inputType: explicit type from the MCP tool input (overrides default)
- * - validatorDefault: from workflowDefaults config (provides type + model/effort)
- * - claudeFallback: model/effort from the execution context agent config
- */
-function buildValidatorConfig(
-  acceptanceCriteria: string,
-  inputType: ValidatorType | undefined,
-  validatorDefault: WorkflowValidatorDefault | undefined,
-  claudeFallback: { model: ClaudeModel; reasoningEffort: EffortLevel },
-  continuityInput?: { enabled?: boolean; contextLimitTokens?: number },
-) {
-  const type = inputType ?? validatorDefault?.type ?? "claude";
-
-  const continuity = {
-    enabled: continuityInput?.enabled ?? true,
-    ...(continuityInput?.contextLimitTokens !== undefined
-      ? { contextLimitTokens: continuityInput.contextLimitTokens }
-      : {}),
-  };
-
-  if (type === "codex") {
-    const codexDefaults =
-      validatorDefault?.type === "codex" ? validatorDefault : undefined;
-    return {
-      type: "codex" as const,
-      enabled: true,
-      codex: {
-        ...(codexDefaults?.model !== undefined
-          ? { model: codexDefaults.model as CodexModel }
-          : {}),
-        ...(codexDefaults?.reasoningEffort !== undefined
-          ? { reasoningEffort: codexDefaults.reasoningEffort }
-          : {}),
-      },
-      acceptanceCriteria,
-      continuity,
-    };
-  }
-
-  const claudeDefaults =
-    validatorDefault?.type === "claude" ? validatorDefault : undefined;
-  return {
-    type: "claude" as const,
-    enabled: true,
-    agent: {
-      backend: "claude" as const,
-      model: claudeDefaults?.model ?? claudeFallback.model,
-      reasoningEffort:
-        claudeDefaults?.reasoningEffort ?? claudeFallback.reasoningEffort,
-    },
-    acceptanceCriteria,
-    continuity,
-  };
-}
-
 function inflateToSemanticDefinition(
   input: CreateWorkflowInput,
-  workflowDefaults?: WorkflowDefaults,
-  defaultAgentBackend: AgentBackendId = "claude",
 ): WorkflowSemanticDefinition {
-  const contextValidatorDefault = workflowDefaults?.contextValidator;
+  const executionContexts = input.executionContexts.map((ctx) => ({
+    id: ctx.id,
+    title: ctx.title,
+    ...(ctx.description !== undefined ? { description: ctx.description } : {}),
+    acceptanceCriteria: ctx.acceptanceCriteria,
+    ...(ctx.implementer !== undefined ? { implementer: ctx.implementer } : {}),
+    ...(ctx.contextValidator !== undefined
+      ? { contextValidator: ctx.contextValidator }
+      : {}),
+    ...(ctx.mutability !== undefined ? { mutability: ctx.mutability } : {}),
+    ...(ctx.circuitBreaker !== undefined
+      ? { circuitBreaker: ctx.circuitBreaker }
+      : {}),
+    ...(ctx.iterationPolicy !== undefined
+      ? { iterationPolicy: ctx.iterationPolicy }
+      : {}),
+  }));
 
-  const executionContexts = input.executionContexts.map((ctx) => {
-    const agentConfig = inflateAgentConfig(
-      ctx.agentConfig,
-      defaultAgentBackend,
-    );
-
-    // Claude validator fallback: use context values when Claude, otherwise Claude defaults
-    const claudeFallback =
-      agentConfig.backend === "claude"
-        ? {
-            model: agentConfig.model,
-            reasoningEffort: agentConfig.reasoningEffort,
-          }
-        : {
-            model: DEFAULT_CLAUDE_MODEL,
-            reasoningEffort: DEFAULT_CLAUDE_EFFORT,
-          };
-
-    return {
-      id: ctx.slug,
-      title: ctx.title,
-      description: ctx.instructions,
-      agent: agentConfig,
-      mutability: {
-        allowAgentTaskAdd: ctx.mutabilityPolicy?.allowAgentTaskAdd ?? false,
-      },
-      circuitBreaker: {
-        ...(ctx.circuitBreakerPolicy?.consecutiveFailureThreshold !==
-          undefined && {
-          consecutiveFailureThreshold:
-            ctx.circuitBreakerPolicy.consecutiveFailureThreshold,
-        }),
-      },
-      iterationPolicy: {
-        maxIterations:
-          ctx.iterationPolicy?.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-        continuity: {
-          enabled: ctx.iterationPolicy?.continuity?.enabled ?? true,
-          ...(ctx.iterationPolicy?.continuity?.contextLimitTokens !== undefined
-            ? {
-                contextLimitTokens:
-                  ctx.iterationPolicy.continuity.contextLimitTokens,
-              }
-            : {}),
-        },
-      },
-      ...(ctx.contextValidation
-        ? {
-            contextValidation: buildValidatorConfig(
-              ctx.contextValidation.acceptanceCriteria,
-              ctx.contextValidation.type,
-              contextValidatorDefault,
-              claudeFallback,
-              ctx.contextValidation.continuity,
-            ),
-          }
-        : {}),
-    };
-  });
-
-  // Derive task order from array position per context
   const contextTaskCounters = new Map<string, number>();
   const tasks = input.tasks.map((task) => {
-    const count = (contextTaskCounters.get(task.contextSlug) ?? 0) + 1;
-    contextTaskCounters.set(task.contextSlug, count);
+    const count = (contextTaskCounters.get(task.contextId) ?? 0) + 1;
+    contextTaskCounters.set(task.contextId, count);
     return {
-      id: task.slug,
-      contextId: task.contextSlug,
+      id: task.id,
+      contextId: task.contextId,
       order: count,
       title: task.title,
       instructions: task.instructions,
@@ -476,21 +235,18 @@ function inflateToSemanticDefinition(
 
   const edges = input.edges.map((edge) => ({
     id: `edge-${randomUUID().slice(0, 8)}`,
-    sourceContextId: edge.sourceContextSlug,
-    targetContextId: edge.targetContextSlug,
+    sourceContextId: edge.sourceContextId,
+    targetContextId: edge.targetContextId,
   }));
 
   return {
     schemaVersion: 1,
+    workflowConfig: input.workflowConfig ?? {},
     executionContexts,
     tasks,
     edges,
   };
 }
-
-// ============================================================
-// Result helpers
-// ============================================================
 
 function textResult(message: string) {
   return {
@@ -504,10 +260,6 @@ function errorResult(message: string) {
     isError: true,
   };
 }
-
-// ============================================================
-// Dependency Injection
-// ============================================================
 
 export interface PlannerToolDeps {
   readConfig(): Promise<GlobalConfig>;
@@ -537,24 +289,30 @@ export interface PlannerToolContext {
   sessionName: string;
 }
 
-// ============================================================
-// Tool Server
-// ============================================================
-
 const CREATE_DESCRIPTION = `Create a graph workflow definition for this project. Analyze the user's objective and decompose it into execution contexts (groups of related work) with tasks and dependency edges.
 
-Guidelines for planning:
+Planning guidelines:
 - Each execution context runs as an independent agent session. Split work into separate contexts when tasks have distinct concerns or dependency boundaries.
 - Tasks within a context execute sequentially in array order within a single agent session. Make each task achievable in roughly 10-30 minutes of work.
 - Task instructions must be self-contained: the executing agent sees only the workflow definition and the codebase, not this conversation. Include the specific what, why, files to modify, and how to verify.
 - Edges express dependencies: context B waits for context A to complete. Do not create edges between contexts that can run independently.
-- Use kebab-case slugs that describe the content (e.g. 'auth-setup', 'create-user-schema'), not generic names like 'step-1'.
-- Validation is optional. When needed, set the validator type directly: 'claude' (Claude agent) or 'codex' (OpenAI Codex, runs locally). Codex is a first-class validator — set it via the type field. Do NOT configure a Claude validator with instructions to invoke Codex via tools. Omit type to use project defaults.
-- Use 'contextValidation.acceptanceCriteria' to define the shared acceptance criteria the implementer and validator must both follow.
-- The user will review and edit the workflow in the visual builder before starting execution.`;
+- Use kebab-case ids that describe the content (e.g. 'auth-setup', 'create-user-schema'), not generic names like 'step-1'.
 
-const REPLACE_DESCRIPTION =
-  "Replace the entire definition of an existing workflow. Use this when revising a plan after user feedback — submit the complete updated graph, not a partial diff. The previous definition is fully overwritten.";
+Cascade & defaults (IMPORTANT — keep payloads minimal):
+- 'acceptanceCriteria' is REQUIRED on every execution context. It is the shared 'done' statement passed to the implementer and — when validation is enabled — to the context validator. Treat it as the single source of truth for what success looks like.
+- 'implementer', 'contextValidator', 'iterationPolicy', 'circuitBreaker', and 'mutability' are all OPTIONAL on a context. Omit them entirely unless the user explicitly asked for a non-default value on that specific context. Omitted blocks inherit from the workflow-level config, which inherits from the global project defaults.
+- To opt a context OUT of validation, set 'contextValidator: { kind: "disabled" }'. To override the validator with a custom config, set 'contextValidator: { kind: "use", value: { type: "claude" | "codex", ... } }'. Omit the field entirely to inherit the workflow/global validator.
+- Include top-level 'workflowConfig' ONLY when the user explicitly asked for a non-default backend/model/effort or a non-default policy for the whole workflow. Otherwise omit it and let global defaults apply.
+
+The user will review and edit the workflow in the visual builder before starting execution.`;
+
+const REPLACE_DESCRIPTION = `Replace the entire definition of an existing workflow. Use this when revising a plan after user feedback — submit the complete updated graph, not a partial diff. The previous definition is fully overwritten.
+
+The same cascade rules apply as with create_graph_workflow:
+- Every execution context must declare 'acceptanceCriteria'.
+- Omit 'implementer', 'contextValidator', 'iterationPolicy', 'circuitBreaker', and 'mutability' on a context unless the user explicitly asked for a non-default value on that context. Omitted blocks inherit workflow-level / global defaults.
+- Use 'contextValidator: { kind: "disabled" }' to opt a context out of validation, or { kind: "use", value: ... } to override it.
+- Set top-level 'workflowConfig' only when the user explicitly asked for non-default backend/model/effort or non-default policies for the whole workflow; otherwise omit it.`;
 
 const LIST_WORKFLOWS_DESCRIPTION =
   "List all saved workflow definitions for this project. Returns each workflow's ID, name, description, and timestamps.";
@@ -578,12 +336,7 @@ function createCreateWorkflowHandler(
     }
 
     try {
-      const config = await deps.readConfig();
-      const definition = inflateToSemanticDefinition(
-        parsed.data,
-        config.workflowDefaults,
-        config.defaultAgentBackend,
-      );
+      const definition = inflateToSemanticDefinition(parsed.data);
       const layout = generateWorkflowLayout(definition);
       const record = await deps.createWorkflow(context.projectPath, {
         name: parsed.data.name,
@@ -615,12 +368,7 @@ function createReplaceWorkflowHandler(
     }
 
     try {
-      const config = await deps.readConfig();
-      const definition = inflateToSemanticDefinition(
-        parsed.data,
-        config.workflowDefaults,
-        config.defaultAgentBackend,
-      );
+      const definition = inflateToSemanticDefinition(parsed.data);
       const layout = generateWorkflowLayout(definition);
       const record = await deps.updateWorkflow(
         context.projectPath,

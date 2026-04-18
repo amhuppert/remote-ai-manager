@@ -7,8 +7,10 @@ import "@/components/workflow-graph/workflow-graph.css";
 import type {
   CodexConfig,
   GraphWorkflowAgentConfig,
+  WorkflowDefaults,
   WorkflowDefinitionRecord,
 } from "@/types";
+import type { InspectorTab } from "./WorkflowInspectorPanel";
 import {
   addExecutionContext,
   deleteExecutionContext,
@@ -36,6 +38,10 @@ interface WorkflowBuilderEditorProps {
   saveError?: string | null;
   defaultImplementerConfig?: GraphWorkflowAgentConfig;
   codexConfig?: CodexConfig;
+  globalDefaults?: WorkflowDefaults;
+  activeTab?: InspectorTab;
+  onTabChange?: (tab: InspectorTab) => void;
+  onOpenWorkflowSettings?: () => void;
   isMobile?: boolean;
   onAutoSwitchPanel?: (panel: BuilderMobilePanel) => void;
 }
@@ -60,6 +66,10 @@ function WorkflowBuilderEditorInner({
   saveError,
   defaultImplementerConfig,
   codexConfig,
+  globalDefaults,
+  activeTab,
+  onTabChange,
+  onOpenWorkflowSettings,
   isMobile,
   onAutoSwitchPanel,
 }: WorkflowBuilderEditorProps): React.JSX.Element {
@@ -127,10 +137,10 @@ function WorkflowBuilderEditorInner({
 
   function handleAddContext() {
     if (!draftDefinition || !draftLayout) return;
-    const result = addExecutionContext(
-      { definition: draftDefinition, layout: draftLayout },
-      { defaultAgentConfig: defaultImplementerConfig },
-    );
+    const result = addExecutionContext({
+      definition: draftDefinition,
+      layout: draftLayout,
+    });
     updateDefinition(result.definition);
     updateLayout(result.layout);
     setSelectedContextId(result.contextId);
@@ -183,6 +193,7 @@ function WorkflowBuilderEditorInner({
         onSave={() => void handleSave()}
         onReset={handleReset}
         onRelayout={handleRelayout}
+        onOpenWorkflowSettings={onOpenWorkflowSettings}
         dirty={dirty}
         saving={isSaving}
         hasValidationErrors={validationErrors.length > 0}
@@ -197,6 +208,9 @@ function WorkflowBuilderEditorInner({
           saving={isSaving}
           defaultImplementerConfig={defaultImplementerConfig}
           codexConfig={codexConfig}
+          globalDefaults={globalDefaults}
+          activeTab={activeTab}
+          onTabChange={onTabChange}
         />
       </div>
     </div>

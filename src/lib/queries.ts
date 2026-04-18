@@ -31,7 +31,7 @@ import {
   kiroDocTreeSchema,
   presetsResponseSchema,
   workflowDefinitionsResponseSchema,
-  workflowDefinitionMutationResponseSchema,
+  workflowDefinitionGetResponseSchema,
   roadmapItemsResponseSchema,
   debugLogStatsResponseSchema,
 } from "@/lib/api-client";
@@ -118,11 +118,10 @@ export function useWorkflowDefinitionQuery(
   return useQuery({
     queryKey: workflowDefinitionKeys.detail(projectName, workflowId ?? ""),
     queryFn: async () => {
-      const data = await apiFetch(
+      return await apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/workflows/${encodeURIComponent(workflowId!)}`,
-        workflowDefinitionMutationResponseSchema,
+        workflowDefinitionGetResponseSchema,
       );
-      return data.item;
     },
     enabled: workflowId != null,
   });

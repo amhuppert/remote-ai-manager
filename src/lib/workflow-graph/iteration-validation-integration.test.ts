@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GraphWorkflowExecution, GraphWorkflowHaltReason } from "@/types";
 import {
-  createWorkflowDefinition,
+  createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "./test-fixtures";
 import {
@@ -48,14 +48,16 @@ function createRepository(
 function createContextValidatorExecution(
   circuitBreaker: { consecutiveFailureThreshold?: number } = {},
 ) {
-  const baseDefinition = createWorkflowDefinition();
-  const definition = createWorkflowDefinition({
+  const baseDefinition = createResolvedWorkflowDefinition();
+  const definition = createResolvedWorkflowDefinition({
     executionContexts: baseDefinition.executionContexts.map((context) =>
       context.id === "context-plan"
         ? {
             ...context,
             circuitBreaker,
-            contextValidation: {
+            acceptanceCriteria:
+              "The plan must include implementation steps, rollback notes, and test coverage.",
+            contextValidator: {
               type: "claude",
               enabled: true,
               continuity: { enabled: true },
@@ -64,8 +66,6 @@ function createContextValidatorExecution(
                 model: "sonnet",
                 reasoningEffort: "medium",
               },
-              acceptanceCriteria:
-                "The plan must include implementation steps, rollback notes, and test coverage.",
             },
           }
         : context,

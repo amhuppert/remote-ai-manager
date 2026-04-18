@@ -26,6 +26,7 @@ function createServices() {
     repository: createGraphWorkflowExecutionRepository({
       getSession: stateManager.getSession,
       mutateSession: stateManager.mutateSession,
+      readConfig: () => configReader.readConfig(),
     }),
   };
 }

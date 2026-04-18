@@ -59,6 +59,33 @@ function defaultConfig(configDir: string = CONFIG_DIR): GlobalConfig {
     preMergeTimeoutMs: 300_000,
     maxConcurrentQueries: 3,
     tailscaleEnabled: true,
+    workflowDefaults: {
+      implementer: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+      },
+      contextValidator: {
+        type: "claude",
+        enabled: true,
+        continuity: { enabled: true },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+      },
+      iterationPolicy: {
+        maxIterations: 20,
+        continuity: { enabled: true },
+      },
+      circuitBreaker: {
+        consecutiveFailureThreshold: 3,
+      },
+      mutability: {
+        allowAgentTaskAdd: false,
+      },
+    },
   };
 }
 

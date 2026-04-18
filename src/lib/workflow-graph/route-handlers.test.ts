@@ -1,7 +1,13 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createWorkflowDefinitionRecord } from "./test-fixtures";
+import {
+  createWorkflowDefinition,
+  createWorkflowDefinitionRecord,
+  createWorkflowLayout,
+} from "./test-fixtures";
 import { createWorkflowDefinitionRouteHandlers } from "./route-handlers";
+import { resolveWorkflowDefinition } from "./resolve-config";
+import type { GlobalConfig } from "@/types";
 
 function makeRequest(url: string, method: string, body?: unknown): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
@@ -16,8 +22,18 @@ function makeContext(params: Record<string, string>) {
   return { params: Promise.resolve(params) };
 }
 
+const MOCK_CONFIG: GlobalConfig = {
+  baseDir: "/projects",
+  ignorePatterns: [],
+  stateFilePath: "/tmp/state.json",
+  claudeTimeoutMs: 3600000,
+  defaultModel: "opus",
+  defaultAgentBackend: "claude",
+};
+
 describe("workflow definition route handlers", () => {
   const resolveProjectPath = vi.fn<(_name: string) => Promise<string | null>>();
+  const readConfig = vi.fn<() => Promise<GlobalConfig>>();
   const listDefinitions = vi.fn();
   const getDefinition = vi.fn();
   const createDefinition = vi.fn();
@@ -26,6 +42,7 @@ describe("workflow definition route handlers", () => {
 
   const handlers = createWorkflowDefinitionRouteHandlers({
     resolveProjectPath,
+    readConfig,
     listDefinitions,
     getDefinition,
     createDefinition,
@@ -35,6 +52,7 @@ describe("workflow definition route handlers", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    readConfig.mockResolvedValue(MOCK_CONFIG);
   });
 
   it("lists workflow definitions for a project", async () => {
@@ -109,6 +127,15 @@ describe("workflow definition route handlers", () => {
       makeContext({ name: "repo", workflowId: "workflow-1" }),
     );
     expect(getResponse.status).toBe(200);
+    const expectedRecord = createWorkflowDefinitionRecord();
+    const expectedResolved = resolveWorkflowDefinition(
+      MOCK_CONFIG,
+      expectedRecord.definition,
+    );
+    await expect(getResponse.json()).resolves.toEqual({
+      item: expectedRecord,
+      resolved: expectedResolved,
+    });
 
     const putResponse = await handlers.UPDATE(
       makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", {
@@ -157,5 +184,61 @@ describe("workflow definition route handlers", () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  it("accepts a POST with workflowConfig: {} and minimal contexts", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    createDefinition.mockResolvedValue(createWorkflowDefinitionRecord());
+
+    const response = await handlers.CREATE(
+      makeRequest("/api/projects/repo/workflows", "POST", {
+        name: "Minimal Workflow",
+        definition: {
+          schemaVersion: 1,
+          workflowConfig: {},
+          executionContexts: [
+            {
+              id: "context-plan",
+              title: "Plan",
+              acceptanceCriteria: "Plan is documented",
+            },
+          ],
+          tasks: [],
+          edges: [],
+        },
+        layout: createWorkflowLayout(),
+      }),
+      makeContext({ name: "repo" }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(createDefinition).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 400 when a context is missing acceptanceCriteria", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+
+    const definitionWithMissingAC = createWorkflowDefinition();
+    const [firstContext, ...restContexts] =
+      definitionWithMissingAC.executionContexts;
+    if (!firstContext) throw new Error("fixture missing context");
+    const { acceptanceCriteria: _omit, ...contextWithoutAC } = firstContext;
+
+    const response = await handlers.CREATE(
+      makeRequest("/api/projects/repo/workflows", "POST", {
+        name: "Missing AC",
+        definition: {
+          ...definitionWithMissingAC,
+          executionContexts: [contextWithoutAC, ...restContexts],
+        },
+        layout: createWorkflowLayout(),
+      }),
+      makeContext({ name: "repo" }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/acceptanceCriteria/);
+    expect(createDefinition).not.toHaveBeenCalled();
   });
 });

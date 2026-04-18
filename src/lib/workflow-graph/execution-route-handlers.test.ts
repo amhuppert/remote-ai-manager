@@ -557,20 +557,22 @@ import {
   createGraphWorkflowIterationOrchestrator,
   type GraphWorkflowRunAgentIterationInput,
 } from "@/lib/workflows/graph-workflow/iteration-orchestrator";
-import { createWorkflowDefinition } from "./test-fixtures";
+import { createResolvedWorkflowDefinition } from "./test-fixtures";
 import type { GraphWorkflowExecution } from "@/types";
 
 function createCodexWorkflowExecution(): GraphWorkflowExecution {
-  const definition = createWorkflowDefinition({
+  const definition = createResolvedWorkflowDefinition({
     executionContexts: [
       {
         id: "context-codex",
         title: "Codex Implement",
-        agent: {
+        acceptanceCriteria: "TBD",
+        implementer: {
           backend: "codex",
           model: "gpt-5.4-mini",
           reasoningEffort: "medium",
         },
+        contextValidator: null,
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

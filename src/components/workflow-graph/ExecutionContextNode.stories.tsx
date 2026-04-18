@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import type { NodeTypes } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
+import type { GraphWorkflowExecutionContextDefinition } from "@/types";
 import type { ExecutionContextNodeData } from "./derive-graph";
 import ExecutionContextNode from "./ExecutionContextNode";
 import "./workflow-graph.css";
@@ -11,14 +12,19 @@ const nodeTypes = {
 } as unknown as NodeTypes;
 
 function makeContext(
-  overrides: Partial<ExecutionContextNodeData["context"]> = {},
-): ExecutionContextNodeData["context"] {
+  overrides: Partial<GraphWorkflowExecutionContextDefinition> = {},
+): GraphWorkflowExecutionContextDefinition {
   return {
     id: "ctx-1",
     title: "API Integration",
     description:
       "Implement REST API endpoints for user management with authentication and validation.",
-    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    acceptanceCriteria: "All REST endpoints exist and pass integration tests.",
+    implementer: {
+      backend: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+    },
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

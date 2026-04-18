@@ -7,6 +7,7 @@ import { graphWorkflowExecutionSchema } from "@/lib/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowLaneState,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
 
@@ -21,19 +22,22 @@ function makeDefinition(
 ): WorkflowSemanticDefinition {
   return {
     schemaVersion: 1,
+    workflowConfig: {},
     executionContexts: [
       {
         id: "ctx-1",
         title: "Plan",
-        agent: {
+        acceptanceCriteria: "TBD",
+        implementer: {
           backend: "claude",
           model: "sonnet",
           reasoningEffort: "medium",
         },
+        contextValidator: null,
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
-      },
+      } as never,
     ],
     tasks: [
       {
@@ -57,7 +61,8 @@ function makeExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
-    workingDefinition: makeDefinition(),
+    workingDefinition:
+      makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,
     status: "running",
     activeContextId: "ctx-1",
     contextStates: {
@@ -220,8 +225,9 @@ describe("resolveImplementerCall", () => {
 
     const definition = makeDefinition();
     // Override continuity to disabled
-    definition.executionContexts[0]!.iterationPolicy.continuity = {
-      enabled: false,
+    definition.executionContexts[0]!.iterationPolicy = {
+      maxIterations: 5,
+      continuity: { enabled: false },
     };
 
     const existingLane: GraphWorkflowLaneState = {
@@ -241,7 +247,8 @@ describe("resolveImplementerCall", () => {
     };
 
     const execution = makeExecution({
-      workingDefinition: definition,
+      workingDefinition:
+        definition as unknown as ResolvedWorkflowSemanticDefinition,
       laneStates: { implementer: existingLane },
     });
 
@@ -704,13 +711,13 @@ describe("resolveValidatorCall", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const definition = makeDefinition();
-    definition.executionContexts[0]!.contextValidation = {
+    const definition =
+      makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition;
+    definition.executionContexts[0]!.contextValidator = {
       type: "claude",
       enabled: true,
       continuity: { enabled: false },
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
-      acceptanceCriteria: "Validate.",
     };
 
     const existingLane: GraphWorkflowLaneState = {

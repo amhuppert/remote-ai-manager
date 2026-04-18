@@ -3,7 +3,7 @@ import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
-  GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowResolvedContext,
   GraphWorkflowValidationReviewArtifact,
   WorkflowValidatorIssue,
 } from "@/types";
@@ -14,7 +14,7 @@ export interface GraphWorkflowContextValidatorInput {
   projectPath: string;
   sessionName: string;
   execution: GraphWorkflowExecution;
-  context: GraphWorkflowExecutionContextDefinition;
+  context: GraphWorkflowResolvedContext;
   validator: GraphWorkflowAgentValidatorConfig;
 }
 
@@ -62,7 +62,7 @@ export interface GraphWorkflowValidationServiceDeps {
 function getContextDefinition(
   execution: GraphWorkflowExecution,
   contextId: string,
-): GraphWorkflowExecutionContextDefinition {
+): GraphWorkflowResolvedContext {
   const context = execution.workingDefinition.executionContexts.find(
     (entry) => entry.id === contextId,
   );
@@ -154,10 +154,10 @@ export function createGraphWorkflowValidationService(
     input: GraphWorkflowContextValidationInput,
   ): Promise<GraphWorkflowContextValidationOutcome> {
     const context = getContextDefinition(input.execution, input.contextId);
-    const validator = context.contextValidation;
+    const validator = context.contextValidator;
     const execLogger = getExecutionLogger(input.execution.id);
 
-    if (!validator?.enabled) {
+    if (!validator || !validator.enabled) {
       execLogger?.validation(input.contextId, "context_validation.skipped", {
         reason: "not_enabled",
       });
@@ -172,7 +172,7 @@ export function createGraphWorkflowValidationService(
 
     execLogger?.validation(input.contextId, "context_validation.started", {
       validatorType: validator.type,
-      acceptanceCriteriaPreview: validator.acceptanceCriteria.slice(0, 200),
+      acceptanceCriteriaPreview: context.acceptanceCriteria.slice(0, 200),
     });
     validationLogger.info("graph-workflow.context_validation.started", {
       executionId: input.execution.id,

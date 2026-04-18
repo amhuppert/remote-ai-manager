@@ -1,5 +1,5 @@
 import type {
-  GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
   GraphWorkflowTaskState,
@@ -22,7 +22,7 @@ export interface LatestContextValidationFailureFeedback {
 }
 
 export interface BuildIterationPromptInput {
-  context: GraphWorkflowExecutionContextDefinition;
+  context: GraphWorkflowResolvedContext;
   tasks: GraphWorkflowTaskDefinition[];
   taskStates: Record<string, GraphWorkflowTaskState>;
   sharedDocuments: GraphWorkflowSharedDocumentEntry[];

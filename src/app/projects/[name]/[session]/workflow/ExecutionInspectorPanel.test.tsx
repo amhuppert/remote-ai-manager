@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import {
-  createWorkflowDefinition,
+  createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
@@ -587,7 +587,7 @@ describe("ExecutionInspectorPanel — shared implementer session task history", 
     const onViewTask = vi.fn();
 
     // Extend the default definition with a second task in context-plan
-    const baseDef = createWorkflowDefinition();
+    const baseDef = createResolvedWorkflowDefinition();
     const definition = {
       ...baseDef,
       tasks: [
@@ -828,7 +828,7 @@ describe("ExecutionInspectorPanel — task editability", () => {
 
   it("reorders only editable tasks within a context", () => {
     const onReorderTask = vi.fn();
-    const baseDefinition = createWorkflowDefinition();
+    const baseDefinition = createResolvedWorkflowDefinition();
     const definition = {
       ...baseDefinition,
       tasks: [

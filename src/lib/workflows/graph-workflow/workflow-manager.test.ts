@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { GraphWorkflowExecution, WorkflowDefinitionRecord } from "@/types";
+import type {
+  GraphWorkflowExecution,
+  ResolvedWorkflowSemanticDefinition,
+  WorkflowDefinitionRecord,
+} from "@/types";
 import {
-  createWorkflowDefinition,
+  createResolvedWorkflowDefinition,
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
@@ -44,7 +48,8 @@ function createRepository(
         id: seed.executionId,
         seedDefinitionId: seed.definitionId,
         seedDefinitionRevision: seed.definitionRevision,
-        workingDefinition: seed.definition,
+        workingDefinition:
+          seed.definition as unknown as ResolvedWorkflowSemanticDefinition,
         startedAt: seed.startedAt,
       });
       return activeExecution;
@@ -710,7 +715,7 @@ describe("graph workflow manager", () => {
   });
 
   it("schedules the first runnable context and keeps other eligible contexts ready", async () => {
-    const branchedDefinition = createWorkflowDefinition({
+    const branchedDefinition = createResolvedWorkflowDefinition({
       edges: [
         {
           id: "edge-plan-implement",

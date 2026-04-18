@@ -17,15 +17,22 @@ import {
 } from "@/lib/queries";
 import { useWorkflowMobilePanel } from "@/components/workflow-graph/useWorkflowMobilePanel";
 import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobileTabBar";
+import { useGlobalDefaults } from "@/hooks/use-global-defaults";
+import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
+import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import type {
   CodexConfig,
+  GlobalConfig,
   GraphWorkflowAgentConfig,
   GraphWorkflowVisualLayout,
+  ResolvedWorkflowSemanticDefinition,
+  WorkflowDefaults,
   WorkflowSemanticDefinition,
 } from "@/types";
 import type { BuilderMobilePanel } from "./WorkflowBuilderEditor";
 import WorkflowBuilderEditor from "./WorkflowBuilderEditor";
 import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
+import type { InspectorTab } from "./WorkflowInspectorPanel";
 
 interface ConnectedWorkflowBuilderPageProps {
   projectName: string;
@@ -35,6 +42,7 @@ interface ConnectedWorkflowBuilderPageProps {
 
 const emptyDefinition: WorkflowSemanticDefinition = {
   schemaVersion: 1,
+  workflowConfig: {},
   executionContexts: [],
   tasks: [],
   edges: [],
@@ -46,6 +54,16 @@ const emptyLayout: GraphWorkflowVisualLayout = {
   viewport: { x: 0, y: 0, zoom: 1 },
 };
 
+export function resolveDefinitionClientSide(
+  globalDefaults: WorkflowDefaults,
+  definition: WorkflowSemanticDefinition,
+): ResolvedWorkflowSemanticDefinition {
+  return resolveWorkflowDefinition(
+    { workflowDefaults: globalDefaults } as GlobalConfig,
+    definition,
+  );
+}
+
 export default function ConnectedWorkflowBuilderPage({
   projectName,
   defaultImplementerConfig,
@@ -54,10 +72,26 @@ export default function ConnectedWorkflowBuilderPage({
   const { isMobile, mobilePanel, setMobilePanel, autoSwitchPanel } =
     useWorkflowMobilePanel<BuilderMobilePanel>("graph");
   const definitionsQuery = useWorkflowDefinitionsQuery(projectName);
+  const { workflowDefaults } = useGlobalDefaults();
   const [requestedWorkflowId, setRequestedWorkflowId] = useState<string | null>(
     null,
   );
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<InspectorTab>("workflow");
+  const selectedContextId = _useGraphWorkflowBuilderStore(
+    (s) => s.selectedContextId,
+  );
+  const [prevSelectedContextId, setPrevSelectedContextId] = useState<
+    string | null
+  >(selectedContextId);
+
+  if (selectedContextId !== prevSelectedContextId) {
+    setPrevSelectedContextId(selectedContextId);
+    if (selectedContextId) {
+      setActiveTab("context");
+    }
+  }
+
   const selectedWorkflowId = useMemo(() => {
     const definitions = definitionsQuery.data;
     if (!definitions || definitions.length === 0) {
@@ -114,14 +148,15 @@ export default function ConnectedWorkflowBuilderPage({
     definition: WorkflowSemanticDefinition;
     layout: GraphWorkflowVisualLayout;
   }): Promise<void> {
-    if (!selectedRecord.data) {
+    const item = selectedRecord.data?.item;
+    if (!item) {
       return;
     }
 
     try {
       await updateMutation.mutateAsync({
-        name: selectedRecord.data.name,
-        description: selectedRecord.data.description,
+        name: item.name,
+        description: item.description,
         definition: draft.definition,
         layout: draft.layout,
       });
@@ -137,14 +172,15 @@ export default function ConnectedWorkflowBuilderPage({
   }
 
   async function handleRenameWorkflow(name: string): Promise<void> {
-    if (!selectedRecord.data) return;
+    const item = selectedRecord.data?.item;
+    if (!item) return;
 
     try {
       await updateMutation.mutateAsync({
         name,
-        description: selectedRecord.data.description,
-        definition: selectedRecord.data.definition,
-        layout: selectedRecord.data.layout,
+        description: item.description,
+        definition: item.definition,
+        layout: item.layout,
       });
     } catch {
       // Rename failure is non-critical — the old name stays
@@ -214,14 +250,18 @@ export default function ConnectedWorkflowBuilderPage({
             ) : selectedRecord.data ? (
               <WorkflowBuilderEditor
                 onSave={handleSaveDraft}
-                record={selectedRecord.data}
-                workflowName={selectedRecord.data.name}
+                record={selectedRecord.data.item}
+                workflowName={selectedRecord.data.item.name}
                 revision={selectedSummary?.revision ?? null}
                 onRename={(name) => void handleRenameWorkflow(name)}
                 onDelete={() => void handleDeleteWorkflow()}
                 saveError={saveError}
                 defaultImplementerConfig={defaultImplementerConfig}
                 codexConfig={codexConfig}
+                globalDefaults={workflowDefaults}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+                onOpenWorkflowSettings={() => setActiveTab("workflow")}
                 isMobile={isMobile}
                 onAutoSwitchPanel={autoSwitchPanel}
               />

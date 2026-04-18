@@ -28,7 +28,8 @@ function makeNode(
       context: {
         id,
         title,
-        agent: {
+        acceptanceCriteria: "TBD",
+        implementer: {
           backend: "claude",
           model: "sonnet",
           reasoningEffort: "medium",

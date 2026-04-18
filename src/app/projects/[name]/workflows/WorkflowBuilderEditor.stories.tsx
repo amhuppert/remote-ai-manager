@@ -28,6 +28,7 @@ export const EmptyWorkflow = {
       name: "Empty Workflow",
       definition: {
         schemaVersion: 1,
+        workflowConfig: {},
         executionContexts: [],
         tasks: [],
         edges: [],

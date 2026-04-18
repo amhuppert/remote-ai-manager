@@ -1,15 +1,34 @@
+import { getEffortLevelsForBackend } from "@/lib/schemas";
 import type {
   GraphWorkflowExecution,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowGraphValidationError,
   WorkflowRuntimeEditRequest,
   WorkflowSemanticDefinition,
 } from "@/types";
+
+type ValidatableDefinition =
+  | WorkflowSemanticDefinition
+  | ResolvedWorkflowSemanticDefinition;
 
 export type { WorkflowGraphValidationError } from "@/types";
 
 export interface WorkflowGraphValidationResult {
   ok: boolean;
   errors: WorkflowGraphValidationError[];
+}
+
+export class GraphWorkflowValidationError extends Error {
+  readonly errors: WorkflowGraphValidationError[];
+
+  constructor(
+    errors: WorkflowGraphValidationError[],
+    message = "Workflow validation failed",
+  ) {
+    super(message);
+    this.name = "GraphWorkflowValidationError";
+    this.errors = errors;
+  }
 }
 
 function resultFromErrors(
@@ -21,13 +40,11 @@ function resultFromErrors(
   };
 }
 
-function createContextIdSet(
-  definition: WorkflowSemanticDefinition,
-): Set<string> {
+function createContextIdSet(definition: ValidatableDefinition): Set<string> {
   return new Set(definition.executionContexts.map((context) => context.id));
 }
 
-function createTaskMap(definition: WorkflowSemanticDefinition) {
+function createTaskMap(definition: ValidatableDefinition) {
   return new Map(definition.tasks.map((task) => [task.id, task]));
 }
 
@@ -40,7 +57,7 @@ function isRuntimeEditTaskLocked(
 }
 
 export function validateWorkflowDefinition(
-  definition: WorkflowSemanticDefinition,
+  definition: ValidatableDefinition,
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [];
   const seenContextIds = new Set<string>();
@@ -67,13 +84,10 @@ export function validateWorkflowDefinition(
       });
     }
 
-    if (
-      context.contextValidation?.enabled &&
-      !context.contextValidation.acceptanceCriteria.trim()
-    ) {
+    if (!context.acceptanceCriteria.trim()) {
       errors.push({
-        code: "empty-context-validator-acceptance-criteria",
-        message: `Context validator on "${context.id}" is enabled but has no acceptance criteria`,
+        code: "empty-context-acceptance-criteria",
+        message: `Context "${context.id}" has empty acceptance criteria`,
         contextId: context.id,
       });
     }
@@ -194,7 +208,7 @@ export function validateWorkflowDefinition(
 }
 
 export function getEntryContextIds(
-  definition: WorkflowSemanticDefinition,
+  definition: ValidatableDefinition,
 ): string[] {
   const targets = new Set(definition.edges.map((edge) => edge.targetContextId));
   return definition.executionContexts
@@ -203,7 +217,7 @@ export function getEntryContextIds(
 }
 
 export function getTerminalContextIds(
-  definition: WorkflowSemanticDefinition,
+  definition: ValidatableDefinition,
 ): string[] {
   const sources = new Set(definition.edges.map((edge) => edge.sourceContextId));
   return definition.executionContexts
@@ -212,7 +226,7 @@ export function getTerminalContextIds(
 }
 
 export function getEligibleContextIds(
-  definition: WorkflowSemanticDefinition,
+  definition: ValidatableDefinition,
   execution: GraphWorkflowExecution,
 ): string[] {
   const prerequisites = new Map<string, string[]>();
@@ -237,8 +251,31 @@ export function getEligibleContextIds(
     });
 }
 
+export function validateResolvedWorkflow(
+  resolved: ResolvedWorkflowSemanticDefinition,
+): WorkflowGraphValidationResult {
+  const errors: WorkflowGraphValidationError[] = [];
+
+  for (const context of resolved.executionContexts) {
+    const { implementer } = context;
+    const supported = getEffortLevelsForBackend(
+      implementer.backend,
+      implementer.model,
+    );
+    if (!supported.includes(implementer.reasoningEffort)) {
+      errors.push({
+        code: "implementer-effort-unsupported",
+        message: `Context "${context.id}" implementer uses reasoning effort "${implementer.reasoningEffort}", which is not supported by ${implementer.backend} model "${implementer.model}"`,
+        contextId: context.id,
+      });
+    }
+  }
+
+  return resultFromErrors(errors);
+}
+
 export function validateWorkflowRuntimeEdit(
-  definition: WorkflowSemanticDefinition,
+  definition: ValidatableDefinition,
   execution: GraphWorkflowExecution,
   request: WorkflowRuntimeEditRequest,
 ): WorkflowGraphValidationResult {

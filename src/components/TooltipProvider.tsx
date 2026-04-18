@@ -28,6 +28,7 @@ export default function TooltipProvider(): React.JSX.Element | null {
   const tooltipRef = useRef<HTMLDivElement>(null);
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
   const currentTargetRef = useRef<Element | null>(null);
+  const longPressTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
 
   const positionTooltip = useCallback((target: Element, text: string) => {
     const rect = target.getBoundingClientRect();
@@ -91,15 +92,64 @@ export default function TooltipProvider(): React.JSX.Element | null {
       }, 50);
     }
 
+    function clearLongPress() {
+      if (longPressTimeoutRef.current) {
+        clearTimeout(longPressTimeoutRef.current);
+        longPressTimeoutRef.current = null;
+      }
+    }
+
+    function handleTouchStart(e: Event) {
+      const target = (e.target as Element).closest?.("[data-tooltip]");
+      if (!target) return;
+
+      const text = target.getAttribute("data-tooltip");
+      if (!text) return;
+
+      clearLongPress();
+      longPressTimeoutRef.current = setTimeout(() => {
+        if (hideTimeoutRef.current) {
+          clearTimeout(hideTimeoutRef.current);
+          hideTimeoutRef.current = null;
+        }
+        currentTargetRef.current = target;
+        positionTooltip(target, text);
+      }, 500);
+    }
+
+    function handleTouchEnd() {
+      clearLongPress();
+      if (!currentTargetRef.current) return;
+      hideTimeoutRef.current = setTimeout(() => {
+        setTooltip((prev) => ({ ...prev, visible: false }));
+        currentTargetRef.current = null;
+      }, 1500);
+    }
+
     document.addEventListener("mouseenter", handleMouseEnter, true);
     document.addEventListener("mouseleave", handleMouseLeave, true);
+    document.addEventListener("touchstart", handleTouchStart, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("touchend", handleTouchEnd, true);
+    document.addEventListener("touchcancel", handleTouchEnd, true);
+    document.addEventListener("touchmove", clearLongPress, {
+      capture: true,
+      passive: true,
+    });
 
     return () => {
       document.removeEventListener("mouseenter", handleMouseEnter, true);
       document.removeEventListener("mouseleave", handleMouseLeave, true);
+      document.removeEventListener("touchstart", handleTouchStart, true);
+      document.removeEventListener("touchend", handleTouchEnd, true);
+      document.removeEventListener("touchcancel", handleTouchEnd, true);
+      document.removeEventListener("touchmove", clearLongPress, true);
       if (hideTimeoutRef.current) {
         clearTimeout(hideTimeoutRef.current);
       }
+      clearLongPress();
     };
   }, [positionTooltip]);
 

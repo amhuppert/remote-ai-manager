@@ -44,6 +44,7 @@ async function defaultRunPlannerQuery(
 ): Promise<WorkflowSemanticDefinition> {
   const emptyDefinition: WorkflowSemanticDefinition = {
     schemaVersion: 1,
+    workflowConfig: {},
     executionContexts: [],
     tasks: [],
     edges: [],

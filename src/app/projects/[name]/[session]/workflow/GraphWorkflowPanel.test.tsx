@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
-  createWorkflowDefinition,
+  createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
 import { renderWithQuery } from "@/test/component-mocks";
@@ -225,17 +225,19 @@ describe("GraphWorkflowPanel", () => {
 // ---------------------------------------------------------------------------
 
 function createCodexExecutionWithRunningTask() {
-  const definition = createWorkflowDefinition({
+  const definition = createResolvedWorkflowDefinition({
     executionContexts: [
       {
         id: "context-codex-impl",
         title: "Codex Implement",
         description: "Codex-powered implementation",
-        agent: {
+        acceptanceCriteria: "Feature shipped via Codex",
+        implementer: {
           backend: "codex",
           model: "gpt-5.4-mini",
           reasoningEffort: "medium",
         },
+        contextValidator: null,
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

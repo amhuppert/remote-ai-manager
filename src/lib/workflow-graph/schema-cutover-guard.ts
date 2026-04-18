@@ -4,10 +4,17 @@ import {
 } from "@/lib/schemas";
 import type { GraphWorkflowExecution, WorkflowDefinitionRecord } from "@/types";
 
-const REMOVED_FIELDS = [
+const UNCONDITIONAL_REMOVED_FIELDS = [
   "contextSoftLimitTokens",
   "contextHardLimitTokens",
   "taskValidation",
+] as const;
+
+const CONTEXT_LEVEL_REMOVED_FIELDS = ["agent", "contextValidation"] as const;
+
+const REMOVED_FIELDS = [
+  ...UNCONDITIONAL_REMOVED_FIELDS,
+  ...CONTEXT_LEVEL_REMOVED_FIELDS,
 ] as const;
 
 const REMOVED_LANE_VALUES = ["task_validator"] as const;
@@ -16,24 +23,33 @@ const REMOVED_VALIDATOR_TYPES = ["task"] as const;
 const REMOVED_FIELD_LIST = REMOVED_FIELDS.join(", ");
 
 const OPERATOR_INSTRUCTIONS =
-  "These fields were removed in the execution-context validator cutover. " +
-  "Use the one-time graph workflow cleanup to delete stale definitions and executions, then recreate workflows.";
+  "These fields were removed in the workflow configuration cascade refactor. " +
+  "AcceptanceCriteria is now a required context-level field. Run the graph workflow cleanup command " +
+  "(same as the execution-context validator cutover) to delete stale definitions and executions, then recreate workflows.";
 
 export class LegacyWorkflowSchemaError extends Error {
-  constructor(context: string) {
-    super(
-      `${context} contains removed fields (${REMOVED_FIELD_LIST}). ${OPERATOR_INSTRUCTIONS}`,
-    );
+  constructor(context: string, detail?: string) {
+    const body = detail ?? `contains removed fields (${REMOVED_FIELD_LIST})`;
+    super(`${context} ${body}. ${OPERATOR_INSTRUCTIONS}`);
     this.name = "LegacyWorkflowSchemaError";
   }
+}
+
+function looksLikeContext(obj: Record<string, unknown>): boolean {
+  return typeof obj.id === "string" && typeof obj.title === "string";
 }
 
 function hasLegacyFields(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   if (Array.isArray(value)) return value.some(hasLegacyFields);
   const obj = value as Record<string, unknown>;
-  for (const field of REMOVED_FIELDS) {
+  for (const field of UNCONDITIONAL_REMOVED_FIELDS) {
     if (field in obj) return true;
+  }
+  if (looksLikeContext(obj)) {
+    for (const field of CONTEXT_LEVEL_REMOVED_FIELDS) {
+      if (field in obj) return true;
+    }
   }
   if (
     obj.lane &&
@@ -56,8 +72,56 @@ function hasLegacyFields(value: unknown): boolean {
   return Object.values(obj).some(hasLegacyFields);
 }
 
+function hasValidatorWithAcceptanceCriteria(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  if (Array.isArray(value)) {
+    return value.some(hasValidatorWithAcceptanceCriteria);
+  }
+  const obj = value as Record<string, unknown>;
+  if (
+    (obj.type === "claude" || obj.type === "codex") &&
+    "acceptanceCriteria" in obj
+  ) {
+    return true;
+  }
+  return Object.values(obj).some(hasValidatorWithAcceptanceCriteria);
+}
+
+function hasContextMissingAcceptanceCriteria(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  if (Array.isArray(value)) {
+    return value.some(hasContextMissingAcceptanceCriteria);
+  }
+  const obj = value as Record<string, unknown>;
+  if (looksLikeContext(obj)) {
+    const hasImplementerOrValidatorField =
+      "agent" in obj ||
+      "implementer" in obj ||
+      "contextValidation" in obj ||
+      "contextValidator" in obj;
+    if (hasImplementerOrValidatorField && !("acceptanceCriteria" in obj)) {
+      return true;
+    }
+  }
+  return Object.values(obj).some(hasContextMissingAcceptanceCriteria);
+}
+
+function detectLegacyShape(value: unknown): string | null {
+  if (hasLegacyFields(value)) {
+    return `contains removed fields (${REMOVED_FIELD_LIST})`;
+  }
+  if (hasValidatorWithAcceptanceCriteria(value)) {
+    return "contains a validator carrying acceptanceCriteria (AC now lives on the context, not the validator)";
+  }
+  if (hasContextMissingAcceptanceCriteria(value)) {
+    return "has an execution context missing the required top-level acceptanceCriteria";
+  }
+  return null;
+}
+
 /**
- * Throws LegacyWorkflowSchemaError if value contains any removed continuity fields.
+ * Throws LegacyWorkflowSchemaError if value contains any removed continuity fields
+ * or any pre-cutover shape (validator carrying AC, context missing top-level AC).
  * Use at write boundaries where the data is already typed but may carry runtime
  * surprises (e.g., an `as unknown as` cast from older code).
  */
@@ -65,8 +129,9 @@ export function assertNoLegacyWorkflowFields(
   value: unknown,
   context: string,
 ): void {
-  if (hasLegacyFields(value)) {
-    throw new LegacyWorkflowSchemaError(context);
+  const detail = detectLegacyShape(value);
+  if (detail) {
+    throw new LegacyWorkflowSchemaError(context, detail);
   }
 }
 
@@ -80,8 +145,9 @@ export function assertNoLegacyWorkflowFields(
 export function assertDefinitionRecordSupported(
   rawRecord: unknown,
 ): WorkflowDefinitionRecord {
-  if (hasLegacyFields(rawRecord)) {
-    throw new LegacyWorkflowSchemaError("Workflow definition");
+  const detail = detectLegacyShape(rawRecord);
+  if (detail) {
+    throw new LegacyWorkflowSchemaError("Workflow definition", detail);
   }
   return workflowDefinitionRecordSchema.parse(rawRecord);
 }
@@ -96,9 +162,11 @@ export function assertDefinitionRecordSupported(
 export function assertExecutionSupported(
   rawExecution: unknown,
 ): GraphWorkflowExecution {
-  if (hasLegacyFields(rawExecution)) {
+  const detail = detectLegacyShape(rawExecution);
+  if (detail) {
     throw new LegacyWorkflowSchemaError(
       "Graph workflow execution (workingDefinition)",
+      detail,
     );
   }
   return graphWorkflowExecutionSchema.parse(rawExecution);
@@ -128,16 +196,26 @@ export function checkRawStateForLegacyWorkflowPayloads(
       if (typeof session !== "object" || session === null) continue;
       const sessionRecord = session as Record<string, unknown>;
       const exec = sessionRecord.graphWorkflowExecution;
-      if (exec != null && hasLegacyFields(exec)) {
-        throw new LegacyWorkflowSchemaError(
-          "Graph workflow execution in state",
-        );
+      if (exec != null) {
+        const execDetail = detectLegacyShape(exec);
+        if (execDetail) {
+          throw new LegacyWorkflowSchemaError(
+            "Graph workflow execution in state",
+            execDetail,
+          );
+        }
       }
       const history = sessionRecord.graphWorkflowExecutionHistory;
-      if (Array.isArray(history) && history.some(hasLegacyFields)) {
-        throw new LegacyWorkflowSchemaError(
-          "Archived graph workflow execution in state",
-        );
+      if (Array.isArray(history)) {
+        for (const entry of history) {
+          const historyDetail = detectLegacyShape(entry);
+          if (historyDetail) {
+            throw new LegacyWorkflowSchemaError(
+              "Archived graph workflow execution in state",
+              historyDetail,
+            );
+          }
+        }
       }
     }
   }

@@ -4,14 +4,22 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowExecutionContextState,
+  GraphWorkflowResolvedContext,
   GraphWorkflowTaskDefinition,
   GraphWorkflowTaskState,
   GraphWorkflowVisualLayout,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
 
+type DeriveGraphDefinition =
+  | WorkflowSemanticDefinition
+  | ResolvedWorkflowSemanticDefinition;
+
 export type ExecutionContextNodeData = {
-  context: GraphWorkflowExecutionContextDefinition;
+  context:
+    | GraphWorkflowExecutionContextDefinition
+    | GraphWorkflowResolvedContext;
   tasks: GraphWorkflowTaskDefinition[];
   mode: "builder" | "execution";
   contextState?: GraphWorkflowExecutionContextState;
@@ -24,7 +32,7 @@ export type ContextEdgeData = {
 };
 
 export function deriveNodes(
-  definition: WorkflowSemanticDefinition,
+  definition: DeriveGraphDefinition,
   layout: GraphWorkflowVisualLayout,
   execution?: GraphWorkflowExecution | null,
 ): Node<ExecutionContextNodeData>[] {
@@ -66,7 +74,7 @@ export function deriveNodes(
 }
 
 export function deriveEdges(
-  definition: WorkflowSemanticDefinition,
+  definition: DeriveGraphDefinition,
   execution?: GraphWorkflowExecution | null,
 ): Edge<ContextEdgeData>[] {
   return definition.edges.map((edge) => {

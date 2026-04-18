@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { SessionState } from "@/types";
-import { createGraphWorkflowExecutionRepository } from "./execution-repository";
+import type { GlobalConfig, SessionState } from "@/types";
+import {
+  GraphWorkflowValidationError,
+  createGraphWorkflowExecutionRepository,
+} from "./execution-repository";
 import { LegacyWorkflowSchemaError } from "./schema-cutover-guard";
 import { createWorkflowDefinition } from "./test-fixtures";
 
@@ -11,7 +14,7 @@ function makeSession(): SessionState {
   } as unknown as SessionState;
 }
 
-function createInMemoryRepo() {
+function createInMemoryRepo(config: GlobalConfig = {} as GlobalConfig) {
   const sessions = new Map<string, SessionState>();
 
   return createGraphWorkflowExecutionRepository({
@@ -26,6 +29,7 @@ function createInMemoryRepo() {
       }
       return mutate(session);
     },
+    readConfig: async () => config,
   });
 }
 
@@ -38,6 +42,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         {
           id: "ctx-1",
           title: "Plan",
+          acceptanceCriteria: "Plan is documented",
           agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
@@ -68,6 +73,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         {
           id: "ctx-1",
           title: "Plan",
+          acceptanceCriteria: "Plan is documented",
           agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
@@ -102,5 +108,97 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
 
     expect(execution.id).toBe("exec-1");
     expect(execution.status).toBe("pending");
+  });
+
+  it("stores a resolved workingDefinition with implementer populated even when the input omits it", async () => {
+    const repo = createInMemoryRepo();
+    const baseline = createWorkflowDefinition();
+    const definition = {
+      ...baseline,
+      executionContexts: baseline.executionContexts.map((context) => {
+        const { implementer: _implementer, ...rest } = context;
+        return rest;
+      }),
+    };
+
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+    });
+
+    for (const context of execution.workingDefinition.executionContexts) {
+      expect(context.implementer).toEqual({
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+      });
+    }
+  });
+
+  it("populates contextValidator from seeded defaults and leaves disabled overrides as null", async () => {
+    const repo = createInMemoryRepo();
+    const baseline = createWorkflowDefinition();
+    const definition = {
+      ...baseline,
+      executionContexts: [
+        baseline.executionContexts[0]!,
+        {
+          ...baseline.executionContexts[1]!,
+          contextValidator: { kind: "disabled" as const },
+        },
+        baseline.executionContexts[2]!,
+      ],
+    };
+
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+    });
+
+    const byId = Object.fromEntries(
+      execution.workingDefinition.executionContexts.map((context) => [
+        context.id,
+        context,
+      ]),
+    );
+
+    expect(byId["context-plan"]?.contextValidator).not.toBeNull();
+    expect(byId["context-verify"]?.contextValidator).not.toBeNull();
+    expect(byId["context-implement"]?.contextValidator).toBeNull();
+  });
+
+  it("throws GraphWorkflowValidationError when resolved implementer uses an unsupported reasoning effort", async () => {
+    const repo = createInMemoryRepo();
+    const baseline = createWorkflowDefinition();
+    const definition = {
+      ...baseline,
+      executionContexts: [
+        {
+          ...baseline.executionContexts[0]!,
+          implementer: {
+            backend: "codex" as const,
+            model: "gpt-5.4" as const,
+            reasoningEffort: "minimal" as const,
+          },
+        },
+        ...baseline.executionContexts.slice(1),
+      ],
+    };
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition,
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+      }),
+    ).rejects.toBeInstanceOf(GraphWorkflowValidationError);
   });
 });

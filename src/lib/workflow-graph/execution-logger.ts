@@ -17,7 +17,7 @@ import { resolveConfigDir } from "@/lib/config";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
-  WorkflowSemanticDefinition,
+  ResolvedWorkflowSemanticDefinition,
 } from "@/types";
 
 // -- Configuration -----------------------------------------------------------
@@ -86,7 +86,7 @@ interface Manifest {
   executionId: string;
   definitionId: string;
   definitionRevision: number;
-  definition: WorkflowSemanticDefinition;
+  definition: ResolvedWorkflowSemanticDefinition;
   startedAt: string;
   completedAt: string | null;
   status: string;

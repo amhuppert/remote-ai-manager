@@ -85,9 +85,20 @@ export default function ExecutionContextNode({
   const progressPercent = getProgressPercent(mode, completedCount, totalCount);
   const progressStatus = status ?? "pending";
 
-  const validatorCount = [context.contextValidation?.enabled].filter(
-    Boolean,
-  ).length;
+  const contextValidator =
+    "contextValidator" in context ? context.contextValidator : undefined;
+  const validatorEnabled =
+    contextValidator &&
+    (typeof contextValidator === "object" && contextValidator !== null
+      ? "enabled" in contextValidator
+        ? contextValidator.enabled
+        : contextValidator.kind === "use"
+      : false);
+  const validatorCount = validatorEnabled ? 1 : 0;
+
+  const implementer =
+    "implementer" in context ? context.implementer : undefined;
+  const implementerBackend = implementer?.backend ?? "claude";
 
   const nodeClassName = [
     "graph-node",
@@ -109,8 +120,8 @@ export default function ExecutionContextNode({
         </span>
       </div>
 
-      <span className={`graph-node-backend-badge ${context.agent.backend}`}>
-        {context.agent.backend === "codex" ? "Codex" : "Claude"}
+      <span className={`graph-node-backend-badge ${implementerBackend}`}>
+        {implementerBackend === "codex" ? "Codex" : "Claude"}
       </span>
 
       {context.description && (

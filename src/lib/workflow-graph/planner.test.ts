@@ -17,12 +17,14 @@ describe("workflow graph planner", () => {
       runPlannerQuery: vi.fn(
         async (): Promise<WorkflowSemanticDefinition> => ({
           schemaVersion: 1,
+          workflowConfig: {},
           executionContexts: [
             {
               id: "context-plan",
               title: "Plan",
               description: "Inspect the current implementation surface.",
-              agent: {
+              acceptanceCriteria: "TBD",
+              implementer: {
                 backend: "claude",
                 model: "opus",
                 reasoningEffort: "high",
@@ -38,7 +40,8 @@ describe("workflow graph planner", () => {
               id: "context-implement",
               title: "Implement",
               description: "Apply the changes.",
-              agent: {
+              acceptanceCriteria: "TBD",
+              implementer: {
                 backend: "claude",
                 model: "sonnet",
                 reasoningEffort: "medium",
@@ -103,11 +106,13 @@ describe("workflow graph planner", () => {
       runPlannerQuery: vi.fn(
         async (): Promise<WorkflowSemanticDefinition> => ({
           schemaVersion: 1,
+          workflowConfig: {},
           executionContexts: [
             {
               id: "context-1",
               title: "Broken",
-              agent: {
+              acceptanceCriteria: "TBD",
+              implementer: {
                 backend: "claude",
                 model: "opus",
                 reasoningEffort: "high",
@@ -154,6 +159,7 @@ describe("workflow graph planner", () => {
     const runPlannerQuery = vi.fn(
       async (): Promise<WorkflowSemanticDefinition> => ({
         schemaVersion: 1,
+        workflowConfig: {},
         executionContexts: [],
         tasks: [],
         edges: [],

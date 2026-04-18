@@ -1,6 +1,7 @@
 import type {
   GraphWorkflowExecution,
   GraphWorkflowVisualLayout,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/types";
@@ -12,12 +13,14 @@ export function createWorkflowDefinition(
 ): WorkflowSemanticDefinition {
   return {
     schemaVersion: 1,
+    workflowConfig: {},
     executionContexts: [
       {
         id: "context-plan",
         title: "Plan",
         description: "Plan the implementation",
-        agent: {
+        acceptanceCriteria: "Plan is documented",
+        implementer: {
           backend: "claude",
           model: "opus",
           reasoningEffort: "high",
@@ -35,7 +38,8 @@ export function createWorkflowDefinition(
         id: "context-implement",
         title: "Implement",
         description: "Implement the feature",
-        agent: {
+        acceptanceCriteria: "Feature implemented",
+        implementer: {
           backend: "claude",
           model: "sonnet",
           reasoningEffort: "medium",
@@ -53,7 +57,8 @@ export function createWorkflowDefinition(
         id: "context-verify",
         title: "Verify",
         description: "Verify the result",
-        agent: {
+        acceptanceCriteria: "Verification passes",
+        implementer: {
           backend: "claude",
           model: "opus",
           reasoningEffort: "medium",
@@ -142,10 +147,43 @@ export function createWorkflowDefinitionRecord(
   };
 }
 
+export function createResolvedWorkflowDefinition(
+  overrides: Partial<ResolvedWorkflowSemanticDefinition> = {},
+): ResolvedWorkflowSemanticDefinition {
+  const source = createWorkflowDefinition();
+  return {
+    schemaVersion: source.schemaVersion,
+    executionContexts: source.executionContexts.map((ctx) => ({
+      id: ctx.id,
+      title: ctx.title,
+      ...(ctx.description !== undefined
+        ? { description: ctx.description }
+        : {}),
+      acceptanceCriteria: ctx.acceptanceCriteria,
+      implementer: ctx.implementer ?? {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+      },
+      contextValidator: null,
+      mutability: ctx.mutability ?? { allowAgentTaskAdd: false },
+      circuitBreaker: ctx.circuitBreaker ?? {},
+      iterationPolicy: ctx.iterationPolicy ?? {
+        maxIterations: 10,
+        continuity: { enabled: true },
+      },
+    })),
+    tasks: source.tasks,
+    edges: source.edges,
+    ...overrides,
+  };
+}
+
 export function createWorkflowExecution(
   overrides: Partial<GraphWorkflowExecution> = {},
 ): GraphWorkflowExecution {
-  const definition = overrides.workingDefinition ?? createWorkflowDefinition();
+  const definition =
+    overrides.workingDefinition ?? createResolvedWorkflowDefinition();
 
   return {
     id: "execution-1",

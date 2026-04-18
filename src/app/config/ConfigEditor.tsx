@@ -2,9 +2,24 @@
 
 import { useState, useCallback, useMemo } from "react";
 import Topbar from "@/components/Topbar";
+import ModelSelector from "@/components/ModelSelector";
+import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import { useFullConfigQuery } from "@/lib/queries";
 import { useUpdateConfigMutation } from "@/lib/mutations";
 import type { FullConfigResponse } from "@/lib/api-client";
+import type {
+  AgentBackendId,
+  EffortLevel,
+  ClaudeModel,
+  CodexModel,
+  CodexReasoningEffort,
+  WorkflowDefaults,
+  GraphWorkflowAgentConfig,
+  GraphWorkflowAgentValidatorConfig,
+  GraphWorkflowIterationPolicy,
+  GraphWorkflowCircuitBreakerPolicy,
+  GraphWorkflowMutabilityPolicy,
+} from "@/lib/schemas";
 import type { GlobalConfig } from "@/types";
 import {
   formatFieldLabel,
@@ -14,6 +29,40 @@ import {
   getModelOptionsForBackend,
   getEffortOptionsForBackend,
 } from "./config-helpers";
+
+// ---------------------------------------------------------------------------
+// Seeded workflow defaults (mirror src/lib/config.ts defaultConfig())
+// ---------------------------------------------------------------------------
+
+export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
+  implementer: {
+    backend: "claude",
+    model: "opus",
+    reasoningEffort: "medium",
+  },
+  contextValidator: {
+    type: "claude",
+    enabled: true,
+    continuity: { enabled: true },
+    agent: {
+      backend: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+    },
+  },
+  iterationPolicy: {
+    maxIterations: 20,
+    continuity: { enabled: true },
+  },
+  circuitBreaker: {
+    consecutiveFailureThreshold: 3,
+  },
+  mutability: {
+    allowAgentTaskAdd: false,
+  },
+};
+
+type WorkflowDefaultsBlock = keyof WorkflowDefaults;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -276,6 +325,9 @@ export default function ConfigEditor(): React.JSX.Element {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
     () => new Set(["pushNotification", "codex", "workflowDefaults"]),
   );
+  const [collapsedSubs, setCollapsedSubs] = useState<Set<string>>(
+    () => new Set(["mutability"]),
+  );
 
   // Initialize form state from query data (during render, not in effect)
   if (configQuery.data && !formState) {
@@ -294,6 +346,34 @@ export default function ConfigEditor(): React.JSX.Element {
       return next;
     });
   }, []);
+
+  const toggleSub = useCallback((id: string) => {
+    setCollapsedSubs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleChangeBlock = useCallback(
+    <K extends WorkflowDefaultsBlock>(block: K, value: WorkflowDefaults[K]) => {
+      setFormState((prev) => {
+        if (!prev) return prev;
+        const existing =
+          prev.workflowDefaults ?? structuredClone(SEEDED_WORKFLOW_DEFAULTS);
+        const nextDefaults: WorkflowDefaults = {
+          ...existing,
+          [block]: value,
+        };
+        return { ...prev, workflowDefaults: nextDefaults };
+      });
+    },
+    [],
+  );
 
   const handleChange = useCallback((path: FieldPath, value: unknown) => {
     setFormState((prev) => (prev ? deepSet(prev, path, value) : prev));
@@ -366,9 +446,11 @@ export default function ConfigEditor(): React.JSX.Element {
       "codex.model",
       "codex.reasoningEffort",
       "codex.timeout",
-      "workflowDefaults.contextValidator.type",
-      "workflowDefaults.contextValidator.model",
-      "workflowDefaults.contextValidator.reasoningEffort",
+      "workflowDefaults.implementer",
+      "workflowDefaults.contextValidator",
+      "workflowDefaults.iterationPolicy",
+      "workflowDefaults.circuitBreaker",
+      "workflowDefaults.mutability",
     ],
     [],
   );
@@ -896,13 +978,11 @@ export default function ConfigEditor(): React.JSX.Element {
             collapsed={collapsedSections.has("workflowDefaults")}
             onToggle={toggleSection}
           >
-            <WorkflowValidatorFields
-              groupLabel="Context Validator"
-              basePath="workflowDefaults.contextValidator"
-              validator={formState.workflowDefaults?.contextValidator}
-              isDefault={isDefault}
-              isModified={isModified}
-              onChangeMulti={handleChangeMulti}
+            <WorkflowDefaultsSubsections
+              defaults={formState.workflowDefaults}
+              collapsedSubs={collapsedSubs}
+              onToggleSub={toggleSub}
+              onChangeBlock={handleChangeBlock}
             />
           </ConfigSection>
 
@@ -930,106 +1010,631 @@ export default function ConfigEditor(): React.JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// Workflow Validator Sub-component
+// Workflow Defaults Sub-sections
 // ---------------------------------------------------------------------------
 
-function WorkflowValidatorFields({
-  groupLabel,
-  basePath,
-  validator,
+function ConfigSubsection({
+  title,
+  id,
   isDefault,
-  isModified,
-  onChangeMulti,
+  collapsed,
+  onToggle,
+  children,
 }: {
-  groupLabel: string;
-  basePath: string;
-  validator?: { type: string; model?: string; reasoningEffort?: string };
-  isDefault: (path: FieldPath) => boolean;
-  isModified: (path: FieldPath) => boolean;
-  onChangeMulti: (changes: Array<[FieldPath, unknown]>) => void;
+  title: string;
+  id: string;
+  isDefault: boolean;
+  collapsed: boolean;
+  onToggle: (id: string) => void;
+  children: React.ReactNode;
 }) {
-  const validatorType = (validator?.type ?? "claude") as "claude" | "codex";
-  const validatorModel =
-    validator?.model ?? (validatorType === "codex" ? "gpt-5.4" : "opus");
-  const validatorEffortOptions = getEffortOptionsForBackend(
-    validatorType,
-    validatorModel,
+  const cls = [
+    "config-subsection",
+    collapsed ? "collapsed" : "",
+    isDefault ? "config-subsection--default" : "config-subsection--modified",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={cls} data-subsection={id}>
+      <button
+        type="button"
+        className="config-subsection-header"
+        onClick={() => onToggle(id)}
+      >
+        <span className="config-section-chevron">&#9660;</span>
+        <span>{title}</span>
+        <span className="config-subsection-badge">
+          {isDefault ? "DEFAULT" : "MODIFIED"}
+        </span>
+      </button>
+      <div className="config-subsection-body">{children}</div>
+    </div>
+  );
+}
+
+function WorkflowDefaultsSubsections({
+  defaults,
+  collapsedSubs,
+  onToggleSub,
+  onChangeBlock,
+}: {
+  defaults: WorkflowDefaults | undefined;
+  collapsedSubs: Set<string>;
+  onToggleSub: (id: string) => void;
+  onChangeBlock: <K extends WorkflowDefaultsBlock>(
+    block: K,
+    value: WorkflowDefaults[K],
+  ) => void;
+}) {
+  const effective: WorkflowDefaults = defaults ?? SEEDED_WORKFLOW_DEFAULTS;
+
+  const implementerIsDefault = deepEqual(
+    effective.implementer,
+    SEEDED_WORKFLOW_DEFAULTS.implementer,
+  );
+  const validatorIsDefault = deepEqual(
+    effective.contextValidator,
+    SEEDED_WORKFLOW_DEFAULTS.contextValidator,
+  );
+  const iterationIsDefault = deepEqual(
+    effective.iterationPolicy,
+    SEEDED_WORKFLOW_DEFAULTS.iterationPolicy,
+  );
+  const circuitIsDefault = deepEqual(
+    effective.circuitBreaker,
+    SEEDED_WORKFLOW_DEFAULTS.circuitBreaker,
+  );
+  const mutabilityIsDefault = deepEqual(
+    effective.mutability,
+    SEEDED_WORKFLOW_DEFAULTS.mutability,
   );
 
   return (
-    <div className="config-field" style={{ marginBottom: "var(--space-xl)" }}>
-      <div className="config-field-header">
-        <span className="config-field-label">{groupLabel}</span>
-      </div>
+    <>
+      <ConfigSubsection
+        id="implementer"
+        title="Implementer"
+        isDefault={implementerIsDefault}
+        collapsed={collapsedSubs.has("implementer")}
+        onToggle={onToggleSub}
+      >
+        <ImplementerFields
+          value={effective.implementer}
+          onChange={(v) => onChangeBlock("implementer", v)}
+        />
+      </ConfigSubsection>
 
+      <ConfigSubsection
+        id="contextValidator"
+        title="Context validator"
+        isDefault={validatorIsDefault}
+        collapsed={collapsedSubs.has("contextValidator")}
+        onToggle={onToggleSub}
+      >
+        <ContextValidatorFields
+          value={effective.contextValidator}
+          onChange={(v) => onChangeBlock("contextValidator", v)}
+        />
+      </ConfigSubsection>
+
+      <ConfigSubsection
+        id="iterationPolicy"
+        title="Iteration policy"
+        isDefault={iterationIsDefault}
+        collapsed={collapsedSubs.has("iterationPolicy")}
+        onToggle={onToggleSub}
+      >
+        <IterationPolicyFields
+          value={effective.iterationPolicy}
+          onChange={(v) => onChangeBlock("iterationPolicy", v)}
+        />
+      </ConfigSubsection>
+
+      <ConfigSubsection
+        id="circuitBreaker"
+        title="Circuit breaker"
+        isDefault={circuitIsDefault}
+        collapsed={collapsedSubs.has("circuitBreaker")}
+        onToggle={onToggleSub}
+      >
+        <CircuitBreakerFields
+          value={effective.circuitBreaker}
+          onChange={(v) => onChangeBlock("circuitBreaker", v)}
+        />
+      </ConfigSubsection>
+
+      <ConfigSubsection
+        id="mutability"
+        title="Mutability"
+        isDefault={mutabilityIsDefault}
+        collapsed={collapsedSubs.has("mutability")}
+        onToggle={onToggleSub}
+      >
+        <MutabilityFields
+          value={effective.mutability}
+          onChange={(v) => onChangeBlock("mutability", v)}
+        />
+      </ConfigSubsection>
+    </>
+  );
+}
+
+function ImplementerFields({
+  value,
+  onChange,
+}: {
+  value: GraphWorkflowAgentConfig;
+  onChange: (v: GraphWorkflowAgentConfig) => void;
+}) {
+  const backend = value.backend;
+  const effortOptions = getEffortOptionsForBackend(backend, value.model);
+
+  const handleBackendChange = (next: AgentBackendId) => {
+    if (next === value.backend) return;
+    if (next === "codex") {
+      onChange({
+        backend: "codex",
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+      });
+    } else {
+      onChange({
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+      });
+    }
+  };
+
+  return (
+    <>
       <ConfigField
-        label={formatFieldLabel("type")}
-        fieldPath={`${basePath}.type`}
-        isDefault={isDefault(`${basePath}.type`)}
-        isModified={isModified(`${basePath}.type`)}
+        label="Backend"
+        fieldPath="workflowDefaults.implementer.backend"
+        isDefault={false}
+        isModified={false}
       >
         <ConfigPillGroup
-          value={validatorType}
+          value={backend}
           options={["claude", "codex"] as const}
-          onChange={(v) => {
-            // Reset model and effort atomically when switching backend
-            onChangeMulti([
-              [`${basePath}.type`, v],
-              [`${basePath}.model`, undefined],
-              [`${basePath}.reasoningEffort`, undefined],
-            ]);
+          onChange={handleBackendChange}
+        />
+      </ConfigField>
+
+      <ConfigField
+        label="Model"
+        fieldPath="workflowDefaults.implementer.model"
+        isDefault={false}
+        isModified={false}
+      >
+        <ModelSelector
+          value={value.model}
+          backend={backend}
+          onChange={(model) => {
+            if (backend === "codex") {
+              onChange({
+                backend: "codex",
+                model: model as GraphWorkflowAgentConfig["model"],
+                reasoningEffort: value.reasoningEffort,
+              } as GraphWorkflowAgentConfig);
+            } else {
+              onChange({
+                backend: "claude",
+                model: model as "opus" | "sonnet" | "haiku",
+                reasoningEffort: value.reasoningEffort as EffortLevel,
+              });
+            }
           }}
         />
       </ConfigField>
 
       <ConfigField
-        label={formatFieldLabel("model")}
-        fieldPath={`${basePath}.model`}
-        isDefault={isDefault(`${basePath}.model`)}
-        isModified={isModified(`${basePath}.model`)}
+        label="Reasoning effort"
+        fieldPath="workflowDefaults.implementer.reasoningEffort"
+        isDefault={false}
+        isModified={false}
+      >
+        <ReasoningLevelSelector
+          value={value.reasoningEffort as EffortLevel}
+          availableLevels={effortOptions}
+          onChange={(level) =>
+            onChange({
+              ...value,
+              reasoningEffort: level,
+            } as GraphWorkflowAgentConfig)
+          }
+        />
+      </ConfigField>
+    </>
+  );
+}
+
+function ContextValidatorFields({
+  value,
+  onChange,
+}: {
+  value: GraphWorkflowAgentValidatorConfig;
+  onChange: (v: GraphWorkflowAgentValidatorConfig) => void;
+}) {
+  const type = value.type;
+  const continuityEnabled = value.continuity?.enabled ?? true;
+  const continuityLimit = value.continuity?.contextLimitTokens;
+
+  const handleTypeChange = (next: "claude" | "codex") => {
+    if (next === value.type) return;
+    if (next === "codex") {
+      onChange({
+        type: "codex",
+        enabled: value.enabled,
+        continuity: value.continuity ?? { enabled: true },
+        codex: { model: "gpt-5.4", reasoningEffort: "medium" },
+      });
+    } else {
+      onChange({
+        type: "claude",
+        enabled: value.enabled,
+        continuity: value.continuity ?? { enabled: true },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+      });
+    }
+  };
+
+  return (
+    <>
+      <ConfigField
+        label="Type"
+        fieldPath="workflowDefaults.contextValidator.type"
+        isDefault={false}
+        isModified={false}
       >
         <ConfigPillGroup
-          value={
-            validator?.model ?? (validatorType === "codex" ? "gpt-5.4" : "opus")
-          }
-          options={
-            validatorType === "codex"
-              ? (["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"] as const)
-              : (["opus", "sonnet", "haiku"] as const)
-          }
-          onChange={(v) => {
-            const changes: Array<[FieldPath, unknown]> = [
-              [`${basePath}.model`, v],
-            ];
-            // Materialize type discriminant if validator didn't exist yet
-            if (!validator) {
-              changes.push([`${basePath}.type`, "claude"]);
-            }
-            onChangeMulti(changes);
-          }}
+          value={type}
+          options={["claude", "codex"] as const}
+          onChange={handleTypeChange}
         />
       </ConfigField>
 
       <ConfigField
-        label={formatFieldLabel("reasoningEffort")}
-        fieldPath={`${basePath}.reasoningEffort`}
-        isDefault={isDefault(`${basePath}.reasoningEffort`)}
-        isModified={isModified(`${basePath}.reasoningEffort`)}
+        label="Enabled"
+        fieldPath="workflowDefaults.contextValidator.enabled"
+        isDefault={false}
+        isModified={false}
       >
-        <ConfigPillGroup
-          value={(validator?.reasoningEffort ?? "medium") as string}
-          options={validatorEffortOptions}
-          onChange={(v) => {
-            const changes: Array<[FieldPath, unknown]> = [
-              [`${basePath}.reasoningEffort`, v],
-            ];
-            if (!validator) {
-              changes.push([`${basePath}.type`, "claude"]);
-            }
-            onChangeMulti(changes);
-          }}
+        <ConfigToggle
+          value={value.enabled}
+          onChange={(v) => onChange({ ...value, enabled: v })}
         />
       </ConfigField>
-    </div>
+
+      {value.type === "claude" && value.agent.backend === "claude" && (
+        <ClaudeAgentSubfields
+          agent={value.agent}
+          onAgentChange={(agent) =>
+            onChange({
+              type: "claude",
+              enabled: value.enabled,
+              continuity: value.continuity,
+              agent,
+            })
+          }
+        />
+      )}
+
+      {value.type === "codex" && (
+        <CodexAgentSubfields
+          model={value.codex.model}
+          reasoningEffort={value.codex.reasoningEffort}
+          onCodexChange={(codex) =>
+            onChange({
+              type: "codex",
+              enabled: value.enabled,
+              continuity: value.continuity,
+              codex,
+            })
+          }
+        />
+      )}
+
+      <ConfigField
+        label="Continuity"
+        fieldPath="workflowDefaults.contextValidator.continuity.enabled"
+        isDefault={false}
+        isModified={false}
+      >
+        <ConfigToggle
+          value={continuityEnabled}
+          onChange={(v) =>
+            onChange({
+              ...value,
+              continuity: {
+                enabled: v,
+                ...(continuityLimit !== undefined
+                  ? { contextLimitTokens: continuityLimit }
+                  : {}),
+              },
+            })
+          }
+        />
+      </ConfigField>
+
+      <ConfigField
+        label="Context limit tokens"
+        fieldPath="workflowDefaults.contextValidator.continuity.contextLimitTokens"
+        isDefault={false}
+        isModified={false}
+        hint="Leave empty for auto"
+      >
+        <ConfigNumericInput
+          value={continuityLimit}
+          onChange={(v) =>
+            onChange({
+              ...value,
+              continuity: {
+                enabled: continuityEnabled,
+                ...(v !== undefined && v !== null
+                  ? { contextLimitTokens: v }
+                  : {}),
+              },
+            })
+          }
+          positive
+          integer
+        />
+      </ConfigField>
+    </>
+  );
+}
+
+function ClaudeAgentSubfields({
+  agent,
+  onAgentChange,
+}: {
+  agent: {
+    backend: "claude";
+    model: ClaudeModel;
+    reasoningEffort: EffortLevel;
+  };
+  onAgentChange: (agent: {
+    backend: "claude";
+    model: ClaudeModel;
+    reasoningEffort: EffortLevel;
+  }) => void;
+}) {
+  return (
+    <>
+      <ConfigField
+        label="Agent model"
+        fieldPath="workflowDefaults.contextValidator.agent.model"
+        isDefault={false}
+        isModified={false}
+      >
+        <ModelSelector
+          value={agent.model}
+          backend="claude"
+          onChange={(model) =>
+            onAgentChange({
+              backend: "claude",
+              model: model as ClaudeModel,
+              reasoningEffort: agent.reasoningEffort,
+            })
+          }
+        />
+      </ConfigField>
+      <ConfigField
+        label="Agent effort"
+        fieldPath="workflowDefaults.contextValidator.agent.reasoningEffort"
+        isDefault={false}
+        isModified={false}
+      >
+        <ReasoningLevelSelector
+          value={agent.reasoningEffort}
+          availableLevels={getEffortOptionsForBackend("claude", agent.model)}
+          onChange={(level) =>
+            onAgentChange({
+              backend: "claude",
+              model: agent.model,
+              reasoningEffort: level,
+            })
+          }
+        />
+      </ConfigField>
+    </>
+  );
+}
+
+function CodexAgentSubfields({
+  model,
+  reasoningEffort,
+  onCodexChange,
+}: {
+  model: CodexModel | undefined;
+  reasoningEffort: CodexReasoningEffort | undefined;
+  onCodexChange: (codex: {
+    model?: CodexModel;
+    reasoningEffort?: CodexReasoningEffort;
+  }) => void;
+}) {
+  const effectiveModel = (model ?? "gpt-5.4") as CodexModel;
+  const effectiveEffort = (reasoningEffort ?? "medium") as CodexReasoningEffort;
+  const effortOptions = getEffortOptionsForBackend("codex", effectiveModel);
+
+  return (
+    <>
+      <ConfigField
+        label="Codex model"
+        fieldPath="workflowDefaults.contextValidator.codex.model"
+        isDefault={false}
+        isModified={false}
+      >
+        <ModelSelector
+          value={effectiveModel}
+          backend="codex"
+          onChange={(next) =>
+            onCodexChange({
+              model: next as CodexModel,
+              reasoningEffort: effectiveEffort,
+            })
+          }
+        />
+      </ConfigField>
+      <ConfigField
+        label="Codex effort"
+        fieldPath="workflowDefaults.contextValidator.codex.reasoningEffort"
+        isDefault={false}
+        isModified={false}
+      >
+        <ReasoningLevelSelector
+          value={effectiveEffort as EffortLevel}
+          availableLevels={effortOptions}
+          onChange={(level) =>
+            onCodexChange({
+              model: effectiveModel,
+              reasoningEffort: level as CodexReasoningEffort,
+            })
+          }
+        />
+      </ConfigField>
+    </>
+  );
+}
+
+function IterationPolicyFields({
+  value,
+  onChange,
+}: {
+  value: GraphWorkflowIterationPolicy;
+  onChange: (v: GraphWorkflowIterationPolicy) => void;
+}) {
+  const continuityEnabled = value.continuity?.enabled ?? true;
+  const continuityLimit = value.continuity?.contextLimitTokens;
+
+  return (
+    <>
+      <ConfigField
+        label="Max iterations"
+        fieldPath="workflowDefaults.iterationPolicy.maxIterations"
+        isDefault={false}
+        isModified={false}
+      >
+        <ConfigNumericInput
+          value={value.maxIterations}
+          onChange={(v) =>
+            onChange({
+              ...value,
+              maxIterations:
+                typeof v === "number" && v > 0 ? v : value.maxIterations,
+            })
+          }
+          required
+          positive
+          integer
+        />
+      </ConfigField>
+
+      <ConfigField
+        label="Continuity"
+        fieldPath="workflowDefaults.iterationPolicy.continuity.enabled"
+        isDefault={false}
+        isModified={false}
+      >
+        <ConfigToggle
+          value={continuityEnabled}
+          onChange={(v) =>
+            onChange({
+              ...value,
+              continuity: {
+                enabled: v,
+                ...(continuityLimit !== undefined
+                  ? { contextLimitTokens: continuityLimit }
+                  : {}),
+              },
+            })
+          }
+        />
+      </ConfigField>
+
+      <ConfigField
+        label="Context limit tokens"
+        fieldPath="workflowDefaults.iterationPolicy.continuity.contextLimitTokens"
+        isDefault={false}
+        isModified={false}
+        hint="Leave empty for auto"
+      >
+        <ConfigNumericInput
+          value={continuityLimit}
+          onChange={(v) =>
+            onChange({
+              ...value,
+              continuity: {
+                enabled: continuityEnabled,
+                ...(v !== undefined && v !== null
+                  ? { contextLimitTokens: v }
+                  : {}),
+              },
+            })
+          }
+          positive
+          integer
+        />
+      </ConfigField>
+    </>
+  );
+}
+
+function CircuitBreakerFields({
+  value,
+  onChange,
+}: {
+  value: GraphWorkflowCircuitBreakerPolicy;
+  onChange: (v: GraphWorkflowCircuitBreakerPolicy) => void;
+}) {
+  return (
+    <ConfigField
+      label="Failure threshold"
+      fieldPath="workflowDefaults.circuitBreaker.consecutiveFailureThreshold"
+      isDefault={false}
+      isModified={false}
+      hint="Consecutive failures before the context is halted"
+    >
+      <ConfigNumericInput
+        value={value.consecutiveFailureThreshold}
+        onChange={(v) =>
+          onChange({
+            consecutiveFailureThreshold: typeof v === "number" ? v : undefined,
+          })
+        }
+        positive
+        integer
+      />
+    </ConfigField>
+  );
+}
+
+function MutabilityFields({
+  value,
+  onChange,
+}: {
+  value: GraphWorkflowMutabilityPolicy;
+  onChange: (v: GraphWorkflowMutabilityPolicy) => void;
+}) {
+  return (
+    <ConfigField
+      label="Allow agent task add"
+      fieldPath="workflowDefaults.mutability.allowAgentTaskAdd"
+      isDefault={false}
+      isModified={false}
+      hint="Let agents add tasks during execution"
+    >
+      <ConfigToggle
+        value={value.allowAgentTaskAdd}
+        onChange={(v) => onChange({ allowAgentTaskAdd: v })}
+      />
+    </ConfigField>
   );
 }

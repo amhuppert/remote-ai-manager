@@ -1,13 +1,28 @@
 import type {
-  GraphWorkflowAgentConfig,
+  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowVisualLayout,
   GraphWorkflowTaskDefinition,
+  WorkflowConfigOverride,
   WorkflowSemanticDefinition,
 } from "@/types";
 import {
   validateWorkflowDefinition,
   type WorkflowGraphValidationError,
 } from "./validation";
+
+export type ContextOverrideBlock =
+  | "implementer"
+  | "contextValidator"
+  | "mutability"
+  | "circuitBreaker"
+  | "iterationPolicy";
+
+export type WorkflowConfigBlock =
+  | "implementer"
+  | "contextValidator"
+  | "iterationPolicy"
+  | "circuitBreaker"
+  | "mutability";
 
 export interface WorkflowBuilderDraftData {
   definition: WorkflowSemanticDefinition;
@@ -80,7 +95,6 @@ function createTaskId(contextId: string, order: number): string {
 
 export function addExecutionContext(
   draft: WorkflowBuilderDraftData,
-  options?: { defaultAgentConfig?: GraphWorkflowAgentConfig },
 ): WorkflowBuilderDraftData & { contextId: string } {
   const definition = cloneValue(draft.definition);
   const layout = cloneValue(draft.layout);
@@ -91,25 +105,10 @@ export function addExecutionContext(
     0,
   );
 
-  const agentConfig: GraphWorkflowAgentConfig = options?.defaultAgentConfig ?? {
-    backend: "claude",
-    model: "sonnet",
-    reasoningEffort: "medium",
-  };
-
   definition.executionContexts.push({
     id: contextId,
     title: `Execution Context ${contextNumber}`,
-    description: "",
-    agent: agentConfig,
-    mutability: {
-      allowAgentTaskAdd: false,
-    },
-    circuitBreaker: {},
-    iterationPolicy: {
-      maxIterations: 3,
-      continuity: { enabled: true },
-    },
+    acceptanceCriteria: "",
   });
 
   layout.contextPositions[contextId] = {
@@ -129,10 +128,13 @@ export function updateExecutionContext(
   contextId: string,
   updates: Partial<WorkflowSemanticDefinition["executionContexts"][number]>,
 ): WorkflowSemanticDefinition {
+  const definedUpdates = Object.fromEntries(
+    Object.entries(updates).filter(([, value]) => value !== undefined),
+  ) as Partial<WorkflowSemanticDefinition["executionContexts"][number]>;
   return {
     ...cloneValue(definition),
     executionContexts: definition.executionContexts.map((context) =>
-      context.id === contextId ? { ...context, ...updates } : context,
+      context.id === contextId ? { ...context, ...definedUpdates } : context,
     ),
   };
 }
@@ -312,6 +314,77 @@ export function moveTaskWithinContext(
   const [task] = reordered.splice(currentIndex, 1);
   reordered.splice(nextIndex, 0, task!);
   return renumberContextTasks(definition, contextId, reordered);
+}
+
+export function setContextBlockOverride<K extends ContextOverrideBlock>(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+  block: K,
+  value: NonNullable<GraphWorkflowExecutionContextDefinition[K]>,
+): WorkflowSemanticDefinition {
+  return {
+    ...cloneValue(definition),
+    executionContexts: definition.executionContexts.map((context) =>
+      context.id === contextId
+        ? { ...context, [block]: cloneValue(value) }
+        : context,
+    ),
+  };
+}
+
+export function clearContextBlockOverride(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+  block: ContextOverrideBlock,
+): WorkflowSemanticDefinition {
+  const next = cloneValue(definition);
+  next.executionContexts = next.executionContexts.map((context) => {
+    if (context.id !== contextId) return context;
+    const updated = { ...context };
+    delete updated[block];
+    return updated;
+  });
+  return next;
+}
+
+export function disableContextValidator(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+): WorkflowSemanticDefinition {
+  return setContextBlockOverride(definition, contextId, "contextValidator", {
+    kind: "disabled",
+  });
+}
+
+export function enableContextValidator(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+): WorkflowSemanticDefinition {
+  return clearContextBlockOverride(definition, contextId, "contextValidator");
+}
+
+export function setWorkflowConfigOverride<K extends WorkflowConfigBlock>(
+  definition: WorkflowSemanticDefinition,
+  block: K,
+  value: NonNullable<WorkflowConfigOverride[K]>,
+): WorkflowSemanticDefinition {
+  const next = cloneValue(definition);
+  next.workflowConfig = {
+    ...next.workflowConfig,
+    [block]: cloneValue(value),
+  };
+  return next;
+}
+
+export function clearWorkflowConfigOverride(
+  definition: WorkflowSemanticDefinition,
+  block: WorkflowConfigBlock,
+): WorkflowSemanticDefinition {
+  const next = cloneValue(definition);
+  const updated = { ...next.workflowConfig };
+  delete updated[block];
+  next.workflowConfig = updated;
+  return next;
 }
 
 export function updateContextPosition(

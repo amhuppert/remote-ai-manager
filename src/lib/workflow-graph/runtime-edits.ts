@@ -8,6 +8,7 @@ import type {
   WorkflowRuntimeEditRequest,
 } from "@/types";
 import {
+  GraphWorkflowValidationError,
   validateWorkflowDefinition,
   validateWorkflowRuntimeEdit,
 } from "./validation";
@@ -31,13 +32,10 @@ export interface AgentAddedTask {
   instructions: string;
 }
 
-export class GraphWorkflowRuntimeEditValidationError extends Error {
-  readonly errors: WorkflowGraphValidationError[];
-
+export class GraphWorkflowRuntimeEditValidationError extends GraphWorkflowValidationError {
   constructor(errors: WorkflowGraphValidationError[]) {
-    super("Runtime edit validation failed");
+    super(errors, "Runtime edit validation failed");
     this.name = "GraphWorkflowRuntimeEditValidationError";
-    this.errors = errors;
   }
 }
 

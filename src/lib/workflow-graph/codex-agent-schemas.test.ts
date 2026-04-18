@@ -2,24 +2,27 @@ import { describe, expect, it } from "vitest";
 import { createWorkflowDefinition } from "./test-fixtures";
 import type { GraphWorkflowExecutionContextDefinition } from "@/types";
 
-describe("execution context agent config with backend support", () => {
+describe("execution context implementer config with backend support", () => {
   it("existing fixtures without backend field still produce valid definitions", () => {
     const definition = createWorkflowDefinition();
-    expect(definition.executionContexts[0]!.agent.model).toBe("opus");
-    expect(definition.executionContexts[0]!.agent.reasoningEffort).toBe("high");
+    expect(definition.executionContexts[0]!.implementer?.model).toBe("opus");
+    expect(definition.executionContexts[0]!.implementer?.reasoningEffort).toBe(
+      "high",
+    );
   });
 
-  it("accepts codex backend on execution context agent", () => {
+  it("accepts codex backend on execution context implementer", () => {
     const definition = createWorkflowDefinition({
       executionContexts: [
         {
           id: "ctx-codex",
           title: "Codex Context",
-          agent: {
+          acceptanceCriteria: "TBD",
+          implementer: {
             backend: "codex",
             model: "gpt-5.4",
             reasoningEffort: "high",
-          } as GraphWorkflowExecutionContextDefinition["agent"],
+          } as GraphWorkflowExecutionContextDefinition["implementer"],
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -31,14 +34,14 @@ describe("execution context agent config with backend support", () => {
     });
 
     const ctx = definition.executionContexts[0]!;
-    expect(ctx.agent.backend).toBe("codex");
-    expect(ctx.agent.model).toBe("gpt-5.4");
+    expect(ctx.implementer?.backend).toBe("codex");
+    expect(ctx.implementer?.model).toBe("gpt-5.4");
   });
 
-  it("backend field is accessible as a discriminator on agent config", () => {
+  it("backend field is accessible as a discriminator on implementer config", () => {
     const definition = createWorkflowDefinition();
-    const agent = definition.executionContexts[0]!.agent;
+    const implementer = definition.executionContexts[0]!.implementer;
 
-    expect(agent.backend).toBe("claude");
+    expect(implementer?.backend).toBe("claude");
   });
 });

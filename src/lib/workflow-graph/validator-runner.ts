@@ -4,7 +4,7 @@ import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
-  GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowResolvedContext,
   GraphWorkflowLaneKind,
   GraphWorkflowTaskDefinition,
   GraphWorkflowValidationReviewArtifact,
@@ -46,7 +46,7 @@ export const VALIDATOR_OUTPUT_SCHEMA = {
 } as const;
 
 export interface BuildContextValidationPromptInput {
-  context: GraphWorkflowExecutionContextDefinition;
+  context: GraphWorkflowResolvedContext;
   tasks: GraphWorkflowTaskDefinition[];
   taskStates: GraphWorkflowExecution["taskStates"];
   validator: GraphWorkflowAgentValidatorConfig;
@@ -85,7 +85,7 @@ export function buildContextValidationPrompt(
     "",
     "## Acceptance Criteria",
     "",
-    input.validator.acceptanceCriteria,
+    input.context.acceptanceCriteria,
     "",
     "## Context",
     "",
