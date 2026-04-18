@@ -130,6 +130,7 @@ export type {
   GraphWorkflowClaudeValidatorConfig,
   GraphWorkflowCodexValidatorConfig,
   GraphWorkflowContextValidation,
+  GraphWorkflowScriptValidatorConfig,
   ContextValidatorOverride,
   WorkflowConfigOverride,
   GraphWorkflowResolvedContext,

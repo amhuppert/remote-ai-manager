@@ -13,6 +13,7 @@ import {
   graphWorkflowCircuitBreakerPolicySchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowMutabilityPolicySchema,
+  graphWorkflowScriptValidatorConfigSchema,
   workflowConfigOverrideSchema,
 } from "@/lib/schemas";
 import { getErrorMessage } from "@/lib/errors";
@@ -48,7 +49,7 @@ const executionContextInputSchema = z.object({
     .trim()
     .min(1)
     .describe(
-      "Required. The shared 'done' statement for this context. Passed to the implementer and, when validation is enabled, to the context validator.",
+      "Required. The shared 'done' statement for this context. Passed to the implementer and, when the agent validator is enabled, to that validator. Write criteria that stay strictly inside this context's scope — if another context will finish related work (e.g. updating downstream types, wiring up integrations), do not include that work here. Do NOT write deterministic gates such as 'tests pass', 'no type errors', 'lint clean', or 'build succeeds' — those belong to the optional script validator, not the acceptance criteria. Focus on judgment-based outcomes that only a reviewer could assess.",
     ),
   implementer: graphWorkflowAgentConfigSchema
     .optional()
@@ -58,7 +59,12 @@ const executionContextInputSchema = z.object({
   contextValidator: contextValidatorOverrideSchema
     .optional()
     .describe(
-      "Optional per-context validator override. Use { kind: 'use', value: ... } to specify a custom validator, or { kind: 'disabled' } to opt this context out of validation. Omit to inherit the workflow-level validator.",
+      "Optional per-context override for the agent (LLM-judged) validator. Use { kind: 'use', value: ... } to specify a custom validator, or { kind: 'disabled' } to opt this context out of agent validation. Omit to inherit the workflow-level validator. The agent validator judges intent-based criteria only; deterministic checks belong to scriptValidator.",
+    ),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema
+    .optional()
+    .describe(
+      "Optional per-context script validator. Set { enabled: true } to run the project's preMergeCommand as a deterministic gate after all tasks in this context complete. Failures are saved to a log file and fed back to the implementer as a remediation task. Requires the project to have a preMergeCommand configured in CommandCenter.json — otherwise the workflow halts with an infra error. Omit to inherit workflow-level/global defaults. A context may use the agent validator, script validator, both, or neither.",
     ),
   mutability: graphWorkflowMutabilityPolicySchema
     .optional()
@@ -210,6 +216,9 @@ function inflateToSemanticDefinition(
     ...(ctx.contextValidator !== undefined
       ? { contextValidator: ctx.contextValidator }
       : {}),
+    ...(ctx.scriptValidator !== undefined
+      ? { scriptValidator: ctx.scriptValidator }
+      : {}),
     ...(ctx.mutability !== undefined ? { mutability: ctx.mutability } : {}),
     ...(ctx.circuitBreaker !== undefined
       ? { circuitBreaker: ctx.circuitBreaker }
@@ -298,20 +307,29 @@ Planning guidelines:
 - Edges express dependencies: context B waits for context A to complete. Do not create edges between contexts that can run independently.
 - Use kebab-case ids that describe the content (e.g. 'auth-setup', 'create-user-schema'), not generic names like 'step-1'.
 
+Acceptance criteria authoring:
+- Write intent-based criteria that an agent could judge by reading the resulting code — outcomes, not process.
+- Keep criteria STRICTLY inside the scope of THIS context. If cleanup, type updates, integration work, or follow-up wiring is the responsibility of a downstream context, do not include it here. Holding a context to work that another context is assigned to produces false validation failures.
+- Do NOT encode deterministic checks ('tests pass', 'no type errors', 'lint clean', 'build succeeds') in acceptance criteria. The agent validator ignores those. If those gates must fully pass before a context can proceed, enable the script validator on the context instead — it runs the project's preMergeCommand as a deterministic gate.
+
+Validators (two independent mechanisms):
+- 'contextValidator' runs an LLM agent that judges the INTENT of the acceptance criteria. It makes allowance for imprecise wording and respects context scope boundaries. Use { kind: 'disabled' } to opt out, or { kind: 'use', value: ... } to override.
+- 'scriptValidator: { enabled: true }' runs the project's preMergeCommand as a deterministic pre-merge gate after all tasks complete. On failure, the full output is written to a log file and a remediation task is added to the context. Script validator runs BEFORE the agent validator; if the script fails, the agent validator is skipped for that iteration.
+- A context may enable the agent validator, the script validator, both, or neither.
+
 Cascade & defaults (IMPORTANT — keep payloads minimal):
-- 'acceptanceCriteria' is REQUIRED on every execution context. It is the shared 'done' statement passed to the implementer and — when validation is enabled — to the context validator. Treat it as the single source of truth for what success looks like.
-- 'implementer', 'contextValidator', 'iterationPolicy', 'circuitBreaker', and 'mutability' are all OPTIONAL on a context. Omit them entirely unless the user explicitly asked for a non-default value on that specific context. Omitted blocks inherit from the workflow-level config, which inherits from the global project defaults.
-- To opt a context OUT of validation, set 'contextValidator: { kind: "disabled" }'. To override the validator with a custom config, set 'contextValidator: { kind: "use", value: { type: "claude" | "codex", ... } }'. Omit the field entirely to inherit the workflow/global validator.
+- 'acceptanceCriteria' is REQUIRED on every execution context. Treat it as the single source of truth for what intent-based success looks like in this context's scope.
+- 'implementer', 'contextValidator', 'scriptValidator', 'iterationPolicy', 'circuitBreaker', and 'mutability' are all OPTIONAL on a context. Omit them entirely unless the user explicitly asked for a non-default value on that specific context. Omitted blocks inherit from the workflow-level config, which inherits from the global project defaults.
 - Include top-level 'workflowConfig' ONLY when the user explicitly asked for a non-default backend/model/effort or a non-default policy for the whole workflow. Otherwise omit it and let global defaults apply.
 
 The user will review and edit the workflow in the visual builder before starting execution.`;
 
 const REPLACE_DESCRIPTION = `Replace the entire definition of an existing workflow. Use this when revising a plan after user feedback — submit the complete updated graph, not a partial diff. The previous definition is fully overwritten.
 
-The same cascade rules apply as with create_graph_workflow:
-- Every execution context must declare 'acceptanceCriteria'.
-- Omit 'implementer', 'contextValidator', 'iterationPolicy', 'circuitBreaker', and 'mutability' on a context unless the user explicitly asked for a non-default value on that context. Omitted blocks inherit workflow-level / global defaults.
-- Use 'contextValidator: { kind: "disabled" }' to opt a context out of validation, or { kind: "use", value: ... } to override it.
+The same authoring rules apply as with create_graph_workflow:
+- Every execution context must declare 'acceptanceCriteria' as intent-based outcomes strictly inside the context's scope. Do not include deterministic gates (tests/types/lint/build) — use 'scriptValidator' for those.
+- Validators are independent: 'contextValidator' judges intent with an LLM; 'scriptValidator: { enabled: true }' runs the project's preMergeCommand as a deterministic gate. A context may enable both, either, or neither.
+- Omit 'implementer', 'contextValidator', 'scriptValidator', 'iterationPolicy', 'circuitBreaker', and 'mutability' on a context unless the user explicitly asked for a non-default value on that context. Omitted blocks inherit workflow-level / global defaults.
 - Set top-level 'workflowConfig' only when the user explicitly asked for non-default backend/model/effort or non-default policies for the whole workflow; otherwise omit it.`;
 
 const LIST_WORKFLOWS_DESCRIPTION =

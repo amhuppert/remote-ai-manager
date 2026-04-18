@@ -26,6 +26,7 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
       reasoningEffort: "medium",
     },
   },
+  scriptValidator: { enabled: false },
   iterationPolicy: {
     maxIterations: 20,
     continuity: { enabled: true },
@@ -46,6 +47,8 @@ function coerceGlobalDefaults(
     implementer: globalDefaults.implementer ?? SEEDED_DEFAULTS.implementer,
     contextValidator:
       globalDefaults.contextValidator ?? SEEDED_DEFAULTS.contextValidator,
+    scriptValidator:
+      globalDefaults.scriptValidator ?? SEEDED_DEFAULTS.scriptValidator,
     iterationPolicy:
       globalDefaults.iterationPolicy ?? SEEDED_DEFAULTS.iterationPolicy,
     circuitBreaker:
@@ -63,6 +66,7 @@ export function resolveWorkflowConfig(
   return {
     implementer: override.implementer ?? defaults.implementer,
     contextValidator: override.contextValidator ?? defaults.contextValidator,
+    scriptValidator: override.scriptValidator ?? defaults.scriptValidator,
     iterationPolicy: override.iterationPolicy ?? defaults.iterationPolicy,
     circuitBreaker: override.circuitBreaker ?? defaults.circuitBreaker,
     mutability: override.mutability ?? defaults.mutability,
@@ -99,6 +103,11 @@ export function resolveContext(
     context.contextValidator,
   );
 
+  const scriptValidator =
+    context.scriptValidator ??
+    workflow.scriptValidator ??
+    defaults.scriptValidator;
+
   return {
     id: context.id,
     title: context.title,
@@ -108,6 +117,7 @@ export function resolveContext(
     acceptanceCriteria: context.acceptanceCriteria,
     implementer,
     contextValidator,
+    scriptValidator,
     mutability,
     circuitBreaker,
     iterationPolicy,

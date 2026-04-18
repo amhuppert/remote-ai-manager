@@ -166,6 +166,7 @@ export function createResolvedWorkflowDefinition(
         reasoningEffort: "medium",
       },
       contextValidator: null,
+      scriptValidator: ctx.scriptValidator ?? { enabled: false },
       mutability: ctx.mutability ?? { allowAgentTaskAdd: false },
       circuitBreaker: ctx.circuitBreaker ?? {},
       iterationPolicy: ctx.iterationPolicy ?? {

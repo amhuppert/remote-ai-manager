@@ -17,6 +17,7 @@ function makeContext(
     acceptanceCriteria: "Planning complete.",
     implementer: { backend: "claude", model: "opus", reasoningEffort: "high" },
     contextValidator: null,
+    scriptValidator: { enabled: false },
     mutability: { allowAgentTaskAdd: true },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },

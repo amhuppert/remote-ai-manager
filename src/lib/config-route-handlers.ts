@@ -12,7 +12,7 @@ import {
   writeRawConfig as defaultWriteRawConfig,
   intersectKeys,
 } from "@/lib/config";
-import { globalConfigSchema } from "@/lib/schemas";
+import { rawGlobalConfigSchema } from "@/lib/schemas";
 import type { GlobalConfig } from "@/types";
 import { createLogger } from "@/lib/logging";
 
@@ -62,7 +62,7 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const validation = globalConfigSchema.partial().safeParse(body);
+    const validation = rawGlobalConfigSchema.safeParse(body);
     if (!validation.success) {
       const detail = validation.error.issues
         .map((i) => `${i.path.join(".")}: ${i.message}`)

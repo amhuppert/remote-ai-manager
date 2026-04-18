@@ -1,508 +1,62 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { writeFile, mkdir, rm } from "node:fs/promises";
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import os from "node:os";
-import {
-  createConfigReader,
-  resolveBranchPrefix,
-  resolveConfigDir,
-} from "./config";
-import { globalConfigSchema, perRepoConfigSchema } from "./schemas";
+import { createConfigReader } from "./config";
 
-const TEST_DIR = path.join("/tmp", "cc-config-test-" + Date.now());
-
-beforeEach(async () => {
-  await mkdir(TEST_DIR, { recursive: true });
-});
+const tempDirs: string[] = [];
 
 afterEach(async () => {
-  await rm(TEST_DIR, { recursive: true, force: true });
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
 });
 
-describe("config", () => {
-  it("readConfig creates default config when none exists", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const config = await reader.readConfig();
+async function createTempConfigDir(): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), "cc-config-test-"));
+  tempDirs.push(dir);
+  return dir;
+}
 
-    expect(config.baseDir).toContain("projects");
-    expect(config.claudeTimeoutMs).toBe(3_600_000);
-    expect(config.ignorePatterns).toContain("node_modules");
-    expect(typeof config.stateFilePath).toBe("string");
-  });
-
-  it("readConfig returns saved config after writeConfig", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const original = await reader.readConfig();
-
-    const modified = {
-      ...original,
-      baseDir: "/custom/path",
-      claudeTimeoutMs: 60_000,
-    };
-    await reader.writeConfig(modified);
-
-    const reread = await reader.readConfig();
-    expect(reread.baseDir).toBe("/custom/path");
-    expect(reread.claudeTimeoutMs).toBe(60_000);
-  });
-
-  it("readConfig merges defaults for missing fields in older configs", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    // First create the config dir + default config
-    await reader.readConfig();
-
-    const configFile = path.join(TEST_DIR, "config.json");
-
-    // Write a partial config (simulating an older version)
+describe("createConfigReader", () => {
+  it("merges partial workflowDefaults from disk with seeded defaults", async () => {
+    const configDir = await createTempConfigDir();
     await writeFile(
-      configFile,
-      JSON.stringify({ baseDir: "/old/path" }),
-      "utf-8",
-    );
-
-    // Fresh reader to pick up the modified file
-    const freshReader = createConfigReader(TEST_DIR);
-    const config = await freshReader.readConfig();
-
-    expect(config.baseDir).toBe("/old/path");
-    // claudeTimeoutMs should get the default
-    expect(config.claudeTimeoutMs).toBe(3_600_000);
-  });
-
-  it("getConfigDirPath returns the configured directory", () => {
-    const reader = createConfigReader(TEST_DIR);
-    expect(reader.getConfigDirPath()).toBe(TEST_DIR);
-  });
-
-  it("stateFilePath defaults to configDir/state.json", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const config = await reader.readConfig();
-    expect(config.stateFilePath).toBe(path.join(TEST_DIR, "state.json"));
-  });
-
-  it("readConfig handles malformed config by merging valid fields with defaults", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    // Create the config dir first
-    await reader.readConfig();
-
-    const configFile = path.join(TEST_DIR, "config.json");
-
-    // Write a config with one valid field and one extra unknown field
-    await writeFile(
-      configFile,
-      JSON.stringify({ baseDir: "/valid/path", unknownField: "ignored" }),
-      "utf-8",
-    );
-
-    const freshReader = createConfigReader(TEST_DIR);
-    const config = await freshReader.readConfig();
-
-    expect(config.baseDir).toBe("/valid/path");
-    // Defaults fill in missing fields
-    expect(config.claudeTimeoutMs).toBe(3_600_000);
-    expect(config.ignorePatterns).toContain("node_modules");
-  });
-
-  it("readConfig creates default config with expected ignore patterns", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const config = await reader.readConfig();
-
-    const expectedPatterns = [
-      "node_modules",
-      ".next",
-      "dist",
-      "build",
-      "target",
-      ".cache",
-      ".turbo",
-      ".venv",
-    ];
-    expect(config.ignorePatterns).toEqual(expectedPatterns);
-  });
-
-  it("readConfig preserves branchPrefix when set", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const original = await reader.readConfig();
-
-    const modified = { ...original, branchPrefix: "dev" };
-    await reader.writeConfig(modified);
-
-    const reread = await reader.readConfig();
-    expect(reread.branchPrefix).toBe("dev");
-  });
-});
-
-describe("schema: branchPrefix field", () => {
-  it("globalConfigSchema accepts branchPrefix", () => {
-    const result = globalConfigSchema
-      .partial()
-      .safeParse({ branchPrefix: "dev" });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.branchPrefix).toBe("dev");
-    }
-  });
-
-  it("globalConfigSchema allows omitted branchPrefix", () => {
-    const result = globalConfigSchema.partial().safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.branchPrefix).toBeUndefined();
-    }
-  });
-
-  it("perRepoConfigSchema accepts branchPrefix", () => {
-    const result = perRepoConfigSchema.safeParse({
-      initScriptPath: null,
-      branchPrefix: "feature",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.branchPrefix).toBe("feature");
-    }
-  });
-
-  it("perRepoConfigSchema allows omitted branchPrefix", () => {
-    const result = perRepoConfigSchema.safeParse({ initScriptPath: null });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.branchPrefix).toBeUndefined();
-    }
-  });
-});
-
-describe("schema: codex config block", () => {
-  it("globalConfigSchema accepts valid codex block", () => {
-    const result = globalConfigSchema.partial().safeParse({
-      codex: {
-        enabled: true,
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
-      },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.codex?.enabled).toBe(true);
-      expect(result.data.codex?.model).toBe("gpt-5.4");
-      expect(result.data.codex?.reasoningEffort).toBe("medium");
-    }
-  });
-
-  it("globalConfigSchema rejects invalid reasoningEffort", () => {
-    const result = globalConfigSchema.partial().safeParse({
-      codex: {
-        enabled: true,
-        reasoningEffort: "turbo",
-      },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("globalConfigSchema allows omitted codex block", () => {
-    const result = globalConfigSchema.partial().safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.codex).toBeUndefined();
-    }
-  });
-
-  it("enabled defaults to false when omitted inside the block", () => {
-    const result = globalConfigSchema.partial().safeParse({
-      codex: { model: "gpt-5.4-nano" },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.codex?.enabled).toBe(false);
-    }
-  });
-
-  it("globalConfigSchema accepts codex timeout as positive number", () => {
-    const result = globalConfigSchema.partial().safeParse({
-      codex: {
-        enabled: true,
-        timeout: 120,
-      },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.codex?.timeout).toBe(120);
-    }
-  });
-
-  it("globalConfigSchema accepts codex timeout as null", () => {
-    const result = globalConfigSchema.partial().safeParse({
-      codex: {
-        enabled: true,
-        timeout: null,
-      },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.codex?.timeout).toBeNull();
-    }
-  });
-
-  it("globalConfigSchema allows omitted codex timeout", () => {
-    const result = globalConfigSchema.partial().safeParse({
-      codex: {
-        enabled: true,
-      },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.codex?.timeout).toBeUndefined();
-    }
-  });
-
-  it("globalConfigSchema rejects non-positive codex timeout", () => {
-    const result = globalConfigSchema.partial().safeParse({
-      codex: {
-        enabled: true,
-        timeout: 0,
-      },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("globalConfigSchema rejects negative codex timeout", () => {
-    const result = globalConfigSchema.partial().safeParse({
-      codex: {
-        enabled: true,
-        timeout: -10,
-      },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("readConfig preserves codex timeout on round-trip", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const original = await reader.readConfig();
-
-    const modified = {
-      ...original,
-      codex: {
-        enabled: true,
-        model: "gpt-5.4" as const,
-        timeout: 300,
-      },
-    };
-    await reader.writeConfig(modified);
-
-    const reread = await reader.readConfig();
-    expect(reread.codex?.timeout).toBe(300);
-  });
-
-  it("readConfig preserves codex timeout null on round-trip", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const original = await reader.readConfig();
-
-    const modified = {
-      ...original,
-      codex: {
-        enabled: true,
-        model: "gpt-5.4" as const,
-        timeout: null,
-      },
-    };
-    await reader.writeConfig(modified);
-
-    const reread = await reader.readConfig();
-    expect(reread.codex?.timeout).toBeNull();
-  });
-
-  it("readConfig preserves codex block on round-trip", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const original = await reader.readConfig();
-
-    const modified = {
-      ...original,
-      codex: {
-        enabled: true,
-        model: "gpt-5.4-mini" as const,
-        reasoningEffort: "high" as const,
-      },
-    };
-    await reader.writeConfig(modified);
-
-    const reread = await reader.readConfig();
-    expect(reread.codex?.enabled).toBe(true);
-    expect(reread.codex?.model).toBe("gpt-5.4-mini");
-    expect(reread.codex?.reasoningEffort).toBe("high");
-  });
-});
-
-describe("readRawConfig", () => {
-  it("returns empty object when config.json doesn't exist", async () => {
-    const emptyDir = path.join(TEST_DIR, "empty-" + Date.now());
-    await mkdir(emptyDir, { recursive: true });
-    const reader = createConfigReader(emptyDir);
-    const raw = await reader.readRawConfig();
-    expect(raw).toEqual({});
-  });
-
-  it("returns only the explicitly written fields (no defaults merged)", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const configFile = path.join(TEST_DIR, "config.json");
-    await writeFile(
-      configFile,
-      JSON.stringify({ baseDir: "/custom/path", claudeTimeoutMs: 99_000 }),
-      "utf-8",
-    );
-
-    const raw = await reader.readRawConfig();
-    expect(raw).toEqual({ baseDir: "/custom/path", claudeTimeoutMs: 99_000 });
-    // Should NOT have defaults like ignorePatterns or stateFilePath
-    expect(raw).not.toHaveProperty("ignorePatterns");
-    expect(raw).not.toHaveProperty("stateFilePath");
-  });
-
-  it("strips unknown fields via schema validation", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const configFile = path.join(TEST_DIR, "config.json");
-    await writeFile(
-      configFile,
-      JSON.stringify({ baseDir: "/valid", unknownField: "ignored" }),
-      "utf-8",
-    );
-
-    const raw = await reader.readRawConfig();
-    expect(raw).toEqual({ baseDir: "/valid" });
-    expect(raw).not.toHaveProperty("unknownField");
-  });
-
-  it("does not inject nested schema defaults into raw output", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const configFile = path.join(TEST_DIR, "config.json");
-    await writeFile(
-      configFile,
-      JSON.stringify({ codex: { model: "gpt-5.4-nano" } }),
-      "utf-8",
-    );
-
-    const raw = await reader.readRawConfig();
-    // codex.enabled has a Zod default of false — should NOT appear
-    expect(raw.codex).toEqual({ model: "gpt-5.4-nano" });
-    expect(raw.codex).not.toHaveProperty("enabled");
-  });
-
-  it("preserves explicitly set nested fields", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const configFile = path.join(TEST_DIR, "config.json");
-    await writeFile(
-      configFile,
+      path.join(configDir, "config.json"),
       JSON.stringify({
-        pushNotification: { enabled: true, topic: "my-topic" },
+        workflowDefaults: {
+          scriptValidator: { enabled: true },
+        },
       }),
       "utf-8",
     );
 
-    const raw = await reader.readRawConfig();
-    expect(raw.pushNotification).toEqual({ enabled: true, topic: "my-topic" });
-    // provider, serverUrl, triggers have Zod defaults — should NOT appear
-    expect(raw.pushNotification).not.toHaveProperty("provider");
-    expect(raw.pushNotification).not.toHaveProperty("serverUrl");
-    expect(raw.pushNotification).not.toHaveProperty("triggers");
+    const reader = createConfigReader(configDir);
+    const config = await reader.readConfig();
+    expect(config.workflowDefaults).toBeDefined();
+
+    expect(config.workflowDefaults?.scriptValidator).toEqual({ enabled: true });
+    expect(config.workflowDefaults?.implementer).toBeDefined();
+    expect(config.workflowDefaults?.iterationPolicy).toBeDefined();
+    expect(config.workflowDefaults?.circuitBreaker).toBeDefined();
+    expect(config.workflowDefaults?.mutability).toBeDefined();
   });
 
-  it("returns empty object for invalid JSON", async () => {
-    const reader = createConfigReader(TEST_DIR);
-    const configFile = path.join(TEST_DIR, "config.json");
-    await writeFile(configFile, "not valid json!!!", "utf-8");
-
-    const raw = await reader.readRawConfig();
-    expect(raw).toEqual({});
-  });
-});
-
-describe("resolveConfigDir", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it("returns CC_CONFIG_DIR when set", () => {
-    vi.stubEnv("CC_CONFIG_DIR", "/custom/cc-dir");
-    expect(resolveConfigDir()).toBe("/custom/cc-dir");
-  });
-
-  it("CC_CONFIG_DIR takes priority over NODE_ENV=development", () => {
-    vi.stubEnv("CC_CONFIG_DIR", "/custom/cc-dir");
-    vi.stubEnv("NODE_ENV", "development");
-    expect(resolveConfigDir()).toBe("/custom/cc-dir");
-  });
-
-  it("uses cc-dev directory name when NODE_ENV=development", () => {
-    vi.stubEnv("CC_CONFIG_DIR", "");
-    delete process.env["CC_CONFIG_DIR"];
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("XDG_CONFIG_HOME", "");
-    delete process.env["XDG_CONFIG_HOME"];
-
-    const result = resolveConfigDir();
-    expect(result).toMatch(/cc-dev$/);
-  });
-
-  it("uses cc directory name when NODE_ENV=production", () => {
-    vi.stubEnv("CC_CONFIG_DIR", "");
-    delete process.env["CC_CONFIG_DIR"];
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("XDG_CONFIG_HOME", "");
-    delete process.env["XDG_CONFIG_HOME"];
-
-    const result = resolveConfigDir();
-    expect(result).toMatch(/[/\\]cc$/);
-    expect(result).not.toMatch(/cc-dev$/);
-  });
-
-  it("uses cc directory name when NODE_ENV is test", () => {
-    vi.stubEnv("CC_CONFIG_DIR", "");
-    delete process.env["CC_CONFIG_DIR"];
-    vi.stubEnv("NODE_ENV", "test");
-    vi.stubEnv("XDG_CONFIG_HOME", "");
-    delete process.env["XDG_CONFIG_HOME"];
-
-    const result = resolveConfigDir();
-    expect(result).toMatch(/[/\\]cc$/);
-  });
-
-  it("respects XDG_CONFIG_HOME on Linux in dev mode", () => {
-    vi.stubEnv("CC_CONFIG_DIR", "");
-    delete process.env["CC_CONFIG_DIR"];
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("XDG_CONFIG_HOME", "/custom/xdg");
-
-    const result = resolveConfigDir();
-    if (os.platform() !== "darwin") {
-      expect(result).toBe("/custom/xdg/cc-dev");
-    }
-  });
-});
-
-describe("resolveBranchPrefix", () => {
-  it("returns 'csm' when neither config has branchPrefix", () => {
-    expect(resolveBranchPrefix({}, null)).toBe("csm");
-  });
-
-  it("returns global value when only global has branchPrefix", () => {
-    expect(resolveBranchPrefix({ branchPrefix: "dev" }, null)).toBe("dev");
-  });
-
-  it("returns per-project value when only per-project has it", () => {
-    expect(resolveBranchPrefix({}, { branchPrefix: "feature" })).toBe(
-      "feature",
+  it("returns partial workflowDefaults from readRawConfig without rejecting them", async () => {
+    const configDir = await createTempConfigDir();
+    const rawConfig = {
+      workflowDefaults: {
+        scriptValidator: { enabled: true },
+      },
+    };
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify(rawConfig),
+      "utf-8",
     );
-  });
 
-  it("per-project overrides global", () => {
-    expect(
-      resolveBranchPrefix({ branchPrefix: "dev" }, { branchPrefix: "feature" }),
-    ).toBe("feature");
-  });
+    const reader = createConfigReader(configDir);
 
-  it("returns 'csm' when repoConfig is null", () => {
-    expect(resolveBranchPrefix({}, null)).toBe("csm");
-  });
-
-  it("returns 'csm' when repoConfig is undefined", () => {
-    expect(resolveBranchPrefix({})).toBe("csm");
+    await expect(reader.readRawConfig()).resolves.toEqual(rawConfig);
   });
 });

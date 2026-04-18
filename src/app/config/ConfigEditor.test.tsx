@@ -73,13 +73,14 @@ function expandWorkflowDefaults() {
 }
 
 describe("ConfigEditor — Workflow Defaults", () => {
-  it("renders all five sub-sections inside 'Workflow Defaults'", () => {
+  it("renders all six sub-sections inside 'Workflow Defaults'", () => {
     renderWithQuery(<ConfigEditor />);
     expandWorkflowDefaults();
 
     const expected = [
       "Implementer",
       "Context validator",
+      "Script validator",
       "Iteration policy",
       "Circuit breaker",
       "Mutability",
@@ -96,7 +97,7 @@ describe("ConfigEditor — Workflow Defaults", () => {
     expandWorkflowDefaults();
 
     const subs = container.querySelectorAll(".config-subsection");
-    expect(subs.length).toBe(5);
+    expect(subs.length).toBe(6);
     for (const el of subs) {
       expect(el.className).toMatch(/config-subsection/);
     }
@@ -192,6 +193,39 @@ describe("ConfigEditor — Workflow Defaults", () => {
     expect(badge?.textContent).toBe("MODIFIED");
   });
 
+  it("switching the implementer model to Haiku does not crash and disables effort editing", () => {
+    const { container } = renderWithQuery(<ConfigEditor />);
+    expandWorkflowDefaults();
+
+    const implementer = container.querySelector(
+      '[data-subsection="implementer"]',
+    ) as HTMLElement;
+    const modelTrigger = implementer.querySelector(
+      ".model-selector-trigger",
+    ) as HTMLElement;
+
+    fireEvent.click(modelTrigger);
+    const haikuOption = Array.from(
+      document.querySelectorAll(
+        ".model-selector-dropdown.open .model-selector-option",
+      ),
+    ).find((button) => (button.textContent ?? "").startsWith("Haiku"));
+    expect(haikuOption).toBeTruthy();
+    fireEvent.click(haikuOption as HTMLElement);
+
+    expect(
+      implementer.querySelector(".model-selector-label")?.textContent,
+    ).toBe("Haiku");
+
+    const effortTrigger = implementer.querySelector(
+      ".effort-selector-trigger",
+    ) as HTMLButtonElement;
+    expect(effortTrigger).toBeDisabled();
+    expect(
+      implementer.querySelector(".effort-selector-label")?.textContent,
+    ).toBe("Unavailable");
+  });
+
   it("save writes only the changed blocks (unchanged workflow-defaults blocks not written)", () => {
     const { container } = renderWithQuery(<ConfigEditor />);
     expandWorkflowDefaults();
@@ -218,13 +252,37 @@ describe("ConfigEditor — Workflow Defaults", () => {
     expect(mutateMock).toHaveBeenCalledTimes(1);
     const [payload] = mutateMock.mock.calls[0]!;
     const defaults = (payload as GlobalConfig).workflowDefaults;
-    expect(defaults).toBeDefined();
-    // Implementer block was changed → present in payload.
-    expect(defaults?.implementer?.model).toBe("sonnet");
-    // Unchanged blocks (not in raw, not modified) must not be written back.
-    expect(defaults?.contextValidator).toBeUndefined();
-    expect(defaults?.iterationPolicy).toBeUndefined();
-    expect(defaults?.circuitBreaker).toBeUndefined();
-    expect(defaults?.mutability).toBeUndefined();
+    expect(defaults).toEqual({
+      implementer: expect.objectContaining({ model: "sonnet" }),
+    });
+  });
+
+  it("marks the Script validator sub-section modified and saves only that block after enabling it", () => {
+    const { container } = renderWithQuery(<ConfigEditor />);
+    expandWorkflowDefaults();
+
+    const scriptValidator = container.querySelector(
+      '[data-subsection="scriptValidator"]',
+    ) as HTMLElement;
+    expect(scriptValidator.className).toContain("config-subsection--default");
+
+    const toggle = scriptValidator.querySelector(
+      '[role="switch"]',
+    ) as HTMLElement;
+    fireEvent.click(toggle);
+
+    expect(scriptValidator.className).toContain("config-subsection--modified");
+
+    const saveBtn = screen.getByRole("button", {
+      name: /Save Changes/i,
+    }) as HTMLButtonElement;
+    fireEvent.click(saveBtn);
+
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+    const [payload] = mutateMock.mock.calls[0]!;
+    const defaults = (payload as GlobalConfig).workflowDefaults;
+    expect(defaults).toEqual({
+      scriptValidator: { enabled: true },
+    });
   });
 });

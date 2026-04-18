@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import {
   createWorkflowDefinition,
   createWorkflowLayout,
@@ -136,19 +136,20 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
 });
 
 describe("WorkflowInspectorPanel — workflow tab body", () => {
-  it("renders exactly five InspectorConfigBlocks and no AC, tasks, or delete", () => {
+  it("renders exactly six InspectorConfigBlocks and no AC, tasks, or delete", () => {
     resetStore();
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     const blocks = container.querySelectorAll(".wb-inspector-block");
-    expect(blocks).toHaveLength(5);
+    expect(blocks).toHaveLength(6);
     const labels = Array.from(
       container.querySelectorAll(".cc-section-label"),
     ).map((el) => el.textContent);
     expect(labels).toEqual([
       "Implementer",
       "Context validator",
+      "Script validator",
       "Iteration policy",
       "Circuit breaker",
       "Mutability",
@@ -187,10 +188,38 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
         .implementer,
     ).toBeUndefined();
   });
+
+  it("toggling the workflow script validator creates and resets a workflow override", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const toggle = screen.getByRole("switch", {
+      name: /workflow script validator/i,
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(toggle);
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .scriptValidator,
+    ).toEqual({ enabled: true });
+
+    const block = findBlockByLabel(container, "Script validator")!;
+    fireEvent.click(
+      footButtons(block).find((b) => b.textContent === "Reset to inherit")!,
+    );
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .scriptValidator,
+    ).toBeUndefined();
+  });
 });
 
 describe("WorkflowInspectorPanel — context tab body", () => {
-  it("renders AC header, five blocks, tasks editor, and delete button", () => {
+  it("renders AC header, six blocks, tasks editor, and delete button", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
@@ -199,7 +228,7 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       container.querySelector("#context-acceptance-criteria"),
     ).not.toBeNull();
     const blocks = container.querySelectorAll(".wb-inspector-block");
-    expect(blocks).toHaveLength(5);
+    expect(blocks).toHaveLength(6);
 
     expect(container.querySelector(".wb-task-list")).not.toBeNull();
     expect(
@@ -282,6 +311,24 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx2?.iterationPolicy).toBeUndefined();
+  });
+
+  it("toggling the context script validator creates a context override", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const toggle = screen.getByRole("switch", {
+      name: /context script validator/i,
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(toggle);
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.scriptValidator).toEqual({ enabled: true });
   });
 });
 

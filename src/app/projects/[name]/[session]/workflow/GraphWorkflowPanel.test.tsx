@@ -238,6 +238,7 @@ function createCodexExecutionWithRunningTask() {
           reasoningEffort: "medium",
         },
         contextValidator: null,
+        scriptValidator: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

@@ -146,6 +146,23 @@ describe("PUT /api/config", () => {
     expect(body.raw).toEqual(updatedRaw);
   });
 
+  it("accepts partial workflowDefaults bodies with only changed blocks", async () => {
+    const input = {
+      workflowDefaults: {
+        implementer: {
+          backend: "claude" as const,
+          model: "sonnet" as const,
+          reasoningEffort: "medium" as const,
+        },
+      },
+    };
+
+    const response = await handlers.PUT(makePutRequest(input));
+
+    expect(response.status).toBe(200);
+    expect(deps.writeRawConfig).toHaveBeenCalledWith(input);
+  });
+
   it("rejects invalid config body with 400 status and { error }", async () => {
     const response = await handlers.PUT(
       makePutRequest({ claudeTimeoutMs: "not-a-number" }),

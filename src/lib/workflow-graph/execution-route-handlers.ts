@@ -19,6 +19,11 @@ import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowValidationService } from "./execution-validation";
 import { GraphWorkflowValidationError } from "./validation";
 import { createValidatorRunner } from "./validator-runner";
+import {
+  createScriptValidatorRunner,
+  type ScriptValidatorInput,
+  type ScriptValidatorOutcome,
+} from "./script-validator-runner";
 import { emit as emitGraphWorkflowStreamFrame } from "./stream-registry";
 import { createWorkflowStorageService } from "./storage";
 import { buildGraphWorkflowPortableMcp } from "@/lib/mcp-gateway/portable-config";
@@ -97,6 +102,59 @@ const implementerRunner = createGraphWorkflowImplementerRunner();
 const validationService = createGraphWorkflowValidationService({
   runContextValidator: validatorRunner.runContextValidator,
 });
+const scriptValidatorRunner = createScriptValidatorRunner();
+
+export interface GraphWorkflowRouteScriptValidatorServiceDeps {
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<SessionState | null>;
+  readConfig(): Promise<{ preMergeTimeoutMs?: number }>;
+  runScriptValidator(
+    input: ScriptValidatorInput,
+  ): Promise<ScriptValidatorOutcome>;
+}
+
+export function createGraphWorkflowRouteScriptValidatorService(
+  deps: GraphWorkflowRouteScriptValidatorServiceDeps,
+) {
+  return {
+    async runScriptValidator(input: {
+      projectPath: string;
+      sessionName: string;
+      execution: GraphWorkflowExecution;
+      contextId: string;
+    }): Promise<ScriptValidatorOutcome> {
+      const session = await deps.getSession(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (!session) {
+        throw new Error("Session not found");
+      }
+
+      const config = await deps.readConfig();
+      const timeoutMs = config.preMergeTimeoutMs ?? 300_000;
+
+      return deps.runScriptValidator({
+        projectPath: input.projectPath,
+        worktreePath: session.worktreePath,
+        sessionName: input.sessionName,
+        branchName: session.branchName,
+        executionId: input.execution.id,
+        contextId: input.contextId,
+        timeoutMs,
+      });
+    },
+  };
+}
+
+const scriptValidatorService = createGraphWorkflowRouteScriptValidatorService({
+  getSession: defaultGetSession,
+  readConfig,
+  runScriptValidator: scriptValidatorRunner.runScriptValidator,
+});
+
 const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository,
   createConversation,
@@ -138,6 +196,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
     });
   },
   validationService,
+  scriptValidatorService,
   emitStreamFrame: emitGraphWorkflowStreamFrame,
 });
 const executionLoop = createGraphWorkflowExecutionLoop({

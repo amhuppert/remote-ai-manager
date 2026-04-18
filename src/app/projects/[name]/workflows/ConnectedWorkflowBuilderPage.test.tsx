@@ -39,6 +39,7 @@ const workflowDefaults: WorkflowDefaults = {
       reasoningEffort: "medium",
     },
   },
+  scriptValidator: { enabled: false },
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   mutability: { allowAgentTaskAdd: false },

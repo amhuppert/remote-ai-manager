@@ -3,16 +3,20 @@ import {
   getCodexReasoningLevelsForModel,
   globalConfigSchema,
   graphWorkflowAgentValidatorConfigSchema,
+  graphWorkflowExecutionContextDefinitionSchema,
   graphWorkflowExecutionSchema,
   graphWorkflowExecutionSessionRefSchema,
   graphWorkflowHaltReasonSchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowLaneContinuityPolicySchema,
   graphWorkflowLaneStateSchema,
+  graphWorkflowResolvedContextSchema,
+  graphWorkflowScriptValidatorConfigSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
   sessionStateSchema,
   workflowAgentValidatorResultSchema,
+  workflowConfigOverrideSchema,
   workflowDefaultsSchema,
   workflowDefinitionRecordSchema,
   workflowRuntimeEditRequestSchema,
@@ -535,6 +539,7 @@ function createWorkflowDefaults() {
       },
       continuity: { enabled: true },
     },
+    scriptValidator: { enabled: false },
     iterationPolicy: {
       maxIterations: 20,
       continuity: { enabled: true },
@@ -545,17 +550,140 @@ function createWorkflowDefaults() {
 }
 
 describe("workflowDefaultsSchema", () => {
-  it("parses with all five blocks specified", () => {
+  it("parses with all six blocks specified", () => {
     const result = workflowDefaultsSchema.safeParse(createWorkflowDefaults());
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.contextValidator.type).toBe("claude");
+      expect(result.data.scriptValidator.enabled).toBe(false);
     }
   });
 
-  it("requires all five blocks", () => {
+  it("requires all six blocks including scriptValidator", () => {
     const result = workflowDefaultsSchema.safeParse({});
     expect(result.success).toBe(false);
+  });
+
+  it("rejects workflowDefaults missing the scriptValidator block", () => {
+    const defaults = createWorkflowDefaults();
+    const { scriptValidator: _removed, ...withoutScriptValidator } = defaults;
+    const result = workflowDefaultsSchema.safeParse(withoutScriptValidator);
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("graphWorkflowScriptValidatorConfigSchema", () => {
+  it("accepts { enabled: true }", () => {
+    const result = graphWorkflowScriptValidatorConfigSchema.safeParse({
+      enabled: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(true);
+    }
+  });
+
+  it("accepts { enabled: false }", () => {
+    const result = graphWorkflowScriptValidatorConfigSchema.safeParse({
+      enabled: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("defaults enabled to false when the block is passed empty", () => {
+    const result = graphWorkflowScriptValidatorConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(false);
+    }
+  });
+
+  it("rejects non-boolean enabled values", () => {
+    const result = graphWorkflowScriptValidatorConfigSchema.safeParse({
+      enabled: "yes",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("workflowConfigOverrideSchema scriptValidator", () => {
+  it("accepts an override that sets scriptValidator", () => {
+    const result = workflowConfigOverrideSchema.safeParse({
+      scriptValidator: { enabled: true },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scriptValidator?.enabled).toBe(true);
+    }
+  });
+
+  it("accepts an override that omits scriptValidator (inherits)", () => {
+    const result = workflowConfigOverrideSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scriptValidator).toBeUndefined();
+    }
+  });
+});
+
+describe("graphWorkflowExecutionContextDefinitionSchema scriptValidator", () => {
+  const base = {
+    id: "ctx-1",
+    title: "Context",
+    acceptanceCriteria: "AC",
+  };
+
+  it("accepts a context that sets scriptValidator", () => {
+    const result = graphWorkflowExecutionContextDefinitionSchema.safeParse({
+      ...base,
+      scriptValidator: { enabled: true },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a context that omits scriptValidator (inherits)", () => {
+    const result =
+      graphWorkflowExecutionContextDefinitionSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scriptValidator).toBeUndefined();
+    }
+  });
+});
+
+describe("graphWorkflowResolvedContextSchema scriptValidator", () => {
+  const base = {
+    id: "ctx-1",
+    title: "Context",
+    acceptanceCriteria: "AC",
+    implementer: {
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "medium",
+    },
+    contextValidator: null,
+    mutability: { allowAgentTaskAdd: false },
+    circuitBreaker: { consecutiveFailureThreshold: 3 },
+    iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+  };
+
+  it("defaults scriptValidator to { enabled: false } when missing (legacy state)", () => {
+    const result = graphWorkflowResolvedContextSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scriptValidator).toEqual({ enabled: false });
+    }
+  });
+
+  it("parses a resolved context with scriptValidator.enabled=true", () => {
+    const result = graphWorkflowResolvedContextSchema.safeParse({
+      ...base,
+      scriptValidator: { enabled: true },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scriptValidator.enabled).toBe(true);
+    }
   });
 });
 
@@ -1127,5 +1255,21 @@ describe("graphWorkflowHaltReasonSchema", () => {
       summary: null,
     });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts a script_validator_missing_command halt reason", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "script_validator_missing_command",
+      contextId: "ctx-1",
+      message: "Script validator enabled but preMergeCommand is not configured",
+    });
+    expect(result.success).toBe(true);
+    if (
+      result.success &&
+      result.data.type === "script_validator_missing_command"
+    ) {
+      expect(result.data.contextId).toBe("ctx-1");
+      expect(result.data.message).toContain("preMergeCommand");
+    }
   });
 });

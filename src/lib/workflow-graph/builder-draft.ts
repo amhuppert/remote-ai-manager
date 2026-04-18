@@ -13,6 +13,7 @@ import {
 export type ContextOverrideBlock =
   | "implementer"
   | "contextValidator"
+  | "scriptValidator"
   | "mutability"
   | "circuitBreaker"
   | "iterationPolicy";
@@ -20,6 +21,7 @@ export type ContextOverrideBlock =
 export type WorkflowConfigBlock =
   | "implementer"
   | "contextValidator"
+  | "scriptValidator"
   | "iterationPolicy"
   | "circuitBreaker"
   | "mutability";

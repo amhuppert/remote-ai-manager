@@ -7,6 +7,7 @@ import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowIterationPolicy,
   GraphWorkflowMutabilityPolicy,
+  GraphWorkflowScriptValidatorConfig,
   WorkflowConfigOverride,
   WorkflowDefaults,
   WorkflowSemanticDefinition,
@@ -47,9 +48,14 @@ const GLOBAL_MUTABILITY: GraphWorkflowMutabilityPolicy = {
   allowAgentTaskAdd: false,
 };
 
+const GLOBAL_SCRIPT_VALIDATOR: GraphWorkflowScriptValidatorConfig = {
+  enabled: false,
+};
+
 const GLOBAL_DEFAULTS: WorkflowDefaults = {
   implementer: GLOBAL_IMPLEMENTER,
   contextValidator: GLOBAL_VALIDATOR,
+  scriptValidator: GLOBAL_SCRIPT_VALIDATOR,
   iterationPolicy: GLOBAL_ITERATION,
   circuitBreaker: GLOBAL_CB,
   mutability: GLOBAL_MUTABILITY,
@@ -186,6 +192,36 @@ describe("resolveContext", () => {
 
     expect(resolved.acceptanceCriteria).toBe("ctx-specific AC");
   });
+
+  it("inherits scriptValidator from global when neither workflow nor context override", () => {
+    const resolved = resolveContext(
+      { ...GLOBAL_DEFAULTS, scriptValidator: { enabled: true } },
+      {},
+      makeContext(),
+    );
+
+    expect(resolved.scriptValidator).toEqual({ enabled: true });
+  });
+
+  it("inherits scriptValidator from workflow when context omits it", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      { scriptValidator: { enabled: true } },
+      makeContext(),
+    );
+
+    expect(resolved.scriptValidator).toEqual({ enabled: true });
+  });
+
+  it("uses context scriptValidator verbatim when overridden", () => {
+    const resolved = resolveContext(
+      { ...GLOBAL_DEFAULTS, scriptValidator: { enabled: true } },
+      { scriptValidator: { enabled: true } },
+      makeContext({ scriptValidator: { enabled: false } }),
+    );
+
+    expect(resolved.scriptValidator).toEqual({ enabled: false });
+  });
 });
 
 describe("resolveWorkflowConfig", () => {
@@ -215,6 +251,8 @@ describe("resolveWorkflowConfig", () => {
       implementer: GLOBAL_IMPLEMENTER,
       contextValidator:
         undefined as unknown as GraphWorkflowAgentValidatorConfig,
+      scriptValidator:
+        undefined as unknown as GraphWorkflowScriptValidatorConfig,
       iterationPolicy: undefined as unknown as GraphWorkflowIterationPolicy,
       circuitBreaker: undefined as unknown as GraphWorkflowCircuitBreakerPolicy,
       mutability: undefined as unknown as GraphWorkflowMutabilityPolicy,
@@ -225,6 +263,7 @@ describe("resolveWorkflowConfig", () => {
 
     expect(resolved.implementer).toEqual(GLOBAL_IMPLEMENTER);
     expect(resolved.contextValidator.type).toBe("claude");
+    expect(resolved.scriptValidator.enabled).toBe(false);
     expect(resolved.iterationPolicy.maxIterations).toBeGreaterThan(0);
     expect(resolved.circuitBreaker.consecutiveFailureThreshold).toBe(3);
     expect(resolved.mutability.allowAgentTaskAdd).toBe(false);
@@ -246,6 +285,7 @@ describe("resolveWorkflowDefinition", () => {
     for (const ctx of resolved.executionContexts) {
       expect(ctx.implementer).toEqual(GLOBAL_IMPLEMENTER);
       expect(ctx.contextValidator).toEqual(GLOBAL_VALIDATOR);
+      expect(ctx.scriptValidator).toEqual(GLOBAL_SCRIPT_VALIDATOR);
       expect(ctx.iterationPolicy).toEqual(GLOBAL_ITERATION);
       expect(ctx.circuitBreaker).toEqual(GLOBAL_CB);
       expect(ctx.mutability).toEqual(GLOBAL_MUTABILITY);

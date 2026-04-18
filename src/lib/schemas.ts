@@ -462,6 +462,13 @@ export type GraphWorkflowContextValidation = z.infer<
   typeof graphWorkflowContextValidationSchema
 >;
 
+export const graphWorkflowScriptValidatorConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+});
+export type GraphWorkflowScriptValidatorConfig = z.infer<
+  typeof graphWorkflowScriptValidatorConfigSchema
+>;
+
 export const contextValidatorOverrideSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("use"),
@@ -483,6 +490,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   acceptanceCriteria: z.string().trim().min(1),
   implementer: graphWorkflowAgentConfigSchema.optional(),
   contextValidator: contextValidatorOverrideSchema.optional(),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
@@ -521,6 +529,7 @@ export type GraphWorkflowContextEdge = z.infer<
 export const workflowConfigOverrideSchema = z.object({
   implementer: graphWorkflowAgentConfigSchema.optional(),
   contextValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
@@ -549,6 +558,9 @@ export const graphWorkflowResolvedContextSchema = z.object({
   acceptanceCriteria: z.string().trim().min(1),
   implementer: graphWorkflowAgentConfigSchema,
   contextValidator: graphWorkflowAgentValidatorConfigSchema.nullable(),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema.default({
+    enabled: false,
+  }),
   mutability: graphWorkflowMutabilityPolicySchema,
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
@@ -695,6 +707,11 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     infraReason: z.enum(["exception", "unparseable", "schema_mismatch"]),
     message: z.string(),
     summary: z.string().nullable().default(null),
+  }),
+  z.object({
+    type: z.literal("script_validator_missing_command"),
+    contextId: z.string().trim().min(1),
+    message: z.string(),
   }),
 ]);
 export type GraphWorkflowHaltReason = z.infer<
@@ -1107,6 +1124,7 @@ export type ReferenceDocument = z.infer<typeof referenceDocumentSchema>;
 export const workflowDefaultsSchema = z.object({
   implementer: graphWorkflowAgentConfigSchema,
   contextValidator: graphWorkflowAgentValidatorConfigSchema,
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   mutability: graphWorkflowMutabilityPolicySchema,
@@ -1116,6 +1134,7 @@ export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
 const rawWorkflowDefaultsSchema = z.object({
   implementer: graphWorkflowAgentConfigSchema.optional(),
   contextValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
+  scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),

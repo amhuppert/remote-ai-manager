@@ -13,6 +13,7 @@ export interface InspectorConfigBlockProps {
   summary: string;
   source: InspectorConfigBlockSource;
   defaultOpen?: boolean;
+  allowInheritedEditing?: boolean;
   onOverride?: () => void;
   onReset?: () => void;
   onToggleDisabled?: () => void;
@@ -35,6 +36,7 @@ export default function InspectorConfigBlock({
   summary,
   source,
   defaultOpen,
+  allowInheritedEditing,
   onOverride,
   onReset,
   onToggleDisabled,
@@ -44,7 +46,7 @@ export default function InspectorConfigBlock({
     defaultOpen ?? (source === "context-override" || source === "disabled");
   const [open, setOpen] = useState<boolean>(initialOpen);
 
-  const editable = source === "context-override";
+  const editable = source === "context-override" || allowInheritedEditing;
   const bodyId = `wb-inspector-block__body--${label.toLowerCase().replace(/\s+/g, "-")}`;
 
   return (

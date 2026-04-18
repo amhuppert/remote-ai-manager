@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import ReasoningLevelSelector from "./ReasoningLevelSelector";
 
 describe("ReasoningLevelSelector", () => {
@@ -42,5 +42,23 @@ describe("ReasoningLevelSelector", () => {
       const trigger = document.querySelector(".effort-selector-trigger");
       expect(trigger?.classList.contains("rainbow-border")).toBe(false);
     });
+  });
+
+  it("renders a disabled unavailable state when no effort levels exist", () => {
+    expect(() =>
+      render(
+        <ReasoningLevelSelector
+          {...defaultProps}
+          value="high"
+          availableLevels={[]}
+          disabled
+        />,
+      ),
+    ).not.toThrow();
+
+    expect(
+      screen.getByRole("button", { name: /reasoning level unavailable/i }),
+    ).toBeDisabled();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
   });
 });

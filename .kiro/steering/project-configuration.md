@@ -24,11 +24,15 @@ Per-project configuration file at repository root. Optional — all fields nulla
 
 ### 2. `preMergeCommand` — Pre-Merge Validation
 
-- Runs in smart merge workflow (Phase 2) via `runPreMergeValidation()`
+Used by two consumers:
+
+1. **Smart merge workflow (Phase 2)** via `runPreMergeValidation()` — failure aborts or auto-fixes the merge; auto-commits any file changes the script makes (formatters) with `skipHooks: true`.
+2. **Graph workflow script validator** via `executeRepoValidationCommand()` (see `src/lib/workflow-graph/script-validator-runner.ts`) — when an execution context enables `scriptValidator: { enabled: true }`, the same command runs as a deterministic pre-merge gate after all tasks in the context complete. On failure, the full output is written to `.cc/workflow/<executionId>/pre-merge-<timestamp>.log` in the worktree and a remediation task is added to the context. If a context enables `scriptValidator` but no `preMergeCommand` is configured, the workflow halts with `script_validator_missing_command`. See `.kiro/steering/workflows.md`.
+
+Shared behavior across both consumers:
 - Direct execution — **must have shebang**
 - cwd = worktree, timeout = `preMergeTimeoutMs` config (default 5min, defined in `src/lib/config.ts`)
-- Failure → merge aborted or auto-fix attempted; stdout/stderr captured for diagnostics
-- Auto-commits any file changes script makes (formatters) with `skipHooks: true`
+- Combined stdout/stderr captured
 - **`PROJECT_ROOT` = worktree** (not original repo!) — differs from init script
 
 ### 3. `devServers` — Dev Server Declarations

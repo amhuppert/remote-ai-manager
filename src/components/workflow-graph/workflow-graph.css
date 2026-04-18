@@ -732,9 +732,32 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-sm);
   padding: 12px var(--space-md);
   border-bottom: 1px solid var(--border-dim);
   min-height: 44px;
+}
+
+.wb-inspector-header .cc-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.wb-inspector-header .cc-tab {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  line-height: 1.2;
+}
+
+.wb-inspector-header .cc-tab--fixed {
+  flex-shrink: 0;
+}
+
+.wb-inspector-header .wb-btn {
+  flex-shrink: 0;
 }
 
 .wb-inspector-back {
@@ -951,6 +974,11 @@
 .wb-field textarea {
   resize: vertical;
   min-height: 64px;
+  line-height: 1.5;
+}
+
+.wb-field textarea.wb-field-tall {
+  min-height: 140px;
 }
 
 /* ---- Inspector Collapsible Sections ---- */
@@ -1565,6 +1593,158 @@
   margin-bottom: var(--space-md);
   padding-bottom: var(--space-sm);
   border-bottom: 1px solid var(--border-dim);
+}
+
+/* ---- Inspector Blocks Container ---- */
+
+.wb-inspector-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wb-inspector-header-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding-bottom: var(--space-md);
+  margin-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+/* ---- Inspector Field Hint ---- */
+
+.wb-field-hint {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  margin-top: var(--space-xs);
+}
+
+.wb-field-hint code {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--cyan);
+  background: var(--bg-raised);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+/* ---- Inspector Block Readonly Preview ---- */
+
+.wb-inspector-block__preview {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-md);
+  row-gap: 3px;
+  font-family: var(--font-mono);
+  margin: 0;
+  padding: 0;
+}
+
+.wb-inspector-block__preview-row {
+  display: contents;
+}
+
+.wb-inspector-block__preview dt {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.wb-inspector-block__preview dd {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0;
+  justify-self: end;
+  text-align: right;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* ---- Script Validator Inline Control ---- */
+
+.wb-script-validator-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* ---- Inspector Block Editor Fields ---- */
+
+.wb-editor-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wb-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wb-editor-field-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.wb-editor-field-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.wb-editor-number-input {
+  width: 100%;
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 6px 8px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.wb-editor-number-input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 1px var(--cyan-glow);
+}
+
+.wb-editor-number-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.config-toggle--disabled {
+  cursor: not-allowed;
+}
+
+/* ---- Save Error Banner ---- */
+
+.wb-save-error-banner {
+  padding: 8px var(--space-md);
+  background: var(--red-glow);
+  color: var(--red-text);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  border-bottom: 1px solid rgba(255, 61, 90, 0.25);
 }
 
 /* ---- Scrollbar ---- */

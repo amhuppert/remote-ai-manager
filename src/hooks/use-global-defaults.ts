@@ -20,6 +20,9 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
       reasoningEffort: "medium",
     },
   },
+  scriptValidator: {
+    enabled: false,
+  },
   iterationPolicy: {
     maxIterations: 20,
     continuity: { enabled: true },
@@ -48,6 +51,8 @@ export function useGlobalDefaults(): UseGlobalDefaultsResult {
       implementer: defaults.implementer ?? SEEDED_DEFAULTS.implementer,
       contextValidator:
         defaults.contextValidator ?? SEEDED_DEFAULTS.contextValidator,
+      scriptValidator:
+        defaults.scriptValidator ?? SEEDED_DEFAULTS.scriptValidator,
       iterationPolicy:
         defaults.iterationPolicy ?? SEEDED_DEFAULTS.iterationPolicy,
       circuitBreaker: defaults.circuitBreaker ?? SEEDED_DEFAULTS.circuitBreaker,

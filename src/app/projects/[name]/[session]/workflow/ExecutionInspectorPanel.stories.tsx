@@ -47,6 +47,7 @@ function makeExecution(
             },
             continuity: { enabled: true },
           },
+          scriptValidator: { enabled: false },
         },
         {
           id: "ctx-2",
@@ -59,6 +60,7 @@ function makeExecution(
             reasoningEffort: "medium",
           },
           contextValidator: null,
+          scriptValidator: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -73,6 +75,7 @@ function makeExecution(
             reasoningEffort: "low",
           },
           contextValidator: null,
+          scriptValidator: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 2, continuity: { enabled: true } },

@@ -2,7 +2,10 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "@/types";
 import { createWorkflowExecution } from "./test-fixtures";
-import { createGraphWorkflowExecutionRouteHandlers } from "./execution-route-handlers";
+import {
+  createGraphWorkflowExecutionRouteHandlers,
+  createGraphWorkflowRouteScriptValidatorService,
+} from "./execution-route-handlers";
 
 function makeRequest(url: string, method: string, body?: unknown): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
@@ -546,6 +549,52 @@ describe("graph workflow execution route handlers", () => {
   });
 });
 
+describe("graph workflow route script validator service", () => {
+  it("maps session and config state into the script validator runner input", async () => {
+    const getSession = vi.fn(async () =>
+      makeSession({
+        worktreePath: "/repo/.worktrees/session-1",
+        branchName: "csm/session-1",
+      }),
+    );
+    const readConfig = vi.fn(async () => ({
+      preMergeTimeoutMs: 123_000,
+    }));
+    const runScriptValidator = vi.fn(async () => ({ kind: "pass" as const }));
+
+    const service = createGraphWorkflowRouteScriptValidatorService({
+      getSession,
+      readConfig,
+      runScriptValidator,
+    });
+
+    const execution = createWorkflowExecution({
+      id: "execution-script-1",
+      status: "running",
+    });
+
+    const result = await service.runScriptValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+    });
+
+    expect(result).toEqual({ kind: "pass" });
+    expect(getSession).toHaveBeenCalledWith("/repo", "session-1");
+    expect(readConfig).toHaveBeenCalledTimes(1);
+    expect(runScriptValidator).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      worktreePath: "/repo/.worktrees/session-1",
+      sessionName: "session-1",
+      branchName: "csm/session-1",
+      executionId: "execution-script-1",
+      contextId: "context-plan",
+      timeoutMs: 123_000,
+    });
+  });
+});
+
 // -- Implementer runner wiring: unified executePromptStream path ---------------
 // These tests exercise the same wiring pattern used by execution-route-handlers.ts
 // to wire implementer turns through createGraphWorkflowImplementerRunner, verifying
@@ -573,6 +622,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
           reasoningEffort: "medium",
         },
         contextValidator: null,
+        scriptValidator: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

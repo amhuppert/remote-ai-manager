@@ -2076,6 +2076,7 @@ describe("codex implementer continuity", () => {
             reasoningEffort: "medium",
           },
           contextValidator: null,
+          scriptValidator: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -3210,5 +3211,481 @@ describe("runIteration when all tasks are already completed on entry", () => {
     expect(
       result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(1);
+  });
+});
+
+// -- Script validator integration --------------------------------------------
+
+describe("script validator integration", () => {
+  const NOW = "2026-04-18T17:00:00.000Z";
+
+  function enableScriptValidator(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+  ): GraphWorkflowExecution {
+    const ctx = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === contextId,
+    );
+    if (!ctx) throw new Error(`context "${contextId}" not in fixture`);
+    ctx.scriptValidator = { enabled: true };
+    return execution;
+  }
+
+  function seedRepoWithScriptValidator(
+    opts: {
+      task1?: GraphWorkflowExecution["taskStates"][string]["status"];
+      task2?: GraphWorkflowExecution["taskStates"][string]["status"];
+      consecutiveFailureCount?: number;
+    } = {},
+  ) {
+    const exec = createExecutionWithPlanTasks({
+      "task-plan-1": opts.task1 ?? "pending",
+      "task-plan-2": opts.task2 ?? "pending",
+    });
+    enableScriptValidator(exec, "context-plan");
+    if (opts.consecutiveFailureCount !== undefined) {
+      const ctxState = exec.contextStates["context-plan"];
+      if (ctxState) {
+        ctxState.consecutiveFailureCount = opts.consecutiveFailureCount;
+      }
+    }
+    return createRepository(exec);
+  }
+
+  function createCapturingToolServer(): {
+    createToolServer: ReturnType<typeof vi.fn>;
+    capturedCompleteTask():
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+  } {
+    let captured:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        captured = input.completeTask;
+        return { server: {}, close: vi.fn(async () => undefined) };
+      },
+    );
+    return {
+      createToolServer,
+      capturedCompleteTask: () => captured,
+    };
+  }
+
+  it("runs the script validator before the agent validator when enabled", async () => {
+    const repository = seedRepoWithScriptValidator();
+    const { createToolServer, capturedCompleteTask } =
+      createCapturingToolServer();
+    const createConversation = vi.fn(async () => ({ id: "conv-s1" }));
+
+    const callOrder: string[] = [];
+    const runScriptValidator = vi.fn(async () => {
+      callOrder.push("script");
+      return { kind: "pass" as const };
+    });
+    const validateContextCompletion = vi.fn(async () => {
+      callOrder.push("agent");
+      return {
+        kind: "pass" as const,
+        summary: "All good",
+        feedback: "pass",
+        issues: [] as never[],
+        reopenTaskIds: [],
+        sessionRef: null,
+        reviewArtifact: null,
+      };
+    });
+
+    const runAgentIteration = vi.fn(async () => {
+      await capturedCompleteTask()!("task-plan-1", "Done");
+      await capturedCompleteTask()!("task-plan-2", "Done");
+      return {
+        conversationId: "conv-s1",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      validationService: { validateContextCompletion },
+      scriptValidatorService: { runScriptValidator },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(callOrder).toEqual(["script", "agent"]);
+    expect(runScriptValidator).toHaveBeenCalledTimes(1);
+    expect(validateContextCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the script validator when the context has it disabled", async () => {
+    // Default fixture leaves scriptValidator disabled
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const repository = createRepository(execution);
+    const { createToolServer, capturedCompleteTask } =
+      createCapturingToolServer();
+    const createConversation = vi.fn(async () => ({ id: "conv-s2" }));
+
+    const runScriptValidator = vi.fn();
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "pass" as const,
+      summary: "All good",
+      feedback: "pass",
+      issues: [] as never[],
+      reopenTaskIds: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const runAgentIteration = vi.fn(async () => {
+      await capturedCompleteTask()!("task-plan-1", "Done");
+      await capturedCompleteTask()!("task-plan-2", "Done");
+      return {
+        conversationId: "conv-s2",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      validationService: { validateContextCompletion },
+      scriptValidatorService: { runScriptValidator },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(runScriptValidator).not.toHaveBeenCalled();
+    expect(validateContextCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the agent validator when the script validator fails, adds a remediation task, and increments failure count", async () => {
+    const repository = seedRepoWithScriptValidator();
+    const { createToolServer, capturedCompleteTask } =
+      createCapturingToolServer();
+    const createConversation = vi.fn(async () => ({ id: "conv-s3" }));
+
+    const runScriptValidator = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "Pre-merge validation failed",
+      logFilePath:
+        "/repo/.worktrees/session-1/.cc/workflow/execution-1/pre-merge-20260418T170000Z.log",
+      logRelativePath:
+        ".cc/workflow/execution-1/pre-merge-20260418T170000Z.log",
+      timedOut: false,
+    }));
+    const validateContextCompletion = vi.fn();
+
+    const runAgentIteration = vi.fn(async () => {
+      await capturedCompleteTask()!("task-plan-1", "Done");
+      await capturedCompleteTask()!("task-plan-2", "Done");
+      return {
+        conversationId: "conv-s3",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    let remediationTaskId = 0;
+    const createTaskId = vi.fn(() => {
+      remediationTaskId += 1;
+      return `task-remediation-${remediationTaskId}`;
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      validationService: { validateContextCompletion },
+      scriptValidatorService: { runScriptValidator },
+      createTaskId,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(runScriptValidator).toHaveBeenCalledTimes(1);
+    expect(validateContextCompletion).not.toHaveBeenCalled();
+
+    // Remediation task exists in the context
+    const planTasks = result.execution.workingDefinition.tasks.filter(
+      (t) => t.contextId === "context-plan",
+    );
+    const remediationTask = planTasks.find(
+      (t) => t.id === "task-remediation-1",
+    );
+    expect(remediationTask).toBeDefined();
+    expect(remediationTask?.title.toLowerCase()).toContain("pre-merge");
+    expect(remediationTask?.instructions).toContain(
+      ".cc/workflow/execution-1/pre-merge-20260418T170000Z.log",
+    );
+
+    // Task state for remediation is pending
+    const remediationTaskState =
+      result.execution.taskStates["task-remediation-1"];
+    expect(remediationTaskState?.status).toBe("pending");
+
+    // Failure count incremented
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(1);
+
+    // Execution remains running, iteration should continue in context
+    expect(result.execution.status).toBe("running");
+    expect(result.shouldContinueInContext).toBe(true);
+  });
+
+  it("halts with script_validator_missing_command when the script validator is enabled but no preMergeCommand is configured", async () => {
+    const repository = seedRepoWithScriptValidator();
+    const { createToolServer, capturedCompleteTask } =
+      createCapturingToolServer();
+    const createConversation = vi.fn(async () => ({ id: "conv-s4" }));
+
+    const runScriptValidator = vi.fn(async () => ({
+      kind: "infra_error" as const,
+      reason: "missing_pre_merge_command" as const,
+      message:
+        "Script validator enabled but the project has no preMergeCommand configured",
+    }));
+    const validateContextCompletion = vi.fn();
+
+    const runAgentIteration = vi.fn(async () => {
+      await capturedCompleteTask()!("task-plan-1", "Done");
+      await capturedCompleteTask()!("task-plan-2", "Done");
+      return {
+        conversationId: "conv-s4",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: unknown;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason =
+          input.reason as GraphWorkflowExecution["haltReason"];
+        await repository.update("/repo", "session-1", current);
+        return current;
+      },
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateContextCompletion },
+      scriptValidatorService: { runScriptValidator },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          type: "script_validator_missing_command",
+          contextId: "context-plan",
+        }),
+      }),
+    );
+    expect(validateContextCompletion).not.toHaveBeenCalled();
+    expect(result.execution.status).toBe("halted");
+    expect(result.execution.haltReason?.type).toBe(
+      "script_validator_missing_command",
+    );
+    expect(result.shouldContinueInContext).toBe(false);
+  });
+
+  it("halts with recovery_error when the script validator throws an unexpected exception", async () => {
+    const repository = seedRepoWithScriptValidator();
+    const { createToolServer, capturedCompleteTask } =
+      createCapturingToolServer();
+    const createConversation = vi.fn(async () => ({ id: "conv-s5" }));
+
+    const runScriptValidator = vi.fn(async () => ({
+      kind: "infra_error" as const,
+      reason: "exception" as const,
+      message: "spawn enoent",
+    }));
+    const validateContextCompletion = vi.fn();
+
+    const runAgentIteration = vi.fn(async () => {
+      await capturedCompleteTask()!("task-plan-1", "Done");
+      await capturedCompleteTask()!("task-plan-2", "Done");
+      return {
+        conversationId: "conv-s5",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: unknown;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason =
+          input.reason as GraphWorkflowExecution["haltReason"];
+        await repository.update("/repo", "session-1", current);
+        return current;
+      },
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateContextCompletion },
+      scriptValidatorService: { runScriptValidator },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          type: "recovery_error",
+        }),
+      }),
+    );
+    expect(validateContextCompletion).not.toHaveBeenCalled();
+    expect(result.execution.status).toBe("halted");
+    expect(result.execution.haltReason?.type).toBe("recovery_error");
+    expect(result.shouldContinueInContext).toBe(false);
+  });
+
+  it("trips the circuit breaker when script validator fails repeatedly beyond the threshold", async () => {
+    // Seed with count = 2; threshold is default 3. A third fail should trip.
+    const repository = seedRepoWithScriptValidator({
+      consecutiveFailureCount: 2,
+    });
+    const { createToolServer, capturedCompleteTask } =
+      createCapturingToolServer();
+    const createConversation = vi.fn(async () => ({ id: "conv-s6" }));
+
+    const runScriptValidator = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "Pre-merge validation failed again",
+      logFilePath:
+        "/repo/.worktrees/session-1/.cc/workflow/execution-1/pre-merge-20260418T170100Z.log",
+      logRelativePath:
+        ".cc/workflow/execution-1/pre-merge-20260418T170100Z.log",
+      timedOut: false,
+    }));
+    const validateContextCompletion = vi.fn();
+
+    const runAgentIteration = vi.fn(async () => {
+      await capturedCompleteTask()!("task-plan-1", "Done");
+      await capturedCompleteTask()!("task-plan-2", "Done");
+      return {
+        conversationId: "conv-s6",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: unknown;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason =
+          input.reason as GraphWorkflowExecution["haltReason"];
+        await repository.update("/repo", "session-1", current);
+        return current;
+      },
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateContextCompletion },
+      scriptValidatorService: { runScriptValidator },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          type: "circuit_breaker",
+          contextId: "context-plan",
+          condition: "retry_exhaustion",
+          failureCount: 3,
+        }),
+      }),
+    );
+    expect(validateContextCompletion).not.toHaveBeenCalled();
+    expect(result.execution.status).toBe("halted");
+    expect(result.execution.haltReason?.type).toBe("circuit_breaker");
   });
 });

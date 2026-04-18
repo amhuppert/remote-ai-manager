@@ -24,6 +24,7 @@ import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowIterationPolicy,
   GraphWorkflowMutabilityPolicy,
+  GraphWorkflowScriptValidatorConfig,
   GraphWorkflowTaskDefinition,
   WorkflowConfigOverride,
   WorkflowDefaults,
@@ -32,6 +33,13 @@ import type {
 import InspectorConfigBlock, {
   type InspectorConfigBlockSource,
 } from "./InspectorConfigBlock";
+import {
+  CircuitBreakerEditor,
+  ContextValidatorEditor,
+  ImplementerEditor,
+  IterationPolicyEditor,
+  MutabilityEditor,
+} from "./InspectorFieldEditors";
 
 interface WorkflowInspectorPanelProps {
   onSave: () => Promise<void>;
@@ -50,6 +58,7 @@ export const DEFAULT_SECTION_IDS = [
   "header",
   "implementer",
   "context-validator",
+  "script-validator",
   "iteration-policy",
   "circuit-breaker",
   "mutability",
@@ -72,6 +81,9 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
       model: "sonnet",
       reasoningEffort: "medium",
     },
+  },
+  scriptValidator: {
+    enabled: false,
   },
   iterationPolicy: {
     maxIterations: 20,
@@ -135,6 +147,12 @@ function summarizeValidator(
   return `codex · ${model} · ${enabledLabel}`;
 }
 
+function summarizeScriptValidator(
+  validator: GraphWorkflowScriptValidatorConfig,
+): string {
+  return validator.enabled ? "enabled" : "off";
+}
+
 function summarizeIterationPolicy(
   policy: GraphWorkflowIterationPolicy,
 ): string {
@@ -165,6 +183,10 @@ type ResolvedContextCascade = {
         source: Exclude<InspectorConfigBlockSource, "disabled">;
       }
     | { source: "disabled" };
+  scriptValidator: {
+    value: GraphWorkflowScriptValidatorConfig;
+    source: Exclude<InspectorConfigBlockSource, "disabled">;
+  };
   iterationPolicy: {
     value: GraphWorkflowIterationPolicy;
     source: InspectorConfigBlockSource;
@@ -187,6 +209,7 @@ function computeContextCascade(
   function resolvePlain<
     K extends
       | "implementer"
+      | "scriptValidator"
       | "iterationPolicy"
       | "circuitBreaker"
       | "mutability",
@@ -234,6 +257,7 @@ function computeContextCascade(
   return {
     implementer: resolvePlain("implementer"),
     contextValidator: validator,
+    scriptValidator: resolvePlain("scriptValidator"),
     iterationPolicy: resolvePlain("iterationPolicy"),
     circuitBreaker: resolvePlain("circuitBreaker"),
     mutability: resolvePlain("mutability"),
@@ -247,6 +271,10 @@ type WorkflowCascade = {
   };
   contextValidator: {
     value: GraphWorkflowAgentValidatorConfig;
+    source: "global" | "context-override";
+  };
+  scriptValidator: {
+    value: GraphWorkflowScriptValidatorConfig;
     source: "global" | "context-override";
   };
   iterationPolicy: {
@@ -286,6 +314,7 @@ function computeWorkflowCascade(
   return {
     implementer: resolve("implementer"),
     contextValidator: resolve("contextValidator"),
+    scriptValidator: resolve("scriptValidator"),
     iterationPolicy: resolve("iterationPolicy"),
     circuitBreaker: resolve("circuitBreaker"),
     mutability: resolve("mutability"),
@@ -392,7 +421,7 @@ export default function WorkflowInspectorPanel({
             type="button"
             role="tab"
             aria-selected={activeTab === "workflow"}
-            className={`cc-tab${activeTab === "workflow" ? " active" : ""}`}
+            className={`cc-tab cc-tab--fixed${activeTab === "workflow" ? " active" : ""}`}
             onClick={() => setActiveTab("workflow")}
           >
             Workflow
@@ -544,6 +573,8 @@ function WorkflowTabBody({
   onClearOverride: (block: keyof WorkflowConfigOverride) => void;
 }): React.JSX.Element {
   const cascade = computeWorkflowCascade(workflowConfig, globalDefaults);
+  const isWorkflowOverride = (source: "global" | "context-override") =>
+    source === "context-override";
 
   return (
     <div className="wb-inspector-blocks" data-scope="workflow">
@@ -556,8 +587,10 @@ function WorkflowTabBody({
         }
         onReset={() => onClearOverride("implementer")}
       >
-        <ReadonlyBlockPreview
-          entries={implementerEntries(cascade.implementer.value)}
+        <ImplementerEditor
+          value={cascade.implementer.value}
+          onChange={(next) => onSetOverride("implementer", next)}
+          readOnly={!isWorkflowOverride(cascade.implementer.source)}
         />
       </InspectorConfigBlock>
 
@@ -573,10 +606,19 @@ function WorkflowTabBody({
         }
         onReset={() => onClearOverride("contextValidator")}
       >
-        <ReadonlyBlockPreview
-          entries={validatorEntries(cascade.contextValidator.value)}
+        <ContextValidatorEditor
+          value={cascade.contextValidator.value}
+          onChange={(next) => onSetOverride("contextValidator", next)}
+          readOnly={!isWorkflowOverride(cascade.contextValidator.source)}
         />
       </InspectorConfigBlock>
+
+      <ScriptValidatorBlock
+        scopeLabel="Workflow script validator"
+        cascade={cascade.scriptValidator}
+        onChange={(value) => onSetOverride("scriptValidator", deepClone(value))}
+        onReset={() => onClearOverride("scriptValidator")}
+      />
 
       <InspectorConfigBlock
         label="Iteration policy"
@@ -590,8 +632,10 @@ function WorkflowTabBody({
         }
         onReset={() => onClearOverride("iterationPolicy")}
       >
-        <ReadonlyBlockPreview
-          entries={iterationPolicyEntries(cascade.iterationPolicy.value)}
+        <IterationPolicyEditor
+          value={cascade.iterationPolicy.value}
+          onChange={(next) => onSetOverride("iterationPolicy", next)}
+          readOnly={!isWorkflowOverride(cascade.iterationPolicy.source)}
         />
       </InspectorConfigBlock>
 
@@ -607,8 +651,10 @@ function WorkflowTabBody({
         }
         onReset={() => onClearOverride("circuitBreaker")}
       >
-        <ReadonlyBlockPreview
-          entries={circuitBreakerEntries(cascade.circuitBreaker.value)}
+        <CircuitBreakerEditor
+          value={cascade.circuitBreaker.value}
+          onChange={(next) => onSetOverride("circuitBreaker", next)}
+          readOnly={!isWorkflowOverride(cascade.circuitBreaker.source)}
         />
       </InspectorConfigBlock>
 
@@ -621,8 +667,10 @@ function WorkflowTabBody({
         }
         onReset={() => onClearOverride("mutability")}
       >
-        <ReadonlyBlockPreview
-          entries={mutabilityEntries(cascade.mutability.value)}
+        <MutabilityEditor
+          value={cascade.mutability.value}
+          onChange={(next) => onSetOverride("mutability", next)}
+          readOnly={!isWorkflowOverride(cascade.mutability.source)}
         />
       </InspectorConfigBlock>
     </div>
@@ -632,6 +680,7 @@ function WorkflowTabBody({
 type ContextBlock =
   | "implementer"
   | "contextValidator"
+  | "scriptValidator"
   | "iterationPolicy"
   | "circuitBreaker"
   | "mutability";
@@ -695,8 +744,8 @@ function ContextTabBody({
   return (
     <div className="wb-inspector-blocks" data-scope="context">
       <section className="wb-inspector-header-group" data-section="header">
-        <div className="wb-inline-field">
-          <label className="wb-inline-field-label" htmlFor="context-title">
+        <div className="wb-field">
+          <label className="wb-field-label" htmlFor="context-title">
             Title <RequiredMark />
           </label>
           <input
@@ -706,31 +755,29 @@ function ContextTabBody({
             onChange={(event) => onUpdateContext({ title: event.target.value })}
           />
         </div>
-        <div className="wb-inline-field">
-          <label
-            className="wb-inline-field-label"
-            htmlFor="context-description"
-          >
+        <div className="wb-field">
+          <label className="wb-field-label" htmlFor="context-description">
             Description
           </label>
           <textarea
             id="context-description"
+            rows={2}
             value={context.description ?? ""}
             onChange={(event) =>
               onUpdateContext({ description: event.target.value })
             }
           />
         </div>
-        <div className="wb-inline-field">
+        <div className="wb-field">
           <label
-            className="wb-inline-field-label"
+            className="wb-field-label"
             htmlFor="context-acceptance-criteria"
           >
             Acceptance Criteria <RequiredMark />
           </label>
           <textarea
             id="context-acceptance-criteria"
-            className={acError ? "invalid" : undefined}
+            className={acError ? "invalid wb-field-tall" : "wb-field-tall"}
             value={context.acceptanceCriteria}
             onChange={(event) =>
               onUpdateContext({ acceptanceCriteria: event.target.value })
@@ -756,8 +803,10 @@ function ContextTabBody({
         }
         onReset={() => onClearContextOverride("implementer")}
       >
-        <ReadonlyBlockPreview
-          entries={implementerEntries(cascade.implementer.value)}
+        <ImplementerEditor
+          value={cascade.implementer.value}
+          onChange={(next) => onSetContextOverride("implementer", next)}
+          readOnly={cascade.implementer.source !== "context-override"}
         />
       </InspectorConfigBlock>
 
@@ -770,9 +819,25 @@ function ContextTabBody({
           };
           onSetContextOverride("contextValidator", override);
         }}
+        onChange={(value) => {
+          const override: ContextValidatorOverride = {
+            kind: "use",
+            value,
+          };
+          onSetContextOverride("contextValidator", override);
+        }}
         onReset={() => onClearContextOverride("contextValidator")}
         onDisable={onDisableValidator}
         onEnable={onEnableValidator}
+      />
+
+      <ScriptValidatorBlock
+        scopeLabel="Context script validator"
+        cascade={cascade.scriptValidator}
+        onChange={(value) =>
+          onSetContextOverride("scriptValidator", deepClone(value))
+        }
+        onReset={() => onClearContextOverride("scriptValidator")}
       />
 
       <InspectorConfigBlock
@@ -787,8 +852,10 @@ function ContextTabBody({
         }
         onReset={() => onClearContextOverride("iterationPolicy")}
       >
-        <ReadonlyBlockPreview
-          entries={iterationPolicyEntries(cascade.iterationPolicy.value)}
+        <IterationPolicyEditor
+          value={cascade.iterationPolicy.value}
+          onChange={(next) => onSetContextOverride("iterationPolicy", next)}
+          readOnly={cascade.iterationPolicy.source !== "context-override"}
         />
       </InspectorConfigBlock>
 
@@ -804,8 +871,10 @@ function ContextTabBody({
         }
         onReset={() => onClearContextOverride("circuitBreaker")}
       >
-        <ReadonlyBlockPreview
-          entries={circuitBreakerEntries(cascade.circuitBreaker.value)}
+        <CircuitBreakerEditor
+          value={cascade.circuitBreaker.value}
+          onChange={(next) => onSetContextOverride("circuitBreaker", next)}
+          readOnly={cascade.circuitBreaker.source !== "context-override"}
         />
       </InspectorConfigBlock>
 
@@ -821,8 +890,10 @@ function ContextTabBody({
         }
         onReset={() => onClearContextOverride("mutability")}
       >
-        <ReadonlyBlockPreview
-          entries={mutabilityEntries(cascade.mutability.value)}
+        <MutabilityEditor
+          value={cascade.mutability.value}
+          onChange={(next) => onSetContextOverride("mutability", next)}
+          readOnly={cascade.mutability.source !== "context-override"}
         />
       </InspectorConfigBlock>
 
@@ -976,12 +1047,14 @@ function ContextTabBody({
 function ContextValidatorBlock({
   cascade,
   onOverride,
+  onChange,
   onReset,
   onDisable,
   onEnable,
 }: {
   cascade: ResolvedContextCascade["contextValidator"];
   onOverride: (value: GraphWorkflowAgentValidatorConfig) => void;
+  onChange: (value: GraphWorkflowAgentValidatorConfig) => void;
   onReset: () => void;
   onDisable: () => void;
   onEnable: () => void;
@@ -1026,8 +1099,81 @@ function ContextValidatorBlock({
       onReset={cascade.source === "context-override" ? onReset : undefined}
       onToggleDisabled={onDisable}
     >
-      <ReadonlyBlockPreview entries={validatorEntries(validator)} />
+      <ContextValidatorEditor
+        value={validator}
+        onChange={onChange}
+        readOnly={cascade.source !== "context-override"}
+      />
     </InspectorConfigBlock>
+  );
+}
+
+function ScriptValidatorBlock({
+  scopeLabel,
+  cascade,
+  onChange,
+  onReset,
+}: {
+  scopeLabel: string;
+  cascade:
+    | ResolvedContextCascade["scriptValidator"]
+    | WorkflowCascade["scriptValidator"];
+  onChange: (value: GraphWorkflowScriptValidatorConfig) => void;
+  onReset: () => void;
+}): React.JSX.Element {
+  return (
+    <InspectorConfigBlock
+      label="Script validator"
+      summary={summarizeScriptValidator(cascade.value)}
+      source={cascade.source}
+      defaultOpen
+      allowInheritedEditing
+      onReset={cascade.source === "context-override" ? onReset : undefined}
+    >
+      <ScriptValidatorControl
+        label={scopeLabel}
+        value={cascade.value.enabled}
+        onChange={(enabled) => onChange({ enabled })}
+      />
+    </InspectorConfigBlock>
+  );
+}
+
+function ScriptValidatorControl({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+}): React.JSX.Element {
+  return (
+    <div className="wb-script-validator-control">
+      <div
+        className="config-toggle"
+        onClick={() => onChange(!value)}
+        role="switch"
+        aria-label={label}
+        aria-checked={value}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onChange(!value);
+          }
+        }}
+      >
+        <div className={`config-toggle-track${value ? " active" : ""}`}>
+          <div className="config-toggle-knob" />
+        </div>
+        <span className="config-toggle-label">{value ? "ON" : "OFF"}</span>
+      </div>
+      <div className="wb-field-hint">
+        Runs the project&apos;s <code>preMergeCommand</code> before agent
+        validation.
+      </div>
+    </div>
   );
 }
 
@@ -1046,81 +1192,4 @@ function ReadonlyBlockPreview({
       ))}
     </dl>
   );
-}
-
-function implementerEntries(
-  value: GraphWorkflowAgentConfig,
-): Array<[string, string]> {
-  const entries: Array<[string, string]> = [
-    ["backend", value.backend],
-    ["model", value.model],
-  ];
-  if (value.reasoningEffort) {
-    entries.push(["reasoningEffort", value.reasoningEffort]);
-  }
-  return entries;
-}
-
-function validatorEntries(
-  value: GraphWorkflowAgentValidatorConfig,
-): Array<[string, string]> {
-  const entries: Array<[string, string]> = [
-    ["type", value.type],
-    ["enabled", String(value.enabled)],
-    ["continuity.enabled", String(value.continuity.enabled)],
-  ];
-  if (value.continuity.contextLimitTokens !== undefined) {
-    entries.push([
-      "continuity.contextLimitTokens",
-      String(value.continuity.contextLimitTokens),
-    ]);
-  }
-  if (value.type === "claude") {
-    entries.push(["agent.backend", value.agent.backend]);
-    entries.push(["agent.model", value.agent.model]);
-    if (value.agent.reasoningEffort) {
-      entries.push(["agent.reasoningEffort", value.agent.reasoningEffort]);
-    }
-  } else {
-    if (value.codex?.model) entries.push(["codex.model", value.codex.model]);
-    if (value.codex?.reasoningEffort) {
-      entries.push(["codex.reasoningEffort", value.codex.reasoningEffort]);
-    }
-  }
-  return entries;
-}
-
-function iterationPolicyEntries(
-  value: GraphWorkflowIterationPolicy,
-): Array<[string, string]> {
-  const entries: Array<[string, string]> = [
-    ["maxIterations", String(value.maxIterations)],
-    ["continuity.enabled", String(value.continuity.enabled)],
-  ];
-  if (value.continuity.contextLimitTokens !== undefined) {
-    entries.push([
-      "continuity.contextLimitTokens",
-      String(value.continuity.contextLimitTokens),
-    ]);
-  }
-  return entries;
-}
-
-function circuitBreakerEntries(
-  value: GraphWorkflowCircuitBreakerPolicy,
-): Array<[string, string]> {
-  const entries: Array<[string, string]> = [];
-  if (value.consecutiveFailureThreshold !== undefined) {
-    entries.push([
-      "consecutiveFailureThreshold",
-      String(value.consecutiveFailureThreshold),
-    ]);
-  }
-  return entries;
-}
-
-function mutabilityEntries(
-  value: GraphWorkflowMutabilityPolicy,
-): Array<[string, string]> {
-  return [["allowAgentTaskAdd", String(value.allowAgentTaskAdd)]];
 }

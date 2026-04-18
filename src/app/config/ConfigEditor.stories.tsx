@@ -115,6 +115,9 @@ const fullyConfiguredConfig: GlobalConfig = {
       },
       continuity: { enabled: true },
     },
+    scriptValidator: {
+      enabled: false,
+    },
     iterationPolicy: {
       maxIterations: 20,
       continuity: { enabled: true },

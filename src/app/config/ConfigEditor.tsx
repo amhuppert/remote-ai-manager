@@ -19,6 +19,7 @@ import type {
   GraphWorkflowIterationPolicy,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowMutabilityPolicy,
+  GraphWorkflowScriptValidatorConfig,
 } from "@/lib/schemas";
 import type { GlobalConfig } from "@/types";
 import {
@@ -49,6 +50,9 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
       model: "sonnet",
       reasoningEffort: "medium",
     },
+  },
+  scriptValidator: {
+    enabled: false,
   },
   iterationPolicy: {
     maxIterations: 20,
@@ -118,6 +122,33 @@ function deepEqual(a: unknown, b: unknown): boolean {
   const bKeys = Object.keys(bObj);
   if (aKeys.length !== bKeys.length) return false;
   return aKeys.every((k) => deepEqual(aObj[k], bObj[k]));
+}
+
+function stripUndefinedDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedDeep(item));
+  }
+
+  if (value == null || typeof value !== "object") {
+    return value;
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === undefined) continue;
+    const stripped = stripUndefinedDeep(entry);
+    if (
+      stripped &&
+      typeof stripped === "object" &&
+      !Array.isArray(stripped) &&
+      Object.keys(stripped).length === 0
+    ) {
+      continue;
+    }
+    result[key] = stripped;
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +479,7 @@ export default function ConfigEditor(): React.JSX.Element {
       "codex.timeout",
       "workflowDefaults.implementer",
       "workflowDefaults.contextValidator",
+      "workflowDefaults.scriptValidator",
       "workflowDefaults.iterationPolicy",
       "workflowDefaults.circuitBreaker",
       "workflowDefaults.mutability",
@@ -517,7 +549,9 @@ export default function ConfigEditor(): React.JSX.Element {
       }
     }
 
-    mutation.mutate(result as Partial<GlobalConfig>, {
+    const cleanedResult = stripUndefinedDeep(result) as Partial<GlobalConfig>;
+
+    mutation.mutate(cleanedResult, {
       onSuccess: (data) => {
         setFormState(data.config);
         setLoadedData(data);
@@ -1078,6 +1112,10 @@ function WorkflowDefaultsSubsections({
     effective.contextValidator,
     SEEDED_WORKFLOW_DEFAULTS.contextValidator,
   );
+  const scriptValidatorIsDefault = deepEqual(
+    effective.scriptValidator,
+    SEEDED_WORKFLOW_DEFAULTS.scriptValidator,
+  );
   const iterationIsDefault = deepEqual(
     effective.iterationPolicy,
     SEEDED_WORKFLOW_DEFAULTS.iterationPolicy,
@@ -1116,6 +1154,19 @@ function WorkflowDefaultsSubsections({
         <ContextValidatorFields
           value={effective.contextValidator}
           onChange={(v) => onChangeBlock("contextValidator", v)}
+        />
+      </ConfigSubsection>
+
+      <ConfigSubsection
+        id="scriptValidator"
+        title="Script validator"
+        isDefault={scriptValidatorIsDefault}
+        collapsed={collapsedSubs.has("scriptValidator")}
+        onToggle={onToggleSub}
+      >
+        <ScriptValidatorFields
+          value={effective.scriptValidator}
+          onChange={(v) => onChangeBlock("scriptValidator", v)}
         />
       </ConfigSubsection>
 
@@ -1388,6 +1439,29 @@ function ContextValidatorFields({
         />
       </ConfigField>
     </>
+  );
+}
+
+function ScriptValidatorFields({
+  value,
+  onChange,
+}: {
+  value: GraphWorkflowScriptValidatorConfig;
+  onChange: (v: GraphWorkflowScriptValidatorConfig) => void;
+}) {
+  return (
+    <ConfigField
+      label="Enabled"
+      fieldPath="workflowDefaults.scriptValidator.enabled"
+      isDefault={false}
+      isModified={false}
+      hint="Run the project's preMergeCommand before agent validation."
+    >
+      <ConfigToggle
+        value={value.enabled}
+        onChange={(enabled) => onChange({ enabled })}
+      />
+    </ConfigField>
   );
 }
 

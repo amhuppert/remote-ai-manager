@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { globalConfigSchema } from "./schemas";
+import { rawGlobalConfigSchema } from "./schemas";
 import type { GlobalConfig, PerRepoConfig } from "@/types";
 import { createLogger } from "@/lib/logging";
 
@@ -75,6 +75,9 @@ function defaultConfig(configDir: string = CONFIG_DIR): GlobalConfig {
           reasoningEffort: "medium",
         },
       },
+      scriptValidator: {
+        enabled: false,
+      },
       iterationPolicy: {
         maxIterations: 20,
         continuity: { enabled: true },
@@ -87,6 +90,22 @@ function defaultConfig(configDir: string = CONFIG_DIR): GlobalConfig {
       },
     },
   };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeConfigWithDefaults<T>(defaults: T, overrides: unknown): T {
+  if (!isPlainObject(defaults) || !isPlainObject(overrides)) {
+    return (overrides === undefined ? defaults : overrides) as T;
+  }
+
+  const result: Record<string, unknown> = { ...defaults };
+  for (const [key, value] of Object.entries(overrides)) {
+    result[key] = mergeConfigWithDefaults(result[key], value);
+  }
+  return result as T;
 }
 
 /* ------------------------------------------------------------------ */
@@ -169,12 +188,9 @@ export function createConfigReader(configDir: string): ConfigReader {
       }
 
       const raw = await readFile(configFile, "utf-8");
-      const parsed: unknown = JSON.parse(raw);
+      const parsed = rawGlobalConfigSchema.parse(JSON.parse(raw));
 
-      return {
-        ...defaultConfig(configDir),
-        ...globalConfigSchema.partial().parse(parsed),
-      };
+      return mergeConfigWithDefaults(defaultConfig(configDir), parsed);
     },
 
     async readRawConfig(): Promise<Partial<GlobalConfig>> {
@@ -195,7 +211,7 @@ export function createConfigReader(configDir: string): ConfigReader {
         return {};
       }
 
-      const result = globalConfigSchema.partial().safeParse(parsed);
+      const result = rawGlobalConfigSchema.safeParse(parsed);
       if (!result.success) {
         log.warn("config.raw_validation_error", {
           error: result.error.message,
@@ -265,10 +281,9 @@ export async function readConfig(): Promise<GlobalConfig> {
   }
 
   const raw = await readFile(CONFIG_FILE, "utf-8");
-  const parsed: unknown = JSON.parse(raw);
+  const parsed = rawGlobalConfigSchema.parse(JSON.parse(raw));
 
-  // Merge with defaults to handle missing fields from older configs
-  return { ...defaultConfig(), ...globalConfigSchema.partial().parse(parsed) };
+  return mergeConfigWithDefaults(defaultConfig(), parsed);
 }
 
 /** Read the raw config from disk without merging defaults. Returns {} if file doesn't exist. */

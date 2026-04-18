@@ -53,14 +53,22 @@ export default function ReasoningLevelSelector({
   const visibleOptions = availableLevels
     ? EFFORT_OPTIONS.filter((o) => availableLevels.includes(o.id))
     : EFFORT_OPTIONS;
+  const effortSupported = visibleOptions.length > 0;
 
   const selected =
     visibleOptions.find((o) => o.id === value) ??
-    visibleOptions[visibleOptions.length - 1]!;
+    visibleOptions[visibleOptions.length - 1];
+  const effectiveDisabled = disabled || !effortSupported;
+  const effectiveLabel = selected?.label ?? "Unavailable";
+  const effectiveDescription =
+    selected?.description ?? "This model does not support reasoning levels";
+  const triggerLabel = effortSupported
+    ? `Effort: ${effectiveLabel} — ${effectiveDescription}`
+    : "Reasoning level unavailable";
 
   const toggle = useCallback(() => {
-    if (!disabled) setOpen((prev) => !prev);
-  }, [disabled]);
+    if (!effectiveDisabled) setOpen((prev) => !prev);
+  }, [effectiveDisabled]);
 
   const select = useCallback(
     (id: EffortLevel) => {
@@ -131,16 +139,13 @@ export default function ReasoningLevelSelector({
       <button
         ref={triggerRef}
         type="button"
-        className={`effort-selector-trigger${open ? " open" : ""}${value === "max" || value === "xhigh" ? " rainbow-border" : ""}`}
+        className={`effort-selector-trigger${open ? " open" : ""}${selected?.id === "max" || selected?.id === "xhigh" ? " rainbow-border" : ""}`}
         onClick={toggle}
-        disabled={disabled}
-        title={
-          disabled && disabledTooltip
-            ? disabledTooltip
-            : `Effort: ${selected.label} — ${selected.description}`
-        }
+        disabled={effectiveDisabled}
+        aria-label={triggerLabel}
+        title={disabled && disabledTooltip ? disabledTooltip : triggerLabel}
       >
-        <span className="effort-selector-label">{selected.label}</span>
+        <span className="effort-selector-label">{effectiveLabel}</span>
         <span className="effort-selector-chevron">
           {open ? "\u25B2" : "\u25BC"}
         </span>

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
@@ -32,6 +33,7 @@ import {
   emit as defaultEmitStreamFrame,
   type GraphWorkflowStreamFrame,
 } from "@/lib/workflow-graph/stream-registry";
+import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validator-runner";
 import type { GraphWorkflowLifecycleSnapshot } from "./workflow-manager";
 
 export interface GraphWorkflowIterationExecutionRepository {
@@ -105,6 +107,19 @@ export interface IterationOrchestratorContinuityService {
   ): GraphWorkflowExecution;
 }
 
+export interface IterationOrchestratorScriptValidatorInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  contextId: string;
+}
+
+export interface IterationOrchestratorScriptValidatorService {
+  runScriptValidator(
+    input: IterationOrchestratorScriptValidatorInput,
+  ): Promise<ScriptValidatorOutcome>;
+}
+
 export interface GraphWorkflowIterationOrchestratorDeps {
   executionRepository: GraphWorkflowIterationExecutionRepository;
   createConversation(
@@ -123,6 +138,8 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   ): Promise<GraphWorkflowExecution>;
   continuityService?: IterationOrchestratorContinuityService;
   validationService?: GraphWorkflowValidationService;
+  scriptValidatorService?: IterationOrchestratorScriptValidatorService;
+  createTaskId?(): string;
   now?(): string;
   emitStreamFrame?(
     projectPath: string,
@@ -409,6 +426,7 @@ export function createGraphWorkflowIterationOrchestrator(
         "signalHalt dependency is not configured on the iteration orchestrator",
       );
     });
+  const createTaskId = deps.createTaskId ?? (() => `task-${randomUUID()}`);
 
   function getConsecutiveFailureThreshold(
     contextDef: GraphWorkflowResolvedContext | undefined,
@@ -627,6 +645,218 @@ export function createGraphWorkflowIterationOrchestrator(
     );
   }
 
+  function buildScriptValidatorRemediationTaskInstructions(
+    logRelativePath: string,
+    summary: string,
+  ): string {
+    return [
+      "Pre-merge validation failed. The script validator runs the project's `preMergeCommand` to catch deterministic problems (tests, type errors, lint, build, etc.).",
+      "",
+      `Summary: ${summary}`,
+      "",
+      `Read the full output at \`${logRelativePath}\` (relative to the worktree root) and address the issues.`,
+      "",
+      "When you believe the issues are resolved, mark this task complete. The pre-merge script will run again to confirm.",
+    ].join("\n");
+  }
+
+  async function applyScriptValidatorFailure(input: {
+    projectPath: string;
+    sessionName: string;
+    execution: GraphWorkflowExecution;
+    contextId: string;
+    outcome: Extract<ScriptValidatorOutcome, { kind: "fail" }>;
+  }): Promise<GraphWorkflowExecution> {
+    const nextExecution = cloneExecution(input.execution);
+    const failureTimestamp = getNow(deps);
+    const contextTasks = nextExecution.workingDefinition.tasks.filter(
+      (task) => task.contextId === input.contextId,
+    );
+    const maxOrder = contextTasks.reduce(
+      (currentMax, task) => Math.max(currentMax, task.order),
+      0,
+    );
+    const order = maxOrder + 1;
+    const taskId = createTaskId();
+
+    const instructions = buildScriptValidatorRemediationTaskInstructions(
+      input.outcome.logRelativePath,
+      input.outcome.summary,
+    );
+    const title = `Fix pre-merge validation errors (${input.outcome.logRelativePath})`;
+
+    nextExecution.workingDefinition.tasks.push({
+      id: taskId,
+      contextId: input.contextId,
+      order,
+      title,
+      instructions,
+      source: "user",
+      metadata: {
+        origin: "script_validator",
+        logRelativePath: input.outcome.logRelativePath,
+      },
+    });
+    nextExecution.taskStates[taskId] = {
+      taskId,
+      contextId: input.contextId,
+      order,
+      status: "pending",
+      summary: null,
+      startedAt: null,
+      completedAt: null,
+      lastConversationId: null,
+      failureMessage: input.outcome.summary,
+      failureHistory: [
+        {
+          message: input.outcome.summary,
+          timestamp: failureTimestamp,
+        },
+      ],
+    };
+
+    const contextState = nextExecution.contextStates[input.contextId];
+    if (contextState) {
+      contextState.totalTaskCount =
+        nextExecution.workingDefinition.tasks.filter(
+          (task) => task.contextId === input.contextId,
+        ).length;
+      contextState.consecutiveFailureCount =
+        (contextState.consecutiveFailureCount ?? 0) + 1;
+    }
+
+    nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
+
+    return persistExecution(
+      input.projectPath,
+      input.sessionName,
+      nextExecution,
+    );
+  }
+
+  async function processScriptValidation(params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    execution: GraphWorkflowExecution;
+    onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
+  }): Promise<"pass" | "skip" | "fail"> {
+    const { input, execLogger, execution, onHalt } = params;
+    const contextDef = getContextDefinition(execution, input.contextId);
+    if (!contextDef.scriptValidator.enabled) {
+      return "skip";
+    }
+
+    if (!deps.scriptValidatorService) {
+      throw new Error(
+        "Script validator is enabled for this context but no scriptValidatorService is configured",
+      );
+    }
+
+    execLogger?.validation(input.contextId, "script_validation.started", {});
+    logger.info("graph-workflow.script_validation.started", {
+      executionId: execution.id,
+      contextId: input.contextId,
+    });
+
+    const outcome = await deps.scriptValidatorService.runScriptValidator({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      execution,
+      contextId: input.contextId,
+    });
+
+    if (outcome.kind === "pass") {
+      execLogger?.validation(input.contextId, "script_validation.passed", {});
+      logger.info("graph-workflow.script_validation.passed", {
+        executionId: execution.id,
+        contextId: input.contextId,
+      });
+      return "pass";
+    }
+
+    if (outcome.kind === "infra_error") {
+      if (outcome.reason === "missing_pre_merge_command") {
+        execLogger?.validation(
+          input.contextId,
+          "script_validation.missing_pre_merge_command",
+          { message: outcome.message },
+        );
+        logger.warn(
+          "graph-workflow.script_validation.missing_pre_merge_command",
+          {
+            executionId: execution.id,
+            contextId: input.contextId,
+          },
+        );
+        const haltReason: GraphWorkflowHaltReason = {
+          type: "script_validator_missing_command",
+          contextId: input.contextId,
+          message: outcome.message,
+        };
+        await onHalt(haltReason);
+        throw new IterationHaltedError(haltReason);
+      }
+
+      execLogger?.validation(input.contextId, "script_validation.exception", {
+        message: outcome.message,
+      });
+      logger.warn("graph-workflow.script_validation.exception", {
+        executionId: execution.id,
+        contextId: input.contextId,
+        message: outcome.message,
+      });
+      const recoveryReason: GraphWorkflowHaltReason = {
+        type: "recovery_error",
+        message: `Script validator error: ${outcome.message}`,
+      };
+      await onHalt(recoveryReason);
+      throw new IterationHaltedError(recoveryReason);
+    }
+
+    execLogger?.validation(input.contextId, "script_validation.failed", {
+      summary: outcome.summary,
+      logRelativePath: outcome.logRelativePath,
+      timedOut: outcome.timedOut,
+    });
+    logger.info("graph-workflow.script_validation.failed", {
+      executionId: execution.id,
+      contextId: input.contextId,
+      logRelativePath: outcome.logRelativePath,
+    });
+
+    const failedExecution = await applyScriptValidatorFailure({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      execution,
+      contextId: input.contextId,
+      outcome,
+    });
+
+    const threshold = getConsecutiveFailureThreshold(contextDef);
+    const failureCount =
+      failedExecution.contextStates[input.contextId]?.consecutiveFailureCount ??
+      0;
+    if (failureCount >= threshold) {
+      execLogger?.decision("circuit_breaker.tripped", {
+        contextId: input.contextId,
+        consecutiveFailureCount: failureCount,
+        threshold,
+        source: "script_validator",
+      });
+      const haltReason: GraphWorkflowHaltReason = {
+        type: "circuit_breaker",
+        contextId: input.contextId,
+        condition: "retry_exhaustion",
+        failureCount,
+        summary: null,
+      };
+      await onHalt(haltReason);
+      throw new IterationHaltedError(haltReason);
+    }
+
+    return "fail";
+  }
+
   async function processContextCompletionValidation(params: {
     input: GraphWorkflowIterationInput;
     execLogger: ReturnType<typeof getExecutionLogger>;
@@ -650,10 +880,30 @@ export function createGraphWorkflowIterationOrchestrator(
       return;
     }
 
+    const scriptStageResult = await processScriptValidation({
+      input,
+      execLogger,
+      execution: preContextValidationExecution,
+      onHalt,
+    });
+
+    if (scriptStageResult === "fail") {
+      return;
+    }
+
+    const executionForAgentValidation = await loadCurrentExecution(
+      input.projectPath,
+      input.sessionName,
+    );
+
+    if (executionForAgentValidation.status !== "running") {
+      return;
+    }
+
     const validation = await validationService.validateContextCompletion({
       projectPath: input.projectPath,
       sessionName: input.sessionName,
-      execution: preContextValidationExecution,
+      execution: executionForAgentValidation,
       contextId: input.contextId,
     });
 

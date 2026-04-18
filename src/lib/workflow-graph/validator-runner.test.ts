@@ -69,6 +69,7 @@ const context: GraphWorkflowResolvedContext = {
     reasoningEffort: "medium",
   },
   contextValidator: validatorConfig,
+  scriptValidator: { enabled: false },
   mutability: { allowAgentTaskAdd: false },
   circuitBreaker: {},
   iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
@@ -363,6 +364,56 @@ describe("buildContextValidationPrompt", () => {
     expect(prompt).toContain("inspect files and verify the agent's claims");
     expect(prompt).not.toContain("`pass`");
     expect(prompt).not.toContain("`reopenTaskIds`");
+  });
+
+  it("frames validation as intent-based judgment rather than literal matching", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+    });
+
+    const lowered = prompt.toLowerCase();
+    expect(lowered).toContain("intent");
+    // Mentions that criteria may be imprecise and judgment is required
+    expect(lowered).toMatch(/imprecise|judgment|close enough|closely enough/);
+    // Should NOT tell the validator to take criteria literally / exactly
+    expect(prompt).not.toContain("exact acceptance criteria");
+    expect(lowered).not.toContain("literal");
+  });
+
+  it("instructs the validator to skip deterministic checks (tests, types, lint, build)", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+    });
+
+    const lowered = prompt.toLowerCase();
+    // Must explicitly call out that deterministic concerns are out of scope
+    expect(lowered).toMatch(/do not|don't|must not/);
+    expect(lowered).toContain("tests");
+    expect(lowered).toMatch(/type (errors|checks|checking)/);
+    // One of lint/build/compile should be mentioned as a deterministic concern
+    expect(lowered).toMatch(/lint|build|compile/);
+  });
+
+  it("instructs the validator to respect context scope boundaries with downstream contexts", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+    });
+
+    const lowered = prompt.toLowerCase();
+    expect(lowered).toContain("scope");
+    // Should reference that downstream/other contexts may complete related work
+    expect(lowered).toMatch(
+      /downstream|other context|another context|later context/,
+    );
   });
 
   it("requires taskId on each issue in the structured output schema", () => {

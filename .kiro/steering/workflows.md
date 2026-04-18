@@ -263,6 +263,7 @@ Resolution happens at seed time (in `src/lib/workflow-graph/resolve-config.ts`) 
   "workflowDefaults": {
     "implementer":      { "backend": "claude", "model": "opus",   "reasoningEffort": "medium" },
     "contextValidator": { "type": "claude", "enabled": true, "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "continuity": { "enabled": true } },
+    "scriptValidator":  { "enabled": false },
     "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
     "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
     "mutability":       { "allowAgentTaskAdd": false }
@@ -280,14 +281,15 @@ Resolution happens at seed time (in `src/lib/workflow-graph/resolve-config.ts`) 
     {
       "id": "plan",
       "title": "Plan",
-      "acceptanceCriteria": "A plan.md file exists describing the approach.",
-      "contextValidator": { "kind": "disabled" }   // opt out of validation for this context
+      "acceptanceCriteria": "A plan.md file exists describing the approach at a level of detail sufficient for an implementer to follow.",
+      "contextValidator": { "kind": "disabled" }   // opt out of agent validation for this context
     },
     {
       "id": "impl",
       "title": "Implement",
-      "acceptanceCriteria": "Feature implemented and tests pass.",
-      "implementer": { "model": "opus", "reasoningEffort": "high" }   // per-context override
+      "acceptanceCriteria": "The feature behaves as described in the plan when exercised end-to-end.",
+      "implementer": { "model": "opus", "reasoningEffort": "high" },   // per-context override
+      "scriptValidator": { "enabled": true }   // run the project's preMergeCommand as a deterministic gate
     }
   ]
 }
@@ -295,12 +297,13 @@ Resolution happens at seed time (in `src/lib/workflow-graph/resolve-config.ts`) 
 
 ### `workflowDefaults` block shape
 
-`workflowDefaults` in `config.json` has exactly **five blocks**, all independent and individually overridable at each tier:
+`workflowDefaults` in `config.json` has exactly **six blocks**, all independent and individually overridable at each tier:
 
 | Block | Purpose |
 |-------|---------|
 | `implementer`       | Agent config for the implementer (backend, model, reasoning effort). |
-| `contextValidator`  | Validator that reviews the whole context against its acceptance criteria. Discriminated on `type: "claude" \| "codex"`. |
+| `contextValidator`  | Agent (LLM) validator that judges the *intent* of the acceptance criteria against the completed work. Discriminated on `type: "claude" \| "codex"`. |
+| `scriptValidator`   | Deterministic validator — runs the project's `preMergeCommand` as a pre-merge gate. Shape: `{ enabled: boolean }`. Requires the project to have `preMergeCommand` configured in `CommandCenter.json`. |
 | `iterationPolicy`   | Iteration caps and continuity policy (`maxIterations`, `continuity.enabled`, optional `contextLimitTokens`). |
 | `circuitBreaker`    | Failure-threshold policy (`consecutiveFailureThreshold`). |
 | `mutability`        | What the implementer is allowed to change (e.g. `allowAgentTaskAdd`). |
@@ -309,13 +312,33 @@ Resolution happens at seed time (in `src/lib/workflow-graph/resolve-config.ts`) 
 
 `acceptanceCriteria` is a **required field on every execution context** (`executionContext.acceptanceCriteria`). It is:
 - Passed to the **implementer** as the success condition the context is working toward.
-- Passed to the **context validator** (when enabled) as the rubric to evaluate against.
+- Passed to the **agent (context) validator** (when enabled) as the rubric to evaluate against.
 
 AC lives on the context — never on the validator. A single statement of "done" is the source of truth for both roles.
 
-### Opting out of context validation
+**Authoring rules:**
+- Write **intent-based outcomes**, not deterministic gates. The agent validator judges the intent of the criteria and makes allowance for imprecise wording. "The feature behaves correctly when exercised end-to-end" is good; "all tests pass and there are no type errors" is wrong (see below).
+- Keep criteria **inside this context's scope**. If another context is responsible for finishing related work — downstream type cleanups, integrations, migrations — do not include it here. The agent validator explicitly respects context scope boundaries and will not fail a context for incomplete work that is explicitly downstream.
+- **Do NOT encode deterministic checks** (`tests pass`, `no type errors`, `lint clean`, `build succeeds`) in acceptance criteria. The agent validator is instructed to ignore those. Enable `scriptValidator` on the context instead if those gates must pass before the context advances.
 
-To skip validation for a specific context, set:
+### Dual-validator model: agent + script
+
+Every execution context can enable **two independent validators**, in any combination:
+
+| Validator | Nature | What it judges | Failure artifact |
+|-----------|--------|----------------|------------------|
+| `contextValidator` | LLM agent (Claude or Codex) | Whether the completed tasks satisfy the **intent** of the acceptance criteria, in scope of this context. | Issues list; affected tasks are reopened. |
+| `scriptValidator`  | Deterministic script | Whether the project's `preMergeCommand` exits successfully against the current worktree. | Full command output saved to `.cc/workflow/<executionId>/pre-merge-<timestamp>.log`; a new remediation task is added to the context pointing at the log. |
+
+**Ordering.** When both are enabled, the script validator runs **first**. If the script fails, the agent validator is skipped for that iteration — no point spending LLM turns on a tree that doesn't even compile. Both script and agent failures count as failed iterations (consume iteration budget, feed the circuit breaker).
+
+**Why two.** Agent validators should focus on judgment-based checks only an LLM can make (did the implementation match user intent? does the API contract make sense?). Deterministic checks are cheaper and more reliable as a script; reusing `preMergeCommand` keeps one source of truth across smart merge and graph workflows.
+
+**Missing `preMergeCommand` is an infra error.** If a context enables `scriptValidator` but the project has no `preMergeCommand` in `CommandCenter.json`, the workflow halts with a `script_validator_missing_command` halt reason. Silent skipping would make the workflow appear to pass gates that were never run.
+
+### Opting out of the agent validator
+
+To skip the agent validator for a specific context, set:
 
 ```jsonc
 { "contextValidator": { "kind": "disabled" } }
@@ -323,20 +346,22 @@ To skip validation for a specific context, set:
 
 This is the `contextValidatorOverride` discriminated union. The two shapes are:
 - `{ "kind": "use", "value": <validator config> }` — use this validator config instead of the inherited one.
-- `{ "kind": "disabled" }` — explicitly skip validation; the context completes when AC is claimed satisfied without validator review.
+- `{ "kind": "disabled" }` — explicitly skip the agent validator; the context completes on the implementer's claim (plus the script validator, if enabled).
 
 Omitting `contextValidator` entirely means "inherit from workflow / global" — which is the usual case.
 
-### Validator engines
+To enable or disable the script validator per context, set `scriptValidator: { enabled: true }` or `{ enabled: false }`. Omit to inherit. A context with both validators disabled completes as soon as the implementer reports the context done.
 
-Validators (global default or per-context override's `value`) are discriminated on `type`:
+### Agent validator engines
 
-| Type | Engine | Runs where | When to use |
-|------|--------|-----------|-------------|
-| `claude` | Claude agent (via SDK) | Cloud | Nuanced reviews, subjective quality checks |
-| `codex` | OpenAI Codex | Local | Fast, deterministic checks (tests pass, types check, lint clean) |
+Agent validators (global default or per-context override's `value`) are discriminated on `type`:
 
-Set the validator type directly — do **NOT** configure a Claude validator and instruct it to call Codex via MCP tools.
+| Type | Engine | Runs where | Notes |
+|------|--------|-----------|-------|
+| `claude` | Claude agent (via SDK) | Cloud | Default choice for intent-based reviews. |
+| `codex` | OpenAI Codex | Local | Useful when the judgment benefits from local file inspection without a round-trip. |
+
+Both engines receive the same intent-based prompt — they are asked to judge whether the completed tasks satisfy the intent of the acceptance criteria closely enough for the overall objective, and explicitly not to enforce tests/types/lint/build (which belong to the script validator). Set the validator type directly — do **NOT** configure a Claude validator and instruct it to call Codex via MCP tools.
 
 ```jsonc
 // Codex validator
