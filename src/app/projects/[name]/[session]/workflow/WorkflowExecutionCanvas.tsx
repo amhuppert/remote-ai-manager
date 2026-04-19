@@ -47,10 +47,6 @@ export default function WorkflowExecutionCanvas({
   const [effectiveLayout, setEffectiveLayout] =
     useState<GraphWorkflowVisualLayout>(layout);
 
-  useEffect(() => {
-    setEffectiveLayout(layout);
-  }, [layout]);
-
   const [nodes, setNodes, onNodesChange] = useNodesState<
     Node<ExecutionContextNodeData>
   >([]);

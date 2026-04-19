@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useReactFlow, useNodesInitialized, type Node } from "@xyflow/react";
+import { useNodes, useNodesInitialized, type Node } from "@xyflow/react";
 import {
   generateWorkflowLayout,
   type NodeDimensions,
@@ -25,25 +25,35 @@ export function collectNodeDimensions(nodes: Node[]): NodeDimensions {
   return dims;
 }
 
+function dimensionsKey(dims: NodeDimensions): string {
+  return [...dims.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, { width, height }]) => `${id}:${width}x${height}`)
+    .join("|");
+}
+
 interface AutoLayoutProps {
   definition: WorkflowSemanticDefinition | ResolvedWorkflowSemanticDefinition;
   onLayout: (layout: GraphWorkflowVisualLayout) => void;
 }
 
 export default function AutoLayout({ definition, onLayout }: AutoLayoutProps) {
-  const { getNodes } = useReactFlow();
+  const nodes = useNodes();
   const nodesInitialized = useNodesInitialized();
-  const appliedRef = useRef(false);
+  const lastDimsKeyRef = useRef<string>("");
 
   useEffect(() => {
-    if (!nodesInitialized || appliedRef.current) return;
-    appliedRef.current = true;
+    if (!nodesInitialized) return;
 
-    const dims = collectNodeDimensions(getNodes());
+    const dims = collectNodeDimensions(nodes);
     if (dims.size === 0) return;
 
+    const key = dimensionsKey(dims);
+    if (key === lastDimsKeyRef.current) return;
+    lastDimsKeyRef.current = key;
+
     onLayout(generateWorkflowLayout(definition, null, dims));
-  }, [nodesInitialized, definition, onLayout, getNodes]);
+  }, [nodes, nodesInitialized, definition, onLayout]);
 
   return null;
 }
