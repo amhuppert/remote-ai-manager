@@ -55,6 +55,7 @@ import {
   mergePortableMcpConfigs,
 } from "@/lib/mcp-gateway/portable-config";
 import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
+import { createExternalTurnHandler } from "./external-turn-handler";
 
 const logger = createLogger("conversation-actor");
 
@@ -927,6 +928,19 @@ export async function executePromptForMachine(
       conversationId: input.conversationId,
     });
 
+    const externalTurnHandler = createExternalTurnHandler(
+      {
+        projectPath: input.projectPath,
+        projectName,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+      },
+      {
+        sendToMachine: (event) => runtimeState.sendToMachine?.(event),
+      },
+      { safeAppendTranscriptEntry: deps.safeAppendTranscriptEntry },
+    );
+
     const newRuntime = await factory.createRuntime({
       conversationId: input.conversationId,
       projectPath: input.projectPath,
@@ -941,6 +955,7 @@ export async function executePromptForMachine(
       tooling: {
         portableMcp,
       },
+      onExternalTurnEvent: externalTurnHandler,
     });
 
     // Register in runtime-registry and local state

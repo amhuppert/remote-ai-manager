@@ -116,7 +116,9 @@ export type ConversationEvent =
   | { type: "SET_DEBUG_RECORDING"; recording: boolean }
   | { type: "MARK_REPRODUCED" }
   | { type: "MARK_FIX_VERIFIED" }
-  | { type: "CLEAR_DEBUG_LOGS" };
+  | { type: "CLEAR_DEBUG_LOGS" }
+  | { type: "EXTERNAL_TURN_STARTED" }
+  | { type: "EXTERNAL_TURN_COMPLETED"; result: PromptActorResult };
 
 // ============================================================
 // Input / Output

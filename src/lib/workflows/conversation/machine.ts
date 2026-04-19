@@ -192,6 +192,36 @@ export const conversationMachine = setup({
             "persistSnapshot",
           ],
         },
+        EXTERNAL_TURN_STARTED: {
+          target: "externalExecuting",
+        },
+      },
+    },
+
+    // ========================================================
+    // EXTERNAL EXECUTING — Claude Code auto-continuation turn
+    // (e.g., response to <task-notification> from a background
+    // Bash task completing). No caller-initiated prompt.
+    // ========================================================
+    externalExecuting: {
+      entry: [
+        assign({
+          status: "running" as const,
+          lastActivityAt: () => new Date().toISOString(),
+          lastError: null,
+        }),
+        "syncDerivedFields",
+        "broadcastConversationStatus",
+      ],
+      on: {
+        EXTERNAL_TURN_COMPLETED: {
+          target: "#conversation.finalizingTurn",
+          actions: assign({
+            lastResult: ({ event }) => event.result,
+            backendRef: ({ context, event }) =>
+              event.result.backendRef ?? context.backendRef,
+          }),
+        },
       },
     },
 
@@ -592,7 +622,7 @@ export const conversationMachine = setup({
               const result = context.lastResult;
               return {
                 promptCount:
-                  context.activeTurn != null
+                  context.activeTurn != null || result != null
                     ? context.promptCount + 1
                     : context.promptCount,
                 totals: result

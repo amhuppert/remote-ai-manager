@@ -10,6 +10,7 @@ import type {
   ConversationBackendCapabilities,
 } from "../types";
 import type {
+  ConversationBackendEvent,
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
@@ -294,6 +295,46 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
 // Helpers
 // ============================================================
 
+function buildExternalTurnHandler(
+  onExternalTurnEvent: (event: ConversationBackendEvent) => void,
+): {
+  emit: (event: string, data: unknown) => void;
+  onComplete: (result: TurnResult) => void;
+} {
+  let started = false;
+  return {
+    emit(event, data) {
+      if (event !== "__raw_message") return;
+      if (!started) {
+        started = true;
+        onExternalTurnEvent({ type: "external_turn_started" });
+      }
+      onExternalTurnEvent({ type: "provider_event", payload: data });
+    },
+    onComplete(turnResult: TurnResult) {
+      started = false;
+      const backendRef: AgentSessionRef | null = turnResult.sessionId
+        ? { backend: "claude", sessionId: turnResult.sessionId }
+        : null;
+      onExternalTurnEvent({
+        type: "external_turn_completed",
+        result: {
+          backendRef,
+          costUsd: turnResult.costUsd,
+          durationMs: turnResult.durationMs,
+          numTurns: turnResult.numTurns,
+          contextTokens: turnResult.contextTokens,
+          contextWindowMax: turnResult.contextWindow,
+          contentBlocks: turnResult.contentBlocks,
+          structuredOutput: turnResult.structuredOutput,
+          aborted: turnResult.aborted,
+          error: turnResult.error,
+        },
+      });
+    },
+  };
+}
+
 async function* wrapAsUserMessage(
   content: MessageContentBlock[],
 ): AsyncGenerator<import("@anthropic-ai/claude-agent-sdk").SDKUserMessage> {
@@ -359,6 +400,10 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
       Object.assign(mcpServers, servers);
     }
 
+    const externalTurnHandler = input.onExternalTurnEvent
+      ? buildExternalTurnHandler(input.onExternalTurnEvent)
+      : undefined;
+
     const sessionOptions: QuerySessionOptions = {
       conversationId: input.conversationId,
       cwd: input.worktreePath,
@@ -382,6 +427,7 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
       settingSources: ["user", "project", "local"],
       disallowedTools: [],
       outputFormat: input.outputFormat,
+      externalTurnHandler,
     };
 
     const querySession = createQuerySession(sessionOptions);

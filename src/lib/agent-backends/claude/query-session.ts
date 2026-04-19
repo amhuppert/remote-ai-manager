@@ -120,6 +120,17 @@ export interface QuerySessionOptions {
     type: "json_schema";
     schema: Record<string, unknown>;
   };
+  /**
+   * Optional handler for "virtual turns" — SDK message sequences that arrive
+   * between caller-initiated prompts (e.g. Claude Code's background-task
+   * auto-continuation feature). When a message arrives while pendingTurn is
+   * null, the pump synthesizes a PendingTurn backed by this handler so the
+   * message sequence is accumulated and resolved through the normal pipeline.
+   */
+  externalTurnHandler?: {
+    emit: TurnEmit;
+    onComplete: (result: TurnResult) => void;
+  };
 }
 
 // ============================================================
@@ -495,12 +506,45 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
   function processMessage(message: SDKMessage): void {
     if (!pendingTurn) {
-      // Between turns — log and discard
-      logger.debug("query-session.idle_message", {
+      if (!options.externalTurnHandler) {
+        // Between turns — log and discard
+        logger.debug("query-session.idle_message", {
+          conversationId: options.conversationId,
+          type: message.type,
+        });
+        return;
+      }
+
+      // Stop MCP keepalive — a virtual turn is starting (it will restart when
+      // the virtual turn's result arrives, same as for caller-initiated turns).
+      if (mcpKeepaliveTimer) {
+        clearInterval(mcpKeepaliveTimer);
+        mcpKeepaliveTimer = null;
+      }
+
+      const handler = options.externalTurnHandler;
+      pendingTurn = {
+        resolve: handler.onComplete,
+        reject: (err: Error) => {
+          logger.warn("query-session.virtual_turn_rejected", {
+            conversationId: options.conversationId,
+            error: err.message,
+          });
+        },
+        emit: handler.emit,
+        sessionId: null,
+        costUsd: null,
+        durationMs: null,
+        numTurns: null,
+        contextTokens: null,
+        contextWindow: null,
+        contentBlocks: [],
+      };
+
+      logger.info("query-session.external_turn_started", {
         conversationId: options.conversationId,
-        type: message.type,
+        firstMessageType: message.type,
       });
-      return;
     }
 
     const turn = pendingTurn;

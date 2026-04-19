@@ -982,4 +982,136 @@ describe("conversationMachine", () => {
       });
     });
   });
+
+  describe("external turn (auto-continuation)", () => {
+    it("transitions idle → externalExecuting on EXTERNAL_TURN_STARTED", () => {
+      const machine = makeTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("externalExecuting");
+      expect(snap.context.status).toBe("running");
+    });
+
+    it("transitions externalExecuting → finalizingTurn → idle on EXTERNAL_TURN_COMPLETED", async () => {
+      const machine = makeTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      actor.send({
+        type: "EXTERNAL_TURN_COMPLETED",
+        result: successResult({
+          costUsd: 0.03,
+          durationMs: 750,
+          numTurns: 1,
+          backendRef: { backend: "claude" as const, sessionId: "sess-ext" },
+        }),
+      });
+
+      await waitForState(actor, "idle");
+
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("idle");
+      expect(snap.context.status).toBe("awaiting");
+      expect(snap.context.promptCount).toBe(1);
+      expect(snap.context.totals.totalCostUsd).toBe(0.03);
+      expect(snap.context.totals.totalDurationMs).toBe(750);
+      expect(snap.context.totals.totalTurns).toBe(1);
+      expect(snap.context.backendRef).toEqual({
+        backend: "claude",
+        sessionId: "sess-ext",
+      });
+      expect(snap.context.lastResult).toBeTruthy();
+    });
+
+    it("fires broadcastConversationStatus on EXTERNAL_TURN_STARTED", () => {
+      const broadcastConversationStatus = vi.fn();
+      const machine = conversationMachine.provide({
+        actors: {
+          prepareTurn: makeMockPrepareTurn(),
+          executePrompt: makeMockExecutePrompt(),
+        },
+        actions: {
+          persistSnapshot: () => {},
+          syncDerivedFields: () => {},
+          broadcastConversationStatus,
+          broadcastAskQuestion: () => {},
+          broadcastDebugModeStatus: () => {},
+          releaseResources: () => {},
+          dispatchPushNotification: () => {},
+        },
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      broadcastConversationStatus.mockClear();
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+
+      expect(broadcastConversationStatus).toHaveBeenCalled();
+    });
+
+    it("fires dispatchPushNotification when external turn completes", async () => {
+      const dispatchPushNotification = vi.fn();
+      const machine = conversationMachine.provide({
+        actors: {
+          prepareTurn: makeMockPrepareTurn(),
+          executePrompt: makeMockExecutePrompt(),
+        },
+        actions: {
+          persistSnapshot: () => {},
+          syncDerivedFields: () => {},
+          broadcastConversationStatus: () => {},
+          broadcastAskQuestion: () => {},
+          broadcastDebugModeStatus: () => {},
+          releaseResources: () => {},
+          dispatchPushNotification,
+        },
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      actor.send({
+        type: "EXTERNAL_TURN_COMPLETED",
+        result: successResult(),
+      });
+
+      await waitForState(actor, "idle");
+      expect(dispatchPushNotification).toHaveBeenCalled();
+    });
+
+    it("runs back-to-back external turns cleanly", async () => {
+      const machine = makeTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      actor.send({
+        type: "EXTERNAL_TURN_COMPLETED",
+        result: successResult({ costUsd: 0.01, numTurns: 1 }),
+      });
+      await waitForState(actor, "idle");
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      actor.send({
+        type: "EXTERNAL_TURN_COMPLETED",
+        result: successResult({ costUsd: 0.02, numTurns: 1 }),
+      });
+      await waitForState(actor, "idle");
+
+      const snap = actor.getSnapshot();
+      expect(snap.context.promptCount).toBe(2);
+      expect(snap.context.totals.totalCostUsd).toBeCloseTo(0.03, 5);
+      expect(snap.context.totals.totalTurns).toBe(2);
+    });
+  });
 });

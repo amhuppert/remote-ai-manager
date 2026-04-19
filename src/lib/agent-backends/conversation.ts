@@ -15,7 +15,12 @@ export type ConversationBackendEvent =
   | { type: "backend_init"; backendRef: AgentSessionRef }
   | { type: "content"; block: MessageContentBlock }
   | { type: "provider_event"; payload: unknown }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "external_turn_started" }
+  | {
+      type: "external_turn_completed";
+      result: ConversationBackendTurnResult;
+    };
 
 export interface ConversationBackendTurnInput {
   promptText: string;
@@ -83,6 +88,13 @@ export interface ConversationBackendCreateInput {
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   sessionInstructions: string[];
   tooling: ConversationToolingOverrides;
+  /**
+   * Optional callback invoked by the backend runtime when SDK messages arrive
+   * between caller-initiated turns — e.g. Claude Code's background-task
+   * auto-continuation. Emits `external_turn_started`, `provider_event`s, and
+   * `external_turn_completed` for each virtual turn.
+   */
+  onExternalTurnEvent?: (event: ConversationBackendEvent) => void;
 }
 
 export interface ConversationBackendFactory {

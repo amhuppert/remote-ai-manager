@@ -1389,3 +1389,246 @@ describe("Pre-turn MCP health check", () => {
     session.close();
   });
 });
+
+describe("QuerySession externalTurnHandler (auto-continuation)", () => {
+  it("forwards messages to handler.emit when no caller-initiated turn is pending", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const externalEmit = vi.fn();
+    const externalOnComplete = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        externalTurnHandler: {
+          emit: externalEmit,
+          onComplete: externalOnComplete,
+        },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Now the pump is idle (pendingTurn is null). Push a task-notification-like user message.
+    mock.pushMessage({
+      type: "user",
+      session_id: "sess-1",
+      uuid: "u2",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "<task-notification>done</task-notification>" },
+        ],
+      },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(externalEmit).toHaveBeenCalled();
+    const rawCall = externalEmit.mock.calls.find(
+      (c) => c[0] === "__raw_message",
+    );
+    expect(rawCall).toBeDefined();
+
+    session.close();
+  });
+
+  it("invokes handler.onComplete with a TurnResult when a virtual-turn result arrives", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const externalEmit = vi.fn();
+    const externalOnComplete = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        externalTurnHandler: {
+          emit: externalEmit,
+          onComplete: externalOnComplete,
+        },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0.01,
+      duration_ms: 100,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Auto-continuation sequence: user -> assistant -> result
+    mock.pushMessage({
+      type: "user",
+      session_id: "sess-1",
+      uuid: "u2",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<task-notification>complete</task-notification>",
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u3",
+      message: {
+        content: [{ type: "text", text: "Continuation response" }],
+      },
+    } as unknown as SDKMessage);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u4",
+      total_cost_usd: 0.07,
+      duration_ms: 450,
+      num_turns: 2,
+      result: "Continuation response",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(externalOnComplete).toHaveBeenCalledTimes(1);
+    const result = externalOnComplete.mock.calls[0]![0];
+    expect(result.sessionId).toBe("sess-1");
+    expect(result.costUsd).toBe(0.07);
+    expect(result.durationMs).toBe(450);
+    expect(result.numTurns).toBe(2);
+    expect(result.aborted).toBe(false);
+    expect(result.error).toBeNull();
+    expect(
+      result.contentBlocks.some(
+        (b: { type: string; text?: string }) =>
+          b.type === "text" && b.text === "Continuation response",
+      ),
+    ).toBe(true);
+
+    session.close();
+  });
+
+  it("preserves drop-and-log behavior when no externalTurnHandler is provided", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Stray message should just be dropped — session stays alive, no crash
+    mock.pushMessage({
+      type: "user",
+      session_id: "sess-1",
+      uuid: "u2",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "idle noise" }],
+      },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(session.status).toBe("alive");
+
+    session.close();
+  });
+
+  it("does not invoke handler.onComplete when the pump dies mid-virtual-turn", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const externalEmit = vi.fn();
+    const externalOnComplete = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        externalTurnHandler: {
+          emit: externalEmit,
+          onComplete: externalOnComplete,
+        },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Start a virtual turn
+    mock.pushMessage({
+      type: "user",
+      session_id: "sess-1",
+      uuid: "u2",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "<task-notification>x</task-notification>" },
+        ],
+      },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Pump crashes before a result arrives
+    mock.crashPump(new Error("subprocess died mid-virtual-turn"));
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(externalOnComplete).not.toHaveBeenCalled();
+    expect(session.status).toBe("dead");
+  });
+});
