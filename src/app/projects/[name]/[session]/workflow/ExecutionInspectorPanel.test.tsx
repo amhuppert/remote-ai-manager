@@ -46,6 +46,7 @@ function makeExecutionWithHistory(
   const history = events.map((event, i) => ({
     occurredAt: `2026-03-27T10:0${i}:00.000Z`,
     event,
+    preReset: false,
   }));
   return createWorkflowExecution({ history });
 }
@@ -454,8 +455,16 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
       },
     });
     const history = [
-      { occurredAt: "2026-03-27T10:00:00.000Z", event: olderEvent },
-      { occurredAt: "2026-03-27T10:01:00.000Z", event: newerEvent },
+      {
+        occurredAt: "2026-03-27T10:00:00.000Z",
+        event: olderEvent,
+        preReset: false,
+      },
+      {
+        occurredAt: "2026-03-27T10:01:00.000Z",
+        event: newerEvent,
+        preReset: false,
+      },
     ];
     const execution = createWorkflowExecution({ history });
 
@@ -487,8 +496,16 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
       },
     });
     const history = [
-      { occurredAt: "2026-03-27T10:00:00.000Z", event: firstEvent },
-      { occurredAt: "2026-03-27T10:01:00.000Z", event: secondEvent },
+      {
+        occurredAt: "2026-03-27T10:00:00.000Z",
+        event: firstEvent,
+        preReset: false,
+      },
+      {
+        occurredAt: "2026-03-27T10:01:00.000Z",
+        event: secondEvent,
+        preReset: false,
+      },
     ];
     const execution = createWorkflowExecution({ history });
 
@@ -524,8 +541,16 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
       },
     });
     const history = [
-      { occurredAt: "2026-03-27T10:00:00.000Z", event: olderEvent },
-      { occurredAt: "2026-03-27T10:01:00.000Z", event: newerEvent },
+      {
+        occurredAt: "2026-03-27T10:00:00.000Z",
+        event: olderEvent,
+        preReset: false,
+      },
+      {
+        occurredAt: "2026-03-27T10:01:00.000Z",
+        event: newerEvent,
+        preReset: false,
+      },
     ];
     const execution = createWorkflowExecution({ history });
 
@@ -917,5 +942,219 @@ describe("ExecutionInspectorPanel — task editability", () => {
       "task-plan-3",
       "task-plan-2",
     ]);
+  });
+});
+
+describe("ExecutionInspectorPanel — Reset Context", () => {
+  it("shows a Reset button when execution is paused and context is not completed", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onResetContext={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /reset context/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a Reset button when execution is halted and context is not completed", () => {
+    const execution = createWorkflowExecution({ status: "halted" });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onResetContext={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /reset context/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the Reset button when execution is running", () => {
+    const execution = createWorkflowExecution({ status: "running" });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onResetContext={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /reset context/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the Reset button when the selected context is completed", () => {
+    const baseExecution = createWorkflowExecution({ status: "paused" });
+    const execution = createWorkflowExecution({
+      status: "paused",
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...baseExecution.contextStates["context-plan"]!,
+          status: "completed",
+        },
+      },
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onResetContext={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /reset context/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the Reset button when no onResetContext handler is provided", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /reset context/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens a confirmation dialog on Reset and calls onResetContext after confirming", () => {
+    const onResetContext = vi.fn();
+    const execution = createWorkflowExecution({ status: "paused" });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onResetContext={onResetContext}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /reset context/i }));
+
+    expect(screen.getByTestId("modal-overlay")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^reset$/i }));
+
+    expect(onResetContext).toHaveBeenCalledWith("context-plan");
+  });
+
+  it("does not call onResetContext when the confirmation dialog is cancelled", () => {
+    const onResetContext = vi.fn();
+    const execution = createWorkflowExecution({ status: "paused" });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onResetContext={onResetContext}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /reset context/i }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(onResetContext).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("modal-overlay")).not.toBeInTheDocument();
+  });
+
+  it("hides history entries flagged as preReset in the detail history tab", () => {
+    const visibleEvent = makeValidationEvent({
+      contextId: "context-plan",
+      summary: "Kept after reset",
+    });
+    const hiddenEvent = makeValidationEvent({
+      contextId: "context-plan",
+      summary: "Discarded by reset",
+    });
+    const execution = createWorkflowExecution({
+      status: "paused",
+      history: [
+        {
+          occurredAt: "2026-03-27T10:00:00.000Z",
+          event: hiddenEvent,
+          preReset: true,
+        },
+        {
+          occurredAt: "2026-03-27T10:01:00.000Z",
+          event: visibleEvent,
+          preReset: false,
+        },
+      ],
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /history/i }));
+
+    expect(screen.getByText("Kept after reset")).toBeInTheDocument();
+    expect(screen.queryByText("Discarded by reset")).not.toBeInTheDocument();
+  });
+
+  it("hides history entries flagged as preReset in the overview validations section", () => {
+    const visibleEvent = makeValidationEvent({
+      contextId: "context-plan",
+      summary: "Kept after reset",
+    });
+    const hiddenEvent = makeValidationEvent({
+      contextId: "context-plan",
+      summary: "Discarded by reset",
+    });
+    const execution = createWorkflowExecution({
+      status: "paused",
+      history: [
+        {
+          occurredAt: "2026-03-27T10:00:00.000Z",
+          event: hiddenEvent,
+          preReset: true,
+        },
+        {
+          occurredAt: "2026-03-27T10:01:00.000Z",
+          event: visibleEvent,
+          preReset: false,
+        },
+      ],
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByText("Kept after reset")).toBeInTheDocument();
+    expect(screen.queryByText("Discarded by reset")).not.toBeInTheDocument();
   });
 });

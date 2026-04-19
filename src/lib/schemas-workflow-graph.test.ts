@@ -4,6 +4,7 @@ import {
   globalConfigSchema,
   graphWorkflowAgentValidatorConfigSchema,
   graphWorkflowExecutionContextDefinitionSchema,
+  graphWorkflowExecutionEventSchema,
   graphWorkflowExecutionSchema,
   graphWorkflowExecutionSessionRefSchema,
   graphWorkflowHaltReasonSchema,
@@ -14,6 +15,7 @@ import {
   graphWorkflowScriptValidatorConfigSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
+  resetExecutionContextRequestSchema,
   sessionStateSchema,
   workflowAgentValidatorResultSchema,
   workflowConfigOverrideSchema,
@@ -1179,6 +1181,85 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
     if (result.success) {
       expect(Object.keys(result.data.laneStates)).toHaveLength(2);
     }
+  });
+});
+
+describe("resetExecutionContextRequestSchema", () => {
+  it("parses a well-formed request with executionId and contextId", () => {
+    const result = resetExecutionContextRequestSchema.safeParse({
+      executionId: "exec-1",
+      contextId: "ctx-1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.executionId).toBe("exec-1");
+      expect(result.data.contextId).toBe("ctx-1");
+    }
+  });
+
+  it("rejects a request missing contextId", () => {
+    const result = resetExecutionContextRequestSchema.safeParse({
+      executionId: "exec-1",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects blank executionId or contextId", () => {
+    expect(
+      resetExecutionContextRequestSchema.safeParse({
+        executionId: "",
+        contextId: "ctx-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      resetExecutionContextRequestSchema.safeParse({
+        executionId: "exec-1",
+        contextId: "   ",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("graphWorkflowExecutionEventSchema preReset marker", () => {
+  const baseEvent = {
+    occurredAt: timestamp,
+    event: {
+      type: "graph-workflow-context-status" as const,
+      projectName: "p",
+      sessionName: "s",
+      executionId: "exec-1",
+      contextId: "ctx-1",
+      status: "running" as const,
+      remainingTaskCount: 0,
+      iterationCount: 1,
+    },
+  };
+
+  it("defaults preReset to false when omitted", () => {
+    const result = graphWorkflowExecutionEventSchema.safeParse(baseEvent);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.preReset).toBe(false);
+    }
+  });
+
+  it("persists preReset: true when specified", () => {
+    const result = graphWorkflowExecutionEventSchema.safeParse({
+      ...baseEvent,
+      preReset: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.preReset).toBe(true);
+    }
+  });
+
+  it("rejects a non-boolean preReset value", () => {
+    const result = graphWorkflowExecutionEventSchema.safeParse({
+      ...baseEvent,
+      preReset: "yes",
+    });
+    expect(result.success).toBe(false);
   });
 });
 

@@ -159,6 +159,7 @@ export type {
   GraphWorkflowExecution,
   WorkflowRuntimeEditOperation,
   WorkflowRuntimeEditRequest,
+  ResetExecutionContextRequest,
   WorkflowGraphValidationError,
   WorkflowPlanReference,
   WorkflowPlanRequest,

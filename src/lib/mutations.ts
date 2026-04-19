@@ -453,6 +453,32 @@ export function useClearGraphWorkflowMutation(
   });
 }
 
+export function useResetExecutionContextMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (variables: { executionId: string; contextId: string }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/reset-context`,
+        "reset-execution-context",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(variables),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    },
+  });
+}
+
 export function useRuntimeEditGraphWorkflowMutation(
   projectName: string,
   sessionName: string,

@@ -915,9 +915,18 @@ export type GraphWorkflowSSEEvent = z.infer<typeof graphWorkflowSseEventSchema>;
 export const graphWorkflowExecutionEventSchema = z.object({
   occurredAt: z.string(),
   event: graphWorkflowSseEventSchema,
+  preReset: z.boolean().default(false),
 });
 export type GraphWorkflowExecutionEvent = z.infer<
   typeof graphWorkflowExecutionEventSchema
+>;
+
+export const resetExecutionContextRequestSchema = z.object({
+  executionId: z.string().trim().min(1),
+  contextId: z.string().trim().min(1),
+});
+export type ResetExecutionContextRequest = z.infer<
+  typeof resetExecutionContextRequestSchema
 >;
 
 // ============================================================

@@ -6,6 +6,7 @@ import {
   useAbortGraphWorkflowMutation,
   useClearGraphWorkflowMutation,
   usePauseGraphWorkflowMutation,
+  useResetExecutionContextMutation,
   useResumeGraphWorkflowMutation,
   useRuntimeEditGraphWorkflowMutation,
 } from "@/lib/mutations";
@@ -43,6 +44,10 @@ export default function ConnectedGraphWorkflowPanel({
   const abortMutation = useAbortGraphWorkflowMutation(projectName, sessionName);
   const clearMutation = useClearGraphWorkflowMutation(projectName, sessionName);
   const runtimeEditMutation = useRuntimeEditGraphWorkflowMutation(
+    projectName,
+    sessionName,
+  );
+  const resetContextMutation = useResetExecutionContextMutation(
     projectName,
     sessionName,
   );
@@ -121,6 +126,15 @@ export default function ConnectedGraphWorkflowPanel({
     [runtimeEditMutation],
   );
 
+  const executionId = session?.graphWorkflowExecution?.id ?? null;
+  const handleResetContext = useCallback(
+    (contextId: string) => {
+      if (!executionId) return;
+      resetContextMutation.mutate({ executionId, contextId });
+    },
+    [executionId, resetContextMutation],
+  );
+
   return (
     <GraphWorkflowPanel
       projectName={projectName}
@@ -137,12 +151,14 @@ export default function ConnectedGraphWorkflowPanel({
       onRemoveTask={handleRemoveTask}
       onMoveTask={handleMoveTask}
       onReorderTask={handleReorderTask}
+      onResetContext={handleResetContext}
       isMutating={
         pauseMutation.isPending ||
         resumeMutation.isPending ||
         abortMutation.isPending ||
         clearMutation.isPending ||
-        runtimeEditMutation.isPending
+        runtimeEditMutation.isPending ||
+        resetContextMutation.isPending
       }
       isMobile={isMobile}
       mobilePanel={mobilePanel}

@@ -1,6 +1,10 @@
 import { readConfig } from "@/lib/config";
 import { graphWorkflowExecutionSchema } from "@/lib/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import {
+  buildInitialContextStates,
+  buildInitialTaskStates,
+} from "./execution-state";
 import { resolveWorkflowDefinition } from "./resolve-config";
 import { assertNoLegacyWorkflowFields } from "./schema-cutover-guard";
 import {
@@ -60,38 +64,8 @@ async function createExecutionFromSeed(
     );
   }
 
-  const contextStates: GraphWorkflowExecution["contextStates"] = {};
-  const taskStates: GraphWorkflowExecution["taskStates"] = {};
-
-  for (const context of seed.definition.executionContexts) {
-    const totalTaskCount = seed.definition.tasks.filter(
-      (task) => task.contextId === context.id,
-    ).length;
-
-    contextStates[context.id] = {
-      contextId: context.id,
-      status: "pending",
-      totalTaskCount,
-      completedTaskCount: 0,
-      iterationCount: 0,
-      consecutiveFailureCount: 0,
-    };
-  }
-
-  for (const task of seed.definition.tasks) {
-    taskStates[task.id] = {
-      taskId: task.id,
-      contextId: task.contextId,
-      order: task.order,
-      status: "pending",
-      summary: null,
-      startedAt: null,
-      completedAt: null,
-      lastConversationId: null,
-      failureMessage: null,
-      failureHistory: [],
-    };
-  }
+  const contextStates = buildInitialContextStates(workingDefinition);
+  const taskStates = buildInitialTaskStates(workingDefinition);
 
   return graphWorkflowExecutionSchema.parse({
     id: seed.executionId,

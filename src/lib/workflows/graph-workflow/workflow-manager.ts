@@ -8,6 +8,10 @@ import {
   unregisterExecutionLogger,
   getExecutionLogger,
 } from "@/lib/workflow-graph/execution-logger";
+import {
+  ResetExecutionContextError,
+  resetExecutionContext,
+} from "@/lib/workflows/graph-workflow/reset-context";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
@@ -615,6 +619,62 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     return execution !== null;
   }
 
+  async function resetContext(
+    projectPath: string,
+    sessionName: string,
+    contextId: string,
+  ): Promise<GraphWorkflowExecution> {
+    const execution = await requireActiveExecution(
+      deps.executionRepository,
+      projectPath,
+      sessionName,
+    );
+
+    logger.info("graph-workflow.context.reset_requested", {
+      executionId: execution.id,
+      contextId,
+      status: execution.status,
+    });
+
+    let nextExecution: GraphWorkflowExecution;
+    try {
+      nextExecution = resetExecutionContext(execution, contextId);
+    } catch (error) {
+      if (error instanceof ResetExecutionContextError) {
+        logger.warn("graph-workflow.context.reset_rejected", {
+          executionId: execution.id,
+          contextId,
+          status: execution.status,
+          reason: error.message,
+        });
+      }
+      throw error;
+    }
+
+    await deps.executionRepository.update(
+      projectPath,
+      sessionName,
+      nextExecution,
+    );
+
+    let execLogger = getExecutionLogger(nextExecution.id);
+    if (!execLogger) {
+      execLogger = createExecutionLogger(nextExecution.id);
+      registerExecutionLogger(execLogger);
+    }
+    execLogger.lifecycle("context.reset", {
+      contextId,
+      previousStatus: execution.status,
+    });
+    logger.info("graph-workflow.context.reset_applied", {
+      executionId: nextExecution.id,
+      contextId,
+      previousStatus: execution.status,
+    });
+
+    return nextExecution;
+  }
+
   return {
     start,
     send,
@@ -622,6 +682,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     normalizeAfterRestart,
     scheduleNextContext,
     recoverRetryableIterationError,
+    resetContext,
     hasActive,
   };
 }

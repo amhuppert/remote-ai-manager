@@ -59,6 +59,7 @@ describe("graph workflow execution route handlers", () => {
   const archiveExecution = vi.fn();
   const normalizeExecutionAfterRestart = vi.fn();
   const kickOffExecutionLoop = vi.fn();
+  const resetExecutionContext = vi.fn();
 
   const handlers = createGraphWorkflowExecutionRouteHandlers({
     resolveProjectPath,
@@ -70,6 +71,7 @@ describe("graph workflow execution route handlers", () => {
     archiveExecution,
     normalizeExecutionAfterRestart,
     kickOffExecutionLoop,
+    resetExecutionContext,
   });
 
   beforeEach(() => {
@@ -524,6 +526,137 @@ describe("graph workflow execution route handlers", () => {
 
     expect(response.status).toBe(200);
     expect(archiveExecution).toHaveBeenCalledWith("/repo", "session-1");
+  });
+
+  it("resets a selected context and returns the execution summary without kicking off the loop", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          id: "execution-reset",
+          status: "paused",
+          activeContextId: "context-implement",
+        }),
+      }),
+    );
+    resetExecutionContext.mockResolvedValue(
+      createWorkflowExecution({
+        id: "execution-reset",
+        status: "paused",
+        activeContextId: null,
+      }),
+    );
+
+    const response = await handlers.RESET_CONTEXT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/reset-context",
+        "POST",
+        { executionId: "execution-reset", contextId: "context-implement" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(resetExecutionContext).toHaveBeenCalledWith(
+      "/repo",
+      "session-1",
+      "context-implement",
+    );
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      execution: {
+        executionId: "execution-reset",
+        status: "paused",
+        activeContextId: null,
+        archived: false,
+      },
+    });
+  });
+
+  it("returns 400 when the reset-context request body is invalid", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+
+    const response = await handlers.RESET_CONTEXT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/reset-context",
+        "POST",
+        { executionId: "" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(resetExecutionContext).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the workflow manager rejects a reset against a running execution", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          id: "execution-reset",
+          status: "running",
+        }),
+      }),
+    );
+    resetExecutionContext.mockRejectedValue(
+      new Error(
+        "Reset only allowed when the workflow is paused or halted (current status: running).",
+      ),
+    );
+
+    const response = await handlers.RESET_CONTEXT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/reset-context",
+        "POST",
+        { executionId: "execution-reset", contextId: "context-implement" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
+  it("returns 409 when the request executionId does not match the active execution", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          id: "execution-current",
+          status: "paused",
+        }),
+      }),
+    );
+
+    const response = await handlers.RESET_CONTEXT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/reset-context",
+        "POST",
+        { executionId: "execution-stale", contextId: "context-implement" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(resetExecutionContext).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the session has no active execution to reset", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession({ graphWorkflowExecution: null }));
+
+    const response = await handlers.RESET_CONTEXT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/reset-context",
+        "POST",
+        { executionId: "execution-current", contextId: "context-implement" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(resetExecutionContext).not.toHaveBeenCalled();
   });
 
   it("rejects clearing a non-terminal execution", async () => {

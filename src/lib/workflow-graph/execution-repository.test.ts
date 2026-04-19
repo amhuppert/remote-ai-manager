@@ -110,6 +110,53 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     expect(execution.status).toBe("pending");
   });
 
+  it("initializes context and task state to execution-start defaults", async () => {
+    const repo = createInMemoryRepo();
+    const execution = await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+    });
+
+    expect(execution.activeContextId).toBeNull();
+    expect(execution.haltReason).toBeNull();
+    expect(execution.completedAt).toBeNull();
+    expect(execution.sharedDocuments).toEqual([]);
+    expect(execution.laneStates).toEqual({});
+    expect(execution.machineSnapshot).toBeNull();
+
+    for (const context of execution.workingDefinition.executionContexts) {
+      const state = execution.contextStates[context.id];
+      expect(state).toEqual({
+        contextId: context.id,
+        status: "pending",
+        totalTaskCount: execution.workingDefinition.tasks.filter(
+          (task) => task.contextId === context.id,
+        ).length,
+        completedTaskCount: 0,
+        iterationCount: 0,
+        consecutiveFailureCount: 0,
+      });
+    }
+
+    for (const task of execution.workingDefinition.tasks) {
+      expect(execution.taskStates[task.id]).toEqual({
+        taskId: task.id,
+        contextId: task.contextId,
+        order: task.order,
+        status: "pending",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
+      });
+    }
+  });
+
   it("stores a resolved workingDefinition with implementer populated even when the input omits it", async () => {
     const repo = createInMemoryRepo();
     const baseline = createWorkflowDefinition();

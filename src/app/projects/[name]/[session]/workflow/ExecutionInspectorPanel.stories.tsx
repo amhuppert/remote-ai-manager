@@ -262,9 +262,11 @@ const createUserSchema = z.object({
             conversationId: "conv-val-1",
           },
         },
+        preReset: false,
       },
       {
         occurredAt: "2026-03-30T10:00:00Z",
+        preReset: false,
         event: {
           type: "graph-workflow-validation-result" as const,
           projectName: "test",
@@ -406,6 +408,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
     history: [
       {
         occurredAt: "2026-03-30T09:30:00Z",
+        preReset: false,
         event: {
           type: "graph-workflow-validation-result",
           projectName: "test",
@@ -421,6 +424,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
       },
       {
         occurredAt: "2026-03-30T10:00:00Z",
+        preReset: false,
         event: {
           type: "graph-workflow-validation-result",
           projectName: "test",
@@ -442,6 +446,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
       },
       {
         occurredAt: "2026-03-30T10:20:00Z",
+        preReset: false,
         event: {
           type: "graph-workflow-validation-result",
           projectName: "test",
@@ -475,6 +480,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
       },
       {
         occurredAt: "2026-03-30T10:30:00Z",
+        preReset: false,
         event: {
           type: "graph-workflow-circuit-breaker",
           projectName: "test",
@@ -496,6 +502,7 @@ const sharedHandlers = {
   onUpdateTask: fn(),
   onRemoveTask: fn(),
   onReorderTask: fn(),
+  onResetContext: fn(),
   onViewTask: fn(),
   onViewConversation: fn(),
   viewingTaskId: null,

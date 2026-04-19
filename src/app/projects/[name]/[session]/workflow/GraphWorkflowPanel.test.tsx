@@ -23,6 +23,7 @@ const noopCallbacks = {
   onRemoveTask: vi.fn(),
   onMoveTask: vi.fn(),
   onReorderTask: vi.fn(),
+  onResetContext: vi.fn(),
   isMutating: false,
   layout: null,
   isMobile: false,

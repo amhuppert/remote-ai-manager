@@ -220,6 +220,7 @@ function appendFailedContextValidationEvent(
       sessionRef: null,
       reviewArtifact: null,
     },
+    preReset: false,
   });
   return execution;
 }

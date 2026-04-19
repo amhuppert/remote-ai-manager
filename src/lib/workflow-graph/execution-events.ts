@@ -107,6 +107,7 @@ function appendEvents(
       (event): GraphWorkflowExecutionEvent => ({
         occurredAt,
         event,
+        preReset: false,
       }),
     ),
   );

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import MarkdownContent from "@/components/MarkdownContent";
 import CollapsibleText from "@/components/CollapsibleText";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationResultEvent,
@@ -22,6 +23,7 @@ interface ExecutionInspectorPanelProps {
   ) => void;
   onRemoveTask: (taskId: string) => void;
   onReorderTask: (contextId: string, orderedTaskIds: string[]) => void;
+  onResetContext?: (contextId: string) => void;
   onViewTask: (taskId: string) => void;
   viewingTaskId: string | null;
   isMutating: boolean;
@@ -53,8 +55,10 @@ function getHistoryEntries(
       ): entry is {
         occurredAt: string;
         event: GraphWorkflowValidationResultEvent;
+        preReset: boolean;
       } =>
         entry.event.type === "graph-workflow-validation-result" &&
+        entry.preReset !== true &&
         (contextId == null || entry.event.contextId === contextId),
     )
     .map(
@@ -71,8 +75,10 @@ function getHistoryEntries(
       ): entry is {
         occurredAt: string;
         event: GraphWorkflowCircuitBreakerEvent;
+        preReset: boolean;
       } =>
         entry.event.type === "graph-workflow-circuit-breaker" &&
+        entry.preReset !== true &&
         (contextId == null || entry.event.contextId === contextId),
     )
     .map(
@@ -518,6 +524,7 @@ function DetailView({
   onUpdateTask,
   onRemoveTask,
   onReorderTask,
+  onResetContext,
   onViewTask,
   viewingTaskId,
   isMutating,
@@ -533,6 +540,7 @@ function DetailView({
   ) => void;
   onRemoveTask: (taskId: string) => void;
   onReorderTask: (contextId: string, orderedTaskIds: string[]) => void;
+  onResetContext?: (contextId: string) => void;
   onViewTask: (taskId: string) => void;
   viewingTaskId: string | null;
   isMutating: boolean;
@@ -544,6 +552,7 @@ function DetailView({
   const [editInstructions, setEditInstructions] = useState("");
   const [addTitle, setAddTitle] = useState("");
   const [addInstructions, setAddInstructions] = useState("");
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
 
   const context = execution.workingDefinition.executionContexts.find(
     (ctx) => ctx.id === contextId,
@@ -568,6 +577,11 @@ function DetailView({
   const canAddTasks =
     contextState?.status !== "completed" &&
     context.mutability?.allowAgentTaskAdd;
+
+  const canResetContext =
+    onResetContext != null &&
+    (execution.status === "paused" || execution.status === "halted") &&
+    contextState?.status !== "completed";
 
   function handleExpandTask(taskId: string) {
     if (expandedTaskId === taskId) {
@@ -622,6 +636,16 @@ function DetailView({
         <span className={`graph-node-badge ${getStatusBadgeClass(status)}`}>
           {getStatusLabel(status)}
         </span>
+        {canResetContext && (
+          <button
+            className="wb-btn wb-btn-xs wb-btn-danger"
+            onClick={() => setResetConfirmOpen(true)}
+            disabled={isMutating}
+            type="button"
+          >
+            Reset Context
+          </button>
+        )}
       </header>
 
       <div className="wb-inspector-tabs">
@@ -914,6 +938,19 @@ function DetailView({
           </>
         )}
       </div>
+      <ConfirmDialog
+        open={resetConfirmOpen}
+        title="Reset Context"
+        message="Clear implementer and validator conversations, unmark completed tasks, and reset runtime state for this context. The workflow will remain paused until you resume it."
+        confirmLabel="Reset"
+        cancelLabel="Cancel"
+        danger
+        onConfirm={() => {
+          setResetConfirmOpen(false);
+          onResetContext?.(contextId);
+        }}
+        onCancel={() => setResetConfirmOpen(false)}
+      />
     </aside>
   );
 }
@@ -928,6 +965,7 @@ export default function ExecutionInspectorPanel({
   onUpdateTask,
   onRemoveTask,
   onReorderTask,
+  onResetContext,
   onViewTask,
   viewingTaskId,
   isMutating,
@@ -957,6 +995,7 @@ export default function ExecutionInspectorPanel({
       onUpdateTask={onUpdateTask}
       onRemoveTask={onRemoveTask}
       onReorderTask={onReorderTask}
+      onResetContext={onResetContext}
       onViewTask={onViewTask}
       viewingTaskId={viewingTaskId}
       isMutating={isMutating}

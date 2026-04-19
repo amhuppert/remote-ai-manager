@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readConfig } from "@/lib/config";
+import { resetExecutionContextRequestSchema } from "@/lib/schemas";
 import { createConversation, getConversation } from "@/lib/conversations";
 import { createLogger } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
@@ -245,6 +246,11 @@ export interface GraphWorkflowExecutionRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution>;
+  resetExecutionContext(
+    projectPath: string,
+    sessionName: string,
+    contextId: string,
+  ): Promise<GraphWorkflowExecution>;
   archiveExecution(projectPath: string, sessionName: string): Promise<void>;
   kickOffExecutionLoop(input: {
     projectPath: string;
@@ -266,6 +272,8 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     workflowManager.resume(projectPath, sessionName),
   abortExecution: (projectPath, sessionName) =>
     workflowManager.send(projectPath, sessionName, { type: "abort" }),
+  resetExecutionContext: (projectPath, sessionName, contextId) =>
+    workflowManager.resetContext(projectPath, sessionName, contextId),
   archiveExecution: (projectPath, sessionName) =>
     executionRepository.archiveActive(projectPath, sessionName),
   async kickOffExecutionLoop(input) {
@@ -391,10 +399,21 @@ function respondToManagerError(error: unknown): Response {
   if (
     message.includes("already has an active graph workflow execution") ||
     message.startsWith("Only running graph workflow executions") ||
-    message.includes("graph workflow executions can be resumed")
+    message.includes("graph workflow executions can be resumed") ||
+    message.startsWith("Reset only allowed") ||
+    message.includes("is completed and cannot be reset")
   ) {
     return NextResponse.json({ error: message } satisfies ApiError, {
       status: 409,
+    });
+  }
+
+  if (
+    message.startsWith("Execution context") &&
+    message.includes("not found")
+  ) {
+    return NextResponse.json({ error: message } satisfies ApiError, {
+      status: 404,
     });
   }
 
@@ -591,6 +610,61 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
   }
 
+  async function RESET_CONTEXT(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) {
+      return resolved.error;
+    }
+
+    const parsed = resetExecutionContextRequestSchema.safeParse(
+      await request.json(),
+    );
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid request: executionId and contextId are required",
+        } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+
+    const activeExecution = resolved.session.graphWorkflowExecution;
+    if (!activeExecution) {
+      return NextResponse.json(
+        {
+          error: "Session does not have an active graph workflow execution",
+        } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    if (activeExecution.id !== parsed.data.executionId) {
+      return NextResponse.json(
+        {
+          error:
+            "Reset request targets a stale execution; reload and try again.",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    try {
+      const execution = await deps.resetExecutionContext(
+        resolved.projectPath,
+        resolved.sessionName,
+        parsed.data.contextId,
+      );
+      return NextResponse.json({
+        execution: summarizeExecution(execution, false),
+      });
+    } catch (error) {
+      return respondToManagerError(error);
+    }
+  }
+
   async function CLEAR(
     _request: Request,
     context: RouteContext,
@@ -625,6 +699,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     PAUSE,
     RESUME,
     ABORT,
+    RESET_CONTEXT,
     CLEAR,
   };
 }

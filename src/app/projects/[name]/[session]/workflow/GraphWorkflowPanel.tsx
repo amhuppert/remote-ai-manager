@@ -38,6 +38,7 @@ interface GraphWorkflowPanelProps {
     targetOrder: number,
   ): void;
   onReorderTask(contextId: string, orderedTaskIds: string[]): void;
+  onResetContext(contextId: string): void;
   isMutating: boolean;
   isMobile: boolean;
   mobilePanel: ExecutionMobilePanel;
@@ -57,6 +58,7 @@ export default function GraphWorkflowPanel({
   onUpdateTask,
   onRemoveTask,
   onReorderTask,
+  onResetContext,
   isMutating,
   isMobile,
   mobilePanel,
@@ -168,6 +170,7 @@ export default function GraphWorkflowPanel({
                 onUpdateTask={onUpdateTask}
                 onRemoveTask={onRemoveTask}
                 onReorderTask={onReorderTask}
+                onResetContext={onResetContext}
                 onViewTask={handleViewTask}
                 viewingTaskId={viewingTaskId}
                 isMutating={isMutating}
@@ -240,6 +243,7 @@ export default function GraphWorkflowPanel({
                 onUpdateTask={onUpdateTask}
                 onRemoveTask={onRemoveTask}
                 onReorderTask={onReorderTask}
+                onResetContext={onResetContext}
                 onViewTask={handleViewTask}
                 viewingTaskId={viewingTaskId}
                 isMutating={isMutating}
