@@ -586,14 +586,14 @@ describe("createSessionFocus", () => {
     const opts = initCall![2] as {
       cwd: string;
       env: Record<string, string>;
-      timeout: number;
+      timeout?: number;
     };
     expect(opts.cwd).toBe(session.worktreePath);
     expect(opts.env.PROJECT_ROOT).toBe("/projects/repo");
     expect(opts.env.WORKTREE_PATH).toBe(session.worktreePath);
     expect(opts.env.SESSION_NAME).toBe("With Init");
     expect(opts.env.BRANCH_NAME).toBe(session.branchName);
-    expect(opts.timeout).toBe(60_000);
+    expect(opts.timeout).toBeUndefined();
   });
 
   it("throws 'Init script not found' when script path doesn't exist", async () => {

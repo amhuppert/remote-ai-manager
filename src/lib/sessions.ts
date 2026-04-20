@@ -340,7 +340,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
             SESSION_NAME: sessionName,
             BRANCH_NAME: branchName,
           },
-          timeout: 60_000,
         });
       }
     } catch (err) {
