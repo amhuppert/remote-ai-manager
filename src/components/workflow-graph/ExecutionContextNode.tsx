@@ -2,7 +2,11 @@
 
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps, Node } from "@xyflow/react";
-import type { ExecutionContextNodeData } from "./derive-graph";
+import type {
+  ContextDisplayPhase,
+  ExecutionContextNodeData,
+} from "./derive-graph";
+import { getContextDisplayPhase } from "./derive-graph";
 
 type ExecutionContextNodeType = Node<
   ExecutionContextNodeData,
@@ -11,14 +15,16 @@ type ExecutionContextNodeType = Node<
 
 function getStatusBadge(
   mode: "builder" | "execution",
-  status?: string,
+  phase?: ContextDisplayPhase,
 ): { label: string; className: string } {
   if (mode === "builder") {
     return { label: "Draft", className: "pending" };
   }
-  switch (status) {
+  switch (phase) {
     case "running":
       return { label: "Running", className: "running" };
+    case "validating":
+      return { label: "Validating", className: "validating" };
     case "completed":
       return { label: "Completed", className: "completed" };
     case "halted":
@@ -33,20 +39,22 @@ function getStatusBadge(
 function getFooterText(
   mode: "builder" | "execution",
   taskCount: number,
-  status?: string,
+  phase?: ContextDisplayPhase,
   completedCount?: number,
   totalCount?: number,
 ): string {
   if (mode === "builder") {
     return `${taskCount} tasks`;
   }
-  switch (status) {
+  switch (phase) {
     case "pending":
       return "Waiting on upstream";
     case "ready":
       return "Ready to start";
     case "running":
       return `Running task ${(completedCount ?? 0) + 1}/${totalCount ?? taskCount}`;
+    case "validating":
+      return "Validating context";
     case "completed":
       return "Completed";
     case "halted":
@@ -70,20 +78,20 @@ export default function ExecutionContextNode({
   selected,
 }: NodeProps<ExecutionContextNodeType>) {
   const { context, tasks, mode, contextState } = data;
-  const status = contextState?.status;
-  const badge = getStatusBadge(mode, status);
+  const phase = getContextDisplayPhase(contextState);
+  const badge = getStatusBadge(mode, phase);
   const totalCount = contextState?.totalTaskCount ?? tasks.length;
   const completedCount = contextState?.completedTaskCount ?? 0;
 
   const footerText = getFooterText(
     mode,
     tasks.length,
-    status,
+    phase,
     completedCount,
     totalCount,
   );
   const progressPercent = getProgressPercent(mode, completedCount, totalCount);
-  const progressStatus = status ?? "pending";
+  const progressStatus = phase ?? "pending";
 
   const contextValidator =
     "contextValidator" in context ? context.contextValidator : undefined;
@@ -103,7 +111,7 @@ export default function ExecutionContextNode({
   const nodeClassName = [
     "graph-node",
     selected && "selected",
-    status && `status-${status}`,
+    phase && `status-${phase}`,
   ]
     .filter(Boolean)
     .join(" ");
@@ -150,7 +158,7 @@ export default function ExecutionContextNode({
         />
       </div>
 
-      <div className={`graph-node-footer ${status ?? ""}`}>{footerText}</div>
+      <div className={`graph-node-footer ${phase ?? ""}`}>{footerText}</div>
     </div>
   );
 }

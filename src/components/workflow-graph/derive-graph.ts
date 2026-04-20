@@ -31,6 +31,22 @@ export type ContextEdgeData = {
   targetStatus?: GraphWorkflowContextStatus;
 };
 
+export type ContextDisplayPhase = GraphWorkflowContextStatus | "validating";
+
+export function getContextDisplayPhase(
+  contextState: GraphWorkflowExecutionContextState | undefined,
+): ContextDisplayPhase | undefined {
+  if (!contextState) return undefined;
+  if (
+    contextState.status === "running" &&
+    contextState.totalTaskCount > 0 &&
+    contextState.completedTaskCount >= contextState.totalTaskCount
+  ) {
+    return "validating";
+  }
+  return contextState.status;
+}
+
 export function deriveNodes(
   definition: DeriveGraphDefinition,
   layout: GraphWorkflowVisualLayout,

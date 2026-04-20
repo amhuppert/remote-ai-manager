@@ -159,6 +159,24 @@ export const Running: Story = {
   },
 };
 
+export const Validating: Story = {
+  args: {
+    data: {
+      context: makeContext(),
+      tasks: makeTasks(5),
+      mode: "execution",
+      contextState: {
+        contextId: "ctx-1",
+        status: "running",
+        totalTaskCount: 5,
+        completedTaskCount: 5,
+        iterationCount: 1,
+        consecutiveFailureCount: 0,
+      },
+    },
+  },
+};
+
 export const Completed: Story = {
   args: {
     data: {

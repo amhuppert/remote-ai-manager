@@ -8,7 +8,11 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
-import { deriveEdges, deriveNodes } from "./derive-graph";
+import {
+  deriveEdges,
+  deriveNodes,
+  getContextDisplayPhase,
+} from "./derive-graph";
 
 function makeDefinition(
   overrides: Partial<WorkflowSemanticDefinition> = {},
@@ -260,6 +264,76 @@ describe("deriveNodes", () => {
     expect(nodes[0]!.data.mode).toBe("execution");
     expect(nodes[0]!.data.contextState).toEqual(ctxState);
     expect(nodes[0]!.data.taskStates).toEqual({ t1: taskState });
+  });
+});
+
+describe("getContextDisplayPhase", () => {
+  function makeState(
+    overrides: Partial<GraphWorkflowExecutionContextState> = {},
+  ): GraphWorkflowExecutionContextState {
+    return {
+      contextId: "ctx-1",
+      status: "running",
+      totalTaskCount: 3,
+      completedTaskCount: 0,
+      iterationCount: 1,
+      consecutiveFailureCount: 0,
+      ...overrides,
+    };
+  }
+
+  it("returns undefined when no state provided", () => {
+    expect(getContextDisplayPhase(undefined)).toBeUndefined();
+  });
+
+  it("passes through non-running statuses", () => {
+    expect(getContextDisplayPhase(makeState({ status: "pending" }))).toBe(
+      "pending",
+    );
+    expect(getContextDisplayPhase(makeState({ status: "ready" }))).toBe(
+      "ready",
+    );
+    expect(
+      getContextDisplayPhase(
+        makeState({
+          status: "completed",
+          completedTaskCount: 3,
+          totalTaskCount: 3,
+        }),
+      ),
+    ).toBe("completed");
+    expect(getContextDisplayPhase(makeState({ status: "halted" }))).toBe(
+      "halted",
+    );
+  });
+
+  it("returns 'running' when tasks are in progress", () => {
+    expect(
+      getContextDisplayPhase(
+        makeState({ completedTaskCount: 0, totalTaskCount: 3 }),
+      ),
+    ).toBe("running");
+    expect(
+      getContextDisplayPhase(
+        makeState({ completedTaskCount: 2, totalTaskCount: 3 }),
+      ),
+    ).toBe("running");
+  });
+
+  it("returns 'validating' when status is running and all tasks are complete", () => {
+    expect(
+      getContextDisplayPhase(
+        makeState({ completedTaskCount: 3, totalTaskCount: 3 }),
+      ),
+    ).toBe("validating");
+  });
+
+  it("returns 'running' when there are no tasks (edge case, not a validation phase)", () => {
+    expect(
+      getContextDisplayPhase(
+        makeState({ completedTaskCount: 0, totalTaskCount: 0 }),
+      ),
+    ).toBe("running");
   });
 });
 
