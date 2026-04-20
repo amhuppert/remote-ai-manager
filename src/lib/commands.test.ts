@@ -161,4 +161,46 @@ Claude skill body.`,
       ]),
     );
   });
+
+  it("uses directory basename for skill id, ignoring frontmatter name with spaces", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
+    const worktreePath = await mkdtemp(
+      path.join(tmpdir(), "commands-worktree-"),
+    );
+    cleanupPaths.push(homeDir, worktreePath);
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    await mkdir(
+      path.join(worktreePath, ".claude", "skills", "expo-ui-swift-ui"),
+      { recursive: true },
+    );
+    await writeFile(
+      path.join(
+        worktreePath,
+        ".claude",
+        "skills",
+        "expo-ui-swift-ui",
+        "SKILL.md",
+      ),
+      `---
+name: Expo UI SwiftUI
+description: A display name with spaces
+---
+Body.`,
+    );
+
+    const items = await (
+      discoverCommands as unknown as (
+        worktreePath: string,
+        backend: string,
+      ) => Promise<Array<{ name: string; source: string }>>
+    )(worktreePath, "claude");
+
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "/expo-ui-swift-ui" }),
+      ]),
+    );
+    expect(items.every((item) => !item.name.includes(" "))).toBe(true);
+  });
 });

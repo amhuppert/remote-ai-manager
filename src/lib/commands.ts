@@ -149,7 +149,7 @@ async function scanSkillsDir(
       try {
         const content = await readFile(skillFile, "utf-8");
         const { fields, body } = parseFrontmatter(content);
-        const skillId = fields["name"]?.trim() || path.basename(currentDir);
+        const skillId = path.basename(currentDir);
         const description =
           fields["description"] ??
           body
