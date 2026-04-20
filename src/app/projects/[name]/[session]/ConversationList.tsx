@@ -127,17 +127,24 @@ export default function ConversationList({
   const commitDisabled = isFinished || diff.files.length === 0;
   const mergeDisabled = isFinished;
 
-  const archivedCount = useMemo(
-    () => conversations.filter((c) => c.archived).length,
+  // Workflow conversations (role !== null) are surfaced on the workflow page
+  // instead of the session overview to reduce noise.
+  const nonWorkflowConversations = useMemo(
+    () => conversations.filter((c) => c.role === null),
     [conversations],
   );
 
-  const filteredConversations = useMemo(() => {
-    if (showArchived) return conversations;
-    return conversations.filter((c) => !c.archived);
-  }, [conversations, showArchived]);
+  const archivedCount = useMemo(
+    () => nonWorkflowConversations.filter((c) => c.archived).length,
+    [nonWorkflowConversations],
+  );
 
-  const activeCount = conversations.length - archivedCount;
+  const filteredConversations = useMemo(() => {
+    if (showArchived) return nonWorkflowConversations;
+    return nonWorkflowConversations.filter((c) => !c.archived);
+  }, [nonWorkflowConversations, showArchived]);
+
+  const activeCount = nonWorkflowConversations.length - archivedCount;
 
   // --- Copy session context for debugging ---
   const handleCopyContext = useCallback(
