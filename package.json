@@ -41,6 +41,7 @@
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.0",
     "remark-gfm": "^4.0.1",
+    "smol-toml": "1.6.1",
     "svg-pan-zoom": "^3.6.2",
     "xstate": "^5.28.0",
     "zod": "^4.3.6",

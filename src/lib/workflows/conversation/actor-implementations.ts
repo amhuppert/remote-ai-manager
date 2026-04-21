@@ -29,7 +29,10 @@ import type {
   AskQuestionItem,
 } from "@/types";
 import type { TranscriptEntry } from "@/lib/transcript";
-import type { McpApplyResult } from "@/lib/agent-backends/portable-mcp";
+import type {
+  McpApplyResult,
+  PortableMcpConfig,
+} from "@/lib/agent-backends/portable-mcp";
 import type {
   SDKMessage,
   SDKAssistantMessage,
@@ -50,10 +53,6 @@ import {
   CC_CONTEXT,
   TDD_INSTRUCTIONS,
 } from "@/lib/prompt";
-import {
-  buildSessionToolsPortableMcp,
-  mergePortableMcpConfigs,
-} from "@/lib/mcp-gateway/portable-config";
 import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
 import { createExternalTurnHandler } from "./external-turn-handler";
 
@@ -157,6 +156,22 @@ export interface ActorImplementationDeps {
     controller: AbortController,
   ): void;
   unregisterAbortController(conversationId: string): void;
+
+  /**
+   * Compose the effective portable MCP config for the next turn, honoring the
+   * four-level override cascade (global → project → session → conversation),
+   * gateway protection, and orphan omission. Transient caller-supplied tooling
+   * (e.g., graph workflow execution tools) is merged last.
+   */
+  composePortableMcpForConversation(args: {
+    backend: AgentBackendId;
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    conversationId: string;
+    worktreePath: string;
+    transientPortableMcp?: PortableMcpConfig;
+  }): Promise<PortableMcpConfig>;
 }
 
 let _deps: ActorImplementationDeps | null = null;
@@ -187,6 +202,11 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     debugLogMod,
     stateMod,
     abortRegistryMod,
+    composeForConversationMod,
+    globalStoreMod,
+    discoveryMod,
+    gatewayPortableConfigMod,
+    osMod,
   ] = await Promise.all([
     import("@/lib/lock"),
     import("@/lib/query-semaphore"),
@@ -202,7 +222,42 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/debug-log"),
     import("@/lib/state"),
     import("@/lib/abort-registry"),
+    import("@/lib/mcp/compose-for-conversation"),
+    import("@/lib/mcp/global-store"),
+    import("@/lib/mcp/discovery"),
+    import("@/lib/mcp-gateway/portable-config"),
+    import("node:os"),
   ]);
+
+  const composePortableMcpForConversation =
+    composeForConversationMod.createComposePortableMcpForConversation({
+      readGlobalOverrides: () =>
+        globalStoreMod.defaultGlobalOverrideStore.read(),
+      readProjectOverrides: async (projectPath) => {
+        const state = await stateMod.readState();
+        return state.projects[projectPath]?.mcpOverrides;
+      },
+      readSessionOverrides: async (projectPath, sessionName) => {
+        const session = await stateMod.getSession(projectPath, sessionName);
+        return session?.mcpOverrides;
+      },
+      readConversationOverrides: async (
+        projectPath,
+        sessionName,
+        conversationId,
+      ) => {
+        const session = await stateMod.getSession(projectPath, sessionName);
+        return session?.conversations.find((c) => c.id === conversationId)
+          ?.mcpOverrides;
+      },
+      discoverSources: (input) => discoveryMod.discoverAllSources(input),
+      homePath: () => osMod.homedir(),
+      buildGatewayServers: (projectName, sessionName) =>
+        gatewayPortableConfigMod.buildSessionToolsPortableMcp(
+          projectName,
+          sessionName,
+        ).servers,
+    });
 
   return {
     acquireSessionLock: lockMod.acquireSessionLock,
@@ -227,6 +282,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     fileExists: (await import("node:fs")).existsSync,
     registerAbortController: abortRegistryMod.registerAbortController,
     unregisterAbortController: abortRegistryMod.unregisterAbortController,
+    composePortableMcpForConversation,
   } as unknown as ActorImplementationDeps;
 }
 
@@ -917,10 +973,17 @@ export async function executePromptForMachine(
       deps.getCodexToolPromptHint(config.codex?.enabled === true),
       referenceDocsPrompt,
     ].filter((s): s is string => s != null && s.length > 0);
-    const portableMcp = mergePortableMcpConfigs(
-      buildSessionToolsPortableMcp(projectName, input.sessionName),
-      runtimeState.tooling?.portableMcp,
-    );
+    const portableMcp = await deps.composePortableMcpForConversation({
+      backend: input.agentBackend,
+      projectPath: input.projectPath,
+      projectName,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      worktreePath: input.worktreePath,
+      ...(runtimeState.tooling?.portableMcp !== undefined
+        ? { transientPortableMcp: runtimeState.tooling.portableMcp }
+        : {}),
+    });
 
     logger.info("prompt.runtime_create", {
       sessionName: input.sessionName,

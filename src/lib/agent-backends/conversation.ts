@@ -10,6 +10,7 @@ import type {
   ConversationToolingOverrides,
 } from "./types";
 import type { PortableMcpConfig, McpApplyResult } from "./portable-mcp";
+import type { McpDiscoveredTool } from "@/lib/schemas";
 
 export type ConversationBackendEvent =
   | { type: "backend_init"; backendRef: AgentSessionRef }
@@ -73,6 +74,15 @@ export interface ConversationBackendRuntime {
   ): Promise<ConversationBackendTurnResult>;
   queueUserInput?(input: ConversationQueuedUserInput): Promise<void>;
   applyPortableMcpConfig?(config: PortableMcpConfig): Promise<McpApplyResult>;
+  /**
+   * Return the live MCP server's advertised tool list when the runtime can
+   * report it authoritatively (e.g. Claude's `mcpServerStatus()`). Returns
+   * `undefined` when the runtime has no status for `serverKey` or the backend
+   * does not support runtime-side tool reporting.
+   */
+  listMcpServerTools?(
+    serverKey: string,
+  ): Promise<readonly McpDiscoveredTool[] | undefined>;
   close(): void;
 }
 

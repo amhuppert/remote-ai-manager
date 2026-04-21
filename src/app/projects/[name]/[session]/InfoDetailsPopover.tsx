@@ -8,6 +8,8 @@ interface InfoDetailsPopoverProps {
   backendRef: AgentSessionRef | null;
   createdAt: string;
   worktreePath: string;
+  /** Opens the session-level MCP servers modal. */
+  onOpenMcpServers?: () => void;
 }
 
 function formatBackendRef(ref: AgentSessionRef | null): string {
@@ -67,6 +69,7 @@ export default function InfoDetailsPopover({
   backendRef,
   createdAt,
   worktreePath,
+  onOpenMcpServers,
 }: InfoDetailsPopoverProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -114,6 +117,21 @@ export default function InfoDetailsPopover({
             copyable={false}
           />
           <CopyableRow label="Worktree" value={worktreePath} />
+          {onOpenMcpServers && (
+            <div className="info-popover-row">
+              <span className="info-popover-label">MCP Servers</span>
+              <button
+                type="button"
+                className="info-popover-link"
+                onClick={() => {
+                  setOpen(false);
+                  onOpenMcpServers();
+                }}
+              >
+                Configure…
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

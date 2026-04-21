@@ -123,6 +123,18 @@ vi.mock("@/lib/queries", () => ({
     error: null,
   }),
   useDebugLogEntryCountQuery: () => ({ data: 0, isPending: false }),
+  useSessionMcpConfigQuery: () => ({
+    data: undefined,
+    isPending: true,
+    isError: false,
+    error: null,
+  }),
+  useConversationMcpConfigQuery: () => ({
+    data: undefined,
+    isPending: true,
+    isError: false,
+    error: null,
+  }),
 }));
 
 vi.mock("@/lib/mutations", () => ({
@@ -144,6 +156,11 @@ vi.mock("@/lib/mutations", () => ({
   ApiCallError: class extends Error {
     code?: string;
   },
+  useToggleMcpServerMutation: () => ({ mutate: vi.fn() }),
+  useResetMcpServerMutation: () => ({ mutate: vi.fn() }),
+  useToggleMcpToolMutation: () => ({ mutate: vi.fn() }),
+  useResetMcpToolMutation: () => ({ mutate: vi.fn() }),
+  useRefreshMcpToolsMutation: () => ({ mutate: vi.fn() }),
 }));
 
 // ---------------------------------------------------------------------------

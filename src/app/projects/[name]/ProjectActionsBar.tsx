@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import ProjectMcpButton from "@/components/mcp/ProjectMcpButton";
 
 interface ProjectActionsBarProps {
   projectName: string;
@@ -39,6 +40,7 @@ export default function ProjectActionsBar({
         <button className="btn btn-sm" onClick={onQuickTask}>
           Quick Task
         </button>
+        <ProjectMcpButton projectName={projectName} />
         <Link
           className="btn btn-sm"
           href={`/projects/${encodeURIComponent(projectName)}/workflows`}

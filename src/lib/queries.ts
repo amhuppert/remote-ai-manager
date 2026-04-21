@@ -9,6 +9,8 @@ import {
   fileKeys,
   workflowDefinitionKeys,
   kiroDocKeys,
+  mcpConfigKeys,
+  mcpToolsKeys,
   notificationKeys,
   presetKeys,
   roadmapItemKeys,
@@ -35,13 +37,22 @@ import {
   roadmapItemsResponseSchema,
   debugLogStatsResponseSchema,
 } from "@/lib/api-client";
-import { sessionStateSchema, conversationStateSchema } from "@/lib/schemas";
+import {
+  sessionStateSchema,
+  conversationStateSchema,
+  mcpConfigViewResponseSchema,
+  mcpToolInventoryResultSchema,
+} from "@/lib/schemas";
 import {
   commandsResponseSchema,
   projectFilesResponseSchema,
   notificationsResponseSchema,
 } from "@/lib/schemas";
 import type { AgentBackendId } from "@/types";
+
+const mcpConfigViewEnvelopeSchema = z.object({
+  view: mcpConfigViewResponseSchema,
+});
 
 // ---------------------------------------------------------------------------
 // Project Queries
@@ -444,6 +455,118 @@ export function useRoadmapItemsQuery(projectName: string) {
         roadmapItemsResponseSchema,
       ).then((r) => r.items),
     refetchInterval: 30_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// MCP Config Queries
+// ---------------------------------------------------------------------------
+
+type McpQueryBackend = "claude" | "codex";
+
+function mcpViewUrl(
+  base: string,
+  backend: McpQueryBackend | undefined,
+): string {
+  return backend ? `${base}?backend=${encodeURIComponent(backend)}` : base;
+}
+
+async function fetchMcpView(url: string) {
+  const envelope = await apiFetch(url, mcpConfigViewEnvelopeSchema);
+  return envelope.view;
+}
+
+export function useGlobalMcpConfigQuery(options?: {
+  backend?: McpQueryBackend;
+  enabled?: boolean;
+}) {
+  return useQuery({
+    queryKey: mcpConfigKeys.global(options?.backend),
+    queryFn: () =>
+      fetchMcpView(mcpViewUrl("/api/config/mcp", options?.backend)),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useProjectMcpConfigQuery(
+  projectName: string,
+  options?: { backend?: McpQueryBackend; enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: mcpConfigKeys.project(projectName, options?.backend),
+    queryFn: () =>
+      fetchMcpView(
+        mcpViewUrl(
+          `/api/projects/${encodeURIComponent(projectName)}/mcp-config`,
+          options?.backend,
+        ),
+      ),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useSessionMcpConfigQuery(
+  projectName: string,
+  sessionName: string,
+  options?: { backend?: McpQueryBackend; enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: mcpConfigKeys.session(projectName, sessionName, options?.backend),
+    queryFn: () =>
+      fetchMcpView(
+        mcpViewUrl(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/mcp-config`,
+          options?.backend,
+        ),
+      ),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useConversationMcpConfigQuery(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+  options?: { backend?: McpQueryBackend; enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: mcpConfigKeys.conversation(
+      projectName,
+      sessionName,
+      conversationId,
+      options?.backend,
+    ),
+    queryFn: () =>
+      fetchMcpView(
+        mcpViewUrl(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/mcp-config`,
+          options?.backend,
+        ),
+      ),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useMcpToolsQuery(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+  serverKey: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: mcpToolsKeys.inventory(
+      projectName,
+      sessionName,
+      conversationId,
+      serverKey,
+    ),
+    queryFn: () =>
+      apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/mcp-config/tools/${encodeURIComponent(serverKey)}`,
+        mcpToolInventoryResultSchema,
+      ),
+    enabled: options?.enabled ?? true,
   });
 }
 

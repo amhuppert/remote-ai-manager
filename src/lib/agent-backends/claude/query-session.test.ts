@@ -908,6 +908,34 @@ describe("outputFormat passthrough", () => {
   });
 });
 
+describe("strictMcpConfig", () => {
+  it("passes strictMcpConfig: true to the SDK so CC's server list is authoritative", () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sdkOptions = (queryMock.mock.calls[0] as any)[0].options;
+    expect(sdkOptions.strictMcpConfig).toBe(true);
+
+    session.close();
+  });
+
+  it("leaves settingSources unchanged so CLAUDE.md/skills/hooks/permissions still load", () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sdkOptions = (queryMock.mock.calls[0] as any)[0].options;
+    expect(sdkOptions.settingSources).toEqual(["user", "project", "local"]);
+
+    session.close();
+  });
+});
+
 describe("MCP keepalive pings", () => {
   it("periodically calls mcpServerStatus between turns to keep transport alive", async () => {
     vi.useFakeTimers();

@@ -100,6 +100,9 @@ import ModelSelector from "@/components/ModelSelector";
 import { getModelsForBackend } from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import BackendToggle from "@/components/BackendToggle";
+import ConversationMcpConfig from "@/components/mcp/ConversationMcpConfig";
+import SessionMcpChip from "@/components/mcp/SessionMcpChip";
+import SessionMcpModal from "@/components/mcp/SessionMcpModal";
 import {
   type AgentBackendId,
   type EffortLevel,
@@ -293,6 +296,7 @@ export default function SessionDetailPage({
   const [focusConfirmLoading, setFocusConfirmLoading] = useState(false);
   // Flag: user clicked confirm, write-focus prompt was sent, waiting for it to finish
   const [awaitingFinalize, setAwaitingFinalize] = useState(false);
+  const [sessionMcpModalOpen, setSessionMcpModalOpen] = useState(false);
 
   // Conditional polling: refetch while session is active
   const messagesQuery = useConversationMessagesQuery(
@@ -1298,6 +1302,12 @@ export default function SessionDetailPage({
               >
                 {contextCopied ? "\u2713" : "\u2398"} Context
               </button>
+              {/* MCP servers summary chip */}
+              <SessionMcpChip
+                projectName={projectName}
+                sessionName={sessionName}
+                onClick={() => setSessionMcpModalOpen(true)}
+              />
               {/* Details popover — Conv ID, Session Ref, Created, full Worktree */}
               <InfoDetailsPopover
                 conversationId={conversationId}
@@ -1307,9 +1317,17 @@ export default function SessionDetailPage({
                 }
                 createdAt={session.createdAt}
                 worktreePath={session.worktreePath}
+                onOpenMcpServers={() => setSessionMcpModalOpen(true)}
               />
             </div>
           </div>
+
+          <SessionMcpModal
+            projectName={projectName}
+            sessionName={sessionName}
+            open={sessionMcpModalOpen}
+            onClose={() => setSessionMcpModalOpen(false)}
+          />
 
           {/* Finished banner */}
           {isFinished && (
@@ -1755,6 +1773,17 @@ export default function SessionDetailPage({
                           sessionName={sessionName}
                           conversation={activeConversation}
                           disabled={sending || isReadOnly}
+                        />
+                        <ConversationMcpConfig
+                          projectName={projectName}
+                          sessionName={sessionName}
+                          conversationId={conversationId}
+                          activeBackend={selectedBackend}
+                          turnRunning={conversationRunning}
+                          disabled={isReadOnly}
+                          disabledTooltip={
+                            isReadOnly ? "Session is read-only" : undefined
+                          }
                         />
                       </div>
                       <div className="prompt-toolbar-end">

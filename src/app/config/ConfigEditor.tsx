@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo } from "react";
 import Topbar from "@/components/Topbar";
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
+import GlobalMcpSection from "@/components/mcp/GlobalMcpSection";
 import { useFullConfigQuery } from "@/lib/queries";
 import { useUpdateConfigMutation } from "@/lib/mutations";
 import type { FullConfigResponse } from "@/lib/api-client";
@@ -1004,6 +1005,9 @@ export default function ConfigEditor(): React.JSX.Element {
               />
             </ConfigField>
           </ConfigSection>
+
+          {/* ---- MCP SERVERS ---- */}
+          <GlobalMcpSection />
 
           {/* ---- WORKFLOW DEFAULTS ---- */}
           <ConfigSection

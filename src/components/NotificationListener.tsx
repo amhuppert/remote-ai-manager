@@ -9,7 +9,10 @@ import {
   notificationKeys,
   devServerKeys,
   debugLogKeys,
+  mcpConfigKeys,
+  mcpToolsKeys,
 } from "@/lib/query-keys";
+import { computeMcpConfigInvalidations } from "@/lib/mcp/sse-invalidation";
 import {
   conversationStatusEventSchema,
   jobStatusEventSchema,
@@ -22,6 +25,8 @@ import {
   graphWorkflowValidationResultEventSchema,
   graphWorkflowCircuitBreakerEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
+  mcpConfigUpdatedEventSchema,
+  mcpToolsUpdatedEventSchema,
 } from "@/lib/schemas";
 import {
   useAddOrUpdateJob,
@@ -293,6 +298,62 @@ export default function NotificationListener(): null {
       }
     });
 
+    // --- MCP Config SSE events ---
+    es.addEventListener("mcp-config-updated", (event) => {
+      try {
+        const parsed = mcpConfigUpdatedEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        const data = parsed.data;
+
+        // An override at any scope changes the resolved view at that scope and
+        // every descendant scope, so we invalidate the whole subtree — not
+        // just the emitting level.
+        const invalidations = computeMcpConfigInvalidations({
+          level: data.level,
+          ...(data.projectName !== undefined && {
+            projectName: data.projectName,
+          }),
+          ...(data.sessionName !== undefined && {
+            sessionName: data.sessionName,
+          }),
+          ...(data.conversationId !== undefined && {
+            conversationId: data.conversationId,
+          }),
+        });
+        for (const matcher of invalidations) {
+          void queryClient.invalidateQueries({ queryKey: matcher.queryKey });
+        }
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("mcp-tools-updated", (event) => {
+      try {
+        const parsed = mcpToolsUpdatedEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        const data = parsed.data;
+        if (data.projectName && data.sessionName && data.conversationId) {
+          void queryClient.invalidateQueries({
+            queryKey: mcpToolsKeys.inventory(
+              data.projectName,
+              data.sessionName,
+              data.conversationId,
+              data.serverKey,
+            ),
+          });
+        } else {
+          void queryClient.invalidateQueries({ queryKey: mcpToolsKeys.all });
+        }
+      } catch {
+        // best-effort
+      }
+    });
+
     // SSE reconnection recovery: refetch notifications on reconnect after error
     es.onerror = () => {
       hadErrorRef.current = true;
@@ -310,6 +371,12 @@ export default function NotificationListener(): null {
         });
         void queryClient.invalidateQueries({
           queryKey: sessionKeys.all,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: mcpConfigKeys.all,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: mcpToolsKeys.all,
         });
 
         // Reconcile stale running jobs with server-side truth

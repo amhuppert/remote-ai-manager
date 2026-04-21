@@ -68,6 +68,9 @@ export interface QuerySession {
   /** The current turn options (read by canUseTool) */
   readonly currentTurnOptions: TurnOptions | null;
 
+  /** True while a turn (caller-initiated or virtual) is currently in flight. */
+  readonly isTurnActive: boolean;
+
   /** Model this session was created with */
   readonly model: string | undefined;
 
@@ -209,6 +212,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     persistSession: true,
     env: options.env as Record<string, string>,
     mcpServers: options.mcpServers as Record<string, never>,
+    strictMcpConfig: true,
     canUseTool: options.canUseTool,
     stderr: (data: string) => {
       stderrChunks.push(data);
@@ -233,6 +237,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     },
     get currentTurnOptions() {
       return currentTurnOptions;
+    },
+    get isTurnActive() {
+      return pendingTurn !== null;
     },
     get model() {
       return options.model;

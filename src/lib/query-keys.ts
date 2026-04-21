@@ -116,6 +116,70 @@ export const debugLogKeys = {
     ] as const,
 };
 
+export const mcpConfigKeys = {
+  all: ["mcp-config"] as const,
+  global: (backend?: "claude" | "codex") =>
+    (backend
+      ? [...mcpConfigKeys.all, "global", backend]
+      : [...mcpConfigKeys.all, "global"]) as readonly unknown[],
+  project: (projectName: string, backend?: "claude" | "codex") =>
+    (backend
+      ? [...mcpConfigKeys.all, "project", projectName, backend]
+      : [...mcpConfigKeys.all, "project", projectName]) as readonly unknown[],
+  session: (
+    projectName: string,
+    sessionName: string,
+    backend?: "claude" | "codex",
+  ) =>
+    (backend
+      ? [...mcpConfigKeys.all, "session", projectName, sessionName, backend]
+      : [
+          ...mcpConfigKeys.all,
+          "session",
+          projectName,
+          sessionName,
+        ]) as readonly unknown[],
+  conversation: (
+    projectName: string,
+    sessionName: string,
+    conversationId: string,
+    backend?: "claude" | "codex",
+  ) =>
+    (backend
+      ? [
+          ...mcpConfigKeys.all,
+          "conversation",
+          projectName,
+          sessionName,
+          conversationId,
+          backend,
+        ]
+      : [
+          ...mcpConfigKeys.all,
+          "conversation",
+          projectName,
+          sessionName,
+          conversationId,
+        ]) as readonly unknown[],
+};
+
+export const mcpToolsKeys = {
+  all: ["mcp-tools"] as const,
+  inventory: (
+    projectName: string,
+    sessionName: string,
+    conversationId: string,
+    serverKey: string,
+  ) =>
+    [
+      ...mcpToolsKeys.all,
+      projectName,
+      sessionName,
+      conversationId,
+      serverKey,
+    ] as const,
+};
+
 export const kiroDocKeys = {
   all: ["kiro-docs"] as const,
   tree: (projectName: string, sessionName?: string) =>

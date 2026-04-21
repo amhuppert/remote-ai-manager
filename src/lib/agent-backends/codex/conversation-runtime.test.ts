@@ -1214,6 +1214,72 @@ describe("CodexConversationRuntime", () => {
         }),
       );
     });
+
+    it("each next turn reconstructs Codex with the latest staged config after repeated applies", async () => {
+      // Per-turn instance reconstruction must pick up the most recent apply so
+      // mid-conversation MCP changes take effect on the following turn and any
+      // turn after that — not only the first.
+      const firstMcp = {
+        mcpServers: { "srv-a": { command: "a" } },
+        droppedFields: [],
+      };
+      const secondMcp = {
+        mcpServers: { "srv-b": { command: "b" } },
+        droppedFields: [],
+      };
+      deps.translatePortableMcpToCodex = vi
+        .fn()
+        .mockReturnValueOnce(firstMcp)
+        .mockReturnValueOnce(firstMcp) // called once per sendTurn's buildCodexOptions
+        .mockReturnValueOnce(secondMcp)
+        .mockReturnValueOnce(secondMcp);
+
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({ tooling: {} }),
+        deps,
+      );
+
+      await runtime.applyPortableMcpConfig!({
+        servers: [{ id: "srv-a", transport: "stdio", command: "a" }],
+      });
+      await runtime.sendTurn(makeTurnInput());
+
+      // Second apply mid-conversation replaces the staged config.
+      await runtime.applyPortableMcpConfig!({
+        servers: [{ id: "srv-b", transport: "stdio", command: "b" }],
+      });
+      setupThread(minimalSuccessEvents("thread-123"));
+      await runtime.sendTurn(makeTurnInput());
+
+      const createCodexCalls = (deps.createCodex as ReturnType<typeof vi.fn>)
+        .mock.calls;
+      expect(createCodexCalls).toHaveLength(2);
+
+      const firstConfig = createCodexCalls[0]![0].config;
+      const secondConfig = createCodexCalls[1]![0].config;
+      expect(firstConfig.mcp_servers).toEqual({ "srv-a": { command: "a" } });
+      expect(secondConfig.mcp_servers).toEqual({ "srv-b": { command: "b" } });
+    });
+
+    it("omits config.mcp_servers when the translated set is empty (no stale leakage)", async () => {
+      deps.translatePortableMcpToCodex = vi
+        .fn()
+        .mockReturnValue({ mcpServers: {}, droppedFields: [] });
+
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({ tooling: {} }),
+        deps,
+      );
+
+      await runtime.applyPortableMcpConfig!({ servers: [] });
+      await runtime.sendTurn(makeTurnInput());
+
+      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0];
+      expect(codexCall).not.toHaveProperty("config");
+    });
   });
 
   // --------------------------------------------------------

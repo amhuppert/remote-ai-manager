@@ -1,0 +1,30 @@
+# Pre-merge validation failure
+timestamp: 2026-04-21T20:59:45.018Z
+execution: cba7dac8-992f-4861-83dc-91af19a565eb
+context: final-e2e-verification
+session: Dynamic MCP Configuration
+branch: cc/dynamic-mcp-configuration-c83174
+
+/home/alex/github/remote-ai-manager/.worktrees/dynamic-mcp-configuration-c83174/src/components/mcp/McpServerCard.tsx
+  59:7  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/alex/github/remote-ai-manager/.worktrees/dynamic-mcp-configuration-c83174/src/components/mcp/McpServerCard.tsx:59:7
+  57 |   useEffect(() => {
+  58 |     if (open && !discoveryRequested && server.toolDiscovery.kind === "idle") {
+> 59 |       setDiscoveryRequested(true);
+     |       ^^^^^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  60 |       actions.onExpand?.(server.id);
+  61 |     }
+  62 |   }, [open, discoveryRequested, server.toolDiscovery.kind, server.id, actions]);  react-hooks/set-state-in-effect
+
+/home/alex/github/remote-ai-manager/.worktrees/dynamic-mcp-configuration-c83174/src/lib/mcp-config-route-handlers.test.ts
+  642:9  error  'projectOverrides' is never reassigned. Use 'const' instead  prefer-const
+  799:9  error  'projectOverrides' is never reassigned. Use 'const' instead  prefer-const
+
+✖ 3 problems (3 errors, 0 warnings)

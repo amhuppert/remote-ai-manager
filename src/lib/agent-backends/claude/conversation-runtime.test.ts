@@ -297,3 +297,295 @@ describe("ClaudeConversationRuntime — external turn events", () => {
     runtime.close();
   });
 });
+
+describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", () => {
+  it("applies live via setMcpServers when runtime is idle (disposition: applied_now)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-idle",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const result = await runtime.applyPortableMcpConfig!({
+      servers: [
+        {
+          id: "idle-stdio",
+          transport: "stdio",
+          command: "node",
+        },
+      ],
+    });
+
+    expect(result.disposition).toBe("applied_now");
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+    const passed = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as Record<string, unknown>;
+    expect(passed).toHaveProperty("idle-stdio");
+
+    runtime.close();
+  });
+
+  it("defers when a caller-initiated turn is running and does not call setMcpServers", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-busy",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    // Kick off a turn but never push a result: it stays running.
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      images: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    // Give the event loop a tick so currentTurnOptions is set.
+    await Promise.resolve();
+
+    const result = await runtime.applyPortableMcpConfig!({
+      servers: [
+        {
+          id: "busy-stdio",
+          transport: "stdio",
+          command: "node",
+        },
+      ],
+    });
+
+    expect(result.disposition).toBe("deferred_to_next_turn");
+    expect(mock.query.setMcpServers).not.toHaveBeenCalled();
+
+    // Drain the turn so the test doesn't leak a pending promise.
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turnPromise;
+
+    runtime.close();
+  });
+});
+
+describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
+  function captureCanUseTool(): (
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ) => Promise<unknown> {
+    const firstCall = queryMock.mock.calls[0]!;
+    const arg = firstCall[0] as {
+      options: {
+        canUseTool: (
+          toolName: string,
+          toolInput: Record<string, unknown>,
+        ) => Promise<unknown>;
+      };
+    };
+    return arg.options.canUseTool;
+  }
+
+  it("wires the resolver-backed MCP filter into canUseTool so disabled tools are denied", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-wire-1",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {
+        portableMcp: {
+          servers: [
+            {
+              id: "srv",
+              transport: "stdio",
+              command: "node",
+              disabledTools: ["forbidden"],
+            },
+          ],
+        },
+      },
+    });
+
+    const canUseTool = captureCanUseTool();
+    const result = await canUseTool("mcp__srv__forbidden", { x: 1 });
+
+    expect(result).toEqual({
+      behavior: "deny",
+      message: "Tool disabled by MCP configuration",
+      interrupt: false,
+    });
+
+    runtime.close();
+  });
+
+  it("allows tools that the resolver-backed filter permits", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-wire-2",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {
+        portableMcp: {
+          servers: [
+            {
+              id: "srv",
+              transport: "stdio",
+              command: "node",
+              disabledTools: ["forbidden"],
+            },
+          ],
+        },
+      },
+    });
+
+    const canUseTool = captureCanUseTool();
+    const result = await canUseTool("mcp__srv__permitted", { x: 1 });
+
+    expect(result).toEqual({ behavior: "allow", updatedInput: { x: 1 } });
+
+    runtime.close();
+  });
+
+  it("reflects live updates to the portable config after applyPortableMcpConfig", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-wire-3",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {
+        portableMcp: {
+          servers: [{ id: "srv", transport: "stdio", command: "node" }],
+        },
+      },
+    });
+
+    const canUseTool = captureCanUseTool();
+
+    const before = await canUseTool("mcp__srv__tool_a", {});
+    expect(before).toEqual({ behavior: "allow", updatedInput: {} });
+
+    await runtime.applyPortableMcpConfig!({
+      servers: [
+        {
+          id: "srv",
+          transport: "stdio",
+          command: "node",
+          disabledTools: ["tool_a"],
+        },
+      ],
+    });
+
+    const after = await canUseTool("mcp__srv__tool_a", {});
+    expect(after).toEqual({
+      behavior: "deny",
+      message: "Tool disabled by MCP configuration",
+      interrupt: false,
+    });
+
+    runtime.close();
+  });
+
+  it("does not update the filter when applyPortableMcpConfig is deferred", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-wire-4",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {
+        portableMcp: {
+          servers: [{ id: "srv", transport: "stdio", command: "node" }],
+        },
+      },
+    });
+
+    const canUseTool = captureCanUseTool();
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      images: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    await Promise.resolve();
+
+    const result = await runtime.applyPortableMcpConfig!({
+      servers: [
+        {
+          id: "srv",
+          transport: "stdio",
+          command: "node",
+          disabledTools: ["tool_a"],
+        },
+      ],
+    });
+    expect(result.disposition).toBe("deferred_to_next_turn");
+
+    // Filter still reflects the original (non-deferred) config.
+    const during = await canUseTool("mcp__srv__tool_a", {});
+    expect(during).toEqual({ behavior: "allow", updatedInput: {} });
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turnPromise;
+
+    runtime.close();
+  });
+});

@@ -47,6 +47,12 @@ vi.mock("@/lib/queries", () => ({
     error: null,
   }),
   useRoadmapItemsQuery: () => ({ data: [] }),
+  useProjectMcpConfigQuery: () => ({
+    data: undefined,
+    isPending: true,
+    isError: false,
+    error: null,
+  }),
 }));
 
 vi.mock("@/stores/roadmap-items.store", () => ({
@@ -73,6 +79,11 @@ vi.mock("@/lib/mutations", () => ({
   useDeleteRoadmapItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useStartRoadmapFocusMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useToggleMcpServerMutation: () => ({ mutate: vi.fn() }),
+  useResetMcpServerMutation: () => ({ mutate: vi.fn() }),
+  useToggleMcpToolMutation: () => ({ mutate: vi.fn() }),
+  useResetMcpToolMutation: () => ({ mutate: vi.fn() }),
+  useRefreshMcpToolsMutation: () => ({ mutate: vi.fn() }),
 }));
 
 let storeShowCreateModal = false;

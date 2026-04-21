@@ -53,6 +53,12 @@ vi.mock("@/lib/queries", () => ({
     error: null,
   }),
   useNotificationsQuery: () => ({ data: { unreadCount: 0 } }),
+  useGlobalMcpConfigQuery: () => ({
+    data: undefined,
+    isPending: true,
+    isError: false,
+    error: null,
+  }),
 }));
 
 vi.mock("@/lib/mutations", () => ({
@@ -60,6 +66,11 @@ vi.mock("@/lib/mutations", () => ({
     mutate: mutateMock,
     isPending: false,
   }),
+  useToggleMcpServerMutation: () => ({ mutate: vi.fn() }),
+  useResetMcpServerMutation: () => ({ mutate: vi.fn() }),
+  useToggleMcpToolMutation: () => ({ mutate: vi.fn() }),
+  useResetMcpToolMutation: () => ({ mutate: vi.fn() }),
+  useRefreshMcpToolsMutation: () => ({ mutate: vi.fn() }),
 }));
 
 beforeEach(() => {

@@ -124,6 +124,22 @@ function createMockDeps(
     fileExists: vi.fn(() => false),
     registerAbortController: vi.fn(),
     unregisterAbortController: vi.fn(),
+    composePortableMcpForConversation: vi.fn(
+      async (args: {
+        projectName: string;
+        sessionName: string;
+        transientPortableMcp?: { servers: Array<Record<string, unknown>> };
+      }) => ({
+        servers: [
+          {
+            id: "cc-session-tools",
+            transport: "streamable-http" as const,
+            url: `http://localhost:3000/api/projects/${args.projectName}/sessions/${args.sessionName}/mcp`,
+          },
+          ...(args.transientPortableMcp?.servers ?? []),
+        ],
+      }),
+    ),
     ...overrides,
   } as ActorImplementationDeps;
 }
@@ -1331,6 +1347,91 @@ describe("executePromptForMachine", () => {
     expect(tooling.portableMcp?.servers.map((server) => server.id)).toEqual(
       expect.arrayContaining(["cc-session-tools", "cc-graph-workflow"]),
     );
+  });
+
+  it("delegates portable MCP composition to composePortableMcpForConversation with full conversation identity", async () => {
+    const transient = {
+      servers: [
+        {
+          id: "cc-graph-workflow",
+          transport: "streamable-http" as const,
+          url: "http://127.0.0.1:3000/graph",
+        },
+      ],
+    };
+
+    const input = makeExecutePromptInput({
+      projectPath: "/projects/repo",
+      projectName: "repo",
+      sessionName: "sess-a",
+      conversationId: "conv-xyz",
+      worktreePath: "/projects/repo/.worktrees/sess-a",
+      agentBackend: "claude",
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      tooling: { portableMcp: transient },
+    });
+
+    await executePromptForMachine(input);
+
+    expect(mockDeps.composePortableMcpForConversation).toHaveBeenCalledTimes(1);
+    expect(mockDeps.composePortableMcpForConversation).toHaveBeenCalledWith({
+      backend: "claude",
+      projectPath: "/projects/repo",
+      projectName: "repo",
+      sessionName: "sess-a",
+      conversationId: "conv-xyz",
+      worktreePath: "/projects/repo/.worktrees/sess-a",
+      transientPortableMcp: transient,
+    });
+  });
+
+  it("passes the composed portable MCP result through to factory.createRuntime tooling", async () => {
+    const composed = {
+      servers: [
+        {
+          id: "cc-session-tools",
+          transport: "streamable-http" as const,
+          url: "http://localhost:3000/api/projects/repo/sessions/sess/mcp",
+        },
+        {
+          id: "disabled-by-session",
+          transport: "stdio" as const,
+          command: "/bin/echo",
+          enabled: false,
+        },
+      ],
+    };
+    mockDeps = createMockDeps({
+      composePortableMcpForConversation: vi.fn(async () => composed),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const createCall = (
+      mockFactory.createRuntime.mock.calls as unknown[][]
+    )[0]![0] as Record<string, unknown>;
+    const tooling = createCall["tooling"] as {
+      portableMcp?: { servers: Array<{ id: string }> };
+    };
+    expect(tooling.portableMcp).toBe(composed);
   });
 
   it("applies portable MCP config on a reused runtime before sendTurn", async () => {

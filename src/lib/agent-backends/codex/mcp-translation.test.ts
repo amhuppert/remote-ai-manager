@@ -176,6 +176,123 @@ describe("translatePortableMcpToCodex", () => {
       "beta",
     );
   });
+
+  it("emits disabled servers with enabled=false alongside enabled ones (never drops)", () => {
+    // Disabled Codex servers must stay in the emitted set with enabled:false so
+    // Codex does not fall back to its native TOML entry for the same id.
+    const config: PortableMcpConfig = {
+      servers: [
+        {
+          id: "on-server",
+          transport: "stdio",
+          command: "on",
+          enabled: true,
+        },
+        {
+          id: "off-server",
+          transport: "stdio",
+          command: "off",
+          enabled: false,
+        },
+      ],
+    };
+
+    const { mcpServers } = translatePortableMcpToCodex(config);
+
+    expect(mcpServers).toHaveProperty("on-server");
+    expect(mcpServers).toHaveProperty("off-server");
+    expect((mcpServers["on-server"] as Record<string, unknown>).enabled).toBe(
+      true,
+    );
+    expect((mcpServers["off-server"] as Record<string, unknown>).enabled).toBe(
+      false,
+    );
+  });
+
+  it("preserves env, cwd, and timeouts on disabled stdio server", () => {
+    const config: PortableMcpConfig = {
+      servers: [
+        {
+          id: "off-stdio",
+          transport: "stdio",
+          command: "node",
+          args: ["server.js"],
+          env: { API_KEY: "val" },
+          cwd: "/tmp",
+          enabled: false,
+          startupTimeoutSec: 5,
+          toolTimeoutSec: 15,
+        },
+      ],
+    };
+
+    const entry = translatePortableMcpToCodex(config).mcpServers[
+      "off-stdio"
+    ] as Record<string, unknown>;
+
+    expect(entry).toMatchObject({
+      command: "node",
+      args: ["server.js"],
+      env: { API_KEY: "val" },
+      cwd: "/tmp",
+      enabled: false,
+      startup_timeout_sec: 5,
+      tool_timeout_sec: 15,
+    });
+  });
+
+  it("preserves headers, bearer_token_env_var, and timeouts on disabled http server", () => {
+    const config: PortableMcpConfig = {
+      servers: [
+        {
+          id: "off-http",
+          transport: "streamable-http",
+          url: "https://mcp.example.com",
+          headers: { "X-Custom": "abc" },
+          bearerTokenEnvVar: "TOKEN_ENV",
+          enabled: false,
+          startupTimeoutSec: 3,
+          toolTimeoutSec: 9,
+        },
+      ],
+    };
+
+    const entry = translatePortableMcpToCodex(config).mcpServers[
+      "off-http"
+    ] as Record<string, unknown>;
+
+    expect(entry).toMatchObject({
+      url: "https://mcp.example.com",
+      http_headers: { "X-Custom": "abc" },
+      bearer_token_env_var: "TOKEN_ENV",
+      enabled: false,
+      startup_timeout_sec: 3,
+      tool_timeout_sec: 9,
+    });
+  });
+
+  it("passes enabled_tools and disabled_tools through natively for stdio transport", () => {
+    const config: PortableMcpConfig = {
+      servers: [
+        {
+          id: "filtered-stdio",
+          transport: "stdio",
+          command: "node",
+          enabledTools: ["safe1", "safe2"],
+          disabledTools: ["dangerous"],
+        },
+      ],
+    };
+
+    const entry = translatePortableMcpToCodex(config).mcpServers[
+      "filtered-stdio"
+    ] as Record<string, unknown>;
+
+    expect(entry).toMatchObject({
+      enabled_tools: ["safe1", "safe2"],
+      disabled_tools: ["dangerous"],
+    });
+  });
 });
 
 describe("translatePortableMcpToAnthropic", () => {
@@ -289,10 +406,12 @@ describe("translatePortableMcpToAnthropic", () => {
     expect(servers).not.toHaveProperty("full-server");
     expect(rejectedServers).toEqual(["full-server"]);
     expect(rejectedFields).toContain("full-server.cwd");
-    expect(rejectedFields).toContain("full-server.enabledTools");
-    expect(rejectedFields).toContain("full-server.disabledTools");
     expect(rejectedFields).toContain("full-server.startupTimeoutSec");
     expect(rejectedFields).toContain("full-server.toolTimeoutSec");
+    // stdio tool filtering is routed through the permission-layer fallback
+    // (per the capability registry), so these are no longer rejected here.
+    expect(rejectedFields).not.toContain("full-server.enabledTools");
+    expect(rejectedFields).not.toContain("full-server.disabledTools");
     expect(errorsByServer["full-server"]).toContain("full-server.cwd");
   });
 
@@ -333,10 +452,12 @@ describe("translatePortableMcpToAnthropic", () => {
 
     const { rejectedFields } = translatePortableMcpToAnthropic(config);
 
-    expect(rejectedFields).toContain("http-full.enabledTools");
-    expect(rejectedFields).toContain("http-full.disabledTools");
     expect(rejectedFields).toContain("http-full.startupTimeoutSec");
     expect(rejectedFields).toContain("http-full.toolTimeoutSec");
+    // streamable-http tool filtering is supported natively by Claude (per the
+    // capability registry), so these fields are emitted, not rejected.
+    expect(rejectedFields).not.toContain("http-full.enabledTools");
+    expect(rejectedFields).not.toContain("http-full.disabledTools");
   });
 
   it("rejects entire server for unrecognized transport, recording in rejectedServers", () => {
@@ -380,9 +501,10 @@ describe("translatePortableMcpToAnthropic", () => {
     const { rejectedFields } = translatePortableMcpToAnthropic(config);
 
     expect(rejectedFields).toContain("server-a.cwd");
-    expect(rejectedFields).toContain("server-a.enabledTools");
     expect(rejectedFields).toContain("server-b.cwd");
-    expect(rejectedFields).toContain("server-b.enabledTools");
+    // enabledTools for stdio now routes through the permission-layer fallback.
+    expect(rejectedFields).not.toContain("server-a.enabledTools");
+    expect(rejectedFields).not.toContain("server-b.enabledTools");
   });
 
   it("skips servers with enabled=false", () => {
@@ -415,5 +537,95 @@ describe("translatePortableMcpToAnthropic", () => {
     expect(servers).toEqual({});
     expect(rejectedServers).toEqual([]);
     expect(rejectedFields).toEqual([]);
+  });
+
+  it("accepts enabledTools/disabledTools on stdio without emitting tool fields (canUseTool fallback handles enforcement)", () => {
+    const config: PortableMcpConfig = {
+      servers: [
+        {
+          id: "stdio-filter",
+          transport: "stdio",
+          command: "node",
+          enabledTools: ["allowed"],
+          disabledTools: ["blocked"],
+        },
+      ],
+    };
+
+    const { servers, rejectedServers, rejectedFields } =
+      translatePortableMcpToAnthropic(config);
+
+    expect(rejectedServers).toEqual([]);
+    expect(rejectedFields).toEqual([]);
+    const entry = servers["stdio-filter"] as Record<string, unknown>;
+    expect(entry).toEqual({ type: "stdio", command: "node" });
+    expect(entry).not.toHaveProperty("tools");
+    expect(entry).not.toHaveProperty("enabledTools");
+    expect(entry).not.toHaveProperty("disabledTools");
+  });
+
+  it("emits native tools policy for streamable-http disabledTools (always_deny)", () => {
+    const config: PortableMcpConfig = {
+      servers: [
+        {
+          id: "http-deny",
+          transport: "streamable-http",
+          url: "https://example.com/mcp",
+          disabledTools: ["dangerous", "legacy"],
+        },
+      ],
+    };
+
+    const { servers, rejectedServers, rejectedFields } =
+      translatePortableMcpToAnthropic(config);
+
+    expect(rejectedServers).toEqual([]);
+    expect(rejectedFields).toEqual([]);
+    const entry = servers["http-deny"] as Record<string, unknown>;
+    expect(entry).toMatchObject({
+      type: "http",
+      url: "https://example.com/mcp",
+      tools: [
+        { name: "dangerous", permission_policy: "always_deny" },
+        { name: "legacy", permission_policy: "always_deny" },
+      ],
+    });
+  });
+
+  it("emits native tools policy for streamable-http enabledTools (always_allow, fallback denies the rest)", () => {
+    const config: PortableMcpConfig = {
+      servers: [
+        {
+          id: "http-allow",
+          transport: "streamable-http",
+          url: "https://example.com/mcp",
+          enabledTools: ["search"],
+        },
+      ],
+    };
+
+    const { servers } = translatePortableMcpToAnthropic(config);
+    const entry = servers["http-allow"] as Record<string, unknown>;
+    expect(entry).toMatchObject({
+      type: "http",
+      url: "https://example.com/mcp",
+      tools: [{ name: "search", permission_policy: "always_allow" }],
+    });
+  });
+
+  it("omits tools field when no filter is set for streamable-http", () => {
+    const config: PortableMcpConfig = {
+      servers: [
+        {
+          id: "http-plain",
+          transport: "streamable-http",
+          url: "https://example.com/mcp",
+        },
+      ],
+    };
+
+    const { servers } = translatePortableMcpToAnthropic(config);
+    const entry = servers["http-plain"] as Record<string, unknown>;
+    expect(entry).not.toHaveProperty("tools");
   });
 });
