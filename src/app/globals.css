@@ -12764,7 +12764,7 @@ html[data-dev-tools-enabled] nextjs-portal {
 /* ---------- conversation popover ----------------------------------------- */
 
 .mcp-config-popover {
-  background: var(--bg-panel);
+  background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
