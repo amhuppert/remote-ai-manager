@@ -1,19 +1,9 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import McpServerList from "./McpServerList";
-import type {
-  McpBackendId,
-  McpServerCardActions,
-  McpServerView,
-} from "./types";
+import type { McpServerCardActions, McpServerView } from "./types";
 
 interface McpConfigPopoverProps {
   /** Reference to the trigger button — used to anchor the popover. */
@@ -25,9 +15,6 @@ interface McpConfigPopoverProps {
   actions: McpServerCardActions;
   /** When true, a "change pending — applies next turn" banner is shown. */
   hasPending?: boolean;
-  /** Filter chip state. */
-  backendFilter?: McpBackendId | "all";
-  onBackendFilterChange?(filter: McpBackendId | "all"): void;
   /** Servers with changes pending relative to the last emission. */
   pendingServerIds?: string[];
 }
@@ -39,8 +26,6 @@ export default function McpConfigPopover({
   servers,
   actions,
   hasPending,
-  backendFilter = "all",
-  onBackendFilterChange,
   pendingServerIds,
 }: McpConfigPopoverProps): React.JSX.Element | null {
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -79,22 +64,8 @@ export default function McpConfigPopover({
     };
   }, [open, onClose, anchorRef]);
 
-  const visibleServers =
-    backendFilter === "all"
-      ? servers
-      : servers.filter(
-          (s) => s.backend === backendFilter || s.backend === "shared",
-        );
-
   const summary = summarise(servers);
   const pendingCount = pendingServerIds?.length ?? 0;
-
-  const handleFilterClick = useCallback(
-    (next: McpBackendId | "all") => {
-      onBackendFilterChange?.(next);
-    },
-    [onBackendFilterChange],
-  );
 
   if (!open || typeof document === "undefined") return null;
 
@@ -133,25 +104,10 @@ export default function McpConfigPopover({
         </div>
       ) : null}
 
-      {onBackendFilterChange ? (
-        <div className="mcp-config-popover__filters">
-          {(["all", "claude", "codex"] as const).map((f) => (
-            <button
-              key={f}
-              type="button"
-              className={`mcp-filter-chip${f === backendFilter ? " active" : ""}`}
-              onClick={() => handleFilterClick(f)}
-            >
-              {f === "all" ? "All" : f === "claude" ? "Claude" : "Codex"}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       <div className="mcp-config-popover__body">
         <McpServerList
           viewLevel="conversation"
-          servers={visibleServers}
+          servers={servers}
           actions={actions}
         />
       </div>

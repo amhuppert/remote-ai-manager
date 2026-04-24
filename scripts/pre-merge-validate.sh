@@ -15,5 +15,8 @@ npx prettier --write . > /dev/null 2>&1
 npx eslint . --fix --quiet --no-color --no-warn-ignored
 # TypeScript: one-line-per-error format
 npx tsc --noEmit --pretty false
-# Vitest: AI-optimized via CLAUDECODE detection in vitest.config.ts
-npx vitest run --project unit --no-color
+# Vitest: AI-optimized via CLAUDECODE detection in vitest.config.ts.
+# NODE_ENV=test mirrors package.json's `test` script so React loads its
+# development build (which exports `React.act`) — required by
+# @testing-library/react 16 under React 19.
+NODE_ENV=test npx vitest run --project unit --no-color

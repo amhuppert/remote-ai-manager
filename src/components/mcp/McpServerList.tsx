@@ -21,18 +21,16 @@ interface McpServerListProps {
   hideScopeGroups?: boolean;
 }
 
-const SCOPE_ORDER: McpScope[] = ["project", "local", "user"];
+const SCOPE_ORDER: McpScope[] = ["project", "global"];
 
 const SCOPE_LABEL: Record<McpScope, string> = {
   project: "Project",
-  local: "Local",
-  user: "User",
+  global: "Global",
 };
 
 const SCOPE_HINT: Record<McpScope, string> = {
-  project: "Shared with the team · checked into the repo",
-  local: "Local to this checkout · not committed",
-  user: "Your personal defaults · applies to every project",
+  project: "From this worktree's .mcp.json",
+  global: "From Command Center global .mcp.json",
 };
 
 export default function McpServerList({

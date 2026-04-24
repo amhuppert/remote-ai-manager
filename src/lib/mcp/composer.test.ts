@@ -15,7 +15,6 @@ function mkDefinition(
 ): McpServerDefinition {
   return {
     nativeId: partial.nativeId ?? partial.serverKey,
-    backend: partial.backend ?? "shared",
     transport: partial.transport ?? "stdio",
     config: partial.config ?? {
       transport: "stdio",
@@ -24,9 +23,8 @@ function mkDefinition(
     },
     sourceRefs: partial.sourceRefs ?? [
       {
-        backend: "claude",
-        scope: "user",
-        filePath: "/home/alex/.claude/settings.json",
+        scope: "global",
+        filePath: "/home/alex/.config/cc/.mcp.json",
       },
     ],
     configSignature: partial.configSignature ?? `sig-${partial.serverKey}`,
@@ -77,7 +75,6 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
     });
 
     const result = composeRuntimeMcpConfig({
-      backend: "claude",
       discovered: [def],
       effective: new Map(),
       gatewayServers: [],
@@ -108,7 +105,6 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
     });
 
     const result = composeRuntimeMcpConfig({
-      backend: "claude",
       discovered: [def],
       effective: new Map(),
       gatewayServers: [],
@@ -125,7 +121,6 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
 
   it("emits `enabled: false` when the effective resolution disables the server so Codex does not fall back to TOML", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "codex",
       discovered: [mkDefinition({ serverKey: "calc", nativeId: "calc" })],
       effective: new Map([
         [
@@ -146,7 +141,6 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
 
   it("excludes orphaned server overrides from the emitted set but reports them in diagnostics", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "claude",
       discovered: [mkDefinition({ serverKey: "present", nativeId: "present" })],
       effective: new Map([
         ["present", mkEffective({ serverKey: "present" })],
@@ -168,7 +162,6 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
 
   it("emits overridden enabledTools/disabledTools verbatim on the portable entry", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "codex",
       discovered: [mkDefinition({ serverKey: "fs", nativeId: "fs" })],
       effective: new Map([
         [
@@ -192,7 +185,6 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
 
   it("falls back to native tool filters when no override is set", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "codex",
       discovered: [
         mkDefinition({
           serverKey: "fs",
@@ -213,7 +205,6 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
 
   it("respects native enabled=false when no override layer provides an enabled value", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "codex",
       discovered: [
         mkDefinition({
           serverKey: "fs",
@@ -228,39 +219,26 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
     expect(result.portable.servers[0]!.enabled).toBe(false);
   });
 
-  it("filters out discovered servers whose backend does not match the active backend (and is not shared)", () => {
+  it("emits every discovered definition regardless of any notional active backend (translators handle backend-specific omission)", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "claude",
       discovered: [
-        mkDefinition({
-          serverKey: "claude-only",
-          nativeId: "claude-only",
-          backend: "claude",
-        }),
-        mkDefinition({
-          serverKey: "codex-only",
-          nativeId: "codex-only",
-          backend: "codex",
-        }),
-        mkDefinition({
-          serverKey: "shared-one",
-          nativeId: "shared-one",
-          backend: "shared",
-        }),
+        mkDefinition({ serverKey: "alpha", nativeId: "alpha" }),
+        mkDefinition({ serverKey: "beta", nativeId: "beta" }),
+        mkDefinition({ serverKey: "gamma", nativeId: "gamma" }),
       ],
       effective: new Map(),
       gatewayServers: [],
     });
 
     expect(result.portable.servers.map((s) => s.id).sort()).toEqual([
-      "claude-only",
-      "shared-one",
+      "alpha",
+      "beta",
+      "gamma",
     ]);
   });
 
   it("skips discovered servers whose transport is not representable in the portable shape (sse)", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "claude",
       discovered: [
         mkDefinition({
           serverKey: "sse-server",
@@ -285,7 +263,6 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
 describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
   it("appends CC-injected gateway servers after user-configured servers", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "claude",
       discovered: [mkDefinition({ serverKey: "user-a", nativeId: "user-a" })],
       effective: new Map(),
       gatewayServers: [
@@ -304,7 +281,6 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
   it("preserves gateway entries verbatim", () => {
     const gw = gateway("cc-session-tools");
     const result = composeRuntimeMcpConfig({
-      backend: "codex",
       discovered: [],
       effective: new Map(),
       gatewayServers: [gw],
@@ -316,7 +292,6 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
   it("drops a user-configured server whose id collides with a gateway id and keeps the gateway", () => {
     const gw = gateway("cc-session-tools", "/gw-path");
     const result = composeRuntimeMcpConfig({
-      backend: "codex",
       discovered: [
         mkDefinition({
           serverKey: "user-collision",
@@ -339,7 +314,6 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
 
   it("marks gateway ids as reserved so no UI surface can expose a toggle for them", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "claude",
       discovered: [],
       effective: new Map(),
       gatewayServers: [
@@ -356,7 +330,6 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
 
   it("always appends gateway servers even when no user-configured servers are present", () => {
     const result = composeRuntimeMcpConfig({
-      backend: "claude",
       discovered: [],
       effective: new Map(),
       gatewayServers: [gateway("cc-session-tools")],

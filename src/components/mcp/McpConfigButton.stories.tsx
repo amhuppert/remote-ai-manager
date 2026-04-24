@@ -63,8 +63,8 @@ export const AllDefaults = {
       mkServer({
         id: "chrome-devtools",
         name: "chrome-devtools",
-        scope: "user",
-        sourceFile: "/home/alex/.claude/settings.json",
+        scope: "global",
+        sourceFile: "/home/alex/.config/cc/.mcp.json",
         status: { kind: "inherited", from: "global" },
       }),
     ],

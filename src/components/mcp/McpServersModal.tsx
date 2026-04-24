@@ -3,7 +3,6 @@
 import { useCallback, useEffect } from "react";
 import McpServerList from "./McpServerList";
 import type {
-  McpBackendId,
   McpServerCardActions,
   McpServerView,
   McpViewLevel,
@@ -20,9 +19,6 @@ interface McpServersModalProps {
   title: string;
   /** Sub-headline giving context (e.g. the project or session name). */
   subtitle?: string;
-  /** Backend filter chip state. */
-  backendFilter?: McpBackendId | "all";
-  onBackendFilterChange?(filter: McpBackendId | "all"): void;
   /** Optional banner (e.g. "Changes apply to next turn in active conversations"). */
   banner?: React.ReactNode;
 }
@@ -35,8 +31,6 @@ export default function McpServersModal({
   actions,
   title,
   subtitle,
-  backendFilter = "all",
-  onBackendFilterChange,
   banner,
 }: McpServersModalProps): React.JSX.Element | null {
   const handleKey = useCallback(
@@ -57,13 +51,6 @@ export default function McpServersModal({
   }, [open, handleKey]);
 
   if (!open) return null;
-
-  const visibleServers =
-    backendFilter === "all"
-      ? servers
-      : servers.filter(
-          (s) => s.backend === backendFilter || s.backend === "shared",
-        );
 
   const total = servers.length;
   const on = servers.filter((s) => s.enabled).length;
@@ -114,25 +101,10 @@ export default function McpServersModal({
           <div className="mcp-servers-modal__banner">{banner}</div>
         ) : null}
 
-        {onBackendFilterChange ? (
-          <div className="mcp-servers-modal__filters">
-            {(["all", "claude", "codex"] as const).map((f) => (
-              <button
-                key={f}
-                type="button"
-                className={`mcp-filter-chip${f === backendFilter ? " active" : ""}`}
-                onClick={() => onBackendFilterChange(f)}
-              >
-                {f === "all" ? "All" : f === "claude" ? "Claude" : "Codex"}
-              </button>
-            ))}
-          </div>
-        ) : null}
-
         <div className="mcp-servers-modal__body">
           <McpServerList
             viewLevel={viewLevel}
-            servers={visibleServers}
+            servers={servers}
             actions={actions}
           />
         </div>

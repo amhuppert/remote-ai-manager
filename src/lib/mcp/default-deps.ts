@@ -6,8 +6,6 @@
  * directly into each factory.
  */
 
-import os from "node:os";
-
 import { createStateManager } from "@/lib/state";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
@@ -17,25 +15,32 @@ import type { McpOverrides, McpToolInventoryResult } from "@/lib/schemas";
 
 import { createComposePortableMcpForConversation } from "./compose-for-conversation";
 import { discoverAllSources } from "./discovery";
-import { defaultGlobalOverrideStore } from "./global-store";
+import {
+  defaultGlobalOverrideStore,
+  getDefaultGlobalMcpDefinitionPath,
+} from "./global-store";
 import {
   createMcpRuntimeApplyService,
   type McpRuntimeApplyService,
 } from "./runtime-apply";
+import {
+  createMcpConfigMutationService,
+  type McpConfigMutationService,
+} from "@/lib/mcp-config-mutation-service";
 import { defaultScopeOverrideStore } from "./scope-store";
 import {
   createToolInventoryCache,
   type ToolInventoryCache,
-  type ToolInventoryKey,
 } from "./tool-discovery-cache";
 import { createProductionMcpProbeClient } from "./tool-discovery-client";
 import { createDirectToolProbe } from "./tool-discovery-probe";
 import type { McpCanonicalServerConfig, McpServerDefinition } from "./types";
+import { collectRuntimeTargets, type RuntimeTarget } from "./runtime-targets";
 
 const log = createLogger("mcp.default-deps");
 
 export const defaultDiscoverAllSources = discoverAllSources;
-export const defaultHomePath = (): string => os.homedir();
+export const defaultGlobalMcpDefinitionPath = getDefaultGlobalMcpDefinitionPath;
 export const defaultGlobalStore = defaultGlobalOverrideStore;
 export const defaultScopeStore = defaultScopeOverrideStore;
 
@@ -61,14 +66,15 @@ export async function defaultReadProjectOverrides(
  */
 const knownDefinitions = new Map<string, McpCanonicalServerConfig>();
 
-function compositeKey(
-  key: Pick<ToolInventoryKey, "backend" | "serverKey" | "configSignature">,
-): string {
-  return `${key.backend}::${key.serverKey}::${key.configSignature}`;
+function compositeKey(key: {
+  serverKey: string;
+  configSignature: string;
+}): string {
+  return `${key.serverKey}::${key.configSignature}`;
 }
 
 export function recordKnownDefinition(
-  key: ToolInventoryKey,
+  key: { serverKey: string; configSignature: string },
   definition: McpServerDefinition,
 ): void {
   knownDefinitions.set(compositeKey(key), definition.config);
@@ -87,7 +93,6 @@ export const defaultToolInventoryCache: ToolInventoryCache =
         if (!config) {
           log.warn("fetch.no_known_definition", {
             serverKey: key.serverKey,
-            backend: key.backend,
           });
           return {
             state: "error",
@@ -105,7 +110,6 @@ export const defaultToolInventoryCache: ToolInventoryCache =
         return directProbe({
           serverKey: key.serverKey,
           server: config,
-          backend: key.backend,
         });
       },
     },
@@ -141,7 +145,7 @@ const composePortableForConversation = createComposePortableMcpForConversation({
       ?.mcpOverrides;
   },
   discoverSources: discoverAllSources,
-  homePath: () => os.homedir(),
+  globalConfigPath: () => getDefaultGlobalMcpDefinitionPath(),
   buildGatewayServers(projectName, sessionName) {
     return buildSessionToolsPortableMcp(projectName, sessionName).servers;
   },
@@ -169,3 +173,77 @@ export const defaultMcpRuntimeApplyService: McpRuntimeApplyService =
       return { portable };
     },
   });
+
+export const defaultMcpConfigMutationService: McpConfigMutationService =
+  createMcpConfigMutationService({
+    stateManager: defaultStateManager,
+    globalStore: defaultGlobalOverrideStore,
+    discoverAllSources,
+    globalConfigPath: () => getDefaultGlobalMcpDefinitionPath(),
+  });
+
+export async function defaultListGlobalRuntimeTargets(): Promise<
+  readonly RuntimeTarget[]
+> {
+  const state = await defaultStateManager.readState();
+  return collectRuntimeTargets({
+    projects: Object.entries(state.projects).map(([projectPath, project]) => ({
+      projectPath,
+      projectName: getProjectDisplayName(projectPath),
+      sessions: Object.values(project.sessions),
+    })),
+    getRuntime(conversationId) {
+      const runtime = getRuntime(conversationId);
+      return runtime
+        ? { status: runtime.status, backend: runtime.backend }
+        : undefined;
+    },
+  });
+}
+
+export async function defaultListProjectRuntimeTargets(
+  projectPath: string,
+): Promise<readonly RuntimeTarget[]> {
+  const sessions = await defaultStateManager.getProjectSessions(projectPath);
+  return collectRuntimeTargets({
+    projects: [
+      {
+        projectPath,
+        projectName: getProjectDisplayName(projectPath),
+        sessions,
+      },
+    ],
+    getRuntime(conversationId) {
+      const runtime = getRuntime(conversationId);
+      return runtime
+        ? { status: runtime.status, backend: runtime.backend }
+        : undefined;
+    },
+  });
+}
+
+export async function defaultListSessionRuntimeTargets(
+  projectPath: string,
+  sessionName: string,
+): Promise<readonly RuntimeTarget[]> {
+  const session = await defaultStateManager.getSession(
+    projectPath,
+    sessionName,
+  );
+  if (!session) return [];
+  return collectRuntimeTargets({
+    projects: [
+      {
+        projectPath,
+        projectName: getProjectDisplayName(projectPath),
+        sessions: [session],
+      },
+    ],
+    getRuntime(conversationId) {
+      const runtime = getRuntime(conversationId);
+      return runtime
+        ? { status: runtime.status, backend: runtime.backend }
+        : undefined;
+    },
+  });
+}

@@ -106,7 +106,6 @@ export class CodexTaskRunner implements AgentTaskRunner {
       };
     }
 
-    // Build MCP config from portable MCP
     let mcpServersConfig: Record<string, unknown> | undefined;
     if (input.tooling?.portableMcp) {
       const { mcpServers, droppedFields } = translatePortableMcpToCodex(
@@ -115,17 +114,15 @@ export class CodexTaskRunner implements AgentTaskRunner {
       if (droppedFields.length > 0) {
         logger.warn("codex-task-runner.mcp_dropped_fields", { droppedFields });
       }
-      if (Object.keys(mcpServers).length > 0) {
-        mcpServersConfig = mcpServers;
-        logger.info("codex-task-runner.mcp_config", {
-          serverCount: Object.keys(mcpServers).length,
-        });
-      }
+      mcpServersConfig = mcpServers;
+      logger.info("codex-task-runner.mcp_config", {
+        serverCount: Object.keys(mcpServers).length,
+      });
     }
 
     const codexOptions: CodexOptions = {
       env: toStringEnv({ ...buildChildEnv(), CLAUDECODE: "" }),
-      ...(mcpServersConfig
+      ...(mcpServersConfig !== undefined
         ? {
             config: { mcp_servers: mcpServersConfig } as CodexOptions["config"],
           }

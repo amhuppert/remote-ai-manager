@@ -421,15 +421,13 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
 
     const options: CodexOptions = { env };
 
-    if (this.stagedPortableMcp) {
+    if (this.stagedPortableMcp !== null) {
       const { mcpServers } = this.deps.translatePortableMcpToCodex(
         this.stagedPortableMcp,
       );
-      if (Object.keys(mcpServers).length > 0) {
-        options.config = {
-          mcp_servers: mcpServers,
-        } as CodexOptions["config"];
-      }
+      options.config = {
+        mcp_servers: mcpServers,
+      } as CodexOptions["config"];
     }
 
     return options;

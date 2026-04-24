@@ -47,7 +47,6 @@ function serverRow(
     serverKey: overrides.serverKey,
     displayName: overrides.displayName ?? overrides.serverKey,
     nativeId: overrides.nativeId ?? overrides.serverKey,
-    backend: overrides.backend ?? "claude",
     transport: overrides.transport ?? "stdio",
     enabled: overrides.enabled ?? true,
     inheritanceStatus: overrides.inheritanceStatus ?? "inherited",
@@ -55,9 +54,6 @@ function serverRow(
     reserved: overrides.reserved ?? false,
     orphaned: overrides.orphaned ?? false,
     pending: overrides.pending ?? false,
-    compatibility: overrides.compatibility ?? {
-      backends: [{ backend: "claude", supported: true }],
-    },
     tools: overrides.tools ?? {
       state: "ready",
       tools: [],
@@ -116,6 +112,78 @@ describe("useToggleMcpServerMutation", () => {
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/projects/p/sessions/s/conversations/c/mcp-config");
     expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({
+      operations: [
+        { type: "set-server-enabled", serverKey: "srv", enabled: false },
+      ],
+    });
+  });
+
+  it("includes expectedEffectiveConfigHash when the current scope view is cached", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        view: view("conversation", []),
+        effectiveConfigHash: "hash-1",
+      }),
+    );
+    const client = makeClient();
+    client.setQueryData(
+      mcpConfigKeys.conversation("p", "s", "c"),
+      view("conversation", [serverRow({ serverKey: "srv" })]),
+    );
+    const cached = client.getQueryData<McpConfigViewResponse>(
+      mcpConfigKeys.conversation("p", "s", "c"),
+    );
+    if (!cached) {
+      throw new Error("expected cached MCP view");
+    }
+    cached.effectiveConfigHash = "hash-current";
+
+    const { result } = renderHook(
+      () =>
+        useToggleMcpServerMutation({
+          level: "conversation",
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+        }),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({ serverKey: "srv", enabled: false });
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      operations: [
+        { type: "set-server-enabled", serverKey: "srv", enabled: false },
+      ],
+      expectedEffectiveConfigHash: "hash-current",
+    });
+  });
+
+  it("omits expectedEffectiveConfigHash when no cached scope view exists", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        view: view("conversation", []),
+        effectiveConfigHash: "hash-1",
+      }),
+    );
+    const { result } = renderHook(
+      () =>
+        useToggleMcpServerMutation({
+          level: "conversation",
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+        }),
+      { wrapper: wrapperFor(makeClient()) },
+    );
+
+    result.current.mutate({ serverKey: "srv", enabled: false });
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({
       operations: [
         { type: "set-server-enabled", serverKey: "srv", enabled: false },
@@ -542,103 +610,5 @@ describe("useRefreshMcpToolsMutation", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     await waitFor(() => expect(resolved).toBe(true));
     unsub();
-  });
-});
-
-describe("backend-filtered variants all get invalidated and optimistically updated", () => {
-  const fetchSpy = vi.fn<typeof fetch>();
-
-  beforeEach(() => {
-    fetchSpy.mockReset();
-    vi.stubGlobal("fetch", fetchSpy);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("optimistic toggle writes across every backend variant of the same scope", async () => {
-    const client = makeClient();
-    const initial = view("conversation", [
-      serverRow({
-        serverKey: "srv",
-        enabled: true,
-        pending: false,
-      }),
-    ]);
-    // Seed both a no-backend view and the claude/codex variants.
-    client.setQueryData(mcpConfigKeys.conversation("p", "s", "c"), initial);
-    client.setQueryData(
-      mcpConfigKeys.conversation("p", "s", "c", "claude"),
-      initial,
-    );
-    client.setQueryData(
-      mcpConfigKeys.conversation("p", "s", "c", "codex"),
-      initial,
-    );
-
-    let resolve: (res: Response) => void = () => {};
-    fetchSpy.mockImplementation(
-      () => new Promise<Response>((r) => (resolve = r)),
-    );
-
-    const { result } = renderHook(
-      () =>
-        useToggleMcpServerMutation({
-          level: "conversation",
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
-        }),
-      { wrapper: wrapperFor(client) },
-    );
-    result.current.mutate({ serverKey: "srv", enabled: false });
-
-    await waitFor(() => {
-      for (const key of [
-        mcpConfigKeys.conversation("p", "s", "c"),
-        mcpConfigKeys.conversation("p", "s", "c", "claude"),
-        mcpConfigKeys.conversation("p", "s", "c", "codex"),
-      ]) {
-        const data = client.getQueryData<McpConfigViewResponse>(key);
-        expect(data?.servers[0]?.enabled).toBe(false);
-        expect(data?.servers[0]?.pending).toBe(true);
-      }
-    });
-
-    resolve(
-      jsonResponse({
-        view: view("conversation", []),
-        effectiveConfigHash: "h",
-      }),
-    );
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-  });
-
-  it("error rollback restores every backend variant snapshot", async () => {
-    const client = makeClient();
-    const initial = view("project", [
-      serverRow({ serverKey: "srv", enabled: true, pending: false }),
-    ]);
-    client.setQueryData(mcpConfigKeys.project("p"), initial);
-    client.setQueryData(mcpConfigKeys.project("p", "claude"), initial);
-
-    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
-
-    const { result } = renderHook(
-      () => useToggleMcpServerMutation({ level: "project", projectName: "p" }),
-      { wrapper: wrapperFor(client) },
-    );
-    result.current.mutate({ serverKey: "srv", enabled: false });
-
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    for (const key of [
-      mcpConfigKeys.project("p"),
-      mcpConfigKeys.project("p", "claude"),
-    ]) {
-      const data = client.getQueryData<McpConfigViewResponse>(key);
-      expect(data?.servers[0]?.enabled).toBe(true);
-      expect(data?.servers[0]?.pending).toBe(false);
-    }
   });
 });

@@ -8,22 +8,19 @@
  *   requested view level, yielding per-server effective enabled state and per
  *   tool enabled/disabled lists plus origin-level tracking.
  * - `resolveView` — full view-model assembly, layering discovery, overrides,
- *   tool inventories, gateway protection, compatibility lookups, and pending
- *   state into a validated `McpConfigViewResponse`.
+ *   tool inventories, gateway protection, and pending state into a validated
+ *   `McpConfigViewResponse`.
  *
- * The resolver never branches on backend identity; all backend-specific
- * decisions are delegated to injected helpers (`compatibilityLookup`) or
- * deferred to the runtime composer / translators at emission time.
+ * The resolver never branches on backend identity; backend-specific decisions
+ * are deferred to the runtime composer / translators at emission time.
  */
 
 import type {
-  AgentBackendId,
   McpConfigLevel,
   McpConfigViewResponse,
   McpDiagnostic,
   McpInheritanceStatus,
   McpOverrides,
-  McpServerCompatibilityView,
   McpServerView,
   McpToolInventoryResult,
   McpToolListView,
@@ -31,14 +28,10 @@ import type {
   ToolDiscoveryState,
 } from "@/lib/schemas";
 
-import {
-  buildCompatibilityLookup,
-  defaultMcpCapabilityRegistry,
-} from "./backend-capabilities";
 import type { McpServerDefinition } from "./types";
 
 // ---------------------------------------------------------------------------
-// Cascade merge — Task 4.1
+// Cascade merge
 // ---------------------------------------------------------------------------
 
 export interface McpOverrideChain {
@@ -147,7 +140,7 @@ export function mergeOverrideChain(
 }
 
 // ---------------------------------------------------------------------------
-// View-model assembly — Tasks 4.2 + 4.3
+// View-model assembly
 // ---------------------------------------------------------------------------
 
 export interface McpResolveViewInput {
@@ -169,18 +162,10 @@ export interface McpResolveViewInput {
   reservedGatewayServerKeys: readonly string[];
   /** Server keys with pending apply state (mid-turn updates waiting). */
   pendingServerKeys: readonly string[];
-  /** Per-server backend compatibility lookup — injected to avoid branching on
-   * backend identity inside the resolver core. Defaults to a lookup backed by
-   * the registry in `backend-capabilities.ts` so no production call site has
-   * to thread the registry explicitly. */
-  compatibilityLookup?(
-    definition: McpServerDefinition,
-  ): McpServerCompatibilityView;
   /** Optional identifiers surfaced on the response. */
   projectName?: string;
   sessionName?: string;
   conversationId?: string;
-  backend?: AgentBackendId;
 }
 
 /** Orphaned placeholder used when an override references a server that no
@@ -189,7 +174,6 @@ function orphanDefinition(serverKey: string): McpServerDefinition {
   return {
     serverKey,
     nativeId: serverKey,
-    backend: "shared",
     transport: "stdio",
     config: { transport: "stdio", command: "" },
     sourceRefs: [],
@@ -209,9 +193,6 @@ export function resolveView(input: McpResolveViewInput): McpConfigViewResponse {
     pendingServerKeys,
     reservedGatewayServerKeys,
   } = input;
-  const compatibilityLookup =
-    input.compatibilityLookup ??
-    buildCompatibilityLookup(defaultMcpCapabilityRegistry);
 
   const effective = mergeOverrideChain(overrides, level);
   const discoveredByKey = new Map<string, McpServerDefinition>();
@@ -246,7 +227,6 @@ export function resolveView(input: McpResolveViewInput): McpConfigViewResponse {
       serverKey,
       displayName: serverKey,
       nativeId: def.nativeId,
-      backend: def.backend,
       transport: def.transport,
       enabled: eff.enabled,
       inheritanceStatus: determineInheritanceStatus({
@@ -259,7 +239,6 @@ export function resolveView(input: McpResolveViewInput): McpConfigViewResponse {
       reserved,
       orphaned,
       pending: pendingSet.has(serverKey),
-      compatibility: compatibilityLookup(def),
       tools: buildToolListView(eff, inventory, level),
       diagnostics: [...def.diagnostics],
     });
@@ -276,7 +255,6 @@ export function resolveView(input: McpResolveViewInput): McpConfigViewResponse {
     ...(input.conversationId !== undefined
       ? { conversationId: input.conversationId }
       : {}),
-    ...(input.backend !== undefined ? { backend: input.backend } : {}),
     servers: rows,
     diagnostics: [...discoveryDiagnostics],
     pendingServerKeys: [...pendingServerKeys],
@@ -315,27 +293,27 @@ function determineInheritanceStatus(
     return "inherited";
   }
 
-  // No override in the cascade — derive from native source scope alignment
+  // No override in the cascade — derive from source scope alignment.
   if (viewLevel === "global") {
     return "explicit";
   }
 
-  if (viewLevel === "project" && hasProjectOrLocalScope(definition)) {
+  if (viewLevel === "project" && hasProjectScope(definition)) {
     return "explicit";
   }
 
   return "inherited";
 }
 
-function hasProjectOrLocalScope(def: McpServerDefinition): boolean {
+function hasProjectScope(def: McpServerDefinition): boolean {
   for (const ref of def.sourceRefs) {
-    if (ref.scope === "project" || ref.scope === "local") return true;
+    if (ref.scope === "project") return true;
   }
   return false;
 }
 
 // ---------------------------------------------------------------------------
-// Tool list view assembly + orphan detection — Task 4.2
+// Tool list view assembly + orphan detection
 // ---------------------------------------------------------------------------
 
 function buildToolListView(

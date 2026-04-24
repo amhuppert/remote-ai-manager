@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   PortableMcpConfig,
@@ -18,7 +18,6 @@ function mkDefinition(
 ): McpServerDefinition {
   return {
     nativeId: partial.nativeId ?? partial.serverKey,
-    backend: partial.backend ?? "shared",
     transport: partial.transport ?? "stdio",
     config: partial.config ?? {
       transport: "stdio",
@@ -26,9 +25,8 @@ function mkDefinition(
     },
     sourceRefs: partial.sourceRefs ?? [
       {
-        backend: "claude",
-        scope: "user",
-        filePath: "/home/alex/.claude/settings.json",
+        scope: "global",
+        filePath: "/home/alex/.config/cc/.mcp.json",
       },
     ],
     configSignature: partial.configSignature ?? `sig-${partial.serverKey}`,
@@ -54,7 +52,6 @@ describe("composePortableForConversation (pure)", () => {
     ];
 
     const result = composePortableForConversation({
-      backend: "claude",
       overrideChain: { global: emptyOverrides },
       discovered,
       gatewayServers: [gateway],
@@ -73,7 +70,6 @@ describe("composePortableForConversation (pure)", () => {
     };
 
     const result = composePortableForConversation({
-      backend: "claude",
       overrideChain: {
         global: emptyOverrides,
         project: emptyOverrides,
@@ -91,7 +87,6 @@ describe("composePortableForConversation (pure)", () => {
     const discovered = [mkDefinition({ serverKey: "calc" })];
 
     const result = composePortableForConversation({
-      backend: "claude",
       overrideChain: {
         global: emptyOverrides,
         session: { servers: { calc: { enabled: false } } },
@@ -107,7 +102,6 @@ describe("composePortableForConversation (pure)", () => {
 
   it("omits orphaned overrides (override references server not in discovery)", () => {
     const result = composePortableForConversation({
-      backend: "claude",
       overrideChain: {
         global: emptyOverrides,
         session: { servers: { "ghost-server": { enabled: true } } },
@@ -130,7 +124,6 @@ describe("composePortableForConversation (pure)", () => {
     ];
 
     const result = composePortableForConversation({
-      backend: "claude",
       overrideChain: { global: emptyOverrides },
       discovered,
       gatewayServers: [gateway],
@@ -155,7 +148,6 @@ describe("composePortableForConversation (pure)", () => {
     };
 
     const result = composePortableForConversation({
-      backend: "claude",
       overrideChain: { global: emptyOverrides },
       discovered: [mkDefinition({ serverKey: "calc" })],
       gatewayServers: [gateway],
@@ -180,7 +172,6 @@ describe("composePortableForConversation (pure)", () => {
     };
 
     const result = composePortableForConversation({
-      backend: "claude",
       overrideChain: { global: emptyOverrides },
       discovered: [mkDefinition({ serverKey: "calc" })],
       gatewayServers: [gateway],
@@ -211,11 +202,72 @@ describe("createComposePortableMcpForConversation (factory)", () => {
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/alex/.config/cc/.mcp.json",
       buildGatewayServers: () => [gateway],
       ...overrides,
     };
   }
+
+  it("invokes discoverSources with globalConfigPath and worktreePath and no backend filter", async () => {
+    const discoverSources = vi.fn<ComposePortableMcpDeps["discoverSources"]>(
+      async () => ({
+        servers: [] as McpServerDefinition[],
+        diagnostics: [],
+        sourceFiles: [],
+      }),
+    );
+
+    const deps = createDeps({ discoverSources });
+    const compose = createComposePortableMcpForConversation(deps);
+    await compose({
+      backend: "claude",
+      projectPath: "/projects/proj",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv",
+      worktreePath: "/projects/proj/.worktrees/sess",
+    });
+
+    expect(discoverSources).toHaveBeenCalledTimes(1);
+    const callArgs = discoverSources.mock.calls[0]![0]!;
+    expect(typeof callArgs.globalConfigPath).toBe("string");
+    expect(callArgs.globalConfigPath.length).toBeGreaterThan(0);
+    expect(callArgs.worktreePath).toBe("/projects/proj/.worktrees/sess");
+    expect(callArgs).not.toHaveProperty("backends");
+    expect(callArgs).not.toHaveProperty("backend");
+  });
+
+  it("reads all four override levels when composing", async () => {
+    const readGlobalOverrides = vi.fn(async () => emptyOverrides);
+    const readProjectOverrides = vi.fn(async () => undefined);
+    const readSessionOverrides = vi.fn(async () => undefined);
+    const readConversationOverrides = vi.fn(async () => undefined);
+
+    const deps = createDeps({
+      readGlobalOverrides,
+      readProjectOverrides,
+      readSessionOverrides,
+      readConversationOverrides,
+    });
+    const compose = createComposePortableMcpForConversation(deps);
+    await compose({
+      backend: "claude",
+      projectPath: "/projects/proj",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv",
+      worktreePath: "/projects/proj/.worktrees/sess",
+    });
+
+    expect(readGlobalOverrides).toHaveBeenCalledTimes(1);
+    expect(readProjectOverrides).toHaveBeenCalledWith("/projects/proj");
+    expect(readSessionOverrides).toHaveBeenCalledWith("/projects/proj", "sess");
+    expect(readConversationOverrides).toHaveBeenCalledWith(
+      "/projects/proj",
+      "sess",
+      "conv",
+    );
+  });
 
   it("passes all four override levels into the cascade resolver", async () => {
     const globalOverrides: McpOverrides = {
@@ -278,8 +330,20 @@ describe("createComposePortableMcpForConversation (factory)", () => {
     expect(ids).toContain("cc-session-tools");
   });
 
-  it("passes transient tooling overrides through to the pure composer", async () => {
-    const deps = createDeps();
+  it("merges transient portable MCP last so graph-workflow tooling wins on id collision", async () => {
+    const deps = createDeps({
+      discoverSources: async () => ({
+        servers: [
+          mkDefinition({
+            serverKey: "calc",
+            nativeId: "calc",
+            config: { transport: "stdio", command: "/discovered/calc" },
+          }),
+        ],
+        diagnostics: [],
+        sourceFiles: [],
+      }),
+    });
     const compose = createComposePortableMcpForConversation(deps);
     const portable = await compose({
       backend: "claude",
@@ -295,11 +359,23 @@ describe("createComposePortableMcpForConversation (factory)", () => {
             transport: "streamable-http",
             url: "http://localhost:3000/gw",
           },
+          {
+            id: "calc",
+            transport: "stdio",
+            command: "/transient/calc",
+          },
         ],
       },
     });
 
     const ids = portable.servers.map((s) => s.id);
     expect(ids).toContain("cc-graph-workflow");
+    const calc = portable.servers.find((s) => s.id === "calc");
+    expect(calc).toBeDefined();
+    if (calc?.transport === "stdio") {
+      expect(calc.command).toBe("/transient/calc");
+    } else {
+      throw new Error("expected stdio transport from transient override");
+    }
   });
 });

@@ -85,17 +85,18 @@ Creating, editing, and deleting MCP server **definitions** remains outside the s
 6. Where the active backend lacks a live-update path, the Command Center shall apply configuration changes by reconstructing the per-turn runtime at the start of the next turn.
 7. When pending configuration changes have been applied at turn start, the Command Center shall clear the pending indicator for the affected rows.
 
-### Requirement 7: Read-Only Source Discovery
+### Requirement 7: Unified Command Center Source Discovery
 
-**Objective:** As a CC user, I want CC to discover my existing MCP servers from my backend config files without modifying those files, so that my manual configuration remains the source of truth.
+**Objective:** As a CC user, I want CC to read MCP server definitions from Command Center's own unified `.mcp.json` files so that there is one canonical source per scope regardless of which backend runs the session.
 
 #### Acceptance Criteria
-1. The Command Center shall read MCP server definitions from the set of backend config files that each supported backend natively reads.
-2. The Command Center shall never write to, create, or delete user-managed backend MCP config files.
-3. When a discovered server originates from a specific scope, the Command Center shall tag the scope (project, local, or user) on the resolved row.
-4. When an MCP configuration surface is opened, the Command Center shall group discovered servers by their source scope.
-5. If a backend config file is missing, malformed, or unreadable, the Command Center shall surface a discovery error for that file and continue discovery of other files.
+1. The Command Center shall read global MCP server definitions from `<CC_CONFIG_DIR>/.mcp.json`.
+2. The Command Center shall read project MCP server definitions from the active worktree's `.mcp.json` at the repository root.
+3. When the same `serverKey` is defined at both the global and project scope, the Command Center shall treat the project definition as an override and use it in the resolved set.
+4. When a discovered server originates from a specific scope, the Command Center shall tag the scope (global or project) on the resolved row.
+5. If a `.mcp.json` file is missing, malformed, or unreadable, the Command Center shall surface a discovery error for that file and continue discovery of the other scope.
 6. When a stored override references a server that is no longer present in discovery, the Command Center shall mark that override as orphaned and omit it from the emitted MCP set.
+7. The Command Center shall not read, migrate, or fall back to backend-native MCP source files (e.g. `~/.claude/settings.json`, `.claude/.mcp.json`, `~/.codex/config.toml`) for discovery.
 
 ### Requirement 8: Backend-Agnostic Abstraction
 

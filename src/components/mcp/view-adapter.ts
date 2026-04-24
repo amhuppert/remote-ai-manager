@@ -1,5 +1,4 @@
 import type {
-  AgentBackendId,
   McpConfigViewResponse,
   McpServerView as ApiServerView,
   McpToolView as ApiToolView,
@@ -8,7 +7,6 @@ import type {
 } from "@/types";
 
 import type {
-  McpBackendId,
   McpInheritanceStatus,
   McpScope,
   McpServerView,
@@ -92,36 +90,15 @@ function toToolView(tool: ApiToolView, viewLevel: McpViewLevel): McpToolView {
   };
 }
 
-export interface AdaptOptions {
-  /** Currently selected agent backend; drives per-server compatibility hint. */
-  activeBackend?: AgentBackendId;
-}
-
-function deriveCompatibility(
-  server: ApiServerView,
-  activeBackend: AgentBackendId | undefined,
-): McpServerView["backendCompatibility"] {
-  if (!activeBackend) return undefined;
-  const match = server.compatibility.backends.find(
-    (b) => b.backend === activeBackend,
-  );
-  if (!match || match.supported) return undefined;
-  return { compatible: false, reason: match.reason };
-}
-
 function deriveSource(server: ApiServerView): {
   scope: McpScope;
   sourceFile: string;
 } {
   const first = server.sourceRefs[0];
   if (!first) {
-    return { scope: "user", sourceFile: "" };
+    return { scope: "global", sourceFile: "" };
   }
   return { scope: first.scope, sourceFile: first.filePath };
-}
-
-function toBackendId(backend: ApiServerView["backend"]): McpBackendId {
-  return backend;
 }
 
 /**
@@ -131,9 +108,7 @@ function toBackendId(backend: ApiServerView["backend"]): McpBackendId {
 export function adaptServerViewsForLevel(
   response: McpConfigViewResponse,
   viewLevel: McpViewLevel,
-  options: AdaptOptions = {},
 ): McpServerView[] {
-  const { activeBackend } = options;
   const rows: McpServerView[] = [];
   for (const server of response.servers) {
     if (server.reserved) continue;
@@ -143,11 +118,9 @@ export function adaptServerViewsForLevel(
       name: server.displayName,
       sourceFile,
       scope,
-      backend: toBackendId(server.backend),
       enabled: server.enabled,
       status: toStatus(server.inheritanceStatus, viewLevel),
       pending: server.pending,
-      backendCompatibility: deriveCompatibility(server, activeBackend),
       toolDiscovery: toToolDiscovery(server.tools, viewLevel),
     });
   }

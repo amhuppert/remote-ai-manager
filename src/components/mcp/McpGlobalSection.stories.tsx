@@ -36,7 +36,6 @@ const meta = {
   ],
   args: {
     actions: sharedActions,
-    onBackendFilterChange: fn(),
   },
 } satisfies Meta<typeof McpGlobalSection>;
 
@@ -44,14 +43,14 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default = {
-  name: "Default — mixed backends",
+  name: "Default",
   args: {
     servers: mkGlobalServers(),
   },
 } satisfies Story;
 
 export const Empty = {
-  name: "No user-level servers",
+  name: "No global servers",
   args: {
     servers: [],
   },
@@ -63,17 +62,9 @@ export const WithNotice = {
     servers: mkGlobalServers(),
     notice: (
       <span>
-        ⚠ Failed to parse <code>~/.codex/config.toml</code> — fix the file and
+        ⚠ Failed to parse <code>~/.config/cc/.mcp.json</code> — fix the file and
         reload.
       </span>
     ),
-  },
-} satisfies Story;
-
-export const ClaudeFilter = {
-  name: "Filtered to Claude backend",
-  args: {
-    servers: mkGlobalServers(),
-    backendFilter: "claude",
   },
 } satisfies Story;

@@ -31,7 +31,6 @@ function errorResult(code: string): McpToolInventoryResult {
 
 function mkKey(partial: Partial<ToolInventoryKey> = {}): ToolInventoryKey {
   return {
-    backend: partial.backend ?? "claude",
     serverKey: partial.serverKey ?? "srv1",
     configSignature: partial.configSignature ?? "sig-a",
   };
@@ -291,7 +290,6 @@ describe("createToolInventoryCache — onCompletion", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     const [event] = listener.mock.calls[0] ?? [];
     expect(event).toMatchObject({
-      backend: "claude",
       serverKey: "srv1",
       result: { state: "ready" },
     });

@@ -11,13 +11,11 @@ function baseServer(
   return {
     id: overrides.id,
     name: overrides.name ?? overrides.id,
-    sourceFile: overrides.sourceFile ?? "/home/alex/.claude/settings.json",
-    scope: overrides.scope ?? "user",
-    backend: overrides.backend ?? "claude",
+    sourceFile: overrides.sourceFile ?? "/home/alex/.config/cc/.mcp.json",
+    scope: overrides.scope ?? "global",
     enabled: overrides.enabled ?? true,
     status: overrides.status ?? { kind: "inherited", from: "session" },
     pending: overrides.pending,
-    backendCompatibility: overrides.backendCompatibility,
     runtimeError: overrides.runtimeError,
     toolDiscovery: overrides.toolDiscovery ?? {
       kind: "loaded",

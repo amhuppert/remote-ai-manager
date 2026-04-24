@@ -10,8 +10,6 @@
  * enough to serve as pure HTTP plumbing.
  */
 
-import { createHash } from "node:crypto";
-
 import { NextResponse } from "next/server";
 
 import { createLogger } from "@/lib/logging";
@@ -22,6 +20,11 @@ import type {
   AfterOverrideChangeInput,
   ConversationApplyResult,
 } from "@/lib/mcp/runtime-apply";
+import type { RuntimeTarget } from "@/lib/mcp/runtime-targets";
+import {
+  computeConfigEditHash,
+  type McpConfigMutationService,
+} from "@/lib/mcp-config-mutation-service";
 import { resolveView, type McpOverrideChain } from "@/lib/mcp/resolver";
 import type {
   McpServerDefinition,
@@ -35,7 +38,6 @@ import {
   type McpConfigPatchRequest,
   type McpConfigViewResponse,
   type McpOverrides,
-  type McpServerView,
   type McpToolInventoryResult,
 } from "@/lib/schemas";
 import type { ConversationState, SessionState } from "@/types";
@@ -73,7 +75,6 @@ export type McpConfigRouteBroadcastPayload =
       sessionName?: string;
       conversationId?: string;
       serverKey: string;
-      configSignature: string;
     };
 
 export type McpConfigRouteBroadcast = (
@@ -88,13 +89,19 @@ interface SharedDiscoveryDeps {
   discoverAllSources(
     input: McpSourceDiscoveryInput,
   ): Promise<McpSourceDiscoveryResult>;
-  homePath(): string;
+  globalConfigPath(): string;
+}
+
+interface RuntimeApplyFanoutDeps {
+  applyAfterOverrideChange(
+    input: AfterOverrideChangeInput,
+  ): Promise<ConversationApplyResult>;
 }
 
 /**
  * Shared optional deps that let GET handlers populate `resolveView`'s
  * `toolInventories` from a cached inventory keyed on
- * `{ backend, serverKey, configSignature }`.
+ * `{ serverKey, configSignature }`.
  *
  * When omitted, `resolveView` receives an empty inventory map and server cards
  * render as `idle` until a refresh POST populates the cache. Production routes
@@ -111,7 +118,6 @@ interface SharedToolInventoryReaderDeps {
    */
   onDefinitionLoaded?(
     key: {
-      backend: AgentBackendId;
       serverKey: string;
       configSignature: string;
     },
@@ -131,9 +137,7 @@ function buildToolInventoriesFromCache(
   if (!deps.toolInventoryCache) return {};
   const inventories: Record<string, McpToolInventoryResult> = {};
   for (const def of servers) {
-    const backend = resolveDefinitionBackend(def);
     const key = {
-      backend,
       serverKey: def.serverKey,
       configSignature: def.configSignature,
     };
@@ -149,6 +153,33 @@ interface RouteContext {
 
 function jsonError(message: string, status: number): Response {
   return NextResponse.json({ error: message }, { status });
+}
+
+async function fanOutRuntimeApply(input: {
+  targets: readonly RuntimeTarget[];
+  changedServerKeys: readonly string[];
+  applyAfterOverrideChange: RuntimeApplyFanoutDeps["applyAfterOverrideChange"];
+}): Promise<void> {
+  for (const target of input.targets) {
+    try {
+      await input.applyAfterOverrideChange({
+        projectPath: target.projectPath,
+        sessionName: target.sessionName,
+        conversationId: target.conversationId,
+        backend: target.backend,
+        changedServerKeys: input.changedServerKeys,
+      });
+    } catch (err) {
+      log.warn("runtime-apply.fanout_failed", {
+        projectPath: target.projectPath,
+        sessionName: target.sessionName,
+        conversationId: target.conversationId,
+        backend: target.backend,
+        changedServerKeys: input.changedServerKeys,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 }
 
 async function parsePatchBody(
@@ -176,47 +207,14 @@ async function parsePatchBody(
   return { ok: true, data: parsed.data };
 }
 
-/**
- * Deterministic hash of the view-visible state at a given scope. Computed over
- * the resolved server list (sorted, stripped of volatile fields) so a no-op
- * reorder or diagnostic change never invalidates the client's hash.
- */
-function computeViewHash(view: McpConfigViewResponse): string {
-  const canonical = {
-    level: view.level,
-    servers: [...view.servers]
-      .sort((a, b) => a.serverKey.localeCompare(b.serverKey))
-      .map(canonicalServer),
-  };
-  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
-}
-
-function canonicalServer(server: McpServerView): object {
+function withHash(
+  view: McpConfigViewResponse,
+  discovered: readonly McpServerDefinition[],
+): McpConfigViewResponse {
   return {
-    serverKey: server.serverKey,
-    enabled: server.enabled,
-    inheritanceStatus: server.inheritanceStatus,
-    tools: [...server.tools.tools]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((t) => ({
-        name: t.name,
-        enabled: t.enabled,
-        inheritanceStatus: t.inheritanceStatus,
-      })),
+    ...view,
+    effectiveConfigHash: computeConfigEditHash({ view, discovered }),
   };
-}
-
-function withHash(view: McpConfigViewResponse): McpConfigViewResponse {
-  return { ...view, effectiveConfigHash: computeViewHash(view) };
-}
-
-function check409(
-  current: McpConfigViewResponse,
-  expected: string | undefined,
-): Response | null {
-  if (expected === undefined) return null;
-  if (current.effectiveConfigHash === expected) return null;
-  return jsonError("effectiveConfigHash mismatch — refresh and retry", 409);
 }
 
 // ===========================================================================
@@ -224,9 +222,14 @@ function check409(
 // ===========================================================================
 
 export interface GlobalMcpConfigHandlersDeps
-  extends SharedDiscoveryDeps, SharedToolInventoryReaderDeps {
+  extends
+    SharedDiscoveryDeps,
+    SharedToolInventoryReaderDeps,
+    RuntimeApplyFanoutDeps {
   globalStore: GlobalOverrideStore;
+  mutationService: McpConfigMutationService;
   broadcast?: McpConfigRouteBroadcast;
+  listGlobalRuntimeTargets(): Promise<readonly RuntimeTarget[]>;
 }
 
 export function createGlobalMcpConfigHandlers(
@@ -236,11 +239,10 @@ export function createGlobalMcpConfigHandlers(
     const [overrides, discovery] = await Promise.all([
       deps.globalStore.read(),
       deps.discoverAllSources({
-        worktreePath: deps.homePath(),
-        homePath: deps.homePath(),
+        globalConfigPath: deps.globalConfigPath(),
       }),
     ]);
-    const visibleServers = userScopeOnly(discovery.servers);
+    const visibleServers = globalScopeOnly(discovery.servers);
     const view = resolveView({
       level: "global",
       overrides: { global: overrides },
@@ -251,7 +253,7 @@ export function createGlobalMcpConfigHandlers(
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
     });
-    return withHash(view);
+    return withHash(view, visibleServers);
   }
 
   async function GET(_request: Request): Promise<Response> {
@@ -268,15 +270,21 @@ export function createGlobalMcpConfigHandlers(
     if (!parsed.ok) return parsed.response;
 
     try {
-      const current = await resolveCurrent();
-      const conflict = check409(
-        current,
-        parsed.data.expectedEffectiveConfigHash,
-      );
-      if (conflict) return conflict;
-
-      const result = await deps.globalStore.patch({
+      const result = await deps.mutationService.patchGlobal({
         operations: parsed.data.operations,
+        expectedEffectiveConfigHash: parsed.data.expectedEffectiveConfigHash,
+      });
+      if (!result.ok) {
+        return jsonError(
+          "effectiveConfigHash mismatch — refresh and retry",
+          409,
+        );
+      }
+      const runtimeTargets = await deps.listGlobalRuntimeTargets();
+      await fanOutRuntimeApply({
+        targets: runtimeTargets,
+        changedServerKeys: result.changedServerKeys,
+        applyAfterOverrideChange: deps.applyAfterOverrideChange,
       });
       const next = await resolveCurrent();
 
@@ -299,11 +307,11 @@ export function createGlobalMcpConfigHandlers(
   return { GET, PATCH };
 }
 
-function userScopeOnly(
+function globalScopeOnly(
   servers: readonly McpServerDefinition[],
 ): readonly McpServerDefinition[] {
   return servers.filter((s) =>
-    s.sourceRefs.some((ref) => ref.scope === "user"),
+    s.sourceRefs.some((ref) => ref.scope === "global"),
   );
 }
 
@@ -312,12 +320,19 @@ function userScopeOnly(
 // ===========================================================================
 
 export interface ProjectMcpConfigHandlersDeps
-  extends SharedDiscoveryDeps, SharedToolInventoryReaderDeps {
+  extends
+    SharedDiscoveryDeps,
+    SharedToolInventoryReaderDeps,
+    RuntimeApplyFanoutDeps {
   globalStore: GlobalOverrideStore;
   scopeStore: ScopeOverrideStore;
+  mutationService: McpConfigMutationService;
   resolveProjectPath(projectName: string): Promise<string | null>;
   readProjectOverrides: ReadProjectOverrides;
   broadcast?: McpConfigRouteBroadcast;
+  listProjectRuntimeTargets(
+    projectPath: string,
+  ): Promise<readonly RuntimeTarget[]>;
 }
 
 type ProjectRouteParams = { name: string };
@@ -333,8 +348,8 @@ export function createProjectMcpConfigHandlers(
       deps.globalStore.read(),
       deps.readProjectOverrides(input.projectPath),
       deps.discoverAllSources({
+        globalConfigPath: deps.globalConfigPath(),
         worktreePath: input.projectPath,
-        homePath: deps.homePath(),
       }),
     ]);
     const chain: McpOverrideChain = {
@@ -352,7 +367,7 @@ export function createProjectMcpConfigHandlers(
       pendingServerKeys: [],
       projectName: input.projectName,
     });
-    return withHash(view);
+    return withHash(view, discovery.servers);
   }
 
   async function GET(_request: Request, ctx: RouteContext): Promise<Response> {
@@ -379,20 +394,24 @@ export function createProjectMcpConfigHandlers(
       const projectPath = await deps.resolveProjectPath(name);
       if (!projectPath) return jsonError("Project not found", 404);
 
-      const current = await resolveCurrent({
+      const result = await deps.mutationService.patchProject({
         projectName: name,
         projectPath,
+        operations: parsed.data.operations,
+        expectedEffectiveConfigHash: parsed.data.expectedEffectiveConfigHash,
       });
-      const conflict = check409(
-        current,
-        parsed.data.expectedEffectiveConfigHash,
-      );
-      if (conflict) return conflict;
-
-      const result = await deps.scopeStore.patchProject(
-        projectPath,
-        parsed.data.operations,
-      );
+      if (!result.ok) {
+        return jsonError(
+          "effectiveConfigHash mismatch — refresh and retry",
+          409,
+        );
+      }
+      const runtimeTargets = await deps.listProjectRuntimeTargets(projectPath);
+      await fanOutRuntimeApply({
+        targets: runtimeTargets,
+        changedServerKeys: result.changedServerKeys,
+        applyAfterOverrideChange: deps.applyAfterOverrideChange,
+      });
       const next = await resolveCurrent({
         projectName: name,
         projectPath,
@@ -423,9 +442,13 @@ export function createProjectMcpConfigHandlers(
 // ===========================================================================
 
 export interface SessionMcpConfigHandlersDeps
-  extends SharedDiscoveryDeps, SharedToolInventoryReaderDeps {
+  extends
+    SharedDiscoveryDeps,
+    SharedToolInventoryReaderDeps,
+    RuntimeApplyFanoutDeps {
   globalStore: GlobalOverrideStore;
   scopeStore: ScopeOverrideStore;
+  mutationService: McpConfigMutationService;
   resolveProjectPath(projectName: string): Promise<string | null>;
   getSession(
     projectPath: string,
@@ -433,6 +456,10 @@ export interface SessionMcpConfigHandlersDeps
   ): Promise<SessionState | null>;
   readProjectOverrides: ReadProjectOverrides;
   broadcast?: McpConfigRouteBroadcast;
+  listSessionRuntimeTargets(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<readonly RuntimeTarget[]>;
 }
 
 type SessionRouteParams = { name: string; session: string };
@@ -451,8 +478,8 @@ export function createSessionMcpConfigHandlers(
       deps.globalStore.read(),
       deps.readProjectOverrides(input.projectPath),
       deps.discoverAllSources({
+        globalConfigPath: deps.globalConfigPath(),
         worktreePath: input.worktreePath,
-        homePath: deps.homePath(),
       }),
     ]);
     const chain: McpOverrideChain = {
@@ -474,7 +501,7 @@ export function createSessionMcpConfigHandlers(
       projectName: input.projectName,
       sessionName: input.sessionName,
     });
-    return withHash(view);
+    return withHash(view, discovery.servers);
   }
 
   async function loadContext(
@@ -521,30 +548,41 @@ export function createSessionMcpConfigHandlers(
       const loaded = await loadContext(params);
       if (!loaded.ok) return loaded.response;
 
-      const current = await resolveCurrent({
+      const result = await deps.mutationService.patchSession({
         projectName: params.name,
-        sessionName: params.session,
         projectPath: loaded.projectPath,
-        worktreePath: loaded.session.worktreePath,
-        sessionOverrides: loaded.session.mcpOverrides,
+        sessionName: params.session,
+        operations: parsed.data.operations,
+        expectedEffectiveConfigHash: parsed.data.expectedEffectiveConfigHash,
       });
-      const conflict = check409(
-        current,
-        parsed.data.expectedEffectiveConfigHash,
-      );
-      if (conflict) return conflict;
-
-      const result = await deps.scopeStore.patchSession(
+      if (!result.ok) {
+        return jsonError(
+          "effectiveConfigHash mismatch — refresh and retry",
+          409,
+        );
+      }
+      const runtimeTargets = await deps.listSessionRuntimeTargets(
         loaded.projectPath,
         params.session,
-        parsed.data.operations,
       );
+      await fanOutRuntimeApply({
+        targets: runtimeTargets,
+        changedServerKeys: result.changedServerKeys,
+        applyAfterOverrideChange: deps.applyAfterOverrideChange,
+      });
+      const refreshedSession = await deps.getSession(
+        loaded.projectPath,
+        params.session,
+      );
+      if (!refreshedSession) {
+        return jsonError("Session not found", 404);
+      }
       const next = await resolveCurrent({
         projectName: params.name,
         sessionName: params.session,
         projectPath: loaded.projectPath,
-        worktreePath: loaded.session.worktreePath,
-        sessionOverrides: result.overrides,
+        worktreePath: refreshedSession.worktreePath,
+        sessionOverrides: refreshedSession.mcpOverrides,
       });
 
       deps.broadcast?.({
@@ -576,6 +614,7 @@ export interface ConversationMcpConfigHandlersDeps
   extends SharedDiscoveryDeps, SharedToolInventoryReaderDeps {
   globalStore: GlobalOverrideStore;
   scopeStore: ScopeOverrideStore;
+  mutationService: McpConfigMutationService;
   resolveProjectPath(projectName: string): Promise<string | null>;
   getSession(
     projectPath: string,
@@ -614,8 +653,8 @@ export function createConversationMcpConfigHandlers(
       deps.globalStore.read(),
       deps.readProjectOverrides(input.projectPath),
       deps.discoverAllSources({
+        globalConfigPath: deps.globalConfigPath(),
         worktreePath: input.worktreePath,
-        homePath: deps.homePath(),
       }),
     ]);
     const chain: McpOverrideChain = {
@@ -641,7 +680,7 @@ export function createConversationMcpConfigHandlers(
       sessionName: input.sessionName,
       conversationId: input.conversationId,
     });
-    return withHash(view);
+    return withHash(view, discovery.servers);
   }
 
   async function loadContext(params: ConversationRouteParams): Promise<
@@ -702,27 +741,20 @@ export function createConversationMcpConfigHandlers(
       const loaded = await loadContext(params);
       if (!loaded.ok) return loaded.response;
 
-      const current = await resolveCurrent({
+      const result = await deps.mutationService.patchConversation({
         projectName: params.name,
         sessionName: params.session,
         conversationId: params.conversationId,
         projectPath: loaded.projectPath,
-        worktreePath: loaded.session.worktreePath,
-        sessionOverrides: loaded.session.mcpOverrides,
-        conversationOverrides: loaded.conversation.mcpOverrides,
+        operations: parsed.data.operations,
+        expectedEffectiveConfigHash: parsed.data.expectedEffectiveConfigHash,
       });
-      const conflict = check409(
-        current,
-        parsed.data.expectedEffectiveConfigHash,
-      );
-      if (conflict) return conflict;
-
-      const result = await deps.scopeStore.patchConversation(
-        loaded.projectPath,
-        params.session,
-        params.conversationId,
-        parsed.data.operations,
-      );
+      if (!result.ok) {
+        return jsonError(
+          "effectiveConfigHash mismatch — refresh and retry",
+          409,
+        );
+      }
 
       const backend = selectBackend(loaded.conversation, deps.defaultBackend);
       const apply = await deps.applyAfterOverrideChange({
@@ -732,15 +764,17 @@ export function createConversationMcpConfigHandlers(
         backend,
         changedServerKeys: result.changedServerKeys,
       });
+      const refreshed = await loadContext(params);
+      if (!refreshed.ok) return refreshed.response;
 
       const next = await resolveCurrent({
         projectName: params.name,
         sessionName: params.session,
         conversationId: params.conversationId,
         projectPath: loaded.projectPath,
-        worktreePath: loaded.session.worktreePath,
-        sessionOverrides: loaded.session.mcpOverrides,
-        conversationOverrides: result.overrides,
+        worktreePath: refreshed.session.worktreePath,
+        sessionOverrides: refreshed.session.mcpOverrides,
+        conversationOverrides: refreshed.conversation.mcpOverrides,
       });
 
       deps.broadcast?.({
@@ -791,7 +825,6 @@ export interface ToolInventoryHandlersDeps extends SharedDiscoveryDeps {
    * the canonical config to the shared probe-key lookup map. No-op in tests. */
   onDefinitionLoaded?(
     key: {
-      backend: AgentBackendId;
       serverKey: string;
       configSignature: string;
     },
@@ -810,7 +843,7 @@ export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
   async function loadDefinition(
     params: ToolInventoryRouteParams,
   ): Promise<
-    | { ok: true; definition: McpServerDefinition; backend: AgentBackendId }
+    | { ok: true; definition: McpServerDefinition }
     | { ok: false; response: Response }
   > {
     const projectPath = await deps.resolveProjectPath(params.name);
@@ -831,8 +864,8 @@ export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
       };
     }
     const discovery = await deps.discoverAllSources({
+      globalConfigPath: deps.globalConfigPath(),
       worktreePath: session.worktreePath,
-      homePath: deps.homePath(),
     });
     const definition = discovery.servers.find(
       (s) => s.serverKey === params.serverKey,
@@ -843,16 +876,24 @@ export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
         response: jsonError("MCP server not found", 404),
       };
     }
-    const backend = resolveDefinitionBackend(definition);
-    return { ok: true, definition, backend };
+    return { ok: true, definition };
   }
 
-  function buildKey(definition: McpServerDefinition, backend: AgentBackendId) {
+  function buildCacheKey(definition: McpServerDefinition) {
     return {
-      backend,
       serverKey: definition.serverKey,
       configSignature: definition.configSignature,
     };
+  }
+
+  function notifyDefinitionLoaded(definition: McpServerDefinition): void {
+    deps.onDefinitionLoaded?.(
+      {
+        serverKey: definition.serverKey,
+        configSignature: definition.configSignature,
+      },
+      definition,
+    );
   }
 
   async function GET(_request: Request, ctx: RouteContext): Promise<Response> {
@@ -860,9 +901,8 @@ export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
       const params = (await ctx.params) as ToolInventoryRouteParams;
       const loaded = await loadDefinition(params);
       if (!loaded.ok) return loaded.response;
-      const key = buildKey(loaded.definition, loaded.backend);
-      deps.onDefinitionLoaded?.(key, loaded.definition);
-      const result = deps.cache.peek(key);
+      notifyDefinitionLoaded(loaded.definition);
+      const result = deps.cache.peek(buildCacheKey(loaded.definition));
       return NextResponse.json(result);
     } catch (err) {
       return handleUnexpected("tools.get", err);
@@ -874,9 +914,8 @@ export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
       const params = (await ctx.params) as ToolInventoryRouteParams;
       const loaded = await loadDefinition(params);
       if (!loaded.ok) return loaded.response;
-      const key = buildKey(loaded.definition, loaded.backend);
-      deps.onDefinitionLoaded?.(key, loaded.definition);
-      const result = await deps.cache.refresh(key);
+      notifyDefinitionLoaded(loaded.definition);
+      const result = await deps.cache.refresh(buildCacheKey(loaded.definition));
       deps.broadcast?.({
         kind: "tools-updated",
         level: "conversation",
@@ -884,7 +923,6 @@ export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
         sessionName: params.session,
         conversationId: params.conversationId,
         serverKey: loaded.definition.serverKey,
-        configSignature: loaded.definition.configSignature,
       });
       return NextResponse.json(result);
     } catch (err) {
@@ -895,22 +933,13 @@ export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
   return { GET, POST };
 }
 
-function resolveDefinitionBackend(
-  definition: McpServerDefinition,
-): AgentBackendId {
-  if (definition.backend === "claude" || definition.backend === "codex") {
-    return definition.backend;
-  }
-  return "claude";
-}
-
 // ---------------------------------------------------------------------------
 // Scoped tool inventory (global / project / session)
 //
 // Tool discovery at every cascade level shares the same cache (keyed on
-// backend + serverKey + configSignature). What differs per scope is:
+// serverKey + configSignature). What differs per scope is:
 //   - which route parameters identify the server,
-//   - which discovery context (worktreePath / homePath) we resolve against,
+//   - which discovery context (globalConfigPath / worktreePath) we resolve against,
 //   - the level + identifiers emitted on the broadcast.
 //
 // A small shared helper does cache GET/POST against a pre-resolved server
@@ -923,7 +952,6 @@ interface ScopedToolInventoryCore {
   broadcast?: McpConfigRouteBroadcast;
   onDefinitionLoaded?(
     key: {
-      backend: AgentBackendId;
       serverKey: string;
       configSignature: string;
     },
@@ -931,42 +959,43 @@ interface ScopedToolInventoryCore {
   ): void;
 }
 
-async function runScopedToolGet(
-  core: ScopedToolInventoryCore,
-  definition: McpServerDefinition,
-  backend: AgentBackendId,
-): Promise<Response> {
-  const key = {
-    backend,
+function scopedCacheKey(definition: McpServerDefinition) {
+  return {
     serverKey: definition.serverKey,
     configSignature: definition.configSignature,
   };
-  core.onDefinitionLoaded?.(key, definition);
-  const result = core.cache.peek(key);
+}
+
+function scopedNotifyKey(definition: McpServerDefinition) {
+  return {
+    serverKey: definition.serverKey,
+    configSignature: definition.configSignature,
+  };
+}
+
+async function runScopedToolGet(
+  core: ScopedToolInventoryCore,
+  definition: McpServerDefinition,
+): Promise<Response> {
+  core.onDefinitionLoaded?.(scopedNotifyKey(definition), definition);
+  const result = core.cache.peek(scopedCacheKey(definition));
   return NextResponse.json(result);
 }
 
 async function runScopedToolRefresh(
   core: ScopedToolInventoryCore,
   definition: McpServerDefinition,
-  backend: AgentBackendId,
   broadcastPayload: Omit<
     Extract<McpConfigRouteBroadcastPayload, { kind: "tools-updated" }>,
-    "kind" | "serverKey" | "configSignature"
+    "kind" | "serverKey"
   >,
 ): Promise<Response> {
-  const key = {
-    backend,
-    serverKey: definition.serverKey,
-    configSignature: definition.configSignature,
-  };
-  core.onDefinitionLoaded?.(key, definition);
-  const result = await core.cache.refresh(key);
+  core.onDefinitionLoaded?.(scopedNotifyKey(definition), definition);
+  const result = await core.cache.refresh(scopedCacheKey(definition));
   core.broadcast?.({
     ...broadcastPayload,
     kind: "tools-updated",
     serverKey: definition.serverKey,
-    configSignature: definition.configSignature,
   });
   return NextResponse.json(result);
 }
@@ -984,24 +1013,19 @@ export function createGlobalToolInventoryHandlers(
   async function loadDefinition(
     serverKey: string,
   ): Promise<
-    | { ok: true; definition: McpServerDefinition; backend: AgentBackendId }
+    | { ok: true; definition: McpServerDefinition }
     | { ok: false; response: Response }
   > {
     const discovery = await deps.discoverAllSources({
-      worktreePath: deps.homePath(),
-      homePath: deps.homePath(),
+      globalConfigPath: deps.globalConfigPath(),
     });
-    const definition = discovery.servers
-      .filter((s) => s.sourceRefs.some((ref) => ref.scope === "user"))
-      .find((s) => s.serverKey === serverKey);
+    const definition = globalScopeOnly(discovery.servers).find(
+      (s) => s.serverKey === serverKey,
+    );
     if (!definition) {
       return { ok: false, response: jsonError("MCP server not found", 404) };
     }
-    return {
-      ok: true,
-      definition,
-      backend: resolveDefinitionBackend(definition),
-    };
+    return { ok: true, definition };
   }
 
   async function GET(_request: Request, ctx: RouteContext): Promise<Response> {
@@ -1010,7 +1034,7 @@ export function createGlobalToolInventoryHandlers(
         (await ctx.params) as GlobalToolInventoryRouteParams;
       const loaded = await loadDefinition(serverKey);
       if (!loaded.ok) return loaded.response;
-      return runScopedToolGet(deps, loaded.definition, loaded.backend);
+      return runScopedToolGet(deps, loaded.definition);
     } catch (err) {
       return handleUnexpected("tools.global.get", err);
     }
@@ -1022,7 +1046,7 @@ export function createGlobalToolInventoryHandlers(
         (await ctx.params) as GlobalToolInventoryRouteParams;
       const loaded = await loadDefinition(serverKey);
       if (!loaded.ok) return loaded.response;
-      return runScopedToolRefresh(deps, loaded.definition, loaded.backend, {
+      return runScopedToolRefresh(deps, loaded.definition, {
         level: "global",
       });
     } catch (err) {
@@ -1048,7 +1072,7 @@ export function createProjectToolInventoryHandlers(
   async function loadDefinition(
     params: ProjectToolInventoryRouteParams,
   ): Promise<
-    | { ok: true; definition: McpServerDefinition; backend: AgentBackendId }
+    | { ok: true; definition: McpServerDefinition }
     | { ok: false; response: Response }
   > {
     const projectPath = await deps.resolveProjectPath(params.name);
@@ -1056,8 +1080,8 @@ export function createProjectToolInventoryHandlers(
       return { ok: false, response: jsonError("Project not found", 404) };
     }
     const discovery = await deps.discoverAllSources({
+      globalConfigPath: deps.globalConfigPath(),
       worktreePath: projectPath,
-      homePath: deps.homePath(),
     });
     const definition = discovery.servers.find(
       (s) => s.serverKey === params.serverKey,
@@ -1065,11 +1089,7 @@ export function createProjectToolInventoryHandlers(
     if (!definition) {
       return { ok: false, response: jsonError("MCP server not found", 404) };
     }
-    return {
-      ok: true,
-      definition,
-      backend: resolveDefinitionBackend(definition),
-    };
+    return { ok: true, definition };
   }
 
   async function GET(_request: Request, ctx: RouteContext): Promise<Response> {
@@ -1077,7 +1097,7 @@ export function createProjectToolInventoryHandlers(
       const params = (await ctx.params) as ProjectToolInventoryRouteParams;
       const loaded = await loadDefinition(params);
       if (!loaded.ok) return loaded.response;
-      return runScopedToolGet(deps, loaded.definition, loaded.backend);
+      return runScopedToolGet(deps, loaded.definition);
     } catch (err) {
       return handleUnexpected("tools.project.get", err);
     }
@@ -1088,7 +1108,7 @@ export function createProjectToolInventoryHandlers(
       const params = (await ctx.params) as ProjectToolInventoryRouteParams;
       const loaded = await loadDefinition(params);
       if (!loaded.ok) return loaded.response;
-      return runScopedToolRefresh(deps, loaded.definition, loaded.backend, {
+      return runScopedToolRefresh(deps, loaded.definition, {
         level: "project",
         projectName: params.name,
       });
@@ -1123,7 +1143,7 @@ export function createSessionToolInventoryHandlers(
   async function loadDefinition(
     params: SessionToolInventoryRouteParams,
   ): Promise<
-    | { ok: true; definition: McpServerDefinition; backend: AgentBackendId }
+    | { ok: true; definition: McpServerDefinition }
     | { ok: false; response: Response }
   > {
     const projectPath = await deps.resolveProjectPath(params.name);
@@ -1135,8 +1155,8 @@ export function createSessionToolInventoryHandlers(
       return { ok: false, response: jsonError("Session not found", 404) };
     }
     const discovery = await deps.discoverAllSources({
+      globalConfigPath: deps.globalConfigPath(),
       worktreePath: session.worktreePath,
-      homePath: deps.homePath(),
     });
     const definition = discovery.servers.find(
       (s) => s.serverKey === params.serverKey,
@@ -1144,11 +1164,7 @@ export function createSessionToolInventoryHandlers(
     if (!definition) {
       return { ok: false, response: jsonError("MCP server not found", 404) };
     }
-    return {
-      ok: true,
-      definition,
-      backend: resolveDefinitionBackend(definition),
-    };
+    return { ok: true, definition };
   }
 
   async function GET(_request: Request, ctx: RouteContext): Promise<Response> {
@@ -1156,7 +1172,7 @@ export function createSessionToolInventoryHandlers(
       const params = (await ctx.params) as SessionToolInventoryRouteParams;
       const loaded = await loadDefinition(params);
       if (!loaded.ok) return loaded.response;
-      return runScopedToolGet(deps, loaded.definition, loaded.backend);
+      return runScopedToolGet(deps, loaded.definition);
     } catch (err) {
       return handleUnexpected("tools.session.get", err);
     }
@@ -1167,7 +1183,7 @@ export function createSessionToolInventoryHandlers(
       const params = (await ctx.params) as SessionToolInventoryRouteParams;
       const loaded = await loadDefinition(params);
       if (!loaded.ok) return loaded.response;
-      return runScopedToolRefresh(deps, loaded.definition, loaded.backend, {
+      return runScopedToolRefresh(deps, loaded.definition, {
         level: "session",
         projectName: params.name,
         sessionName: params.session,

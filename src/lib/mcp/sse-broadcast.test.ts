@@ -78,7 +78,6 @@ describe("createMcpRouteBroadcast", () => {
       sessionName: "sess",
       conversationId: "conv-1",
       serverKey: "calc",
-      configSignature: "sig-1",
     });
 
     expect(emit).toHaveBeenCalledTimes(1);
@@ -86,7 +85,7 @@ describe("createMcpRouteBroadcast", () => {
     expect(event.type).toBe("mcp-tools-updated");
     if (event.type !== "mcp-tools-updated") throw new Error("bad event type");
     expect(event.serverKey).toBe("calc");
-    expect(event.configSignature).toBe("sig-1");
+    expect(event).not.toHaveProperty("configSignature");
     expect(mcpToolsUpdatedEventSchema.safeParse(event).success).toBe(true);
   });
 

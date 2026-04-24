@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type {
   McpConfigLevel,
   McpOverrides,
-  McpServerCompatibilityView,
   McpToolInventoryResult,
 } from "@/lib/schemas";
 
@@ -38,7 +37,6 @@ function mkDefinition(
 ): McpServerDefinition {
   return {
     nativeId: partial.nativeId ?? partial.serverKey,
-    backend: partial.backend ?? "shared",
     transport: partial.transport ?? "stdio",
     config: partial.config ?? {
       transport: "stdio",
@@ -47,24 +45,14 @@ function mkDefinition(
     },
     sourceRefs: partial.sourceRefs ?? [
       {
-        backend: "claude",
-        scope: "user",
-        filePath: "/home/alex/.claude/settings.json",
+        scope: "global",
+        filePath: "/cc-config/.mcp.json",
       },
     ],
     configSignature: partial.configSignature ?? `sig-${partial.serverKey}`,
     reserved: partial.reserved ?? false,
     diagnostics: partial.diagnostics ?? [],
     ...partial,
-  };
-}
-
-function compatibilityAlwaysSupported(): McpServerCompatibilityView {
-  return {
-    backends: [
-      { backend: "claude", supported: true },
-      { backend: "codex", supported: true },
-    ],
   };
 }
 
@@ -86,10 +74,10 @@ function notLoadedInventory(): McpToolInventoryResult {
 }
 
 // ===========================================================================
-// Task 4.1 — Cascade merge
+// Cascade merge
 // ===========================================================================
 
-describe("mergeOverrideChain (task 4.1)", () => {
+describe("mergeOverrideChain", () => {
   it("returns empty map when no level has overrides", () => {
     const result = mergeOverrideChain(
       chain({ global: noOverrides() }),
@@ -233,10 +221,10 @@ describe("mergeOverrideChain (task 4.1)", () => {
 });
 
 // ===========================================================================
-// Task 4.2 — Orphan detection
+// Orphan detection
 // ===========================================================================
 
-describe("resolveView — orphan detection (task 4.2)", () => {
+describe("resolveView — orphan detection", () => {
   function resolve(
     overrideChain: McpOverrideChain,
     opts: {
@@ -254,7 +242,6 @@ describe("resolveView — orphan detection (task 4.2)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
   }
 
@@ -401,11 +388,11 @@ describe("resolveView — orphan detection (task 4.2)", () => {
 });
 
 // ===========================================================================
-// Task 4.3 — View-model assembly
+// View-model assembly
 // ===========================================================================
 
-describe("resolveView — inheritance status at global view (task 4.3)", () => {
-  it("user-scope server with no override → explicit", () => {
+describe("resolveView — inheritance status at global view", () => {
+  it("global-scope server with no override → explicit", () => {
     const view = resolveView({
       level: "global",
       overrides: chain(),
@@ -415,7 +402,6 @@ describe("resolveView — inheritance status at global view (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const row = view.servers.find((s) => s.serverKey === "kagi");
     expect(row?.inheritanceStatus).toBe("explicit");
@@ -434,7 +420,6 @@ describe("resolveView — inheritance status at global view (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const row = view.servers.find((s) => s.serverKey === "kagi");
     expect(row?.inheritanceStatus).toBe("disabled");
@@ -442,35 +427,26 @@ describe("resolveView — inheritance status at global view (task 4.3)", () => {
   });
 });
 
-describe("resolveView — inheritance status at project view (task 4.3)", () => {
+describe("resolveView — inheritance status at project view", () => {
   const projectSrc: McpServerDefinition = mkDefinition({
     serverKey: "playwright",
-    sourceRefs: [
-      { backend: "claude", scope: "project", filePath: "/repo/.mcp.json" },
-    ],
+    sourceRefs: [{ scope: "project", filePath: "/repo/.mcp.json" }],
   });
-  const userSrc: McpServerDefinition = mkDefinition({
+  const globalSrc: McpServerDefinition = mkDefinition({
     serverKey: "chrome-devtools",
-    sourceRefs: [
-      {
-        backend: "claude",
-        scope: "user",
-        filePath: "/home/alex/.claude/settings.json",
-      },
-    ],
+    sourceRefs: [{ scope: "global", filePath: "/cc-config/.mcp.json" }],
   });
 
   function viewAt(overrideChain: McpOverrideChain) {
     return resolveView({
       level: "project",
       overrides: overrideChain,
-      discovered: [projectSrc, userSrc],
+      discovered: [projectSrc, globalSrc],
       discoveryDiagnostics: [],
       toolInventories: {},
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
   }
 
@@ -481,7 +457,7 @@ describe("resolveView — inheritance status at project view (task 4.3)", () => 
     ).toBe("explicit");
   });
 
-  it("user-scope server, no override → inherited", () => {
+  it("global-scope server, no override → inherited", () => {
     const view = viewAt(chain());
     expect(
       view.servers.find((s) => s.serverKey === "chrome-devtools")
@@ -489,7 +465,7 @@ describe("resolveView — inheritance status at project view (task 4.3)", () => 
     ).toBe("inherited");
   });
 
-  it("user-scope server with project override enabled=true → overridden", () => {
+  it("global-scope server with project override enabled=true → overridden", () => {
     const view = viewAt(
       chain({
         project: { servers: { "chrome-devtools": { enabled: true } } },
@@ -501,7 +477,7 @@ describe("resolveView — inheritance status at project view (task 4.3)", () => 
     ).toBe("overridden");
   });
 
-  it("user-scope server with project override enabled=false → disabled", () => {
+  it("global-scope server with project override enabled=false → disabled", () => {
     const view = viewAt(
       chain({
         project: { servers: { "chrome-devtools": { enabled: false } } },
@@ -513,7 +489,7 @@ describe("resolveView — inheritance status at project view (task 4.3)", () => 
     ).toBe("disabled");
   });
 
-  it("user-scope server disabled at global → inherited (disabled) at project view", () => {
+  it("global-scope server disabled at global → inherited (disabled) at project view", () => {
     const view = viewAt(
       chain({
         global: { servers: { "chrome-devtools": { enabled: false } } },
@@ -525,16 +501,14 @@ describe("resolveView — inheritance status at project view (task 4.3)", () => 
   });
 });
 
-describe("resolveView — inheritance status at session/conversation views (task 4.3)", () => {
-  const userSrc = mkDefinition({
+describe("resolveView — inheritance status at session/conversation views", () => {
+  const globalSrc = mkDefinition({
     serverKey: "chrome-devtools",
-    sourceRefs: [
-      {
-        backend: "claude",
-        scope: "user",
-        filePath: "/home/alex/.claude/settings.json",
-      },
-    ],
+    sourceRefs: [{ scope: "global", filePath: "/cc-config/.mcp.json" }],
+  });
+  const projectSrc = mkDefinition({
+    serverKey: "playwright",
+    sourceRefs: [{ scope: "project", filePath: "/repo/.mcp.json" }],
   });
 
   it("server with session override → overridden at session view", () => {
@@ -543,13 +517,12 @@ describe("resolveView — inheritance status at session/conversation views (task
       overrides: chain({
         session: { servers: { "chrome-devtools": { enabled: true } } },
       }),
-      discovered: [userSrc],
+      discovered: [globalSrc],
       discoveryDiagnostics: [],
       toolInventories: {},
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     expect(
       view.servers.find((s) => s.serverKey === "chrome-devtools")
@@ -563,13 +536,12 @@ describe("resolveView — inheritance status at session/conversation views (task
       overrides: chain({
         conversation: { servers: { "chrome-devtools": { enabled: true } } },
       }),
-      discovered: [userSrc],
+      discovered: [globalSrc],
       discoveryDiagnostics: [],
       toolInventories: {},
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     expect(
       view.servers.find((s) => s.serverKey === "chrome-devtools")
@@ -583,22 +555,53 @@ describe("resolveView — inheritance status at session/conversation views (task
       overrides: chain({
         project: { servers: { "chrome-devtools": { enabled: true } } },
       }),
-      discovered: [userSrc],
+      discovered: [globalSrc],
       discoveryDiagnostics: [],
       toolInventories: {},
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     expect(
       view.servers.find((s) => s.serverKey === "chrome-devtools")
         ?.inheritanceStatus,
     ).toBe("inherited");
   });
+
+  it("project-scope definition with no override → inherited at session view", () => {
+    const view = resolveView({
+      level: "session",
+      overrides: chain(),
+      discovered: [projectSrc],
+      discoveryDiagnostics: [],
+      toolInventories: {},
+      gatewayServerKeys: [],
+      reservedGatewayServerKeys: [],
+      pendingServerKeys: [],
+    });
+    expect(
+      view.servers.find((s) => s.serverKey === "playwright")?.inheritanceStatus,
+    ).toBe("inherited");
+  });
+
+  it("project-scope definition with no override → inherited at conversation view", () => {
+    const view = resolveView({
+      level: "conversation",
+      overrides: chain(),
+      discovered: [projectSrc],
+      discoveryDiagnostics: [],
+      toolInventories: {},
+      gatewayServerKeys: [],
+      reservedGatewayServerKeys: [],
+      pendingServerKeys: [],
+    });
+    expect(
+      view.servers.find((s) => s.serverKey === "playwright")?.inheritanceStatus,
+    ).toBe("inherited");
+  });
 });
 
-describe("resolveView — reserved gateway servers (task 4.3)", () => {
+describe("resolveView — reserved gateway servers", () => {
   const gateway = mkDefinition({
     serverKey: "cc-roadmap",
     reserved: true,
@@ -615,7 +618,6 @@ describe("resolveView — reserved gateway servers (task 4.3)", () => {
       gatewayServerKeys: ["cc-roadmap"],
       reservedGatewayServerKeys: ["cc-roadmap"],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const row = view.servers.find((s) => s.serverKey === "cc-roadmap");
     expect(row?.reserved).toBe(true);
@@ -631,7 +633,6 @@ describe("resolveView — reserved gateway servers (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     expect(
       view.servers.find((s) => s.serverKey === "cc-planner")?.reserved,
@@ -639,60 +640,28 @@ describe("resolveView — reserved gateway servers (task 4.3)", () => {
   });
 });
 
-describe("resolveView — scope grouping and source refs (task 4.3)", () => {
+describe("resolveView — scope grouping and source refs", () => {
   it("preserves the discovered sourceRefs on each row for UI scope grouping", () => {
-    const userSrc = mkDefinition({
+    const globalSrc = mkDefinition({
       serverKey: "chrome-devtools",
-      sourceRefs: [
-        {
-          backend: "claude",
-          scope: "user",
-          filePath: "/home/alex/.claude/settings.json",
-        },
-      ],
+      sourceRefs: [{ scope: "global", filePath: "/cc-config/.mcp.json" }],
     });
     const view = resolveView({
       level: "project",
       overrides: chain(),
-      discovered: [userSrc],
+      discovered: [globalSrc],
       discoveryDiagnostics: [],
       toolInventories: {},
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const row = view.servers.find((s) => s.serverKey === "chrome-devtools");
-    expect(row?.sourceRefs).toEqual(userSrc.sourceRefs);
+    expect(row?.sourceRefs).toEqual(globalSrc.sourceRefs);
   });
 });
 
-describe("resolveView — compatibility from injected lookup (task 4.3)", () => {
-  it("attaches compatibility from the lookup function — no backend branching", () => {
-    const def = mkDefinition({ serverKey: "kagi", backend: "codex" });
-    const compat: McpServerCompatibilityView = {
-      backends: [
-        { backend: "claude", supported: false, reason: "codex-only" },
-        { backend: "codex", supported: true },
-      ],
-    };
-    const view = resolveView({
-      level: "conversation",
-      overrides: chain(),
-      discovered: [def],
-      discoveryDiagnostics: [],
-      toolInventories: {},
-      gatewayServerKeys: [],
-      reservedGatewayServerKeys: [],
-      pendingServerKeys: [],
-      compatibilityLookup: () => compat,
-    });
-    const row = view.servers.find((s) => s.serverKey === "kagi");
-    expect(row?.compatibility).toEqual(compat);
-  });
-});
-
-describe("resolveView — tool list view (task 4.3)", () => {
+describe("resolveView — tool list view", () => {
   const def = mkDefinition({ serverKey: "kagi" });
 
   it("emits tools with per-tool enabled + inherited flags from inventory", () => {
@@ -711,7 +680,6 @@ describe("resolveView — tool list view (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const row = view.servers.find((s) => s.serverKey === "kagi");
     const search = row?.tools.tools.find((t) => t.name === "search");
@@ -742,7 +710,6 @@ describe("resolveView — tool list view (task 4.3)", () => {
         gatewayServerKeys: [],
         reservedGatewayServerKeys: [],
         pendingServerKeys: [],
-        compatibilityLookup: compatibilityAlwaysSupported,
       });
       const search = view.servers
         .find((s) => s.serverKey === "kagi")
@@ -769,7 +736,6 @@ describe("resolveView — tool list view (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const search = view.servers
       .find((s) => s.serverKey === "kagi")
@@ -795,7 +761,6 @@ describe("resolveView — tool list view (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const search = view.servers
       .find((s) => s.serverKey === "kagi")
@@ -815,7 +780,6 @@ describe("resolveView — tool list view (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const searchProject = projectView.servers
       .find((s) => s.serverKey === "kagi")
@@ -832,7 +796,6 @@ describe("resolveView — tool list view (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const searchGlobal = globalView.servers
       .find((s) => s.serverKey === "kagi")
@@ -851,7 +814,6 @@ describe("resolveView — tool list view (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     const row = view.servers.find((s) => s.serverKey === "kagi");
     expect(row?.tools.state).toBe("not-loaded");
@@ -859,7 +821,7 @@ describe("resolveView — tool list view (task 4.3)", () => {
   });
 });
 
-describe("resolveView — pending indicator (task 4.3)", () => {
+describe("resolveView — pending indicator", () => {
   it("marks a server row pending when its serverKey is in pendingServerKeys", () => {
     const def = mkDefinition({ serverKey: "kagi" });
     const view = resolveView({
@@ -871,7 +833,6 @@ describe("resolveView — pending indicator (task 4.3)", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: ["kagi"],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     expect(view.servers.find((s) => s.serverKey === "kagi")?.pending).toBe(
       true,
@@ -891,17 +852,14 @@ describe("resolveView — response-level fields", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
       projectName: "repo",
       sessionName: "main",
       conversationId: "c1",
-      backend: "claude",
     });
     expect(view.level).toBe("conversation");
     expect(view.projectName).toBe("repo");
     expect(view.sessionName).toBe("main");
     expect(view.conversationId).toBe("c1");
-    expect(view.backend).toBe("claude");
   });
 
   it("aggregates discovery diagnostics into the response", () => {
@@ -920,7 +878,6 @@ describe("resolveView — response-level fields", () => {
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      compatibilityLookup: compatibilityAlwaysSupported,
     });
     expect(view.diagnostics).toHaveLength(1);
   });

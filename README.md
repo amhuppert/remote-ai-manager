@@ -49,6 +49,15 @@ To stop exposing:
 tailscale serve off
 ```
 
+## MCP Server Configuration
+
+Command Center reads MCP server definitions from two `.mcp.json` files it owns:
+
+- **Global** — `<CC_CONFIG_DIR>/.mcp.json` (e.g. `~/.config/cc/.mcp.json` on Linux, `~/Library/Application Support/cc/.mcp.json` on macOS). Servers defined here apply to every project.
+- **Project** — each worktree's `.mcp.json` at the repository root. Servers defined here apply only to that project.
+
+When the same `serverKey` appears in both files, the project definition overrides the global one.
+
 ## Optional: Enable the Codex Tool
 
 CC can expose an MCP tool (`run_codex`) that lets Claude delegate tasks to OpenAI's Codex agent. To enable it, add a `codex` block to your global config file (`~/.config/cc/config.json` on Linux, `~/Library/Application Support/cc/config.json` on macOS):

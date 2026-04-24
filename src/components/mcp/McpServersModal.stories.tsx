@@ -25,7 +25,6 @@ const meta = {
     open: true,
     onClose: fn(),
     actions: sharedActions,
-    onBackendFilterChange: fn(),
   },
 } satisfies Meta<typeof McpServersModal>;
 
@@ -63,16 +62,5 @@ export const Empty = {
     title: "Session MCP configuration",
     subtitle: "new-session",
     servers: [],
-  },
-} satisfies Story;
-
-export const WithCodexFilter = {
-  name: "Codex filter applied",
-  args: {
-    viewLevel: "session",
-    title: "Session MCP configuration",
-    subtitle: "add-payments-flow",
-    servers: mkSessionServers(),
-    backendFilter: "codex",
   },
 } satisfies Story;

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AgentBackendId } from "@/lib/agent-backends/types";
 import type { McpToolInventoryResult } from "@/lib/schemas";
 
 import {
@@ -38,8 +37,7 @@ function makeFetcher(
   return { fetch: impl };
 }
 
-const claudeKey = (serverKey: string, sig = "sig-a"): ToolInventoryKey => ({
-  backend: "claude" as AgentBackendId,
+const mkKey = (serverKey: string, sig = "sig-a"): ToolInventoryKey => ({
   serverKey,
   configSignature: sig,
 });
@@ -55,11 +53,10 @@ describe("wireToolDiscoveryInvalidation", () => {
 
     wireToolDiscoveryInvalidation({ cache, invalidator });
 
-    await cache.getOrFetch(claudeKey("srv1"));
+    await cache.getOrFetch(mkKey("srv1"));
 
     expect(invalidator.invalidate).toHaveBeenCalledTimes(1);
     expect(invalidator.invalidate).toHaveBeenCalledWith({
-      backend: "claude",
       serverKey: "srv1",
     });
   });
@@ -74,11 +71,10 @@ describe("wireToolDiscoveryInvalidation", () => {
 
     wireToolDiscoveryInvalidation({ cache, invalidator });
 
-    await cache.getOrFetch(claudeKey("srv1"));
+    await cache.getOrFetch(mkKey("srv1"));
 
     expect(invalidator.invalidate).toHaveBeenCalledTimes(1);
     expect(invalidator.invalidate).toHaveBeenCalledWith({
-      backend: "claude",
       serverKey: "srv1",
     });
   });
@@ -93,21 +89,18 @@ describe("wireToolDiscoveryInvalidation", () => {
 
     wireToolDiscoveryInvalidation({ cache, invalidator });
 
-    await cache.getOrFetch(claudeKey("srv-a"));
-    await cache.refresh(claudeKey("srv-a"));
-    await cache.getOrFetch(claudeKey("srv-b"));
+    await cache.getOrFetch(mkKey("srv-a"));
+    await cache.refresh(mkKey("srv-a"));
+    await cache.getOrFetch(mkKey("srv-b"));
 
     expect(invalidator.invalidate).toHaveBeenCalledTimes(3);
     expect(invalidator.invalidate).toHaveBeenNthCalledWith(1, {
-      backend: "claude",
       serverKey: "srv-a",
     });
     expect(invalidator.invalidate).toHaveBeenNthCalledWith(2, {
-      backend: "claude",
       serverKey: "srv-a",
     });
     expect(invalidator.invalidate).toHaveBeenNthCalledWith(3, {
-      backend: "claude",
       serverKey: "srv-b",
     });
   });
@@ -123,7 +116,7 @@ describe("wireToolDiscoveryInvalidation", () => {
     const unsubscribe = wireToolDiscoveryInvalidation({ cache, invalidator });
     unsubscribe();
 
-    await cache.getOrFetch(claudeKey("srv1"));
+    await cache.getOrFetch(mkKey("srv1"));
 
     expect(invalidator.invalidate).not.toHaveBeenCalled();
   });
@@ -140,7 +133,7 @@ describe("wireToolDiscoveryInvalidation", () => {
 
     wireToolDiscoveryInvalidation({ cache, invalidator });
 
-    await expect(cache.getOrFetch(claudeKey("srv1"))).resolves.toMatchObject({
+    await expect(cache.getOrFetch(mkKey("srv1"))).resolves.toMatchObject({
       state: "ready",
     });
   });

@@ -1,5 +1,8 @@
 import type { McpServerView, McpToolView, McpInheritanceStatus } from "./types";
 
+const CC_GLOBAL_MCP = "/home/alex/.config/cc/.mcp.json";
+const CC_PROJECT_MCP = "/home/alex/repos/acme-dashboard/.mcp.json";
+
 export function mkTool(
   name: string,
   opts: Partial<McpToolView> = {},
@@ -29,9 +32,8 @@ export function mkServer(partial: Partial<McpServerView> = {}): McpServerView {
   return {
     id: "playwright",
     name: "playwright",
-    sourceFile: "/home/alex/.claude/settings.json",
-    scope: "user",
-    backend: "claude",
+    sourceFile: CC_GLOBAL_MCP,
+    scope: "global",
     enabled: true,
     status: { kind: "inherited", from: "global" } as McpInheritanceStatus,
     toolDiscovery: { kind: "loaded", tools: playwrightTools },
@@ -39,21 +41,21 @@ export function mkServer(partial: Partial<McpServerView> = {}): McpServerView {
   };
 }
 
-/** Realistic list: a mix of scopes, backends, and inheritance states. */
+/** Realistic list: a mix of scopes and inheritance states. */
 export function mkConversationServers(): McpServerView[] {
   return [
     mkServer({
       id: "playwright",
       name: "playwright",
       scope: "project",
-      sourceFile: "/home/alex/repos/acme-dashboard/.mcp.json",
+      sourceFile: CC_PROJECT_MCP,
       status: { kind: "inherited", from: "session" },
     }),
     mkServer({
       id: "chrome-devtools",
       name: "chrome-devtools",
-      scope: "user",
-      sourceFile: "/home/alex/.claude/settings.json",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       status: { kind: "overridden", inheritsFrom: "session" },
       toolDiscovery: {
         kind: "loaded",
@@ -79,8 +81,8 @@ export function mkConversationServers(): McpServerView[] {
     mkServer({
       id: "gmail",
       name: "gmail",
-      scope: "user",
-      sourceFile: "/home/alex/.claude/settings.json",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       enabled: false,
       status: { kind: "disabled", inheritsFrom: "global" },
       toolDiscovery: { kind: "idle" },
@@ -88,22 +90,16 @@ export function mkConversationServers(): McpServerView[] {
     mkServer({
       id: "linear-mcp",
       name: "linear-mcp",
-      scope: "user",
-      sourceFile: "/home/alex/.codex/config.toml",
-      backend: "codex",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       status: { kind: "inherited", from: "global" },
-      backendCompatibility: {
-        compatible: false,
-        reason: "Uses Codex-only fields (cwd, startupTimeoutSec).",
-      },
       toolDiscovery: { kind: "idle" },
     }),
     mkServer({
       id: "notify",
       name: "notify",
-      scope: "user",
-      sourceFile: "/home/alex/.codex/config.toml",
-      backend: "codex",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       status: { kind: "inherited", from: "global" },
       toolDiscovery: { kind: "loaded", tools: [] },
     }),
@@ -115,21 +111,21 @@ export function mkSessionServers(): McpServerView[] {
     mkServer({
       id: "playwright",
       scope: "project",
-      sourceFile: "/home/alex/repos/acme-dashboard/.mcp.json",
+      sourceFile: CC_PROJECT_MCP,
       status: { kind: "inherited", from: "project" },
     }),
     mkServer({
       id: "chrome-devtools",
       name: "chrome-devtools",
-      scope: "user",
-      sourceFile: "/home/alex/.claude/settings.json",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       status: { kind: "overridden", inheritsFrom: "project" },
     }),
     mkServer({
       id: "gmail",
       name: "gmail",
-      scope: "user",
-      sourceFile: "/home/alex/.claude/settings.json",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       enabled: false,
       status: { kind: "disabled", inheritsFrom: "global" },
     }),
@@ -141,23 +137,22 @@ export function mkProjectServers(): McpServerView[] {
     mkServer({
       id: "playwright",
       scope: "project",
-      sourceFile: "/home/alex/repos/acme-dashboard/.mcp.json",
+      sourceFile: CC_PROJECT_MCP,
       status: { kind: "explicit" },
     }),
     mkServer({
       id: "linear-mcp",
       name: "linear-mcp",
       scope: "project",
-      sourceFile: "/home/alex/repos/acme-dashboard/.codex/config.toml",
-      backend: "codex",
+      sourceFile: CC_PROJECT_MCP,
       status: { kind: "explicit" },
       toolDiscovery: { kind: "idle" },
     }),
     mkServer({
       id: "chrome-devtools",
       name: "chrome-devtools",
-      scope: "user",
-      sourceFile: "/home/alex/.claude/settings.json",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       status: { kind: "inherited", from: "global" },
     }),
   ];
@@ -168,15 +163,15 @@ export function mkGlobalServers(): McpServerView[] {
     mkServer({
       id: "chrome-devtools",
       name: "chrome-devtools",
-      scope: "user",
-      sourceFile: "/home/alex/.claude/settings.json",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       status: { kind: "explicit" },
     }),
     mkServer({
       id: "gmail",
       name: "gmail",
-      scope: "user",
-      sourceFile: "/home/alex/.claude/settings.json",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       enabled: false,
       status: { kind: "disabled" },
       toolDiscovery: { kind: "idle" },
@@ -184,9 +179,8 @@ export function mkGlobalServers(): McpServerView[] {
     mkServer({
       id: "linear-mcp",
       name: "linear-mcp",
-      scope: "user",
-      sourceFile: "/home/alex/.codex/config.toml",
-      backend: "codex",
+      scope: "global",
+      sourceFile: CC_GLOBAL_MCP,
       status: { kind: "explicit" },
       toolDiscovery: { kind: "idle" },
     }),

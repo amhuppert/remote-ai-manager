@@ -2,8 +2,9 @@ import { withTracing } from "@/lib/logging";
 import { createConversationMcpConfigHandlers } from "@/lib/mcp-config-route-handlers";
 import {
   defaultDiscoverAllSources,
+  defaultMcpConfigMutationService,
+  defaultGlobalMcpDefinitionPath,
   defaultGlobalStore,
-  defaultHomePath,
   defaultMcpRuntimeApplyService,
   defaultReadProjectOverrides,
   defaultScopeStore,
@@ -19,8 +20,9 @@ export const dynamic = "force-dynamic";
 const handlers = createConversationMcpConfigHandlers({
   globalStore: defaultGlobalStore,
   scopeStore: defaultScopeStore,
+  mutationService: defaultMcpConfigMutationService,
   discoverAllSources: defaultDiscoverAllSources,
-  homePath: defaultHomePath,
+  globalConfigPath: defaultGlobalMcpDefinitionPath,
   resolveProjectPath,
   getSession,
   readProjectOverrides: defaultReadProjectOverrides,

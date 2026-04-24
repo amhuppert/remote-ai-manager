@@ -2,19 +2,19 @@
 
 ## Overview
 
-This feature delivers first-class MCP server and tool configuration to Command Center users who run Claude and Codex conversations. Users can discover configured MCP servers, override server and tool availability at global, project, session, and conversation scopes, and have those changes apply to the agent's next turn without editing native backend config files.
+This feature delivers first-class MCP server and tool configuration to Command Center users who run Claude and Codex conversations. Users can discover configured MCP servers, override server and tool availability at global, project, session, and conversation scopes, and have those changes apply to the agent's next turn through Command Center's own unified MCP configuration files.
 
-The implementation adds a backend-neutral MCP domain layer that reads native config sources, stores Command Center overrides, resolves inherited state, and emits a portable MCP runtime config through existing Claude and Codex backend adapters. The UI uses one resolved view model across global, project, session, and conversation surfaces so backend differences remain at the adapter boundary.
+The implementation adds a backend-neutral MCP domain layer that reads two CC-owned `.mcp.json` files — global (`<CC_CONFIG_DIR>/.mcp.json`) and project (the active worktree's `.mcp.json`) — stores Command Center overrides, resolves inherited state, and emits a portable MCP runtime config through existing Claude and Codex backend adapters. The UI uses one resolved view model across global, project, session, and conversation surfaces so backend differences remain at the adapter boundary.
 
 ### Goals
 - Provide hierarchical MCP server and tool toggles for Claude and Codex.
 - Apply mid-conversation changes safely on the next turn, with clear pending state.
-- Preserve native MCP config files as read-only sources.
+- Treat CC-owned `.mcp.json` files as the single source of truth for server definitions at each scope.
 - Keep storage, APIs, and UI backend-neutral.
 - Protect Command Center injected MCP gateway servers from accidental disablement or ID collision.
 
 ### Non-Goals
-- Editing `.mcp.json`, `.claude/settings.json`, `.claude/settings.local.json`, or `.codex/config.toml`.
+- Reading, migrating, or falling back to backend-native MCP source files (e.g. `.claude/settings.json`, `.claude/settings.local.json`, `.codex/config.toml`).
 - Proxying every MCP tool call through a new Command Center gateway.
 - Changing one-shot task runner defaults beyond preserving existing caller-supplied portable MCP tooling.
 - Supporting remote shared configuration across multiple Command Center installations.
@@ -45,7 +45,7 @@ graph TB
   Query[TanStack Query Hooks]
   API[MCP Config API Routes]
   Store[Override Stores]
-  Source[Native Source Discovery]
+  Source[CC Source Discovery]
   Resolver[Cascade Resolver]
   Tools[Tool Discovery Cache]
   Composer[Runtime Config Composer]
@@ -76,10 +76,10 @@ graph TB
 |-------|------------------|-----------------|-------|
 | Frontend | React 19, Next.js 16, TanStack Query | Scope-aware MCP views, mutations, SSE invalidation | Reuse `src/components/mcp/` primitives |
 | Backend | Next.js route handlers, TypeScript strict mode, Zod v4 | API routes, schemas, validation, state mutation | Route handlers use injected dependencies for tests |
-| Data / Storage | Existing state JSON plus new global MCP override JSON | Persist override diffs and runtime apply state | Native MCP files remain read-only |
+| Data / Storage | Existing state JSON plus new global MCP override JSON | Persist override diffs and runtime apply state | CC-owned `.mcp.json` files are the only discovery sources |
 | Messaging / Events | Existing SSE broadcaster | Cross-client invalidation and pending-state updates | Add `mcp-config-updated` and `mcp-tools-updated` |
 | Runtime | Claude Agent SDK, Codex SDK, MCP SDK | Backend emission and tool discovery | Tool discovery uses runtime status or direct MCP probe |
-| Config Parsing | JSON, `smol-toml@1.6.1` | Read `.mcp.json`, Claude settings, and Codex TOML | New dependency for TOML parsing only |
+| Config Parsing | JSON | Parse `<CC_CONFIG_DIR>/.mcp.json` and each worktree's `.mcp.json` | No backend-native source files are parsed |
 
 ## System Flows
 
@@ -95,7 +95,7 @@ sequenceDiagram
   participant Tools
 
   UI->>API: GET scope mcp config
-  API->>Source: read native definitions
+  API->>Source: read CC `.mcp.json` definitions
   API->>Store: read override chain
   API->>Resolver: resolve effective config and inheritance
   Resolver->>Tools: attach cached tool inventory
@@ -198,12 +198,13 @@ The emitted config hash includes user-resolved MCP definitions plus protected in
 | 6.5 | Live replace when safe | Claude Adapter | `setMcpServers` | Update Flow |
 | 6.6 | Reconstruct for backends without live replace | Codex Adapter | staged config | Turn Start Flow |
 | 6.7 | Preserve previous applied config on failure | Runtime Apply Service | `lastAppliedConfigHash` | Turn Start Flow |
-| 7.1 | Discover native backend config | Source Discovery | Source adapters | Read Flow |
-| 7.2 | Group sources by scope | Source Discovery, UI | `McpSourceRef.scope` | Read Flow |
-| 7.3 | Never write native files | Source Discovery, Store | Read-only adapters | Read Flow |
-| 7.4 | Surface malformed or missing files | Source Discovery | `McpDiagnostic` | Read Flow |
-| 7.5 | Omit orphaned server overrides from emission | Resolver, Composer | `orphaned` diagnostics | Turn Start Flow |
-| 7.6 | Do not expose secrets | Source Discovery, API, Logging | redacted view fields | Read Flow |
+| 7.1 | Read global `.mcp.json` from `<CC_CONFIG_DIR>` | Source Discovery | CC global source | Read Flow |
+| 7.2 | Read project `.mcp.json` from worktree root | Source Discovery | CC project source | Read Flow |
+| 7.3 | Project overrides global on same `serverKey` | Source Discovery, Resolver | scope precedence | Read Flow |
+| 7.4 | Tag resolved rows with source scope (global or project) | Source Discovery, UI | `McpSourceRef.scope` | Read Flow |
+| 7.5 | Surface malformed or missing files per scope | Source Discovery | `McpDiagnostic` | Read Flow |
+| 7.6 | Omit orphaned server overrides from emission | Resolver, Composer | `orphaned` diagnostics | Turn Start Flow |
+| 7.7 | Never read or fall back to backend-native source files | Source Discovery | unified CC `.mcp.json` only | Read Flow |
 | 8.1 | Generic interface | Domain Model | `McpBackendId`, canonical config | All |
 | 8.2 | Capability registry | Capability Registry | `McpBackendCapabilities` | Turn Start Flow |
 | 8.3 | Translators at emission boundary | Backend Translators | translator contracts | Turn Start Flow |
@@ -227,7 +228,7 @@ The emitted config hash includes user-resolved MCP definitions plus protected in
 
 | Component | Domain / Layer | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|----------------|--------|--------------|------------------|-----------|
-| MCP Source Discovery | Backend services | Read native config files into canonical server definitions | 2, 7, 8 | File system, JSON, `smol-toml` | Service |
+| MCP Source Discovery | Backend services | Read CC-owned `.mcp.json` files (global + project) into canonical server definitions | 2, 7, 8 | File system, JSON | Service |
 | MCP Override Store | Backend services | Persist global, project, session, and conversation override diffs | 1, 3, 6, 8 | `src/lib/state.ts`, config dir | Service, State |
 | MCP Cascade Resolver | Domain core | Merge sources and overrides into effective config and view model | 1, 2, 3, 4, 7, 8, 9, 10 | Source Discovery, Override Store, Tool Discovery | Service |
 | MCP Tool Discovery | Backend services | Discover and cache tool inventories per server | 4, 5, 7 | MCP SDK, Claude runtime status | Service, State |
@@ -245,20 +246,21 @@ The emitted config hash includes user-resolved MCP definitions plus protected in
 
 | Field | Detail |
 |-------|--------|
-| Intent | Read native MCP definitions for Claude and Codex without modifying source files |
-| Requirements | 2.1, 7.1, 7.2, 7.3, 7.4, 7.6, 8.5 |
+| Intent | Read the two CC-owned `.mcp.json` files (global and project) into canonical server definitions |
+| Requirements | 2.1, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 8.5 |
 
 **Responsibilities & Constraints**
-- Read supported native config files from the active worktree and current user config locations.
-- Parse valid definitions into canonical server definitions.
-- Return diagnostics for missing, malformed, unsupported, or partially parsed sources.
+- Read the global `.mcp.json` at `<CC_CONFIG_DIR>/.mcp.json`.
+- Read the project `.mcp.json` at the active worktree's repository root when a worktree is available.
+- When a `serverKey` is present in both scopes, treat the project entry as an override of the global entry.
+- Parse valid definitions into canonical server definitions and tag each row with its originating scope (`global` or `project`).
+- Return diagnostics for missing, malformed, or unreadable files per scope without discarding the other scope.
 - Redact environment values, bearer tokens, and headers in all API views and logs.
-- Never write native MCP config files.
+- Do not read, migrate, or fall back to backend-native MCP source files (Claude `.mcp.json`, `.claude/settings.json`, `.claude/settings.local.json`, Codex `.codex/config.toml`).
 
 **Dependencies**
 - Inbound: MCP API Route Handlers - request source definitions for a scope (P0)
-- Outbound: File system - read native config files (P0)
-- Outbound: `smol-toml` - parse Codex TOML config (P0)
+- Outbound: File system - read the two CC-owned `.mcp.json` files (P0)
 - Outbound: `createLogger` - structured diagnostics without secret values (P0)
 
 **Contracts**: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [ ]
@@ -270,9 +272,8 @@ interface McpSourceDiscoveryService {
 }
 
 interface McpSourceDiscoveryInput {
-  projectName?: string;
+  globalConfigPath: string;
   worktreePath?: string;
-  backends: readonly McpBackendId[];
 }
 
 interface McpSourceDiscoveryResult {
@@ -340,20 +341,20 @@ interface McpOverridePatchResult {
 
 | Field | Detail |
 |-------|--------|
-| Intent | Convert native sources plus scope overrides into effective server and tool state |
+| Intent | Combine CC-owned `.mcp.json` definitions with the scope override chain into effective server and tool state |
 | Requirements | 1.2, 1.3, 1.6, 2.5, 3.3, 3.4, 4.4, 4.8, 7.5, 8.1, 8.4, 9.2, 10.7 |
 
 **Responsibilities & Constraints**
 - Apply override cascade in order: global, project, session, conversation.
-- Distinguish stable `serverKey` from backend-native server IDs.
-- Coalesce Claude and Codex definitions only when normalized non-secret config is equivalent.
+- Distinguish the stable `serverKey` from each backend's runtime server identifier produced by the translators.
+- Treat the project `.mcp.json` entry as an override of the global entry when both scopes declare the same `serverKey`.
 - Keep disabled and orphaned rows visible in the view model.
 - Exclude orphaned server overrides from emitted runtime config.
 - Mark CC-injected gateway servers as reserved and non-togglable if they are shown.
 
 **Dependencies**
 - Inbound: API Route Handlers, Runtime Composer - resolve views and emitted config (P0)
-- Outbound: Source Discovery - native server definitions (P0)
+- Outbound: Source Discovery - CC-owned `.mcp.json` server definitions (P0)
 - Outbound: Override Store - scope chain (P0)
 - Outbound: Tool Discovery - cached tool inventory (P1 for server toggles, P0 for tool UI) 
 
@@ -371,7 +372,6 @@ interface McpResolveViewInput {
   projectName?: string;
   sessionName?: string;
   conversationId?: string;
-  backend?: McpBackendId;
 }
 
 interface McpResolveRuntimeInput {
@@ -398,13 +398,13 @@ interface McpResolveRuntimeInput {
 
 | Field | Detail |
 |-------|--------|
-| Intent | Discover server tools lazily and cache results by backend, server, and config signature |
+| Intent | Discover server tools lazily and cache results by server and config signature |
 | Requirements | 4.1, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6 |
 
 **Responsibilities & Constraints**
 - Prefer Claude runtime `mcpServerStatus()` for active Claude conversation scope when available.
 - Use MCP SDK direct probes for Codex, inactive runtimes, and manual refresh.
-- Cache results by `backend`, `serverKey`, and `configSignature`.
+- Cache results by `serverKey` and `configSignature`.
 - Provide per-server loading, success, stale, and error state.
 - Sanitize process stderr and exception messages before exposing diagnostics.
 
@@ -449,8 +449,8 @@ interface McpToolInventoryResult {
 
 **Responsibilities & Constraints**
 - Publish typed capability metadata for Claude and Codex.
-- Keep UI compatibility badges and runtime emission decisions driven by the same registry.
-- Avoid backend conditionals in UI components and storage.
+- Keep runtime emission decisions and authoritative-runtime checks driven by the same registry.
+- Avoid backend conditionals in storage and public UI contracts.
 
 **Contracts**: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [ ]
 
@@ -595,15 +595,15 @@ interface McpApplyAtTurnStartInput {
 ##### API Contract
 | Method | Endpoint | Request | Response | Errors |
 |--------|----------|---------|----------|--------|
-| GET | `/api/config/mcp` | query backend optional | `McpConfigViewResponse` | 400, 500 |
+| GET | `/api/config/mcp` | none | `McpConfigViewResponse` | 400, 500 |
 | PATCH | `/api/config/mcp` | `McpConfigPatchRequest` | `McpConfigPatchResponse` | 400, 409, 422, 500 |
-| GET | `/api/projects/[name]/mcp-config` | query backend optional | `McpConfigViewResponse` | 400, 404, 500 |
+| GET | `/api/projects/[name]/mcp-config` | none | `McpConfigViewResponse` | 400, 404, 500 |
 | PATCH | `/api/projects/[name]/mcp-config` | `McpConfigPatchRequest` | `McpConfigPatchResponse` | 400, 404, 409, 422, 500 |
-| GET | `/api/projects/[name]/sessions/[session]/mcp-config` | query backend optional | `McpConfigViewResponse` | 400, 404, 500 |
+| GET | `/api/projects/[name]/sessions/[session]/mcp-config` | none | `McpConfigViewResponse` | 400, 404, 500 |
 | PATCH | `/api/projects/[name]/sessions/[session]/mcp-config` | `McpConfigPatchRequest` | `McpConfigPatchResponse` | 400, 404, 409, 422, 500 |
-| GET | `/api/projects/[name]/sessions/[session]/conversations/[conversationId]/mcp-config` | query backend optional | `McpConfigViewResponse` | 400, 404, 500 |
+| GET | `/api/projects/[name]/sessions/[session]/conversations/[conversationId]/mcp-config` | none | `McpConfigViewResponse` | 400, 404, 500 |
 | PATCH | `/api/projects/[name]/sessions/[session]/conversations/[conversationId]/mcp-config` | `McpConfigPatchRequest` | `McpConfigPatchResponse` | 400, 404, 409, 422, 500 |
-| GET | scoped `/mcp-config/tools/[serverKey]` | query backend optional | `McpToolInventoryResult` | 400, 404, 422, 500 |
+| GET | scoped `/mcp-config/tools/[serverKey]` | none | `McpToolInventoryResult` | 400, 404, 422, 500 |
 | POST | scoped `/mcp-config/tools/[serverKey]` | `McpToolRefreshRequest` | `McpToolInventoryResult` | 400, 404, 422, 500 |
 
 ##### Event Contract
@@ -622,10 +622,10 @@ interface McpApplyAtTurnStartInput {
 | Requirements | 1 through 11 |
 
 **Responsibilities & Constraints**
-- Build query keys by scope and backend.
+- Build query keys by scope.
 - Fetch `McpConfigViewResponse` from the matching endpoint.
 - Apply optimistic disabled and pending UI only when the mutation response confirms persistence.
-- Invalidate exact scope queries on `mcp-config-updated` and server tool queries on `mcp-tools-updated`.
+- Invalidate exact scope queries on `mcp-config-updated` and both tool inventory queries and MCP config queries on `mcp-tools-updated`.
 - On SSE reconnect, invalidate all MCP query keys.
 
 **Contracts**: Service [ ] / API [ ] / Event [x] / Batch [ ] / State [x]
@@ -643,7 +643,7 @@ interface McpApplyAtTurnStartInput {
 - Session info strip: add `McpInfoChip` in `src/app/projects/[name]/[session]/SessionDetailPage.tsx`.
 - Details popover: extend `InfoDetailsPopover` with an MCP row and open handler.
 - Conversation prompt toolbar: add `McpConfigPopover` near backend/model controls.
-- Shared UI must render server status, inheritance source, pending application, diagnostics, and backend compatibility from the view model.
+- Shared UI must render server status, inheritance source, pending application, and diagnostics from the view model.
 
 ## Data Models
 
@@ -652,8 +652,7 @@ interface McpApplyAtTurnStartInput {
 ```typescript
 type McpConfigLevel = "global" | "project" | "session" | "conversation";
 type McpBackendId = "claude" | "codex";
-type McpBackendAvailability = McpBackendId | "shared";
-type McpDefinitionScope = "global" | "project" | "local";
+type McpDefinitionScope = "global" | "project";
 type McpTransport = "stdio" | "streamable-http" | "sse";
 type McpInheritanceStatus = "explicit" | "inherited" | "overridden" | "disabled";
 type ToolDiscoveryState = "not-loaded" | "loading" | "ready" | "stale" | "error";
@@ -672,7 +671,6 @@ interface McpToolOverride {
 }
 
 interface McpSourceRef {
-  backend: McpBackendId;
   scope: McpDefinitionScope;
   filePath: string;
 }
@@ -680,7 +678,6 @@ interface McpSourceRef {
 interface McpServerDefinition {
   serverKey: string;
   nativeId: string;
-  backend: McpBackendAvailability;
   config: McpCanonicalServerConfig;
   sourceRefs: readonly McpSourceRef[];
   configSignature: string;
@@ -742,8 +739,8 @@ erDiagram
 
 **Consistency & Integrity**
 - Natural key: `serverKey` is the stable Command Center identifier; `nativeId` is the backend emission identifier.
-- Native source precedence is user, project, local within a backend. Command Center override precedence is global, project, session, conversation.
-- Secret values may participate in internal config signatures but must never be returned through API responses or logs.
+- Source precedence is project over global when the same `serverKey` is defined in both CC-owned `.mcp.json` files. Command Center override precedence is global, project, session, conversation.
+- Secret values may participate in internal config signatures but must never be returned through API responses, logs, or public SSE payloads.
 - Orphaned server overrides remain visible as diagnostics and are not emitted to runtimes.
 
 ### Physical Data Model
@@ -798,7 +795,6 @@ interface McpConfigViewResponse {
   projectName?: string;
   sessionName?: string;
   conversationId?: string;
-  backend?: McpBackendId;
   servers: readonly McpServerView[];
   diagnostics: readonly McpDiagnostic[];
   pendingServerKeys: readonly string[];
@@ -809,7 +805,6 @@ interface McpServerView {
   serverKey: string;
   displayName: string;
   nativeId: string;
-  backend: McpBackendAvailability;
   transport: McpTransport;
   enabled: boolean;
   inheritanceStatus: McpInheritanceStatus;
@@ -817,7 +812,6 @@ interface McpServerView {
   reserved: boolean;
   orphaned: boolean;
   pending: boolean;
-  compatibility: McpServerCompatibilityView;
   tools: McpToolListView;
   diagnostics: readonly McpDiagnostic[];
 }
@@ -826,6 +820,7 @@ interface McpToolView {
   name: string;
   enabled: boolean;
   inherited: boolean;
+  inheritanceStatus: McpInheritanceStatus;
   orphaned: boolean;
   pending: boolean;
   description?: string;
@@ -834,6 +829,7 @@ interface McpToolView {
 
 interface McpConfigPatchRequest {
   operations: readonly McpOverrideOperation[];
+  expectedEffectiveConfigHash?: string;
 }
 
 type McpOverrideOperation =
@@ -873,7 +869,7 @@ All implementation tasks should follow red-green TDD: write the failing test, ru
 - Resolver cascade: global, project, session, and conversation precedence for server enabled state.
 - Resolver inheritance: inherited toggle promotion, reset to inherited, and parent propagation.
 - Tool overrides: disabled, re-enabled, orphaned, and undiscovered tool behavior.
-- Source discovery: valid JSON/TOML, malformed source diagnostics, missing files, redaction, and backend coalescing.
+- Source discovery: valid JSON, malformed source diagnostics, missing files, redaction, and project-over-global precedence.
 - Runtime composer: disabled Codex server emission, orphan omission, gateway append, and reserved ID collision.
 
 ### Integration Tests
@@ -897,16 +893,16 @@ All implementation tasks should follow red-green TDD: write the failing test, ru
 
 ## Security Considerations
 
-- Native config sources may include secrets in headers or environment variables. API responses, UI, diagnostics, and logs must redact values while preserving enough metadata to identify the source.
-- Direct MCP probes launch configured commands. They must only run for servers discovered in the active project or user config context and must use strict timeouts and cleanup.
+- CC-owned `.mcp.json` files may include secrets in headers or environment variables. API responses, UI, diagnostics, and logs must redact values while preserving enough metadata to identify the source.
+- Direct MCP probes launch configured commands. They must only run for servers discovered in the active CC global or project `.mcp.json` and must use strict timeouts and cleanup.
 - The UI must not expose controls that disable CC-injected gateway servers required for Command Center operation.
-- No native backend config file is written by this feature.
+- No backend-native MCP config file is read or written by this feature.
 
 ## Performance & Scalability
 
 - Server source discovery is file-based and cheap; cache only if profiling shows repeated parsing cost.
 - Tool discovery is potentially expensive and must be lazy. Do not list tools for every server on initial page load unless cached.
-- Tool inventory cache key is `backend`, `serverKey`, and `configSignature`.
+- Tool inventory cache key is `serverKey` and `configSignature`.
 - Force refresh bypasses cache for one server only.
 - SSE invalidation should target the narrowest query scope possible and fall back to invalidating all MCP queries on reconnect.
 
@@ -916,7 +912,7 @@ All implementation tasks should follow red-green TDD: write the failing test, ru
 flowchart TD
   Start[Current State Files] --> AddSchemas[Add Optional MCP Fields]
   AddSchemas --> AddGlobal[Create Global MCP File On First Write]
-  AddGlobal --> Discover[Read Native Sources]
+  AddGlobal --> Discover[Read CC `.mcp.json` Files]
   Discover --> Resolve[Resolve With Empty Overrides]
   Resolve --> Ready[Feature Ready]
 ```

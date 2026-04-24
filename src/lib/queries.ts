@@ -462,44 +462,28 @@ export function useRoadmapItemsQuery(projectName: string) {
 // MCP Config Queries
 // ---------------------------------------------------------------------------
 
-type McpQueryBackend = "claude" | "codex";
-
-function mcpViewUrl(
-  base: string,
-  backend: McpQueryBackend | undefined,
-): string {
-  return backend ? `${base}?backend=${encodeURIComponent(backend)}` : base;
-}
-
 async function fetchMcpView(url: string) {
   const envelope = await apiFetch(url, mcpConfigViewEnvelopeSchema);
   return envelope.view;
 }
 
-export function useGlobalMcpConfigQuery(options?: {
-  backend?: McpQueryBackend;
-  enabled?: boolean;
-}) {
+export function useGlobalMcpConfigQuery(options?: { enabled?: boolean }) {
   return useQuery({
-    queryKey: mcpConfigKeys.global(options?.backend),
-    queryFn: () =>
-      fetchMcpView(mcpViewUrl("/api/config/mcp", options?.backend)),
+    queryKey: mcpConfigKeys.global(),
+    queryFn: () => fetchMcpView("/api/config/mcp"),
     enabled: options?.enabled ?? true,
   });
 }
 
 export function useProjectMcpConfigQuery(
   projectName: string,
-  options?: { backend?: McpQueryBackend; enabled?: boolean },
+  options?: { enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: mcpConfigKeys.project(projectName, options?.backend),
+    queryKey: mcpConfigKeys.project(projectName),
     queryFn: () =>
       fetchMcpView(
-        mcpViewUrl(
-          `/api/projects/${encodeURIComponent(projectName)}/mcp-config`,
-          options?.backend,
-        ),
+        `/api/projects/${encodeURIComponent(projectName)}/mcp-config`,
       ),
     enabled: options?.enabled ?? true,
   });
@@ -508,16 +492,13 @@ export function useProjectMcpConfigQuery(
 export function useSessionMcpConfigQuery(
   projectName: string,
   sessionName: string,
-  options?: { backend?: McpQueryBackend; enabled?: boolean },
+  options?: { enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: mcpConfigKeys.session(projectName, sessionName, options?.backend),
+    queryKey: mcpConfigKeys.session(projectName, sessionName),
     queryFn: () =>
       fetchMcpView(
-        mcpViewUrl(
-          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/mcp-config`,
-          options?.backend,
-        ),
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/mcp-config`,
       ),
     enabled: options?.enabled ?? true,
   });
@@ -527,21 +508,17 @@ export function useConversationMcpConfigQuery(
   projectName: string,
   sessionName: string,
   conversationId: string,
-  options?: { backend?: McpQueryBackend; enabled?: boolean },
+  options?: { enabled?: boolean },
 ) {
   return useQuery({
     queryKey: mcpConfigKeys.conversation(
       projectName,
       sessionName,
       conversationId,
-      options?.backend,
     ),
     queryFn: () =>
       fetchMcpView(
-        mcpViewUrl(
-          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/mcp-config`,
-          options?.backend,
-        ),
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/mcp-config`,
       ),
     enabled: options?.enabled ?? true,
   });

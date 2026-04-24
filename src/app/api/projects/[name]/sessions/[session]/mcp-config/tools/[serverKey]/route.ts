@@ -2,7 +2,7 @@ import { withTracing } from "@/lib/logging";
 import { createSessionToolInventoryHandlers } from "@/lib/mcp-config-route-handlers";
 import {
   defaultDiscoverAllSources,
-  defaultHomePath,
+  defaultGlobalMcpDefinitionPath,
   defaultToolInventoryCache,
   recordKnownDefinition,
 } from "@/lib/mcp/default-deps";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 const handlers = createSessionToolInventoryHandlers({
   cache: defaultToolInventoryCache,
   discoverAllSources: defaultDiscoverAllSources,
-  homePath: defaultHomePath,
+  globalConfigPath: defaultGlobalMcpDefinitionPath,
   resolveProjectPath,
   getSession,
   onDefinitionLoaded: recordKnownDefinition,

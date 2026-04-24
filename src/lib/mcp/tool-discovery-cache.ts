@@ -1,12 +1,12 @@
 /**
- * Tool inventory cache keyed by `{ backend, serverKey, configSignature }`.
+ * Tool inventory cache keyed by `{ serverKey, configSignature }`.
  *
  * Signature-based invalidation is load-bearing: at any moment only one
- * configuration signature is cached per `{ backend, serverKey }`. When a
- * caller presents a different signature, the existing entry is evicted and
- * a fresh fetch is issued — whether or not another fetch is still in-flight
- * for the old signature. Late-arriving results from the old fetch are
- * discarded; they must not clobber the newer entry.
+ * configuration signature is cached per `serverKey`. When a caller presents
+ * a different signature, the existing entry is evicted and a fresh fetch is
+ * issued — whether or not another fetch is still in-flight for the old
+ * signature. Late-arriving results from the old fetch are discarded; they
+ * must not clobber the newer entry.
  *
  * Access paths:
  * - `getOrFetch` — async, awaits a ready/stale/error result. Dedupes
@@ -20,14 +20,12 @@
  * Completion listeners fire after every fetch settles (ready or error) so
  * the query layer can invalidate scoped views and surface orphan flags.
  */
-import type { AgentBackendId } from "@/lib/agent-backends/types";
 import { createLogger } from "@/lib/logging";
 import type { McpToolInventoryResult } from "@/lib/schemas";
 
 const logger = createLogger("mcp.tool-discovery");
 
 export interface ToolInventoryKey {
-  backend: AgentBackendId;
   serverKey: string;
   configSignature: string;
 }
@@ -37,7 +35,6 @@ export interface ToolInventoryCacheFetcher {
 }
 
 export interface ToolInventoryCompletionEvent {
-  backend: AgentBackendId;
   serverKey: string;
   configSignature: string;
   result: McpToolInventoryResult;
@@ -65,10 +62,8 @@ interface CacheEntry {
   inflight?: Promise<McpToolInventoryResult>;
 }
 
-function entryKey(
-  key: Pick<ToolInventoryKey, "backend" | "serverKey">,
-): string {
-  return `${key.backend}::${key.serverKey}`;
+function entryKey(key: Pick<ToolInventoryKey, "serverKey">): string {
+  return key.serverKey;
 }
 
 const NOT_LOADED: McpToolInventoryResult = {
@@ -92,7 +87,6 @@ export function createToolInventoryCache(
   function notify(key: ToolInventoryKey, result: McpToolInventoryResult): void {
     if (listeners.size === 0) return;
     const event: ToolInventoryCompletionEvent = {
-      backend: key.backend,
       serverKey: key.serverKey,
       configSignature: key.configSignature,
       result,
@@ -102,7 +96,6 @@ export function createToolInventoryCache(
         listener(event);
       } catch (err) {
         logger.warn("cache.listener_failed", {
-          backend: key.backend,
           serverKey: key.serverKey,
           error: err instanceof Error ? err.message : String(err),
         });

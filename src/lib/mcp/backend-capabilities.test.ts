@@ -8,7 +8,6 @@ import {
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { ConversationBackendCapabilities } from "@/lib/agent-backends/types";
 import type { McpServerDefinition } from "@/lib/mcp/types";
-import { resolveView } from "@/lib/mcp/resolver";
 import { createClaudeRuntimeToolSource } from "@/lib/mcp/tool-discovery-runtime";
 import type {
   AgentBackendId,
@@ -28,7 +27,6 @@ function definition(
 ): McpServerDefinition {
   return {
     nativeId: partial.nativeId ?? partial.serverKey,
-    backend: partial.backend ?? "shared",
     transport: partial.transport ?? "stdio",
     config: partial.config ?? { transport: "stdio", command: "x" },
     sourceRefs: partial.sourceRefs ?? [],
@@ -205,48 +203,6 @@ describe("buildCompatibilityLookup — registry-driven compatibility", () => {
     const view = onlyCodex(definition({ serverKey: "any", transport: "sse" }));
     expect(view.backends.map((b) => b.backend)).toEqual(["codex"]);
     expect(view.backends[0]?.supported).toBe(false);
-  });
-});
-
-// ===========================================================================
-// Production delegation — resolver uses registry-backed lookup by default
-// ===========================================================================
-
-describe("resolveView — default compatibility lookup uses the registry", () => {
-  it("fills compatibility from the default registry when no override is supplied", () => {
-    const discovered = definition({
-      serverKey: "sse-only",
-      transport: "sse",
-      sourceRefs: [
-        {
-          backend: "claude",
-          scope: "user",
-          filePath: "/home/alex/.claude/settings.json",
-        },
-      ],
-    });
-
-    const response = resolveView({
-      level: "global",
-      overrides: { global: { servers: {} } },
-      discovered: [discovered],
-      discoveryDiagnostics: [],
-      toolInventories: {},
-      gatewayServerKeys: [],
-      reservedGatewayServerKeys: [],
-      pendingServerKeys: [],
-    });
-
-    const row = response.servers[0];
-    expect(row?.compatibility.backends.map((b) => b.backend)).toEqual([
-      "claude",
-      "codex",
-    ]);
-    const codex = row?.compatibility.backends.find(
-      (b) => b.backend === "codex",
-    );
-    expect(codex?.supported).toBe(false);
-    expect(codex?.reason).toMatch(/sse/i);
   });
 });
 

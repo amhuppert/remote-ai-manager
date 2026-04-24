@@ -29,10 +29,9 @@ import type {
   AskQuestionItem,
 } from "@/types";
 import type { TranscriptEntry } from "@/lib/transcript";
-import type {
-  McpApplyResult,
-  PortableMcpConfig,
-} from "@/lib/agent-backends/portable-mcp";
+import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { ConversationApplyResult } from "@/lib/mcp/runtime-apply";
+import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
 import type {
   SDKMessage,
   SDKAssistantMessage,
@@ -172,6 +171,12 @@ export interface ActorImplementationDeps {
     worktreePath: string;
     transientPortableMcp?: PortableMcpConfig;
   }): Promise<PortableMcpConfig>;
+  applyMcpAtTurnStart(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    backend: AgentBackendId;
+  }): Promise<ConversationApplyResult>;
 }
 
 let _deps: ActorImplementationDeps | null = null;
@@ -206,7 +211,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     globalStoreMod,
     discoveryMod,
     gatewayPortableConfigMod,
-    osMod,
+    defaultDepsMod,
   ] = await Promise.all([
     import("@/lib/lock"),
     import("@/lib/query-semaphore"),
@@ -226,7 +231,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/mcp/global-store"),
     import("@/lib/mcp/discovery"),
     import("@/lib/mcp-gateway/portable-config"),
-    import("node:os"),
+    import("@/lib/mcp/default-deps"),
   ]);
 
   const composePortableMcpForConversation =
@@ -251,7 +256,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
           ?.mcpOverrides;
       },
       discoverSources: (input) => discoveryMod.discoverAllSources(input),
-      homePath: () => osMod.homedir(),
+      globalConfigPath: () =>
+        globalStoreMod.getDefaultGlobalMcpDefinitionPath(),
       buildGatewayServers: (projectName, sessionName) =>
         gatewayPortableConfigMod.buildSessionToolsPortableMcp(
           projectName,
@@ -283,6 +289,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     registerAbortController: abortRegistryMod.registerAbortController,
     unregisterAbortController: abortRegistryMod.unregisterAbortController,
     composePortableMcpForConversation,
+    applyMcpAtTurnStart:
+      defaultDepsMod.defaultMcpRuntimeApplyService.applyAtTurnStart,
   } as unknown as ActorImplementationDeps;
 }
 
@@ -468,26 +476,13 @@ export function buildNonClaudeTranscriptEntries(input: {
   return entries;
 }
 
-function formatPortableMcpApplyFailure(result: McpApplyResult): string {
-  const parts = [
-    result.disposition === "unsupported"
-      ? "Portable MCP update is not supported by the active backend runtime"
-      : "Failed to apply portable MCP configuration",
-  ];
-
-  const errorMessages = Object.entries(result.errors).map(
-    ([serverId, message]) => `${serverId}: ${message}`,
-  );
-  if (errorMessages.length > 0) {
-    parts.push(errorMessages.join("; "));
+function formatTurnStartMcpApplyFailure(
+  result: ConversationApplyResult,
+): string {
+  const parts = ["Failed to apply portable MCP configuration"];
+  if (result.error) {
+    parts.push(result.error);
   }
-  if (result.droppedServerIds.length > 0) {
-    parts.push(`Dropped servers: ${result.droppedServerIds.join(", ")}`);
-  }
-  if (result.droppedFields.length > 0) {
-    parts.push(`Dropped fields: ${result.droppedFields.join(", ")}`);
-  }
-
   return parts.join(". ");
 }
 
@@ -901,6 +896,34 @@ export async function executePromptForMachine(
   // ---------------------------------------------------------------
   let backendRuntime = runtimeState.backendRuntime;
 
+  async function seedRuntimeMcpState(portableMcp: PortableMcpConfig) {
+    const hash = computeEffectiveConfigHash(portableMcp);
+    await deps.mutateConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "prompt.seedMcpRuntime",
+      (conversation) => {
+        const next = {
+          ...(conversation.mcpRuntime ?? {}),
+          lastAppliedConfigHash: hash,
+          lastApplyDisposition: "applied_now" as const,
+        };
+        delete next.lastApplyError;
+        if (next.pendingConfigHash === hash) {
+          delete next.pendingConfigHash;
+          delete next.pendingServerKeys;
+        }
+        conversation.mcpRuntime = next;
+      },
+    );
+    logger.info("prompt.mcp_seeded", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+    });
+  }
+
   // Close existing runtime if model, effort, or outputFormat changed
   if (
     backendRuntime &&
@@ -1025,6 +1048,7 @@ export async function executePromptForMachine(
     deps.registerBackendRuntime(input.conversationId, newRuntime);
     runtimeState.backendRuntime = newRuntime;
     backendRuntime = newRuntime;
+    await seedRuntimeMcpState(portableMcp);
 
     return newRuntime;
   }
@@ -1192,35 +1216,34 @@ export async function executePromptForMachine(
   let turnResult: ConversationBackendTurnResult | undefined;
 
   try {
-    if (
-      !isNewRuntime &&
-      runtimeState.tooling?.portableMcp &&
-      backendRuntime?.applyPortableMcpConfig
-    ) {
-      const mcpApplyResult = await backendRuntime.applyPortableMcpConfig(
-        runtimeState.tooling.portableMcp,
-      );
-
-      logger.info("prompt.mcp_apply", {
+    if (!isNewRuntime) {
+      logger.info("prompt.mcp_turn_start_apply", {
         sessionName: input.sessionName,
         backend: input.agentBackend,
-        disposition: mcpApplyResult.disposition,
-        droppedServerIds: mcpApplyResult.droppedServerIds,
-        droppedFields: mcpApplyResult.droppedFields,
+        conversationId: input.conversationId,
+      });
+      const mcpApplyResult = await deps.applyMcpAtTurnStart({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        backend: input.agentBackend,
       });
 
-      if (
-        mcpApplyResult.disposition === "rejected" ||
-        mcpApplyResult.disposition === "unsupported"
-      ) {
-        const errorMessage = formatPortableMcpApplyFailure(mcpApplyResult);
-        logger.warn("prompt.mcp_apply_failed", {
+      logger.info("prompt.mcp_turn_start_result", {
+        sessionName: input.sessionName,
+        backend: input.agentBackend,
+        conversationId: input.conversationId,
+        disposition: mcpApplyResult.disposition,
+      });
+
+      if (mcpApplyResult.disposition === "rejected") {
+        const errorMessage = formatTurnStartMcpApplyFailure(mcpApplyResult);
+        logger.warn("prompt.mcp_turn_start_failed", {
           sessionName: input.sessionName,
           backend: input.agentBackend,
+          conversationId: input.conversationId,
           disposition: mcpApplyResult.disposition,
-          errors: mcpApplyResult.errors,
-          droppedServerIds: mcpApplyResult.droppedServerIds,
-          droppedFields: mcpApplyResult.droppedFields,
+          error: mcpApplyResult.error,
         });
         runtimeState.streamEmit?.("error", { message: errorMessage });
         return {

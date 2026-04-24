@@ -7,7 +7,6 @@ import { useProjectMcpConfigQuery } from "@/lib/queries";
 import McpServersModal from "./McpServersModal";
 import { adaptServerViewsForLevel } from "./view-adapter";
 import { useMcpActions } from "./use-mcp-actions";
-import type { McpBackendId } from "./types";
 
 interface ProjectMcpButtonProps {
   projectName: string;
@@ -23,9 +22,6 @@ export default function ProjectMcpButton({
   projectName,
 }: ProjectMcpButtonProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const [backendFilter, setBackendFilter] = useState<McpBackendId | "all">(
-    "all",
-  );
 
   const query = useProjectMcpConfigQuery(projectName, { enabled: open });
 
@@ -65,8 +61,6 @@ export default function ProjectMcpButton({
         actions={actions}
         title="Project MCP configuration"
         subtitle={projectName}
-        backendFilter={backendFilter}
-        onBackendFilterChange={setBackendFilter}
         banner={
           <span>
             Project-level overrides apply to every session in this project.

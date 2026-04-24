@@ -46,7 +46,7 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe("MCP query keys", () => {
-  it("omits the backend segment entirely when no backend is specified (scope prefix)", () => {
+  it("builds scope-only keys with no backend segment", () => {
     expect(mcpConfigKeys.global()).toEqual(["mcp-config", "global"]);
     expect(mcpConfigKeys.project("p")).toEqual(["mcp-config", "project", "p"]);
     expect(mcpConfigKeys.session("p", "s")).toEqual([
@@ -62,43 +62,6 @@ describe("MCP query keys", () => {
       "s",
       "c",
     ]);
-  });
-
-  it("appends the backend segment when supplied", () => {
-    expect(mcpConfigKeys.global("claude")).toEqual([
-      "mcp-config",
-      "global",
-      "claude",
-    ]);
-    expect(mcpConfigKeys.project("p", "codex")).toEqual([
-      "mcp-config",
-      "project",
-      "p",
-      "codex",
-    ]);
-    expect(mcpConfigKeys.session("p", "s", "codex")).toEqual([
-      "mcp-config",
-      "session",
-      "p",
-      "s",
-      "codex",
-    ]);
-    expect(mcpConfigKeys.conversation("p", "s", "c", "claude")).toEqual([
-      "mcp-config",
-      "conversation",
-      "p",
-      "s",
-      "c",
-      "claude",
-    ]);
-  });
-
-  it("scope prefix is a strict prefix of the backend-filtered key (enables partial-match invalidation)", () => {
-    const prefix = mcpConfigKeys.conversation("p", "s", "c");
-    const claude = mcpConfigKeys.conversation("p", "s", "c", "claude");
-    const codex = mcpConfigKeys.conversation("p", "s", "c", "codex");
-    expect(claude.slice(0, prefix.length)).toEqual(prefix);
-    expect(codex.slice(0, prefix.length)).toEqual(prefix);
   });
 
   it("builds tool inventory keys scoped by conversation and serverKey", () => {
@@ -135,18 +98,13 @@ describe("MCP query hooks", () => {
     expect(result.current.data?.level).toBe("global");
   });
 
-  it("appends ?backend= when a backend filter is supplied", async () => {
+  it("fetches the project endpoint with no ?backend= query string", async () => {
     fetchSpy.mockResolvedValue(jsonResponse({ view: emptyView("project") }));
-    renderHook(
-      () => useProjectMcpConfigQuery("my-proj", { backend: "codex" }),
-      {
-        wrapper: wrapperFor(makeClient()),
-      },
-    );
+    renderHook(() => useProjectMcpConfigQuery("my-proj"), {
+      wrapper: wrapperFor(makeClient()),
+    });
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "/api/projects/my-proj/mcp-config?backend=codex",
-    );
+    expect(fetchSpy).toHaveBeenCalledWith("/api/projects/my-proj/mcp-config");
   });
 
   it("GET /api/projects/.../sessions/.../mcp-config for session scope", async () => {

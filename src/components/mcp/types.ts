@@ -11,9 +11,7 @@ export type McpViewLevel = "global" | "project" | "session" | "conversation";
 
 export type McpSourceLevel = "global" | "project" | "session" | "conversation";
 
-export type McpBackendId = "claude" | "codex" | "shared";
-
-export type McpScope = "project" | "local" | "user";
+export type McpScope = "global" | "project";
 
 /**
  * Inheritance status of a server (or tool) at the current viewing level.
@@ -50,30 +48,20 @@ export interface McpToolView {
   pending?: boolean;
 }
 
-export interface McpBackendCompatibility {
-  compatible: boolean;
-  /** Displayed when `compatible === false`. */
-  reason?: string;
-}
-
 export interface McpServerView {
   id: string;
   /** Display name (e.g. "playwright"). */
   name: string;
   /** Absolute path to the source config file. */
   sourceFile: string;
-  /** Which discovery scope this came from. */
+  /** Which definition scope this came from (Command Center .mcp.json). */
   scope: McpScope;
-  /** Which backend(s) this server serves. */
-  backend: McpBackendId;
   /** Effective on/off after cascade resolution. */
   enabled: boolean;
   /** Inheritance status of the server row at the current view level. */
   status: McpInheritanceStatus;
   /** Pending a mid-turn apply — show amber dot. */
   pending?: boolean;
-  /** If the server declares fields the active backend does not support. */
-  backendCompatibility?: McpBackendCompatibility;
   /** Optional runtime diagnostic (e.g. connection error). */
   runtimeError?: string;
   /** Tool list + discovery state. */

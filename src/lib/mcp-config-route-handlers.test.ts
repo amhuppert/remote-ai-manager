@@ -4,7 +4,20 @@
  * dependency injection — no HTTP or network in scope here.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockLogger } = vi.hoisted(() => ({
+  mockLogger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
+vi.mock("@/lib/logging", () => ({
+  createLogger: () => mockLogger,
+}));
 
 import type { GlobalOverrideStore } from "@/lib/mcp/global-store";
 import type { ScopeOverrideStore } from "@/lib/mcp/scope-store";
@@ -18,6 +31,7 @@ import type {
   AfterOverrideChangeInput,
   ConversationApplyResult,
 } from "@/lib/mcp/runtime-apply";
+import type { McpConfigMutationService } from "@/lib/mcp-config-mutation-service";
 import type { McpServerDefinition } from "@/lib/mcp/types";
 import type { ConversationState, SessionState } from "@/types";
 
@@ -32,6 +46,10 @@ import {
   createToolInventoryHandlers,
   type McpConfigRouteBroadcast,
 } from "./mcp-config-route-handlers";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 function makeRequest(body?: unknown): Request {
   const init: RequestInit =
@@ -56,14 +74,12 @@ function mkDefinition(
   return {
     serverKey: key,
     nativeId: key,
-    backend: overrides.backend ?? "shared",
     transport: overrides.transport ?? "stdio",
     config: overrides.config ?? { transport: "stdio", command: "/bin/echo" },
     sourceRefs: overrides.sourceRefs ?? [
       {
-        backend: "claude",
-        scope: "user",
-        filePath: "/home/alex/.claude/settings.json",
+        scope: "global",
+        filePath: "/home/test/.config/cc/.mcp.json",
       },
     ],
     configSignature: overrides.configSignature ?? `sig-${key}`,
@@ -98,6 +114,9 @@ function mkGlobalStore(initial: McpOverrides): GlobalOverrideStore {
       }
       overrides = next;
       return { overrides: next, changedServerKeys: changed };
+    },
+    async replace(nextOverrides) {
+      overrides = nextOverrides;
     },
   };
 }
@@ -175,6 +194,35 @@ function mkScopeStore(): {
 
 const EMPTY_OVERRIDES: McpOverrides = { servers: {} };
 
+function appliedNowResult(
+  conversationId = "conv-1",
+  backend: ConversationApplyResult["backend"] = "claude",
+): ConversationApplyResult {
+  return {
+    conversationId,
+    backend,
+    disposition: "applied_now",
+    effectiveConfigHash: `hash-${conversationId}`,
+  };
+}
+
+function noopMutationService(): McpConfigMutationService {
+  return {
+    async patchGlobal() {
+      throw new Error("not used");
+    },
+    async patchProject() {
+      throw new Error("not used");
+    },
+    async patchSession() {
+      throw new Error("not used");
+    },
+    async patchConversation() {
+      throw new Error("not used");
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 12.1 — Global endpoints
 // ---------------------------------------------------------------------------
@@ -185,11 +233,37 @@ describe("createGlobalMcpConfigHandlers", () => {
       Parameters<typeof createGlobalMcpConfigHandlers>[0]
     > = {},
   ) {
+    const globalStore = mkGlobalStore(EMPTY_OVERRIDES);
+    const mutationService: McpConfigMutationService = {
+      async patchGlobal(input) {
+        const result = await globalStore.patch({
+          operations: input.operations,
+        });
+        return {
+          ok: true,
+          changedServerKeys: result.changedServerKeys,
+          effectiveConfigHash: "hash-global",
+        };
+      },
+      async patchProject() {
+        throw new Error("not used");
+      },
+      async patchSession() {
+        throw new Error("not used");
+      },
+      async patchConversation() {
+        throw new Error("not used");
+      },
+    };
     return {
-      globalStore: mkGlobalStore(EMPTY_OVERRIDES),
+      globalStore,
+      mutationService,
       discoverAllSources: async (_: McpSourceDiscoveryInput) =>
         emptyDiscovery(),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
+      listGlobalRuntimeTargets: async () => [],
+      applyAfterOverrideChange: async (input: AfterOverrideChangeInput) =>
+        appliedNowResult(input.conversationId, input.backend),
       broadcast: vi.fn<McpConfigRouteBroadcast>(),
       ...overrides,
     };
@@ -218,6 +292,25 @@ describe("createGlobalMcpConfigHandlers", () => {
     const store = mkGlobalStore(EMPTY_OVERRIDES);
     const deps = baseDeps({
       globalStore: store,
+      mutationService: {
+        async patchGlobal(input) {
+          const result = await store.patch({ operations: input.operations });
+          return {
+            ok: true as const,
+            changedServerKeys: result.changedServerKeys,
+            effectiveConfigHash: "hash-global",
+          };
+        },
+        async patchProject() {
+          throw new Error("not used");
+        },
+        async patchSession() {
+          throw new Error("not used");
+        },
+        async patchConversation() {
+          throw new Error("not used");
+        },
+      },
       discoverAllSources: async () => ({
         servers: [mkDefinition("calc")],
         diagnostics: [],
@@ -253,6 +346,20 @@ describe("createGlobalMcpConfigHandlers", () => {
 
   it("PATCH returns 409 when expectedEffectiveConfigHash does not match the pre-write hash", async () => {
     const deps = baseDeps({
+      mutationService: {
+        async patchGlobal() {
+          return { ok: false as const, reason: "conflict" as const };
+        },
+        async patchProject() {
+          throw new Error("not used");
+        },
+        async patchSession() {
+          throw new Error("not used");
+        },
+        async patchConversation() {
+          throw new Error("not used");
+        },
+      },
       discoverAllSources: async () => ({
         servers: [mkDefinition("calc")],
         diagnostics: [],
@@ -320,12 +427,144 @@ describe("createGlobalMcpConfigHandlers", () => {
     expect(typeof call.effectiveConfigHash).toBe("string");
   });
 
+  it("fans out a global PATCH to every active runtime target", async () => {
+    const applyAfterOverrideChange = vi.fn<
+      (input: AfterOverrideChangeInput) => Promise<ConversationApplyResult>
+    >(async (input) => appliedNowResult(input.conversationId, input.backend));
+    const deps = {
+      ...baseDeps({
+        discoverAllSources: async () => ({
+          servers: [mkDefinition("calc")],
+          diagnostics: [],
+          sourceFiles: [],
+        }),
+      }),
+      listGlobalRuntimeTargets: async () => [
+        {
+          projectPath: "/projects/proj",
+          projectName: "proj",
+          sessionName: "sess-a",
+          conversationId: "conv-1",
+          backend: "claude" as const,
+        },
+        {
+          projectPath: "/projects/proj",
+          projectName: "proj",
+          sessionName: "sess-b",
+          conversationId: "conv-2",
+          backend: "codex" as const,
+        },
+      ],
+      applyAfterOverrideChange,
+    } as Parameters<typeof createGlobalMcpConfigHandlers>[0];
+    const handlers = createGlobalMcpConfigHandlers(deps);
+
+    const res = await handlers.PATCH(
+      makeRequest({
+        operations: [
+          { type: "set-server-enabled", serverKey: "calc", enabled: false },
+        ],
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(applyAfterOverrideChange).toHaveBeenCalledTimes(2);
+    expect(applyAfterOverrideChange).toHaveBeenNthCalledWith(1, {
+      projectPath: "/projects/proj",
+      sessionName: "sess-a",
+      conversationId: "conv-1",
+      backend: "claude",
+      changedServerKeys: ["calc"],
+    });
+    expect(applyAfterOverrideChange).toHaveBeenNthCalledWith(2, {
+      projectPath: "/projects/proj",
+      sessionName: "sess-b",
+      conversationId: "conv-2",
+      backend: "codex",
+      changedServerKeys: ["calc"],
+    });
+  });
+
+  it("logs fan-out failures but still returns success after the global override write", async () => {
+    const applyAfterOverrideChange = vi
+      .fn<
+        (input: AfterOverrideChangeInput) => Promise<ConversationApplyResult>
+      >()
+      .mockRejectedValueOnce(new Error("runtime apply failed"))
+      .mockResolvedValueOnce(appliedNowResult("conv-2", "claude"));
+    const deps = {
+      ...baseDeps({
+        discoverAllSources: async () => ({
+          servers: [mkDefinition("calc")],
+          diagnostics: [],
+          sourceFiles: [],
+        }),
+      }),
+      listGlobalRuntimeTargets: async () => [
+        {
+          projectPath: "/projects/proj",
+          projectName: "proj",
+          sessionName: "sess-a",
+          conversationId: "conv-1",
+          backend: "claude" as const,
+        },
+        {
+          projectPath: "/projects/proj",
+          projectName: "proj",
+          sessionName: "sess-b",
+          conversationId: "conv-2",
+          backend: "claude" as const,
+        },
+      ],
+      applyAfterOverrideChange,
+    } as Parameters<typeof createGlobalMcpConfigHandlers>[0];
+    const handlers = createGlobalMcpConfigHandlers(deps);
+
+    const res = await handlers.PATCH(
+      makeRequest({
+        operations: [
+          { type: "set-server-enabled", serverKey: "calc", enabled: false },
+        ],
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(applyAfterOverrideChange).toHaveBeenCalledTimes(2);
+    expect(mockLogger.warn).toHaveBeenCalled();
+    const body = await res.json();
+    const calc = body.view.servers.find(
+      (s: { serverKey: string }) => s.serverKey === "calc",
+    );
+    expect(calc.enabled).toBe(false);
+  });
+
   it("PATCH returns 500 when the store throws", async () => {
     const store = mkGlobalStore(EMPTY_OVERRIDES);
     store.patch = async () => {
       throw new Error("disk full");
     };
-    const deps = baseDeps({ globalStore: store });
+    const deps = baseDeps({
+      globalStore: store,
+      mutationService: {
+        async patchGlobal(input) {
+          await store.patch({ operations: input.operations });
+          return {
+            ok: true as const,
+            changedServerKeys: [],
+            effectiveConfigHash: "hash-global",
+          };
+        },
+        async patchProject() {
+          throw new Error("not used");
+        },
+        async patchSession() {
+          throw new Error("not used");
+        },
+        async patchConversation() {
+          throw new Error("not used");
+        },
+      },
+    });
     const handlers = createGlobalMcpConfigHandlers(deps);
     const res = await handlers.PATCH(
       makeRequest({
@@ -335,6 +574,45 @@ describe("createGlobalMcpConfigHandlers", () => {
       }),
     );
     expect(res.status).toBe(500);
+  });
+
+  it("GET filters out servers whose sourceRefs do not include a global scope ref", async () => {
+    const globalServer = mkDefinition("calc", {
+      sourceRefs: [
+        { scope: "global", filePath: "/home/test/.config/cc/.mcp.json" },
+      ],
+    });
+    const projectOnlyServer = mkDefinition("proj-only", {
+      sourceRefs: [{ scope: "project", filePath: "/projects/proj/.mcp.json" }],
+    });
+    const deps = baseDeps({
+      discoverAllSources: async () => ({
+        servers: [globalServer, projectOnlyServer],
+        diagnostics: [],
+        sourceFiles: [],
+      }),
+    });
+    const handlers = createGlobalMcpConfigHandlers(deps);
+    const res = await handlers.GET(makeRequest());
+    const body = await res.json();
+    const keys = body.view.servers.map(
+      (s: { serverKey: string }) => s.serverKey,
+    );
+    expect(keys).toContain("calc");
+    expect(keys).not.toContain("proj-only");
+  });
+
+  it("GET calls discovery with only globalConfigPath (no worktreePath)", async () => {
+    const discoverAllSources = vi.fn(async (_input: McpSourceDiscoveryInput) =>
+      emptyDiscovery(),
+    );
+    const deps = baseDeps({ discoverAllSources });
+    const handlers = createGlobalMcpConfigHandlers(deps);
+    await handlers.GET(makeRequest());
+    expect(discoverAllSources).toHaveBeenCalledTimes(1);
+    const arg = discoverAllSources.mock.calls[0]![0]!;
+    expect(arg.globalConfigPath).toBe("/home/test/.config/cc/.mcp.json");
+    expect(arg.worktreePath).toBeUndefined();
   });
 });
 
@@ -349,17 +627,43 @@ describe("createProjectMcpConfigHandlers", () => {
     > = {},
   ) {
     const scope = mkScopeStore();
+    const mutationService: McpConfigMutationService = {
+      async patchGlobal() {
+        throw new Error("not used");
+      },
+      async patchProject(input) {
+        const result = await scope.store.patchProject(
+          "/projects/proj",
+          input.operations,
+        );
+        return {
+          ok: true,
+          changedServerKeys: result.changedServerKeys,
+          effectiveConfigHash: "hash-project",
+        };
+      },
+      async patchSession() {
+        throw new Error("not used");
+      },
+      async patchConversation() {
+        throw new Error("not used");
+      },
+    };
     return {
       scopeStore: scope.store,
       scopeCalls: scope.calls,
       globalStore: mkGlobalStore(EMPTY_OVERRIDES),
+      mutationService,
       discoverAllSources: async (_: McpSourceDiscoveryInput) =>
         emptyDiscovery(),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async (name: string) =>
         name === "proj" ? "/projects/proj" : null,
       readProjectOverrides: async (_path: string) =>
         undefined as McpOverrides | undefined,
+      listProjectRuntimeTargets: async (_projectPath: string) => [],
+      applyAfterOverrideChange: async (input: AfterOverrideChangeInput) =>
+        appliedNowResult(input.conversationId, input.backend),
       broadcast: vi.fn<McpConfigRouteBroadcast>(),
       ...overrides,
     };
@@ -388,7 +692,31 @@ describe("createProjectMcpConfigHandlers", () => {
 
   it("PATCH applies project overrides via the scope store", async () => {
     const scope = mkScopeStore();
-    const deps = baseDeps({ scopeStore: scope.store });
+    const deps = baseDeps({
+      scopeStore: scope.store,
+      mutationService: {
+        async patchGlobal() {
+          throw new Error("not used");
+        },
+        async patchProject(input) {
+          const result = await scope.store.patchProject(
+            "/projects/proj",
+            input.operations,
+          );
+          return {
+            ok: true as const,
+            changedServerKeys: result.changedServerKeys,
+            effectiveConfigHash: "hash-project",
+          };
+        },
+        async patchSession() {
+          throw new Error("not used");
+        },
+        async patchConversation() {
+          throw new Error("not used");
+        },
+      },
+    });
     const handlers = createProjectMcpConfigHandlers(deps);
     const res = await handlers.PATCH(
       makeRequest({
@@ -404,7 +732,22 @@ describe("createProjectMcpConfigHandlers", () => {
   });
 
   it("PATCH returns 409 on hash mismatch", async () => {
-    const deps = baseDeps();
+    const deps = baseDeps({
+      mutationService: {
+        async patchGlobal() {
+          throw new Error("not used");
+        },
+        async patchProject() {
+          return { ok: false as const, reason: "conflict" as const };
+        },
+        async patchSession() {
+          throw new Error("not used");
+        },
+        async patchConversation() {
+          throw new Error("not used");
+        },
+      },
+    });
     const handlers = createProjectMcpConfigHandlers(deps);
     const res = await handlers.PATCH(
       makeRequest({
@@ -436,6 +779,45 @@ describe("createProjectMcpConfigHandlers", () => {
     if (call.kind !== "config-updated") throw new Error("unexpected kind");
     expect(call.level).toBe("project");
     expect(call.projectName).toBe("proj");
+  });
+
+  it("fans out a project PATCH to active runtimes in that project", async () => {
+    const applyAfterOverrideChange = vi.fn<
+      (input: AfterOverrideChangeInput) => Promise<ConversationApplyResult>
+    >(async (input) => appliedNowResult(input.conversationId, input.backend));
+    const deps = {
+      ...baseDeps(),
+      listProjectRuntimeTargets: async (_projectPath: string) => [
+        {
+          projectPath: "/projects/proj",
+          projectName: "proj",
+          sessionName: "sess-a",
+          conversationId: "conv-1",
+          backend: "claude" as const,
+        },
+      ],
+      applyAfterOverrideChange,
+    } as Parameters<typeof createProjectMcpConfigHandlers>[0];
+    const handlers = createProjectMcpConfigHandlers(deps);
+
+    const res = await handlers.PATCH(
+      makeRequest({
+        operations: [
+          { type: "set-server-enabled", serverKey: "calc", enabled: true },
+        ],
+      }),
+      { params: Promise.resolve({ name: "proj" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(applyAfterOverrideChange).toHaveBeenCalledTimes(1);
+    expect(applyAfterOverrideChange).toHaveBeenCalledWith({
+      projectPath: "/projects/proj",
+      sessionName: "sess-a",
+      conversationId: "conv-1",
+      backend: "claude",
+      changedServerKeys: ["calc"],
+    });
   });
 
   it("GET includes project overrides in the cascade", async () => {
@@ -494,6 +876,28 @@ describe("createProjectMcpConfigHandlers", () => {
     };
     const deps = baseDeps({
       scopeStore: scope,
+      mutationService: {
+        async patchGlobal() {
+          throw new Error("not used");
+        },
+        async patchProject(input) {
+          const result = await scope.patchProject(
+            "/projects/proj",
+            input.operations,
+          );
+          return {
+            ok: true as const,
+            changedServerKeys: result.changedServerKeys,
+            effectiveConfigHash: "hash-project",
+          };
+        },
+        async patchSession() {
+          throw new Error("not used");
+        },
+        async patchConversation() {
+          throw new Error("not used");
+        },
+      },
       readProjectOverrides: async () => stored,
       discoverAllSources: async () => ({
         servers: [mkDefinition("calc")],
@@ -556,19 +960,49 @@ describe("createSessionMcpConfigHandlers", () => {
     > = {},
   ) {
     const scope = mkScopeStore();
+    const mutationService: McpConfigMutationService = {
+      async patchGlobal() {
+        throw new Error("not used");
+      },
+      async patchProject() {
+        throw new Error("not used");
+      },
+      async patchSession(input) {
+        const result = await scope.store.patchSession(
+          "/projects/proj",
+          "sess",
+          input.operations,
+        );
+        return {
+          ok: true,
+          changedServerKeys: result.changedServerKeys,
+          effectiveConfigHash: "hash-session",
+        };
+      },
+      async patchConversation() {
+        throw new Error("not used");
+      },
+    };
     return {
       scopeStore: scope.store,
       scopeCalls: scope.calls,
       globalStore: mkGlobalStore(EMPTY_OVERRIDES),
+      mutationService,
       discoverAllSources: async (_: McpSourceDiscoveryInput) =>
         emptyDiscovery(),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async (name: string) =>
         name === "proj" ? "/projects/proj" : null,
       getSession: async (_path: string, name: string) =>
         name === "sess" ? mkSession("sess") : null,
       readProjectOverrides: async (_path: string) =>
         undefined as McpOverrides | undefined,
+      listSessionRuntimeTargets: async (
+        _projectPath: string,
+        _sessionName: string,
+      ) => [],
+      applyAfterOverrideChange: async (input: AfterOverrideChangeInput) =>
+        appliedNowResult(input.conversationId, input.backend),
       broadcast: vi.fn<McpConfigRouteBroadcast>(),
       ...overrides,
     };
@@ -599,7 +1033,32 @@ describe("createSessionMcpConfigHandlers", () => {
 
   it("PATCH applies session overrides via the scope store", async () => {
     const scope = mkScopeStore();
-    const deps = baseDeps({ scopeStore: scope.store });
+    const deps = baseDeps({
+      scopeStore: scope.store,
+      mutationService: {
+        async patchGlobal() {
+          throw new Error("not used");
+        },
+        async patchProject() {
+          throw new Error("not used");
+        },
+        async patchSession(input) {
+          const result = await scope.store.patchSession(
+            "/projects/proj",
+            "sess",
+            input.operations,
+          );
+          return {
+            ok: true as const,
+            changedServerKeys: result.changedServerKeys,
+            effectiveConfigHash: "hash-session",
+          };
+        },
+        async patchConversation() {
+          throw new Error("not used");
+        },
+      },
+    });
     const handlers = createSessionMcpConfigHandlers(deps);
     const res = await handlers.PATCH(
       makeRequest({
@@ -639,37 +1098,76 @@ describe("createSessionMcpConfigHandlers", () => {
   });
 
   it("PATCH returns 409 when project-scope overrides have changed since the client's hash was read", async () => {
-    const projectOverridesRef: { current: McpOverrides | undefined } = {
-      current: undefined,
-    };
     const deps = baseDeps({
-      readProjectOverrides: async () => projectOverridesRef.current,
-      discoverAllSources: async () => ({
-        servers: [mkDefinition("calc")],
-        diagnostics: [],
-        sourceFiles: [],
-      }),
+      mutationService: {
+        async patchGlobal() {
+          throw new Error("not used");
+        },
+        async patchProject() {
+          throw new Error("not used");
+        },
+        async patchSession() {
+          return { ok: false as const, reason: "conflict" as const };
+        },
+        async patchConversation() {
+          throw new Error("not used");
+        },
+      },
     });
     const handlers = createSessionMcpConfigHandlers(deps);
-    const firstGet = await handlers.GET(makeRequest(), {
-      params: Promise.resolve({ name: "proj", session: "sess" }),
-    });
-    const firstBody = await firstGet.json();
-    const clientHash = firstBody.view.effectiveConfigHash as string;
-
-    // Project-level override lands before the session PATCH.
-    projectOverridesRef.current = { servers: { calc: { enabled: false } } };
 
     const res = await handlers.PATCH(
       makeRequest({
         operations: [
           { type: "set-server-enabled", serverKey: "calc", enabled: true },
         ],
-        expectedEffectiveConfigHash: clientHash,
+        expectedEffectiveConfigHash: "client-hash",
       }),
       { params: Promise.resolve({ name: "proj", session: "sess" }) },
     );
     expect(res.status).toBe(409);
+  });
+
+  it("fans out a session PATCH to active runtimes in that session", async () => {
+    const applyAfterOverrideChange = vi.fn<
+      (input: AfterOverrideChangeInput) => Promise<ConversationApplyResult>
+    >(async (input) => appliedNowResult(input.conversationId, input.backend));
+    const deps = {
+      ...baseDeps(),
+      listSessionRuntimeTargets: async (
+        _projectPath: string,
+        _sessionName: string,
+      ) => [
+        {
+          projectPath: "/projects/proj",
+          projectName: "proj",
+          sessionName: "sess",
+          conversationId: "conv-1",
+          backend: "claude" as const,
+        },
+      ],
+      applyAfterOverrideChange,
+    } as Parameters<typeof createSessionMcpConfigHandlers>[0];
+    const handlers = createSessionMcpConfigHandlers(deps);
+
+    const res = await handlers.PATCH(
+      makeRequest({
+        operations: [
+          { type: "set-server-enabled", serverKey: "calc", enabled: true },
+        ],
+      }),
+      { params: Promise.resolve({ name: "proj", session: "sess" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(applyAfterOverrideChange).toHaveBeenCalledTimes(1);
+    expect(applyAfterOverrideChange).toHaveBeenCalledWith({
+      projectPath: "/projects/proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      backend: "claude",
+      changedServerKeys: ["calc"],
+    });
   });
 });
 
@@ -687,18 +1185,41 @@ describe("createConversationMcpConfigHandlers", () => {
     const apply = vi.fn<
       (input: AfterOverrideChangeInput) => Promise<ConversationApplyResult>
     >(async (input) => ({
-      conversationId: input.conversationId,
-      backend: input.backend,
-      disposition: "applied_now",
+      ...appliedNowResult(input.conversationId, input.backend),
       effectiveConfigHash: "fake-hash",
     }));
+    const mutationService: McpConfigMutationService = {
+      async patchGlobal() {
+        throw new Error("not used");
+      },
+      async patchProject() {
+        throw new Error("not used");
+      },
+      async patchSession() {
+        throw new Error("not used");
+      },
+      async patchConversation(input) {
+        const result = await scope.store.patchConversation(
+          "/projects/proj",
+          "sess",
+          "conv-1",
+          input.operations,
+        );
+        return {
+          ok: true,
+          changedServerKeys: result.changedServerKeys,
+          effectiveConfigHash: "hash-conversation",
+        };
+      },
+    };
     return {
       scopeStore: scope.store,
       scopeCalls: scope.calls,
       globalStore: mkGlobalStore(EMPTY_OVERRIDES),
+      mutationService,
       discoverAllSources: async (_: McpSourceDiscoveryInput) =>
         emptyDiscovery(),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async (name: string) =>
         name === "proj" ? "/projects/proj" : null,
       getSession: async (_path: string, name: string) =>
@@ -798,37 +1319,30 @@ describe("createConversationMcpConfigHandlers", () => {
   });
 
   it("PATCH returns 409 when project-scope overrides have changed since the client's hash was read", async () => {
-    const projectOverridesRef: { current: McpOverrides | undefined } = {
-      current: undefined,
-    };
     const deps = baseDeps({
-      readProjectOverrides: async () => projectOverridesRef.current,
-      discoverAllSources: async () => ({
-        servers: [mkDefinition("calc")],
-        diagnostics: [],
-        sourceFiles: [],
-      }),
+      mutationService: {
+        async patchGlobal() {
+          throw new Error("not used");
+        },
+        async patchProject() {
+          throw new Error("not used");
+        },
+        async patchSession() {
+          throw new Error("not used");
+        },
+        async patchConversation() {
+          return { ok: false as const, reason: "conflict" as const };
+        },
+      },
     });
     const handlers = createConversationMcpConfigHandlers(deps);
-    const firstGet = await handlers.GET(makeRequest(), {
-      params: Promise.resolve({
-        name: "proj",
-        session: "sess",
-        conversationId: "conv-1",
-      }),
-    });
-    const firstBody = await firstGet.json();
-    const clientHash = firstBody.view.effectiveConfigHash as string;
-
-    // Project-level override lands before the conversation PATCH.
-    projectOverridesRef.current = { servers: { calc: { enabled: false } } };
 
     const res = await handlers.PATCH(
       makeRequest({
         operations: [
           { type: "set-server-enabled", serverKey: "calc", enabled: true },
         ],
-        expectedEffectiveConfigHash: clientHash,
+        expectedEffectiveConfigHash: "client-hash",
       }),
       {
         params: Promise.resolve({
@@ -875,12 +1389,16 @@ describe("GET handlers surface cached tool inventories", () => {
     const onDefinitionLoaded = vi.fn();
     const handlers = createGlobalMcpConfigHandlers({
       globalStore: mkGlobalStore(EMPTY_OVERRIDES),
+      mutationService: noopMutationService(),
       discoverAllSources: async () => ({
         servers: [mkDefinition("calc")],
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
+      listGlobalRuntimeTargets: async () => [],
+      applyAfterOverrideChange: async (input) =>
+        appliedNowResult(input.conversationId, input.backend),
       toolInventoryCache: readyCache(),
       onDefinitionLoaded,
     });
@@ -897,8 +1415,7 @@ describe("GET handlers surface cached tool inventories", () => {
     ]);
     expect(onDefinitionLoaded).toHaveBeenCalledTimes(1);
     const [key, definition] = onDefinitionLoaded.mock.calls[0]!;
-    expect(key).toMatchObject({
-      backend: "claude",
+    expect(key).toEqual({
       serverKey: "calc",
       configSignature: "sig-calc",
     });
@@ -909,14 +1426,18 @@ describe("GET handlers surface cached tool inventories", () => {
     const handlers = createProjectMcpConfigHandlers({
       globalStore: mkGlobalStore(EMPTY_OVERRIDES),
       scopeStore: mkScopeStore().store,
+      mutationService: noopMutationService(),
       discoverAllSources: async () => ({
         servers: [mkDefinition("calc")],
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async () => "/projects/proj",
       readProjectOverrides: async () => undefined,
+      listProjectRuntimeTargets: async () => [],
+      applyAfterOverrideChange: async (input) =>
+        appliedNowResult(input.conversationId, input.backend),
       toolInventoryCache: readyCache(),
     });
     const res = await handlers.GET(makeRequest(), {
@@ -934,15 +1455,19 @@ describe("GET handlers surface cached tool inventories", () => {
     const handlers = createSessionMcpConfigHandlers({
       globalStore: mkGlobalStore(EMPTY_OVERRIDES),
       scopeStore: mkScopeStore().store,
+      mutationService: noopMutationService(),
       discoverAllSources: async () => ({
         servers: [mkDefinition("calc")],
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async () => "/projects/proj",
       getSession: async () => mkSession("sess"),
       readProjectOverrides: async () => undefined,
+      listSessionRuntimeTargets: async () => [],
+      applyAfterOverrideChange: async (input) =>
+        appliedNowResult(input.conversationId, input.backend),
       toolInventoryCache: readyCache(),
     });
     const res = await handlers.GET(makeRequest(), {
@@ -960,20 +1485,19 @@ describe("GET handlers surface cached tool inventories", () => {
     const handlers = createConversationMcpConfigHandlers({
       globalStore: mkGlobalStore(EMPTY_OVERRIDES),
       scopeStore: mkScopeStore().store,
+      mutationService: noopMutationService(),
       discoverAllSources: async () => ({
         servers: [mkDefinition("calc")],
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async () => "/projects/proj",
       getSession: async () =>
         mkSession("sess", { conversations: [mkConversation("conv-1")] }),
       readProjectOverrides: async () => undefined,
       applyAfterOverrideChange: async () => ({
-        conversationId: "conv-1",
-        backend: "claude",
-        disposition: "applied_now",
+        ...appliedNowResult("conv-1", "claude"),
         effectiveConfigHash: "fake-hash",
       }),
       toolInventoryCache: readyCache(),
@@ -996,12 +1520,16 @@ describe("GET handlers surface cached tool inventories", () => {
   it("omitted toolInventoryCache yields not-loaded tool state (pre-wiring behaviour preserved)", async () => {
     const handlers = createGlobalMcpConfigHandlers({
       globalStore: mkGlobalStore(EMPTY_OVERRIDES),
+      mutationService: noopMutationService(),
       discoverAllSources: async () => ({
         servers: [mkDefinition("calc")],
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
+      listGlobalRuntimeTargets: async () => [],
+      applyAfterOverrideChange: async (input) =>
+        appliedNowResult(input.conversationId, input.backend),
     });
     const res = await handlers.GET(makeRequest());
     const body = await res.json();
@@ -1054,7 +1582,7 @@ describe("createToolInventoryHandlers", () => {
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async (name: string) =>
         name === "proj" ? "/projects/proj" : null,
       getSession: async (_path: string, name: string) =>
@@ -1177,7 +1705,7 @@ describe("createGlobalToolInventoryHandlers", () => {
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       broadcast: vi.fn<McpConfigRouteBroadcast>(),
       ...overrides,
     };
@@ -1233,7 +1761,7 @@ describe("createProjectToolInventoryHandlers", () => {
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async (name: string) =>
         name === "proj" ? "/projects/proj" : null,
       broadcast: vi.fn<McpConfigRouteBroadcast>(),
@@ -1292,7 +1820,7 @@ describe("createSessionToolInventoryHandlers", () => {
         diagnostics: [],
         sourceFiles: [],
       }),
-      homePath: () => "/home/test",
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async (name: string) =>
         name === "proj" ? "/projects/proj" : null,
       getSession: async (_path: string, name: string) =>

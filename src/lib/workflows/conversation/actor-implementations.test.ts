@@ -46,6 +46,7 @@ import {
 } from "./actor-implementations";
 import type { ActorConfig } from "./actor-implementations";
 import { QUERY_SESSION_ERROR_CODES } from "@/lib/agent-backends/claude/query-session-errors";
+import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
 
 // ---------------------------------------------------------------------------
 // Shared mock backend runtime
@@ -124,6 +125,19 @@ function createMockDeps(
     fileExists: vi.fn(() => false),
     registerAbortController: vi.fn(),
     unregisterAbortController: vi.fn(),
+    applyMcpAtTurnStart: vi.fn(
+      async (_input: {
+        projectPath: string;
+        sessionName: string;
+        conversationId: string;
+        backend: "claude" | "codex";
+      }) => ({
+        conversationId: "conv-1",
+        backend: "claude" as const,
+        disposition: "applied_now" as const,
+        effectiveConfigHash: "hash-1",
+      }),
+    ),
     composePortableMcpForConversation: vi.fn(
       async (args: {
         projectName: string;
@@ -1434,21 +1448,22 @@ describe("executePromptForMachine", () => {
     expect(tooling.portableMcp).toBe(composed);
   });
 
-  it("applies portable MCP config on a reused runtime before sendTurn", async () => {
-    const applyPortableMcpConfig = vi.fn(async () => ({
-      disposition: "deferred_to_next_turn" as const,
-      droppedServerIds: [],
-      droppedFields: [],
-      errors: {},
-    }));
+  it("applies MCP at turn start on a reused runtime before sendTurn", async () => {
     const reusedRuntime = createMockBackendRuntime({
       backend: "codex" as const,
-      applyPortableMcpConfig,
     });
     (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...defaultTurnResult,
       backendRef: { backend: "codex" as const, threadId: "thread-1" },
     });
+    const applyMcpAtTurnStart = vi.fn(async () => ({
+      conversationId: "conv-1",
+      backend: "codex" as const,
+      disposition: "applied_now" as const,
+      effectiveConfigHash: "hash-codex",
+    }));
+    mockDeps = createMockDeps({ applyMcpAtTurnStart });
+    setActorDeps(mockDeps);
 
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
@@ -1474,25 +1489,33 @@ describe("executePromptForMachine", () => {
 
     await executePromptForMachine(input);
 
-    expect(applyPortableMcpConfig).toHaveBeenCalledTimes(1);
-    expect(applyPortableMcpConfig.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(applyMcpAtTurnStart).toHaveBeenCalledTimes(1);
+    expect(applyMcpAtTurnStart).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      sessionName: "test-session",
+      conversationId: "conv-1",
+      backend: "codex",
+    });
+    expect(applyMcpAtTurnStart.mock.invocationCallOrder[0]).toBeLessThan(
       (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mock
         .invocationCallOrder[0]!,
     );
   });
 
-  it("fails fast when portable MCP apply is rejected on a reused runtime", async () => {
+  it("fails fast when turn-start MCP apply is rejected on a reused runtime", async () => {
     const streamEmit = vi.fn();
-    const applyPortableMcpConfig = vi.fn(async () => ({
-      disposition: "rejected" as const,
-      droppedServerIds: ["server-1"],
-      droppedFields: ["server-1.cwd"],
-      errors: { "server-1": "unsupported field" },
-    }));
     const reusedRuntime = createMockBackendRuntime({
       backend: "codex" as const,
-      applyPortableMcpConfig,
     });
+    const applyMcpAtTurnStart = vi.fn(async () => ({
+      conversationId: "conv-1",
+      backend: "codex" as const,
+      disposition: "rejected" as const,
+      effectiveConfigHash: "hash-codex",
+      error: "server-1: unsupported field",
+    }));
+    mockDeps = createMockDeps({ applyMcpAtTurnStart });
+    setActorDeps(mockDeps);
 
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
@@ -1532,6 +1555,96 @@ describe("executePromptForMachine", () => {
         ),
       }),
     );
+  });
+
+  it("seeds lastAppliedConfigHash from the created runtime portable MCP so the next turn can no-op", async () => {
+    const composed = {
+      servers: [
+        {
+          id: "cc-session-tools",
+          transport: "streamable-http" as const,
+          url: "http://localhost:3000/api/projects/repo/sessions/test-session/mcp",
+        },
+        {
+          id: "server-1",
+          transport: "stdio" as const,
+          command: "node",
+        },
+      ],
+    };
+    const conversationState = {} as {
+      mcpRuntime?: {
+        lastAppliedConfigHash?: string;
+        pendingConfigHash?: string;
+        pendingServerKeys?: string[];
+        lastApplyDisposition?: string;
+        lastApplyError?: string;
+      };
+    };
+    const mutateConversation = vi.fn(
+      async (
+        _projectPath: string,
+        _sessionName: string,
+        _conversationId: string,
+        _label: string,
+        mutate: (conversation: typeof conversationState) => void,
+      ) => {
+        mutate(conversationState);
+      },
+    );
+    const applyMcpAtTurnStart = vi.fn(async () => {
+      if (conversationState.mcpRuntime?.lastAppliedConfigHash === undefined) {
+        throw new Error("expected seeded hash before reused turn");
+      }
+      return {
+        conversationId: "conv-1",
+        backend: "claude" as const,
+        disposition: "applied_now" as const,
+        effectiveConfigHash: conversationState.mcpRuntime.lastAppliedConfigHash,
+      };
+    });
+    const reusedRuntime = createMockBackendRuntime({ modelId: "opus" });
+    (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
+      defaultTurnResult,
+    );
+    mockFactory.createRuntime.mockResolvedValue(reusedRuntime);
+    mockDeps = createMockDeps({
+      composePortableMcpForConversation: vi.fn(async () => composed),
+      mutateConversation,
+      applyMcpAtTurnStart,
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const expectedHash = computeEffectiveConfigHash(composed);
+    expect(conversationState.mcpRuntime?.lastAppliedConfigHash).toBe(
+      expectedHash,
+    );
+    expect(conversationState.mcpRuntime?.lastApplyDisposition).toBe(
+      "applied_now",
+    );
+
+    vi.clearAllMocks();
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      backendRuntime: reusedRuntime,
+    });
+
+    await executePromptForMachine(input);
+
+    expect(applyMcpAtTurnStart).toHaveBeenCalledTimes(1);
+    expect(reusedRuntime.sendTurn).toHaveBeenCalledTimes(1);
   });
 
   it("does not include tooling overrides when not set on runtime", async () => {

@@ -349,6 +349,7 @@ export default function NotificationListener(): null {
         } else {
           void queryClient.invalidateQueries({ queryKey: mcpToolsKeys.all });
         }
+        void queryClient.invalidateQueries({ queryKey: mcpConfigKeys.all });
       } catch {
         // best-effort
       }

@@ -14,23 +14,18 @@ function apiServer(
     serverKey: partial.serverKey,
     displayName: partial.displayName ?? partial.serverKey,
     nativeId: partial.nativeId ?? partial.serverKey,
-    backend: partial.backend ?? "claude",
     transport: partial.transport ?? "stdio",
     enabled: partial.enabled ?? true,
     inheritanceStatus: partial.inheritanceStatus ?? "inherited",
     sourceRefs: partial.sourceRefs ?? [
       {
-        backend: "claude",
-        scope: "user",
-        filePath: "/home/alex/.claude/settings.json",
+        scope: "global",
+        filePath: "/home/alex/.config/cc/.mcp.json",
       },
     ],
     reserved: partial.reserved ?? false,
     orphaned: partial.orphaned ?? false,
     pending: partial.pending ?? false,
-    compatibility: partial.compatibility ?? {
-      backends: [{ backend: "claude", supported: true }],
-    },
     tools: partial.tools ?? { state: "not-loaded", tools: [], diagnostics: [] },
     diagnostics: partial.diagnostics ?? [],
   };
@@ -111,13 +106,30 @@ describe("adaptServerViewsForLevel", () => {
     expect(servers.map((s) => s.id)).toEqual(["playwright"]);
   });
 
-  it("derives scope and sourceFile from first sourceRef", () => {
+  it("maps global scope from first sourceRef", () => {
+    const view = apiView("global", [
+      apiServer({
+        serverKey: "chrome",
+        sourceRefs: [
+          {
+            scope: "global",
+            filePath: "/home/alex/.config/cc/.mcp.json",
+          },
+        ],
+      }),
+    ]);
+    const rows = adaptServerViewsForLevel(view, "global");
+    const server = rows[0]!;
+    expect(server.scope).toBe("global");
+    expect(server.sourceFile).toBe("/home/alex/.config/cc/.mcp.json");
+  });
+
+  it("maps project scope from first sourceRef", () => {
     const view = apiView("session", [
       apiServer({
         serverKey: "playwright",
         sourceRefs: [
           {
-            backend: "claude",
             scope: "project",
             filePath: "/home/alex/repo/.mcp.json",
           },
@@ -176,32 +188,5 @@ describe("adaptServerViewsForLevel", () => {
         },
       ]);
     }
-  });
-
-  it("surfaces incompatible backend capability", () => {
-    const view = apiView("session", [
-      apiServer({
-        serverKey: "linear-mcp",
-        backend: "codex",
-        compatibility: {
-          backends: [
-            {
-              backend: "claude",
-              supported: false,
-              reason: "Uses Codex-only fields",
-            },
-            { backend: "codex", supported: true },
-          ],
-        },
-      }),
-    ]);
-    const rows = adaptServerViewsForLevel(view, "session", {
-      activeBackend: "claude",
-    });
-    const server = rows[0]!;
-    expect(server.backendCompatibility).toEqual({
-      compatible: false,
-      reason: "Uses Codex-only fields",
-    });
   });
 });

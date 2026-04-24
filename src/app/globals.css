@@ -12077,10 +12077,6 @@ html[data-dev-tools-enabled] nextjs-portal {
   border-left: 2px solid var(--red-dim);
 }
 
-.mcp-server-card--incompatible {
-  border-left: 2px solid var(--amber);
-}
-
 .mcp-server-card--pending {
   box-shadow:
     0 0 0 1px var(--amber-glow),
@@ -12348,22 +12344,9 @@ html[data-dev-tools-enabled] nextjs-portal {
   color: var(--border-default);
 }
 
-.mcp-server-card__backend,
 .mcp-server-card__scope {
   font-weight: 600;
   letter-spacing: 0.05em;
-}
-
-.mcp-server-card__warn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-sm);
-  border-radius: var(--radius-sm);
-  background: var(--amber-glow);
-  color: var(--amber);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
 }
 
 .mcp-server-card__error {
@@ -12729,36 +12712,6 @@ html[data-dev-tools-enabled] nextjs-portal {
   background: var(--bg-surface);
   border: 1px dashed var(--border-subtle);
   border-radius: 4px;
-}
-
-/* ---------- backend filter chips (shared across all surfaces) ------------- */
-
-.mcp-filter-chip {
-  appearance: none;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  cursor: pointer;
-  transition:
-    background 120ms,
-    color 120ms,
-    border-color 120ms;
-}
-
-.mcp-filter-chip:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.mcp-filter-chip.active {
-  background: var(--accent-cyan-dim, rgba(0, 190, 255, 0.1));
-  color: var(--accent-cyan);
-  border-color: var(--accent-cyan);
 }
 
 /* ---------- conversation popover ----------------------------------------- */
@@ -13172,10 +13125,5 @@ html[data-dev-tools-enabled] nextjs-portal {
   .mcp-config-popover {
     width: calc(100vw - 16px) !important;
     max-height: calc(100vh - 24px) !important;
-  }
-
-  .mcp-filter-chip {
-    min-height: var(--touch-target-min);
-    padding: 0.4rem 0.75rem;
   }
 }

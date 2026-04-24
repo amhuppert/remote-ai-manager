@@ -2,17 +2,11 @@
 
 import { useCallback, useRef, useState } from "react";
 import McpConfigPopover from "./McpConfigPopover";
-import type {
-  McpBackendId,
-  McpServerCardActions,
-  McpServerView,
-} from "./types";
+import type { McpServerCardActions, McpServerView } from "./types";
 
 interface McpConfigButtonProps {
   servers: McpServerView[];
   actions: McpServerCardActions;
-  backendFilter?: McpBackendId | "all";
-  onBackendFilterChange?(filter: McpBackendId | "all"): void;
   hasPending?: boolean;
   pendingServerIds?: string[];
   disabled?: boolean;
@@ -22,8 +16,6 @@ interface McpConfigButtonProps {
 export default function McpConfigButton({
   servers,
   actions,
-  backendFilter,
-  onBackendFilterChange,
   hasPending,
   pendingServerIds,
   disabled,
@@ -101,8 +93,6 @@ export default function McpConfigButton({
         actions={actions}
         hasPending={hasPending}
         pendingServerIds={pendingServerIds}
-        backendFilter={backendFilter}
-        onBackendFilterChange={onBackendFilterChange}
       />
     </>
   );

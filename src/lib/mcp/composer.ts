@@ -4,8 +4,9 @@
  * Sits between the cascade resolver and the backend translators. Produces the
  * final backend-neutral `PortableMcpConfig` emitted to an agent turn by:
  *
- * 1. Filtering discovered server definitions to those usable by the active
- *    backend (matching `backend` or `shared`).
+ * 1. Emitting every discovered server definition that can be represented as
+ *    portable MCP. Backend-specific omission (e.g. dropping disabled servers
+ *    for Claude) is the responsibility of the runtime translators.
  * 2. Overlaying the effective override chain (from `mergeOverrideChain`) onto
  *    each discovered server's native filter baseline to produce `enabled`,
  *    `enabledTools`, and `disabledTools` per entry.
@@ -28,7 +29,6 @@ import type {
   PortableMcpConfig,
   PortableMcpServerConfig,
 } from "@/lib/agent-backends/portable-mcp";
-import type { AgentBackendId } from "@/lib/schemas";
 
 import type { McpEffectiveServerResolution } from "./resolver";
 import type {
@@ -40,10 +40,6 @@ import type {
 const logger = createLogger("mcp.composer");
 
 export interface McpComposeInput {
-  /** Active agent backend. Used to filter discovered servers whose backend
-   * availability (`claude` / `codex` / `shared`) does not match. Emission
-   * decisions themselves remain in the translators. */
-  backend: AgentBackendId;
   /** Discovered server definitions produced by source discovery. */
   discovered: readonly McpServerDefinition[];
   /** Effective override resolution from `mergeOverrideChain`. Servers absent
@@ -70,7 +66,7 @@ export interface McpComposeResult {
 export function composeRuntimeMcpConfig(
   input: McpComposeInput,
 ): McpComposeResult {
-  const { backend, discovered, effective, gatewayServers } = input;
+  const { discovered, effective, gatewayServers } = input;
 
   const gatewayIds = new Set(gatewayServers.map((g) => g.id));
   const userEntries: PortableMcpServerConfig[] = [];
@@ -79,8 +75,6 @@ export function composeRuntimeMcpConfig(
   const emittedUserKeys = new Set<string>();
 
   for (const def of discovered) {
-    if (!isBackendMatch(def, backend)) continue;
-
     const resolution = effective.get(def.serverKey);
     const portableEntry = buildPortableEntry(def, resolution);
     if (!portableEntry) {
@@ -111,7 +105,6 @@ export function composeRuntimeMcpConfig(
   const reservedServerIds = gatewayServers.map((g) => g.id);
 
   logger.debug("composed runtime mcp", {
-    backend,
     userServerCount: userEntries.length,
     gatewayServerCount: gatewayServers.length,
     orphanedCount: omittedOrphanServerKeys.length,
@@ -126,13 +119,6 @@ export function composeRuntimeMcpConfig(
     reservedServerIds,
     droppedServerKeys,
   };
-}
-
-function isBackendMatch(
-  def: McpServerDefinition,
-  backend: AgentBackendId,
-): boolean {
-  return def.backend === backend || def.backend === "shared";
 }
 
 function buildPortableEntry(

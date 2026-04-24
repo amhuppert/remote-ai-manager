@@ -1262,7 +1262,7 @@ describe("CodexConversationRuntime", () => {
       expect(secondConfig.mcp_servers).toEqual({ "srv-b": { command: "b" } });
     });
 
-    it("omits config.mcp_servers when the translated set is empty (no stale leakage)", async () => {
+    it("emits empty config.mcp_servers when staged MCP translates to an empty map (suppresses ~/.codex/config.toml fallback)", async () => {
       deps.translatePortableMcpToCodex = vi
         .fn()
         .mockReturnValue({ mcpServers: {}, droppedFields: [] });
@@ -1274,6 +1274,21 @@ describe("CodexConversationRuntime", () => {
       );
 
       await runtime.applyPortableMcpConfig!({ servers: [] });
+      await runtime.sendTurn(makeTurnInput());
+
+      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0];
+      expect(codexCall).toHaveProperty("config");
+      expect(codexCall.config).toEqual({ mcp_servers: {} });
+    });
+
+    it("omits config entirely when no portable MCP has been staged", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({ tooling: {} }),
+        deps,
+      );
+
       await runtime.sendTurn(makeTurnInput());
 
       const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock

@@ -327,7 +327,7 @@ export type McpBackendAvailability = z.infer<
   typeof mcpBackendAvailabilitySchema
 >;
 
-export const mcpDefinitionScopeSchema = z.enum(["user", "project", "local"]);
+export const mcpDefinitionScopeSchema = z.enum(["global", "project"]);
 export type McpDefinitionScope = z.infer<typeof mcpDefinitionScopeSchema>;
 
 export const mcpTransportSchema = z.enum(["stdio", "streamable-http", "sse"]);
@@ -406,7 +406,6 @@ export type McpRuntimeApplicationState = z.infer<
 // ---------------------------------------------------------------------------
 
 export const mcpSourceRefSchema = z.object({
-  backend: agentBackendSchema,
   scope: mcpDefinitionScopeSchema,
   filePath: z.string(),
 });
@@ -458,7 +457,6 @@ export const mcpServerViewSchema = z.object({
   serverKey: z.string(),
   displayName: z.string(),
   nativeId: z.string(),
-  backend: mcpBackendAvailabilitySchema,
   transport: mcpTransportSchema,
   enabled: z.boolean(),
   inheritanceStatus: mcpInheritanceStatusSchema,
@@ -466,7 +464,6 @@ export const mcpServerViewSchema = z.object({
   reserved: z.boolean(),
   orphaned: z.boolean(),
   pending: z.boolean(),
-  compatibility: mcpServerCompatibilityViewSchema,
   tools: mcpToolListViewSchema,
   diagnostics: z.array(mcpDiagnosticSchema),
 });
@@ -477,7 +474,6 @@ export const mcpConfigViewResponseSchema = z.object({
   projectName: z.string().optional(),
   sessionName: z.string().optional(),
   conversationId: z.string().optional(),
-  backend: agentBackendSchema.optional(),
   servers: z.array(mcpServerViewSchema),
   diagnostics: z.array(mcpDiagnosticSchema),
   pendingServerKeys: z.array(z.string()),
@@ -1939,7 +1935,6 @@ export const mcpToolsUpdatedEventSchema = z
     sessionName: z.string().optional(),
     conversationId: z.string().optional(),
     serverKey: z.string(),
-    configSignature: z.string(),
   })
   .strict();
 export type McpToolsUpdatedEvent = z.infer<typeof mcpToolsUpdatedEventSchema>;

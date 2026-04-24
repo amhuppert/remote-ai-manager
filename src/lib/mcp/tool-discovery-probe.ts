@@ -13,7 +13,6 @@
  */
 import { createLogger } from "@/lib/logging";
 import type {
-  AgentBackendId,
   McpDiagnostic,
   McpDiscoveredTool,
   McpToolInventoryResult,
@@ -33,7 +32,6 @@ const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
 export interface DirectToolProbeInput {
   serverKey: string;
   server: McpCanonicalServerConfig;
-  backend: AgentBackendId;
   /** Optional overrides for the default timeouts (e.g. per-server). */
   startupTimeoutMs?: number;
   toolTimeoutMs?: number;
@@ -51,7 +49,6 @@ export interface DirectToolProbeClient {
 export interface DirectToolProbeClientFactoryInput {
   serverKey: string;
   server: McpCanonicalServerConfig;
-  backend: AgentBackendId;
 }
 
 export interface DirectToolProbeDeps {
@@ -87,12 +84,10 @@ export function createDirectToolProbe(
       client = await deps.createClient({
         serverKey: input.serverKey,
         server: input.server,
-        backend: input.backend,
       });
     } catch (err) {
       logger.warn("probe.factory_failed", {
         serverKey: input.serverKey,
-        backend: input.backend,
         transport: input.server.transport,
       });
       return errorResult(
@@ -115,7 +110,6 @@ export function createDirectToolProbe(
         if (err instanceof ProbeTimeoutError) {
           logger.warn("probe.startup_timeout", {
             serverKey: input.serverKey,
-            backend: input.backend,
             transport: input.server.transport,
             timeoutMs: startupTimeoutMs,
           });
@@ -127,7 +121,6 @@ export function createDirectToolProbe(
         }
         logger.warn("probe.connect_failed", {
           serverKey: input.serverKey,
-          backend: input.backend,
           transport: input.server.transport,
         });
         return errorResult("mcp.probe.connect_failed", "connection failed", {
@@ -143,7 +136,6 @@ export function createDirectToolProbe(
         );
         logger.info("probe.success", {
           serverKey: input.serverKey,
-          backend: input.backend,
           transport: input.server.transport,
           toolCount: tools.length,
         });
@@ -157,7 +149,6 @@ export function createDirectToolProbe(
         if (err instanceof ProbeTimeoutError) {
           logger.warn("probe.list_tools_timeout", {
             serverKey: input.serverKey,
-            backend: input.backend,
             transport: input.server.transport,
             timeoutMs: toolTimeoutMs,
           });
@@ -169,7 +160,6 @@ export function createDirectToolProbe(
         }
         logger.warn("probe.list_tools_failed", {
           serverKey: input.serverKey,
-          backend: input.backend,
           transport: input.server.transport,
         });
         return errorResult(

@@ -66,7 +66,6 @@ function toSseEvent(
     level: payload.level,
     ...onlyDefinedScope(payload),
     serverKey: payload.serverKey,
-    configSignature: payload.configSignature,
   };
 }
 

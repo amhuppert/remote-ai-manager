@@ -523,6 +523,48 @@ describe("applyAtTurnStart — no-op when hash already applied", () => {
     expect(result.effectiveConfigHash).toBe(hash);
     expect(runtime.applyCalls).toHaveLength(0);
   });
+
+  it("leaves pending state untouched when a matching applied hash was seeded before the turn", async () => {
+    const { stateManager } = createTestHarness();
+
+    const portable = portableWith([{ id: "s1" }]);
+    const hash = computeEffectiveConfigHash(portable);
+    await stateManager.writeState(
+      stateWith({
+        mcpRuntime: {
+          lastAppliedConfigHash: hash,
+          pendingConfigHash: "newer-pending-hash",
+          pendingServerKeys: ["s2"],
+          lastApplyDisposition: "deferred_to_next_turn",
+        },
+      }),
+    );
+
+    const runtime = makeFakeRuntime({ backend: "claude" });
+    const service = createMcpRuntimeApplyService(
+      createDeps(stateManager, runtime, {
+        portable,
+        effectiveConfigHash: "ignored",
+      }),
+    );
+
+    await service.applyAtTurnStart({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      backend: "claude",
+    });
+
+    const persisted = await stateManager.readState();
+    const conv = persisted.projects[PROJECT_PATH]!.sessions[
+      SESSION_NAME
+    ]!.conversations.find((c) => c.id === CONVERSATION_ID)!;
+
+    expect(runtime.applyCalls).toHaveLength(0);
+    expect(conv.mcpRuntime?.lastAppliedConfigHash).toBe(hash);
+    expect(conv.mcpRuntime?.pendingConfigHash).toBe("newer-pending-hash");
+    expect(conv.mcpRuntime?.pendingServerKeys).toEqual(["s2"]);
+  });
 });
 
 describe("applyAtTurnStart — applies and writes lastAppliedConfigHash on success", () => {

@@ -7,8 +7,6 @@
  */
 
 import type {
-  AgentBackendId,
-  McpBackendAvailability,
   McpDefinitionScope,
   McpDiagnostic,
   McpSourceRef,
@@ -63,7 +61,6 @@ export interface McpServerDefinition {
   serverKey: string;
   /** Backend-native identifier used for emission. */
   nativeId: string;
-  backend: McpBackendAvailability;
   transport: McpTransport;
   /** Canonical config carrying raw (non-redacted) values for signature and
    * runtime emission. View-facing code must pass this through `redactForView`
@@ -82,7 +79,6 @@ export interface McpServerDefinition {
 }
 
 export interface McpSourceFileStatus {
-  backend: AgentBackendId;
   scope: McpDefinitionScope;
   filePath: string;
   status: "read" | "missing" | "malformed" | "unreadable" | "empty";
@@ -97,11 +93,9 @@ export interface McpSourceDiscoveryResult {
 }
 
 export interface McpSourceDiscoveryInput {
-  /** Absolute path to the active worktree (project-scope files live here). */
-  worktreePath: string;
-  /** Absolute path to the current user's home directory. Overridable so tests
-   * can point discovery at a fixture tree. */
-  homePath: string;
-  /** Restrict discovery to specific backends when narrowing a scope view. */
-  backends?: readonly AgentBackendId[];
+  /** Absolute path to the Command Center global `.mcp.json`. */
+  globalConfigPath: string;
+  /** Absolute path to the active worktree (project `.mcp.json` lives here).
+   * Omit for global-only discovery. */
+  worktreePath?: string;
 }

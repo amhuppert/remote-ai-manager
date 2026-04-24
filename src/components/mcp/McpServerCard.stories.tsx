@@ -13,6 +13,9 @@ const sharedActions: McpServerCardActions = {
   onExpand: fn(),
 };
 
+const CC_GLOBAL_MCP = "/home/alex/.config/cc/.mcp.json";
+const CC_PROJECT_MCP = "/home/alex/repos/acme-dashboard/.mcp.json";
+
 function tool(
   name: string,
   opts: Partial<McpToolView> = {},
@@ -54,9 +57,8 @@ function baseServer(partial: Partial<McpServerView>): McpServerView {
   return {
     id: "playwright",
     name: "playwright",
-    sourceFile: "/home/alex/repos/acme-dashboard/.mcp.json",
+    sourceFile: CC_PROJECT_MCP,
     scope: "project",
-    backend: "claude",
     enabled: true,
     status: { kind: "inherited", from: "session" },
     toolDiscovery: { kind: "loaded", tools: playwrightTools },
@@ -106,8 +108,8 @@ export const ExplicitGlobal = {
     server: baseServer({
       id: "chrome-devtools",
       name: "chrome-devtools",
-      sourceFile: "/home/alex/.claude/settings.json",
-      scope: "user",
+      sourceFile: CC_GLOBAL_MCP,
+      scope: "global",
       status: { kind: "explicit" },
     }),
   },
@@ -119,8 +121,8 @@ export const InheritedFromGlobal = {
     viewLevel: "session",
     server: baseServer({
       status: { kind: "inherited", from: "global" },
-      sourceFile: "/home/alex/.claude/settings.json",
-      scope: "user",
+      sourceFile: CC_GLOBAL_MCP,
+      scope: "global",
     }),
   },
 } satisfies Story;
@@ -193,8 +195,8 @@ export const Disabled = {
     server: baseServer({
       id: "gmail",
       name: "gmail",
-      sourceFile: "/home/alex/.claude/settings.json",
-      scope: "user",
+      sourceFile: CC_GLOBAL_MCP,
+      scope: "global",
       enabled: false,
       status: { kind: "disabled", inheritsFrom: "global" },
       toolDiscovery: {
@@ -211,27 +213,6 @@ export const Disabled = {
 // ---------------------------------------------------------------------------
 // Diagnostic / state variants
 // ---------------------------------------------------------------------------
-
-export const BackendIncompatible = {
-  name: "Backend incompatible",
-  args: {
-    viewLevel: "session",
-    server: baseServer({
-      id: "linear-mcp",
-      name: "linear-mcp",
-      sourceFile: "/home/alex/.codex/config.toml",
-      scope: "user",
-      backend: "codex",
-      status: { kind: "inherited", from: "global" },
-      backendCompatibility: {
-        compatible: false,
-        reason:
-          "Uses Codex-only fields (cwd, startupTimeoutSec) — can't be emitted to Claude.",
-      },
-      toolDiscovery: { kind: "idle" },
-    }),
-  },
-} satisfies Story;
 
 export const RuntimeError = {
   name: "Runtime error",
@@ -272,9 +253,8 @@ export const NoTools = {
     server: baseServer({
       id: "notify",
       name: "notify",
-      sourceFile: "~/.codex/config.toml",
-      scope: "user",
-      backend: "codex",
+      sourceFile: CC_GLOBAL_MCP,
+      scope: "global",
       status: { kind: "explicit" },
       toolDiscovery: { kind: "loaded", tools: [] },
     }),
@@ -342,8 +322,8 @@ export const ListPreview = {
         server={baseServer({
           id: "chrome-devtools",
           name: "chrome-devtools",
-          sourceFile: "/home/alex/.claude/settings.json",
-          scope: "user",
+          sourceFile: CC_GLOBAL_MCP,
+          scope: "global",
           status: { kind: "overridden", inheritsFrom: "session" },
           toolDiscovery: {
             kind: "loaded",
@@ -373,28 +353,10 @@ export const ListPreview = {
         server={baseServer({
           id: "gmail",
           name: "gmail",
-          sourceFile: "/home/alex/.claude/settings.json",
-          scope: "user",
+          sourceFile: CC_GLOBAL_MCP,
+          scope: "global",
           enabled: false,
           status: { kind: "disabled", inheritsFrom: "global" },
-          toolDiscovery: { kind: "idle" },
-        })}
-      />
-      <McpServerCard
-        viewLevel="conversation"
-        actions={args.actions}
-        defaultOpen={false}
-        server={baseServer({
-          id: "linear-mcp",
-          name: "linear-mcp",
-          sourceFile: "/home/alex/.codex/config.toml",
-          scope: "user",
-          backend: "codex",
-          status: { kind: "inherited", from: "global" },
-          backendCompatibility: {
-            compatible: false,
-            reason: "Uses Codex-only fields (cwd, startupTimeoutSec).",
-          },
           toolDiscovery: { kind: "idle" },
         })}
       />

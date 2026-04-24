@@ -118,49 +118,23 @@ export const debugLogKeys = {
 
 export const mcpConfigKeys = {
   all: ["mcp-config"] as const,
-  global: (backend?: "claude" | "codex") =>
-    (backend
-      ? [...mcpConfigKeys.all, "global", backend]
-      : [...mcpConfigKeys.all, "global"]) as readonly unknown[],
-  project: (projectName: string, backend?: "claude" | "codex") =>
-    (backend
-      ? [...mcpConfigKeys.all, "project", projectName, backend]
-      : [...mcpConfigKeys.all, "project", projectName]) as readonly unknown[],
-  session: (
-    projectName: string,
-    sessionName: string,
-    backend?: "claude" | "codex",
-  ) =>
-    (backend
-      ? [...mcpConfigKeys.all, "session", projectName, sessionName, backend]
-      : [
-          ...mcpConfigKeys.all,
-          "session",
-          projectName,
-          sessionName,
-        ]) as readonly unknown[],
+  global: () => [...mcpConfigKeys.all, "global"] as const,
+  project: (projectName: string) =>
+    [...mcpConfigKeys.all, "project", projectName] as const,
+  session: (projectName: string, sessionName: string) =>
+    [...mcpConfigKeys.all, "session", projectName, sessionName] as const,
   conversation: (
     projectName: string,
     sessionName: string,
     conversationId: string,
-    backend?: "claude" | "codex",
   ) =>
-    (backend
-      ? [
-          ...mcpConfigKeys.all,
-          "conversation",
-          projectName,
-          sessionName,
-          conversationId,
-          backend,
-        ]
-      : [
-          ...mcpConfigKeys.all,
-          "conversation",
-          projectName,
-          sessionName,
-          conversationId,
-        ]) as readonly unknown[],
+    [
+      ...mcpConfigKeys.all,
+      "conversation",
+      projectName,
+      sessionName,
+      conversationId,
+    ] as const,
 };
 
 export const mcpToolsKeys = {

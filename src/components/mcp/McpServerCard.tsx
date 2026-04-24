@@ -18,12 +18,6 @@ export interface McpServerCardProps {
   defaultOpen?: boolean;
 }
 
-function backendLabel(backend: McpServerView["backend"]): string {
-  if (backend === "claude") return "Claude";
-  if (backend === "codex") return "Codex";
-  return "Shared";
-}
-
 function truncatePath(path: string, maxLen = 48): string {
   if (path.length <= maxLen) return path;
   const keepStart = 10;
@@ -69,9 +63,8 @@ export default function McpServerCard({
   const isInherited = status.kind === "inherited";
   const isDisabled = status.kind === "disabled";
   const isOverridden = status.kind === "overridden";
-  const isIncompatible = server.backendCompatibility?.compatible === false;
 
-  const toggleLocked = isIncompatible;
+  const toggleLocked = false;
 
   const handleHeadClick = useCallback(() => {
     setOpen((prev) => !prev);
@@ -105,7 +98,6 @@ export default function McpServerCard({
   const cardClass = [
     "mcp-server-card",
     `mcp-server-card--source-${status.kind}`,
-    isIncompatible ? "mcp-server-card--incompatible" : "",
     !server.enabled ? "mcp-server-card--off" : "",
     server.pending ? "mcp-server-card--pending" : "",
     open ? "mcp-server-card--open" : "",
@@ -114,7 +106,6 @@ export default function McpServerCard({
     .join(" ");
 
   const statusDotClass = (() => {
-    if (isIncompatible) return "mcp-status-dot mcp-status-dot--warning";
     if (server.runtimeError) return "mcp-status-dot mcp-status-dot--error";
     if (!server.enabled) return "mcp-status-dot mcp-status-dot--off";
     return "mcp-status-dot mcp-status-dot--on";
@@ -191,23 +182,10 @@ export default function McpServerCard({
             {truncatePath(server.sourceFile)}
           </span>
           <span className="mcp-server-card__meta-sep">·</span>
-          <span className="mcp-server-card__backend">
-            {backendLabel(server.backend)}
-          </span>
-          <span className="mcp-server-card__meta-sep">·</span>
           <span className="mcp-server-card__scope">
             {server.scope.toUpperCase()}
           </span>
         </div>
-
-        {isIncompatible && server.backendCompatibility?.reason ? (
-          <div className="mcp-server-card__warn" role="status">
-            <span className="mcp-warn-icon" aria-hidden>
-              ⚠
-            </span>
-            <span>{server.backendCompatibility.reason}</span>
-          </div>
-        ) : null}
 
         {server.runtimeError ? (
           <div className="mcp-server-card__error" role="alert">

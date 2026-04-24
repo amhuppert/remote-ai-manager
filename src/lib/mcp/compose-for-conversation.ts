@@ -27,7 +27,6 @@ import { mergeOverrideChain, type McpOverrideChain } from "./resolver";
 import type { McpServerDefinition, McpSourceDiscoveryResult } from "./types";
 
 export interface ComposePortableForConversationPureInput {
-  backend: AgentBackendId;
   overrideChain: McpOverrideChain;
   discovered: readonly McpServerDefinition[];
   gatewayServers: readonly PortableMcpServerConfig[];
@@ -49,7 +48,6 @@ export function composePortableForConversation(
 ): ComposePortableForConversationPureResult {
   const effective = mergeOverrideChain(input.overrideChain, "conversation");
   const composed = composeRuntimeMcpConfig({
-    backend: input.backend,
     discovered: input.discovered,
     effective,
     gatewayServers: input.gatewayServers,
@@ -95,11 +93,10 @@ export interface ComposePortableMcpDeps {
     conversationId: string,
   ): Promise<McpOverrides | undefined>;
   discoverSources(input: {
-    worktreePath: string;
-    homePath: string;
-    backends?: readonly AgentBackendId[];
+    globalConfigPath: string;
+    worktreePath?: string;
   }): Promise<McpSourceDiscoveryResult>;
-  homePath(): string;
+  globalConfigPath(): string;
   buildGatewayServers(
     projectName: string,
     sessionName: string,
@@ -144,9 +141,8 @@ export function createComposePortableMcpForConversation(
         args.conversationId,
       ),
       deps.discoverSources({
+        globalConfigPath: deps.globalConfigPath(),
         worktreePath: args.worktreePath,
-        homePath: deps.homePath(),
-        backends: [args.backend],
       }),
     ]);
 
@@ -165,7 +161,6 @@ export function createComposePortableMcpForConversation(
     );
 
     const { portable } = composePortableForConversation({
-      backend: args.backend,
       overrideChain,
       discovered: discovery.servers,
       gatewayServers,

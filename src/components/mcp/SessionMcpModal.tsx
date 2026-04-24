@@ -1,13 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { useSessionMcpConfigQuery } from "@/lib/queries";
 
 import McpServersModal from "./McpServersModal";
 import { adaptServerViewsForLevel } from "./view-adapter";
 import { useMcpActions } from "./use-mcp-actions";
-import type { McpBackendId } from "./types";
 
 interface SessionMcpModalProps {
   projectName: string;
@@ -22,10 +21,6 @@ export default function SessionMcpModal({
   open,
   onClose,
 }: SessionMcpModalProps): React.JSX.Element | null {
-  const [backendFilter, setBackendFilter] = useState<McpBackendId | "all">(
-    "all",
-  );
-
   const query = useSessionMcpConfigQuery(projectName, sessionName, {
     enabled: open,
   });
@@ -49,8 +44,6 @@ export default function SessionMcpModal({
       actions={actions}
       title="Session MCP configuration"
       subtitle={`${projectName} / ${sessionName}`}
-      backendFilter={backendFilter}
-      onBackendFilterChange={setBackendFilter}
       banner={
         <span>
           Session-level overrides apply to every conversation in this session.

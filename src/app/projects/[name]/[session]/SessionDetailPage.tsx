@@ -1778,7 +1778,6 @@ export default function SessionDetailPage({
                           projectName={projectName}
                           sessionName={sessionName}
                           conversationId={conversationId}
-                          activeBackend={selectedBackend}
                           turnRunning={conversationRunning}
                           disabled={isReadOnly}
                           disabledTooltip={

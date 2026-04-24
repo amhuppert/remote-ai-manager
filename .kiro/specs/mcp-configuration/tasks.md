@@ -6,6 +6,17 @@ Presentational UI components (`src/components/mcp/*`) and CSS are already in pla
 
 All implementation follows **red-green TDD**: write the failing test first, run it to confirm the red state, implement the minimum to pass, then re-run the focused test before broader checks.
 
+## Change plan: Unified CC MCP source discovery
+
+Section 2 was originally written around reading backend-native MCP source files (Claude settings, Codex TOML). The product direction has moved to a single unified source model owned by Command Center:
+
+- Global MCP server definitions come from `<CC_CONFIG_DIR>/.mcp.json`.
+- Project MCP server definitions come from the active worktree's `.mcp.json`.
+- Project entries override global entries on the same `serverKey`.
+- No backend-native MCP source files (`~/.claude/settings.json`, `.claude/settings.local.json`, `~/.codex/config.toml`, etc.) are read, migrated, or used as fallback.
+
+The Section 2 tasks below now describe unified CC discovery; previously-checked Claude/Codex native source parsing tasks have been reworked accordingly. Migration from backend-native source files is explicitly out of scope.
+
 ---
 
 ## 1. Schema and domain type foundation
@@ -24,34 +35,34 @@ All implementation follows **red-green TDD**: write the failing test first, run 
   - _Requirements: 6.1, 6.3, 6.4, 6.7_
 
 - [x] 1.3 (P) Add API view model and patch request schemas
-  - Add the scoped config view response shape with server rows, tool rows, inheritance status, source scope, orphan/reserved/pending flags, compatibility, and diagnostics.
+  - Add the scoped config view response shape with server rows, tool rows, inheritance status, source scope, orphan/reserved/pending flags, and diagnostics.
   - Add the patch request shape carrying toggle-server, reset-server, toggle-tool, and reset-tool operations.
   - Add the tool inventory result shape carrying discovery state, tool list, diagnostics, and last refreshed timestamp.
   - _Requirements: 1.4, 2.5, 3.2, 3.4, 4.1, 4.8, 5.5, 5.6, 7.3, 7.4, 8.1, 8.4_
 
 ---
 
-## 2. Native MCP source discovery
+## 2. Unified Command Center MCP source discovery
 
-- [x] 2.1 Parse Claude MCP sources into canonical server definitions
-  - Read project-scope `.mcp.json`, project-scope Claude settings, local Claude settings, and user Claude settings.
-  - Emit one canonical definition per server tagged with its scope (user / project / local) and originating file path.
-  - Surface malformed or unreadable files as per-file diagnostics without discarding other valid sources.
+- [x] 2.1 Parse the global `<CC_CONFIG_DIR>/.mcp.json` into canonical server definitions
+  - Read the single global `.mcp.json` file under the Command Center config directory (OS-aware path).
+  - Emit one canonical definition per server tagged with scope `global` and the originating file path.
+  - Surface a missing, malformed, or unreadable global file as a per-file diagnostic without aborting project discovery.
   - Redact environment values, headers, and bearer tokens in every view-facing field.
-  - _Requirements: 7.1, 7.2, 7.4, 7.6_
+  - _Requirements: 7.1, 7.4, 7.5, 7.6_
 
-- [x] 2.2 (P) Parse Codex MCP sources from TOML into canonical definitions
-  - Read project-scope and user-scope Codex config TOML, extracting `mcp_servers` entries.
-  - Preserve native Codex fields relevant to emission (enabled, enabled_tools, disabled_tools, env, startup/tool timeouts, bearer token env vars).
-  - Emit canonical definitions tagged with scope and source file, applying the same redaction policy as Claude.
-  - _Requirements: 7.1, 7.2, 7.4, 7.6_
+- [x] 2.2 (P) Parse the active worktree's project `.mcp.json` into canonical definitions
+  - Read `.mcp.json` at the repository root of the active session worktree when a worktree is available.
+  - Emit canonical definitions tagged with scope `project` and the originating file path, applying the same redaction policy as the global file.
+  - Surface a missing, malformed, or unreadable project file as a per-file diagnostic without aborting global discovery.
+  - _Requirements: 7.2, 7.4, 7.5, 7.6_
 
-- [x] 2.3 Compose unified discovery across backends with orphan-safe coalescing
-  - Provide a single entry point that returns the combined definitions, source file status records, and diagnostics for the current worktree plus the current user config paths.
-  - Coalesce Claude and Codex definitions into a single row only when their non-secret canonical config is equivalent; otherwise keep them distinct.
-  - Never write to any discovered source file at any point in the discovery pipeline.
+- [x] 2.3 Compose unified discovery with project-over-global precedence
+  - Provide a single entry point returning the combined definitions, source file status records, and diagnostics for the two CC-owned files.
+  - When a `serverKey` is present in both scopes, emit the project entry as the resolved definition and mark the global entry as overridden.
+  - Do not read, migrate, or fall back to backend-native MCP source files under any circumstances.
   - Log discovery with structured events (`mcp.source-discovery`) noting counts and scopes, never config contents.
-  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.6, 8.1, 8.5_
+  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.6, 7.7, 8.1, 8.5_
 
 ---
 
@@ -85,11 +96,10 @@ All implementation follows **red-green TDD**: write the failing test first, run 
   - Keep disabled and orphaned rows visible in the view model even though they are excluded from the emitted runtime config.
   - _Requirements: 4.8, 7.5_
 
-- [x] 4.3 View-model assembly with inheritance status, scope grouping, and compatibility
+- [x] 4.3 View-model assembly with inheritance status and scope grouping
   - Tag each row with `explicit`, `inherited`, `overridden`, or `disabled` relative to the current view level.
   - Indicate the level at which an override originates so the UI can label the source.
-  - Group rows by source scope (project / local / user) for UI consumption and mark CC-injected gateway servers as reserved and non-togglable when they appear.
-  - Carry per-server backend compatibility from the capability registry without branching on backend in the UI.
+  - Group rows by source scope (project / global) for UI consumption and mark CC-injected gateway servers as reserved and non-togglable when they appear.
   - _Requirements: 1.4, 2.3, 2.5, 3.3, 7.3, 7.4, 9.2, 10.7_
 
 ---
@@ -107,7 +117,7 @@ All implementation follows **red-green TDD**: write the failing test first, run 
   - Fall back to the direct probe path when the runtime is not active or does not expose the needed server.
   - _Requirements: 4.1, 5.1_
 
-- [x] 5.3 Tool inventory cache keyed by backend, serverKey, and config signature
+- [x] 5.3 Tool inventory cache keyed by serverKey and config signature
   - Return cached tools when the signature is unchanged and expose a per-server state of not-loaded, loading, ready, stale, or error.
   - Invalidate the cache entry when the server's command, URL, transport, env, headers, or auth config changes.
   - Provide an explicit refresh entry point that forces re-discovery for a single server without affecting others.
@@ -120,7 +130,7 @@ All implementation follows **red-green TDD**: write the failing test first, run 
 
 - [x] 6. Declare per-backend MCP capabilities through a single registry
   - Publish typed capability metadata for Claude and Codex describing: strict-authoritative config support, server-disable mechanism, between-turn apply mode, tool filtering mode (native vs permission-layer fallback), and tool discovery mode.
-  - Route UI compatibility badges and runtime emission decisions through the same registry so no branching on backend identity is required outside the emission boundary.
+  - Route runtime emission decisions through the same registry so backend-specific branching stays confined to backend adapters and other internal runtime boundaries.
   - Expose the registry shape so adding a new backend requires only a new entry plus a translator.
   - _Requirements: 4.6, 4.7, 6.5, 6.6, 8.2, 8.5, 10.7_
 

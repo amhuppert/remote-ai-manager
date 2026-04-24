@@ -111,7 +111,6 @@ describe("createDirectToolProbe", () => {
     const result = await probe({
       serverKey: "srv1",
       server: stdioServer(),
-      backend: "claude",
     });
 
     expect(result.state).toBe("ready");
@@ -143,7 +142,6 @@ describe("createDirectToolProbe", () => {
     const result = await probe({
       serverKey: "srv",
       server: httpServer(),
-      backend: "codex",
     });
 
     expect(result.state).toBe("ready");
@@ -172,7 +170,6 @@ describe("createDirectToolProbe", () => {
     const result = await probe({
       serverKey: "srv",
       server: sseServer(),
-      backend: "claude",
     });
 
     expect(result.state).toBe("ready");
@@ -214,7 +211,6 @@ describe("createDirectToolProbe timeouts", () => {
       const pending = probe({
         serverKey: "srv",
         server: stdioServer(),
-        backend: "claude",
       });
 
       await vi.advanceTimersByTimeAsync(250);
@@ -257,7 +253,6 @@ describe("createDirectToolProbe timeouts", () => {
       const pending = probe({
         serverKey: "srv",
         server: stdioServer(),
-        backend: "claude",
       });
 
       await vi.advanceTimersByTimeAsync(250);
@@ -302,7 +297,6 @@ describe("createDirectToolProbe diagnostics", () => {
     const result = await probe({
       serverKey: "srv",
       server: stdioServer(),
-      backend: "claude",
     });
 
     expect(result.state).toBe("error");
@@ -340,7 +334,6 @@ describe("createDirectToolProbe diagnostics", () => {
     const result = await probe({
       serverKey: "srv",
       server: stdioServer(),
-      backend: "claude",
     });
 
     expect(result.state).toBe("error");
@@ -373,7 +366,6 @@ describe("createDirectToolProbe diagnostics", () => {
     const result = await probe({
       serverKey: "srv",
       server: stdioServer(),
-      backend: "claude",
     });
 
     expect(result.state).toBe("error");
@@ -401,7 +393,6 @@ describe("createDirectToolProbe diagnostics", () => {
     const result = await probe({
       serverKey: "srv",
       server: stdioServer(),
-      backend: "claude",
     });
 
     expect(result.state).toBe("ready");

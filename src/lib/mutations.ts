@@ -1291,10 +1291,8 @@ function scopedInvalidations(scope: McpMutationScope): readonly QueryKey[] {
 }
 
 /**
- * Optimistically edit every matching cached MCP view (across backend-filtered
- * variants of the same scope) and return a rollback function. Views are keyed
- * by a shared scope prefix, so a single edit touches every variant the UI has
- * subscribed to.
+ * Optimistically edit every matching cached MCP view at the given scope and
+ * return a rollback function.
  */
 function applyOptimisticViewUpdate(
   queryClient: ReturnType<typeof useQueryClient>,
@@ -1326,15 +1324,29 @@ interface PatchContext {
   rollback: () => void;
 }
 
+function readEffectiveConfigHash(
+  queryClient: ReturnType<typeof useQueryClient>,
+  scopeKey: QueryKey,
+): string | undefined {
+  const cached = queryClient.getQueryData<McpConfigViewResponse>(scopeKey);
+  return cached?.effectiveConfigHash;
+}
+
 async function patchMcp(
   scope: McpMutationScope,
   operations: readonly McpOverrideOperation[],
   traceLabel: string,
+  expectedEffectiveConfigHash?: string,
 ): Promise<void> {
   await mutationFetch(mcpScopeUrl(scope), traceLabel, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ operations }),
+    body: JSON.stringify({
+      operations,
+      ...(expectedEffectiveConfigHash !== undefined
+        ? { expectedEffectiveConfigHash }
+        : {}),
+    }),
   });
 }
 
@@ -1353,6 +1365,7 @@ export function useToggleMcpServerMutation(scope: McpMutationScope) {
         scope,
         [{ type: "set-server-enabled", serverKey, enabled }],
         "mcp-toggle-server",
+        readEffectiveConfigHash(queryClient, scopeKey),
       ),
     onMutate: async ({ serverKey, enabled }) => {
       await queryClient.cancelQueries({ queryKey: scopeKey });
@@ -1385,6 +1398,7 @@ export function useResetMcpServerMutation(scope: McpMutationScope) {
         scope,
         [{ type: "reset-server", serverKey }],
         "mcp-reset-server",
+        readEffectiveConfigHash(queryClient, scopeKey),
       ),
     onMutate: async ({ serverKey }) => {
       await queryClient.cancelQueries({ queryKey: scopeKey });
@@ -1422,6 +1436,7 @@ export function useToggleMcpToolMutation(scope: McpMutationScope) {
         scope,
         [{ type: "set-tool-enabled", serverKey, toolName, enabled }],
         "mcp-toggle-tool",
+        readEffectiveConfigHash(queryClient, scopeKey),
       ),
     onMutate: async ({ serverKey, toolName, enabled }) => {
       await queryClient.cancelQueries({ queryKey: scopeKey });
@@ -1468,6 +1483,7 @@ export function useResetMcpToolMutation(scope: McpMutationScope) {
         scope,
         [{ type: "reset-tool", serverKey, toolName }],
         "mcp-reset-tool",
+        readEffectiveConfigHash(queryClient, scopeKey),
       ),
     onMutate: async ({ serverKey, toolName }) => {
       await queryClient.cancelQueries({ queryKey: scopeKey });

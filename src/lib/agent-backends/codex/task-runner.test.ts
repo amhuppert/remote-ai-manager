@@ -28,6 +28,7 @@ vi.mock("../registry-core", () => ({
   registerTaskRunner: vi.fn(),
 }));
 
+import { Codex } from "@openai/codex-sdk";
 import { registerTaskRunner } from "../registry-core";
 import { CodexTaskRunner } from "./task-runner";
 import type { AgentTaskRequest } from "../task";
@@ -86,6 +87,63 @@ describe("CodexTaskRunner", () => {
 
     expect(startThreadMock).not.toHaveBeenCalled();
     expect(result.error).toContain('Invalid Codex reasoning effort: "max"');
+  });
+
+  it("passes populated mcp_servers to Codex when portableMcp translates to a non-empty map", async () => {
+    await runner.run(
+      makeRequest({
+        tooling: {
+          portableMcp: {
+            servers: [
+              {
+                id: "test-server",
+                transport: "stdio",
+                command: "node",
+                args: ["server.js"],
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const codexCalls = vi.mocked(Codex).mock.calls;
+    expect(codexCalls).toHaveLength(1);
+    const passedOptions = codexCalls[0]![0]!;
+    expect(passedOptions).toHaveProperty("config");
+    expect(passedOptions.config).toEqual({
+      mcp_servers: {
+        "test-server": {
+          command: "node",
+          args: ["server.js"],
+        },
+      },
+    });
+  });
+
+  it("passes empty mcp_servers to Codex when portableMcp translates to an empty map (suppresses ~/.codex/config.toml fallback)", async () => {
+    await runner.run(
+      makeRequest({
+        tooling: {
+          portableMcp: { servers: [] },
+        },
+      }),
+    );
+
+    const codexCalls = vi.mocked(Codex).mock.calls;
+    expect(codexCalls).toHaveLength(1);
+    const passedOptions = codexCalls[0]![0]!;
+    expect(passedOptions).toHaveProperty("config");
+    expect(passedOptions.config).toEqual({ mcp_servers: {} });
+  });
+
+  it("omits config entirely when no portableMcp is provided", async () => {
+    await runner.run(makeRequest());
+
+    const codexCalls = vi.mocked(Codex).mock.calls;
+    expect(codexCalls).toHaveLength(1);
+    const passedOptions = codexCalls[0]![0]!;
+    expect(passedOptions).not.toHaveProperty("config");
   });
 
   it("does not abort immediately when timeoutMs is 0 (no timeout)", async () => {

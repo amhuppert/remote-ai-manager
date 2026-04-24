@@ -315,25 +315,22 @@ describe("mcpConfigViewResponseSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("parses a populated response with server rows, tool rows, flags, compatibility, and diagnostics", () => {
+  it("parses a populated response with server rows, tool rows, flags, and diagnostics", () => {
     const input = {
       level: "conversation",
       projectName: "repo",
       sessionName: "main",
       conversationId: "c1",
-      backend: "claude",
       servers: [
         {
           serverKey: "playwright",
           displayName: "Playwright",
           nativeId: "playwright",
-          backend: "shared",
           transport: "stdio",
           enabled: true,
           inheritanceStatus: "inherited",
           sourceRefs: [
             {
-              backend: "claude",
               scope: "project",
               filePath: "/repo/.mcp.json",
             },
@@ -341,16 +338,6 @@ describe("mcpConfigViewResponseSchema", () => {
           reserved: false,
           orphaned: false,
           pending: false,
-          compatibility: {
-            backends: [
-              { backend: "claude", supported: true },
-              {
-                backend: "codex",
-                supported: false,
-                reason: "stdio filtering not native",
-              },
-            ],
-          },
           tools: {
             state: "ready",
             tools: [
@@ -375,9 +362,8 @@ describe("mcpConfigViewResponseSchema", () => {
           code: "mcp.source.malformed",
           message: "JSON parse error",
           sourceRef: {
-            backend: "claude",
-            scope: "user",
-            filePath: "~/.claude/settings.json",
+            scope: "global",
+            filePath: "/cc-config/.mcp.json",
           },
         },
       ],
@@ -557,7 +543,6 @@ describe("mcpToolsUpdatedEventSchema", () => {
       sessionName: "sess",
       conversationId: "conv-1",
       serverKey: "calc",
-      configSignature: "sig-1",
     });
     expect(result.success).toBe(true);
   });
@@ -570,13 +555,12 @@ describe("mcpToolsUpdatedEventSchema", () => {
       sessionName: "sess",
       conversationId: "conv-1",
       serverKey: "calc",
-      configSignature: "sig-1",
       tools: [{ name: "evil" }],
     });
     expect(result.success).toBe(false);
   });
 
-  it("requires serverKey and configSignature", () => {
+  it("requires serverKey", () => {
     const result = mcpToolsUpdatedEventSchema.safeParse({
       type: "mcp-tools-updated",
       level: "conversation",

@@ -19,6 +19,12 @@ export function getDefaultGlobalOverridesPath(): string {
   return path.join(resolveConfigDir(), MCP_GLOBAL_STATE_FILENAME);
 }
 
+export const MCP_GLOBAL_DEFINITION_FILENAME = ".mcp.json";
+
+export function getDefaultGlobalMcpDefinitionPath(): string {
+  return path.join(resolveConfigDir(), MCP_GLOBAL_DEFINITION_FILENAME);
+}
+
 const logger = createLogger("mcp.override-store");
 
 export interface GlobalOverrideStoreDeps {
@@ -38,6 +44,7 @@ export interface GlobalOverridePatchResult {
 export interface GlobalOverrideStore {
   read(): Promise<McpOverrides>;
   patch(input: GlobalOverridePatchInput): Promise<GlobalOverridePatchResult>;
+  replace(overrides: McpOverrides): Promise<void>;
 }
 
 export function createGlobalOverrideStore(
@@ -116,7 +123,15 @@ export function createGlobalOverrideStore(
     return { overrides, changedServerKeys };
   }
 
-  return { read, patch };
+  async function replace(overrides: McpOverrides): Promise<void> {
+    await writeAtomically(filePath, {
+      version: 1,
+      overrides,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  return { read, patch, replace };
 }
 
 /**

@@ -2,8 +2,11 @@ import { withTracing } from "@/lib/logging";
 import { createSessionMcpConfigHandlers } from "@/lib/mcp-config-route-handlers";
 import {
   defaultDiscoverAllSources,
+  defaultMcpConfigMutationService,
+  defaultGlobalMcpDefinitionPath,
   defaultGlobalStore,
-  defaultHomePath,
+  defaultListSessionRuntimeTargets,
+  defaultMcpRuntimeApplyService,
   defaultReadProjectOverrides,
   defaultScopeStore,
   defaultToolInventoryCache,
@@ -18,11 +21,15 @@ export const dynamic = "force-dynamic";
 const handlers = createSessionMcpConfigHandlers({
   globalStore: defaultGlobalStore,
   scopeStore: defaultScopeStore,
+  mutationService: defaultMcpConfigMutationService,
   discoverAllSources: defaultDiscoverAllSources,
-  homePath: defaultHomePath,
+  globalConfigPath: defaultGlobalMcpDefinitionPath,
   resolveProjectPath,
   getSession,
   readProjectOverrides: defaultReadProjectOverrides,
+  listSessionRuntimeTargets: defaultListSessionRuntimeTargets,
+  applyAfterOverrideChange:
+    defaultMcpRuntimeApplyService.applyAfterOverrideChange,
   broadcast: createMcpRouteBroadcast(),
   toolInventoryCache: defaultToolInventoryCache,
   onDefinitionLoaded: recordKnownDefinition,
