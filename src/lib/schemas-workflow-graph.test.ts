@@ -704,6 +704,12 @@ describe("getCodexReasoningLevelsForModel", () => {
     expect(levels).not.toContain("minimal");
   });
 
+  it("returns the same allowed levels for gpt-5.5 as for gpt-5.4", () => {
+    expect(getCodexReasoningLevelsForModel("gpt-5.5")).toEqual(
+      getCodexReasoningLevelsForModel("gpt-5.4"),
+    );
+  });
+
   it("returns null for unknown models (all levels allowed)", () => {
     expect(getCodexReasoningLevelsForModel("unknown-model")).toBeNull();
   });

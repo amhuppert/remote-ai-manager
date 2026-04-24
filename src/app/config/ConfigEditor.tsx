@@ -972,7 +972,14 @@ export default function ConfigEditor(): React.JSX.Element {
             >
               <ConfigPillGroup
                 value={formState.codex?.model ?? "gpt-5.4"}
-                options={["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"] as const}
+                options={
+                  [
+                    "gpt-5.5",
+                    "gpt-5.4",
+                    "gpt-5.4-mini",
+                    "gpt-5.4-nano",
+                  ] as const
+                }
                 onChange={(v) => handleChange("codex.model", v)}
               />
             </ConfigField>

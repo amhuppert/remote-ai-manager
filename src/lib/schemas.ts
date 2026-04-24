@@ -96,6 +96,7 @@ export type PushNotificationConfig = z.infer<
 // ============================================================
 
 export const codexModelSchema = z.enum([
+  "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.4-nano",
@@ -134,6 +135,7 @@ export type CodexConfig = z.infer<typeof codexConfigSchema>;
 // ============================================================
 
 const CODEX_MODEL_REASONING_LEVELS: Record<string, CodexReasoningEffort[]> = {
+  "gpt-5.5": ["low", "medium", "high", "xhigh"],
   "gpt-5.4": ["low", "medium", "high", "xhigh"],
   "gpt-5.4-mini": ["low", "medium", "high", "xhigh"],
   "gpt-5.4-nano": ["low", "medium", "high", "xhigh"],

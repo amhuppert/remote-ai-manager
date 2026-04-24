@@ -26,6 +26,7 @@ const CLAUDE_MODEL_OPTIONS: ModelOption[] = [
 ];
 
 const CODEX_MODEL_OPTIONS: ModelOption[] = [
+  { id: "gpt-5.5", label: "GPT-5.5", description: "Latest" },
   { id: "gpt-5.4", label: "GPT-5.4", description: "Most capable" },
   { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", description: "Balanced" },
   { id: "gpt-5.4-nano", label: "GPT-5.4 Nano", description: "Fastest" },

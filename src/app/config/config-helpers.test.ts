@@ -206,6 +206,7 @@ describe("getModelOptionsForBackend", () => {
 
   it("returns Codex models for codex backend", () => {
     expect(getModelOptionsForBackend("codex")).toEqual([
+      "gpt-5.5",
       "gpt-5.4",
       "gpt-5.4-mini",
       "gpt-5.4-nano",
