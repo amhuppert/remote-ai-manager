@@ -178,7 +178,7 @@ function shortenWorktreePath(fullPath: string): string {
   return fullPath.slice(idx + marker.length);
 }
 
-export default function SessionDetailPage({
+export default function ConversationDetailPage({
   projectName,
   sessionName,
   conversationId,

@@ -1,4 +1,4 @@
-import SessionDetailPage from "../SessionDetailPage";
+import ConversationDetailPage from "../ConversationDetailPage";
 import { readConfig } from "@/lib/config";
 
 interface PageProps {
@@ -14,7 +14,7 @@ export default async function ConversationPage({
   const { autoFocus } = await searchParams;
   const config = await readConfig();
   return (
-    <SessionDetailPage
+    <ConversationDetailPage
       projectName={name}
       sessionName={decodeURIComponent(session)}
       conversationId={conversationId}

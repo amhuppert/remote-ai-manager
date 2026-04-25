@@ -6,7 +6,7 @@ import InfoDetailsPopover from "./InfoDetailsPopover";
 
 /**
  * Isolated rendering of the session info strip to preview the redesigned layout.
- * This story simulates the strip without requiring the full SessionDetailPage.
+ * This story simulates the strip without requiring the full ConversationDetailPage.
  */
 function InfoStripDemo({
   branchName,

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
-import SessionDetailPage from "./SessionDetailPage";
+import ConversationDetailPage from "./ConversationDetailPage";
 import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
@@ -270,7 +270,7 @@ function renderPage(props?: {
   defaultEffort?: "low" | "medium" | "high" | "max";
 }) {
   return renderWithQuery(
-    <SessionDetailPage
+    <ConversationDetailPage
       projectName="repo"
       sessionName="test-session"
       conversationId="conv-1"
@@ -284,7 +284,7 @@ function renderPage(props?: {
 // Tests
 // ===========================================================================
 
-describe("SessionDetailPage", () => {
+describe("ConversationDetailPage", () => {
   it("renders user and assistant messages with role indicators", () => {
     renderPage();
     expect(screen.getAllByText("You")).toHaveLength(2);

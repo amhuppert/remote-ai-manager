@@ -28,6 +28,8 @@ import {
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import CopyableId from "@/components/CopyableId";
+import SessionMcpChip from "@/components/mcp/SessionMcpChip";
+import SessionMcpModal from "@/components/mcp/SessionMcpModal";
 import GraphWorkflowCard from "./GraphWorkflowCard";
 import SessionGitPanel from "./SessionGitPanel";
 import CommitDialog from "./CommitDialog";
@@ -104,6 +106,7 @@ export default function ConversationList({
   const [showCommitDialog, setShowCommitDialog] = useState(false);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [contextCopied, setContextCopied] = useState(false);
+  const [sessionMcpModalOpen, setSessionMcpModalOpen] = useState(false);
 
   // --- Derived data ---
   const session = sessionQuery.data;
@@ -337,6 +340,12 @@ export default function ConversationList({
                   >
                     {contextCopied ? "\u2713" : "\u2398"} Context
                   </button>
+                  <div className="si-sep" />
+                  <SessionMcpChip
+                    projectName={projectName}
+                    sessionName={sessionName}
+                    onClick={() => setSessionMcpModalOpen(true)}
+                  />
                 </div>
                 <div
                   style={{
@@ -534,6 +543,13 @@ export default function ConversationList({
           hasUncommittedChanges={diff.files.length > 0}
         />
       )}
+
+      <SessionMcpModal
+        projectName={projectName}
+        sessionName={sessionName}
+        open={sessionMcpModalOpen}
+        onClose={() => setSessionMcpModalOpen(false)}
+      />
     </div>
   );
 }
