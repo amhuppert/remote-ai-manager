@@ -143,7 +143,7 @@ describe("readConversationMessages", () => {
     });
   });
 
-  it("skips non-display entries (system, result, status)", async () => {
+  it("surfaces system entries and skips other non-display entries (result, status)", async () => {
     const filePath = path.join(TEST_DIR, "transcripts", "mixed.jsonl");
     const lines = [
       JSON.stringify({
@@ -172,9 +172,10 @@ describe("readConversationMessages", () => {
     await writeFile(filePath, lines.join("\n"), "utf-8");
 
     const result = await readConversationMessages(filePath);
-    expect(result).toHaveLength(2);
-    expect(result[0]!.role).toBe("user");
-    expect(result[1]!.role).toBe("assistant");
+    expect(result).toHaveLength(3);
+    expect(result[0]!.role).toBe("system");
+    expect(result[1]!.role).toBe("user");
+    expect(result[2]!.role).toBe("assistant");
   });
 
   it("skips entries with empty content", async () => {
@@ -442,6 +443,154 @@ describe("readConversationMessages", () => {
     expect(result[0]!.effort).toBeUndefined();
     expect(result[1]!.model).toBeUndefined();
     expect(result[1]!.effort).toBeUndefined();
+  });
+
+  it("emits system entries as messages with role 'system' and a system_reminder block", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "system-row.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "system",
+        raw: { subtype: "compact_boundary", trigger: "auto" },
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.role).toBe("system");
+    expect(result[0]!.content).toHaveLength(1);
+    const block = result[0]!.content[0]!;
+    expect(block.type).toBe("system_reminder");
+    if (block.type === "system_reminder") {
+      expect(block.text).toContain("compact_boundary");
+    }
+    expect(result[0]!.timestamp).toBe("2024-01-01T00:00:00Z");
+    expect(result[1]!.role).toBe("user");
+  });
+
+  it("extracts inline <system-reminder> tags from user text into separate blocks", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "inline-reminder.jsonl",
+    );
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Before reminder.\n<system-reminder>\nDeferred tools no longer available.\n</system-reminder>\nAfter reminder.",
+          },
+        ],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.role).toBe("user");
+    expect(result[0]!.content).toHaveLength(3);
+    expect(result[0]!.content[0]).toEqual({
+      type: "text",
+      text: "Before reminder.",
+    });
+    expect(result[0]!.content[1]).toEqual({
+      type: "system_reminder",
+      text: "Deferred tools no longer available.",
+    });
+    expect(result[0]!.content[2]).toEqual({
+      type: "text",
+      text: "After reminder.",
+    });
+  });
+
+  it("extracts inline <system-reminder> tags from assistant text", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "inline-reminder-asst.jsonl",
+    );
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "assistant",
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "<system-reminder>Heads up</system-reminder>OK proceeding",
+          },
+        ],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.content).toHaveLength(2);
+    expect(result[0]!.content[0]).toEqual({
+      type: "system_reminder",
+      text: "Heads up",
+    });
+    expect(result[0]!.content[1]).toEqual({
+      type: "text",
+      text: "OK proceeding",
+    });
+  });
+
+  it("handles a user message that is only a <system-reminder>", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "only-reminder.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<system-reminder>Just a notice</system-reminder>",
+          },
+        ],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.content).toHaveLength(1);
+    expect(result[0]!.content[0]).toEqual({
+      type: "system_reminder",
+      text: "Just a notice",
+    });
+  });
+
+  it("leaves text untouched when no <system-reminder> tags are present", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "no-reminder.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Plain message" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessages(filePath);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.content).toEqual([
+      { type: "text", text: "Plain message" },
+    ]);
   });
 
   it("detects plain text slash commands in user messages", async () => {

@@ -5,6 +5,7 @@ import type { MessageContentBlock } from "@/types";
 import MarkdownContent from "./MarkdownContent";
 import { formatToolUse } from "@/lib/format-tool-use";
 import ToolUseGroup from "./ToolUseGroup";
+import CollapsibleText from "./CollapsibleText";
 
 /** Minimum consecutive tool_use blocks required to form a collapsed group */
 const GROUP_THRESHOLD = 2;
@@ -95,6 +96,16 @@ export default memo(function MessageContent({
               alt="Attached image"
               className="message-inline-image"
             />
+          );
+        }
+        if (block.type === "system_reminder") {
+          return (
+            <div key={i} className="system-reminder">
+              <div className="system-reminder-label">system reminder</div>
+              <CollapsibleText maxCollapsedHeight={120}>
+                <pre className="system-reminder-text">{block.text}</pre>
+              </CollapsibleText>
+            </div>
           );
         }
         if (block.type === "tool_use") {

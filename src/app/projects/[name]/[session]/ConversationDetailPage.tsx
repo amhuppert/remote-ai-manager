@@ -1444,6 +1444,8 @@ export default function ConversationDetailPage({
                             const msg = displayMessages[virtualRow.index]!;
                             const isEditing = editingIndex === virtualRow.index;
                             const isUserMsg = msg.role === "user";
+                            const isAssistantMsg = msg.role === "assistant";
+                            const isSystemMsg = msg.role === "system";
                             return (
                               <div
                                 key={virtualRow.index}
@@ -1462,33 +1464,36 @@ export default function ConversationDetailPage({
                                 <div className="message-role">
                                   {isUserMsg
                                     ? "You"
-                                    : selectedBackend === "codex"
-                                      ? "Codex"
-                                      : "Claude"}
-                                  {!isUserMsg && (msg.model || msg.effort) && (
-                                    <span className="message-meta">
-                                      <span className="message-meta-sep">
-                                        &middot;
-                                      </span>
-                                      {msg.model && (
-                                        <span className="message-meta-model">
-                                          {msg.model}
-                                        </span>
-                                      )}
-                                      {msg.model && msg.effort && (
+                                    : isSystemMsg
+                                      ? "System"
+                                      : selectedBackend === "codex"
+                                        ? "Codex"
+                                        : "Claude"}
+                                  {isAssistantMsg &&
+                                    (msg.model || msg.effort) && (
+                                      <span className="message-meta">
                                         <span className="message-meta-sep">
                                           &middot;
                                         </span>
-                                      )}
-                                      {msg.effort && (
-                                        <span
-                                          className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
-                                        >
-                                          {msg.effort}
-                                        </span>
-                                      )}
-                                    </span>
-                                  )}
+                                        {msg.model && (
+                                          <span className="message-meta-model">
+                                            {msg.model}
+                                          </span>
+                                        )}
+                                        {msg.model && msg.effort && (
+                                          <span className="message-meta-sep">
+                                            &middot;
+                                          </span>
+                                        )}
+                                        {msg.effort && (
+                                          <span
+                                            className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
+                                          >
+                                            {msg.effort}
+                                          </span>
+                                        )}
+                                      </span>
+                                    )}
                                 </div>
                                 {isEditing ? (
                                   <MessageEditor
@@ -1510,7 +1515,7 @@ export default function ConversationDetailPage({
                                     <MessageContent content={msg.content} />
                                   </div>
                                 )}
-                                {!isUserMsg &&
+                                {isAssistantMsg &&
                                   virtualRow.index ===
                                     displayMessages.length - 1 &&
                                   activeConversation && (
@@ -1530,7 +1535,7 @@ export default function ConversationDetailPage({
                                     disabled={isBusy || isReadOnly}
                                   />
                                 )}
-                                {!isUserMsg && (
+                                {isAssistantMsg && (
                                   <AssistantMessageActions
                                     content={msg.content}
                                   />
