@@ -139,7 +139,7 @@ export const activeConversationsResponseSchema = z.object({
 
 // -- Transcript --
 export const transcriptMessageSchema = z.object({
-  role: z.enum(["user", "assistant"]),
+  role: z.enum(["user", "assistant", "system"]),
   content: z.array(messageContentBlockSchema),
   timestamp: z.string().nullable(),
   model: z.string().optional(),
