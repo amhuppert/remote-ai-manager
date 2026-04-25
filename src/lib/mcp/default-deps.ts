@@ -180,6 +180,7 @@ export const defaultMcpConfigMutationService: McpConfigMutationService =
     globalStore: defaultGlobalOverrideStore,
     discoverAllSources,
     globalConfigPath: () => getDefaultGlobalMcpDefinitionPath(),
+    toolInventoryCache: defaultToolInventoryCache,
   });
 
 export async function defaultListGlobalRuntimeTargets(): Promise<

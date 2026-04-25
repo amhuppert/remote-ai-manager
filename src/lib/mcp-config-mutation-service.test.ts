@@ -3,8 +3,12 @@ import { describe, expect, it } from "vitest";
 import type {
   ManagerState,
   McpConfigViewResponse,
+  McpToolInventoryResult,
   SessionState,
 } from "@/types";
+
+import { resolveView } from "@/lib/mcp/resolver";
+import type { ToolInventoryCache } from "@/lib/mcp/tool-discovery-cache";
 
 import {
   computeConfigEditHash,
@@ -221,6 +225,89 @@ describe("createMcpConfigMutationService", () => {
     });
 
     expect(result).toEqual({ ok: false, reason: "conflict" });
+  });
+
+  it("matches the hash a GET-style view computes when tool inventories are populated", async () => {
+    // Reproduces the production conflict-on-every-PATCH bug: the read path
+    // (route handler GET) computes the conflict hash with populated tool
+    // inventories, while the mutation service used to compute its check hash
+    // with empty inventories — every client PATCH would 409 even though the
+    // overrides hadn't actually changed.
+    const inventory: McpToolInventoryResult = {
+      state: "ready",
+      tools: [{ name: "add" }, { name: "subtract" }],
+      diagnostics: [],
+    };
+    const calcDef = {
+      serverKey: "calc",
+      nativeId: "calc",
+      transport: "stdio" as const,
+      config: { transport: "stdio" as const, command: "node" },
+      sourceRefs: [
+        { scope: "project" as const, filePath: "/projects/proj/.mcp.json" },
+      ],
+      configSignature: "sig-calc",
+      reserved: false,
+      diagnostics: [],
+    };
+
+    const cache: ToolInventoryCache = {
+      peek: () => inventory,
+      refresh: async () => inventory,
+      getOrFetch: async () => inventory,
+      markStale: () => {},
+      onCompletion: () => () => {},
+    };
+
+    const state = baseState();
+    const service = createMcpConfigMutationService({
+      stateManager: createInMemoryStateManager(state),
+      globalStore: {
+        async read() {
+          return { servers: {} };
+        },
+        async patch() {
+          throw new Error("not used");
+        },
+        async replace() {
+          throw new Error("not used");
+        },
+      },
+      discoverAllSources: async () => ({
+        servers: [calcDef],
+        diagnostics: [],
+        sourceFiles: [],
+      }),
+      globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
+      toolInventoryCache: cache,
+    });
+
+    const externalView = resolveView({
+      level: "project",
+      overrides: { global: { servers: {} } },
+      discovered: [calcDef],
+      discoveryDiagnostics: [],
+      toolInventories: { calc: inventory },
+      gatewayServerKeys: [],
+      reservedGatewayServerKeys: [],
+      pendingServerKeys: [],
+      projectName: "proj",
+    });
+    const externalHash = computeConfigEditHash({
+      view: externalView,
+      discovered: [calcDef],
+    });
+
+    const result = await service.patchProject({
+      projectName: "proj",
+      projectPath: "/projects/proj",
+      operations: [
+        { type: "set-server-enabled", serverKey: "calc", enabled: false },
+      ],
+      expectedEffectiveConfigHash: externalHash,
+    });
+
+    expect(result.ok).toBe(true);
   });
 
   it("computes the current hash while still inside the serialized mutation path", async () => {

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { GlobalOverrideStore } from "@/lib/mcp/global-store";
 import { applyOperations } from "@/lib/mcp/overrides-patch";
 import { resolveView, type McpOverrideChain } from "@/lib/mcp/resolver";
+import type { ToolInventoryCache } from "@/lib/mcp/tool-discovery-cache";
 import type {
   McpSourceDiscoveryInput,
   McpSourceDiscoveryResult,
@@ -13,6 +14,7 @@ import type {
   McpOverrideOperation,
   McpOverrides,
   McpServerView,
+  McpToolInventoryResult,
 } from "@/lib/schemas";
 import { createStateManager } from "@/lib/state";
 import { withStateLock } from "@/lib/state-mutex";
@@ -68,6 +70,13 @@ export interface McpConfigMutationServiceDeps {
     input: McpSourceDiscoveryInput,
   ): Promise<McpSourceDiscoveryResult>;
   globalConfigPath(): string;
+  /**
+   * Tool inventory cache used while computing the conflict-check hash. The
+   * read path (route GET) resolves views with cached inventories merged in,
+   * so the write path must read from the same cache or the hashes will
+   * always disagree and every PATCH will return 409.
+   */
+  toolInventoryCache?: ToolInventoryCache;
 }
 
 export function computeConfigEditHash(input: {
@@ -280,7 +289,7 @@ export function createMcpConfigMutationService(
       overrides: { global: globalOverrides },
       discovered,
       discoveryDiagnostics: discovery.diagnostics,
-      toolInventories: {},
+      toolInventories: peekToolInventories(deps.toolInventoryCache, discovered),
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
@@ -310,7 +319,10 @@ export function createMcpConfigMutationService(
       overrides: chain,
       discovered: discovery.servers,
       discoveryDiagnostics: discovery.diagnostics,
-      toolInventories: {},
+      toolInventories: peekToolInventories(
+        deps.toolInventoryCache,
+        discovery.servers,
+      ),
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
@@ -351,7 +363,10 @@ export function createMcpConfigMutationService(
       overrides: chain,
       discovered: discovery.servers,
       discoveryDiagnostics: discovery.diagnostics,
-      toolInventories: {},
+      toolInventories: peekToolInventories(
+        deps.toolInventoryCache,
+        discovery.servers,
+      ),
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
@@ -402,7 +417,10 @@ export function createMcpConfigMutationService(
       overrides: chain,
       discovered: discovery.servers,
       discoveryDiagnostics: discovery.diagnostics,
-      toolInventories: {},
+      toolInventories: peekToolInventories(
+        deps.toolInventoryCache,
+        discovery.servers,
+      ),
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
@@ -472,6 +490,21 @@ function patchAndPrune(
 ) {
   const base: McpOverrides = current ?? { servers: {} };
   return applyOperations(base, operations);
+}
+
+function peekToolInventories(
+  cache: ToolInventoryCache | undefined,
+  servers: readonly McpServerDefinition[],
+): Readonly<Record<string, McpToolInventoryResult>> {
+  if (!cache) return {};
+  const inventories: Record<string, McpToolInventoryResult> = {};
+  for (const def of servers) {
+    inventories[def.serverKey] = cache.peek({
+      serverKey: def.serverKey,
+      configSignature: def.configSignature,
+    });
+  }
+  return inventories;
 }
 
 function writeOrDelete<
