@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import McpServerList from "./McpServerList";
 import type {
   McpServerCardActions,
@@ -50,7 +51,7 @@ export default function McpServersModal({
       document.removeEventListener("keydown", handleKey, { capture: true });
   }, [open, handleKey]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
   const total = servers.length;
   const on = servers.filter((s) => s.enabled).length;
@@ -58,7 +59,7 @@ export default function McpServersModal({
     (s) => s.status.kind === "overridden" || s.status.kind === "disabled",
   ).length;
 
-  return (
+  const overlay = (
     <div
       className="modal-overlay"
       onClick={(e) => {
@@ -111,4 +112,6 @@ export default function McpServersModal({
       </div>
     </div>
   );
+
+  return createPortal(overlay, document.body);
 }
