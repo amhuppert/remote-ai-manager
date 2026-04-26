@@ -3,6 +3,8 @@
  * behind the backend-neutral conversation runtime interface.
  */
 
+import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
+
 import type { MessageContentBlock } from "@/types";
 import type {
   AgentBackendId,
@@ -455,14 +457,26 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
         ? input.persistedRef.sessionId
         : undefined;
 
-    // Build MCP servers config from tooling overrides
-    const mcpServers: Record<string, unknown> = {};
-
+    // Build MCP servers config from tooling overrides.
+    //
+    // The SDK's static-Options init path (XP6 in cli.js) connects servers and
+    // lists tools but does NOT iterate `tools[].permission_policy` on
+    // HTTP/SSE configs. Only the dynamic `mcp_set_servers` handler (fX5)
+    // extracts those policies into the session's `alwaysDenyRules`/
+    // `alwaysAllowRules` — and those rules are checked before the
+    // `bypassPermissions` short-circuit, which is how native per-tool denies
+    // are enforced for HTTP servers.
+    //
+    // Pass an empty `mcpServers` to the SDK initially and immediately call
+    // `setMcpServers` after creation so the dynamic path runs once at start.
+    // Without this, conversation-level disabledTools on HTTP servers leak
+    // through (root cause of context7 `resolve-library-id` not being denied).
+    let translatedServers: Record<string, McpServerConfig> = {};
     if (input.tooling.portableMcp) {
       const { servers } = translatePortableMcpToClaude(
         input.tooling.portableMcp,
       );
-      Object.assign(mcpServers, servers);
+      translatedServers = servers;
     }
 
     const externalTurnHandler = input.onExternalTurnEvent
@@ -484,7 +498,7 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
       },
       resume: resumeSessionId,
       forkSession: undefined,
-      mcpServers,
+      mcpServers: {},
       canUseTool: canUseTool as never,
       env: buildChildEnv() as Record<string, string>,
       maxTurns: undefined,
@@ -530,6 +544,22 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
         turnContext = null;
       }
     };
+
+    if (Object.keys(translatedServers).length > 0) {
+      try {
+        await querySession.query.setMcpServers(translatedServers);
+        logger.info("claude-runtime.initial_mcp_set", {
+          conversationId: input.conversationId,
+          serverCount: Object.keys(translatedServers).length,
+        });
+      } catch (err) {
+        logger.error("claude-runtime.initial_mcp_set_failed", {
+          conversationId: input.conversationId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
+    }
 
     return runtime;
   },

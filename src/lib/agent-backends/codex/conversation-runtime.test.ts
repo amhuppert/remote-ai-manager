@@ -155,7 +155,6 @@ function turnCompleted(
     input_tokens: 100,
     cached_input_tokens: 10,
     output_tokens: 50,
-    reasoning_output_tokens: 0,
   },
 ): TurnCompletedEvent {
   return { type: "turn.completed", usage };
@@ -727,7 +726,6 @@ describe("CodexConversationRuntime", () => {
           input_tokens: 200,
           cached_input_tokens: 50,
           output_tokens: 100,
-          reasoning_output_tokens: 0,
         }),
       ]);
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);

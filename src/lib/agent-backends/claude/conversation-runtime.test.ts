@@ -589,3 +589,63 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     runtime.close();
   });
 });
+
+describe("ClaudeConversationRuntime — initial MCP policy extraction", () => {
+  it("invokes setMcpServers during createRuntime so HTTP tool policies are extracted into alwaysDenyRules at session start", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-init-policy",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {
+        portableMcp: {
+          servers: [
+            {
+              id: "context7",
+              transport: "streamable-http",
+              url: "https://mcp.context7.com/mcp",
+              disabledTools: ["resolve-library-id"],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      context7: {
+        type: "http",
+        url: "https://mcp.context7.com/mcp",
+        tools: [
+          { name: "resolve-library-id", permission_policy: "always_deny" },
+        ],
+      },
+    });
+  });
+
+  it("does not invoke setMcpServers when the portable config carries no servers", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-init-empty",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    expect(mock.query.setMcpServers).not.toHaveBeenCalled();
+  });
+});
