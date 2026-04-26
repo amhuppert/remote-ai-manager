@@ -155,6 +155,7 @@ function turnCompleted(
     input_tokens: 100,
     cached_input_tokens: 10,
     output_tokens: 50,
+    reasoning_output_tokens: 0,
   },
 ): TurnCompletedEvent {
   return { type: "turn.completed", usage };
@@ -325,6 +326,7 @@ describe("CodexConversationRuntime", () => {
       translatePortableMcpToCodex: vi
         .fn()
         .mockReturnValue({ mcpServers: {}, droppedFields: [] }),
+      listNativeCodexMcpServerNames: vi.fn().mockResolvedValue([]),
       mkdir: vi.fn().mockResolvedValue(undefined),
       writeFile: vi.fn().mockResolvedValue(undefined),
       rm: vi.fn().mockResolvedValue(undefined),
@@ -726,6 +728,7 @@ describe("CodexConversationRuntime", () => {
           input_tokens: 200,
           cached_input_tokens: 50,
           output_tokens: 100,
+          reasoning_output_tokens: 0,
         }),
       ]);
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
@@ -1262,7 +1265,7 @@ describe("CodexConversationRuntime", () => {
       expect(secondConfig.mcp_servers).toEqual({ "srv-b": { command: "b" } });
     });
 
-    it("emits empty config.mcp_servers when staged MCP translates to an empty map (suppresses ~/.codex/config.toml fallback)", async () => {
+    it("emits empty config.mcp_servers when no managed or native servers are present", async () => {
       deps.translatePortableMcpToCodex = vi
         .fn()
         .mockReturnValue({ mcpServers: {}, droppedFields: [] });
@@ -1280,6 +1283,60 @@ describe("CodexConversationRuntime", () => {
         .calls[0]![0];
       expect(codexCall).toHaveProperty("config");
       expect(codexCall.config).toEqual({ mcp_servers: {} });
+    });
+
+    it("adds enabled=false entries for native Codex MCP servers not managed by Command Center", async () => {
+      deps.translatePortableMcpToCodex = vi.fn().mockReturnValue({
+        mcpServers: {
+          "cc-session-tools": { url: "http://localhost/mcp" },
+          "next-devtools-project": { command: "npx", args: ["next"] },
+        },
+        droppedFields: [],
+      });
+      deps.listNativeCodexMcpServerNames = vi
+        .fn()
+        .mockResolvedValue(["playwright", "cc-session-tools", "next-devtools"]);
+
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          tooling: {
+            portableMcp: {
+              servers: [
+                {
+                  id: "cc-session-tools",
+                  transport: "streamable-http",
+                  url: "http://localhost/mcp",
+                },
+                {
+                  id: "next-devtools-project",
+                  transport: "stdio",
+                  command: "npx",
+                  args: ["next"],
+                },
+              ],
+            },
+          },
+        }),
+        deps,
+      );
+
+      await runtime.sendTurn(makeTurnInput());
+
+      expect(deps.listNativeCodexMcpServerNames).toHaveBeenCalledWith({
+        cwd: "/test/worktree",
+        env: expect.any(Object),
+      });
+      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0];
+      expect(codexCall.config).toEqual({
+        mcp_servers: {
+          "cc-session-tools": { url: "http://localhost/mcp" },
+          "next-devtools-project": { command: "npx", args: ["next"] },
+          playwright: { enabled: false },
+          "next-devtools": { enabled: false },
+        },
+      });
     });
 
     it("omits config entirely when no portable MCP has been staged", async () => {

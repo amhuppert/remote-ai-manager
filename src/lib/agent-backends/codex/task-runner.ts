@@ -11,12 +11,53 @@ import type {
 import type { AgentBackendId } from "../types";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {
+  buildCodexMcpServersConfig,
+  listNativeCodexMcpServerNames,
+} from "./native-mcp-suppression";
+import {
   codexReasoningEffortSchema,
   type CodexReasoningEffort,
 } from "@/lib/schemas";
 import { toStringEnv } from "./shared";
 
 const logger = createLogger("codex:task-runner");
+
+interface CodexTaskRunnerClient {
+  startThread(options?: ThreadOptions): {
+    readonly id: string | null;
+    run(
+      input: string,
+      options?: { outputSchema?: unknown; signal?: AbortSignal },
+    ): Promise<{
+      finalResponse?: string;
+      usage?: {
+        input_tokens: number;
+        cached_input_tokens: number;
+        output_tokens: number;
+      };
+    }>;
+  };
+  resumeThread(
+    id: string,
+    options?: ThreadOptions,
+  ): ReturnType<CodexTaskRunnerClient["startThread"]>;
+}
+
+export interface CodexTaskRunnerDeps {
+  createCodex(options: CodexOptions): CodexTaskRunnerClient;
+  buildChildEnv(): NodeJS.ProcessEnv;
+  listNativeCodexMcpServerNames(input: {
+    cwd: string;
+    env: Record<string, string>;
+  }): Promise<string[]>;
+}
+
+const defaultDeps: CodexTaskRunnerDeps = {
+  createCodex: (options) =>
+    new Codex(options) as unknown as CodexTaskRunnerClient,
+  buildChildEnv,
+  listNativeCodexMcpServerNames,
+};
 
 function buildPrompt(input: AgentTaskRequest): string {
   const parts: string[] = [];
@@ -40,6 +81,8 @@ function buildPrompt(input: AgentTaskRequest): string {
 
 export class CodexTaskRunner implements AgentTaskRunner {
   readonly backend: AgentBackendId = "codex";
+
+  constructor(private readonly deps: CodexTaskRunnerDeps = defaultDeps) {}
 
   async run(input: AgentTaskRequest): Promise<AgentTaskResult> {
     let validatedReasoningEffort: CodexReasoningEffort | undefined;
@@ -106,6 +149,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       };
     }
 
+    const env = toStringEnv({ ...this.deps.buildChildEnv(), CLAUDECODE: "" });
     let mcpServersConfig: Record<string, unknown> | undefined;
     if (input.tooling?.portableMcp) {
       const { mcpServers, droppedFields } = translatePortableMcpToCodex(
@@ -114,14 +158,25 @@ export class CodexTaskRunner implements AgentTaskRunner {
       if (droppedFields.length > 0) {
         logger.warn("codex-task-runner.mcp_dropped_fields", { droppedFields });
       }
-      mcpServersConfig = mcpServers;
+      const nativeServerNames = await listNativeMcpServerNames(
+        input.workingDirectory,
+        env,
+        this.deps,
+      );
+      mcpServersConfig = buildCodexMcpServersConfig({
+        managedMcpServers: mcpServers,
+        nativeServerNames,
+      });
       logger.info("codex-task-runner.mcp_config", {
-        serverCount: Object.keys(mcpServers).length,
+        serverCount: Object.keys(mcpServersConfig).length,
+        managedServerCount: Object.keys(mcpServers).length,
+        disabledNativeServerCount:
+          Object.keys(mcpServersConfig).length - Object.keys(mcpServers).length,
       });
     }
 
     const codexOptions: CodexOptions = {
-      env: toStringEnv({ ...buildChildEnv(), CLAUDECODE: "" }),
+      env,
       ...(mcpServersConfig !== undefined
         ? {
             config: { mcp_servers: mcpServersConfig } as CodexOptions["config"],
@@ -154,7 +209,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
     let error: string | null = null;
 
     try {
-      const codex = new Codex(codexOptions);
+      const codex = this.deps.createCodex(codexOptions);
 
       let thread;
       if (input.resumeRef?.backend === "codex") {
@@ -228,6 +283,27 @@ export class CodexTaskRunner implements AgentTaskRunner {
       error: error ?? (timedOut ? "Task timed out" : null),
       timedOut,
     };
+  }
+}
+
+async function listNativeMcpServerNames(
+  cwd: string,
+  env: Record<string, string>,
+  deps: Pick<CodexTaskRunnerDeps, "listNativeCodexMcpServerNames">,
+): Promise<string[]> {
+  try {
+    const names = await deps.listNativeCodexMcpServerNames({ cwd, env });
+    logger.info("codex-task-runner.mcp_native_servers_listed", {
+      workingDirectory: cwd,
+      nativeServerCount: names.length,
+    });
+    return names;
+  } catch (err) {
+    logger.warn("codex-task-runner.mcp_native_server_list_failed", {
+      workingDirectory: cwd,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
   }
 }
 

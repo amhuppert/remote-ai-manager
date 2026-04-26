@@ -30,7 +30,7 @@ vi.mock("../registry-core", () => ({
 
 import { Codex } from "@openai/codex-sdk";
 import { registerTaskRunner } from "../registry-core";
-import { CodexTaskRunner } from "./task-runner";
+import { CodexTaskRunner, type CodexTaskRunnerDeps } from "./task-runner";
 import type { AgentTaskRequest } from "../task";
 
 function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
@@ -51,10 +51,19 @@ it("registers the codex task runner in the registry on module load", () => {
 
 describe("CodexTaskRunner", () => {
   let runner: CodexTaskRunner;
+  let listNativeCodexMcpServerNames: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    runner = new CodexTaskRunner();
+    listNativeCodexMcpServerNames = vi.fn().mockResolvedValue([]);
+    runner = new CodexTaskRunner({
+      createCodex: (options) =>
+        new Codex(options) as unknown as ReturnType<
+          CodexTaskRunnerDeps["createCodex"]
+        >,
+      buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
+      listNativeCodexMcpServerNames,
+    });
 
     startThreadMock.mockReturnValue({
       id: "thread-abc",
@@ -121,7 +130,49 @@ describe("CodexTaskRunner", () => {
     });
   });
 
-  it("passes empty mcp_servers to Codex when portableMcp translates to an empty map (suppresses ~/.codex/config.toml fallback)", async () => {
+  it("passes enabled=false entries for native Codex MCP servers not managed by Command Center", async () => {
+    listNativeCodexMcpServerNames.mockResolvedValue([
+      "playwright",
+      "test-server",
+      "next-devtools",
+    ]);
+
+    await runner.run(
+      makeRequest({
+        tooling: {
+          portableMcp: {
+            servers: [
+              {
+                id: "test-server",
+                transport: "stdio",
+                command: "node",
+                args: ["server.js"],
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(listNativeCodexMcpServerNames).toHaveBeenCalledWith({
+      cwd: "/test/workspace",
+      env: { CLAUDECODE: "" },
+    });
+    const codexCalls = vi.mocked(Codex).mock.calls;
+    const passedOptions = codexCalls[0]![0]!;
+    expect(passedOptions.config).toEqual({
+      mcp_servers: {
+        "test-server": {
+          command: "node",
+          args: ["server.js"],
+        },
+        playwright: { enabled: false },
+        "next-devtools": { enabled: false },
+      },
+    });
+  });
+
+  it("passes empty mcp_servers to Codex when no managed or native servers are present", async () => {
     await runner.run(
       makeRequest({
         tooling: {

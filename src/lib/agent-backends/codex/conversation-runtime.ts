@@ -37,6 +37,10 @@ import { Codex } from "@openai/codex-sdk";
 import { buildChildEnv } from "@/lib/child-env";
 import { toStringEnv } from "./shared";
 import { translatePortableMcpToCodex } from "./mcp-translation";
+import {
+  buildCodexMcpServersConfig,
+  listNativeCodexMcpServerNames,
+} from "./native-mcp-suppression";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 
 const logger = createLogger("codex:conversation-runtime");
@@ -65,6 +69,10 @@ export interface CodexConversationRuntimeDeps {
   translatePortableMcpToCodex(
     config: PortableMcpConfig,
   ): PortableMcpToCodexResult;
+  listNativeCodexMcpServerNames(input: {
+    cwd: string;
+    env: Record<string, string>;
+  }): Promise<string[]>;
   mkdir(path: string, options: { recursive: boolean }): Promise<void>;
   writeFile(path: string, data: Buffer): Promise<void>;
   rm(
@@ -79,6 +87,7 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   buildChildEnv,
   toStringEnv,
   translatePortableMcpToCodex,
+  listNativeCodexMcpServerNames,
   mkdir: async (path, options) => {
     await mkdir(path, options);
   },
@@ -171,7 +180,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       cleanupImageDir = promptInput.cleanup;
 
       // Build per-turn Codex client options
-      const codexOptions = this.buildCodexOptions();
+      const codexOptions = await this.buildCodexOptions();
 
       // Create Codex client and thread
       const codex = this.deps.createCodex(codexOptions);
@@ -413,7 +422,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     return { input: userInput, cleanup };
   }
 
-  private buildCodexOptions(): CodexOptions {
+  private async buildCodexOptions(): Promise<CodexOptions> {
     const env = this.deps.toStringEnv({
       ...this.deps.buildChildEnv(),
       CLAUDECODE: "",
@@ -425,12 +434,38 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       const { mcpServers } = this.deps.translatePortableMcpToCodex(
         this.stagedPortableMcp,
       );
+      const nativeServerNames = await this.listNativeMcpServerNames(env);
       options.config = {
-        mcp_servers: mcpServers,
+        mcp_servers: buildCodexMcpServersConfig({
+          managedMcpServers: mcpServers,
+          nativeServerNames,
+        }),
       } as CodexOptions["config"];
     }
 
     return options;
+  }
+
+  private async listNativeMcpServerNames(
+    env: Record<string, string>,
+  ): Promise<string[]> {
+    try {
+      const names = await this.deps.listNativeCodexMcpServerNames({
+        cwd: this.worktreePath,
+        env,
+      });
+      logger.info("codex-runtime.mcp_native_servers_listed", {
+        conversationId: this.conversationId,
+        nativeServerCount: names.length,
+      });
+      return names;
+    } catch (err) {
+      logger.warn("codex-runtime.mcp_native_server_list_failed", {
+        conversationId: this.conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
   }
 
   private buildThreadOptions(): ThreadOptions {
