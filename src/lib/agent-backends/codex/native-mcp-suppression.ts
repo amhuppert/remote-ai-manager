@@ -1,10 +1,9 @@
 import { execFile } from "node:child_process";
-import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const moduleRequire = createRequire(import.meta.url);
 
 export interface NativeCodexMcpListInput {
   cwd: string;
@@ -14,6 +13,12 @@ export interface NativeCodexMcpListInput {
 export interface BuildCodexMcpServersConfigInput {
   managedMcpServers: Record<string, unknown>;
   nativeServerNames: readonly string[];
+}
+
+export interface ResolveCodexCliPathInput {
+  cwd: string;
+  serverRoot?: string;
+  fileExists?: (filePath: string) => boolean;
 }
 
 export function buildCodexMcpServersConfig(
@@ -50,7 +55,7 @@ export function parseCodexMcpListJson(stdout: string): string[] {
 export async function listNativeCodexMcpServerNames(
   input: NativeCodexMcpListInput,
 ): Promise<string[]> {
-  const codexBin = resolveCodexBin();
+  const codexBin = resolveCodexCliPath({ cwd: input.cwd });
   const { stdout } = await execFileAsync(
     process.execPath,
     [codexBin, "mcp", "list", "--json"],
@@ -64,11 +69,32 @@ export async function listNativeCodexMcpServerNames(
   return parseCodexMcpListJson(stdout);
 }
 
-function resolveCodexBin(): string {
-  const sdkPackageJsonPath = moduleRequire.resolve(
-    "@openai/codex-sdk/package.json",
+export function resolveCodexCliPath(input: ResolveCodexCliPathInput): string {
+  const fileExists = input.fileExists ?? existsSync;
+  const candidates = uniqueCandidates([
+    input.cwd,
+    input.serverRoot ?? process.cwd(),
+  ]);
+
+  for (const basePath of candidates) {
+    const packageJsonPath = codexPackageJsonPath(basePath);
+    if (!fileExists(packageJsonPath)) continue;
+    return path.join(path.dirname(packageJsonPath), "bin", "codex.js");
+  }
+
+  throw new Error("Unable to resolve @openai/codex CLI path");
+}
+
+function uniqueCandidates(candidates: readonly string[]): string[] {
+  return Array.from(new Set(candidates));
+}
+
+function codexPackageJsonPath(basePath: string): string {
+  return path.join(
+    basePath,
+    "node_modules",
+    "@openai",
+    "codex",
+    "package.json",
   );
-  const sdkRequire = createRequire(sdkPackageJsonPath);
-  const packageJsonPath = sdkRequire.resolve("@openai/codex/package.json");
-  return path.join(path.dirname(packageJsonPath), "bin", "codex.js");
 }

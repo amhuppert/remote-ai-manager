@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 
 import {
   buildCodexMcpServersConfig,
   parseCodexMcpListJson,
+  resolveCodexCliPath,
 } from "./native-mcp-suppression";
 
 describe("parseCodexMcpListJson", () => {
@@ -36,5 +38,38 @@ describe("buildCodexMcpServersConfig", () => {
       playwright: { enabled: false },
       "next-devtools": { enabled: false },
     });
+  });
+});
+
+describe("resolveCodexCliPath", () => {
+  it("resolves the Codex CLI from a fallback base when the worktree package is absent", () => {
+    const cwd = "/repo";
+    const fallbackBase = "/server-root";
+    const codexPackageJson = path.join(
+      fallbackBase,
+      "node_modules",
+      "@openai",
+      "codex",
+      "package.json",
+    );
+
+    const cliPath = resolveCodexCliPath({
+      cwd,
+      serverRoot: fallbackBase,
+      fileExists(filePath) {
+        return filePath === codexPackageJson;
+      },
+    });
+
+    expect(cliPath).toBe(
+      path.join(
+        fallbackBase,
+        "node_modules",
+        "@openai",
+        "codex",
+        "bin",
+        "codex.js",
+      ),
+    );
   });
 });
