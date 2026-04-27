@@ -339,8 +339,12 @@ export default function ConversationDetailPage({
 
   // --- Local state ---
   const [promptText, setPromptText] = useState("");
+  // Initialize backend/model/effort consistently from the active conversation's
+  // stored backend. The Claude `defaultModel` from server config must not leak
+  // into a Codex conversation — picking the first backend-appropriate model
+  // keeps these in sync from the very first render.
   const [selectedBackend, setSelectedBackend] = useState<AgentBackendId>(
-    activeConversation?.agentBackend ?? "claude",
+    () => activeConversation?.agentBackend ?? "claude",
   );
   const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
 
@@ -371,9 +375,24 @@ export default function ConversationDetailPage({
     setSelectedEffort(levels.includes("high") ? "high" : levels[0]!);
   }, [conversationId, activeBackend]); // eslint-disable-line react-hooks/exhaustive-deps -- reset on conversation switch or backend change
 
-  const [selectedModel, setSelectedModel] = useState<string>(defaultModel);
-  const [selectedEffort, setSelectedEffort] =
-    useState<EffortLevel>(defaultEffort);
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    const backend = activeConversation?.agentBackend ?? "claude";
+    const models = getModelsForBackend(backend);
+    return models.some((m) => m.id === defaultModel)
+      ? defaultModel
+      : models[0]!.id;
+  });
+  const [selectedEffort, setSelectedEffort] = useState<EffortLevel>(() => {
+    const backend = activeConversation?.agentBackend ?? "claude";
+    const models = getModelsForBackend(backend);
+    const initialModel = models.some((m) => m.id === defaultModel)
+      ? defaultModel
+      : models[0]!.id;
+    const levels = getEffortLevelsForBackend(backend, initialModel);
+    if (levels.length === 0) return defaultEffort;
+    if (levels.includes(defaultEffort)) return defaultEffort;
+    return levels.includes("high") ? "high" : levels[0]!;
+  });
   const availableEffortLevels = getEffortLevelsForBackend(
     selectedBackend,
     selectedModel,

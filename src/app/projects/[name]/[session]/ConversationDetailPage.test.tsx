@@ -554,4 +554,44 @@ describe("ConversationDetailPage", () => {
       expect(effortTrigger!.getAttribute("title")).toContain("Low");
     });
   });
+
+  describe("Codex conversation initial model", () => {
+    // Regression: when the active conversation's backend is "codex" and the
+    // session query is already in cache (e.g. navigating between conversations),
+    // both `selectedBackend` and `selectedModel` initialize together. Previously
+    // the model defaulted to the Claude `defaultModel`, so the first prompt
+    // was sent as "opus" against the Codex backend and the API rejected it.
+    it("submits a Codex model (not the Claude defaultModel) on first prompt", async () => {
+      testSession = {
+        ...baseSession,
+        conversations: [
+          {
+            ...baseSession.conversations[0]!,
+            agentBackend: "codex",
+          },
+        ],
+      };
+
+      renderPage(); // defaultModel="sonnet" (a Claude model)
+
+      const textarea = screen.getByPlaceholderText(
+        "Send a prompt to Claude...",
+      );
+      fireEvent.change(textarea, { target: { value: "Hello" } });
+
+      const sendBtn = screen.getByTitle("Send prompt");
+      fireEvent.click(sendBtn);
+
+      expect(sendPromptMock).toHaveBeenCalledTimes(1);
+      const callArgs = sendPromptMock.mock.calls[0]!;
+      const submittedModel = callArgs[2] as string;
+      const submittedBackend = callArgs[5] as string;
+
+      expect(submittedBackend).toBe("codex");
+      // Must NOT be the Claude defaultModel — that's the bug.
+      expect(submittedModel).not.toBe("sonnet");
+      expect(submittedModel).not.toBe("opus");
+      expect(submittedModel).not.toBe("haiku");
+    });
+  });
 });
