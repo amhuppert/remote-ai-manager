@@ -216,10 +216,6 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
     mediaType: z.string(),
     imagePath: z.string(),
   }),
-  z.object({
-    type: z.literal("system_reminder"),
-    text: z.string(),
-  }),
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 

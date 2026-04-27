@@ -219,7 +219,7 @@ export type {
 /** Parsed transcript message */
 export interface TranscriptMessage {
   /** Message role */
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant";
   /** Message content blocks (text, tool_use, tool_result) */
   content: _MessageContentBlock[];
   /** ISO 8601 timestamp if available */

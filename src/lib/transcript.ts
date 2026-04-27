@@ -244,62 +244,12 @@ export async function findLastAssistantUuid(
 // Re-export from shared module (also used by client-side use-send-prompt.ts)
 export { parseCommandContent } from "./command-parsing";
 
-const SYSTEM_REMINDER_PATTERN =
-  /<system-reminder>([\s\S]*?)<\/system-reminder>/g;
-
-/**
- * Split a text string on `<system-reminder>...</system-reminder>` boundaries,
- * returning a mix of `text` and `system_reminder` content blocks. Whitespace-only
- * surrounding text segments are dropped so the rendered conversation isn't
- * cluttered with empty paragraphs around extracted reminders.
- */
-function splitSystemReminders(text: string): MessageContentBlock[] {
-  if (!text.includes("<system-reminder>")) {
-    return [{ type: "text", text }];
-  }
-  const blocks: MessageContentBlock[] = [];
-  let cursor = 0;
-  SYSTEM_REMINDER_PATTERN.lastIndex = 0;
-  for (
-    let match = SYSTEM_REMINDER_PATTERN.exec(text);
-    match;
-    match = SYSTEM_REMINDER_PATTERN.exec(text)
-  ) {
-    const before = text.slice(cursor, match.index);
-    if (before.trim().length > 0) {
-      blocks.push({ type: "text", text: before.trim() });
-    }
-    blocks.push({ type: "system_reminder", text: match[1]!.trim() });
-    cursor = match.index + match[0].length;
-  }
-  const trailing = text.slice(cursor);
-  if (trailing.trim().length > 0) {
-    blocks.push({ type: "text", text: trailing.trim() });
-  }
-  return blocks;
-}
-
-function expandSystemReminders(
-  blocks: MessageContentBlock[],
-): MessageContentBlock[] {
-  const result: MessageContentBlock[] = [];
-  for (const block of blocks) {
-    if (block.type === "text") {
-      result.push(...splitSystemReminders(block.text));
-    } else {
-      result.push(block);
-    }
-  }
-  return result;
-}
-
 /**
  * Read conversation messages from a transcript file.
  * Handles null paths and missing files gracefully (returns []).
  *
  * Parses our own JSONL format where each line is a TranscriptEntry.
- * Returns user/assistant entries with content blocks, plus system entries
- * surfaced as `role: "system"` rows so SDK-level events are visible in the UI.
+ * Filters for user/assistant entries with content blocks.
  */
 export async function readConversationMessages(
   transcriptPath: string | null,
@@ -322,20 +272,6 @@ export async function readConversationMessages(
     try {
       entry = JSON.parse(line) as TranscriptEntry;
     } catch {
-      continue;
-    }
-
-    if (entry.type === "system") {
-      messages.push({
-        role: "system",
-        content: [
-          {
-            type: "system_reminder",
-            text: JSON.stringify(entry.raw ?? {}, null, 2),
-          },
-        ],
-        timestamp: entry.timestamp ?? null,
-      });
       continue;
     }
 
@@ -370,16 +306,14 @@ export async function readConversationMessages(
       }
     }
 
-    const expandedContent = expandSystemReminders(entry.content);
-
     const prev = messages[messages.length - 1];
     if (prev && prev.role === entry.role) {
       // Merge consecutive messages from the same role into one
-      prev.content = [...prev.content, ...expandedContent];
+      prev.content = [...prev.content, ...entry.content];
     } else {
       messages.push({
         role: entry.role,
-        content: expandedContent,
+        content: entry.content,
         timestamp: entry.timestamp ?? null,
         // User entries carry their own metadata; assistant entries inherit
         model: entry.role === "user" ? entry.model : currentModel,
