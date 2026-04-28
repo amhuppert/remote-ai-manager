@@ -12,13 +12,13 @@ import type { EffortLevel } from "@/lib/schemas";
 
 export type { EffortLevel };
 
-interface EffortOption {
+export interface EffortOption {
   id: EffortLevel;
   label: string;
   description: string;
 }
 
-const EFFORT_OPTIONS: EffortOption[] = [
+export const EFFORT_OPTIONS: EffortOption[] = [
   { id: "minimal", label: "Minimal", description: "Least reasoning" },
   { id: "low", label: "Low", description: "Minimal" },
   { id: "medium", label: "Medium", description: "Moderate" },

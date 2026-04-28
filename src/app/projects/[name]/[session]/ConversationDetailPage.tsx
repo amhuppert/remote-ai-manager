@@ -15,6 +15,7 @@ import {
   useConversationsQuery,
 } from "@/lib/queries";
 import {
+  useDebugModeToggleMutation,
   useDeleteSessionMutation,
   useFinalizeInitializationMutation,
   useTddToggleMutation,
@@ -98,7 +99,10 @@ import { FileAutocomplete } from "@/components/FileAutocomplete";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import ModelSelector from "@/components/ModelSelector";
 import { getModelsForBackend } from "@/components/ModelSelector";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
+import ReasoningLevelSelector, {
+  EFFORT_OPTIONS,
+} from "@/components/ReasoningLevelSelector";
+import MobilePromptToolbar from "./MobilePromptToolbar";
 import BackendToggle from "@/components/BackendToggle";
 import ConversationMcpConfig from "@/components/mcp/ConversationMcpConfig";
 import SessionMcpChip from "@/components/mcp/SessionMcpChip";
@@ -439,6 +443,12 @@ export default function ConversationDetailPage({
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
     useImageAttachments();
   const failPrompt = useFailPrompt();
+
+  const debugToggleMutation = useDebugModeToggleMutation(
+    projectName,
+    sessionName,
+    conversationId,
+  );
 
   // --- Refs for message navigation ---
   const panelBodyRef = useRef<HTMLDivElement>(null);
@@ -1849,6 +1859,101 @@ export default function ConversationDetailPage({
                         </button>
                       </div>
                     </div>
+                    <MobilePromptToolbar
+                      modelOptions={getModelsForBackend(selectedBackend)}
+                      effortOptions={EFFORT_OPTIONS.filter((o) =>
+                        availableEffortLevels.includes(o.id),
+                      )}
+                      selectedModel={selectedModel}
+                      selectedEffort={selectedEffort}
+                      effortSupported={effortSupported}
+                      effortDisabledReason={
+                        !effortSupported
+                          ? "Reasoning level is only available for Opus and Sonnet models"
+                          : undefined
+                      }
+                      onSelectModel={handleModelChange}
+                      onSelectEffort={setSelectedEffort}
+                      backend={selectedBackend}
+                      backendLocked={backendLocked}
+                      onSelectBackend={handleBackendChange}
+                      onAttach={() => fileInputRef.current?.click()}
+                      attachDisabled={isAtLimit || sending}
+                      debugActive={
+                        activeConversation?.debugMode?.active ?? false
+                      }
+                      debugSupported={!!activeConversation}
+                      onToggleDebug={() =>
+                        debugToggleMutation.mutate(
+                          activeConversation?.debugMode?.active
+                            ? "exit"
+                            : "enter",
+                        )
+                      }
+                      debugDisabled={sending || debugToggleMutation.isPending}
+                      mcpRow={
+                        <div className="mobile-prompt-row mobile-prompt-row--mcp">
+                          <ConversationMcpConfig
+                            projectName={projectName}
+                            sessionName={sessionName}
+                            conversationId={conversationId}
+                            turnRunning={conversationRunning}
+                            disabled={isReadOnly}
+                            disabledTooltip={
+                              isReadOnly ? "Session is read-only" : undefined
+                            }
+                          />
+                        </div>
+                      }
+                      isReadOnly={isReadOnly}
+                      isBusy={sending && !conversationId}
+                      voiceButton={
+                        <VoiceRecordButton
+                          isRecording={isRecording}
+                          isProcessing={isProcessing}
+                          elapsedTime={elapsedTime}
+                          isAvailable={voiceAvailable}
+                          toggleRecording={toggleRecording}
+                          disabled={sending}
+                        />
+                      }
+                      sendButton={
+                        <button
+                          className={`send-btn${sending && !conversationId ? " busy" : ""}`}
+                          disabled={
+                            (!promptText.trim() &&
+                              pendingImages.length === 0) ||
+                            (sending && !conversationId) ||
+                            isReadOnly ||
+                            isRecording
+                          }
+                          onClick={() => void handleSendPrompt()}
+                          title={
+                            isReadOnly
+                              ? "Session is read-only"
+                              : sending && !conversationId
+                                ? "Session is busy"
+                                : sending
+                                  ? "Queue message"
+                                  : "Send prompt"
+                          }
+                        >
+                          {sending && !conversationId ? (
+                            <div
+                              className="spinner"
+                              style={{
+                                borderColor: "rgba(0, 229, 255, 0.3)",
+                                borderTopColor: "var(--cyan)",
+                                width: 18,
+                                height: 18,
+                              }}
+                            />
+                          ) : (
+                            "\u25B6"
+                          )}
+                        </button>
+                      }
+                    />
                   </div>
                 </div>
               )}

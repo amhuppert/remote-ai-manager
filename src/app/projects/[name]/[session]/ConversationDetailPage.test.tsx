@@ -338,16 +338,22 @@ describe("ConversationDetailPage", () => {
 
   it("disables send button when prompt text is empty", () => {
     renderPage();
-    const sendBtn = screen.getByTitle("Send prompt");
-    expect(sendBtn.hasAttribute("disabled")).toBe(true);
+    const sendBtns = screen.getAllByTitle("Send prompt");
+    expect(sendBtns.length).toBeGreaterThan(0);
+    sendBtns.forEach((btn) => {
+      expect(btn.hasAttribute("disabled")).toBe(true);
+    });
   });
 
   it("enables send button when prompt text is entered", () => {
     renderPage();
     const textarea = screen.getByPlaceholderText("Send a prompt to Claude...");
     fireEvent.change(textarea, { target: { value: "Hello" } });
-    const sendBtn = screen.getByTitle("Send prompt");
-    expect(sendBtn.hasAttribute("disabled")).toBe(false);
+    const sendBtns = screen.getAllByTitle("Send prompt");
+    expect(sendBtns.length).toBeGreaterThan(0);
+    sendBtns.forEach((btn) => {
+      expect(btn.hasAttribute("disabled")).toBe(false);
+    });
   });
 
   it("prompt textarea accepts text input", () => {
@@ -579,7 +585,7 @@ describe("ConversationDetailPage", () => {
       );
       fireEvent.change(textarea, { target: { value: "Hello" } });
 
-      const sendBtn = screen.getByTitle("Send prompt");
+      const sendBtn = screen.getAllByTitle("Send prompt")[0]!;
       fireEvent.click(sendBtn);
 
       expect(sendPromptMock).toHaveBeenCalledTimes(1);

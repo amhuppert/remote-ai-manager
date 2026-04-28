@@ -7057,6 +7057,407 @@ textarea {
 }
 
 /* ============================================================
+   Mobile Prompt Toolbar — compact toolbar + bottom-sheet menus
+   ============================================================ */
+
+.mobile-prompt-toolbar {
+  display: none;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.mobile-prompt-toolbar-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.mobile-prompt-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.mobile-prompt-add-btn:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.mobile-prompt-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mobile-prompt-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  cursor: pointer;
+  min-width: 0;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.mobile-prompt-model-chip:hover {
+  border-color: var(--cyan-dim);
+}
+
+.mobile-prompt-model-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mobile-prompt-model-chip__model {
+  font-weight: 600;
+}
+
+.mobile-prompt-model-chip__sep {
+  color: var(--text-tertiary);
+  padding: 0 2px;
+}
+
+.mobile-prompt-model-chip__effort {
+  color: var(--text-secondary);
+}
+
+.mobile-prompt-model-chip__chevron {
+  color: var(--text-tertiary);
+  margin-left: 4px;
+  font-size: 0.7rem;
+}
+
+.mobile-prompt-model-chip.rainbow-border,
+.mobile-prompt-model-chip.rainbow-border:hover {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(
+        90deg,
+        rgba(255, 107, 107, 0.14),
+        rgba(255, 165, 0, 0.12),
+        rgba(255, 217, 61, 0.1),
+        rgba(107, 203, 119, 0.12),
+        rgba(77, 150, 255, 0.14),
+        rgba(155, 89, 182, 0.13),
+        rgba(255, 107, 107, 0.14)
+      )
+      padding-box,
+    linear-gradient(var(--bg-surface), var(--bg-surface)) padding-box,
+    linear-gradient(
+        90deg,
+        #ff6b6b,
+        #ffa500,
+        #ffd93d,
+        #6bcb77,
+        #4d96ff,
+        #9b59b6,
+        #ff6b6b
+      )
+      border-box;
+  background-size:
+    200% auto,
+    100% 100%,
+    200% auto;
+  animation: rainbow-border-shift 3s linear infinite;
+  box-shadow:
+    0 0 8px rgba(155, 89, 182, 0.15),
+    0 0 20px rgba(77, 150, 255, 0.08);
+}
+
+.mobile-prompt-model-chip.rainbow-border .mobile-prompt-model-chip__effort {
+  background: linear-gradient(
+    90deg,
+    #ff6b6b,
+    #ffa500,
+    #ffd93d,
+    #6bcb77,
+    #4d96ff,
+    #9b59b6,
+    #ff6b6b
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: rainbow-shift 3s linear infinite;
+  font-weight: 700;
+}
+
+/* Sheet rows — used inside the "More" sheet */
+
+.mobile-prompt-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  min-height: 56px;
+  transition: background 0.1s ease;
+}
+
+.mobile-prompt-row:hover {
+  background: var(--bg-hover);
+}
+
+.mobile-prompt-row:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mobile-prompt-row--static {
+  cursor: default;
+}
+
+.mobile-prompt-row--static:hover {
+  background: transparent;
+}
+
+.mobile-prompt-row__icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.mobile-prompt-row.is-on .mobile-prompt-row__icon {
+  color: var(--amber);
+}
+
+.mobile-prompt-row__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-prompt-row__label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.mobile-prompt-row__meta {
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+}
+
+.mobile-prompt-row__trailing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.mobile-prompt-row__chevron {
+  color: var(--text-tertiary);
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.mobile-prompt-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+/* Inline switch within a sheet row */
+
+.mobile-prompt-switch {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--border-default);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.mobile-prompt-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+
+.mobile-prompt-switch.on {
+  background: rgba(255, 179, 0, 0.35);
+}
+
+.mobile-prompt-switch.on::after {
+  transform: translateX(16px);
+  background: var(--amber);
+}
+
+/* Inline segmented control (e.g. backend selector) */
+
+.mobile-prompt-segment {
+  display: inline-flex;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.mobile-prompt-segment__btn {
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.mobile-prompt-segment__btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.mobile-prompt-segment__btn.active {
+  background: var(--cyan-dim);
+  color: var(--text-inverse);
+}
+
+.mobile-prompt-segment__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Settings sheet option rows (Model / Reasoning) */
+
+.mobile-prompt-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  min-height: 52px;
+  transition: background 0.1s ease;
+}
+
+.mobile-prompt-option:hover {
+  background: var(--bg-hover);
+}
+
+.mobile-prompt-option.active {
+  background: var(--cyan-glow);
+}
+
+.mobile-prompt-option__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-prompt-option__name {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.mobile-prompt-option.rainbow .mobile-prompt-option__name {
+  background: linear-gradient(
+    90deg,
+    #ff6b6b,
+    #ffa500,
+    #ffd93d,
+    #6bcb77,
+    #4d96ff,
+    #9b59b6,
+    #ff6b6b
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: rainbow-shift 3s linear infinite;
+  font-weight: 700;
+}
+
+.mobile-prompt-option__desc {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+.mobile-prompt-option__check {
+  margin-left: auto;
+  color: var(--cyan);
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.mobile-prompt-empty {
+  padding: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+}
+
+/* ============================================================
    Responsive: Tablet (<=900px)
    ============================================================ */
 
@@ -7097,6 +7498,14 @@ textarea {
   .pin-toggle-btn {
     min-width: 44px;
     min-height: 44px;
+  }
+
+  /* Swap desktop prompt toolbar for the compact mobile toolbar. */
+  .prompt-input-wrapper > .prompt-toolbar {
+    display: none;
+  }
+  .prompt-input-wrapper > .mobile-prompt-toolbar {
+    display: flex;
   }
 
   .main {
