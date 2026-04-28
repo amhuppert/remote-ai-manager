@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createStartupRegistrar } from "./instrumentation.node";
 
 describe("createStartupRegistrar", () => {
-  it("runs the graph workflow cutover before any startup state recovery", async () => {
+  it("runs the graph workflow cutover before rehydrating conversation actors", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
       runGraphWorkflowContextValidatorCutover: async () => {
@@ -20,10 +20,6 @@ describe("createStartupRegistrar", () => {
             archivedExecutionsCleared: 0,
           },
         };
-      },
-      recoverStaleConversations: async () => {
-        calls.push("recover");
-        return 0;
       },
       loadConversationManager: async () => ({
         rehydrateConversationActors: async () => {
@@ -51,6 +47,6 @@ describe("createStartupRegistrar", () => {
     await register();
 
     expect(calls[0]).toBe("cutover");
-    expect(calls.indexOf("cutover")).toBeLessThan(calls.indexOf("recover"));
+    expect(calls.indexOf("cutover")).toBeLessThan(calls.indexOf("rehydrate"));
   });
 });

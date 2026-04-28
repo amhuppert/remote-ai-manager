@@ -514,6 +514,30 @@ export function stopConversationActor(
 }
 
 /**
+ * Decide whether a persisted conversation snapshot is worth restoring into a
+ * live actor at startup.
+ *
+ * The only machine state that can meaningfully resume across a process
+ * boundary is "waiting for a permission answer" — i.e. `pendingQuestion` is
+ * set in context. A user can still answer that question after a restart, and
+ * the actor needs to be live to receive the event.
+ *
+ * Every other snapshot shape (idle, executing.*, acquiringResources, debug.*,
+ * externalExecuting, etc.) is non-resumable: the underlying invoked actor
+ * (SDK stream, subprocess) is dead, so the in-machine state is stale. A fresh
+ * actor created lazily by `ensureConversationActor` is functionally
+ * equivalent — `applySyncDerivedFields` will overwrite any stale
+ * `ConversationState.status` ("running"/"waiting_for_input") on the next
+ * machine event.
+ */
+export function shouldRehydrateSnapshot(snapshot: Snapshot<unknown>): boolean {
+  if (snapshot.status !== "active") return false;
+  const context = (snapshot as { context?: { pendingQuestion?: unknown } })
+    .context;
+  return context?.pendingQuestion != null;
+}
+
+/**
  * Rehydrate conversation actors from persisted snapshots on startup.
  * Returns the number of actors rehydrated.
  */
@@ -524,6 +548,7 @@ export async function rehydrateConversationActors(): Promise<number> {
 
   const state = await readState();
   let count = 0;
+  let skippedNonResumable = 0;
 
   for (const [projectPath, project] of Object.entries(state.projects)) {
     for (const [sessionName, session] of Object.entries(project.sessions)) {
@@ -538,6 +563,11 @@ export async function rehydrateConversationActors(): Promise<number> {
         );
 
         if (!snapshot) continue;
+
+        if (!shouldRehydrateSnapshot(snapshot)) {
+          skippedNonResumable++;
+          continue;
+        }
 
         const key = conversationRuntimeKey(
           projectPath,
@@ -617,8 +647,11 @@ export async function rehydrateConversationActors(): Promise<number> {
     }
   }
 
-  if (count > 0) {
-    logger.info("conversation-manager.rehydration_complete", { count });
+  if (count > 0 || skippedNonResumable > 0) {
+    logger.info("conversation-manager.rehydration_complete", {
+      count,
+      skippedNonResumable,
+    });
   }
 
   return count;

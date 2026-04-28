@@ -445,104 +445,6 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
     });
   }
 
-  /**
-   * Reset any conversations stuck in "running" or "waiting_for_input" back to "awaiting".
-   * Called on server startup — no prompt can survive a restart, so these are stale.
-   * Returns the number of conversations recovered.
-   */
-  async function recoverStaleConversations(): Promise<number> {
-    return mutateState("recoverStaleConversations", (state) => {
-      let recovered = 0;
-
-      for (const project of Object.values(state.projects)) {
-        for (const session of Object.values(project.sessions)) {
-          for (const conversation of session.conversations) {
-            if (
-              conversation.status === "running" ||
-              conversation.status === "waiting_for_input"
-            ) {
-              // Skip conversations with a persisted machine snapshot —
-              // rehydrateConversationActors() will restore these actors
-              if (conversation.machineSnapshot) {
-                logger.info("state.skip_snapshot_conversation", {
-                  sessionName: session.sessionName,
-                  conversationId: conversation.id,
-                  status: conversation.status,
-                });
-                continue;
-              }
-
-              logger.warn("state.recover_stale_conversation", {
-                sessionName: session.sessionName,
-                conversationId: conversation.id,
-                previousStatus: conversation.status,
-              });
-              conversation.status = "awaiting";
-              conversation.pendingQuestionId = null;
-              conversation.pendingQuestions = null;
-              recovered++;
-            }
-          }
-        }
-      }
-
-      if (recovered > 0) {
-        logger.info("state.recovery_complete", { recovered });
-      }
-
-      return recovered;
-    });
-  }
-
-  /**
-   * Recover conversations stuck in "running" that have no active SDK query.
-   * Unlike recoverStaleConversations (startup-only), this can be called anytime
-   * to detect orphaned conversations whose prompt execution was lost (e.g., HMR,
-   * silent crash, failed finally block). Uses a grace period to avoid racing
-   * with prompt startup.
-   */
-  async function recoverOrphanedConversations(
-    isQueryActive: (conversationId: string) => boolean,
-    gracePeriodMs: number = 120_000,
-  ): Promise<number> {
-    const now = Date.now();
-    return mutateState("recoverOrphanedConversations", (state) => {
-      let recovered = 0;
-
-      for (const project of Object.values(state.projects)) {
-        for (const session of Object.values(project.sessions)) {
-          for (const conversation of session.conversations) {
-            if (conversation.status !== "running") continue;
-
-            // If there's an active query, the conversation is legitimately running
-            if (isQueryActive(conversation.id)) continue;
-
-            // Grace period: don't recover conversations that just started
-            const lastActive = new Date(conversation.lastActivityAt).getTime();
-            if (now - lastActive < gracePeriodMs) continue;
-
-            logger.warn("state.recover_orphaned_conversation", {
-              sessionName: session.sessionName,
-              conversationId: conversation.id,
-              lastActivityAt: conversation.lastActivityAt,
-              staleDurationMs: now - lastActive,
-            });
-            conversation.status = "awaiting";
-            conversation.pendingQuestionId = null;
-            conversation.pendingQuestions = null;
-            recovered++;
-          }
-        }
-      }
-
-      if (recovered > 0) {
-        logger.info("state.orphaned_recovery_complete", { recovered });
-      }
-
-      return recovered;
-    });
-  }
-
   // ----------------------------------------------------------
   // Roadmap Item Mutations
   // ----------------------------------------------------------
@@ -725,8 +627,6 @@ export function createStateManager(deps: StateDeps = defaultStateDeps) {
     setSessionFinished,
     setProjectArchived,
     setProjectPinned,
-    recoverStaleConversations,
-    recoverOrphanedConversations,
     getRoadmapItems,
     createRoadmapItem,
     updateRoadmapItem,
@@ -760,10 +660,6 @@ export const setSessionTddEnabled = defaultManager.setSessionTddEnabled;
 export const setSessionFinished = defaultManager.setSessionFinished;
 export const setProjectArchived = defaultManager.setProjectArchived;
 export const setProjectPinned = defaultManager.setProjectPinned;
-export const recoverStaleConversations =
-  defaultManager.recoverStaleConversations;
-export const recoverOrphanedConversations =
-  defaultManager.recoverOrphanedConversations;
 export const getRoadmapItems = defaultManager.getRoadmapItems;
 export const createRoadmapItem = defaultManager.createRoadmapItem;
 export const updateRoadmapItem = defaultManager.updateRoadmapItem;

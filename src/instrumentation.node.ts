@@ -1,4 +1,3 @@
-import { recoverStaleConversations } from "./lib/state";
 import { startMergeDetection } from "./lib/merge-detection";
 import { initialize as initNotificationDb } from "./lib/notification-db";
 import { setConfigReader } from "./lib/push-dispatcher";
@@ -11,7 +10,6 @@ const logger = createLogger("startup");
 
 export interface StartupDeps {
   runGraphWorkflowContextValidatorCutover: typeof runGraphWorkflowContextValidatorCutover;
-  recoverStaleConversations: typeof recoverStaleConversations;
   loadConversationManager(): Promise<{
     rehydrateConversationActors(): Promise<number>;
   }>;
@@ -23,7 +21,6 @@ export interface StartupDeps {
 
 const defaultStartupDeps: StartupDeps = {
   runGraphWorkflowContextValidatorCutover,
-  recoverStaleConversations,
   loadConversationManager: () => import("./lib/workflows/conversation/manager"),
   initNotificationDb,
   setConfigReader,
@@ -48,17 +45,6 @@ export function createStartupRegistrar(
       });
     } catch (err) {
       logger.error("startup.graph_workflow_cutover_failed", {
-        error: getErrorMessage(err),
-      });
-    }
-
-    try {
-      const recovered = await deps.recoverStaleConversations();
-      if (recovered > 0) {
-        logger.info("startup.recovered_stale_conversations", { recovered });
-      }
-    } catch (err) {
-      logger.error("startup.recovery_failed", {
         error: getErrorMessage(err),
       });
     }

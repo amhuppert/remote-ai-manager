@@ -20,7 +20,9 @@ import {
   _resetMachineFactoryForTesting,
   _resetForTesting,
   applySyncDerivedFields,
+  shouldRehydrateSnapshot,
 } from "./manager";
+import type { Snapshot } from "xstate";
 import { _resetForTesting as resetRuntime } from "./runtime-state";
 
 // Infrastructure mock — createLogger is called at module level
@@ -412,6 +414,76 @@ describe("conversation manager", () => {
       expect(conv.totalTurns).toBe(5);
       expect(conv.status).toBe("awaiting");
       expect(conv.promptCount).toBe(3);
+    });
+  });
+
+  describe("shouldRehydrateSnapshot", () => {
+    function snap(partial: {
+      status?: string;
+      value?: unknown;
+      context?: { pendingQuestion?: unknown };
+    }): Snapshot<unknown> {
+      return partial as unknown as Snapshot<unknown>;
+    }
+
+    it("rehydrates active snapshots with a pending question", () => {
+      expect(
+        shouldRehydrateSnapshot(
+          snap({
+            status: "active",
+            value: "waiting_for_input",
+            context: {
+              pendingQuestion: {
+                questionId: "q1",
+                questions: [{ question: "?", options: [] }],
+              },
+            },
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("skips terminal snapshots regardless of pendingQuestion", () => {
+      expect(
+        shouldRehydrateSnapshot(
+          snap({
+            status: "done",
+            value: "idle",
+            context: {
+              pendingQuestion: {
+                questionId: "q1",
+                questions: [{ question: "?", options: [] }],
+              },
+            },
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("skips active snapshots without a pending question", () => {
+      expect(
+        shouldRehydrateSnapshot(
+          snap({
+            status: "active",
+            value: "idle",
+            context: { pendingQuestion: null },
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        shouldRehydrateSnapshot(
+          snap({
+            status: "active",
+            value: { executing: "running" },
+            context: { pendingQuestion: null },
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        shouldRehydrateSnapshot(
+          snap({ status: "active", value: "acquiringResources", context: {} }),
+        ),
+      ).toBe(false);
     });
   });
 });
