@@ -315,6 +315,8 @@ export interface PromptStreamResult {
   contextTokens: number | null;
   contextWindowMax: number | null;
   structuredOutput?: unknown;
+  aborted?: boolean;
+  error?: string | null;
 }
 
 /**
@@ -551,13 +553,16 @@ function readContextFromActor(
     | { contextTokens?: number | null; contextWindowMax?: number | null }
     | undefined;
   const lastResult = ctx?.lastResult as
-    | { structuredOutput?: unknown }
+    | { structuredOutput?: unknown; aborted?: boolean; error?: string | null }
     | undefined;
+  const lastError = typeof ctx?.lastError === "string" ? ctx.lastError : null;
   return {
     conversationId,
     contextTokens: totals?.contextTokens ?? null,
     contextWindowMax: totals?.contextWindowMax ?? null,
     structuredOutput: lastResult?.structuredOutput,
+    aborted: lastResult?.aborted ?? false,
+    error: lastResult?.error ?? lastError,
   };
 }
 

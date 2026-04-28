@@ -190,7 +190,7 @@ describe("GraphWorkflowPanel", () => {
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
   });
 
-  it("shows Resume and Clear buttons when execution is aborted", () => {
+  it("shows only Clear button when execution is aborted", () => {
     render(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({
@@ -203,9 +203,10 @@ describe("GraphWorkflowPanel", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Abort" })).toBeNull();
   });
 });
 

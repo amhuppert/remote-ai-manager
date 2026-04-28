@@ -848,7 +848,7 @@ describe("graph workflow manager", () => {
     });
   });
 
-  it("resumes an aborted execution, clearing abort reason and preserving interrupted tasks", async () => {
+  it("rejects resuming an aborted execution", async () => {
     const repository = createRepository(
       createWorkflowExecution({
         status: "aborted",
@@ -896,19 +896,9 @@ describe("graph workflow manager", () => {
       },
     });
 
-    const execution = await manager.resume("/repo", "session-1");
-
-    expect(execution.status).toBe("running");
-    expect(execution.completedAt).toBeNull();
-    expect(execution.haltReason).toBeNull();
-    expect(execution.taskStates["task-plan-1"]?.status).toBe("interrupted");
-    expect(execution.machineSnapshot).toEqual({
-      schemaVersion: 1,
-      lifecycleStatus: "running",
-      activeContextId: "context-plan",
-      recoveryMode: "interrupted_task",
-      hasLiveIteration: false,
-    });
+    await expect(manager.resume("/repo", "session-1")).rejects.toThrow(
+      "Only paused or halted graph workflow executions can be resumed",
+    );
   });
 
   it("rejects resuming a completed execution", async () => {

@@ -385,14 +385,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       projectPath,
       sessionName,
     );
-    const resumableStatuses: GraphWorkflowStatus[] = [
-      "paused",
-      "halted",
-      "aborted",
-    ];
+    const resumableStatuses: GraphWorkflowStatus[] = ["paused", "halted"];
     if (!resumableStatuses.includes(execution.status)) {
       throw new Error(
-        "Only paused, halted, or aborted graph workflow executions can be resumed",
+        "Only paused or halted graph workflow executions can be resumed",
       );
     }
 

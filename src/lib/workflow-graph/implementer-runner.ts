@@ -105,6 +105,27 @@ export function createGraphWorkflowImplementerRunner(
       },
     );
 
+    if (result.error) {
+      logger.error("graph-workflow.implementer.turn_failed", {
+        sessionName: input.session.sessionName,
+        conversationId: input.conversationId,
+        contextId: input.contextId,
+        backend: input.backend,
+        error: result.error,
+      });
+      throw new Error(`SDK error: ${result.error}`);
+    }
+
+    if (result.aborted) {
+      logger.warn("graph-workflow.implementer.turn_aborted", {
+        sessionName: input.session.sessionName,
+        conversationId: input.conversationId,
+        contextId: input.contextId,
+        backend: input.backend,
+      });
+      throw new Error("Prompt execution was aborted");
+    }
+
     logger.info("graph-workflow.implementer.turn_completed", {
       sessionName: input.session.sessionName,
       conversationId: input.conversationId,

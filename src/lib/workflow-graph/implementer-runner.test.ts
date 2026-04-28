@@ -271,4 +271,36 @@ describe("graph workflow implementer runner", () => {
       },
     });
   });
+
+  it("throws when prompt execution returns an SDK error", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+      error: "Claude API overloaded",
+      aborted: false,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    await expect(
+      runner.runIteration({
+        projectPath: "/repo",
+        session: makeSession(),
+        prompt: "Implement feature",
+        conversationId: "conversation-1",
+        contextId: "context-plan",
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "high",
+        toolServer: { servers: [] },
+      }),
+    ).rejects.toThrow("SDK error: Claude API overloaded");
+
+    expect(getConversation).not.toHaveBeenCalled();
+  });
 });

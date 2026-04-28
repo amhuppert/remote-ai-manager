@@ -535,6 +535,40 @@ describe("executePromptStream (facade)", () => {
     expect(result.contextWindowMax).toBe(200_000);
   });
 
+  it("returns prompt errors from actor snapshot", async () => {
+    mockActor.getSnapshot
+      .mockReturnValueOnce({
+        value: "idle",
+        status: "active" as const,
+        context: {},
+      })
+      .mockReturnValue({
+        value: "idle",
+        status: "active" as const,
+        context: {
+          lastResult: {
+            error: "Claude API overloaded",
+            aborted: false,
+          },
+        },
+      });
+
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    const result = await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(result.error).toBe("Claude API overloaded");
+    expect(result.aborted).toBe(false);
+  });
+
   it("passes images in the SUBMIT_PROMPT event", async () => {
     deps = createTestDeps();
     const executor = createPromptExecutor(deps);

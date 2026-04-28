@@ -36,7 +36,7 @@ function getFirstIncompleteTaskTitle(
 }
 
 const terminalStatuses = new Set(["completed", "halted", "aborted"]);
-const resumableStatuses = new Set(["paused", "halted", "aborted"]);
+const resumableStatuses = new Set(["paused", "halted"]);
 
 export default function ExecutionStatusBar({
   execution,
