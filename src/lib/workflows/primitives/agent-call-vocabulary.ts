@@ -41,7 +41,10 @@ const baseRequestFields = {
   tooling: portableMcpConfigInputSchema.optional(),
   outputSchema: outputSchemaInputSchema.optional(),
   writeCapability: laneWriteCapabilitySchema.optional(),
-  timeoutMs: z.number().int().positive().optional(),
+  // 0 is the project-wide "no timeout" sentinel; positive values cap the
+  // turn. Both task runners (`claude/task-runner`, `codex/task-runner`) and
+  // the conversation safety-net timer skip their timeout when this is 0.
+  timeoutMs: z.number().int().nonnegative().optional(),
 } as const;
 
 export const agentCallRequestSchema = z.discriminatedUnion("kind", [

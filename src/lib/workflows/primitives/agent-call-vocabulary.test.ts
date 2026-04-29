@@ -89,6 +89,30 @@ describe("agentCallRequestSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // timeoutMs=0 is the project-wide "no timeout" sentinel — the task runners
+  // (claude/codex) explicitly skip their timer when timeoutMs===0, and
+  // resolveBackendTimeoutMs returns 0 when codex.timeout is null. The
+  // request schema must therefore admit 0 alongside positive values.
+  it("accepts timeoutMs: 0 as the no-timeout sentinel", () => {
+    const result = agentCallRequestSchema.safeParse({
+      kind: "task_run",
+      backend: "codex",
+      prompt: "validate context",
+      timeoutMs: 0,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects negative timeoutMs", () => {
+    const result = agentCallRequestSchema.safeParse({
+      kind: "task_run",
+      backend: "codex",
+      prompt: "validate context",
+      timeoutMs: -1,
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("laneRefSchema and laneWriteCapabilitySchema", () => {
