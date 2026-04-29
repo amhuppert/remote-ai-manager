@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createActor, fromPromise, type AnyActorRef } from "xstate";
 import { conversationMachine } from "./machine";
+import {
+  debugHypothesisOutputSchema,
+  debugEvidenceAnalysisSchema,
+  debugFixResultSchema,
+  debugCleanupResultSchema,
+} from "./debug-schemas";
 import type {
   ConversationInput,
   PrepareTurnInput,
@@ -980,6 +986,105 @@ describe("conversationMachine", () => {
       expect(actor.getSnapshot().value).toEqual({
         debug: "analyzingEvidence",
       });
+    });
+
+    it("wires the per-phase debug-schemas.ts outputFormat schema on every executePrompt invocation", async () => {
+      const capturedSchemas: Array<unknown> = [];
+      let callCount = 0;
+
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async ({ input }) => {
+          capturedSchemas.push(input.outputFormat?.schema);
+          callCount += 1;
+          if (callCount === 1) {
+            return successResult({
+              structuredOutput: {
+                hypotheses: [
+                  { id: "H1", description: "A", instrumentationPlan: "Log" },
+                  { id: "H2", description: "B", instrumentationPlan: "Log" },
+                  { id: "H3", description: "C", instrumentationPlan: "Log" },
+                ],
+                reproductionSteps: ["Step 1", "Step 2"],
+              },
+            });
+          }
+          if (callCount === 2) {
+            return successResult({
+              structuredOutput: {
+                supportedHypotheses: ["H1"],
+                refutedHypotheses: [],
+                inconclusiveHypotheses: ["H2", "H3"],
+                recommendedNextStep: "fix",
+                evidenceSummary: "H1 is the cause.",
+              },
+            });
+          }
+          if (callCount === 3) {
+            return successResult({
+              structuredOutput: {
+                fixSummary: "Fixed H1.",
+                verificationSteps: ["Run test", "Inspect logs"],
+              },
+            });
+          }
+          return successResult({
+            structuredOutput: {
+              removedInstrumentation: true,
+              filesModified: ["src/index.ts"],
+              grepVerificationPassed: true,
+              manifestDeleted: true,
+              notes: "Cleanup complete.",
+            },
+          });
+        },
+      );
+
+      const machine = makeTestMachine({ executePrompt });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "ENTER_DEBUG_MODE",
+        logFilePath: "/tmp/.debug/logs.jsonl",
+      });
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hypothesize",
+        streamId: "s1",
+      });
+      await waitForState(actor, "awaitingReproduction");
+
+      actor.send({ type: "MARK_REPRODUCED" });
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Analyze evidence",
+        streamId: "s2",
+      });
+      await waitForState(actor, "fixing");
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Apply fix",
+        streamId: "s3",
+      });
+      await waitForState(actor, "awaitingVerification");
+
+      actor.send({ type: "MARK_FIX_VERIFIED" });
+      await waitForState(actor, "cleanupInstrumentation");
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Cleanup",
+        streamId: "s4",
+      });
+      await waitForState(actor, "idle");
+
+      expect(capturedSchemas).toHaveLength(4);
+      expect(capturedSchemas[0]).toBe(debugHypothesisOutputSchema);
+      expect(capturedSchemas[1]).toBe(debugEvidenceAnalysisSchema);
+      expect(capturedSchemas[2]).toBe(debugFixResultSchema);
+      expect(capturedSchemas[3]).toBe(debugCleanupResultSchema);
     });
   });
 

@@ -48,6 +48,7 @@ const buildWorkflowDraftPortableMcpMock = vi.fn(() => ({
 
 vi.mock("@/lib/agent-backends/registry", () => ({
   getTaskRunner: vi.fn(() => ({
+    backend: "claude",
     run: runMock,
   })),
 }));

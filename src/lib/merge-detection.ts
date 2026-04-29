@@ -17,10 +17,8 @@ import {
 } from "./git-operations";
 import { stopAllForSession as defaultStopAllForSession } from "./dev-server-registry";
 import { retargetOrphanedChildren as defaultRetargetOrphanedChildren } from "./sessions";
-import {
-  broadcast as defaultBroadcast,
-  type BroadcastFn,
-} from "./sse-broadcaster";
+import type { BroadcastFn } from "./sse-broadcaster";
+import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
 import { createLogger } from "./logging";
 import { getErrorMessage } from "@/lib/errors";
 import type { ManagerState, SessionFinishedEvent } from "@/types";
@@ -75,6 +73,10 @@ export interface MergeDetectionDeps {
   broadcast: BroadcastFn;
 }
 
+const defaultMergeDetectionBroadcast: BroadcastFn = (event) => {
+  publishSessionStatus(event);
+};
+
 const defaultDeps: MergeDetectionDeps = {
   readState: defaultReadState,
   readConfig: defaultReadConfig,
@@ -83,7 +85,7 @@ const defaultDeps: MergeDetectionDeps = {
   setSessionFinished: defaultSetSessionFinished,
   retargetOrphanedChildren: defaultRetargetOrphanedChildren,
   stopAllForSession: defaultStopAllForSession,
-  broadcast: defaultBroadcast,
+  broadcast: defaultMergeDetectionBroadcast,
 };
 
 // ============================================================

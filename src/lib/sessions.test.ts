@@ -7,6 +7,57 @@ import {
   createSessionService,
   type SessionDeps,
 } from "./sessions";
+import type {
+  ArtifactRegistry,
+  ArtifactRecord,
+  ArtifactWriteRequest,
+  ArtifactWriteOptionalRequest,
+  ArtifactRegisterRequest,
+  ArtifactWriteOutcome,
+} from "./workflows/primitives/artifact-registry";
+
+interface CapturedRegistryCall {
+  type: "write" | "writeOptional" | "register";
+  request:
+    | ArtifactWriteRequest
+    | ArtifactWriteOptionalRequest
+    | ArtifactRegisterRequest;
+}
+
+function makeRecordingArtifactRegistry(): {
+  registry: ArtifactRegistry;
+  calls: CapturedRegistryCall[];
+} {
+  const calls: CapturedRegistryCall[] = [];
+  const fakeRecord = (
+    kind: ArtifactWriteRequest["kind"],
+    relativePath: string,
+  ): ArtifactRecord => ({
+    artifactId: `art-${calls.length}`,
+    kind,
+    relativePath,
+    audience: "user_facing",
+    source: { createdAt: "2026-04-28T00:00:00.000Z" },
+  });
+  const registry: ArtifactRegistry = {
+    write: async (request) => {
+      calls.push({ type: "write", request });
+      return fakeRecord(request.kind, request.relativePath);
+    },
+    writeOptional: async (request): Promise<ArtifactWriteOutcome> => {
+      calls.push({ type: "writeOptional", request });
+      return {
+        status: "registered",
+        record: fakeRecord(request.kind, request.relativePath),
+      };
+    },
+    register: async (request) => {
+      calls.push({ type: "register", request });
+      return fakeRecord(request.kind, request.relativePath);
+    },
+  };
+  return { registry, calls };
+}
 
 // ---------------------------------------------------------------------------
 // Test dep factory – replaces all vi.mock() calls
@@ -22,11 +73,20 @@ function createTestDeps() {
     .mockResolvedValue({ stdout: "", stderr: "" });
   const queryMock = vi.fn();
 
+  const recording = makeRecordingArtifactRegistry();
+  const factoryArgs: Array<{ projectPath: string; sessionName: string }> = [];
+  const createSessionArtifactRegistryMock = vi
+    .fn()
+    .mockImplementation(
+      (input: { projectPath: string; sessionName: string }) => {
+        factoryArgs.push(input);
+        return recording.registry;
+      },
+    );
+
   const deps: SessionDeps = {
     existsSync: existsSyncMock as unknown as SessionDeps["existsSync"],
-    mkdir: vi.fn().mockResolvedValue(undefined),
     rm: vi.fn().mockResolvedValue(undefined),
-    writeFile: vi.fn().mockResolvedValue(undefined),
     execFileAsync: execFileAsyncMock as unknown as SessionDeps["execFileAsync"],
     gitClient: { git: gitMock } as unknown as GitClient,
     readState: readStateMock,
@@ -52,6 +112,7 @@ function createTestDeps() {
       .fn()
       .mockReturnValue({}) as unknown as SessionDeps["buildChildEnv"],
     query: queryMock as unknown as SessionDeps["query"],
+    createSessionArtifactRegistry: createSessionArtifactRegistryMock,
   };
 
   return {
@@ -62,6 +123,8 @@ function createTestDeps() {
     existsSyncMock,
     execFileAsyncMock,
     queryMock,
+    artifactRegistryCalls: recording.calls,
+    artifactRegistryFactoryArgs: factoryArgs,
   };
 }
 
@@ -154,6 +217,11 @@ let writeStateMock: Mock;
 let existsSyncMock: Mock;
 let execFileAsyncMock: Mock;
 let queryMock: Mock;
+let artifactRegistryCalls: CapturedRegistryCall[];
+let artifactRegistryFactoryArgs: Array<{
+  projectPath: string;
+  sessionName: string;
+}>;
 let service: ReturnType<typeof createSessionService>;
 
 /** Make gitMock resolve with { stdout, stderr } */
@@ -193,6 +261,8 @@ beforeEach(() => {
   existsSyncMock = testSetup.existsSyncMock;
   execFileAsyncMock = testSetup.execFileAsyncMock;
   queryMock = testSetup.queryMock;
+  artifactRegistryCalls = testSetup.artifactRegistryCalls;
+  artifactRegistryFactoryArgs = testSetup.artifactRegistryFactoryArgs;
   service = createSessionService(deps);
 });
 
@@ -458,7 +528,7 @@ describe("createSessionFocus", () => {
     );
   });
 
-  it("writes memory-bank/focus.md with objective", async () => {
+  it("writes memory-bank/focus.md with objective via the artifact registry", async () => {
     queryMock.mockReturnValue(mockQueryResponse("Auth Feature"));
     mockGitSuccess();
     const session = await service.createSessionFocus(
@@ -466,15 +536,17 @@ describe("createSessionFocus", () => {
       "Add user authentication",
     );
 
-    expect(deps.mkdir).toHaveBeenCalledWith(
-      `${session.worktreePath}/memory-bank`,
-      { recursive: true },
-    );
-    expect(deps.writeFile).toHaveBeenCalledWith(
-      `${session.worktreePath}/memory-bank/focus.md`,
+    expect(artifactRegistryCalls).toHaveLength(1);
+    const call = artifactRegistryCalls[0]!;
+    expect(call.type).toBe("write");
+    const req = call.request as ArtifactWriteRequest;
+    expect(req.kind).toBe("focus_memory");
+    expect(req.worktreePath).toBe(session.worktreePath);
+    expect(req.relativePath).toBe("memory-bank/focus.md");
+    expect(req.contents).toBe(
       "# Session Focus\n\n## Objective\n\nAdd user authentication\n\n> This focus document will be enriched after objective analysis.\n",
-      "utf-8",
     );
+    expect(req.required).toBe(true);
   });
 
   it("persists session to state via writeState", async () => {
@@ -758,12 +830,7 @@ describe("createSessionFast", () => {
     mockGitSuccess(); // git worktree add
     await service.createSessionFast("/projects/repo", "Quick Fix");
 
-    const writeFileMock = deps.writeFile as ReturnType<typeof vi.fn>;
-    const focusWrites = writeFileMock.mock.calls.filter(
-      (call: unknown[]) =>
-        typeof call[0] === "string" && call[0].includes("focus.md"),
-    );
-    expect(focusWrites).toHaveLength(0);
+    expect(artifactRegistryCalls).toHaveLength(0);
   });
 
   it("throws for empty session name", async () => {
@@ -1082,12 +1149,7 @@ describe("provisionSession — optimistic mode gets fast-mode treatment", () => 
       objective: "Fix the bug in login",
     });
 
-    const writeFileMock = deps.writeFile as ReturnType<typeof vi.fn>;
-    const focusWrites = writeFileMock.mock.calls.filter(
-      (call: unknown[]) =>
-        typeof call[0] === "string" && call[0].includes("focus.md"),
-    );
-    expect(focusWrites).toHaveLength(0);
+    expect(artifactRegistryCalls).toHaveLength(0);
   });
 
   it("sets conversation role to null for optimistic sessions (no initialization)", async () => {
@@ -1104,7 +1166,7 @@ describe("provisionSession — optimistic mode gets fast-mode treatment", () => 
     expect(session.conversations[0]!.role).toBeNull();
   });
 
-  it("still writes focus-mode content for focus sessions", async () => {
+  it("still writes focus-mode content for focus sessions (via the artifact registry)", async () => {
     mockGitSuccess();
     const session = await service.provisionSession(
       "/projects/repo",
@@ -1115,10 +1177,15 @@ describe("provisionSession — optimistic mode gets fast-mode treatment", () => 
       },
     );
 
-    expect(deps.writeFile).toHaveBeenCalledWith(
-      `${session.worktreePath}/memory-bank/focus.md`,
+    expect(artifactRegistryCalls).toHaveLength(1);
+    const call = artifactRegistryCalls[0]!;
+    expect(call.type).toBe("write");
+    const req = call.request as ArtifactWriteRequest;
+    expect(req.kind).toBe("focus_memory");
+    expect(req.worktreePath).toBe(session.worktreePath);
+    expect(req.relativePath).toBe("memory-bank/focus.md");
+    expect(req.contents).toBe(
       "# Session Focus\n\n## Objective\n\nResearch the auth system\n\n> This focus document will be enriched after objective analysis.\n",
-      "utf-8",
     );
   });
 
@@ -1656,5 +1723,104 @@ describe("deleteSession — orphan retargeting", () => {
     const retargetIdx = mutateLabels.indexOf("retargetOrphanedChildren");
     const deleteIdx = mutateLabels.indexOf("deleteSession");
     expect(retargetIdx).toBeLessThan(deleteIdx);
+  });
+});
+
+// ===========================================================================
+// Task 6.1 — Focus-mode init routes through the ArtifactRegistry primitive
+// ===========================================================================
+
+describe("provisionSession — focus.md routes through ArtifactRegistry primitive", () => {
+  it("focus mode writes focus.md via registry.write with kind=focus_memory and canonical relativePath", async () => {
+    mockGitSuccess();
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "primitive-focus",
+      {
+        mode: "focus",
+        objective: "Research the auth system",
+      },
+    );
+
+    // Factory was called with project + session identity (so production wiring
+    // resolves the right reference-document target).
+    expect(artifactRegistryFactoryArgs).toEqual([
+      { projectPath: "/projects/repo", sessionName: "primitive-focus" },
+    ]);
+
+    // Exactly one write call for the focus.md placeholder.
+    expect(artifactRegistryCalls).toHaveLength(1);
+    const call = artifactRegistryCalls[0]!;
+    expect(call.type).toBe("write");
+
+    const req = call.request as ArtifactWriteRequest;
+    expect(req.kind).toBe("focus_memory");
+    expect(req.worktreePath).toBe(session.worktreePath);
+    expect(req.relativePath).toBe("memory-bank/focus.md");
+    expect(req.contents).toBe(
+      "# Session Focus\n\n## Objective\n\nResearch the auth system\n\n> This focus document will be enriched after objective analysis.\n",
+    );
+    expect(req.required).toBe(true);
+    expect(req.audience).toBe("user_facing");
+    expect(req.description?.length ?? 0).toBeGreaterThan(0);
+    expect(req.source.workflowId).toBeTruthy();
+  });
+
+  it("focus-mode session creation only invokes the registry (no direct fs calls for focus.md)", async () => {
+    mockGitSuccess();
+    await service.provisionSession("/projects/repo", "primitive-focus-no-fs", {
+      mode: "focus",
+      objective: "Investigate caching",
+    });
+
+    expect(artifactRegistryCalls).toHaveLength(1);
+    expect(artifactRegistryCalls[0]!.type).toBe("write");
+    expect(
+      (artifactRegistryCalls[0]!.request as ArtifactWriteRequest).kind,
+    ).toBe("focus_memory");
+  });
+
+  it("does not call the registry for fast-mode session creation", async () => {
+    mockGitSuccess();
+    await service.provisionSession("/projects/repo", "fast-no-registry", {
+      mode: "fast",
+      objective: null,
+    });
+
+    expect(artifactRegistryCalls).toHaveLength(0);
+  });
+
+  it("does not call the registry for optimistic-mode session creation", async () => {
+    mockGitSuccess();
+    await service.provisionSession("/projects/repo", "opt-no-registry", {
+      mode: "optimistic",
+      objective: "Fix the login flow",
+    });
+
+    expect(artifactRegistryCalls).toHaveLength(0);
+  });
+
+  it("registry write failure halts focus-mode session creation and rolls back state", async () => {
+    mockGitSuccess();
+    // Override the registry to throw on write.
+    (deps.createSessionArtifactRegistry as Mock).mockImplementation(() => ({
+      write: vi.fn().mockRejectedValue(new Error("disk full")),
+      writeOptional: vi.fn(),
+      register: vi.fn(),
+    }));
+
+    await expect(
+      service.provisionSession("/projects/repo", "halt-on-fail", {
+        mode: "focus",
+        objective: "x",
+      }),
+    ).rejects.toThrow("disk full");
+
+    // Cleanup ran: state rollback was attempted (session removed from state).
+    const mutateStateMock = deps.mutateState as ReturnType<typeof vi.fn>;
+    const rollbackLabels = mutateStateMock.mock.calls
+      .map((call) => call[0])
+      .filter((label) => label === "rollbackSession");
+    expect(rollbackLabels.length).toBeGreaterThan(0);
   });
 });

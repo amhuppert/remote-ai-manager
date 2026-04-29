@@ -11,6 +11,7 @@ import {
   debugLogKeys,
   mcpConfigKeys,
   mcpToolsKeys,
+  collaborationKeys,
 } from "@/lib/query-keys";
 import { computeMcpConfigInvalidations } from "@/lib/mcp/sse-invalidation";
 import {
@@ -27,6 +28,7 @@ import {
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   mcpConfigUpdatedEventSchema,
   mcpToolsUpdatedEventSchema,
+  scopedStatusEventSchema,
 } from "@/lib/schemas";
 import {
   useAddOrUpdateJob,
@@ -293,6 +295,40 @@ export default function NotificationListener(): null {
           parsed.data.projectName,
           parsed.data.sessionName,
         );
+      } catch {
+        // best-effort
+      }
+    });
+
+    // --- Scoped Status SSE events (StatusBus → SSE bridge) ---
+    // Generic envelope for primitive-native workflows (Collaboration Mode and
+    // any future workflow that publishes through `StatusBus`). Dispatch by
+    // `scope`; unknown scopes are ignored on the client so feature rollouts
+    // can ship a new scope without coordinating a listener change.
+    es.addEventListener("scoped-status", (event) => {
+      try {
+        const parsed = scopedStatusEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        const data = parsed.data;
+        const sessionDetail = sessionKeys.detail(
+          data.projectName,
+          data.sessionName,
+        );
+        if (data.scope === "collaboration") {
+          void queryClient.invalidateQueries({
+            queryKey: collaborationKeys.all,
+          });
+          void queryClient.invalidateQueries({ queryKey: sessionDetail });
+          void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+          return;
+        }
+        if (data.scope === "workflow") {
+          void queryClient.invalidateQueries({ queryKey: sessionDetail });
+          void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+          return;
+        }
       } catch {
         // best-effort
       }

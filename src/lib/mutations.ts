@@ -15,6 +15,7 @@ import {
   notificationKeys,
   mcpConfigKeys,
   mcpToolsKeys,
+  collaborationKeys,
 } from "@/lib/query-keys";
 import { useAddOrUpdateJob } from "@/stores/notification.store";
 import {
@@ -33,6 +34,8 @@ import {
   roadmapItemMutationResponseSchema,
   workflowDefinitionMutationResponseSchema,
   workflowGeneratedDraftResponseSchema,
+  collaborationStartResponseSchema,
+  collaborationResumeResponseSchema,
 } from "@/lib/api-client";
 import type {
   GlobalConfig,
@@ -1556,6 +1559,80 @@ export function useRefreshMcpToolsMutation(scope: McpMutationScope) {
       for (const key of scopedInvalidations(scope)) {
         void queryClient.invalidateQueries({ queryKey: key });
       }
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Collaboration Mutations
+// ---------------------------------------------------------------------------
+
+export function useCollaborationStartMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: {
+      brief: string;
+      maxIterations: number;
+      scribeBackend: "claude" | "codex";
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration`,
+        "collaboration-start",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(params),
+        },
+        collaborationStartResponseSchema,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: collaborationKeys.all,
+      });
+    },
+  });
+}
+
+export function useCollaborationResumeMutation(
+  projectName: string,
+  sessionName: string,
+  workflowId: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: {
+      resumeToken: string;
+      userAnswers?: Record<string, string>;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(workflowId)}/resume`,
+        "collaboration-resume",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            resumeToken: params.resumeToken,
+            userAnswers: params.userAnswers ?? {},
+          }),
+        },
+        collaborationResumeResponseSchema,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: collaborationKeys.all,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: collaborationKeys.detail(
+          projectName,
+          sessionName,
+          workflowId,
+        ),
+      });
     },
   });
 }

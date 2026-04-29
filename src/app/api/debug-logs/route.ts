@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readState } from "@/lib/state";
 import { debugLogEntrySchema } from "@/lib/schemas";
 import { appendDebugLogEntry, getDebugLogStats } from "@/lib/debug-log";
-import { broadcast } from "@/lib/sse-broadcaster";
+import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
 import type { ConversationState, SessionState } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -82,8 +82,7 @@ export async function POST(request: Request) {
 
   if (written > 0) {
     const stats = getDebugLogStats(logFilePath);
-    broadcast({
-      type: "debug-log-received",
+    getDefaultDebugAdapter().publishDebugLogReceived({
       projectName: ctx.projectName,
       sessionName: ctx.sessionName,
       conversationId,

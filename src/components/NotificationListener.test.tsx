@@ -4,7 +4,12 @@ import { render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import NotificationListener from "./NotificationListener";
-import { mcpConfigKeys, mcpToolsKeys } from "@/lib/query-keys";
+import {
+  collaborationKeys,
+  mcpConfigKeys,
+  mcpToolsKeys,
+  sessionKeys,
+} from "@/lib/query-keys";
 
 vi.mock("@/stores/notification.store", () => ({
   useAddOrUpdateJob: () => vi.fn(),
@@ -104,6 +109,106 @@ describe("NotificationListener", () => {
     );
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: mcpToolsKeys.inventory("proj", "sess", "conv-1", "calc"),
+    });
+  });
+
+  it("invalidates collaboration + session queries on scoped-status events with scope=collaboration", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) {
+      throw new Error("expected EventSource instance");
+    }
+
+    es.emit("scoped-status", {
+      type: "scoped-status",
+      scope: "collaboration",
+      scopeId: "wf-collab-1",
+      status: "paused",
+      timestamp: "2026-04-28T00:00:00.000Z",
+      projectName: "proj",
+      sessionName: "sess",
+      payload: { kind: "paused_for_user_input" },
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: collaborationKeys.all,
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: sessionKeys.all,
+    });
+  });
+
+  it("invalidates only session queries on scoped-status events with scope=workflow", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) {
+      throw new Error("expected EventSource instance");
+    }
+
+    es.emit("scoped-status", {
+      type: "scoped-status",
+      scope: "workflow",
+      scopeId: "wf-generic-7",
+      status: "completed",
+      timestamp: "2026-04-28T00:00:00.000Z",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: sessionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: sessionKeys.all,
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: collaborationKeys.all,
+    });
+  });
+
+  it("ignores scoped-status events whose scope the client does not recognize (forward-compat)", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) {
+      throw new Error("expected EventSource instance");
+    }
+
+    invalidateQueries.mockClear();
+
+    es.emit("scoped-status", {
+      type: "scoped-status",
+      scope: "future-scope-not-yet-handled",
+      scopeId: "x-1",
+      status: "running",
+      timestamp: "2026-04-28T00:00:00.000Z",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: collaborationKeys.all,
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
     });
   });
 });

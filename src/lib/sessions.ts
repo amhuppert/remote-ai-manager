@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -24,6 +24,8 @@ import { getErrorMessage } from "@/lib/errors";
 import { getProjectDisplayName } from "./project-resolver";
 import { executeOptimisticWorkflow } from "./optimistic";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
+import type { ArtifactRegistry } from "./workflows/primitives/artifact-registry";
+import { createSessionArtifactRegistryForProduction } from "./workflows/primitives/default-session-artifact-registry";
 
 const logger = createLogger("sessions");
 
@@ -69,9 +71,7 @@ export type MergeMainResult =
 
 export interface SessionDeps {
   existsSync: typeof existsSync;
-  mkdir: typeof mkdir;
   rm: typeof rm;
-  writeFile: typeof writeFile;
   execFileAsync: typeof execFileAsync;
   gitClient: GitClient;
   readState: typeof readState;
@@ -84,13 +84,15 @@ export interface SessionDeps {
   executeOptimisticWorkflow: typeof executeOptimisticWorkflow;
   buildChildEnv: typeof buildChildEnv;
   query: typeof query;
+  createSessionArtifactRegistry(input: {
+    projectPath: string;
+    sessionName: string;
+  }): ArtifactRegistry;
 }
 
 export const defaultSessionDeps: SessionDeps = {
   existsSync,
-  mkdir,
   rm,
-  writeFile,
   execFileAsync,
   gitClient: defaultGitClient,
   readState,
@@ -103,6 +105,7 @@ export const defaultSessionDeps: SessionDeps = {
   executeOptimisticWorkflow,
   buildChildEnv,
   query,
+  createSessionArtifactRegistry: createSessionArtifactRegistryForProduction,
 };
 
 // ============================================================
@@ -116,9 +119,7 @@ export const defaultSessionDeps: SessionDeps = {
 export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   const {
     existsSync,
-    mkdir,
     rm,
-    writeFile,
     execFileAsync,
     gitClient,
     readState,
@@ -131,6 +132,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     executeOptimisticWorkflow,
     buildChildEnv,
     query,
+    createSessionArtifactRegistry,
   } = deps;
 
   /** Execute a git command in the given working directory */
@@ -311,13 +313,21 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       // Focus mode writes a placeholder focus.md that the agent enriches after research.
       // Fast and optimistic modes skip this — focus.md is only for the Focus Mode workflow.
       if (opts.mode === "focus") {
-        const memoryBankDir = path.join(worktreePath, "memory-bank");
-        await mkdir(memoryBankDir, { recursive: true });
-        await writeFile(
-          path.join(memoryBankDir, "focus.md"),
-          `# Session Focus\n\n## Objective\n\n${opts.objective}\n\n> This focus document will be enriched after objective analysis.\n`,
-          "utf-8",
-        );
+        const registry = createSessionArtifactRegistry({
+          projectPath,
+          sessionName,
+        });
+        await registry.write({
+          kind: "focus_memory",
+          worktreePath,
+          relativePath: "memory-bank/focus.md",
+          contents: `# Session Focus\n\n## Objective\n\n${opts.objective}\n\n> This focus document will be enriched after objective analysis.\n`,
+          audience: "user_facing",
+          required: true,
+          source: { workflowId: "session-init" },
+          description:
+            "Session focus document — captures the objective and is enriched after objective analysis.",
+        });
       }
 
       // Run optional init script

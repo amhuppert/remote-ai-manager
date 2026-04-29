@@ -1,5 +1,17 @@
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
+import {
+  toGraph,
+  toPrimitive,
+  type GraphWorkflowLaneAdapterInputContext,
+} from "@/lib/workflows/primitives/graph-workflow-lane-adapter";
+import {
+  createLaneService,
+  type LaneOutcome,
+  type LaneService,
+} from "@/lib/workflows/primitives/lane-service";
+import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
+import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowLaneKind,
@@ -30,6 +42,17 @@ export interface WorkflowContinuityServiceDeps {
   startCodexThread(): Promise<{ threadId: string }>;
   resumeCodexThread(threadId: string): Promise<{ threadId: string }>;
   now?(): string;
+  /**
+   * Shared workflow primitive lane service. When provided, the continuity
+   * service routes lane creation and post-turn outcome recording through the
+   * primitive layer, keeping the graph-only fields (contextId,
+   * workflowConversationId, limitEvaluation) in the adapter extras while the
+   * shared metrics live in the primitive lane state.
+   *
+   * Defaults to a service backed by an in-memory lane store so existing
+   * callers see no behavioral change beyond shared schema validation.
+   */
+  laneService?: LaneService;
 }
 
 // ============================================================
@@ -162,6 +185,29 @@ function getCurrentLane(
   return execution.laneStates[lane];
 }
 
+/**
+ * Build the adapter context shared across primitive projections — the
+ * execution id is the workflow scope and the iteration policy decides
+ * continuity / context-limit semantics.
+ */
+function buildAdapterContext(
+  execution: GraphWorkflowExecution,
+  lane: GraphWorkflowLaneKind,
+  contextId: string,
+): GraphWorkflowLaneAdapterInputContext {
+  const ctx = execution.workingDefinition.executionContexts.find(
+    (c) => c.id === contextId,
+  );
+  const continuityEnabled =
+    lane === "implementer"
+      ? (ctx?.iterationPolicy.continuity.enabled ?? true)
+      : (ctx?.contextValidator?.continuity.enabled ?? true);
+  return {
+    executionId: execution.id,
+    policy: { continuityEnabled },
+  };
+}
+
 // ============================================================
 // Service factory
 // ============================================================
@@ -169,6 +215,66 @@ function getCurrentLane(
 export function createWorkflowContinuityService(
   deps: WorkflowContinuityServiceDeps,
 ) {
+  const laneService =
+    deps.laneService ??
+    createLaneService({ store: createInMemoryLaneStore(), now: deps.now });
+
+  async function persistLaneState(
+    execution: GraphWorkflowExecution,
+    laneState: GraphWorkflowLaneState,
+    contextId: string,
+  ): Promise<void> {
+    const adapterCtx = buildAdapterContext(
+      execution,
+      laneState.lane,
+      contextId,
+    );
+    const { primitive } = toPrimitive(laneState, adapterCtx);
+    await laneService.initialize(primitive);
+  }
+
+  async function recordLaneOutcome(
+    execution: GraphWorkflowExecution,
+    laneState: GraphWorkflowLaneState,
+    outcome: LaneOutcome,
+  ): Promise<GraphWorkflowLaneState> {
+    const adapterCtx = buildAdapterContext(
+      execution,
+      laneState.lane,
+      laneState.contextId,
+    );
+    const { primitive, extras } = toPrimitive(laneState, adapterCtx);
+    let existing: LaneState | null = null;
+    try {
+      existing = await laneService.resolve({
+        workflowId: primitive.workflowId,
+        laneId: primitive.laneId,
+      });
+    } catch {
+      existing = null;
+    }
+    if (!existing) {
+      await laneService.initialize(primitive);
+    }
+    const updated = await laneService.recordOutcome(
+      { workflowId: primitive.workflowId, laneId: primitive.laneId },
+      outcome,
+    );
+    // Carry forward any limitEvaluation override the outcome encodes (Codex
+    // never supports limit-based rotation; Claude flips to "supported" once
+    // contextLimitTokens is observed). The primitive layer doesn't model that
+    // distinction so the extras are recomputed from the outcome semantics.
+    const nextExtras = { ...extras };
+    if (outcome.backend === "claude") {
+      nextExtras.limitEvaluation =
+        outcome.contextLimitTokens !== undefined ? "supported" : "disabled";
+    } else {
+      nextExtras.limitEvaluation =
+        outcome.contextLimitTokens !== undefined ? "unsupported" : "disabled";
+    }
+    return toGraph(updated, nextExtras);
+  }
+
   async function createFreshClaudeLane(
     projectPath: string,
     sessionName: string,
@@ -177,6 +283,7 @@ export function createWorkflowContinuityService(
     role: "iteration" | "validator",
     reason: string,
     now: string,
+    execution: GraphWorkflowExecution,
   ): Promise<{ laneState: GraphWorkflowLaneState; conversationId: string }> {
     const conversation = await deps.createConversation(
       projectPath,
@@ -199,6 +306,8 @@ export function createWorkflowContinuityService(
       limitEvaluation: "disabled",
       lastUsedAt: now,
     };
+
+    await persistLaneState(execution, laneState, contextId);
 
     logger.info("workflow-continuity.lane.create", {
       lane,
@@ -280,6 +389,7 @@ export function createWorkflowContinuityService(
           "iteration",
           reason,
           now,
+          execution,
         );
 
       return {
@@ -336,6 +446,7 @@ export function createWorkflowContinuityService(
           "iteration",
           "stale_recovery",
           now,
+          execution,
         );
 
       return {
@@ -391,6 +502,8 @@ export function createWorkflowContinuityService(
       limitEvaluation: "disabled",
       lastUsedAt: now,
     };
+
+    await persistLaneState(execution, newLaneState, contextId);
 
     logger.info("workflow-continuity.lane.create", {
       lane,
@@ -501,6 +614,7 @@ export function createWorkflowContinuityService(
             "validator",
             reason,
             now,
+            execution,
           );
 
         return {
@@ -540,6 +654,7 @@ export function createWorkflowContinuityService(
             "validator",
             "stale_recovery",
             now,
+            execution,
           );
 
         return {
@@ -591,6 +706,8 @@ export function createWorkflowContinuityService(
         limitEvaluation: "disabled",
         lastUsedAt: now,
       };
+
+      await persistLaneState(execution, newLaneState, contextId);
 
       logger.info("workflow-continuity.lane.create", {
         lane,
@@ -657,6 +774,8 @@ export function createWorkflowContinuityService(
         lastUsedAt: now,
       };
 
+      await persistLaneState(execution, freshLaneState, contextId);
+
       logger.info("workflow-continuity.lane.create", {
         lane,
         engine: "codex",
@@ -674,9 +793,9 @@ export function createWorkflowContinuityService(
     }
   }
 
-  function recordClaudeTurnOutcome(
+  async function recordClaudeTurnOutcome(
     input: RecordClaudeLaneTurnInput,
-  ): GraphWorkflowExecution {
+  ): Promise<GraphWorkflowExecution> {
     const {
       execution,
       lane,
@@ -687,79 +806,60 @@ export function createWorkflowContinuityService(
     const laneState = getCurrentLane(execution, lane);
     if (!laneState || laneState.engine !== "claude") return execution;
 
-    let rotateBeforeNextTurn = false;
-    let limitEvaluation: "disabled" | "supported" = "disabled";
+    if (
+      contextLimitTokens !== undefined &&
+      contextTokens !== null &&
+      contextTokens > contextLimitTokens
+    ) {
+      logger.info("workflow-continuity.rotation.scheduled", {
+        lane,
+        contextTokens,
+        limit: contextLimitTokens,
+      });
 
-    if (contextLimitTokens !== undefined) {
-      limitEvaluation = "supported";
-      if (contextTokens !== null && contextTokens > contextLimitTokens) {
-        rotateBeforeNextTurn = true;
-
-        logger.info("workflow-continuity.rotation.scheduled", {
-          lane,
-          contextTokens,
-          limit: contextLimitTokens,
-        });
-
-        const contextId = laneState.contextId;
-        const execLogger = getExecutionLogger(execution.id);
-        execLogger?.decision("rotation.scheduled", {
-          lane,
-          engine: "claude",
-          contextId,
-          contextTokens,
-          contextWindowMax,
-          contextLimitTokens,
-          utilization: contextWindowMax
-            ? Math.round((contextTokens / contextWindowMax) * 100)
-            : null,
-        });
-      }
+      const contextId = laneState.contextId;
+      const execLogger = getExecutionLogger(execution.id);
+      execLogger?.decision("rotation.scheduled", {
+        lane,
+        engine: "claude",
+        contextId,
+        contextTokens,
+        contextWindowMax,
+        contextLimitTokens,
+        utilization: contextWindowMax
+          ? Math.round((contextTokens / contextWindowMax) * 100)
+          : null,
+      });
     }
 
-    const updatedLane: GraphWorkflowLaneState = {
-      ...laneState,
-      lastContextTokens: contextTokens,
-      lastContextWindowMax: contextWindowMax,
-      rotateBeforeNextTurn,
-      limitEvaluation,
-      lastUsedAt: getNow(deps),
+    const outcome: LaneOutcome = {
+      backend: "claude",
+      ...(contextTokens !== null ? { contextTokens } : {}),
+      ...(contextWindowMax !== null ? { contextWindowMax } : {}),
+      ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
     };
 
+    const updatedLane = await recordLaneOutcome(execution, laneState, outcome);
     return withLaneState(execution, lane, updatedLane);
   }
 
-  function recordCodexTurnOutcome(
+  async function recordCodexTurnOutcome(
     input: RecordCodexLaneTurnInput,
-  ): GraphWorkflowExecution {
+  ): Promise<GraphWorkflowExecution> {
     const { execution, lane, usage, contextLimitTokens, newThreadId, failed } =
       input;
     const laneState = getCurrentLane(execution, lane);
     if (!laneState || laneState.engine !== "codex") return execution;
 
-    // Codex never supports context-window limit rotation
-    const limitEvaluation: "disabled" | "unsupported" =
-      contextLimitTokens !== undefined ? "unsupported" : "disabled";
-
-    // Update sessionRef.threadId with the real Codex thread ID if captured post-run
-    const sessionRef =
-      newThreadId != null
-        ? {
-            engine: "codex" as const,
-            lane,
-            threadId: newThreadId,
-          }
-        : laneState.sessionRef;
-
-    const updatedLane: GraphWorkflowLaneState = {
-      ...laneState,
-      sessionRef,
+    const outcome: LaneOutcome = {
+      backend: "codex",
       lastTurnUsage: usage,
-      rotateBeforeNextTurn: failed === true,
-      limitEvaluation,
-      lastUsedAt: getNow(deps),
+      ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
+      ...(newThreadId != null ? { threadId: newThreadId } : {}),
+      ...(failed === true ? { failed: true } : {}),
     };
 
+    const updatedLane = await recordLaneOutcome(execution, laneState, outcome);
     return withLaneState(execution, lane, updatedLane);
   }
 

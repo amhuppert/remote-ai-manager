@@ -8,13 +8,15 @@
 
 import { getRuntime as defaultGetRuntime } from "@/lib/agent-backends/runtime-registry";
 import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
-import {
-  broadcast as defaultBroadcast,
-  type BroadcastFn,
-} from "./sse-broadcaster";
+import { type BroadcastFn } from "./sse-broadcaster";
+import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
 import { createLogger } from "./logging";
 
 const logger = createLogger("queue-message");
+
+const defaultBroadcast: BroadcastFn = (event) => {
+  publishSessionStatus(event);
+};
 
 export interface QueueMessageDeps {
   getRuntime: typeof defaultGetRuntime;

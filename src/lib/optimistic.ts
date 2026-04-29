@@ -7,6 +7,20 @@ import { createLogger } from "./logging";
 
 const logger = createLogger("optimistic");
 
+/**
+ * The optimistic workflow turn enters the AgentCall primitive through the
+ * conversation actor: `executePromptStream` ensures the conversation/actor
+ * exists and dispatches a SUBMIT_PROMPT event, and the actor's
+ * `executePromptForMachine` routes the underlying turn through
+ * `executeAgentCall` (Task 6.1 migration).
+ *
+ * Calling `executeAgentCall` from this orchestrator directly would bypass the
+ * conversation lifecycle (transcript writing, single-flight session lock,
+ * machine-state transitions) that the optimistic-mode UI surfaces depend on.
+ * The chain is asserted via parity tests in
+ * `src/lib/workflows/primitives/section-6-3-merge-optimistic-parity.test.ts`.
+ */
+
 // No-op emitter for fire-and-forget execution (no SSE client connected)
 const noopEmit = () => {};
 

@@ -649,7 +649,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     // After each turn, signal that rotation is needed
     const recordClaudeTurnOutcome = vi.fn(
-      (input: RecordClaudeLaneTurnInput) => ({
+      async (input: RecordClaudeLaneTurnInput) => ({
         ...input.execution,
         laneStates: {
           implementer: {
@@ -722,7 +722,7 @@ describe("graph workflow iteration orchestrator", () => {
     );
 
     const recordClaudeTurnOutcome = vi.fn(
-      (input: RecordClaudeLaneTurnInput) => input.execution,
+      async (input: RecordClaudeLaneTurnInput) => input.execution,
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -813,7 +813,7 @@ describe("graph workflow iteration orchestrator", () => {
     );
 
     const recordClaudeTurnOutcome = vi.fn(
-      (input: RecordClaudeLaneTurnInput) => input.execution,
+      async (input: RecordClaudeLaneTurnInput) => input.execution,
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -936,7 +936,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const recordClaudeTurnOutcome = vi.fn(
-      (input: RecordClaudeLaneTurnInput) => input.execution,
+      async (input: RecordClaudeLaneTurnInput) => input.execution,
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -2191,10 +2191,10 @@ describe("codex implementer continuity", () => {
       }),
     );
     const recordCodexTurnOutcome = vi.fn(
-      (input: RecordCodexLaneTurnInput) => input.execution,
+      async (input: RecordCodexLaneTurnInput) => input.execution,
     );
     const recordClaudeTurnOutcome = vi.fn(
-      (input: RecordClaudeLaneTurnInput) => input.execution,
+      async (input: RecordClaudeLaneTurnInput) => input.execution,
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -2255,27 +2255,29 @@ describe("codex implementer continuity", () => {
     );
 
     // Codex normally keeps rotateBeforeNextTurn false, but if somehow set, the guard should trigger
-    const recordCodexTurnOutcome = vi.fn((input: RecordCodexLaneTurnInput) => ({
-      ...input.execution,
-      laneStates: {
-        implementer: {
-          engine: "codex" as const,
-          lane: "implementer" as const,
-          contextId: "context-plan",
-          sessionRef: {
+    const recordCodexTurnOutcome = vi.fn(
+      async (input: RecordCodexLaneTurnInput) => ({
+        ...input.execution,
+        laneStates: {
+          implementer: {
             engine: "codex" as const,
             lane: "implementer" as const,
-            threadId: "thread-1",
+            contextId: "context-plan",
+            sessionRef: {
+              engine: "codex" as const,
+              lane: "implementer" as const,
+              threadId: "thread-1",
+            },
+            lastTurnUsage: null,
+            // Defense-in-depth: Codex schema defines this as literal false, but
+            // the rotation guard should still stop follow-ups if the value is true
+            rotateBeforeNextTurn: true as boolean as false,
+            limitEvaluation: "disabled" as const,
+            lastUsedAt: "2026-03-27T16:00:00.000Z",
           },
-          lastTurnUsage: null,
-          // Defense-in-depth: Codex schema defines this as literal false, but
-          // the rotation guard should still stop follow-ups if the value is true
-          rotateBeforeNextTurn: true as boolean as false,
-          limitEvaluation: "disabled" as const,
-          lastUsedAt: "2026-03-27T16:00:00.000Z",
         },
-      },
-    }));
+      }),
+    );
     const recordClaudeTurnOutcome = vi.fn();
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -2596,6 +2598,118 @@ describe("mid-iteration halt via signalHalt", () => {
     expect(result.execution.status).toBe("halted");
     expect(result.execution.haltReason?.type).toBe("circuit_breaker");
     expect(result.shouldContinueInContext).toBe(false);
+  });
+
+  it("routes circuit-breaker decisions through the runCircuitBreakerGate primitive (Task 6.2 — primitive layer integration)", async () => {
+    const { runCircuitBreakerGate: defaultGate } =
+      await import("@/lib/workflows/primitives/circuit-breaker-gate");
+    // Seed with count = 2; default threshold is 3 — third failing completion
+    // should ask the primitive whether to trip and receive a `fail` result.
+    const repository = seedRepoWithConsecutiveFailures(2);
+    let capturedCompleteTask:
+      | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
+      | undefined;
+
+    const createToolServer = vi.fn(
+      (input: {
+        completeTask: (
+          taskId: string,
+          summary: string,
+        ) => Promise<GraphWorkflowExecution>;
+      }) => {
+        capturedCompleteTask = input.completeTask;
+        return {
+          server: {},
+          close: vi.fn(async () => undefined),
+        };
+      },
+    );
+    const createConversation = vi.fn(async () => ({ id: "conv-gate" }));
+
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "Still failing",
+      feedback:
+        "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing: add coverage",
+      issues: [
+        {
+          taskId: "task-plan-2",
+          title: "Missing",
+          description: "add coverage",
+        },
+      ],
+      reopenTaskIds: ["task-plan-2"],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: unknown;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason =
+          input.reason as GraphWorkflowExecution["haltReason"];
+        await repository.update("/repo", "session-1", current);
+        return current;
+      },
+    );
+
+    const runAgentIteration = vi.fn(async () => {
+      await capturedCompleteTask!("task-plan-1", "Done");
+      await capturedCompleteTask!("task-plan-2", "Done");
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const runCircuitBreakerGate = vi.fn(defaultGate);
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateContextCompletion },
+      runCircuitBreakerGate,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // Gate primitive consulted with the post-failure count and the context's threshold
+    expect(runCircuitBreakerGate).toHaveBeenCalledWith({
+      failureCount: 3,
+      threshold: 3,
+    });
+    const gateResult = runCircuitBreakerGate.mock.results.at(-1)!.value;
+    expect(gateResult.status).toBe("fail");
+    expect(gateResult.kind).toBe("circuit_breaker");
+
+    // Halt actually fires using the gate's verdict
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          type: "circuit_breaker",
+          contextId: "context-plan",
+          condition: "retry_exhaustion",
+          failureCount: 3,
+        }),
+      }),
+    );
+    expect(result.execution.status).toBe("halted");
+    expect(result.execution.haltReason?.type).toBe("circuit_breaker");
   });
 
   it("does NOT call signalHalt when failure count remains below threshold", async () => {
@@ -3686,6 +3800,95 @@ describe("script validator integration", () => {
       }),
     );
     expect(validateContextCompletion).not.toHaveBeenCalled();
+    expect(result.execution.status).toBe("halted");
+    expect(result.execution.haltReason?.type).toBe("circuit_breaker");
+  });
+
+  it("routes script-validator circuit-breaker decisions through the runCircuitBreakerGate primitive (Task 6.2)", async () => {
+    const { runCircuitBreakerGate: defaultGate } =
+      await import("@/lib/workflows/primitives/circuit-breaker-gate");
+    const repository = seedRepoWithScriptValidator({
+      consecutiveFailureCount: 2,
+    });
+    const { createToolServer, capturedCompleteTask } =
+      createCapturingToolServer();
+    const createConversation = vi.fn(async () => ({ id: "conv-script-gate" }));
+
+    const runScriptValidator = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "Pre-merge validation failed again",
+      logFilePath:
+        "/repo/.worktrees/session-1/.cc/workflow/execution-1/pre-merge-20260418T170100Z.log",
+      logRelativePath:
+        ".cc/workflow/execution-1/pre-merge-20260418T170100Z.log",
+      timedOut: false,
+    }));
+    const validateContextCompletion = vi.fn();
+
+    const runAgentIteration = vi.fn(async () => {
+      await capturedCompleteTask()!("task-plan-1", "Done");
+      await capturedCompleteTask()!("task-plan-2", "Done");
+      return {
+        conversationId: "conv-script-gate",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: unknown;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason =
+          input.reason as GraphWorkflowExecution["haltReason"];
+        await repository.update("/repo", "session-1", current);
+        return current;
+      },
+    );
+
+    const runCircuitBreakerGate = vi.fn(defaultGate);
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      validationService: { validateContextCompletion },
+      scriptValidatorService: { runScriptValidator },
+      runCircuitBreakerGate,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(runCircuitBreakerGate).toHaveBeenCalledWith({
+      failureCount: 3,
+      threshold: 3,
+    });
+    const gateResult = runCircuitBreakerGate.mock.results.at(-1)!.value;
+    expect(gateResult.status).toBe("fail");
+    expect(gateResult.kind).toBe("circuit_breaker");
+
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          type: "circuit_breaker",
+          contextId: "context-plan",
+          condition: "retry_exhaustion",
+          failureCount: 3,
+        }),
+      }),
+    );
     expect(result.execution.status).toBe("halted");
     expect(result.execution.haltReason?.type).toBe("circuit_breaker");
   });

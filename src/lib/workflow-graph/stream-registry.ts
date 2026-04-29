@@ -1,3 +1,15 @@
+/**
+ * Graph workflow per-block content streaming — NDJSON transport over
+ * `/api/projects/[name]/sessions/[session]/graph-workflow/stream`.
+ *
+ * This transport is intentionally distinct from StatusBus / SSE
+ * (`/api/events`). StatusBus is the lifecycle wire (running/paused/
+ * completed/failed envelopes broadcast to every connected client);
+ * this registry is the high-frequency content wire (per-block frames
+ * delivered to the single active graph-workflow viewer for the
+ * session). See `memory-bank/statusbus-graph-stream-boundary.md` for
+ * the full rationale and the rules for choosing between the two.
+ */
 import type { MessageContentBlock } from "@/types";
 import { getGlobalSingleton } from "@/lib/global-singleton";
 

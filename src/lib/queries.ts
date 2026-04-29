@@ -16,6 +16,7 @@ import {
   roadmapItemKeys,
   debugLogKeys,
   referenceDocumentKeys,
+  collaborationKeys,
 } from "@/lib/query-keys";
 import {
   apiFetch,
@@ -36,6 +37,7 @@ import {
   workflowDefinitionGetResponseSchema,
   roadmapItemsResponseSchema,
   debugLogStatsResponseSchema,
+  collaborationListResponseSchema,
 } from "@/lib/api-client";
 import {
   sessionStateSchema,
@@ -565,5 +567,33 @@ export function useDebugLogEntryCountQuery(
         debugLogStatsResponseSchema,
       ).then((r) => r.entryCount),
     enabled,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Collaboration Queries
+// ---------------------------------------------------------------------------
+
+export function useCollaborationListQuery(
+  projectName: string,
+  sessionName: string,
+  options?: {
+    enabled?: boolean;
+    refetchInterval?: number;
+    includeAll?: boolean;
+  },
+) {
+  const includeAll = options?.includeAll ?? false;
+  return useQuery({
+    queryKey: includeAll
+      ? collaborationKeys.listAll(projectName, sessionName)
+      : collaborationKeys.list(projectName, sessionName),
+    queryFn: () =>
+      apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration${includeAll ? "?all=true" : ""}`,
+        collaborationListResponseSchema,
+      ).then((r) => r.envelopes),
+    enabled: options?.enabled ?? true,
+    refetchInterval: options?.refetchInterval,
   });
 }

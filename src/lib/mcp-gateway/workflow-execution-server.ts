@@ -229,7 +229,7 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
           );
         }
 
-        const updated = sharedDocumentRegistry.upsert(
+        const updated = await sharedDocumentRegistry.upsert(
           activeSession.worktreePath,
           activeExecution,
           {

@@ -14,6 +14,19 @@ import type { MessageContentBlock, SessionState } from "@/types";
 
 const logger = createLogger("graph-workflow-implementer-runner");
 
+/**
+ * The implementer turn enters the AgentCall primitive through the conversation
+ * actor: `executePromptStream` ensures the conversation/actor exists and
+ * dispatches a SUBMIT_PROMPT event, and the actor's `executePromptForMachine`
+ * routes the underlying turn through `executeAgentCall` (Task 6.1 migration).
+ *
+ * Calling `executeAgentCall` from the runner directly would bypass the
+ * conversation lifecycle (transcript writing, single-flight session lock,
+ * machine-state transitions) that the graph workflow's UI surfaces depend
+ * on. The chain is asserted via parity tests in
+ * `src/lib/workflows/primitives/section-6-2-graph-debug-parity.test.ts`.
+ */
+
 interface ExecutePromptStreamFn {
   (
     projectPath: string,
@@ -76,6 +89,11 @@ export function createGraphWorkflowImplementerRunner(
       reasoningEffort: input.reasoningEffort,
     });
 
+    // Intentionally free-form: no `outputFormat` passed in
+    // `PromptStreamOptions`. The implementer is a tool-using coding turn that
+    // produces code edits, file writes, and a natural-language summary
+    // streamed to the UI as chat content. A JSON schema would suppress the
+    // streaming markdown turn body the UI renders.
     const result = await executePromptStream(
       input.projectPath,
       input.session,

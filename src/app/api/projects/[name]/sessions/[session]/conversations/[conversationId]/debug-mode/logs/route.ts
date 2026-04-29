@@ -3,7 +3,7 @@ import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
 import { clearDebugLog } from "@/lib/debug-log";
 import { withTracing } from "@/lib/logging";
-import { broadcast } from "@/lib/sse-broadcaster";
+import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
 import { createDebugLogStatsHandlers } from "@/lib/debug-log-stats-route-handlers";
 import type { ApiError } from "@/types";
 
@@ -55,8 +55,7 @@ export const DELETE = withTracing(async (_request, { params }) => {
 
   try {
     clearDebugLog(conversation.debugMode.logFilePath);
-    broadcast({
-      type: "debug-log-received",
+    getDefaultDebugAdapter().publishDebugLogReceived({
       projectName: name,
       sessionName,
       conversationId,

@@ -8,6 +8,11 @@ import {
   executeRepoValidationCommand as defaultExecuteRepoValidationCommand,
   type RepoValidationCommandResult,
 } from "@/lib/repo-config";
+import {
+  createArtifactRegistry,
+  ArtifactRequiredFailure,
+  type ArtifactRegistry,
+} from "@/lib/workflows/primitives/artifact-registry";
 
 const logger = createLogger("script-validator-runner");
 
@@ -50,6 +55,14 @@ export interface ScriptValidatorDeps {
     opts: { recursive: true },
   ): Promise<string | undefined>;
   now(): Date;
+  /**
+   * Optional injected `ArtifactRegistry`. When omitted, an
+   * `ArtifactRegistry` is constructed from `deps.writeFile`/`deps.mkdir` so the
+   * production write path always goes through the shared
+   * `validation_log` artifact flow while still honoring caller-supplied fs
+   * adapters (used by unit tests).
+   */
+  artifactRegistry?: ArtifactRegistry;
 }
 
 const defaultDeps: ScriptValidatorDeps = {
@@ -137,11 +150,37 @@ export function createScriptValidatorRunner(
       result.output.length > 0 ? result.output : "(no output captured)";
     const content = `${header}\n${body}\n`;
 
+    const registry =
+      deps.artifactRegistry ??
+      createArtifactRegistry({
+        writeFile: async (absolutePath, fileContents) => {
+          await deps.writeFile(
+            absolutePath,
+            typeof fileContents === "string"
+              ? fileContents
+              : Buffer.from(fileContents).toString("utf-8"),
+          );
+        },
+        ensureDir: async (absolutePath) => {
+          await deps.mkdir(absolutePath, { recursive: true });
+        },
+        now: () => now.toISOString(),
+      });
+
     try {
-      await deps.mkdir(path.dirname(logFilePath), { recursive: true });
-      await deps.writeFile(logFilePath, content);
+      await registry.write({
+        kind: "validation_log",
+        worktreePath: input.worktreePath,
+        relativePath: logRelativePath,
+        contents: content,
+        audience: "internal_log",
+        required: true,
+        source: { workflowId: input.executionId },
+      });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const cause =
+        err instanceof ArtifactRequiredFailure ? (err.cause ?? err) : err;
+      const message = cause instanceof Error ? cause.message : String(cause);
       logger.error("script_validator.write_log_failed", {
         executionId: input.executionId,
         contextId: input.contextId,

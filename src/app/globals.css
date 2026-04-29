@@ -13536,3 +13536,140 @@ html[data-dev-tools-enabled] nextjs-portal {
     max-height: calc(100vh - 24px) !important;
   }
 }
+
+/* ---------------------------------------------------------------------- */
+/* Collaboration Mode                                                      */
+/* ---------------------------------------------------------------------- */
+
+.collaboration-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: var(--surface-elevated);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.collaboration-status-card:hover {
+  border-color: var(--accent);
+}
+
+.collaboration-status-card--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.collaboration-status-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.collaboration-status-card-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.collaboration-status-card-status {
+  font-weight: 600;
+}
+
+.collaboration-status-card-phase {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.collaboration-status-card-brief {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.collaboration-status-card-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.collaboration-status-card-meta dt {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+
+.collaboration-status-card-meta dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.collaboration-status-card-paused {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+}
+
+.collaboration-status-card-paused-reason {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.collaboration-status-card-resume-btn {
+  align-self: flex-start;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--bg-void);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.collaboration-status-card-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.collaboration-status-card-artifacts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.collaboration-status-card-artifacts li {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+}

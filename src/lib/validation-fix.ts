@@ -10,12 +10,89 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readConfig } from "./config";
+import { readConfig as defaultReadConfig } from "./config";
 import { createLogger } from "./logging";
-import { getTaskRunner } from "./agent-backends/registry";
+import { getTaskRunner as defaultGetTaskRunner } from "./agent-backends/registry";
+import type { AgentTaskRunner, AgentTaskResult } from "./agent-backends/task";
 import type { AgentSessionRef } from "./agent-backends/types";
+import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import type { AgentCallFacadeDeps } from "@/lib/workflows/primitives/agent-call-facade";
+import type {
+  AgentCallRequest,
+  AgentCallResult,
+} from "@/lib/workflows/primitives/agent-call-vocabulary";
+import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 
 const logger = createLogger("validation-fix");
+
+// ============================================================
+// Dependency Injection
+// ============================================================
+
+export interface ValidationFixDeps {
+  getTaskRunner(backend: "claude"): AgentTaskRunner;
+  readConfig: typeof defaultReadConfig;
+  /**
+   * Optional override for the AgentCall primitive entry point. The validation
+   * fixer routes its task-style turn through `executeAgentCall` so the facade
+   * applies the structured-output gate and uniform failure normalization.
+   */
+  executeAgentCall?: (
+    request: AgentCallRequest,
+    facadeDeps: AgentCallFacadeDeps,
+  ) => Promise<AgentCallResult>;
+}
+
+const defaultDeps: ValidationFixDeps = {
+  getTaskRunner: defaultGetTaskRunner,
+  readConfig: defaultReadConfig,
+};
+
+function agentCallResultToTaskResult(result: AgentCallResult): AgentTaskResult {
+  if (result.outcome.kind === "completed") {
+    const completed: AgentTaskResult = {
+      text: result.outcome.text,
+      usage: result.usage
+        ? {
+            inputTokens: result.usage.inputTokens ?? null,
+            outputTokens: result.usage.outputTokens ?? null,
+            cachedInputTokens: result.usage.cachedInputTokens ?? null,
+          }
+        : null,
+      error: null,
+      timedOut: false,
+      backendRef: result.backendRef ?? null,
+    };
+    if (result.outcome.structuredOutput !== undefined) {
+      completed.structuredOutput = result.outcome.structuredOutput;
+    }
+    return completed;
+  }
+
+  if (result.outcome.kind === "failed") {
+    return {
+      text: null,
+      usage: result.usage
+        ? {
+            inputTokens: result.usage.inputTokens ?? null,
+            outputTokens: result.usage.outputTokens ?? null,
+            cachedInputTokens: result.usage.cachedInputTokens ?? null,
+          }
+        : null,
+      error: result.outcome.error.message,
+      timedOut: result.outcome.error.failureKind === "timeout",
+      backendRef: result.backendRef ?? null,
+    };
+  }
+
+  return {
+    text: null,
+    usage: null,
+    error: `validation fixer paused unexpectedly (pauseKind=${result.outcome.pauseKind})`,
+    timedOut: false,
+    backendRef: result.backendRef ?? null,
+  };
+}
 
 // ============================================================
 // Public Types
@@ -127,6 +204,28 @@ function buildRetryPrompt(params: {
 // Main Entry Point
 // ============================================================
 
+export interface FixValidationErrorsParams {
+  worktreePath: string;
+  validationOutput: string;
+  validationCommand?: string;
+  projectPath?: string;
+  sessionName?: string;
+  branchName?: string;
+  sessionRef?: AgentSessionRef | null;
+}
+
+/**
+ * Create a validation fixer with injected dependencies.
+ * Tests use this to inject mocks; production uses the default singleton export.
+ */
+export function createValidationFixer(deps: ValidationFixDeps = defaultDeps) {
+  return {
+    fixValidationErrors: (
+      params: FixValidationErrorsParams,
+    ): Promise<ValidationFixResult> => fixValidationErrorsImpl(params, deps),
+  };
+}
+
 /**
  * Fix validation errors in a session worktree via the task runner.
  *
@@ -135,17 +234,20 @@ function buildRetryPrompt(params: {
  * - On retry: resumes the previous session for accumulated context
  * - Returns the session ref so the caller can resume on retry
  */
-export async function fixValidationErrors(params: {
-  worktreePath: string;
-  validationOutput: string;
-  validationCommand?: string;
-  projectPath?: string;
-  sessionName?: string;
-  branchName?: string;
-  sessionRef?: AgentSessionRef | null;
-}): Promise<ValidationFixResult> {
+export async function fixValidationErrors(
+  params: FixValidationErrorsParams,
+): Promise<ValidationFixResult> {
+  return fixValidationErrorsImpl(params, defaultDeps);
+}
+
+async function fixValidationErrorsImpl(
+  params: FixValidationErrorsParams,
+  deps: ValidationFixDeps,
+): Promise<ValidationFixResult> {
   const { worktreePath, validationOutput, validationCommand, sessionRef } =
     params;
+  const { readConfig, getTaskRunner } = deps;
+  const executeAgentCall = deps.executeAgentCall ?? defaultExecuteAgentCall;
   const isRetry = sessionRef != null;
 
   logger.info("validation-fix.start", {
@@ -164,7 +266,6 @@ export async function fixValidationErrors(params: {
     return { status: "failed", error: errorMsg };
   }
 
-  // Write validation output to a temp file
   const jobId = `${params.sessionName ?? "unknown"}-${Date.now()}`;
   const attempt = isRetry ? 2 : 1;
   let validationOutputPath: string;
@@ -195,14 +296,27 @@ export async function fixValidationErrors(params: {
 
   try {
     const runner = getTaskRunner("claude");
-    const result = await runner.run({
-      workingDirectory: worktreePath,
+    const request: AgentCallRequest = {
+      kind: "task_run",
+      backend: "claude",
       prompt,
-      systemInstructions: [VALIDATION_FIX_INSTRUCTIONS],
-      resumeRef: sessionRef,
-      autonomous: true,
+      systemInstructions: VALIDATION_FIX_INSTRUCTIONS,
+      writeCapability: "write_capable",
       timeoutMs: config.claudeTimeoutMs,
+    };
+
+    const callResult = await executeAgentCall(request, {
+      resolveTaskRunner: () => ({
+        runner,
+        capabilityView: capabilityViewForBackend("claude"),
+        workingDirectory: worktreePath,
+        autonomous: true,
+        defaultTimeoutMs: config.claudeTimeoutMs,
+        ...(sessionRef !== undefined ? { resumeRef: sessionRef } : {}),
+      }),
     });
+
+    const result = agentCallResultToTaskResult(callResult);
 
     if (result.error) {
       logger.error("validation-fix.task_error", {

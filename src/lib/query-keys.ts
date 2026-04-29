@@ -154,6 +154,22 @@ export const mcpToolsKeys = {
     ] as const,
 };
 
+export const collaborationKeys = {
+  all: ["collaboration"] as const,
+  list: (projectName: string, sessionName: string) =>
+    [...collaborationKeys.all, "list", projectName, sessionName] as const,
+  listAll: (projectName: string, sessionName: string) =>
+    [...collaborationKeys.all, "listAll", projectName, sessionName] as const,
+  detail: (projectName: string, sessionName: string, workflowId: string) =>
+    [
+      ...collaborationKeys.all,
+      "detail",
+      projectName,
+      sessionName,
+      workflowId,
+    ] as const,
+};
+
 export const kiroDocKeys = {
   all: ["kiro-docs"] as const,
   tree: (projectName: string, sessionName?: string) =>

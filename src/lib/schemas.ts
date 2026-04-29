@@ -1481,6 +1481,15 @@ export const sessionStateSchema = z.object({
     .array(graphWorkflowExecutionSchema)
     .default([]),
   referenceDocuments: z.array(referenceDocumentSchema).default([]),
+  // Workflow envelope durable persistence for the workflow primitive layer.
+  // Stored as opaque records here to avoid pulling primitive-layer schemas into
+  // schemas.ts. Validation runs at the WorkflowEnvelopeStore boundary via
+  // workflowEnvelopeSchema.parse() in src/lib/workflows/primitives.
+  workflowEnvelopes: z.record(z.string(), z.unknown()).optional(),
+  // Workflow lane durable persistence for the workflow primitive layer.
+  // Stored as opaque records for the same reason as workflowEnvelopes; the
+  // LaneStore boundary validates entries with laneStateSchema.
+  workflowLanes: z.record(z.string(), z.unknown()).optional(),
   mcpOverrides: mcpOverridesSchema.optional(),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
@@ -1941,6 +1950,46 @@ export const mcpToolsUpdatedEventSchema = z
   .strict();
 export type McpToolsUpdatedEvent = z.infer<typeof mcpToolsUpdatedEventSchema>;
 
+// ============================================================
+// Scoped Status SSE Event (StatusBus → SSE bridge)
+// ============================================================
+
+/**
+ * Generic scoped-status SSE event used by primitive-native workflows
+ * (Collaboration Mode and any future workflow built directly on the
+ * primitive layer) to bridge in-process `StatusBus` envelopes onto the
+ * shared session SSE wire without each feature having to define its
+ * own typed SSE event.
+ *
+ * Contract:
+ *  - `scope` identifies the feature family the envelope belongs to
+ *    (`"collaboration"`, `"workflow"`, etc.). New scopes are additive
+ *    and do not require schema changes — clients filter by the scope
+ *    field at runtime.
+ *  - `scopeId` is the durable workflow identifier within that scope
+ *    (e.g. the collaboration `workflowId`).
+ *  - `status` is the StatusBus lifecycle status mapped to one of the
+ *    four canonical states.
+ *  - `payload` is the original feature-defined envelope payload, kept
+ *    `unknown` so each feature can evolve its own internal shape
+ *    without redefining the SSE wire contract.
+ *  - `reason` is an optional short tag describing why the envelope was
+ *    published (e.g. `"max_iterations_exceeded"`); useful for surface
+ *    UI without parsing the payload.
+ */
+export const scopedStatusEventSchema = z.object({
+  type: z.literal("scoped-status"),
+  scope: z.string().min(1),
+  scopeId: z.string().min(1),
+  status: z.enum(["running", "paused", "completed", "failed"]),
+  timestamp: z.string().min(1),
+  projectName: z.string(),
+  sessionName: z.string(),
+  payload: z.unknown().optional(),
+  reason: z.string().optional(),
+});
+export type ScopedStatusEvent = z.infer<typeof scopedStatusEventSchema>;
+
 /** SSE event type */
 export type SSEEvent =
   | ConversationStatusEvent
@@ -1960,7 +2009,8 @@ export type SSEEvent =
   | DebugModeStatusEvent
   | DebugLogReceivedEvent
   | McpConfigUpdatedEvent
-  | McpToolsUpdatedEvent;
+  | McpToolsUpdatedEvent
+  | ScopedStatusEvent;
 
 // ============================================================
 // Command Autocomplete Schemas

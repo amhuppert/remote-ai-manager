@@ -36,7 +36,30 @@ const logger = createLogger("prompt");
 export const TDD_INSTRUCTIONS =
   "<methodology>Use red-green TDD. Write a failing test first, run it to confirm it fails, then write the minimum code to make it pass.</methodology>";
 
-/** Appended to the system prompt when a conversation is in debug mode. Placeholders are replaced at runtime. */
+/**
+ * Appended to the system prompt when a conversation is in debug mode.
+ * Placeholders are replaced at runtime.
+ *
+ * NOTE: This prompt instructs the agent to produce two machine-readable
+ * artifacts as side effects rather than as the agent's text response:
+ *   1. `.debug/instrumentation.json` — written via the filesystem `Write`
+ *      tool. Validated post-write by `debugInstrumentationManifestSchema`
+ *      in `src/lib/debug-log.ts:readManifest`.
+ *   2. Per-probe JSON entries POSTed to `{DEBUG_LOG_URL}` from the
+ *      instrumented app at runtime. Validated per-request by
+ *      `debugLogEntrySchema.safeParse` in `src/app/api/debug-logs/route.ts`.
+ *
+ * Neither contract uses SDK `outputFormat` because neither artifact travels
+ * through the agent's text response — the manifest is a file the agent
+ * writes during the same turn, and the log entries are HTTP requests the
+ * instrumented code makes at user-reproduction time. SDK structured output
+ * cannot constrain side effects of tool calls; instead, both contracts are
+ * enforced at consumption via Zod schemas in `@/lib/schemas`.
+ *
+ * The agent's actual *text* response is constrained per debug phase by
+ * `outputFormat` derived from `debug-schemas.ts` (see
+ * `src/lib/workflows/conversation/machine.ts:281-310`).
+ */
 export const DEBUG_MODE_INSTRUCTIONS = `<debug-mode>
 You are in Debug Mode. Debug with runtime evidence, not static guesswork.
 
@@ -307,6 +330,11 @@ export interface PromptStreamOptions {
   backend?: AgentBackendId;
   tooling?: ConversationToolingOverrides;
   skipSessionLock?: boolean;
+  // `outputFormat` is intentionally opt-in. Regular user-facing chat is
+  // free-form markdown by design — forcing a JSON schema would prevent the
+  // streaming chat response the UI renders. Workflow callers (debug mode,
+  // validator, collaboration round responses) opt in explicitly so the SDK
+  // enforces their schema; everyone else gets unconstrained text.
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
 }
 

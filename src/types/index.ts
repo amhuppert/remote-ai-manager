@@ -92,6 +92,7 @@ export type {
   ProjectFilesResponse,
   ConversationStatusEvent,
   SSEEvent,
+  ScopedStatusEvent,
   AskQuestionOption,
   AskQuestionItem,
   AskQuestionEvent,

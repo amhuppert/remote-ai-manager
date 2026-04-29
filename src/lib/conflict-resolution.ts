@@ -5,9 +5,31 @@ import { readConfig as defaultReadConfig } from "./config";
 import { assertNever } from "./assert-never";
 import { createLogger } from "./logging";
 import { getTaskRunner as defaultGetTaskRunner } from "./agent-backends/registry";
-import type { AgentTaskRunner } from "./agent-backends/task";
+import type { AgentTaskRunner, AgentTaskResult } from "./agent-backends/task";
+import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import type { AgentCallFacadeDeps } from "@/lib/workflows/primitives/agent-call-facade";
+import type {
+  AgentCallRequest,
+  AgentCallResult,
+} from "@/lib/workflows/primitives/agent-call-vocabulary";
+import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 
 const logger = createLogger("conflict-resolution");
+
+export const CONFLICT_ENTRIES_OUTPUT_SCHEMA = {
+  type: "array",
+  items: {
+    type: "object",
+    additionalProperties: false,
+    required: ["file", "description", "resolution", "rationale"],
+    properties: {
+      file: { type: "string", minLength: 1 },
+      description: { type: "string", minLength: 1 },
+      resolution: { type: "string", minLength: 1 },
+      rationale: { type: "string", minLength: 1 },
+    },
+  },
+} as const;
 
 // ============================================================
 // Dependency Injection
@@ -16,12 +38,109 @@ const logger = createLogger("conflict-resolution");
 export interface ConflictResolutionDeps {
   getTaskRunner(backend: "claude"): AgentTaskRunner;
   readConfig: typeof defaultReadConfig;
+  /**
+   * Optional override for the AgentCall primitive entry point. The smart-merge
+   * resolver and analyzer route their task-style turns through
+   * `executeAgentCall` so the facade applies the structured-output gate and
+   * uniform failure normalization across the primitive layer.
+   */
+  executeAgentCall?: (
+    request: AgentCallRequest,
+    facadeDeps: AgentCallFacadeDeps,
+  ) => Promise<AgentCallResult>;
 }
 
 const defaultDeps: ConflictResolutionDeps = {
   getTaskRunner: defaultGetTaskRunner,
   readConfig: defaultReadConfig,
 };
+
+function agentCallResultToTaskResult(result: AgentCallResult): AgentTaskResult {
+  if (result.outcome.kind === "completed") {
+    const completed: AgentTaskResult = {
+      text: result.outcome.text,
+      usage: result.usage
+        ? {
+            inputTokens: result.usage.inputTokens ?? null,
+            outputTokens: result.usage.outputTokens ?? null,
+            cachedInputTokens: result.usage.cachedInputTokens ?? null,
+          }
+        : null,
+      error: null,
+      timedOut: false,
+      backendRef: result.backendRef ?? null,
+    };
+    if (result.outcome.structuredOutput !== undefined) {
+      completed.structuredOutput = result.outcome.structuredOutput;
+    }
+    return completed;
+  }
+
+  if (result.outcome.kind === "failed") {
+    return {
+      text: null,
+      usage: result.usage
+        ? {
+            inputTokens: result.usage.inputTokens ?? null,
+            outputTokens: result.usage.outputTokens ?? null,
+            cachedInputTokens: result.usage.cachedInputTokens ?? null,
+          }
+        : null,
+      error: result.outcome.error.message,
+      timedOut: result.outcome.error.failureKind === "timeout",
+      backendRef: result.backendRef ?? null,
+    };
+  }
+
+  return {
+    text: null,
+    usage: null,
+    error: `conflict resolver paused unexpectedly (pauseKind=${result.outcome.pauseKind})`,
+    timedOut: false,
+    backendRef: result.backendRef ?? null,
+  };
+}
+
+interface ConflictAgentCallInvocation {
+  prompt: string;
+  systemInstructions: string;
+  workingDirectory: string;
+  timeoutMs: number;
+  writeCapability: "write_capable" | "read_only";
+}
+
+async function dispatchConflictAgentCall(
+  invocation: ConflictAgentCallInvocation,
+  deps: ConflictResolutionDeps,
+): Promise<AgentTaskResult> {
+  const executeAgentCall = deps.executeAgentCall ?? defaultExecuteAgentCall;
+  const runner = deps.getTaskRunner("claude");
+
+  const request: AgentCallRequest = {
+    kind: "task_run",
+    backend: "claude",
+    prompt: invocation.prompt,
+    systemInstructions: invocation.systemInstructions,
+    writeCapability: invocation.writeCapability,
+    timeoutMs: invocation.timeoutMs,
+    outputSchema: CONFLICT_ENTRIES_OUTPUT_SCHEMA as unknown as Record<
+      string,
+      unknown
+    >,
+  };
+
+  const result = await executeAgentCall(request, {
+    resolveTaskRunner: () => ({
+      runner,
+      capabilityView: capabilityViewForBackend("claude"),
+      workingDirectory: invocation.workingDirectory,
+      autonomous: true,
+      defaultTimeoutMs: invocation.timeoutMs,
+    }),
+  });
+
+  return agentCallResultToTaskResult(result);
+}
 
 // ============================================================
 // Public Types
@@ -48,9 +167,8 @@ Follow these steps precisely:
 3. For each file, determine the best resolution by understanding the intent of both sides.
 4. Edit each file to remove all conflict markers and produce the correct merged content.
 5. Stage each resolved file with \`git add <file>\`.
-6. After resolving ALL conflicts, output a single JSON code fence with your analysis using exactly this schema:
+6. After resolving ALL conflicts, return structured output with your analysis using exactly this schema:
 
-\`\`\`json
 [
   {
     "file": "path/to/file",
@@ -59,7 +177,6 @@ Follow these steps precisely:
     "rationale": "Why this resolution is correct"
   }
 ]
-\`\`\`
 
 IMPORTANT:
 - Resolve ALL conflicted files before outputting the JSON.
@@ -74,9 +191,8 @@ Follow these steps precisely:
 1. Run \`git diff --name-only --diff-filter=U\` to find all conflicted files.
 2. Read each conflicted file and analyze the conflict markers (<<<<<<< HEAD, =======, >>>>>>> markers).
 3. For each file, understand the intent of both sides and propose how the conflict should be resolved.
-4. Output a single JSON code fence with your analysis using exactly this schema:
+4. Return structured output with your analysis using exactly this schema:
 
-\`\`\`json
 [
   {
     "file": "path/to/file",
@@ -85,7 +201,6 @@ Follow these steps precisely:
     "rationale": "Why this resolution is correct"
   }
 ]
-\`\`\`
 
 IMPORTANT:
 - DO NOT edit any files. DO NOT remove conflict markers. DO NOT run git add. This is analysis only.
@@ -261,7 +376,7 @@ async function resolveConflictsImpl(
   deps: ConflictResolutionDeps,
 ): Promise<ConflictResolutionResult> {
   const { worktreePath, decisions } = params;
-  const { getTaskRunner, readConfig } = deps;
+  const { readConfig } = deps;
 
   logger.info("conflict-resolution.start", { worktreePath });
 
@@ -275,7 +390,6 @@ async function resolveConflictsImpl(
     return { status: "failed", error: errorMsg };
   }
 
-  // Build the prompt
   let prompt =
     "Resolve all merge conflicts in this worktree. Follow the instructions in your system prompt precisely.";
 
@@ -284,14 +398,16 @@ async function resolveConflictsImpl(
   }
 
   try {
-    const runner = getTaskRunner("claude");
-    const result = await runner.run({
-      workingDirectory: worktreePath,
-      prompt,
-      systemInstructions: [CONFLICT_RESOLUTION_INSTRUCTIONS],
-      autonomous: true,
-      timeoutMs: config.claudeTimeoutMs,
-    });
+    const result = await dispatchConflictAgentCall(
+      {
+        prompt,
+        systemInstructions: CONFLICT_RESOLUTION_INSTRUCTIONS,
+        workingDirectory: worktreePath,
+        timeoutMs: config.claudeTimeoutMs,
+        writeCapability: "write_capable",
+      },
+      deps,
+    );
 
     if (result.error) {
       logger.error("conflict-resolution.task_error", {
@@ -349,7 +465,7 @@ async function analyzeConflictsImpl(
   deps: ConflictResolutionDeps,
 ): Promise<ConflictAnalysisResult> {
   const { worktreePath } = params;
-  const { getTaskRunner, readConfig } = deps;
+  const { readConfig } = deps;
 
   logger.info("conflict-analysis.start", { worktreePath });
 
@@ -367,14 +483,16 @@ async function analyzeConflictsImpl(
     "Analyze all merge conflicts in this worktree. Follow the instructions in your system prompt precisely. Do NOT edit any files.";
 
   try {
-    const runner = getTaskRunner("claude");
-    const result = await runner.run({
-      workingDirectory: worktreePath,
-      prompt,
-      systemInstructions: [CONFLICT_ANALYSIS_INSTRUCTIONS],
-      autonomous: true,
-      timeoutMs: config.claudeTimeoutMs,
-    });
+    const result = await dispatchConflictAgentCall(
+      {
+        prompt,
+        systemInstructions: CONFLICT_ANALYSIS_INSTRUCTIONS,
+        workingDirectory: worktreePath,
+        timeoutMs: config.claudeTimeoutMs,
+        writeCapability: "read_only",
+      },
+      deps,
+    );
 
     if (result.error) {
       logger.error("conflict-analysis.task_error", {

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { broadcast as defaultBroadcast } from "@/lib/sse-broadcaster";
+import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
 import type {
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowExecution,
@@ -14,6 +14,10 @@ import type {
   WorkflowValidatorIssue,
 } from "@/types";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
+
+function defaultBroadcast(event: GraphWorkflowSSEEvent): void {
+  publishSessionStatus(event);
+}
 
 interface PublishExecutionUpdateInput {
   projectPath: string;

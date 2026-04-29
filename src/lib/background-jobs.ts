@@ -14,10 +14,8 @@
 import { randomUUID } from "node:crypto";
 import { createActor } from "xstate";
 import { acquireSessionLock as defaultAcquireSessionLock } from "./lock";
-import {
-  broadcast as defaultBroadcast,
-  type BroadcastFn,
-} from "./sse-broadcaster";
+import type { BroadcastFn } from "./sse-broadcaster";
+import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
 import { createLogger } from "./logging";
 import {
   createJobRecord,
@@ -126,9 +124,13 @@ export function getConflictAnalysis(
 // Broadcast Helper
 // ============================================================
 
+const defaultJobBroadcast: BroadcastFn = (event) => {
+  publishSessionStatus(event);
+};
+
 function broadcastJobStatus(
   job: BackgroundJob,
-  broadcast: BroadcastFn = defaultBroadcast,
+  broadcast: BroadcastFn = defaultJobBroadcast,
 ): void {
   const event: JobStatusEvent = {
     type: "job-status",
@@ -291,7 +293,7 @@ function prepareDispatch(params: {
     branchName,
     jobType,
     targetBranch,
-    broadcast = defaultBroadcast,
+    broadcast = defaultJobBroadcast,
     acquireSessionLock = defaultAcquireSessionLock,
   } = params;
   const key = sessionKey(projectPath, sessionName);
@@ -345,7 +347,7 @@ function subscribeMergeActor(
   actor: ReturnType<typeof createActor<MergeMachineType>>,
   job: BackgroundJob,
   release: () => void,
-  broadcast: BroadcastFn = defaultBroadcast,
+  broadcast: BroadcastFn = defaultJobBroadcast,
 ): void {
   let lastPhase: string | undefined = undefined;
 
@@ -413,7 +415,7 @@ function subscribeCommitActor(
   actor: ReturnType<typeof createActor<CommitMachineType>>,
   job: BackgroundJob,
   release: () => void,
-  broadcast: BroadcastFn = defaultBroadcast,
+  broadcast: BroadcastFn = defaultJobBroadcast,
 ): void {
   let lastPhase: string | undefined = undefined;
 
@@ -488,7 +490,7 @@ export function dispatchMergeJob(params: {
     autoResolve,
     targetBranch,
     targetWorktreePath,
-    broadcast = defaultBroadcast,
+    broadcast = defaultJobBroadcast,
     acquireSessionLock,
     machine = mergeMachine,
   } = params;
@@ -565,7 +567,7 @@ export function dispatchCommitJob(params: {
     worktreePath,
     branchName,
     message,
-    broadcast = defaultBroadcast,
+    broadcast = defaultJobBroadcast,
     acquireSessionLock,
     machine = commitMachine,
   } = params;
@@ -642,7 +644,7 @@ export function dispatchResolveConflictsJob(params: {
     decisions,
     targetBranch,
     targetWorktreePath,
-    broadcast = defaultBroadcast,
+    broadcast = defaultJobBroadcast,
     acquireSessionLock,
     machine = mergeMachine,
   } = params;

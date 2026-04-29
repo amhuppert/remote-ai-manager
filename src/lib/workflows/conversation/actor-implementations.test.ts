@@ -45,6 +45,7 @@ import {
   resolveBackendTimeoutMs,
 } from "./actor-implementations";
 import type { ActorConfig } from "./actor-implementations";
+import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import { QUERY_SESSION_ERROR_CODES } from "@/lib/agent-backends/claude/query-session-errors";
 import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
 
@@ -154,6 +155,7 @@ function createMockDeps(
         ],
       }),
     ),
+    executeAgentCall: defaultExecuteAgentCall,
     ...overrides,
   } as ActorImplementationDeps;
 }
@@ -1980,5 +1982,45 @@ describe("executePromptForMachine", () => {
       ([event]) => event === "error",
     );
     expect(errorEvents).toHaveLength(1);
+  });
+
+  // ---------------------------------------------------------------
+  // Task 6.1 parity — the conversation actor must route every turn
+  // through the shared AgentCall primitive instead of calling
+  // backendRuntime.sendTurn() directly. The injected dep stays on
+  // the call path so test code can assert primitive composition
+  // without falling back to vi.mock on internal modules.
+  // ---------------------------------------------------------------
+  it("routes the conversation turn through deps.executeAgentCall (Task 6.1 parity)", async () => {
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+    setActorDeps(
+      createMockDeps({
+        executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+          typeof vi.fn
+        >,
+      } as unknown as Partial<ActorImplementationDeps>),
+    );
+
+    const input = makeExecutePromptInput({ agentBackend: "claude" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
+    const [request, facadeDeps] = executeAgentCallSpy.mock.calls[0]!;
+    expect(request).toMatchObject({
+      kind: "conversation_turn",
+      prompt: "Hello, world!",
+      backend: "claude",
+      writeCapability: "write_capable",
+    });
+    expect(typeof facadeDeps.resolveConversationRuntime).toBe("function");
   });
 });

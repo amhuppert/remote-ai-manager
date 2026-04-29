@@ -39,12 +39,7 @@ import type {
 } from "./types";
 import { prepareTurnActor, executePromptActor } from "./actors";
 import type { DebugEvidenceAnalysisOutput } from "./debug-schemas";
-import {
-  debugHypothesisOutputSchema,
-  debugEvidenceAnalysisSchema,
-  debugFixResultSchema,
-  debugCleanupResultSchema,
-} from "./debug-schemas";
+import { getDefaultDebugAdapter } from "./debug-adapter";
 
 // ============================================================
 // Helpers
@@ -274,43 +269,13 @@ export const conversationMachine = setup({
       invoke: {
         src: "executePrompt",
         input: ({ context }): ExecutePromptInput => {
-          // Explicit outputFormat (e.g. from validator) takes priority over debug-phase-derived
+          // Explicit outputFormat (e.g. from validator) takes priority over
+          // debug-phase-derived format.
           const outputFormat =
             context.activeTurn?.outputFormat ??
-            (() => {
-              const phase = context.debugMode?.phase;
-              if (phase === "hypothesizing") {
-                return {
-                  type: "json_schema" as const,
-                  schema: debugHypothesisOutputSchema as Record<
-                    string,
-                    unknown
-                  >,
-                };
-              }
-              if (phase === "analyzing_evidence") {
-                return {
-                  type: "json_schema" as const,
-                  schema: debugEvidenceAnalysisSchema as Record<
-                    string,
-                    unknown
-                  >,
-                };
-              }
-              if (phase === "fixing") {
-                return {
-                  type: "json_schema" as const,
-                  schema: debugFixResultSchema as Record<string, unknown>,
-                };
-              }
-              if (phase === "cleanup_instrumentation") {
-                return {
-                  type: "json_schema" as const,
-                  schema: debugCleanupResultSchema as Record<string, unknown>,
-                };
-              }
-              return undefined;
-            })();
+            getDefaultDebugAdapter().resolveOutputFormat(
+              context.debugMode?.phase,
+            );
 
           return {
             projectPath: context.projectPath,

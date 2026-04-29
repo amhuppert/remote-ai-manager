@@ -3,7 +3,7 @@ import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession } from "@/lib/state";
 import { debugRecordingRequestSchema } from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
-import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
+import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -60,10 +60,10 @@ export const POST = withTracing(async (request, { params }) => {
   }
 
   try {
-    sendConversationEvent(projectPath, sessionName, conversationId, {
-      type: "SET_DEBUG_RECORDING",
-      recording: body.recording,
-    });
+    getDefaultDebugAdapter().setRecording(
+      { projectPath, sessionName, conversationId },
+      body.recording,
+    );
 
     // syncDerivedFields is fire-and-forget in the machine, so the SSE broadcast
     // and query invalidation can race ahead of the state.json write. Await the

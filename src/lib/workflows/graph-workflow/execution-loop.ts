@@ -5,6 +5,11 @@ import {
   emit as defaultEmitStreamFrame,
   type GraphWorkflowStreamFrame,
 } from "@/lib/workflow-graph/stream-registry";
+import {
+  runCircuitBreakerGate as defaultRunCircuitBreakerGate,
+  type CircuitBreakerGateResult,
+  type RunCircuitBreakerGateInput,
+} from "@/lib/workflows/primitives/circuit-breaker-gate";
 import type { GraphWorkflowExecution, GraphWorkflowHaltReason } from "@/types";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
@@ -48,6 +53,15 @@ export interface GraphWorkflowExecutionLoopDeps {
     sessionName: string,
     frame: GraphWorkflowStreamFrame,
   ): void;
+  /**
+   * Optional override for the shared circuit-breaker gate primitive. The loop
+   * routes the per-context "consecutive failures hit threshold" decision
+   * through `runCircuitBreakerGate` so the halt vocabulary stays unified with
+   * the iteration-orchestrator's gate-based circuit breaker.
+   */
+  runCircuitBreakerGate?: (
+    input: RunCircuitBreakerGateInput,
+  ) => CircuitBreakerGateResult;
 }
 
 function emitDone(
@@ -98,6 +112,9 @@ const logger = createLogger("graph-workflow-execution-loop");
 export function createGraphWorkflowExecutionLoop(
   deps: GraphWorkflowExecutionLoopDeps,
 ) {
+  const runCircuitBreakerGate =
+    deps.runCircuitBreakerGate ?? defaultRunCircuitBreakerGate;
+
   async function run(
     input: GraphWorkflowExecutionLoopInput,
   ): Promise<GraphWorkflowExecution> {
@@ -204,12 +221,18 @@ export function createGraphWorkflowExecutionLoop(
           (c) => c.id === contextId,
         );
 
-        // Circuit breaker: halt if consecutive validation failures exceed threshold
+        // Circuit breaker: route the consecutive-failure decision through the
+        // shared gate primitive so the halt vocabulary stays unified with the
+        // iteration orchestrator's gate-based circuit breaker.
         if (contextState && contextDef) {
           const threshold =
             contextDef.circuitBreaker.consecutiveFailureThreshold ??
             DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD;
-          if (contextState.consecutiveFailureCount >= threshold) {
+          const gateResult = runCircuitBreakerGate({
+            failureCount: contextState.consecutiveFailureCount,
+            threshold,
+          });
+          if (gateResult.status === "fail") {
             execLogger?.decision("circuit_breaker.tripped", {
               contextId,
               consecutiveFailureCount: contextState.consecutiveFailureCount,

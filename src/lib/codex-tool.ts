@@ -33,6 +33,7 @@ export interface CodexToolContext {
 
 export interface CodexRunResult {
   response: string | null;
+  structuredOutput?: unknown;
   error: string | null;
   timedOut: boolean;
 }
@@ -112,7 +113,12 @@ export async function runCodexDefault(input: {
     if (result.error) {
       return { response: null, error: result.error, timedOut: false };
     }
-    return { response: result.text, error: null, timedOut: false };
+    return {
+      response: result.text,
+      structuredOutput: result.structuredOutput,
+      error: null,
+      timedOut: false,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { response: null, error: msg, timedOut: false };
@@ -155,13 +161,15 @@ export interface CodexStructuredResponse {
 }
 
 export function parseCodexStructuredResponse(
-  text: string,
+  input: unknown,
 ): CodexStructuredResponse | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return null;
+  let parsed = input;
+  if (typeof input === "string") {
+    try {
+      parsed = JSON.parse(input);
+    } catch {
+      return null;
+    }
   }
 
   if (typeof parsed !== "object" || parsed === null) return null;
@@ -259,17 +267,26 @@ function createRunCodexHandler(context: CodexToolContext, deps: CodexToolDeps) {
       return errorResult(`Codex execution failed: ${result.error}`);
     }
 
-    if (!result.response) {
-      return errorResult("Codex completed without emitting a final response.");
-    }
-
     logger.info("codex.success", {
       sessionName: context.sessionName,
-      responseLength: result.response.length,
+      responseLength: result.response?.length ?? 0,
     });
 
-    const structured = parseCodexStructuredResponse(result.response);
+    const structured =
+      parseCodexStructuredResponse(result.structuredOutput) ??
+      parseCodexStructuredResponse(result.response);
     if (structured) {
+      // TODO(artifact-registry): The files Codex writes under memory-bank/codex/
+      // (and anywhere else its `danger-full-access` sandbox lets it touch) are
+      // surfaced here as `referenceDocuments[]` metadata but never registered
+      // through `ArtifactRegistry`. That bypasses canonical-path validation
+      // and reference-document discoverability. The right migration is for
+      // the upstream caller (the conversation machine / workflow lane that
+      // invokes `run_codex`) to iterate `structured.referenceDocuments` and
+      // call `registry.register({ kind: "codex_output", ... })` for entries
+      // inside memory-bank/codex/, plus `kind: "reference_document"` for any
+      // file the caller chooses to surface to CC's broader discoverability
+      // index. See `memory-bank/artifact-registry-audit.md` (Codex section).
       return {
         content: [
           {
@@ -278,6 +295,10 @@ function createRunCodexHandler(context: CodexToolContext, deps: CodexToolDeps) {
           },
         ],
       };
+    }
+
+    if (!result.response) {
+      return errorResult("Codex completed without emitting a final response.");
     }
 
     return {

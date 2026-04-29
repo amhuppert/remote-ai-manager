@@ -240,6 +240,29 @@ describe("codex-tool", () => {
       expect(result.isError).toBeUndefined();
     });
 
+    it("prefers SDK structuredOutput over reparsing final text", async () => {
+      const structuredOutput = {
+        summary: "Used SDK structured output",
+        referenceDocuments: [
+          { filePath: "memory-bank/codex/sdk.md", description: "SDK result" },
+        ],
+      };
+      const mockDeps = createMockDeps({
+        response: "not valid json",
+        structuredOutput,
+      });
+      registerTool(mockDeps);
+
+      const handler = getHandler("run_codex");
+      const result = (await handler({ prompt: "fix tests" })) as {
+        content: Array<{ type: string; text: string }>;
+        isError?: boolean;
+      };
+
+      expect(JSON.parse(result.content[0]!.text)).toEqual(structuredOutput);
+      expect(result.isError).toBeUndefined();
+    });
+
     it("falls back to raw text when response is not valid structured JSON", async () => {
       const mockDeps = createMockDeps({ response: "All tests pass now." });
       registerTool(mockDeps);
@@ -422,6 +445,7 @@ function createMockDeps(runResult?: {
   response?: string | null;
   error?: string | null;
   timedOut?: boolean;
+  structuredOutput?: unknown;
 }): CodexToolDeps & {
   mockRunCodex: ReturnType<typeof vi.fn>;
   mockEnsureDir: ReturnType<typeof vi.fn>;
@@ -430,6 +454,7 @@ function createMockDeps(runResult?: {
     response: "response" in (runResult ?? {}) ? runResult!.response : "ok",
     error: "error" in (runResult ?? {}) ? runResult!.error : null,
     timedOut: runResult?.timedOut ?? false,
+    structuredOutput: runResult?.structuredOutput,
   });
   const mockEnsureDir = vi.fn().mockResolvedValue(undefined);
 

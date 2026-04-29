@@ -4,6 +4,7 @@ import {
   type ConflictResolutionDeps,
 } from "./conflict-resolution";
 import type { AgentTaskRunner, AgentTaskResult } from "./agent-backends/task";
+import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 
 // ============================================================
 // Test Helpers
@@ -138,6 +139,41 @@ All conflicts have been resolved and staged.`;
     }
   });
 
+  it("passes a JSON schema to the SDK task runner for conflict resolution", async () => {
+    const conflictEntries = [
+      {
+        file: "src/index.ts",
+        description: "Import conflict",
+        resolution: "Merged imports",
+        rationale: "Both imports are required",
+      },
+    ];
+
+    const runner = createMockRunner({
+      text: "not json",
+      structuredOutput: conflictEntries,
+    });
+    const deps = createTestDeps({
+      getTaskRunner: vi.fn().mockReturnValue(runner),
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+    });
+
+    expect(result.status).toBe("resolved");
+    const callArgs = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(callArgs.outputSchema).toMatchObject({
+      type: "array",
+      items: {
+        type: "object",
+        required: ["file", "description", "resolution", "rationale"],
+      },
+    });
+  });
+
   it("falls back to raw JSON parse when text is valid JSON", async () => {
     const conflictEntries = [
       {
@@ -183,7 +219,7 @@ All conflicts have been resolved and staged.`;
 
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
-      expect(result.error).toContain("No JSON code fence found");
+      expect(result.error).toContain("structured output failed validation");
     }
   });
 
@@ -214,7 +250,7 @@ ${JSON.stringify(malformedEntries, null, 2)}
 
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
-      expect(result.error).toContain("Failed to parse conflict entries");
+      expect(result.error).toContain("structured output failed validation");
     }
   });
 
@@ -377,7 +413,7 @@ ${JSON.stringify(lastEntries, null, 2)}
 
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
-      expect(result.error).toContain("Failed to parse");
+      expect(result.error).toContain("structured output failed validation");
     }
   });
 });
@@ -475,7 +511,7 @@ ${JSON.stringify(conflictEntries, null, 2)}
 
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
-      expect(result.error).toContain("No JSON code fence found");
+      expect(result.error).toContain("structured output failed validation");
     }
   });
 
@@ -495,5 +531,69 @@ ${JSON.stringify(conflictEntries, null, 2)}
     if (result.status === "failed") {
       expect(result.error).toContain("SDK connection failed");
     }
+  });
+});
+
+describe("conflict-resolution Task 6.3 parity (executeAgentCall route)", () => {
+  it("routes resolveConflicts through deps.executeAgentCall as kind=task_run with write_capable", async () => {
+    const conflictEntries = [
+      {
+        file: "src/index.ts",
+        description: "Conflict",
+        resolution: "Resolved",
+        rationale: "Reason",
+      },
+    ];
+    const text = `\`\`\`json\n${JSON.stringify(conflictEntries)}\n\`\`\``;
+    const runner = createMockRunner({ text });
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+
+    const deps = createTestDeps({
+      getTaskRunner: vi.fn().mockReturnValue(runner),
+      executeAgentCall: executeAgentCallSpy,
+    });
+
+    const { resolveConflicts } = createConflictResolver(deps);
+    const result = await resolveConflicts({ worktreePath: "/tmp/worktree" });
+
+    expect(result.status).toBe("resolved");
+    expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
+    const [request] = executeAgentCallSpy.mock.calls[0]!;
+    expect(request).toMatchObject({
+      kind: "task_run",
+      backend: "claude",
+      writeCapability: "write_capable",
+    });
+  });
+
+  it("routes analyzeConflicts through deps.executeAgentCall as kind=task_run with read_only", async () => {
+    const conflictEntries = [
+      {
+        file: "src/index.ts",
+        description: "Conflict",
+        resolution: "Proposed",
+        rationale: "Reason",
+      },
+    ];
+    const text = `\`\`\`json\n${JSON.stringify(conflictEntries)}\n\`\`\``;
+    const runner = createMockRunner({ text });
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+
+    const deps = createTestDeps({
+      getTaskRunner: vi.fn().mockReturnValue(runner),
+      executeAgentCall: executeAgentCallSpy,
+    });
+
+    const { analyzeConflicts } = createConflictResolver(deps);
+    const result = await analyzeConflicts({ worktreePath: "/tmp/worktree" });
+
+    expect(result.status).toBe("analyzed");
+    expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
+    const [request] = executeAgentCallSpy.mock.calls[0]!;
+    expect(request).toMatchObject({
+      kind: "task_run",
+      backend: "claude",
+      writeCapability: "read_only",
+    });
   });
 });

@@ -179,20 +179,20 @@ function createProvidedMachine() {
           context.lastResult?.error ?? context.lastError ?? undefined;
 
         void (async () => {
-          const { broadcast } = await import("@/lib/sse-broadcaster");
-          try {
-            broadcast({
-              type: "conversation-status",
-              projectName: context.projectName,
-              sessionName: context.sessionName,
-              conversationId: context.conversationId,
-              status: context.status as SSEStatus,
-              ...(promptError ? { error: promptError } : {}),
-            });
-          } catch (err) {
+          const { publishSessionStatus } =
+            await import("@/lib/workflows/primitives/default-session-status-bus");
+          const outcome = publishSessionStatus({
+            type: "conversation-status",
+            projectName: context.projectName,
+            sessionName: context.sessionName,
+            conversationId: context.conversationId,
+            status: context.status as SSEStatus,
+            ...(promptError ? { error: promptError } : {}),
+          });
+          if (!outcome.delivered) {
             logger.warn("conversation-manager.broadcast_status_failed", {
               conversationId: context.conversationId,
-              error: err instanceof Error ? err.message : String(err),
+              error: outcome.error?.message,
             });
           }
         })();
@@ -201,20 +201,20 @@ function createProvidedMachine() {
       broadcastAskQuestion: ({ context }) => {
         if (!context.pendingQuestion) return;
         void (async () => {
-          const { broadcast } = await import("@/lib/sse-broadcaster");
-          try {
-            broadcast({
-              type: "ask-question",
-              projectName: context.projectName,
-              sessionName: context.sessionName,
-              conversationId: context.conversationId,
-              questionId: context.pendingQuestion!.questionId,
-              questions: context.pendingQuestion!.questions,
-            });
-          } catch (err) {
+          const { publishSessionStatus } =
+            await import("@/lib/workflows/primitives/default-session-status-bus");
+          const outcome = publishSessionStatus({
+            type: "ask-question",
+            projectName: context.projectName,
+            sessionName: context.sessionName,
+            conversationId: context.conversationId,
+            questionId: context.pendingQuestion!.questionId,
+            questions: context.pendingQuestion!.questions,
+          });
+          if (!outcome.delivered) {
             logger.warn("conversation-manager.broadcast_ask_failed", {
               conversationId: context.conversationId,
-              error: err instanceof Error ? err.message : String(err),
+              error: outcome.error?.message,
             });
           }
         })();
@@ -222,20 +222,18 @@ function createProvidedMachine() {
 
       broadcastDebugModeStatus: ({ context }) => {
         void (async () => {
-          const { broadcast } = await import("@/lib/sse-broadcaster");
-          try {
-            broadcast({
-              type: "debug-mode-status",
-              projectName: context.projectName,
-              sessionName: context.sessionName,
-              conversationId: context.conversationId,
-              active: context.debugMode?.active ?? false,
-              recording: context.debugMode?.recording ?? false,
-            });
-          } catch (err) {
+          const { getDefaultDebugAdapter } = await import("./debug-adapter");
+          const outcome = getDefaultDebugAdapter().publishDebugModeStatus({
+            projectName: context.projectName,
+            sessionName: context.sessionName,
+            conversationId: context.conversationId,
+            active: context.debugMode?.active ?? false,
+            recording: context.debugMode?.recording ?? false,
+          });
+          if (!outcome.delivered) {
             logger.warn("conversation-manager.broadcast_debug_failed", {
               conversationId: context.conversationId,
-              error: err instanceof Error ? err.message : String(err),
+              error: outcome.error?.message,
             });
           }
         })();

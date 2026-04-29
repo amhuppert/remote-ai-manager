@@ -775,6 +775,183 @@ describe("execution loop", () => {
     expect(result.status).toBe("completed");
   });
 
+  it("routes the circuit-breaker decision through the runCircuitBreakerGate dep", async () => {
+    const definition = createSingleContextDefinition(10);
+    let currentExecution = createRunningExecution(definition, {
+      activeContextId: "ctx-1",
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 2,
+        },
+      },
+    });
+
+    const sendSpy = vi.fn(
+      async (
+        _projectPath: string,
+        _sessionName: string,
+        event:
+          | { type: "complete" }
+          | { type: "halt"; reason: GraphWorkflowHaltReason },
+      ) => {
+        if (event.type === "halt") {
+          currentExecution = {
+            ...structuredClone(currentExecution),
+            status: "halted",
+            haltReason: event.reason,
+            completedAt: "2026-03-27T12:10:00.000Z",
+          };
+        }
+        return currentExecution;
+      },
+    );
+
+    const runCircuitBreakerGate = vi.fn(
+      (input: { failureCount: number; threshold: number }) => {
+        if (input.failureCount >= input.threshold) {
+          return {
+            status: "fail" as const,
+            kind: "circuit_breaker" as const,
+            reason: "tripped",
+            details: {
+              failureCount: input.failureCount,
+              threshold: input.threshold,
+              tripped: true,
+            },
+          };
+        }
+        return {
+          status: "pass" as const,
+          kind: "circuit_breaker" as const,
+          details: {
+            failureCount: input.failureCount,
+            threshold: input.threshold,
+            tripped: false,
+          },
+        };
+      },
+    );
+
+    const deps: GraphWorkflowExecutionLoopDeps = {
+      workflowManager: {
+        async scheduleNextContext() {
+          return currentExecution;
+        },
+        send: sendSpy,
+      },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(currentExecution);
+          next.contextStates["ctx-1"]!.iterationCount += 1;
+          next.contextStates["ctx-1"]!.consecutiveFailureCount = 3;
+          currentExecution = next;
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: true,
+          };
+        },
+      },
+      emitStreamFrame: vi.fn(),
+      runCircuitBreakerGate,
+    };
+
+    const loop = createGraphWorkflowExecutionLoop(deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: currentExecution,
+    });
+
+    expect(runCircuitBreakerGate).toHaveBeenCalledWith({
+      failureCount: 3,
+      threshold: 3,
+    });
+    expect(result.status).toBe("halted");
+    expect(result.haltReason?.type).toBe("circuit_breaker");
+  });
+
+  it("does not halt when the runCircuitBreakerGate dep returns pass", async () => {
+    const definition = createSingleContextDefinition(10);
+    let currentExecution = createRunningExecution(definition, {
+      activeContextId: "ctx-1",
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 5,
+        },
+      },
+    });
+    let iterationCallCount = 0;
+
+    const sendSpy = vi.fn(async (_projectPath, _sessionName, event) => {
+      if (event.type === "complete") {
+        currentExecution = {
+          ...structuredClone(currentExecution),
+          status: "completed",
+          completedAt: "2026-03-27T12:05:00.000Z",
+        };
+      }
+      return currentExecution;
+    });
+
+    const runCircuitBreakerGate = vi.fn(() => ({
+      status: "pass" as const,
+      kind: "circuit_breaker" as const,
+      details: { failureCount: 0, threshold: 99, tripped: false },
+    }));
+
+    const deps: GraphWorkflowExecutionLoopDeps = {
+      workflowManager: {
+        async scheduleNextContext() {
+          return currentExecution;
+        },
+        send: sendSpy,
+      },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          const next = structuredClone(currentExecution);
+          next.contextStates["ctx-1"]!.iterationCount = iterationCallCount;
+          next.contextStates["ctx-1"]!.consecutiveFailureCount = 5;
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextId = null;
+          currentExecution = next;
+          return {
+            conversationId: `conv-${iterationCallCount}`,
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+      emitStreamFrame: vi.fn(),
+      runCircuitBreakerGate,
+    };
+
+    const loop = createGraphWorkflowExecutionLoop(deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: currentExecution,
+    });
+
+    expect(runCircuitBreakerGate).toHaveBeenCalled();
+    expect(result.status).toBe("completed");
+    expect(result.haltReason).toBeNull();
+  });
+
   it("emits done with validator_infra_error when iteration returns a pre-halted execution", async () => {
     const definition = createSingleContextDefinition(10);
     const initialExecution = createRunningExecution(definition, {

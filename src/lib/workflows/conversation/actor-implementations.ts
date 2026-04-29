@@ -54,8 +54,82 @@ import {
 } from "@/lib/prompt";
 import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
 import { createExternalTurnHandler } from "./external-turn-handler";
+import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
+import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import type {
+  AgentCallRequest,
+  AgentCallResult,
+} from "@/lib/workflows/primitives/agent-call-vocabulary";
+import type {
+  AgentCallFacadeDeps,
+  ConversationRuntimeResolution,
+} from "@/lib/workflows/primitives/agent-call-facade";
+import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
+import fs from "node:fs/promises";
 
 const logger = createLogger("conversation-actor");
+
+const FOCUS_MEMORY_DESCRIPTION =
+  "Current work-in-progress and remaining tasks for this session";
+
+export interface RegisterFocusMemoryIfPresentInput {
+  worktreePath: string;
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
+  fileExists: (filePath: string) => boolean;
+  registerReferenceDocument: (
+    projectPath: string,
+    sessionName: string,
+    filePath: string,
+    description: string,
+  ) => Promise<unknown>;
+  /** Optional registry override; production constructs one if omitted. */
+  artifactRegistry?: ReturnType<typeof createArtifactRegistry>;
+}
+
+/**
+ * Register `memory-bank/focus.md` as a `focus_memory` artifact when present.
+ *
+ * Always routes through the shared `ArtifactRegistry.register()` flow so the
+ * canonical path is enforced and shallow source metadata (workflowId =
+ * conversationId) is recorded alongside the existing reference-document
+ * registration. Preserves the prior behavior of doing nothing when the file
+ * is absent.
+ */
+export async function registerFocusMemoryIfPresent(
+  input: RegisterFocusMemoryIfPresentInput,
+): Promise<void> {
+  const focusPath = `${input.worktreePath}/memory-bank/focus.md`;
+  if (!input.fileExists(focusPath)) return;
+
+  const registry =
+    input.artifactRegistry ??
+    createArtifactRegistry({
+      writeFile: (absolutePath, contents) =>
+        fs.writeFile(absolutePath, contents),
+      ensureDir: (absolutePath) =>
+        fs.mkdir(absolutePath, { recursive: true }).then(() => {}),
+      registration: {
+        registerReferenceDocument: async ({ relativePath, description }) => {
+          await input.registerReferenceDocument(
+            input.projectPath,
+            input.sessionName,
+            relativePath,
+            description,
+          );
+        },
+      },
+    });
+
+  await registry.register({
+    kind: "focus_memory",
+    worktreePath: input.worktreePath,
+    relativePath: "memory-bank/focus.md",
+    description: FOCUS_MEMORY_DESCRIPTION,
+    source: { workflowId: input.conversationId },
+  });
+}
 
 // ============================================================
 // Minimal types for deps interface
@@ -131,7 +205,13 @@ export interface ActorImplementationDeps {
     sessionName: string,
   ): Promise<SessionState | null>;
 
-  // Reference documents
+  // Reference documents — production routes through the shared
+  // ArtifactRegistry primitive (`register()` on `focus_memory`). Tests can
+  // continue to mock `createReferenceDocument` directly because the production
+  // wiring assigns it to the artifact registry's `registerReferenceDocument`
+  // hook (see `loadProductionDeps`). This preserves the existing reference
+  // document store semantics while routing the side effect through the shared
+  // artifact flow.
   createReferenceDocument(
     projectPath: string,
     sessionName: string,
@@ -177,6 +257,17 @@ export interface ActorImplementationDeps {
     conversationId: string;
     backend: AgentBackendId;
   }): Promise<ConversationApplyResult>;
+
+  /**
+   * Execute a single conversation/task turn through the shared AgentCall
+   * primitive. Production wires this to the real `executeAgentCall` facade;
+   * tests inject a spy. Routing through this dep guarantees the conversation
+   * actor never bypasses the primitive layer (cf. `executePromptForMachine`).
+   */
+  executeAgentCall(
+    request: AgentCallRequest,
+    facadeDeps: AgentCallFacadeDeps,
+  ): Promise<AgentCallResult>;
 }
 
 let _deps: ActorImplementationDeps | null = null;
@@ -291,6 +382,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     composePortableMcpForConversation,
     applyMcpAtTurnStart:
       defaultDepsMod.defaultMcpRuntimeApplyService.applyAtTurnStart,
+    executeAgentCall: defaultExecuteAgentCall,
   } as unknown as ActorImplementationDeps;
 }
 
@@ -748,6 +840,152 @@ function buildOnAskQuestion(
 }
 
 // ============================================================
+// Shared AgentCall dispatch
+// ============================================================
+
+interface DispatchTurnViaAgentCallInput {
+  executeAgentCall: ActorImplementationDeps["executeAgentCall"];
+  getRuntime: () => ConversationBackendRuntime;
+  replaceRuntime: () => Promise<ConversationBackendRuntime>;
+  signal: AbortSignal;
+  conversationId: string;
+  sessionName: string;
+  backend: AgentBackendId;
+  promptText: string;
+  images: ConversationBackendTurnInput["images"] | undefined;
+  modelId: string | null | undefined;
+  reasoningEffort: string | undefined;
+  autonomous: boolean;
+  outputFormat: ConversationBackendTurnInput["outputFormat"];
+  onEvent: ConversationBackendTurnInput["onEvent"];
+  onAskQuestion: ConversationBackendTurnInput["onAskQuestion"];
+  nativeFork: ConversationBackendTurnInput["nativeFork"];
+  syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"];
+}
+
+interface DispatchTurnViaAgentCallOutput {
+  turnResult: ConversationBackendTurnResult | undefined;
+  thrown?: unknown;
+}
+
+/**
+ * Routes a single conversation turn through the shared AgentCall primitive.
+ *
+ * - Builds a normalized `conversation_turn` request and resolves the
+ *   conversation runtime via the facade.
+ * - Captures the underlying `ConversationBackendTurnResult` so the actor's
+ *   downstream code keeps full access to fields the normalized primitive
+ *   result drops (numTurns, raw contentBlocks).
+ * - Wraps the backend runtime so its `sendTurn` performs the existing
+ *   undelivered-query-session retry loop in-place; observable behavior
+ *   (close + unregister + recreate) matches the prior direct-`sendTurn`
+ *   path so a stale Claude query session is retried transparently.
+ */
+async function dispatchTurnViaAgentCall(
+  input: DispatchTurnViaAgentCallInput,
+): Promise<DispatchTurnViaAgentCallOutput> {
+  let captured: ConversationBackendTurnResult | undefined;
+  let pendingRetry: Error | undefined;
+
+  const wrappedRuntime: ConversationBackendRuntime = new Proxy(
+    input.getRuntime(),
+    {
+      get(_target, prop, _receiver) {
+        const live = input.getRuntime();
+        if (prop === "sendTurn") {
+          return async (
+            turnInput: ConversationBackendTurnInput,
+          ): Promise<ConversationBackendTurnResult> => {
+            let attempt = 0;
+            let current = input.getRuntime();
+            while (true) {
+              try {
+                const result = await current.sendTurn(turnInput);
+                captured = result;
+                return result;
+              } catch (err) {
+                if (
+                  !shouldRetryUndeliveredPrompt(
+                    err,
+                    current,
+                    input.signal,
+                    attempt,
+                  )
+                ) {
+                  // Non-retryable: capture so the actor's outer catch can
+                  // surface the original error after the facade normalizes
+                  // the throw into a failed AgentCallResult.
+                  pendingRetry = err as Error;
+                  throw err;
+                }
+                attempt += 1;
+                logger.warn("prompt.runtime_retry", {
+                  sessionName: input.sessionName,
+                  conversationId: input.conversationId,
+                  attempt,
+                  error: getErrorMessage(err),
+                });
+                current = await input.replaceRuntime();
+              }
+            }
+          };
+        }
+        return Reflect.get(live, prop);
+      },
+    },
+  );
+
+  const request: AgentCallRequest = {
+    kind: "conversation_turn",
+    prompt: input.promptText,
+    backend: input.backend,
+    writeCapability: "write_capable",
+    ...(input.outputFormat?.type === "json_schema"
+      ? { outputSchema: input.outputFormat.schema }
+      : {}),
+  };
+
+  const facadeDeps: AgentCallFacadeDeps = {
+    resolveConversationRuntime: () => {
+      const resolution: ConversationRuntimeResolution = {
+        runtime: wrappedRuntime,
+        capabilityView: capabilityViewForBackend(input.backend),
+        signal: input.signal,
+        ...(input.modelId != null ? { modelId: input.modelId } : {}),
+        ...(input.reasoningEffort !== undefined
+          ? { reasoningEffort: input.reasoningEffort }
+          : {}),
+        autonomous: input.autonomous,
+        sessionInstructions: [],
+        ...(input.images !== undefined ? { images: input.images } : {}),
+        onEvent: input.onEvent,
+        ...(input.onAskQuestion !== undefined
+          ? { answerAskUser: input.onAskQuestion }
+          : {}),
+        ...(input.nativeFork !== undefined
+          ? { nativeFork: input.nativeFork }
+          : {}),
+        ...(input.syntheticForkSeed !== undefined
+          ? { syntheticForkSeed: input.syntheticForkSeed }
+          : {}),
+      };
+      return resolution;
+    },
+  };
+
+  try {
+    await input.executeAgentCall(request, facadeDeps);
+  } catch (err) {
+    pendingRetry = err as Error;
+  }
+
+  return {
+    turnResult: captured,
+    ...(pendingRetry ? { thrown: pendingRetry } : {}),
+  };
+}
+
+// ============================================================
 // Main actor implementations
 // ============================================================
 
@@ -958,16 +1196,14 @@ export async function executePromptForMachine(
       input.sessionName,
     );
 
-    // Auto-register focus.md as a reference document
-    const focusPath = `${input.worktreePath}/memory-bank/focus.md`;
-    if (deps.fileExists(focusPath)) {
-      await deps.createReferenceDocument(
-        input.projectPath,
-        input.sessionName,
-        "memory-bank/focus.md",
-        "Current work-in-progress and remaining tasks for this session",
-      );
-    }
+    await registerFocusMemoryIfPresent({
+      worktreePath: input.worktreePath,
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      fileExists: deps.fileExists,
+      registerReferenceDocument: deps.createReferenceDocument,
+    });
 
     // Build reference documents system prompt section
     const referenceDocs = await deps.getReferenceDocuments(
@@ -1260,49 +1496,39 @@ export async function executePromptForMachine(
       }
     }
 
-    let deliveryAttempt = 0;
-
-    while (true) {
-      try {
-        turnResult = await backendRuntime!.sendTurn({
-          promptText,
-          images: input.images,
-          sessionInstructions: [], // Already baked into the runtime
-          modelId: effectiveModel,
-          reasoningEffort: effectiveEffort,
-          autonomous: input.autonomous,
-          outputFormat: input.outputFormat,
-          signal: abortController.signal,
-          onEvent,
-          onAskQuestion,
-          nativeFork,
-          syntheticForkSeed,
-        });
-        break;
-      } catch (err) {
-        if (
-          !shouldRetryUndeliveredPrompt(
-            err,
-            backendRuntime,
-            abortController.signal,
-            deliveryAttempt,
-          )
-        ) {
-          throw err;
-        }
-
-        deliveryAttempt += 1;
-        logger.warn("prompt.runtime_retry", {
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          attempt: deliveryAttempt,
-          error: getErrorMessage(err),
-        });
-
+    // Route the turn through the shared AgentCall primitive. The wrapped
+    // runtime captures the underlying `ConversationBackendTurnResult` (the
+    // existing actor downstream still needs `numTurns`, `contentBlocks`, and
+    // other fields the primitive's normalized result drops) and handles the
+    // undelivered-query-session retry loop in-place so observable behavior
+    // matches the prior direct-`sendTurn` path.
+    const turnDispatch = await dispatchTurnViaAgentCall({
+      executeAgentCall: deps.executeAgentCall,
+      getRuntime: () => backendRuntime!,
+      replaceRuntime: async () => {
         backendRuntime?.close();
         deps.unregisterBackendRuntime(input.conversationId);
         backendRuntime = await createManagedBackendRuntime();
-      }
+        return backendRuntime;
+      },
+      signal: abortController.signal,
+      conversationId: input.conversationId,
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      promptText,
+      images: input.images,
+      modelId: effectiveModel,
+      reasoningEffort: effectiveEffort,
+      autonomous: input.autonomous ?? false,
+      outputFormat: input.outputFormat,
+      onEvent,
+      onAskQuestion,
+      nativeFork,
+      syntheticForkSeed,
+    });
+    turnResult = turnDispatch.turnResult;
+    if (turnDispatch.thrown) {
+      throw turnDispatch.thrown;
     }
   } catch (err) {
     if (abortController.signal.aborted) {

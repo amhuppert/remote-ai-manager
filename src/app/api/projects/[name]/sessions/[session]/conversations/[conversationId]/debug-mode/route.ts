@@ -4,10 +4,8 @@ import { getSession } from "@/lib/state";
 import { debugModeRequestSchema } from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
 import { ensureDebugDir, getDebugLogPath } from "@/lib/debug-log";
-import {
-  ensureConversationActor,
-  sendConversationEvent,
-} from "@/lib/workflows/conversation/manager";
+import { ensureConversationActor } from "@/lib/workflows/conversation/manager";
+import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -60,6 +58,8 @@ export const POST = withTracing(async (request, { params }) => {
 
   try {
     await ensureConversationActor(projectPath, sessionName, conversationId);
+    const adapter = getDefaultDebugAdapter();
+    const target = { projectPath, sessionName, conversationId };
 
     switch (body.action) {
       case "enter": {
@@ -71,26 +71,17 @@ export const POST = withTracing(async (request, { params }) => {
         }
         ensureDebugDir(session.worktreePath);
         const logFilePath = getDebugLogPath(session.worktreePath);
-        sendConversationEvent(projectPath, sessionName, conversationId, {
-          type: "ENTER_DEBUG_MODE",
-          logFilePath,
-        });
+        adapter.enterDebugMode(target, { logFilePath });
         break;
       }
       case "exit":
-        sendConversationEvent(projectPath, sessionName, conversationId, {
-          type: "EXIT_DEBUG_MODE",
-        });
+        adapter.exitDebugMode(target);
         break;
       case "mark_reproduced":
-        sendConversationEvent(projectPath, sessionName, conversationId, {
-          type: "MARK_REPRODUCED",
-        });
+        adapter.markReproduced(target);
         break;
       case "mark_fix_verified":
-        sendConversationEvent(projectPath, sessionName, conversationId, {
-          type: "MARK_FIX_VERIFIED",
-        });
+        adapter.markFixVerified(target);
         break;
     }
 

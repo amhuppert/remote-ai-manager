@@ -4,6 +4,9 @@ import {
   type WorkflowContinuityServiceDeps,
 } from "./workflow-continuity-service";
 import { graphWorkflowExecutionSchema } from "@/lib/schemas";
+import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
+import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowLaneState,
@@ -798,7 +801,7 @@ describe("resolveValidatorCall", () => {
 // ---------------------------------------------------------------------------
 
 describe("recordClaudeTurnOutcome", () => {
-  it("updates context token metrics on the lane state", () => {
+  it("updates context token metrics on the lane state", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -822,7 +825,7 @@ describe("recordClaudeTurnOutcome", () => {
       laneStates: { implementer: existingLane },
     });
 
-    const result = svc.recordClaudeTurnOutcome({
+    const result = await svc.recordClaudeTurnOutcome({
       execution,
       lane: "implementer",
       contextTokens: 50000,
@@ -840,7 +843,7 @@ describe("recordClaudeTurnOutcome", () => {
     }
   });
 
-  it("sets rotateBeforeNextTurn when tokens exceed configured limit", () => {
+  it("sets rotateBeforeNextTurn when tokens exceed configured limit", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -864,7 +867,7 @@ describe("recordClaudeTurnOutcome", () => {
       laneStates: { implementer: existingLane },
     });
 
-    const result = svc.recordClaudeTurnOutcome({
+    const result = await svc.recordClaudeTurnOutcome({
       execution,
       lane: "implementer",
       contextTokens: 150000,
@@ -879,7 +882,7 @@ describe("recordClaudeTurnOutcome", () => {
     }
   });
 
-  it("clears rotateBeforeNextTurn when tokens are under the limit", () => {
+  it("clears rotateBeforeNextTurn when tokens are under the limit", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -903,7 +906,7 @@ describe("recordClaudeTurnOutcome", () => {
       laneStates: { implementer: existingLane },
     });
 
-    const result = svc.recordClaudeTurnOutcome({
+    const result = await svc.recordClaudeTurnOutcome({
       execution,
       lane: "implementer",
       contextTokens: 40000,
@@ -917,7 +920,7 @@ describe("recordClaudeTurnOutcome", () => {
     }
   });
 
-  it("does not set rotateBeforeNextTurn when no limit is configured", () => {
+  it("does not set rotateBeforeNextTurn when no limit is configured", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -942,7 +945,7 @@ describe("recordClaudeTurnOutcome", () => {
     });
 
     // Even with very high tokens, no limit means no rotation
-    const result = svc.recordClaudeTurnOutcome({
+    const result = await svc.recordClaudeTurnOutcome({
       execution,
       lane: "implementer",
       contextTokens: 199000,
@@ -963,7 +966,7 @@ describe("recordClaudeTurnOutcome", () => {
 // ---------------------------------------------------------------------------
 
 describe("recordCodexTurnOutcome", () => {
-  it("updates turn usage and always keeps rotateBeforeNextTurn false", () => {
+  it("updates turn usage and always keeps rotateBeforeNextTurn false", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -986,7 +989,7 @@ describe("recordCodexTurnOutcome", () => {
       laneStates: { context_validator: existingLane },
     });
 
-    const result = svc.recordCodexTurnOutcome({
+    const result = await svc.recordCodexTurnOutcome({
       execution,
       lane: "context_validator",
       usage: { inputTokens: 1000, cachedInputTokens: 200, outputTokens: 300 },
@@ -1002,7 +1005,7 @@ describe("recordCodexTurnOutcome", () => {
     }
   });
 
-  it("records disabled limitEvaluation when no limit is configured", () => {
+  it("records disabled limitEvaluation when no limit is configured", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -1025,7 +1028,7 @@ describe("recordCodexTurnOutcome", () => {
       laneStates: { context_validator: existingLane },
     });
 
-    const result = svc.recordCodexTurnOutcome({
+    const result = await svc.recordCodexTurnOutcome({
       execution,
       lane: "context_validator",
       usage: null,
@@ -1038,7 +1041,7 @@ describe("recordCodexTurnOutcome", () => {
     }
   });
 
-  it("updates sessionRef.threadId when newThreadId is provided", () => {
+  it("updates sessionRef.threadId when newThreadId is provided", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -1061,7 +1064,7 @@ describe("recordCodexTurnOutcome", () => {
       laneStates: { context_validator: existingLane },
     });
 
-    const result = svc.recordCodexTurnOutcome({
+    const result = await svc.recordCodexTurnOutcome({
       execution,
       lane: "context_validator",
       usage: null,
@@ -1075,7 +1078,7 @@ describe("recordCodexTurnOutcome", () => {
     }
   });
 
-  it("creates a codex sessionRef when the implementer lane starts without one", () => {
+  it("creates a codex sessionRef when the implementer lane starts without one", async () => {
     const svc = createWorkflowContinuityService(makeDeps());
     const execution = makeExecution({
       laneStates: {
@@ -1092,7 +1095,7 @@ describe("recordCodexTurnOutcome", () => {
       },
     });
 
-    const result = svc.recordCodexTurnOutcome({
+    const result = await svc.recordCodexTurnOutcome({
       execution,
       lane: "implementer",
       usage: null,
@@ -1111,7 +1114,7 @@ describe("recordCodexTurnOutcome", () => {
     }
   });
 
-  it("preserves existing threadId when newThreadId is null", () => {
+  it("preserves existing threadId when newThreadId is null", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -1134,7 +1137,7 @@ describe("recordCodexTurnOutcome", () => {
       laneStates: { context_validator: existingLane },
     });
 
-    const result = svc.recordCodexTurnOutcome({
+    const result = await svc.recordCodexTurnOutcome({
       execution,
       lane: "context_validator",
       usage: null,
@@ -1148,7 +1151,7 @@ describe("recordCodexTurnOutcome", () => {
     }
   });
 
-  it("sets rotateBeforeNextTurn=true when failed is true to recover from phantom threads", () => {
+  it("sets rotateBeforeNextTurn=true when failed is true to recover from phantom threads", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -1171,7 +1174,7 @@ describe("recordCodexTurnOutcome", () => {
       laneStates: { context_validator: existingLane },
     });
 
-    const result = svc.recordCodexTurnOutcome({
+    const result = await svc.recordCodexTurnOutcome({
       execution,
       lane: "context_validator",
       usage: null,
@@ -1486,5 +1489,222 @@ describe("recovery behaviors", () => {
     if (result.engine === "codex") {
       expect(result.threadId).toBe("thread-codex-abc");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LaneService primitive integration (Task 6.2 — adapter-backed continuity)
+// ---------------------------------------------------------------------------
+
+describe("primitive lane-service integration", () => {
+  it("seeds the LaneService store when resolving a fresh implementer call", async () => {
+    const store = createInMemoryLaneStore();
+    const laneService = createLaneService({ store, now: () => NOW });
+    const initializeSpy = vi.spyOn(laneService, "initialize");
+
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService({ ...deps, laneService });
+    const execution = makeExecution();
+
+    const result = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    expect(initializeSpy).toHaveBeenCalledTimes(1);
+    const persisted = await store.read({
+      workflowId: execution.id,
+      laneId: "implementer",
+    });
+    expect(persisted).not.toBeNull();
+    expect(persisted?.backend).toBe("claude");
+    expect(persisted?.workflowId).toBe(execution.id);
+    expect(persisted?.laneId).toBe("implementer");
+    if (persisted?.backendState.backend === "claude") {
+      expect(persisted.backendState.conversationId).toBe("conv-new");
+    }
+    // The graph execution still carries the same lane state for callers.
+    expect(result.execution.laneStates["implementer"]?.engine).toBe("claude");
+    expect(result.execution.laneStates["implementer"]?.contextId).toBe("ctx-1");
+  });
+
+  it("routes recordClaudeTurnOutcome through LaneService.recordOutcome and projects the result back to graph state", async () => {
+    const store = createInMemoryLaneStore();
+    const laneService = createLaneService({ store, now: () => NOW });
+    const recordSpy = vi.spyOn(laneService, "recordOutcome");
+
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService({ ...deps, laneService });
+
+    const existingLane: GraphWorkflowLaneState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-claude-1",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: { implementer: existingLane },
+    });
+
+    const result = await svc.recordClaudeTurnOutcome({
+      execution,
+      lane: "implementer",
+      contextTokens: 150_000,
+      contextWindowMax: 200_000,
+      contextLimitTokens: 100_000,
+    });
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    const callArgs = recordSpy.mock.calls[0]!;
+    expect(callArgs[0]).toEqual({
+      workflowId: execution.id,
+      laneId: "implementer",
+    });
+    expect(callArgs[1]).toMatchObject({
+      backend: "claude",
+      contextTokens: 150_000,
+      contextWindowMax: 200_000,
+      contextLimitTokens: 100_000,
+    });
+
+    const updated = result.laneStates["implementer"];
+    if (updated?.engine === "claude") {
+      expect(updated.lastContextTokens).toBe(150_000);
+      expect(updated.lastContextWindowMax).toBe(200_000);
+      expect(updated.rotateBeforeNextTurn).toBe(true);
+      expect(updated.limitEvaluation).toBe("supported");
+    }
+
+    const persisted = await store.read({
+      workflowId: execution.id,
+      laneId: "implementer",
+    });
+    expect(persisted).not.toBeNull();
+    if (persisted?.metrics.backend === "claude") {
+      expect(persisted.metrics.contextTokens).toBe(150_000);
+      expect(persisted.metrics.rotateBeforeNextTurn).toBe(true);
+    }
+  });
+
+  it("routes recordCodexTurnOutcome through LaneService.recordOutcome with failed=true", async () => {
+    const store = createInMemoryLaneStore();
+    const laneService = createLaneService({ store, now: () => NOW });
+    const recordSpy = vi.spyOn(laneService, "recordOutcome");
+
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService({ ...deps, laneService });
+
+    const existingLane: GraphWorkflowLaneState = {
+      engine: "codex",
+      lane: "context_validator",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "codex",
+        lane: "context_validator",
+        threadId: "thread-1",
+      },
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: { context_validator: existingLane },
+    });
+
+    const result = await svc.recordCodexTurnOutcome({
+      execution,
+      lane: "context_validator",
+      usage: null,
+      contextLimitTokens: undefined,
+      failed: true,
+    });
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    const callArgs = recordSpy.mock.calls[0]!;
+    expect(callArgs[0]).toEqual({
+      workflowId: execution.id,
+      laneId: "context_validator",
+    });
+    expect(callArgs[1]).toMatchObject({
+      backend: "codex",
+      failed: true,
+    });
+
+    const updated = result.laneStates["context_validator"];
+    expect(updated?.engine).toBe("codex");
+    if (updated?.engine === "codex") {
+      expect(updated.rotateBeforeNextTurn).toBe(true);
+    }
+  });
+
+  it("preserves graph state unchanged when LaneService throws during initialize", async () => {
+    const store = createInMemoryLaneStore();
+    const laneService = createLaneService({ store, now: () => NOW });
+    const initSpy = vi
+      .spyOn(laneService, "initialize")
+      .mockImplementation(async (_state: LaneState) => {
+        throw new Error("synthetic store failure");
+      });
+
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService({ ...deps, laneService });
+    const execution = makeExecution();
+
+    await expect(
+      svc.resolveImplementerCall({
+        execution,
+        projectPath: "/proj",
+        sessionName: "sess",
+        contextId: "ctx-1",
+      }),
+    ).rejects.toThrow(/synthetic store failure/i);
+
+    expect(initSpy).toHaveBeenCalled();
+  });
+
+  it("isolates lane state across executions (workflowId scoped)", async () => {
+    const store = createInMemoryLaneStore();
+    const laneService = createLaneService({ store, now: () => NOW });
+
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService({ ...deps, laneService });
+
+    const execA = makeExecution({ id: "exec-A" });
+    const execB = makeExecution({ id: "exec-B" });
+
+    await svc.resolveImplementerCall({
+      execution: execA,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    await svc.resolveImplementerCall({
+      execution: execB,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+    });
+
+    const lanesA = await store.listByWorkflow("exec-A");
+    const lanesB = await store.listByWorkflow("exec-B");
+    expect(lanesA).toHaveLength(1);
+    expect(lanesB).toHaveLength(1);
+    expect(lanesA[0]?.workflowId).toBe("exec-A");
+    expect(lanesB[0]?.workflowId).toBe("exec-B");
   });
 });

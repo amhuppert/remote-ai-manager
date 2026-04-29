@@ -6,6 +6,7 @@ import {
   parseValidatorResponse,
   VALIDATOR_OUTPUT_SCHEMA,
 } from "./validator-runner";
+import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
@@ -878,5 +879,49 @@ describe("context validator continuity runtime integration", () => {
     expect(
       repo.read().laneStates["context_validator"]?.rotateBeforeNextTurn,
     ).toBe(true);
+  });
+});
+
+describe("validator-runner Task 6.2 parity (executeAgentCall route)", () => {
+  it("routes the validator turn through deps.executeAgentCall as kind=task_run with the expected request shape", async () => {
+    const agentResponse = JSON.stringify({
+      summary: "All good",
+      issues: [],
+    });
+
+    const claudeRun = vi.fn(async () => taskResult(agentResponse));
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+
+    const runner = createValidatorRunner({
+      getTaskRunner: mockGetTaskRunner(claudeRun),
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeAgentCall: executeAgentCallSpy,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+    });
+
+    expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
+    const [request] = executeAgentCallSpy.mock.calls[0]!;
+    expect(request).toMatchObject({
+      kind: "task_run",
+      backend: "claude",
+      writeCapability: "write_capable",
+      outputSchema: VALIDATOR_OUTPUT_SCHEMA,
+    });
+    expect(typeof request.prompt).toBe("string");
+    expect(request.prompt.length).toBeGreaterThan(0);
+    expect(result.result.kind).toBe("pass");
   });
 });

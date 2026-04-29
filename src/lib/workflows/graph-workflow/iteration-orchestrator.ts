@@ -34,6 +34,11 @@ import {
   type GraphWorkflowStreamFrame,
 } from "@/lib/workflow-graph/stream-registry";
 import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validator-runner";
+import {
+  runCircuitBreakerGate as defaultRunCircuitBreakerGate,
+  type CircuitBreakerGateResult,
+  type RunCircuitBreakerGateInput,
+} from "@/lib/workflows/primitives/circuit-breaker-gate";
 import type { GraphWorkflowLifecycleSnapshot } from "./workflow-manager";
 
 export interface GraphWorkflowIterationExecutionRepository {
@@ -101,10 +106,10 @@ export interface IterationOrchestratorContinuityService {
   ): Promise<ResolvedImplementerCall>;
   recordClaudeTurnOutcome(
     input: RecordClaudeLaneTurnInput,
-  ): GraphWorkflowExecution;
+  ): Promise<GraphWorkflowExecution>;
   recordCodexTurnOutcome(
     input: RecordCodexLaneTurnInput,
-  ): GraphWorkflowExecution;
+  ): Promise<GraphWorkflowExecution>;
 }
 
 export interface IterationOrchestratorScriptValidatorInput {
@@ -149,6 +154,16 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   eventPublisher?: ReturnType<
     typeof createGraphWorkflowExecutionEventPublisher
   >;
+  /**
+   * Optional override for the shared circuit-breaker gate primitive.
+   * Production routes both the script-validator failure path and the context-
+   * validator failure path through `runCircuitBreakerGate` so the
+   * "give up after N consecutive failures" decision uses the workflow
+   * primitive layer's gate vocabulary instead of duplicated inline checks.
+   */
+  runCircuitBreakerGate?: (
+    input: RunCircuitBreakerGateInput,
+  ) => CircuitBreakerGateResult;
 }
 
 export interface GraphWorkflowIterationInput {
@@ -427,6 +442,8 @@ export function createGraphWorkflowIterationOrchestrator(
       );
     });
   const createTaskId = deps.createTaskId ?? (() => `task-${randomUUID()}`);
+  const runCircuitBreakerGate =
+    deps.runCircuitBreakerGate ?? defaultRunCircuitBreakerGate;
 
   function getConsecutiveFailureThreshold(
     contextDef: GraphWorkflowResolvedContext | undefined,
@@ -435,6 +452,13 @@ export function createGraphWorkflowIterationOrchestrator(
       contextDef?.circuitBreaker.consecutiveFailureThreshold ??
       DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD
     );
+  }
+
+  function shouldTripCircuitBreaker(
+    failureCount: number,
+    threshold: number,
+  ): boolean {
+    return runCircuitBreakerGate({ failureCount, threshold }).status === "fail";
   }
 
   function emitStreamFrame(
@@ -836,7 +860,7 @@ export function createGraphWorkflowIterationOrchestrator(
     const failureCount =
       failedExecution.contextStates[input.contextId]?.consecutiveFailureCount ??
       0;
-    if (failureCount >= threshold) {
+    if (shouldTripCircuitBreaker(failureCount, threshold)) {
       execLogger?.decision("circuit_breaker.tripped", {
         contextId: input.contextId,
         consecutiveFailureCount: failureCount,
@@ -1014,7 +1038,7 @@ export function createGraphWorkflowIterationOrchestrator(
       const failureCount =
         executionWithValidationEvent.contextStates[input.contextId]
           ?.consecutiveFailureCount ?? 0;
-      if (failureCount >= threshold) {
+      if (shouldTripCircuitBreaker(failureCount, threshold)) {
         execLogger?.decision("circuit_breaker.tripped", {
           contextId: input.contextId,
           consecutiveFailureCount: failureCount,
@@ -1492,7 +1516,7 @@ export function createGraphWorkflowIterationOrchestrator(
           context.iterationPolicy.continuity.contextLimitTokens;
         const updated =
           context.implementer.backend === "codex"
-            ? deps.continuityService.recordCodexTurnOutcome({
+            ? await deps.continuityService.recordCodexTurnOutcome({
                 execution: current,
                 lane: "implementer",
                 usage: null,
@@ -1502,7 +1526,7 @@ export function createGraphWorkflowIterationOrchestrator(
                     ? agentResult.sessionRef.threadId
                     : null,
               })
-            : deps.continuityService.recordClaudeTurnOutcome({
+            : await deps.continuityService.recordClaudeTurnOutcome({
                 execution: current,
                 lane: "implementer",
                 contextTokens: agentResult.contextTokens,

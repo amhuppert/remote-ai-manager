@@ -59,10 +59,10 @@ let _deps: WorkflowActionDeps | null = null;
 
 function getDefaultDeps(): WorkflowActionDeps {
   if (!_deps) {
-    const sseBroadcaster: {
-      broadcast: WorkflowActionDeps["broadcast"];
+    const sessionStatusBus: {
+      publishSessionStatus: (event: SSEEvent) => unknown;
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-    } = require("@/lib/sse-broadcaster");
+    } = require("@/lib/workflows/primitives/default-session-status-bus");
     const persistence: {
       persistWorkflowSnapshot: WorkflowActionDeps["persistSnapshot"];
       // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -73,7 +73,9 @@ function getDefaultDeps(): WorkflowActionDeps {
     } = require("@/lib/notification-db");
 
     _deps = {
-      broadcast: sseBroadcaster.broadcast,
+      broadcast: (event) => {
+        sessionStatusBus.publishSessionStatus(event);
+      },
       persistSnapshot: persistence.persistWorkflowSnapshot,
       createNotification: notificationDb.createNotification,
     };

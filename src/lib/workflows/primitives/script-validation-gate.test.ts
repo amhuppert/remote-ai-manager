@@ -1,0 +1,85 @@
+import { describe, expect, it } from "vitest";
+import { gateResultSchema } from "./gate-vocabulary";
+import {
+  scriptValidationGateFromOutcome,
+  type ScriptValidationOutcome,
+} from "./script-validation-gate";
+
+describe("scriptValidationGateFromOutcome", () => {
+  it("returns a passing gate result for a successful script run", () => {
+    const gate = scriptValidationGateFromOutcome({ kind: "pass" });
+    expect(() => gateResultSchema.parse(gate)).not.toThrow();
+    expect(gate.status).toBe("pass");
+    expect(gate.kind).toBe("script_validation");
+  });
+
+  it("returns a failing gate result with validation_failed class for a script-reported failure", () => {
+    const outcome: ScriptValidationOutcome = {
+      kind: "fail",
+      summary: "tests failed: 3 of 42",
+      logFilePath: "/abs/path/to/log",
+      logRelativePath: ".cc/workflow/exec-1/pre-merge-2026.log",
+      timedOut: false,
+    };
+    const gate = scriptValidationGateFromOutcome(outcome);
+    expect(() => gateResultSchema.parse(gate)).not.toThrow();
+    expect(gate.status).toBe("fail");
+    if (gate.status !== "fail") return;
+    expect(gate.kind).toBe("script_validation");
+    expect(gate.reason).toBe("tests failed: 3 of 42");
+    expect(gate.details).toMatchObject({
+      failureClass: "validation_failed",
+      logFilePath: "/abs/path/to/log",
+      logRelativePath: ".cc/workflow/exec-1/pre-merge-2026.log",
+      timedOut: false,
+    });
+  });
+
+  it("preserves the timedOut flag on validation failure", () => {
+    const gate = scriptValidationGateFromOutcome({
+      kind: "fail",
+      summary: "validation timed out",
+      logFilePath: "/abs/path",
+      logRelativePath: "rel",
+      timedOut: true,
+    });
+    expect(gate.status).toBe("fail");
+    if (gate.status !== "fail") return;
+    expect(gate.details).toMatchObject({ timedOut: true });
+  });
+
+  it("returns a failing gate result with infrastructure class for a missing pre-merge command", () => {
+    const outcome: ScriptValidationOutcome = {
+      kind: "infra_error",
+      reason: "missing_pre_merge_command",
+      message:
+        "Script validator enabled but the project has no preMergeCommand configured",
+    };
+    const gate = scriptValidationGateFromOutcome(outcome);
+    expect(() => gateResultSchema.parse(gate)).not.toThrow();
+    expect(gate.status).toBe("fail");
+    if (gate.status !== "fail") return;
+    expect(gate.kind).toBe("script_validation");
+    expect(gate.reason).toContain("preMergeCommand");
+    expect(gate.details).toMatchObject({
+      failureClass: "infrastructure",
+      infraReason: "missing_pre_merge_command",
+    });
+  });
+
+  it("returns a failing gate result with infrastructure class for an exception", () => {
+    const outcome: ScriptValidationOutcome = {
+      kind: "infra_error",
+      reason: "exception",
+      message: "ENOENT: spawn failed",
+    };
+    const gate = scriptValidationGateFromOutcome(outcome);
+    expect(gate.status).toBe("fail");
+    if (gate.status !== "fail") return;
+    expect(gate.reason).toBe("ENOENT: spawn failed");
+    expect(gate.details).toMatchObject({
+      failureClass: "infrastructure",
+      infraReason: "exception",
+    });
+  });
+});
