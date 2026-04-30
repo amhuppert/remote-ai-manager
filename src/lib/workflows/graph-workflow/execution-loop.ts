@@ -100,7 +100,7 @@ export function _resetActiveLoopsForTesting(): void {
 // -- Helpers ------------------------------------------------------------------
 
 function isRetryableIterationError(error: unknown): boolean {
-  return /stream closed|querysession died before prompt delivery|processtransport is not ready for writing/i.test(
+  return /stream closed|querysession (died|is dead|ended before)|processtransport is not ready for writing/i.test(
     getErrorMessage(error),
   );
 }

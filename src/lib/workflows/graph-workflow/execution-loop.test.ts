@@ -535,6 +535,124 @@ describe("execution loop", () => {
     expect(result.status).toBe("completed");
   });
 
+  it.each([
+    "QuerySession is dead — cannot send prompt",
+    "QuerySession ended before the turn completed",
+  ])(
+    "retries once when the iteration fails with %j",
+    async (sdkErrorMessage) => {
+      const definition = createSingleContextDefinition(5);
+      let currentExecution = createRunningExecution(definition, {
+        activeContextId: "ctx-1",
+        contextStates: {
+          "ctx-1": {
+            contextId: "ctx-1",
+            status: "running",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 1,
+            consecutiveFailureCount: 0,
+          },
+        },
+        laneStates: {
+          implementer: {
+            engine: "claude",
+            lane: "implementer",
+            contextId: "ctx-1",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-1",
+            },
+            lastContextTokens: null,
+            lastContextWindowMax: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-27T12:00:00.000Z",
+          },
+        },
+      });
+      let iterationCallCount = 0;
+
+      const recoverRetryableIterationError = vi.fn(
+        async (_projectPath, _sessionName, input) => {
+          expect(input).toEqual({
+            contextId: "ctx-1",
+            errorMessage: `SDK error: ${sdkErrorMessage}`,
+          });
+          const next = structuredClone(currentExecution);
+          next.contextStates["ctx-1"]!.status = "ready";
+          const lane = next.laneStates["implementer"];
+          if (lane?.engine === "claude") {
+            lane.rotateBeforeNextTurn = true;
+          }
+          currentExecution = next;
+          return next;
+        },
+      );
+
+      const sendSpy = vi.fn(async (_projectPath, _sessionName, event) => {
+        if (event.type === "complete") {
+          currentExecution = {
+            ...structuredClone(currentExecution),
+            status: "completed",
+            completedAt: "2026-03-27T12:05:00.000Z",
+          };
+        }
+        return currentExecution;
+      });
+
+      const deps: GraphWorkflowExecutionLoopDeps = {
+        workflowManager: {
+          async scheduleNextContext() {
+            return currentExecution;
+          },
+          send: sendSpy,
+          recoverRetryableIterationError,
+        },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            iterationCallCount += 1;
+            if (iterationCallCount === 1) {
+              throw new Error(`SDK error: ${sdkErrorMessage}`);
+            }
+
+            const next = structuredClone(currentExecution);
+            next.contextStates["ctx-1"]!.iterationCount = 2;
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.taskStates["task-1"]!.status = "completed";
+            next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
+            next.contextStates["ctx-1"]!.completedTaskCount = 1;
+            next.activeContextId = null;
+            currentExecution = next;
+
+            return {
+              conversationId: "conv-2",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+        emitStreamFrame: vi.fn(),
+      };
+
+      const loop = createGraphWorkflowExecutionLoop(deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: currentExecution,
+      });
+
+      expect(iterationCallCount).toBe(2);
+      expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+      expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+        type: "complete",
+      });
+      expect(result.status).toBe("completed");
+    },
+  );
+
   it("halts after a second consecutive stream-closed error", async () => {
     const definition = createSingleContextDefinition(5);
     let currentExecution = createRunningExecution(definition, {
