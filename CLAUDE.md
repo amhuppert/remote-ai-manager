@@ -57,6 +57,7 @@ Sessions run in git worktrees under `.worktrees/`. **All file operations and git
 
 Project steering files are loaded automatically below. Custom files are supported (managed via `/kiro:steering-custom`).
 
+@.kiro/steering/engineering-principles.md
 @.kiro/steering/product.md
 @.kiro/steering/tech.md
 @.kiro/steering/structure.md

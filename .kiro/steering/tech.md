@@ -2,92 +2,54 @@
 
 ## Architecture
 
-Server-rendered Next.js application with API routes acting as the backend. Dual storage: JSON state file for session/project state, SQLite for notification/job history. Claude Code is driven via the `@anthropic-ai/claude-agent-sdk` `query()` API for prompt execution.
+Server-rendered Next.js + API routes as backend. **Dual storage**: JSON state file (atomic write-temp-rename) for session/project state; SQLite (WAL mode) for notification/job history. Claude Code driven via `@anthropic-ai/claude-agent-sdk` `query()`.
 
-## Core Technologies
+## Stack
 
-- **Language**: TypeScript (strict mode, `noUncheckedIndexedAccess`)
-- **Framework**: Next.js 16 (App Router)
-- **Runtime**: Node.js with React 19
-- **Validation**: Zod v4 (schemas define all data entities)
+- **TypeScript** — `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`, `allowJs: false`
+- **Next.js 16** (App Router) + **React 19** + **Node.js**
+- **Zod v4** — schema-first; types derived via `z.infer`; `safeParse` external/untrusted, `parse` internal/trusted
+- **Zustand + Immer** — client state (`src/stores/`)
+- **@tanstack/react-query** — server state; factories in `src/lib/queries.ts`, `mutations.ts`, `query-keys.ts`
+- **@tanstack/react-virtual** — virtualized message lists
+- **react-markdown + remark-gfm + react-syntax-highlighter** — markdown rendering
+- **mermaid + svg-pan-zoom** — diagram rendering
+- **react-hotkeys-hook** — shortcuts
+- **better-sqlite3** — SQLite (WAL) for jobs/notifications
 
-## Key Libraries
-
-- **`@anthropic-ai/claude-agent-sdk`** — SDK wrapping Claude Code CLI as a typed async generator; `query()` returns streamed `SDKMessage` objects
-- **Zod v4** — Schema-first data modeling; all entity types derived via `z.infer`
-- **Zustand + Immer** — Client-side state management; stores in `src/stores/` (notifications, sessions, workflow, etc.)
-- **@tanstack/react-query** — Server state caching; query/mutation factories in `src/lib/queries.ts` and `mutations.ts`
-- **@tanstack/react-virtual** — Virtualized lists for large message histories
-- **react-markdown + remark-gfm + react-syntax-highlighter** — Markdown rendering with GFM and syntax highlighting
-- **mermaid + svg-pan-zoom** — Mermaid diagram rendering with pan/zoom
-- **react-hotkeys-hook** — Keyboard shortcut handling
-- **better-sqlite3** — SQLite for notification/job persistence (WAL mode)
-- **next/font/google** — Typography (Anybody, Manrope, Geist Mono)
-
-### Zod v4 Convention
+### Zod v4 gotcha
 
 ```typescript
-// CORRECT — Zod v4 requires explicit key schema for records
-z.record(z.string(), valueSchema);
-
-// WRONG — single arg is treated as key schema in v4
-z.record(valueSchema);
+z.record(z.string(), valueSchema);  // ✅ v4 requires explicit key schema
+z.record(valueSchema);              // ❌ v4 treats single arg as key schema
 ```
 
-## Development Standards
+## Schema location
 
-### Type Safety
+All entity schemas in `src/lib/schemas.ts`; types/interfaces re-exported from `src/types/index.ts`.
 
-- TypeScript `strict: true` with `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`
-- `allowJs: false` — no JavaScript files
-- All data entities defined as Zod schemas in `src/lib/schemas.ts`, types re-exported from `src/types/index.ts`
-- `safeParse` for external/untrusted input; `parse` for internal/trusted data
-
-### Code Quality
-
-- ESLint via `eslint-config-next`
-- CSS class naming: kebab-case BEM-style (e.g., `project-card-header`, `topbar-breadcrumb`)
-
-### Testing
-
-- **Vitest** — test files colocated with source: `*.test.ts` next to `*.ts` in `src/lib/`
-- Tests run via `bun run test` (single run) or `bun run test:watch` (watch mode)
-- Typecheck via `bun run typecheck`
-
-## Development Environment
-
-### Common Commands
+## Commands
 
 ```bash
-# Dev server
-bun run dev
-
-# Production build
-bun run build
-
-# Run tests (single run)
-bun run test
-
-# Run tests (watch mode)
-bun run test:watch
-
-# Type checking
-bun run typecheck
-
-# Lint
-bun run lint
+bun run dev          # dev server
+bun run build        # production
+bun run test         # vitest single
+bun run test:watch   # vitest watch
+bun run typecheck    # tsc --noEmit
+bun run lint         # eslint
 ```
 
-## Key Technical Decisions
+## Code style
 
-- **Dual storage** — JSON state file with atomic writes (write-to-temp + rename) for session/project state; SQLite (`better-sqlite3`, WAL mode) for notification and background job persistence
-- **Git worktrees for isolation** — Each session creates a worktree + branch, avoiding workspace conflicts between parallel sessions
-- **Single-flight locking** — In-memory promise map prevents concurrent prompt execution on the same session
-- **Claude Agent SDK** — Prompts executed via `@anthropic-ai/claude-agent-sdk` `query()` API (typed async generator), replacing direct CLI subprocess spawning. SDK options include `systemPrompt: { type: "preset", preset: "claude_code" }`, `permissionMode: "bypassPermissions"`, and `settingSources: ["user", "project", "local"]` for CLI parity
-- **Own transcript storage** — CC writes its own JSONL transcript files from SDK stream data (no dependency on Claude Code's `~/.claude/projects/` filesystem)
-- **SSE-based real-time updates** — Conversation status changes broadcast via SSE to drive UI updates and browser notifications (replaced hook-based event ingestion)
-- **OS-aware config** — Config directory follows platform conventions (macOS: `~/Library/Application Support/cc`, Linux: `$XDG_CONFIG_HOME/cc` or `~/.config/cc`)
+- ESLint via `eslint-config-next`
+- CSS: kebab-case BEM-style (`project-card-header`)
+- Vitest tests colocated next to source
 
----
+## Key Decisions
 
-_Document standards and patterns, not every dependency_
+- **Git worktrees** for session isolation
+- **Single-flight locking** via in-memory promise map keyed by `projectPath::sessionName`
+- **Claude Agent SDK** options: `systemPrompt: { type: "preset", preset: "claude_code" }`, `permissionMode: "bypassPermissions"`, `settingSources: ["user", "project", "local"]`
+- **Own transcript storage** — CC writes its own JSONL files; no dependency on `~/.claude/projects/`
+- **SSE over hooks** — conversation/job/notification updates broadcast via SSE
+- **OS-aware config dir** — macOS `~/Library/Application Support/cc`, Linux `$XDG_CONFIG_HOME/cc` or `~/.config/cc`

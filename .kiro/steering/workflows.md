@@ -1,38 +1,31 @@
 # Workflow Orchestration with XState
 
-All multi-step background workflows use XState v5 state machines. Two machines exist today: **Optimistic** (prompt + merge) and **Smart Merge** (git pipeline). New workflows follow the same patterns.
+Multi-step background workflows use XState v5. Existing machines: `optimistic/`, `merge/` (Smart Merge), `commit/`, `conversation/`. Graph workflows (`graph-workflow/`) use a custom execution loop, not XState. New XState workflows follow the patterns below.
 
-## Directory Convention
+## Layout
 
 ```
 src/lib/workflows/
 ├── types.ts                    # BaseWorkflowContext, shared types
 ├── runtime-state.ts            # External registry for non-serializable data
 ├── persistence.ts              # Debounced snapshot writes
-├── actions.ts                  # Reusable SSE broadcast + notification actions
+├── actions.ts                  # Reusable SSE/notification actions
 ├── <workflow-name>/
-│   ├── types.ts                # Context, events, input, output types
-│   ├── actors.ts               # fromPromise stubs (default implementations)
+│   ├── types.ts                # Context, events, input, output
+│   ├── actors.ts               # fromPromise stubs (default impls)
 │   ├── machine.ts              # setup() → createMachine()
 │   ├── machine.test.ts         # Tests using .provide() overrides
-│   ├── actor-implementations.ts # Production logic (optional, for complex actors)
-│   └── workflow-manager.ts     # Actor lifecycle (optional, for long-running workflows)
+│   ├── actor-implementations.ts # Production logic (complex actors)
+│   └── workflow-manager.ts     # Actor lifecycle (long-running)
 ```
 
-## Machine Anatomy
-
-Every machine follows the same three-phase pattern:
+## Machine anatomy
 
 ```typescript
 export const fooMachine = setup({
-  types: {} as {
-    context: FooContext;
-    events: FooEvent;
-    input: FooInput;
-    output: FooOutput;
-  },
+  types: {} as { context: FooContext; events: FooEvent; input: FooInput; output: FooOutput; },
   actors: { /* fromPromise stubs */ },
-  guards: { /* pure boolean functions */ },
+  guards: { /* pure boolean fns */ },
   actions: { onTerminal: () => {} }, // stub, overridden via .provide()
 }).createMachine({
   id: "foo",
@@ -43,26 +36,24 @@ export const fooMachine = setup({
 });
 ```
 
-### Key conventions
+Conventions:
+- `_schemaVersion` in context — enables snapshot migration on restore
+- `finalStatus` set in terminal-state entry, used by `output`
+- `onTerminal` action — overridden in production for cleanup
 
-- **`_schemaVersion`** in context — enables snapshot migration on restore
-- **`finalStatus`** field — set in terminal state entry, used by `output`
-- **Stub actions** in `setup()` — real implementations injected via `.provide()` at runtime
-- **`onTerminal`** action — called on entry to every terminal state; overridden in production for cleanup
+## Actor pattern: stubs + `.provide()`
 
-## Actor Pattern: Stubs + `.provide()`
-
-Actors are defined as `fromPromise` stubs with default implementations that lazy-import production logic:
+Actors are `fromPromise` stubs with default impls that lazy-import production logic:
 
 ```typescript
-// actors.ts — stub with default implementation
+// actors.ts
 export const doWork = fromPromise<WorkOutput, WorkInput>(async ({ input }) => {
   const { doWorkImpl } = await import("@/lib/some-module");
   return doWorkImpl(input);
 });
 ```
 
-**Production** injects via `.provide()` in the workflow manager:
+Production injects via `.provide()` at the call site:
 ```typescript
 const machine = fooMachine.provide({
   actors: { doWork: fromPromise(async ({ input }) => realImpl(input)) },
@@ -70,45 +61,40 @@ const machine = fooMachine.provide({
 });
 ```
 
-**Tests** inject mocks via `.provide()` — no `vi.mock()` needed for actors:
+Tests inject mocks via `.provide()` — **no `vi.mock()` for actors**:
 ```typescript
 const testMachine = fooMachine.provide({
   actors: { doWork: fromPromise(async () => ({ result: "mock" })) },
 });
 ```
 
-## Non-Serializable State
+## Non-serializable state
 
-XState context must be JSON-serializable. AbortControllers, lock release functions, and stream handles live in `runtime-state.ts`:
+Context must be JSON-serializable. AbortControllers, lock release fns, stream handles live in `runtime-state.ts`:
 
 ```typescript
 registerRuntime(key, { abortController: new AbortController() });
-// Inside actor: const { abortController } = getRuntime(key);
-// On terminal:  cleanupRuntime(key);
+const { abortController } = getRuntime(key);
+cleanupRuntime(key); // on terminal
 ```
 
-Key format: `${projectPath}::${sessionName}`. Registry uses `globalThis` singleton (HMR-safe).
+Key format: `${projectPath}::${sessionName}`. Registry is `globalThis` singleton (HMR-safe).
 
-## Terminal States
-
-All machines end in explicit `type: "final"` states:
+## Terminal states
 
 ```typescript
 completed: { type: "final", entry: [assign({ finalStatus: "completed" }), "onTerminal"] },
-failed:    { type: "final", entry: [assign({ finalStatus: "failed" }), "onTerminal"] },
+failed:    { type: "final", entry: [assign({ finalStatus: "failed" }),    "onTerminal"] },
 ```
 
-Output is computed from context on completion:
+Output computed from context:
 ```typescript
-output: ({ context }) => ({
-  status: context.finalStatus ?? "completed",
-  error: context.error,
-})
+output: ({ context }) => ({ status: context.finalStatus ?? "completed", error: context.error })
 ```
 
-## Error Handling
+## Error handling
 
-Every actor invocation has an `onError` transition:
+Every actor invocation has `onError`:
 
 ```typescript
 onError: {
@@ -128,34 +114,34 @@ onError: {
 }
 ```
 
-Handle both `Error` objects and thrown strings/unknowns. Include `gitOutput` when present.
+Handle `Error` and unknowns. Include `gitOutput` when present.
 
-## Guard Conventions
+## Guards
 
-- **Context-only guards** for state checks: `({ context }) => context.autoResolve`
-- **Event-based guards** for actor output: `({ event }) => (event as { output: T }).output.hasChanges`
-- **Priority ordering** via sequential `always` transitions (first true guard wins):
+- **Context guards**: `({ context }) => context.autoResolve`
+- **Event guards**: `({ event }) => (event as { output: T }).output.hasChanges`
+- **Priority via sequential `always`** (first true wins):
 
 ```typescript
 evaluatingExit: {
   always: [
-    { guard: "isPlanComplete", target: "#completed" },
-    { guard: "isCapReached", target: "#halted" },
+    { guard: "isPlanComplete",       target: "#completed" },
+    { guard: "isCapReached",         target: "#halted" },
     { guard: "isCircuitBreakerOpen", target: "#halted" },
-    { target: "executingIteration" }, // default: continue
+    { target: "executingIteration" },
   ],
 }
 ```
 
-## SSE Broadcasting
+## SSE broadcasting
 
-Shared action factories in `actions.ts` provide SSE broadcasting via dependency injection:
+Shared factories in `actions.ts` use DI:
 
 ```typescript
-// In machine setup — stub
+// machine setup — stub
 actions: { broadcastStatus: () => {} }
 
-// In .provide() — real implementation
+// .provide() — real
 actions: {
   broadcastStatus: ({ context }) => {
     broadcast({ type: "workflow-status", projectName: context.projectName, ... });
@@ -163,49 +149,41 @@ actions: {
 }
 ```
 
-Available actions: `broadcastWorkflowEvent`, `persistSnapshot`, `createNotificationAction`.
+Available: `broadcastWorkflowEvent`, `persistSnapshot`, `createNotificationAction`.
 
 ## Persistence
 
-For long-running workflows, context snapshots can be debounced to the state file:
+Long-running workflows debounce snapshots:
 
 ```typescript
 persistWorkflowSnapshot(projectPath, sessionName, actor.getPersistedSnapshot());
-// Debounced 500ms by default; immediate: true for terminal states
+// 500ms debounce; immediate: true for terminal states
 ```
 
-Schema version checked on restore — mismatched versions are discarded.
+Schema version checked on restore — mismatched versions discarded.
 
-## Testing Patterns
+## Testing
 
-### Machine factory helper
 ```typescript
+// Factory helper
 function createTestMachine(overrides: Partial<ActorOverrides> = {}) {
   return fooMachine.provide({
-    actors: {
-      doWork: overrides.doWork ?? fromPromise(async () => defaultOutput),
-    },
+    actors: { doWork: overrides.doWork ?? fromPromise(async () => defaultOutput) },
     actions: { onTerminal: vi.fn() },
   });
 }
-```
 
-### Terminal state assertion
-```typescript
+// Terminal assertion
 const actor = createActor(testMachine, { input });
 actor.start();
 const output = await toPromise(actor);
 expect(output.status).toBe("completed");
-```
 
-### Guard testing — verify transition blocked/allowed
-```typescript
+// Guard testing
 actor.send({ type: "CONFIRM" });
-expect(actor.getSnapshot().value).toBe("planning"); // guard blocked
-```
+expect(actor.getSnapshot().value).toBe("planning"); // blocked
 
-### Intermediate state waiting
-```typescript
+// Wait for intermediate state
 function waitForState(actor: AnyActorRef, state: string, timeoutMs = 5000) {
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout: ${state}`)), timeoutMs);
@@ -215,47 +193,40 @@ function waitForState(actor: AnyActorRef, state: string, timeoutMs = 5000) {
     });
   });
 }
-```
 
-### Deferred promises for pause/resume
-```typescript
+// Deferred resolvers for pause/resume
 const resolvers: Array<{ resolve: (v: Output) => void }> = [];
 const actor = startMachine({
   doWork: fromPromise(() => new Promise(resolve => resolvers.push({ resolve }))),
 });
 // Later: resolvers[0]!.resolve(output);
-```
 
-### Actor cleanup in afterEach
-```typescript
+// Cleanup
 const activeActors: AnyActorRef[] = [];
-afterEach(() => {
-  for (const a of activeActors) { try { a.stop(); } catch {} }
-  activeActors.length = 0;
-});
+afterEach(() => { for (const a of activeActors) { try { a.stop(); } catch {} } activeActors.length = 0; });
 ```
 
-## Adding a New Workflow
+## Adding a new workflow
 
 1. Create `src/lib/workflows/<name>/` with `types.ts`, `actors.ts`, `machine.ts`, `machine.test.ts`
-2. Context extends `BaseWorkflowContext` and includes `_schemaVersion`, `finalStatus`, `error`
-3. Define `fromPromise` actor stubs in `actors.ts` with default implementations
-4. Wire production `.provide()` at the call site (or in a `workflow-manager.ts` for long-running workflows)
-5. Use shared `actions.ts` factories for SSE broadcasting
-6. If the workflow needs abort/pause, use `runtime-state.ts` for AbortControllers
-7. If the workflow needs persistence, use `persistence.ts` for snapshot writes
+2. Context extends `BaseWorkflowContext`, includes `_schemaVersion`, `finalStatus`, `error`
+3. `fromPromise` stubs in `actors.ts` with default impls
+4. Wire production `.provide()` at call site (or `workflow-manager.ts` for long-running)
+5. Use shared `actions.ts` factories for SSE
+6. AbortControllers/locks → `runtime-state.ts`
+7. Persistence → `persistence.ts`
 
 ---
 
-## Graph Workflows — Configuration Cascade
+# Graph Workflows — Configuration Cascade
 
-Graph workflow configuration is resolved through a **three-tier cascade**. Each tier overrides the one above it:
+Graph workflow config resolves through a **three-tier cascade**:
 
-1. **Global** — `workflowDefaults` in `config.json` (the base values for every workflow).
-2. **Workflow** — `workflowConfig` on the workflow definition (overrides any global block for this workflow).
-3. **Per-context** — individual blocks on an `executionContext` (overrides both global and workflow for that context only).
+1. **Global** — `workflowDefaults` in `config.json`
+2. **Workflow** — `workflowConfig` on definition (overrides global)
+3. **Per-context** — `executionContext` blocks (overrides both)
 
-Resolution happens at seed time (in `src/lib/workflow-graph/resolve-config.ts`) — the resolved context is snapshotted into the execution's `workingDefinition`, so later edits to global or workflow configs do not mutate a running execution.
+Resolution at seed time (`src/lib/workflow-graph/resolve-config.ts`); resolved context snapshotted into execution's `workingDefinition` — later edits don't mutate running executions.
 
 ```jsonc
 // config.json — global tier
@@ -272,117 +243,101 @@ Resolution happens at seed time (in `src/lib/workflow-graph/resolve-config.ts`) 
 ```
 
 ```jsonc
-// workflow definition — workflow tier overrides global, per-context overrides both
+// workflow tier overrides global; per-context overrides both
 {
-  "workflowConfig": {
-    "implementer": { "model": "sonnet" }      // every context uses sonnet implementer unless it overrides
-  },
+  "workflowConfig": { "implementer": { "model": "sonnet" } },
   "executionContexts": [
-    {
-      "id": "plan",
-      "title": "Plan",
-      "acceptanceCriteria": "A plan.md file exists describing the approach at a level of detail sufficient for an implementer to follow.",
-      "contextValidator": { "kind": "disabled" }   // opt out of agent validation for this context
-    },
-    {
-      "id": "impl",
-      "title": "Implement",
+    { "id": "plan", "title": "Plan",
+      "acceptanceCriteria": "A plan.md describes the approach in enough detail for an implementer to follow.",
+      "contextValidator": { "kind": "disabled" } },
+    { "id": "impl", "title": "Implement",
       "acceptanceCriteria": "The feature behaves as described in the plan when exercised end-to-end.",
-      "implementer": { "model": "opus", "reasoningEffort": "high" },   // per-context override
-      "scriptValidator": { "enabled": true }   // run the project's preMergeCommand as a deterministic gate
-    }
+      "implementer": { "model": "opus", "reasoningEffort": "high" },
+      "scriptValidator": { "enabled": true } }
   ]
 }
 ```
 
-### `workflowDefaults` block shape
+## `workflowDefaults` blocks
 
-`workflowDefaults` in `config.json` has exactly **six blocks**, all independent and individually overridable at each tier:
+Six blocks, all individually overridable per tier:
 
 | Block | Purpose |
-|-------|---------|
-| `implementer`       | Agent config for the implementer (backend, model, reasoning effort). |
-| `contextValidator`  | Agent (LLM) validator that judges the *intent* of the acceptance criteria against the completed work. Discriminated on `type: "claude" \| "codex"`. |
-| `scriptValidator`   | Deterministic validator — runs the project's `preMergeCommand` as a pre-merge gate. Shape: `{ enabled: boolean }`. Requires the project to have `preMergeCommand` configured in `CommandCenter.json`. |
-| `iterationPolicy`   | Iteration caps and continuity policy (`maxIterations`, `continuity.enabled`, optional `contextLimitTokens`). |
-| `circuitBreaker`    | Failure-threshold policy (`consecutiveFailureThreshold`). |
-| `mutability`        | What the implementer is allowed to change (e.g. `allowAgentTaskAdd`). |
+|---|---|
+| `implementer` | Implementer agent config (backend, model, reasoning) |
+| `contextValidator` | Agent (LLM) validator on intent of acceptance criteria. Discriminated `type: "claude" \| "codex"` |
+| `scriptValidator` | Deterministic — runs project's `preMergeCommand`. `{ enabled: boolean }`. Requires `preMergeCommand` in `CommandCenter.json` |
+| `iterationPolicy` | `maxIterations`, `continuity.enabled`, optional `contextLimitTokens` |
+| `circuitBreaker` | `consecutiveFailureThreshold` |
+| `mutability` | E.g. `allowAgentTaskAdd` |
 
-### Acceptance criteria is context-level
+## Acceptance criteria (context-level)
 
-`acceptanceCriteria` is a **required field on every execution context** (`executionContext.acceptanceCriteria`). It is:
-- Passed to the **implementer** as the success condition the context is working toward.
-- Passed to the **agent (context) validator** (when enabled) as the rubric to evaluate against.
+`acceptanceCriteria` is **required on every execution context**. Used by:
+- **Implementer** — success condition for the context
+- **Agent (context) validator** (when enabled) — rubric to evaluate against
 
-AC lives on the context — never on the validator. A single statement of "done" is the source of truth for both roles.
+AC lives on the context — never on the validator.
 
 **Authoring rules:**
-- Write **intent-based outcomes**, not deterministic gates. The agent validator judges the intent of the criteria and makes allowance for imprecise wording. "The feature behaves correctly when exercised end-to-end" is good; "all tests pass and there are no type errors" is wrong (see below).
-- Keep criteria **inside this context's scope**. If another context is responsible for finishing related work — downstream type cleanups, integrations, migrations — do not include it here. The agent validator explicitly respects context scope boundaries and will not fail a context for incomplete work that is explicitly downstream.
-- **Do NOT encode deterministic checks** (`tests pass`, `no type errors`, `lint clean`, `build succeeds`) in acceptance criteria. The agent validator is instructed to ignore those. Enable `scriptValidator` on the context instead if those gates must pass before the context advances.
+- **Intent-based outcomes**, not deterministic gates. Agent validator judges intent and tolerates imprecise wording.
+- Keep criteria **inside this context's scope**. Agent validator respects scope boundaries.
+- **Do NOT encode deterministic checks** (`tests pass`, `no type errors`, `lint clean`, `build succeeds`) — agent validator ignores those. Enable `scriptValidator` instead.
 
-### Dual-validator model: agent + script
+## Dual validators: agent + script
 
-Every execution context can enable **two independent validators**, in any combination:
+| Validator | Nature | Judges | Failure artifact |
+|---|---|---|---|
+| `contextValidator` | LLM (Claude/Codex) | Whether work satisfies intent of AC, in context scope | Issues list; affected tasks reopened |
+| `scriptValidator` | Deterministic | Whether `preMergeCommand` exits 0 against worktree | Output to `.cc/workflow/<executionId>/pre-merge-<timestamp>.log`; remediation task added |
 
-| Validator | Nature | What it judges | Failure artifact |
-|-----------|--------|----------------|------------------|
-| `contextValidator` | LLM agent (Claude or Codex) | Whether the completed tasks satisfy the **intent** of the acceptance criteria, in scope of this context. | Issues list; affected tasks are reopened. |
-| `scriptValidator`  | Deterministic script | Whether the project's `preMergeCommand` exits successfully against the current worktree. | Full command output saved to `.cc/workflow/<executionId>/pre-merge-<timestamp>.log`; a new remediation task is added to the context pointing at the log. |
+**Order**: script runs **first**. If script fails, agent validator skipped — no point spending LLM turns on a tree that won't compile. Both failures count as failed iterations (consume iteration budget, feed circuit breaker).
 
-**Ordering.** When both are enabled, the script validator runs **first**. If the script fails, the agent validator is skipped for that iteration — no point spending LLM turns on a tree that doesn't even compile. Both script and agent failures count as failed iterations (consume iteration budget, feed the circuit breaker).
+**Why two**: agent for judgment-based checks only an LLM can make; script for deterministic checks (cheaper, more reliable; reuses `preMergeCommand` as single source of truth across smart merge + graph workflows).
 
-**Why two.** Agent validators should focus on judgment-based checks only an LLM can make (did the implementation match user intent? does the API contract make sense?). Deterministic checks are cheaper and more reliable as a script; reusing `preMergeCommand` keeps one source of truth across smart merge and graph workflows.
+**Missing `preMergeCommand` is an infra error** — context with `scriptValidator: { enabled: true }` halts with `script_validator_missing_command` if not configured. No silent skipping.
 
-**Missing `preMergeCommand` is an infra error.** If a context enables `scriptValidator` but the project has no `preMergeCommand` in `CommandCenter.json`, the workflow halts with a `script_validator_missing_command` halt reason. Silent skipping would make the workflow appear to pass gates that were never run.
-
-### Opting out of the agent validator
-
-To skip the agent validator for a specific context, set:
+## Opting out per-context
 
 ```jsonc
 { "contextValidator": { "kind": "disabled" } }
 ```
 
-This is the `contextValidatorOverride` discriminated union. The two shapes are:
-- `{ "kind": "use", "value": <validator config> }` — use this validator config instead of the inherited one.
-- `{ "kind": "disabled" }` — explicitly skip the agent validator; the context completes on the implementer's claim (plus the script validator, if enabled).
+`contextValidatorOverride` is a discriminated union:
+- `{ "kind": "use", "value": <validator config> }` — override
+- `{ "kind": "disabled" }` — skip; context completes on implementer's claim (+ script validator if enabled)
 
-Omitting `contextValidator` entirely means "inherit from workflow / global" — which is the usual case.
+Omit entirely → inherit (usual case).
 
-To enable or disable the script validator per context, set `scriptValidator: { enabled: true }` or `{ enabled: false }`. Omit to inherit. A context with both validators disabled completes as soon as the implementer reports the context done.
+Script validator: `scriptValidator: { enabled: true | false }` per context. Both disabled → context completes when implementer reports done.
 
-### Agent validator engines
+## Validator engines
 
-Agent validators (global default or per-context override's `value`) are discriminated on `type`:
+Discriminated on `type`:
 
-| Type | Engine | Runs where | Notes |
-|------|--------|-----------|-------|
-| `claude` | Claude agent (via SDK) | Cloud | Default choice for intent-based reviews. |
-| `codex` | OpenAI Codex | Local | Useful when the judgment benefits from local file inspection without a round-trip. |
+| Type | Engine | Runs | Notes |
+|---|---|---|---|
+| `claude` | Claude (SDK) | Cloud | Default for intent reviews |
+| `codex` | OpenAI Codex | Local | Useful for local-file inspection without round-trip |
 
-Both engines receive the same intent-based prompt — they are asked to judge whether the completed tasks satisfy the intent of the acceptance criteria closely enough for the overall objective, and explicitly not to enforce tests/types/lint/build (which belong to the script validator). Set the validator type directly — do **NOT** configure a Claude validator and instruct it to call Codex via MCP tools.
+Both receive the same intent-based prompt — judge whether work satisfies AC intent; explicitly NOT enforce tests/types/lint/build (script validator's job). Set `type` directly — do **NOT** configure a Claude validator and instruct it to call Codex via MCP.
 
 ```jsonc
-// Codex validator
+// Codex
 { "type": "codex", "enabled": true, "codex": { "reasoningEffort": "high" }, "continuity": { "enabled": true } }
 
-// Claude validator
+// Claude
 { "type": "claude", "enabled": true, "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "high" }, "continuity": { "enabled": true } }
 ```
 
-Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns the allowed levels for a given model.
+Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns allowed levels.
 
-### Clearing existing workflow state
+## Clearing legacy state
 
-The cascade refactor removed legacy fields (`agent`, `contextValidation`, `taskValidation`, `contextSoftLimitTokens`, `contextHardLimitTokens`). The schema-cutover guard rejects legacy shapes at read time. Existing workflow state must be cleared before the app will start:
+The cascade refactor removed `agent`, `contextValidation`, `taskValidation`, `contextSoftLimitTokens`, `contextHardLimitTokens`. The schema-cutover guard rejects legacy shapes at read time. Existing state must be cleared:
 
 ```bash
 bun scripts/clean-graph-workflow-state.ts
 ```
 
-The script clears `graphWorkflowExecution` / `graphWorkflowExecutionHistory` from every session in `state.json` and deletes the `workflows/` directory alongside the state file. It is idempotent and safe to rerun. Recreate workflows afterward via the UI or MCP tools.
-
----
-
-_Document patterns, not every state transition. New workflows following these patterns shouldn't require updates._
+Clears `graphWorkflowExecution` / `graphWorkflowExecutionHistory` from every session in `state.json` and deletes `workflows/` directory. Idempotent. Recreate workflows via UI or MCP.
