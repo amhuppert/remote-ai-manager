@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback, useMemo } from "react";
-import { useConversationMessagesQuery } from "@/lib/queries";
+import { useConversationMessagesQuery, useSessionQuery } from "@/lib/queries";
 import type { TranscriptMessage } from "@/types";
 import MessageContent from "@/components/MessageContent";
 
@@ -38,6 +38,8 @@ export default function IterationTranscriptViewer({
     conversationId,
     { refetchInterval: isLive ? 1000 : false },
   );
+  const sessionQuery = useSessionQuery(projectName, sessionName);
+  const worktreePath = sessionQuery.data?.worktreePath;
 
   const messages = messagesQuery.data ?? [];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -157,7 +159,10 @@ export default function IterationTranscriptViewer({
               >
                 <div className="message-role">{msg.role}</div>
                 <div className="message-content">
-                  <MessageContent content={msg.content} />
+                  <MessageContent
+                    content={msg.content}
+                    worktreePath={worktreePath}
+                  />
                 </div>
               </div>
             ))}

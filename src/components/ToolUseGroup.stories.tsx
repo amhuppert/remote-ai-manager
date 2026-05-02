@@ -1,10 +1,15 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import type { MessageContentBlock } from "@/types";
 import ToolUseGroup from "./ToolUseGroup";
+import { buildToolResultLookup } from "./MessageContent";
 
-const meta = {
+interface StoryArgs {
+  blocks: MessageContentBlock[];
+  worktreePath?: string;
+}
+
+const meta: Meta<StoryArgs> = {
   title: "Components/ToolUseGroup",
-  component: ToolUseGroup,
   decorators: [
     (Story) => (
       <div
@@ -19,33 +24,80 @@ const meta = {
       </div>
     ),
   ],
-} satisfies Meta<typeof ToolUseGroup>;
+  render: ({ blocks, worktreePath }) => (
+    <ToolUseGroup
+      blocks={blocks}
+      worktreePath={worktreePath}
+      resultLookup={buildToolResultLookup(blocks)}
+    />
+  ),
+};
 
 export default meta;
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<StoryArgs>;
+
+const WORKTREE = "/home/alex/github/remote-ai-manager/.worktrees/feature-x";
 
 export const TwoToolUses = {
   args: {
+    worktreePath: WORKTREE,
     blocks: [
       {
         type: "tool_use",
+        id: "tool_1",
         name: "Grep",
         input: { pattern: "waiting_for_input" },
       },
       {
         type: "tool_result",
         tool_use_id: "tool_1",
-        content: "found 3 matches",
+        content: "src/a.ts:10: foo\nsrc/b.ts:20: foo\nsrc/c.ts:30: foo",
+        metrics: { matchCount: 3 },
       },
       {
         type: "tool_use",
+        id: "tool_2",
         name: "Read",
-        input: { file_path: "/src/lib/sessions.ts" },
+        input: { file_path: `${WORKTREE}/src/lib/sessions.ts` },
       },
       {
         type: "tool_result",
         tool_use_id: "tool_2",
         content: "file contents...",
+        metrics: { lineCount: 184 },
+      },
+    ] satisfies MessageContentBlock[],
+  },
+} satisfies Story;
+
+export const WithErrors = {
+  args: {
+    worktreePath: WORKTREE,
+    blocks: [
+      {
+        type: "tool_use",
+        id: "tool_1",
+        name: "Bash",
+        input: { command: "git push origin main" },
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "tool_1",
+        content: "fatal: Authentication failed",
+        isError: true,
+        metrics: { exitCode: 128 },
+      },
+      {
+        type: "tool_use",
+        id: "tool_2",
+        name: "Read",
+        input: { file_path: `${WORKTREE}/src/lib/missing.ts` },
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "tool_2",
+        content: "ENOENT: no such file or directory",
+        isError: true,
       },
     ] satisfies MessageContentBlock[],
   },
@@ -53,29 +105,35 @@ export const TwoToolUses = {
 
 export const ManyToolUses = {
   args: {
+    worktreePath: WORKTREE,
     blocks: [
       {
         type: "tool_use",
+        id: "tool_1",
         name: "Grep",
         input: { pattern: "sidebar-dot|unified-panel-dot" },
       },
       {
         type: "tool_result",
         tool_use_id: "tool_1",
-        content: "results...",
+        content: "src/a.ts:1\nsrc/b.ts:2",
+        metrics: { matchCount: 2 },
       },
       {
         type: "tool_use",
+        id: "tool_2",
         name: "Grep",
         input: { pattern: "waiting_for_input" },
       },
       {
         type: "tool_result",
         tool_use_id: "tool_2",
-        content: "results...",
+        content: "Found 5 files",
+        metrics: { fileCount: 5 },
       },
       {
         type: "tool_use",
+        id: "tool_3",
         name: "Grep",
         input: { pattern: "\\.waiting_for_input" },
       },
@@ -83,29 +141,31 @@ export const ManyToolUses = {
         type: "tool_result",
         tool_use_id: "tool_3",
         content: "results...",
+        metrics: { matchCount: 7 },
       },
       {
         type: "tool_use",
+        id: "tool_4",
         name: "Glob",
         input: { pattern: "**/*UnifiedPanel*.tsx" },
       },
       {
         type: "tool_result",
         tool_use_id: "tool_4",
-        content: "results...",
+        content: "src/x.tsx\nsrc/y.tsx",
+        metrics: { fileCount: 2 },
       },
       {
         type: "tool_use",
+        id: "tool_5",
         name: "Read",
-        input: {
-          file_path:
-            "/home/alex/github/remote-ai-manager/.worktrees/fix-waiting-for-endpoint-style/src/components/UnifiedPanel.tsx",
-        },
+        input: { file_path: `${WORKTREE}/src/components/UnifiedPanel.tsx` },
       },
       {
         type: "tool_result",
         tool_use_id: "tool_5",
         content: "file contents...",
+        metrics: { lineCount: 312 },
       },
     ] satisfies MessageContentBlock[],
   },
@@ -113,59 +173,40 @@ export const ManyToolUses = {
 
 export const MixedToolNames = {
   args: {
+    worktreePath: WORKTREE,
     blocks: [
       {
         type: "tool_use",
+        id: "t1",
         name: "Task",
         input: { description: "Find waiting_for_input styling" },
       },
       { type: "tool_result", tool_use_id: "t1" },
       {
         type: "tool_use",
+        id: "t2",
         name: "Grep",
         input: { pattern: "waiting_for_input|WAITING_FOR_INPUT" },
       },
-      { type: "tool_result", tool_use_id: "t2" },
-      { type: "tool_use", name: "Glob", input: { pattern: "**/*.css" } },
-      { type: "tool_result", tool_use_id: "t3" },
+      {
+        type: "tool_result",
+        tool_use_id: "t2",
+        metrics: { matchCount: 14 },
+      },
       {
         type: "tool_use",
+        id: "t3",
         name: "Glob",
-        input: { pattern: '**/*"status"*.ts*' },
+        input: { pattern: "**/*.css" },
       },
-      { type: "tool_result", tool_use_id: "t4" },
+      { type: "tool_result", tool_use_id: "t3", metrics: { fileCount: 3 } },
       {
         type: "tool_use",
-        name: "Grep",
-        input: {
-          pattern:
-            'status."indicator|status."dot|conversation."status|awaiting|running',
-        },
-      },
-      { type: "tool_result", tool_use_id: "t5" },
-      {
-        type: "tool_use",
-        name: "Grep",
-        input: { pattern: 'className."status|status."className' },
-      },
-      { type: "tool_result", tool_use_id: "t6" },
-      {
-        type: "tool_use",
+        id: "t4",
         name: "Read",
-        input: {
-          file_path:
-            "/home/alex/github/remote-ai-manager/.worktrees/fix-waiting-for-endpoint-style/src/app/globals.css",
-        },
+        input: { file_path: `${WORKTREE}/src/app/globals.css` },
       },
-      { type: "tool_result", tool_use_id: "t7" },
-      {
-        type: "tool_use",
-        name: "Grep",
-        input: {
-          pattern: "amber|orange|\\.awaiting|\\.running|--status|dot|indicator",
-        },
-      },
-      { type: "tool_result", tool_use_id: "t8" },
+      { type: "tool_result", tool_use_id: "t4", metrics: { lineCount: 6800 } },
     ] satisfies MessageContentBlock[],
   },
 } satisfies Story;

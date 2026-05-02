@@ -629,6 +629,7 @@ export async function processMessage(
         } else if (block.type === "tool_use" && "name" in block) {
           const toolBlock: MessageContentBlock = {
             type: "tool_use",
+            id: block.id,
             name: block.name,
             input: block.input as Record<string, unknown> | undefined,
           };

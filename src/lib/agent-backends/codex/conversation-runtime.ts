@@ -13,7 +13,8 @@ import type {
   Usage,
   McpToolCallItem,
 } from "@openai/codex-sdk";
-import type { MessageContentBlock } from "@/types";
+import type { MessageContentBlock, ToolResultMetrics } from "@/types";
+import { parseToolResultMetrics } from "@/lib/parse-tool-result";
 import type { AgentBackendId, ConversationBackendCapabilities } from "../types";
 import type {
   ConversationBackendRuntime,
@@ -542,6 +543,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       case "command_execution": {
         const block: MessageContentBlock = {
           type: "tool_use",
+          id: item.id,
           name: "Bash",
           input: { command: unwrapBashCommand(item.command) },
         };
@@ -552,6 +554,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       case "mcp_tool_call": {
         const block: MessageContentBlock = {
           type: "tool_use",
+          id: item.id,
           name: item.tool,
           input: {
             server: item.server,
@@ -584,11 +587,19 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         break;
       }
       case "command_execution": {
-        if (item.aggregated_output) {
+        const exitCode = item.exit_code;
+        const isError =
+          item.status === "failed" ||
+          (typeof exitCode === "number" && exitCode !== 0);
+        if (item.aggregated_output || isError) {
+          const metrics: ToolResultMetrics = {};
+          if (typeof exitCode === "number") metrics.exitCode = exitCode;
           const block: MessageContentBlock = {
             type: "tool_result",
             tool_use_id: item.id,
-            content: item.aggregated_output,
+            content: item.aggregated_output || undefined,
+            ...(isError ? { isError: true } : {}),
+            ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
           };
           contentBlocks.push(block);
           input.onEvent({ type: "content", block });
@@ -596,11 +607,16 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         break;
       }
       case "mcp_tool_call": {
-        const content = extractMcpToolResultContent(item as McpToolCallItem);
+        const mcpItem = item as McpToolCallItem;
+        const content = extractMcpToolResultContent(mcpItem);
+        const isError = mcpItem.status === "failed" || mcpItem.error != null;
+        const metrics = parseToolResultMetrics(mcpItem.tool, content);
         const block: MessageContentBlock = {
           type: "tool_result",
           tool_use_id: item.id,
           content,
+          ...(isError ? { isError: true } : {}),
+          ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
         };
         contentBlocks.push(block);
         input.onEvent({ type: "content", block });

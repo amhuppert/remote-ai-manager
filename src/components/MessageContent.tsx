@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useMemo } from "react";
-import type { MessageContentBlock } from "@/types";
+import type { MessageContentBlock, ToolResultMetrics } from "@/types";
 import MarkdownContent from "./MarkdownContent";
 import { formatToolUse } from "@/lib/format-tool-use";
 import ToolUseGroup from "./ToolUseGroup";
@@ -55,21 +55,57 @@ function groupContentBlocks(blocks: MessageContentBlock[]): GroupedItem[] {
   return result;
 }
 
+export interface ToolResultLookup {
+  get(
+    toolUseId: string | undefined,
+  ): { isError?: boolean; metrics?: ToolResultMetrics } | undefined;
+}
+
+/** Build a lookup from tool_use.id → its paired tool_result metadata. */
+export function buildToolResultLookup(
+  blocks: MessageContentBlock[],
+): ToolResultLookup {
+  const map = new Map<
+    string,
+    { isError?: boolean; metrics?: ToolResultMetrics }
+  >();
+  for (const block of blocks) {
+    if (block.type !== "tool_result") continue;
+    map.set(block.tool_use_id, {
+      ...(block.isError !== undefined ? { isError: block.isError } : {}),
+      ...(block.metrics ? { metrics: block.metrics } : {}),
+    });
+  }
+  return {
+    get: (toolUseId) =>
+      toolUseId === undefined ? undefined : map.get(toolUseId),
+  };
+}
+
 interface Props {
   content: MessageContentBlock[];
+  /** Session worktree path — used to display tool file paths as relative when nested. */
+  worktreePath?: string;
 }
 
 export default memo(function MessageContent({
   content,
+  worktreePath,
 }: Props): React.JSX.Element {
   const grouped = useMemo(() => groupContentBlocks(content), [content]);
+  const resultLookup = useMemo(() => buildToolResultLookup(content), [content]);
 
   return (
     <>
       {grouped.map((item) => {
         if (item.kind === "tool_group") {
           return (
-            <ToolUseGroup key={`tg-${item.startIndex}`} blocks={item.blocks} />
+            <ToolUseGroup
+              key={`tg-${item.startIndex}`}
+              blocks={item.blocks}
+              worktreePath={worktreePath}
+              resultLookup={resultLookup}
+            />
           );
         }
 
@@ -98,21 +134,30 @@ export default memo(function MessageContent({
           );
         }
         if (block.type === "tool_use") {
-          const formatted = formatToolUse(
-            block.name,
-            block.input as Record<string, unknown> | undefined,
-          );
+          const formatted = formatToolUse(block.name, block.input, {
+            worktreePath,
+            result: resultLookup.get(block.id),
+          });
+          const className = `tool-use-indicator${formatted.isError ? " tool-use-error" : ""}`;
           return (
-            <div key={i} className="tool-use-indicator">
-              <span className="tool-use-icon">{"\u2699"}</span>
+            <div key={i} className={className}>
+              <span className="tool-use-icon">
+                {formatted.isError ? "\u2715" : "\u2699"}
+              </span>
               <span className="tool-use-name">{formatted.name}</span>
               {formatted.context && (
                 <span className="tool-use-context">{formatted.context}</span>
               )}
+              {formatted.metricsLabel && (
+                <span className="tool-use-metrics">
+                  {formatted.metricsLabel}
+                </span>
+              )}
             </div>
           );
         }
-        // tool_result blocks are not rendered
+        // tool_result blocks are not rendered standalone; their data is folded
+        // into the paired tool_use indicator via resultLookup above.
         return null;
       })}
     </>

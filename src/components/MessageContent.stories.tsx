@@ -221,3 +221,52 @@ export const SingleToolUseNoGroup = {
     ] satisfies MessageContentBlock[],
   },
 } satisfies Story;
+
+const WORKTREE = "/home/alex/github/remote-ai-manager/.worktrees/feature-x";
+
+/** Tool uses paired with results showing line counts, match counts, and errors */
+export const WithResultMetrics = {
+  args: {
+    worktreePath: WORKTREE,
+    content: [
+      { type: "text", text: "Let me investigate the codebase." },
+      {
+        type: "tool_use",
+        id: "t1",
+        name: "Read",
+        input: { file_path: `${WORKTREE}/src/lib/auth.ts` },
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "t1",
+        content: "...",
+        metrics: { lineCount: 234 },
+      },
+      { type: "text", text: "Let me search for usages and run the tests." },
+      {
+        type: "tool_use",
+        id: "t2",
+        name: "Grep",
+        input: { pattern: "createSession" },
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "t2",
+        metrics: { matchCount: 12 },
+      },
+      {
+        type: "tool_use",
+        id: "t3",
+        name: "Bash",
+        input: { command: "bun test", description: "Run tests" },
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "t3",
+        content: "FAIL src/lib/auth.test.ts",
+        isError: true,
+        metrics: { exitCode: 1 },
+      },
+    ] satisfies MessageContentBlock[],
+  },
+} satisfies Story;

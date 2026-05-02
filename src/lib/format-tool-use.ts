@@ -1,5 +1,7 @@
+import type { ToolResultMetrics } from "@/lib/schemas";
+
 /**
- * Formatted tool use with separate name and context parts.
+ * Formatted tool use with separate name, context, metrics, and error parts.
  * Allows the UI to style the tool name distinctly from its context.
  */
 export interface FormattedToolUse {
@@ -7,102 +9,207 @@ export interface FormattedToolUse {
   name: string;
   /** Brief context string, or null if none available */
   context: string | null;
+  /** Result-derived metric label (e.g. "234 lines", "12 matches"), or null */
+  metricsLabel: string | null;
+  /** Whether the tool errored */
+  isError: boolean;
 }
 
-/** Truncate a string to maxLen, appending "..." if truncated. */
+export interface FormatToolUseOptions {
+  /** Session worktree path — used to display tool file paths as relative when nested. */
+  worktreePath?: string;
+  /** Paired tool_result metadata (matched by tool_use.id ↔ tool_result.tool_use_id). */
+  result?: { isError?: boolean; metrics?: ToolResultMetrics };
+}
+
 function truncate(s: string, maxLen: number): string {
   return s.length > maxLen ? `${s.slice(0, maxLen)}...` : s;
 }
 
+function pluralize(n: number, singular: string, plural?: string): string {
+  return `${n} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
+}
+
+function shortenPath(filePath: string, worktreePath?: string): string {
+  if (!worktreePath) return filePath;
+  const root = worktreePath.replace(/\/+$/, "");
+  if (filePath === root) return ".";
+  const prefix = `${root}/`;
+  if (filePath.startsWith(prefix)) return filePath.slice(prefix.length);
+  return filePath;
+}
+
+function formatPathContext(
+  input: Record<string, unknown>,
+  worktreePath: string | undefined,
+): string | null {
+  const filePath = input["file_path"];
+  if (typeof filePath !== "string") return null;
+  return shortenPath(filePath, worktreePath);
+}
+
+/**
+ * Build a metricsLabel from input + result metrics. Returns null when nothing
+ * meaningful exists. Input-derived metrics (TodoWrite task count, MultiEdit
+ * edit count) are computed here even when no result is available.
+ */
+function buildMetricsLabel(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+  metrics: ToolResultMetrics | undefined,
+): string | null {
+  switch (toolName) {
+    case "Read": {
+      if (metrics?.lineCount != null)
+        return pluralize(metrics.lineCount, "line");
+      return null;
+    }
+    case "Grep": {
+      if (metrics?.matchCount != null)
+        return pluralize(metrics.matchCount, "match", "matches");
+      if (metrics?.fileCount != null)
+        return pluralize(metrics.fileCount, "file");
+      return null;
+    }
+    case "Glob": {
+      if (metrics?.fileCount != null)
+        return pluralize(metrics.fileCount, "file");
+      return null;
+    }
+    case "Bash": {
+      if (typeof metrics?.exitCode === "number" && metrics.exitCode !== 0) {
+        return `exit ${metrics.exitCode}`;
+      }
+      return null;
+    }
+    case "MultiEdit": {
+      const edits = input?.["edits"];
+      if (Array.isArray(edits)) return pluralize(edits.length, "edit");
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
 /**
  * Format a tool_use block for display in the UI.
- * Returns structured name + context for flexible rendering.
+ * Returns structured name + context + metricsLabel + isError for flexible rendering.
  */
 export function formatToolUse(
   name: string,
   input?: Record<string, unknown>,
+  options?: FormatToolUseOptions,
 ): FormattedToolUse {
-  if (!input) return { name, context: null };
+  const worktreePath = options?.worktreePath;
+  const result = options?.result;
+  const isError = result?.isError === true;
+  const metricsLabel = buildMetricsLabel(name, input, result?.metrics);
+
+  if (!input) {
+    return { name, context: null, metricsLabel, isError };
+  }
+
+  const base: Pick<FormattedToolUse, "metricsLabel" | "isError"> = {
+    metricsLabel,
+    isError,
+  };
 
   switch (name) {
     case "Read":
-      return {
-        name,
-        context: input["file_path"] ? String(input["file_path"]) : null,
-      };
+      return { name, context: formatPathContext(input, worktreePath), ...base };
     case "Write":
-      return {
-        name,
-        context: input["file_path"] ? String(input["file_path"]) : null,
-      };
+      return { name, context: formatPathContext(input, worktreePath), ...base };
     case "Edit":
     case "MultiEdit":
       return {
         name: "Edit",
-        context: input["file_path"] ? String(input["file_path"]) : null,
+        context: formatPathContext(input, worktreePath),
+        ...base,
       };
     case "Bash": {
       if (input["description"])
-        return { name, context: String(input["description"]) };
+        return { name, context: String(input["description"]), ...base };
       if (input["command"])
-        return { name, context: truncate(String(input["command"]), 50) };
-      return { name, context: null };
+        return {
+          name,
+          context: truncate(String(input["command"]), 50),
+          ...base,
+        };
+      return { name, context: null, ...base };
     }
     case "Grep":
       return {
         name: "Search",
         context: input["pattern"] ? `"${input["pattern"]}"` : null,
+        ...base,
       };
     case "Glob":
       return {
         name: "Find files",
         context: input["pattern"] ? `"${input["pattern"]}"` : null,
+        ...base,
       };
     case "Task": {
       if (input["description"])
-        return { name, context: truncate(String(input["description"]), 50) };
-      return { name, context: null };
+        return {
+          name,
+          context: truncate(String(input["description"]), 50),
+          ...base,
+        };
+      return { name, context: null, ...base };
     }
     case "TodoWrite":
     case "TodoRead": {
       const todos = input["todos"];
       if (Array.isArray(todos))
-        return {
-          name,
-          context: `${todos.length} task${todos.length === 1 ? "" : "s"}`,
-        };
-      return { name, context: null };
+        return { name, context: pluralize(todos.length, "task"), ...base };
+      return { name, context: null, ...base };
     }
     case "WebSearch":
       return {
         name,
         context: input["query"] ? truncate(String(input["query"]), 60) : null,
+        ...base,
       };
     case "WebFetch":
       return {
         name,
         context: input["url"] ? truncate(String(input["url"]), 60) : null,
+        ...base,
       };
     case "Skill":
       return {
         name,
         context: input["skill"] ? String(input["skill"]) : null,
+        ...base,
       };
-    case "NotebookEdit":
+    case "NotebookEdit": {
+      const notebookPath = input["notebook_path"];
       return {
         name,
-        context: input["notebook_path"] ? String(input["notebook_path"]) : null,
+        context:
+          typeof notebookPath === "string"
+            ? shortenPath(notebookPath, worktreePath)
+            : null,
+        ...base,
       };
+    }
     case "TaskCreate":
       return {
         name,
         context: input["subject"]
           ? truncate(String(input["subject"]), 50)
           : null,
+        ...base,
       };
     case "TaskUpdate":
-      return { name, context: input["status"] ? `→ ${input["status"]}` : null };
+      return {
+        name,
+        context: input["status"] ? `→ ${input["status"]}` : null,
+        ...base,
+      };
     default:
-      return { name, context: null };
+      return { name, context: null, ...base };
   }
 }

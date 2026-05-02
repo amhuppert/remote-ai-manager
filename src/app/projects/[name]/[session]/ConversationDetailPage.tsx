@@ -1536,7 +1536,10 @@ export default function ConversationDetailPage({
                                   />
                                 ) : (
                                   <div className="message-content">
-                                    <MessageContent content={msg.content} />
+                                    <MessageContent
+                                      content={msg.content}
+                                      worktreePath={session?.worktreePath}
+                                    />
                                   </div>
                                 )}
                                 {!isUserMsg &&

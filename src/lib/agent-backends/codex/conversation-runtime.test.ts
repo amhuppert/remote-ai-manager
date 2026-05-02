@@ -185,13 +185,15 @@ function commandCompleted(
   command: string,
   output: string,
   id = "cmd-1",
+  opts: { exitCode?: number; failed?: boolean } = {},
 ): ItemCompletedEvent {
   const item: CommandExecutionItem = {
     id,
     type: "command_execution",
     command,
     aggregated_output: output,
-    status: "completed",
+    ...(opts.exitCode !== undefined ? { exit_code: opts.exitCode } : {}),
+    status: opts.failed ? "failed" : "completed",
   };
   return { type: "item.completed", item };
 }
@@ -557,6 +559,7 @@ describe("CodexConversationRuntime", () => {
       // Command start → tool_use with name "Bash"
       expect(result.contentBlocks).toContainEqual({
         type: "tool_use",
+        id: "cmd-1",
         name: "Bash",
         input: { command: "ls -la" },
       });
@@ -571,7 +574,12 @@ describe("CodexConversationRuntime", () => {
       // Should emit content events for both
       expect(onEvent).toHaveBeenCalledWith({
         type: "content",
-        block: { type: "tool_use", name: "Bash", input: { command: "ls -la" } },
+        block: {
+          type: "tool_use",
+          id: "cmd-1",
+          name: "Bash",
+          input: { command: "ls -la" },
+        },
       });
       expect(onEvent).toHaveBeenCalledWith({
         type: "content",
@@ -596,6 +604,7 @@ describe("CodexConversationRuntime", () => {
       const toolUse = result.contentBlocks.find((b) => b.type === "tool_use");
       expect(toolUse).toEqual({
         type: "tool_use",
+        id: "cmd-1",
         name: "Bash",
         input: { command: "pwd && ls -la" },
       });
@@ -621,10 +630,74 @@ describe("CodexConversationRuntime", () => {
       expect(toolUses).toHaveLength(1);
       expect(toolUses[0]).toEqual({
         type: "tool_use",
+        id: "cmd-1",
         name: "Bash",
         input: { command: "mkdir test" },
       });
       expect(toolResults).toHaveLength(0);
+    });
+
+    it("marks command tool_result as error on non-zero exit code", async () => {
+      setupThread([
+        threadStarted(),
+        commandStarted("false"),
+        commandCompleted("false", "boom", "cmd-1", { exitCode: 1 }),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      const toolResult = result.contentBlocks.find(
+        (b) => b.type === "tool_result",
+      );
+      expect(toolResult).toEqual({
+        type: "tool_result",
+        tool_use_id: "cmd-1",
+        content: "boom",
+        isError: true,
+        metrics: { exitCode: 1 },
+      });
+    });
+
+    it("emits failed-status command tool_result even with empty output", async () => {
+      setupThread([
+        threadStarted(),
+        commandStarted("blowup"),
+        commandCompleted("blowup", "", "cmd-1", { failed: true }),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      const toolResult = result.contentBlocks.find(
+        (b) => b.type === "tool_result",
+      );
+      expect(toolResult).toEqual({
+        type: "tool_result",
+        tool_use_id: "cmd-1",
+        isError: true,
+      });
+    });
+
+    it("does not set isError on command success with exit 0", async () => {
+      setupThread([
+        threadStarted(),
+        commandStarted("true"),
+        commandCompleted("true", "ok", "cmd-1", { exitCode: 0 }),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      const toolResult = result.contentBlocks.find(
+        (b) => b.type === "tool_result",
+      );
+      expect(toolResult).toEqual({
+        type: "tool_result",
+        tool_use_id: "cmd-1",
+        content: "ok",
+        metrics: { exitCode: 0 },
+      });
     });
 
     it("maps mcp_tool_call start to tool_use and completion to tool_result", async () => {
@@ -677,6 +750,7 @@ describe("CodexConversationRuntime", () => {
           type: "tool_result",
           tool_use_id: "mcp-1",
           content: "tool failed",
+          isError: true,
         }),
       );
     });

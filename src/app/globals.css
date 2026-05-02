@@ -6578,6 +6578,27 @@ textarea {
   min-width: 0;
 }
 
+.tool-use-metrics {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-weight: 400;
+  font-size: 0.7rem;
+  flex-shrink: 0;
+  padding-left: var(--space-sm);
+}
+
+.tool-use-error {
+  border-left-color: var(--red, #e57373);
+}
+
+.tool-use-error .tool-use-icon {
+  color: var(--red, #e57373);
+}
+
+.tool-use-error .tool-use-metrics {
+  color: var(--red, #e57373);
+}
+
 /* Tool use group (collapsible consecutive tool uses) */
 
 .tool-use-group {
@@ -6653,6 +6674,21 @@ textarea {
   margin: 2px 0;
   background: var(--bg-surface);
   border-left: none;
+}
+
+.tool-use-group-has-error {
+  border-left-color: var(--red, #e57373);
+}
+
+.tool-use-group-has-error .tool-use-group-icon {
+  color: var(--red, #e57373);
+}
+
+.tool-use-group-error-flag {
+  color: var(--red, #e57373);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  margin-left: var(--space-xs);
 }
 
 /* Command indicator (slash commands) */

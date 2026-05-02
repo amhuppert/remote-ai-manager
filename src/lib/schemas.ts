@@ -189,10 +189,20 @@ export type DerivedSessionStatus =
   | "new"
   | "idle";
 
+export const toolResultMetricsSchema = z.object({
+  lineCount: z.number().int().nonnegative().optional(),
+  fileCount: z.number().int().nonnegative().optional(),
+  matchCount: z.number().int().nonnegative().optional(),
+  byteCount: z.number().int().nonnegative().optional(),
+  exitCode: z.number().int().optional(),
+});
+export type ToolResultMetrics = z.infer<typeof toolResultMetricsSchema>;
+
 export const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
     type: z.literal("tool_use"),
+    id: z.string().optional(),
     name: z.string(),
     input: z.record(z.string(), z.unknown()).optional(),
   }),
@@ -200,6 +210,8 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
     type: z.literal("tool_result"),
     tool_use_id: z.string(),
     content: z.string().optional(),
+    isError: z.boolean().optional(),
+    metrics: toolResultMetricsSchema.optional(),
   }),
   z.object({
     type: z.literal("command"),

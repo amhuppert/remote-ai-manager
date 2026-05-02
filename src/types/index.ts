@@ -25,6 +25,7 @@ export type {
   ConversationState,
   ForkedFrom,
   MessageContentBlock,
+  ToolResultMetrics,
   ReferenceDocument,
   AgentBackendId,
   AgentSessionRef,

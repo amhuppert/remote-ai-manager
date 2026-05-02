@@ -17,10 +17,11 @@ import type {
   CanUseTool,
   Options,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { MessageContentBlock } from "@/types";
+import type { MessageContentBlock, ToolResultMetrics } from "@/types";
 import type { EffortLevel } from "@/lib/schemas";
 import { createLogger } from "@/lib/logging";
 import { extractContextTokens, extractContextWindow } from "@/lib/context-fill";
+import { parseToolResultMetrics } from "@/lib/parse-tool-result";
 import {
   QUERY_SESSION_ERROR_CODES,
   tagQuerySessionError,
@@ -151,6 +152,8 @@ interface PendingTurn {
   contextTokens: number | null;
   contextWindow: number | null;
   contentBlocks: MessageContentBlock[];
+  /** Map from tool_use.id → tool name, for parsing tool_result metrics. */
+  toolNamesById: Map<string, string>;
   structuredOutput?: unknown;
 }
 
@@ -307,6 +310,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         contextTokens: null,
         contextWindow: null,
         contentBlocks: [],
+        toolNamesById: new Map(),
       };
 
       if (isFirstPrompt) {
@@ -546,6 +550,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         contextTokens: null,
         contextWindow: null,
         contentBlocks: [],
+        toolNamesById: new Map(),
       };
 
       logger.info("query-session.external_turn_started", {
@@ -583,10 +588,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           } else if (block.type === "tool_use" && "name" in block) {
             const toolBlock: MessageContentBlock = {
               type: "tool_use",
+              id: block.id,
               name: block.name,
               input: block.input as Record<string, unknown> | undefined,
             };
             turn.contentBlocks.push(toolBlock);
+            turn.toolNamesById.set(block.id, block.name);
           }
         }
 
@@ -594,6 +601,30 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         const contextTokens = extractContextTokens(asstMsg.message.usage);
         if (contextTokens > 0) {
           turn.contextTokens = contextTokens;
+        }
+        break;
+      }
+
+      case "user": {
+        const userMsg = message as SDKUserMessage;
+        const content = userMsg.message.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (
+              block != null &&
+              typeof block === "object" &&
+              "type" in block &&
+              block.type === "tool_result" &&
+              "tool_use_id" in block &&
+              typeof block.tool_use_id === "string"
+            ) {
+              const resultBlock = buildToolResultBlock(
+                block as SdkToolResultBlock,
+                turn.toolNamesById,
+              );
+              turn.contentBlocks.push(resultBlock);
+            }
+          }
         }
         break;
       }
@@ -702,6 +733,52 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 // ============================================================
 // Helpers
 // ============================================================
+
+interface SdkToolResultBlock {
+  type: "tool_result";
+  tool_use_id: string;
+  is_error?: boolean;
+  content?:
+    | string
+    | Array<{ type: string; text?: string; [k: string]: unknown }>;
+}
+
+function extractToolResultText(
+  content: SdkToolResultBlock["content"],
+): string | undefined {
+  if (typeof content === "string") return content || undefined;
+  if (!Array.isArray(content)) return undefined;
+  const textParts: string[] = [];
+  for (const block of content) {
+    if (
+      block != null &&
+      typeof block === "object" &&
+      block.type === "text" &&
+      typeof block.text === "string"
+    ) {
+      textParts.push(block.text);
+    }
+  }
+  return textParts.length > 0 ? textParts.join("\n") : undefined;
+}
+
+function buildToolResultBlock(
+  block: SdkToolResultBlock,
+  toolNamesById: Map<string, string>,
+): MessageContentBlock {
+  const text = extractToolResultText(block.content);
+  const toolName = toolNamesById.get(block.tool_use_id);
+  const metrics: ToolResultMetrics = toolName
+    ? parseToolResultMetrics(toolName, text)
+    : {};
+  return {
+    type: "tool_result",
+    tool_use_id: block.tool_use_id,
+    ...(text ? { content: text } : {}),
+    ...(block.is_error ? { isError: true } : {}),
+    ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
+  };
+}
 
 function buildUserMessage(
   prompt: string | MessageContentBlock[],
