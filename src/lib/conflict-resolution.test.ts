@@ -67,7 +67,7 @@ describe("conflict-resolution", () => {
     const text = `I've analyzed and resolved all merge conflicts. Here's the structured analysis:
 
 \`\`\`json
-${JSON.stringify(conflictEntries, null, 2)}
+${JSON.stringify({ conflicts: conflictEntries }, null, 2)}
 \`\`\`
 
 All conflicts have been resolved and staged.`;
@@ -120,7 +120,7 @@ All conflicts have been resolved and staged.`;
 
     const runner = createMockRunner({
       text: "some text without json",
-      structuredOutput: conflictEntries,
+      structuredOutput: { conflicts: conflictEntries },
     });
     const deps = createTestDeps({
       getTaskRunner: vi.fn().mockReturnValue(runner),
@@ -139,7 +139,7 @@ All conflicts have been resolved and staged.`;
     }
   });
 
-  it("passes a JSON schema to the SDK task runner for conflict resolution", async () => {
+  it("passes a JSON schema with type:object to the SDK task runner (Anthropic tool input_schema requirement)", async () => {
     const conflictEntries = [
       {
         file: "src/index.ts",
@@ -151,7 +151,7 @@ All conflicts have been resolved and staged.`;
 
     const runner = createMockRunner({
       text: "not json",
-      structuredOutput: conflictEntries,
+      structuredOutput: { conflicts: conflictEntries },
     });
     const deps = createTestDeps({
       getTaskRunner: vi.fn().mockReturnValue(runner),
@@ -165,12 +165,19 @@ All conflicts have been resolved and staged.`;
 
     expect(result.status).toBe("resolved");
     const callArgs = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    // Anthropic tool input_schema must be type:"object" — array at root is rejected with HTTP 400.
     expect(callArgs.outputSchema).toMatchObject({
-      type: "array",
-      items: {
-        type: "object",
-        required: ["file", "description", "resolution", "rationale"],
+      type: "object",
+      properties: {
+        conflicts: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["file", "description", "resolution", "rationale"],
+          },
+        },
       },
+      required: ["conflicts"],
     });
   });
 
@@ -185,7 +192,7 @@ All conflicts have been resolved and staged.`;
     ];
 
     const runner = createMockRunner({
-      text: JSON.stringify(conflictEntries),
+      text: JSON.stringify({ conflicts: conflictEntries }),
     });
     const deps = createTestDeps({
       getTaskRunner: vi.fn().mockReturnValue(runner),
@@ -265,7 +272,7 @@ ${JSON.stringify(malformedEntries, null, 2)}
     ];
 
     const text = `\`\`\`json
-${JSON.stringify(conflictEntries, null, 2)}
+${JSON.stringify({ conflicts: conflictEntries }, null, 2)}
 \`\`\``;
 
     const runner = createMockRunner({ text });
@@ -366,13 +373,13 @@ ${JSON.stringify(conflictEntries, null, 2)}
     const text = `First attempt:
 
 \`\`\`json
-${JSON.stringify(firstEntries, null, 2)}
+${JSON.stringify({ conflicts: firstEntries }, null, 2)}
 \`\`\`
 
 Wait, let me update that:
 
 \`\`\`json
-${JSON.stringify(lastEntries, null, 2)}
+${JSON.stringify({ conflicts: lastEntries }, null, 2)}
 \`\`\``;
 
     const runner = createMockRunner({ text });
@@ -437,7 +444,7 @@ describe("analyzeConflicts", () => {
     const text = `I've analyzed the merge conflicts. Here's the structured analysis:
 
 \`\`\`json
-${JSON.stringify(conflictEntries, null, 2)}
+${JSON.stringify({ conflicts: conflictEntries }, null, 2)}
 \`\`\``;
 
     const runner = createMockRunner({ text });
@@ -475,7 +482,7 @@ ${JSON.stringify(conflictEntries, null, 2)}
     ];
 
     const text = `\`\`\`json
-${JSON.stringify(conflictEntries, null, 2)}
+${JSON.stringify({ conflicts: conflictEntries }, null, 2)}
 \`\`\``;
 
     const runner = createMockRunner({ text });
@@ -544,7 +551,7 @@ describe("conflict-resolution Task 6.3 parity (executeAgentCall route)", () => {
         rationale: "Reason",
       },
     ];
-    const text = `\`\`\`json\n${JSON.stringify(conflictEntries)}\n\`\`\``;
+    const text = `\`\`\`json\n${JSON.stringify({ conflicts: conflictEntries })}\n\`\`\``;
     const runner = createMockRunner({ text });
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
 
@@ -575,7 +582,7 @@ describe("conflict-resolution Task 6.3 parity (executeAgentCall route)", () => {
         rationale: "Reason",
       },
     ];
-    const text = `\`\`\`json\n${JSON.stringify(conflictEntries)}\n\`\`\``;
+    const text = `\`\`\`json\n${JSON.stringify({ conflicts: conflictEntries })}\n\`\`\``;
     const runner = createMockRunner({ text });
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
 

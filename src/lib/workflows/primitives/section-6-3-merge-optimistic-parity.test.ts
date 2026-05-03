@@ -384,7 +384,7 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
           rationale: "Reason",
         },
       ];
-      const text = `\`\`\`json\n${JSON.stringify(conflictEntries)}\n\`\`\``;
+      const text = `\`\`\`json\n${JSON.stringify({ conflicts: conflictEntries })}\n\`\`\``;
       const runner = createTestRunner({ text });
       const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
 
@@ -421,7 +421,7 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
           rationale: "Reason",
         },
       ];
-      const text = `\`\`\`json\n${JSON.stringify(conflictEntries)}\n\`\`\``;
+      const text = `\`\`\`json\n${JSON.stringify({ conflicts: conflictEntries })}\n\`\`\``;
       const runner = createTestRunner({ text });
       const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
 

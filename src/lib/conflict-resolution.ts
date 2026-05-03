@@ -16,17 +16,26 @@ import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-cap
 
 const logger = createLogger("conflict-resolution");
 
+// Anthropic tool input_schema requires `type: "object"` at the root, so the
+// array of entries is wrapped under a `conflicts` property.
 export const CONFLICT_ENTRIES_OUTPUT_SCHEMA = {
-  type: "array",
-  items: {
-    type: "object",
-    additionalProperties: false,
-    required: ["file", "description", "resolution", "rationale"],
-    properties: {
-      file: { type: "string", minLength: 1 },
-      description: { type: "string", minLength: 1 },
-      resolution: { type: "string", minLength: 1 },
-      rationale: { type: "string", minLength: 1 },
+  type: "object",
+  additionalProperties: false,
+  required: ["conflicts"],
+  properties: {
+    conflicts: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["file", "description", "resolution", "rationale"],
+        properties: {
+          file: { type: "string", minLength: 1 },
+          description: { type: "string", minLength: 1 },
+          resolution: { type: "string", minLength: 1 },
+          rationale: { type: "string", minLength: 1 },
+        },
+      },
     },
   },
 } as const;
@@ -167,20 +176,10 @@ Follow these steps precisely:
 3. For each file, determine the best resolution by understanding the intent of both sides.
 4. Edit each file to remove all conflict markers and produce the correct merged content.
 5. Stage each resolved file with \`git add <file>\`.
-6. After resolving ALL conflicts, return structured output with your analysis using exactly this schema:
-
-[
-  {
-    "file": "path/to/file",
-    "description": "Brief description of what conflicted",
-    "resolution": "What you chose and how you merged it",
-    "rationale": "Why this resolution is correct"
-  }
-]
+6. After resolving ALL conflicts, return your analysis as the structured output the response schema requires (one entry per conflicted file).
 
 IMPORTANT:
-- Resolve ALL conflicted files before outputting the JSON.
-- The JSON must be a valid array of objects with exactly: file, description, resolution, rationale fields.
+- Resolve ALL conflicted files before producing the structured output.
 - Every conflict marker must be removed — no <<<<<<< or ======= or >>>>>>> markers should remain.
 - Stage every resolved file with git add.`;
 
@@ -191,21 +190,11 @@ Follow these steps precisely:
 1. Run \`git diff --name-only --diff-filter=U\` to find all conflicted files.
 2. Read each conflicted file and analyze the conflict markers (<<<<<<< HEAD, =======, >>>>>>> markers).
 3. For each file, understand the intent of both sides and propose how the conflict should be resolved.
-4. Return structured output with your analysis using exactly this schema:
-
-[
-  {
-    "file": "path/to/file",
-    "description": "Brief description of what conflicted",
-    "resolution": "Proposed resolution — what should be done to merge correctly",
-    "rationale": "Why this resolution is correct"
-  }
-]
+4. Return your analysis as the structured output the response schema requires (one entry per conflicted file).
 
 IMPORTANT:
 - DO NOT edit any files. DO NOT remove conflict markers. DO NOT run git add. This is analysis only.
-- The JSON must be a valid array of objects with exactly: file, description, resolution, rationale fields.
-- Analyze ALL conflicted files before outputting the JSON.`;
+- Analyze ALL conflicted files before producing the structured output.`;
 
 // ============================================================
 // Decision Prompt Builder
@@ -266,6 +255,19 @@ function extractLastJsonCodeFence(text: string): string | null {
 // Conflict Entry Parsing (resilience order)
 // ============================================================
 
+// Accepts either the wrapped object `{ conflicts: [...] }` produced by the
+// Anthropic tool-call path, or the bare array a model may emit in free text.
+const conflictEntriesPayloadSchema = z.union([
+  z.object({ conflicts: z.array(conflictEntrySchema) }),
+  z.array(conflictEntrySchema),
+]);
+
+function unwrapEntries(
+  parsed: z.infer<typeof conflictEntriesPayloadSchema>,
+): ConflictEntry[] {
+  return Array.isArray(parsed) ? parsed : parsed.conflicts;
+}
+
 /**
  * Parse conflict entries from task runner output using a resilience chain:
  * 1. Structured output (if the runner returned it via outputSchema)
@@ -278,12 +280,11 @@ function parseConflictEntries(
 ): { conflicts: ConflictEntry[] } | { error: string } {
   // 1. Structured output
   if (structuredOutput != null) {
-    const parseResult = z
-      .array(conflictEntrySchema)
-      .safeParse(structuredOutput);
+    const parseResult =
+      conflictEntriesPayloadSchema.safeParse(structuredOutput);
     if (parseResult.success) {
       logger.debug("conflict-resolution.parsed_via_structured_output");
-      return { conflicts: parseResult.data };
+      return { conflicts: unwrapEntries(parseResult.data) };
     }
     logger.debug("conflict-resolution.structured_output_invalid", {
       error: parseResult.error.message,
@@ -297,10 +298,10 @@ function parseConflictEntries(
   // 2. Raw JSON parse of the full text
   try {
     const parsed = JSON.parse(text);
-    const parseResult = z.array(conflictEntrySchema).safeParse(parsed);
+    const parseResult = conflictEntriesPayloadSchema.safeParse(parsed);
     if (parseResult.success) {
       logger.debug("conflict-resolution.parsed_via_raw_json");
-      return { conflicts: parseResult.data };
+      return { conflicts: unwrapEntries(parseResult.data) };
     }
   } catch {
     // Not valid JSON — fall through to fenced block extraction
@@ -320,7 +321,7 @@ function parseConflictEntries(
     return { error: `Failed to parse conflict entries JSON: ${errorMsg}` };
   }
 
-  const parseResult = z.array(conflictEntrySchema).safeParse(parsed);
+  const parseResult = conflictEntriesPayloadSchema.safeParse(parsed);
   if (!parseResult.success) {
     return {
       error: `Failed to parse conflict entries: ${parseResult.error.message}`,
@@ -328,7 +329,7 @@ function parseConflictEntries(
   }
 
   logger.debug("conflict-resolution.parsed_via_fenced_block");
-  return { conflicts: parseResult.data };
+  return { conflicts: unwrapEntries(parseResult.data) };
 }
 
 // ============================================================
