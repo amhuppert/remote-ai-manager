@@ -1,5 +1,5 @@
 /**
- * Production composition of `CollaborationSliceDeps.callAgent`.
+ * Production composition of `AsymmetricCollaborationSliceDeps.callAgent`.
  *
  * Wires the slice's lane-aware `callAgent` to real Claude / Codex backends:
  *
@@ -30,7 +30,7 @@ import { createLogger } from "@/lib/logging";
 import {
   getConversationBackendFactory as defaultGetConversationBackendFactory,
   getTaskRunner as defaultGetTaskRunner,
-} from "@/lib/agent-backends/registry-core";
+} from "@/lib/agent-backends/registry";
 import type { ConversationBackendFactory } from "@/lib/agent-backends/conversation";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type { AgentBackendId } from "@/lib/agent-backends/types";
@@ -51,7 +51,7 @@ import type {
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { LaneScheduler } from "@/lib/workflows/primitives/lane-scheduler";
 import type { LaneService } from "@/lib/workflows/primitives/lane-service";
-import type { CollaborationSliceDeps } from "./slice";
+import type { AsymmetricCollaborationSliceDeps } from "./asymmetric-slice";
 
 const logger = createLogger("workflows.collaboration.agent-caller-production");
 
@@ -262,16 +262,16 @@ export function createCollaborationProductionAgentCaller(
  * Adapts a `WorkflowAgentCaller` into the `(request) => Promise<AgentCallResult>`
  * signature the slice's `callAgent` dep expects.
  *
- * Lane-aware requests (the per-round design + review calls carrying a
- * `laneRef`) flow through the WorkflowAgentCaller so post-turn outcomes are
- * recorded on the lane. Lane-less requests (the scribe pass after
- * convergence) bypass the lane wrap and call the inner backend directly —
- * the scribe is a one-shot synthesis that the slice does not track on a
- * lane and returns free-form prose, not a structured round response.
+ * Lane-aware requests (every artifact-producing call in the asymmetric
+ * negotiation flow carries a `laneRef`) flow through the WorkflowAgentCaller
+ * so post-turn outcomes are recorded on the lane. Lane-less requests fall
+ * back to a direct inner backend call under a synthetic per-workflow lane
+ * key as a defensive path; the asymmetric slice itself always sets
+ * `laneRef`, so this branch is not exercised in production.
  */
 export function createCollaborationProductionCallAgent(
   input: CollaborationProductionAgentCallerInput,
-): CollaborationSliceDeps["callAgent"] {
+): AsymmetricCollaborationSliceDeps["callAgent"] {
   const caller = createCollaborationProductionAgentCaller(input);
   const innerCallAgent = buildInnerCallAgent(input);
   return async (request) => {

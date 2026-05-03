@@ -36,6 +36,7 @@ import {
   workflowGeneratedDraftResponseSchema,
   collaborationStartResponseSchema,
   collaborationResumeResponseSchema,
+  collaborationStopResponseSchema,
 } from "@/lib/api-client";
 import type {
   GlobalConfig,
@@ -1576,8 +1577,9 @@ export function useCollaborationStartMutation(
   return useMutation({
     mutationFn: (params: {
       brief: string;
-      maxIterations: number;
-      scribeBackend: "claude" | "codex";
+      negotiationRounds: number;
+      autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
+      conversationId: string;
     }) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration`,
@@ -1597,6 +1599,40 @@ export function useCollaborationStartMutation(
   });
 }
 
+export function useCollaborationStopMutation(
+  projectName: string,
+  sessionName: string,
+  workflowId: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: { conversationId: string }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(workflowId)}/stop`,
+        "collaboration-stop",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversationId: params.conversationId }),
+        },
+        collaborationStopResponseSchema,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: collaborationKeys.all,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: collaborationKeys.detail(
+          projectName,
+          sessionName,
+          workflowId,
+        ),
+      });
+    },
+  });
+}
+
 export function useCollaborationResumeMutation(
   projectName: string,
   sessionName: string,
@@ -1607,6 +1643,7 @@ export function useCollaborationResumeMutation(
   return useMutation({
     mutationFn: (params: {
       resumeToken: string;
+      conversationId: string;
       userAnswers?: Record<string, string>;
     }) =>
       mutationFetch(
@@ -1617,6 +1654,7 @@ export function useCollaborationResumeMutation(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             resumeToken: params.resumeToken,
+            conversationId: params.conversationId,
             userAnswers: params.userAnswers ?? {},
           }),
         },

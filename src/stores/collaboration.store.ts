@@ -1,11 +1,10 @@
 /**
  * Collaboration Mode UI store.
  *
- * Holds ephemeral client-side UI state for the collaboration feature only:
+ * Holds ephemeral client-side UI state for the inline `/collab` flow only:
  *
- *  - the brief draft the user is typing into the start form (per session)
- *  - the workflow the user has expanded in the side panel (per session)
  *  - per-question answer drafts when a paused workflow is awaiting user input
+ *  - per-conversation `/collab` config drafts (second agent, max rounds, etc.)
  *
  * Durable workflow state (envelope status, lifecycle phase, artifacts) lives
  * server-side in `WorkflowEnvelopeStore` and is fetched via TanStack Query.
@@ -17,37 +16,36 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 
-interface BriefDraft {
-  brief: string;
-  maxIterations: number;
-  scribeBackend: "claude" | "codex";
+export type CollabAgent = "claude" | "codex";
+
+export type CollabAutonomousResolutionThreshold =
+  | "none"
+  | "minor"
+  | "major"
+  | "blocking";
+
+export interface CollabConfigDraft {
+  secondAgent: CollabAgent;
+  negotiationRounds: number;
+  autonomousResolutionThreshold: CollabAutonomousResolutionThreshold;
 }
 
 interface CollaborationState {
-  /** Per-session brief drafts. Key is `${projectName}::${sessionName}`. */
-  briefDraftsBySession: Record<string, BriefDraft>;
-  /** Per-session selected workflow id (null when nothing is open). */
-  selectedWorkflowIdBySession: Record<string, string | null>;
   /**
    * Per-(session,workflow,question) user-answer drafts. Outer key is
    * `${projectName}::${sessionName}::${workflowId}`; inner record maps
    * questionId → draft answer text.
    */
   userAnswerDraftsByWorkflow: Record<string, Record<string, string>>;
+  /**
+   * Per-conversation `/collab` config drafts. Keyed by
+   * `${projectName}::${sessionName}::${conversationId}` so opening a
+   * different conversation gets a fresh draft.
+   */
+  collabConfigDraftsByConversation: Record<string, CollabConfigDraft>;
 }
 
 interface CollaborationActions {
-  setBriefDraft(
-    projectName: string,
-    sessionName: string,
-    draft: Partial<BriefDraft>,
-  ): void;
-  clearBriefDraft(projectName: string, sessionName: string): void;
-  setSelectedWorkflowId(
-    projectName: string,
-    sessionName: string,
-    workflowId: string | null,
-  ): void;
   setUserAnswerDraft(
     projectName: string,
     sessionName: string,
@@ -60,19 +58,26 @@ interface CollaborationActions {
     sessionName: string,
     workflowId: string,
   ): void;
+  setCollabConfigDraft(
+    projectName: string,
+    sessionName: string,
+    conversationId: string,
+    draft: CollabConfigDraft,
+  ): void;
+  clearCollabConfigDraft(
+    projectName: string,
+    sessionName: string,
+    conversationId: string,
+  ): void;
 }
 
 type CollaborationStore = CollaborationState & CollaborationActions;
 
-const DEFAULT_DRAFT: BriefDraft = {
-  brief: "",
-  maxIterations: 4,
-  scribeBackend: "claude",
+export const DEFAULT_COLLAB_CONFIG_DRAFT: CollabConfigDraft = {
+  secondAgent: "codex",
+  negotiationRounds: 3,
+  autonomousResolutionThreshold: "major",
 };
-
-function sessionKey(projectName: string, sessionName: string): string {
-  return `${projectName}::${sessionName}`;
-}
 
 function workflowKey(
   projectName: string,
@@ -82,30 +87,18 @@ function workflowKey(
   return `${projectName}::${sessionName}::${workflowId}`;
 }
 
+function conversationKey(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+): string {
+  return `${projectName}::${sessionName}::${conversationId}`;
+}
+
 export const useCollaborationStore = create<CollaborationStore>()(
   immer((set) => ({
-    briefDraftsBySession: {},
-    selectedWorkflowIdBySession: {},
     userAnswerDraftsByWorkflow: {},
-
-    setBriefDraft: (projectName, sessionName, patch) =>
-      set((state) => {
-        const key = sessionKey(projectName, sessionName);
-        const existing = state.briefDraftsBySession[key] ?? DEFAULT_DRAFT;
-        state.briefDraftsBySession[key] = { ...existing, ...patch };
-      }),
-
-    clearBriefDraft: (projectName, sessionName) =>
-      set((state) => {
-        const key = sessionKey(projectName, sessionName);
-        delete state.briefDraftsBySession[key];
-      }),
-
-    setSelectedWorkflowId: (projectName, sessionName, workflowId) =>
-      set((state) => {
-        const key = sessionKey(projectName, sessionName);
-        state.selectedWorkflowIdBySession[key] = workflowId;
-      }),
+    collabConfigDraftsByConversation: {},
 
     setUserAnswerDraft: (
       projectName,
@@ -128,28 +121,20 @@ export const useCollaborationStore = create<CollaborationStore>()(
         const key = workflowKey(projectName, sessionName, workflowId);
         delete state.userAnswerDraftsByWorkflow[key];
       }),
+
+    setCollabConfigDraft: (projectName, sessionName, conversationId, draft) =>
+      set((state) => {
+        const key = conversationKey(projectName, sessionName, conversationId);
+        state.collabConfigDraftsByConversation[key] = draft;
+      }),
+
+    clearCollabConfigDraft: (projectName, sessionName, conversationId) =>
+      set((state) => {
+        const key = conversationKey(projectName, sessionName, conversationId);
+        delete state.collabConfigDraftsByConversation[key];
+      }),
   })),
 );
-
-export const useBriefDraft = (
-  projectName: string,
-  sessionName: string,
-): BriefDraft => {
-  const draftsBySession = useCollaborationStore((s) => s.briefDraftsBySession);
-  return useMemo(
-    () =>
-      draftsBySession[sessionKey(projectName, sessionName)] ?? DEFAULT_DRAFT,
-    [draftsBySession, projectName, sessionName],
-  );
-};
-
-export const useSelectedWorkflowId = (
-  projectName: string,
-  sessionName: string,
-): string | null => {
-  const map = useCollaborationStore((s) => s.selectedWorkflowIdBySession);
-  return map[sessionKey(projectName, sessionName)] ?? null;
-};
 
 export const useUserAnswerDrafts = (
   projectName: string,
@@ -163,13 +148,25 @@ export const useUserAnswerDrafts = (
   );
 };
 
-export const useSetBriefDraft = () =>
-  useCollaborationStore((s) => s.setBriefDraft);
-export const useClearBriefDraft = () =>
-  useCollaborationStore((s) => s.clearBriefDraft);
-export const useSetSelectedWorkflowId = () =>
-  useCollaborationStore((s) => s.setSelectedWorkflowId);
+export const useCollabConfigDraft = (
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+): CollabConfigDraft => {
+  const map = useCollaborationStore((s) => s.collabConfigDraftsByConversation);
+  return useMemo(
+    () =>
+      map[conversationKey(projectName, sessionName, conversationId)] ??
+      DEFAULT_COLLAB_CONFIG_DRAFT,
+    [map, projectName, sessionName, conversationId],
+  );
+};
+
 export const useSetUserAnswerDraft = () =>
   useCollaborationStore((s) => s.setUserAnswerDraft);
 export const useClearUserAnswerDrafts = () =>
   useCollaborationStore((s) => s.clearUserAnswerDrafts);
+export const useSetCollabConfigDraft = () =>
+  useCollaborationStore((s) => s.setCollabConfigDraft);
+export const useClearCollabConfigDraft = () =>
+  useCollaborationStore((s) => s.clearCollabConfigDraft);

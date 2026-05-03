@@ -209,7 +209,11 @@ export default function MobilePromptToolbar({
           </button>
 
           <div className="mobile-prompt-row mobile-prompt-row--static">
-            <span className="mobile-prompt-row__icon" aria-hidden>
+            <span
+              className="mobile-prompt-row__icon"
+              data-backend={backend}
+              aria-hidden
+            >
               {backend === "codex" ? "$" : "/"}
             </span>
             <span className="mobile-prompt-row__content">
@@ -238,6 +242,7 @@ export default function MobilePromptToolbar({
                       role="radio"
                       aria-checked={backend === b}
                       className={`mobile-prompt-segment__btn${backend === b ? " active" : ""}`}
+                      data-backend={b}
                       onClick={() => onSelectBackend(b)}
                       disabled={isBusy || isReadOnly}
                     >

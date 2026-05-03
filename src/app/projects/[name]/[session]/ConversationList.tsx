@@ -386,15 +386,6 @@ export default function ConversationList({
               />
             )}
 
-            {session && (
-              <a
-                className="gw-card-link"
-                href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/collaboration`}
-              >
-                Collaboration mode →
-              </a>
-            )}
-
             {/* Finished banner */}
             {isFinished && (
               <div className="finished-banner">

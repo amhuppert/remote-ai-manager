@@ -322,6 +322,12 @@ export default function NotificationListener(): null {
           });
           void queryClient.invalidateQueries({ queryKey: sessionDetail });
           void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+          void queryClient.invalidateQueries({
+            queryKey: conversationKeys.active,
+          });
+          void queryClient.invalidateQueries({
+            queryKey: projectKeys.list(),
+          });
           return;
         }
         if (data.scope === "workflow") {

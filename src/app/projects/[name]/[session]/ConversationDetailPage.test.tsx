@@ -6,6 +6,7 @@ import ConversationDetailPage from "./ConversationDetailPage";
 import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { makeFinalAnswer } from "@/lib/workflows/collaboration/test-fixtures";
 
 // ---------------------------------------------------------------------------
 // Shared mocks
@@ -91,6 +92,12 @@ let testSession: SessionState | undefined;
 let testMessages: TranscriptMessage[];
 let testDiff: SessionDiff;
 let testSessionPending: boolean;
+let testCollaborationEnvelopes: Array<{
+  workflowId: string;
+  status: "running" | "paused" | "completed" | "failed";
+  phase: string;
+  featureSnapshot: { conversationId?: string } & Record<string, unknown>;
+}>;
 
 vi.mock("@/lib/queries", () => ({
   useSessionQuery: () => ({ data: testSession, isPending: testSessionPending }),
@@ -112,6 +119,14 @@ vi.mock("@/lib/queries", () => ({
     isError: false,
   }),
   useActiveConversationsQuery: () => ({ data: undefined }),
+  useCollaborationListQuery: () => ({
+    data: testCollaborationEnvelopes,
+    isPending: false,
+  }),
+  useCollaborationArtifactQuery: () => ({
+    data: undefined,
+    isPending: false,
+  }),
   useNotificationsQuery: () => ({ data: undefined }),
   useReferenceDocumentsQuery: () => ({ data: [], isPending: false }),
   useReferenceDocumentContentQuery: () => ({ data: null, isPending: false }),
@@ -137,6 +152,8 @@ vi.mock("@/lib/queries", () => ({
   }),
 }));
 
+const collaborationStartMutateMock = vi.fn();
+const collaborationStopMutateMock = vi.fn();
 vi.mock("@/lib/mutations", () => ({
   useDeleteSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useCommitMutation: () => ({ mutate: vi.fn(), isPending: false }),
@@ -151,8 +168,21 @@ vi.mock("@/lib/mutations", () => ({
   }),
   useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useDebugModeToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useDebugPhaseMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useDebugRecordingMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useClearDebugLogsMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useCollaborationStartMutation: () => ({
+    mutate: collaborationStartMutateMock,
+    isPending: false,
+  }),
+  useCollaborationResumeMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  useCollaborationStopMutation: () => ({
+    mutate: collaborationStopMutateMock,
+    isPending: false,
+  }),
   ApiCallError: class extends Error {
     code?: string;
   },
@@ -219,6 +249,24 @@ const emptyDiff: SessionDiff = {
   totalDeletions: 0,
 };
 
+function makeCollabFeatureSnapshot(
+  conversationId: string,
+  overrides: Record<string, unknown> = {},
+): { conversationId: string } & Record<string, unknown> {
+  return {
+    conversationId,
+    mode: "asymmetric",
+    brief: "Decide on caching strategy.",
+    primaryAgentBackend: "claude",
+    negotiationRounds: 3,
+    negotiationRoundsCompleted: 0,
+    autonomousResolutionThreshold: "major",
+    artifacts: [],
+    userAnswersByQuestionId: {},
+    ...overrides,
+  };
+}
+
 const sampleMessages: TranscriptMessage[] = [
   {
     role: "user",
@@ -247,6 +295,7 @@ beforeEach(() => {
   testMessages = sampleMessages;
   testDiff = emptyDiff;
   testSessionPending = false;
+  testCollaborationEnvelopes = [];
 
   globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
     observe: vi.fn(),
@@ -558,6 +607,447 @@ describe("ConversationDetailPage", () => {
       const effortTrigger = document.querySelector(".effort-selector-trigger");
       expect(effortTrigger).toBeTruthy();
       expect(effortTrigger!.getAttribute("title")).toContain("Low");
+    });
+  });
+
+  describe("/collab config row", () => {
+    it("shows CollabConfigRow above the textarea when prompt starts with /collab", () => {
+      renderPage();
+      const textarea = screen.getByPlaceholderText(
+        "Send a prompt to Claude...",
+      );
+      fireEvent.change(textarea, { target: { value: "/collab " } });
+
+      expect(
+        screen.getByRole("region", { name: "Collaboration configuration" }),
+      ).toBeInTheDocument();
+    });
+
+    it("does not show CollabConfigRow for non-/collab prompts", () => {
+      renderPage();
+      const textarea = screen.getByPlaceholderText(
+        "Send a prompt to Claude...",
+      );
+      fireEvent.change(textarea, { target: { value: "Fix the bug" } });
+
+      expect(
+        screen.queryByRole("region", { name: "Collaboration configuration" }),
+      ).toBeNull();
+    });
+
+    it("submitting a /collab prompt routes to collaboration start, not sendPrompt", () => {
+      renderPage();
+      const textarea = screen.getByPlaceholderText(
+        "Send a prompt to Claude...",
+      );
+      fireEvent.change(textarea, {
+        target: { value: "/collab refactor the auth flow" },
+      });
+
+      const sendBtn = screen.getAllByTitle("Send prompt")[0]!;
+      fireEvent.click(sendBtn);
+
+      expect(collaborationStartMutateMock).toHaveBeenCalledTimes(1);
+      const args = collaborationStartMutateMock.mock.calls[0]![0] as {
+        brief: string;
+        negotiationRounds: number;
+        conversationId: string;
+      };
+      expect(args.brief).toBe("refactor the auth flow");
+      expect(args.conversationId).toBe("conv-1");
+      expect(typeof args.negotiationRounds).toBe("number");
+      expect(sendPromptMock).not.toHaveBeenCalled();
+    });
+
+    it("dismiss button removes /collab from the prompt text", () => {
+      renderPage();
+      const textarea = screen.getByPlaceholderText(
+        "Send a prompt to Claude...",
+      ) as HTMLTextAreaElement;
+      fireEvent.change(textarea, {
+        target: { value: "/collab refactor the auth flow" },
+      });
+
+      const dismissBtn = screen.getByLabelText("Dismiss /collab");
+      fireEvent.click(dismissBtn);
+
+      expect(textarea.value).toBe("refactor the auth flow");
+      expect(
+        screen.queryByRole("region", { name: "Collaboration configuration" }),
+      ).toBeNull();
+    });
+  });
+
+  describe("blocks normal input during active /collab", () => {
+    it("makes the textarea read-only with a tooltip when a collab is running for the current conversation", () => {
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-running",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      const textarea = screen.getByPlaceholderText(
+        "Send a prompt to Claude...",
+      ) as HTMLTextAreaElement;
+      expect(textarea.readOnly).toBe(true);
+      expect(textarea.title).toContain("collaboration in progress");
+    });
+
+    it("does not lock the textarea for terminal collabs", () => {
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-done",
+          status: "completed",
+          phase: "synthesis",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      const textarea = screen.getByPlaceholderText(
+        "Send a prompt to Claude...",
+      ) as HTMLTextAreaElement;
+      expect(textarea.readOnly).toBe(false);
+    });
+
+    it("renders a CollabPassage in the conversation when an active collab exists", () => {
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-running",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      expect(
+        screen.getByLabelText("Collaboration passage"),
+      ).toBeInTheDocument();
+    });
+
+    it("hides the normal conversation typing indicator while a collab is active", () => {
+      testSession = {
+        ...baseSession,
+        conversations: [
+          {
+            ...baseSession.conversations[0]!,
+            status: "running",
+          },
+        ],
+      };
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-running",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+
+      renderPage();
+
+      expect(
+        screen.getByLabelText("Collaboration passage"),
+      ).toBeInTheDocument();
+      expect(document.querySelector(".typing-indicator")).toBeNull();
+      expect(document.querySelector(".streaming-indicator")).toBeNull();
+    });
+
+    it("renders the CollabPassage as a virtualized message-list row, not after the list", () => {
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-running",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      const passage = screen.getByLabelText("Collaboration passage");
+      const row = passage.closest(
+        '[data-collab-row="true"]',
+      ) as HTMLElement | null;
+      expect(row).not.toBeNull();
+      expect(row!.style.position).toBe("absolute");
+    });
+
+    it("inserts the CollabPassage immediately after the latest /collab user message", () => {
+      testMessages = [
+        {
+          role: "user",
+          content: [{ type: "text", text: "Hello Claude" }],
+          timestamp: "2024-06-15T10:00:00Z",
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Hi" }],
+          timestamp: "2024-06-15T10:00:05Z",
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "/collab investigate the regression" },
+          ],
+          timestamp: "2024-06-15T10:01:00Z",
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "another message after" }],
+          timestamp: "2024-06-15T10:02:00Z",
+        },
+      ];
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-running",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      const passage = screen.getByLabelText("Collaboration passage");
+      const collabRow = passage.closest(
+        '[data-collab-row="true"]',
+      ) as HTMLElement | null;
+      expect(collabRow).not.toBeNull();
+      const collabIndex = Number(collabRow!.getAttribute("data-index"));
+      // /collab is at displayMessages index 2; the collab row must sit at
+      // virtualizer index 3 — directly after that user message — so the
+      // subsequent message ("another message after") shifts to index 4.
+      expect(collabIndex).toBe(3);
+    });
+
+    it("does not render a CollabPassage when no active collab exists", () => {
+      testCollaborationEnvelopes = [];
+      renderPage();
+      expect(screen.queryByLabelText("Collaboration passage")).toBeNull();
+    });
+
+    it("anchors the CollabPassage after a /collab user message stored as a command block", () => {
+      testMessages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "command",
+              name: "/collab",
+              args: "investigate the regression",
+            },
+          ],
+          timestamp: "2024-06-15T10:00:00Z",
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "final answer" }],
+          timestamp: "2024-06-15T10:01:00Z",
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Do you have a conversation history" },
+          ],
+          timestamp: "2024-06-15T10:02:00Z",
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Yes I can see it" }],
+          timestamp: "2024-06-15T10:03:00Z",
+        },
+      ];
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-running",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      const passage = screen.getByLabelText("Collaboration passage");
+      const collabRow = passage.closest(
+        '[data-collab-row="true"]',
+      ) as HTMLElement | null;
+      expect(collabRow).not.toBeNull();
+      const collabIndex = Number(collabRow!.getAttribute("data-index"));
+      expect(collabIndex).toBe(1);
+    });
+
+    it("exposes a Stop control while a collaboration is active", () => {
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-running",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      expect(screen.getByLabelText("Stop collaboration")).toBeInTheDocument();
+    });
+
+    it("calls the stop mutation with the conversationId when Stop is clicked", () => {
+      collaborationStopMutateMock.mockClear();
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-running",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      const stopButton = screen.getByLabelText("Stop collaboration");
+      fireEvent.click(stopButton);
+      expect(collaborationStopMutateMock).toHaveBeenCalledTimes(1);
+      expect(collaborationStopMutateMock.mock.calls[0]![0]).toEqual({
+        conversationId: "conv-1",
+      });
+    });
+
+    it("keeps Stop available when a collaboration is paused for user input", () => {
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-paused",
+          status: "paused",
+          phase: "asymmetric_paused_for_user",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      expect(screen.getByLabelText("Stop collaboration")).toBeInTheDocument();
+    });
+
+    it("does not lock the textarea when active collab belongs to a different conversation", () => {
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-other",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("different-conv"),
+        },
+      ];
+      renderPage();
+      const textarea = screen.getByPlaceholderText(
+        "Send a prompt to Claude...",
+      ) as HTMLTextAreaElement;
+      expect(textarea.readOnly).toBe(false);
+    });
+
+    // The phase strip is portaled into a sticky target at the top of the
+    // conversation panel, so there is exactly one strip in the DOM whether
+    // the run is active or terminal — and it lives inside the pinned target.
+    it("renders the phase strip inside the pinned-top target while a collab is running", () => {
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-running",
+          status: "running",
+          phase: "round-1",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      const pinned = document.querySelectorAll(
+        ".collab-pinned-top-target .collab-phase-strip",
+      );
+      const allStrips = document.querySelectorAll(".collab-phase-strip");
+      expect(pinned).toHaveLength(1);
+      expect(allStrips).toHaveLength(1);
+    });
+
+    it("renders the phase strip inside the pinned-top target once the collab is terminal", () => {
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-done",
+          status: "completed",
+          phase: "synthesis",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1"),
+        },
+      ];
+      renderPage();
+      const pinned = document.querySelectorAll(
+        ".collab-pinned-top-target .collab-phase-strip",
+      );
+      const allStrips = document.querySelectorAll(".collab-phase-strip");
+      expect(pinned).toHaveLength(1);
+      expect(allStrips).toHaveLength(1);
+    });
+
+    it("does not render the terminal final answer twice after transcript writeback", () => {
+      const finalAnswer = makeFinalAnswer({
+        answer: "Unique collaboration final answer",
+      });
+      testMessages = [
+        {
+          role: "user",
+          content: [{ type: "text", text: "/collab settle the design" }],
+          timestamp: "2024-06-15T10:01:00Z",
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: finalAnswer.answer }],
+          timestamp: "2024-06-15T10:02:00Z",
+        },
+      ];
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-done",
+          status: "completed",
+          phase: "asymmetric_completed_final",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1", {
+            artifacts: [finalAnswer],
+          }),
+        },
+      ];
+
+      renderPage();
+
+      expect(
+        screen.getAllByText("Unique collaboration final answer"),
+      ).toHaveLength(1);
+    });
+
+    it("does not render the terminal final answer twice when the /collab trigger is parsed as a command block", () => {
+      const finalAnswer = makeFinalAnswer({
+        answer: "Unique collaboration final answer from command block",
+      });
+      testMessages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "command",
+              name: "/collab",
+              args: "settle the design",
+            },
+          ],
+          timestamp: "2024-06-15T10:01:00Z",
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: finalAnswer.answer }],
+          timestamp: "2024-06-15T10:02:00Z",
+        },
+      ];
+      testCollaborationEnvelopes = [
+        {
+          workflowId: "wf-done",
+          status: "completed",
+          phase: "asymmetric_completed_final",
+          featureSnapshot: makeCollabFeatureSnapshot("conv-1", {
+            artifacts: [finalAnswer],
+          }),
+        },
+      ];
+
+      renderPage();
+
+      expect(
+        screen.getAllByText(
+          "Unique collaboration final answer from command block",
+        ),
+      ).toHaveLength(1);
     });
   });
 

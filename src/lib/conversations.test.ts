@@ -494,6 +494,96 @@ describe("deriveSessionStatus", () => {
     const session = makeSessionWith([]);
     expect(deriveSessionStatus(session)).toBe("idle");
   });
+
+  it("returns running when an active collaboration envelope is running and no conversations are active", () => {
+    const session = makeSessionWith([], {
+      workflowEnvelopes: {
+        "wf-1": {
+          workflowId: "wf-1",
+          workflowType: "collaboration",
+          status: "running",
+          phase: "round",
+          createdAt: "2024-01-01T00:00:00Z",
+          updatedAt: "2024-01-01T00:00:00Z",
+          featureSnapshot: {},
+        },
+      },
+    });
+
+    expect(deriveSessionStatus(session)).toBe("running");
+  });
+
+  it("returns waiting_for_input when a collaboration envelope is paused", () => {
+    const session = makeSessionWith([], {
+      workflowEnvelopes: {
+        "wf-1": {
+          workflowId: "wf-1",
+          workflowType: "collaboration",
+          status: "paused",
+          phase: "awaiting-user-input",
+          createdAt: "2024-01-01T00:00:00Z",
+          updatedAt: "2024-01-01T00:00:00Z",
+          featureSnapshot: {},
+        },
+      },
+    });
+
+    expect(deriveSessionStatus(session)).toBe("waiting_for_input");
+  });
+
+  it("ignores collaboration envelopes that are completed or failed", () => {
+    const session = makeSessionWith([], {
+      workflowEnvelopes: {
+        "wf-1": {
+          workflowId: "wf-1",
+          workflowType: "collaboration",
+          status: "completed",
+          phase: "done",
+          createdAt: "2024-01-01T00:00:00Z",
+          updatedAt: "2024-01-01T00:00:00Z",
+          featureSnapshot: {},
+        },
+      },
+    });
+
+    expect(deriveSessionStatus(session)).toBe("idle");
+  });
+
+  it("ignores envelopes whose workflowType is not collaboration", () => {
+    const session = makeSessionWith([], {
+      workflowEnvelopes: {
+        "wf-1": {
+          workflowId: "wf-1",
+          workflowType: "graph-workflow",
+          status: "running",
+          phase: "step",
+          createdAt: "2024-01-01T00:00:00Z",
+          updatedAt: "2024-01-01T00:00:00Z",
+          featureSnapshot: {},
+        },
+      },
+    });
+
+    expect(deriveSessionStatus(session)).toBe("idle");
+  });
+
+  it("prefers waiting_for_input from paused envelope over conversation new status", () => {
+    const session = makeSessionWith([makeConvo({ status: "new" })], {
+      workflowEnvelopes: {
+        "wf-1": {
+          workflowId: "wf-1",
+          workflowType: "collaboration",
+          status: "paused",
+          phase: "awaiting-user-input",
+          createdAt: "2024-01-01T00:00:00Z",
+          updatedAt: "2024-01-01T00:00:00Z",
+          featureSnapshot: {},
+        },
+      },
+    });
+
+    expect(deriveSessionStatus(session)).toBe("waiting_for_input");
+  });
 });
 
 describe("deriveSessionPromptCount", () => {

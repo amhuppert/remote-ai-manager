@@ -10,7 +10,10 @@ import { describe, it, expect, vi } from "vitest";
 
 import { createCollaborationRouteHandlers } from "./route-handlers";
 import {
+  CollaborationConversationMismatchError,
+  CollaborationConversationNotFoundError,
   CollaborationNotPausedError,
+  CollaborationNotStoppableError,
   CollaborationResumeTokenMismatchError,
   CollaborationSessionNotFoundError,
   CollaborationWorkflowNotFoundError,
@@ -41,6 +44,8 @@ interface ScriptedManagerOptions {
   envelope?: WorkflowEnvelope | null;
   resumeResult?: { workflowId: string; status: "resumed" };
   resumeError?: Error;
+  stopResult?: { workflowId: string; status: "stopped" };
+  stopError?: Error;
 }
 
 function buildScriptedManager(options: ScriptedManagerOptions = {}): {
@@ -48,10 +53,12 @@ function buildScriptedManager(options: ScriptedManagerOptions = {}): {
   startCalls: Parameters<CollaborationManager["start"]>[0][];
   listCalls: Parameters<CollaborationManager["listActive"]>[0][];
   resumeCalls: Parameters<CollaborationManager["resume"]>[0][];
+  stopCalls: Parameters<CollaborationManager["stop"]>[0][];
 } {
   const startCalls: Parameters<CollaborationManager["start"]>[0][] = [];
   const listCalls: Parameters<CollaborationManager["listActive"]>[0][] = [];
   const resumeCalls: Parameters<CollaborationManager["resume"]>[0][] = [];
+  const stopCalls: Parameters<CollaborationManager["stop"]>[0][] = [];
 
   const manager: CollaborationManager = {
     start: vi.fn(
@@ -96,9 +103,23 @@ function buildScriptedManager(options: ScriptedManagerOptions = {}): {
         );
       },
     ),
+    stop: vi.fn(
+      async (
+        input: Parameters<CollaborationManager["stop"]>[0],
+      ): Promise<{ workflowId: string; status: "stopped" }> => {
+        stopCalls.push(input);
+        if (options.stopError) throw options.stopError;
+        return (
+          options.stopResult ?? {
+            workflowId: input.workflowId,
+            status: "stopped",
+          }
+        );
+      },
+    ),
   };
 
-  return { manager, startCalls, listCalls, resumeCalls };
+  return { manager, startCalls, listCalls, resumeCalls, stopCalls };
 }
 
 function buildContext(
@@ -156,8 +177,9 @@ describe("collaboration route handlers — START", () => {
         method: "POST",
         body: JSON.stringify({
           brief: "design X",
-          maxIterations: 3,
-          scribeBackend: "claude",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
         }),
       }),
       buildContext("missing-project", "sess-1"),
@@ -201,8 +223,9 @@ describe("collaboration route handlers — START", () => {
         method: "POST",
         body: JSON.stringify({
           brief: "",
-          maxIterations: 3,
-          scribeBackend: "claude",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
         }),
       }),
       buildContext("example", "sess-1"),
@@ -216,6 +239,68 @@ describe("collaboration route handlers — START", () => {
     expect(body.error).toBe("Invalid request body");
     expect(body.issues.length).toBeGreaterThan(0);
     expect(startCalls).toHaveLength(0);
+  });
+
+  it("returns 400 when conversationId is missing from the body", async () => {
+    const { manager, startCalls } = buildScriptedManager();
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design X",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      issues: { path: unknown; message: string }[];
+    };
+    expect(body.error).toBe("Invalid request body");
+    expect(
+      body.issues.some((i) => String(i.path).includes("conversationId")),
+    ).toBe(true);
+    expect(startCalls).toHaveLength(0);
+  });
+
+  it("returns 404 when the conversation does not exist", async () => {
+    const { manager } = buildScriptedManager({
+      startError: new CollaborationConversationNotFoundError(
+        "/projects/example",
+        "sess-1",
+        "conv-missing",
+      ),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design X",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-missing",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("conv-missing");
   });
 
   it("returns 404 when the session does not exist", async () => {
@@ -235,8 +320,9 @@ describe("collaboration route handlers — START", () => {
         method: "POST",
         body: JSON.stringify({
           brief: "design X",
-          maxIterations: 3,
-          scribeBackend: "claude",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
         }),
       }),
       buildContext("example", "sess-1"),
@@ -261,8 +347,9 @@ describe("collaboration route handlers — START", () => {
         method: "POST",
         body: JSON.stringify({
           brief: "design Y",
-          maxIterations: 5,
-          scribeBackend: "codex",
+          negotiationRounds: 5,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-Y",
         }),
       }),
       buildContext("example", "sess-1"),
@@ -285,9 +372,137 @@ describe("collaboration route handlers — START", () => {
       projectPath: "/projects/example",
       sessionName: "sess-1",
       brief: "design Y",
-      maxIterations: 5,
-      scribeBackend: "codex",
+      negotiationRounds: 5,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-Y",
     });
+  });
+
+  it("persists the /collab user prompt to the transcript before invoking the manager", async () => {
+    const { manager, startCalls } = buildScriptedManager({
+      startResult: { workflowId: "wf-xyz", status: "started" },
+    });
+    const order: string[] = [];
+    const appendTranscriptEntry = vi.fn(async (...args) => {
+      order.push("transcript");
+      return args;
+    });
+    const wrappedManager: CollaborationManager = {
+      ...manager,
+      start: vi.fn(async (input) => {
+        order.push("manager.start");
+        return manager.start(input);
+      }),
+    };
+
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager: wrappedManager,
+      appendTranscriptEntry,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "investigate flaky test",
+          negotiationRounds: 4,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-trans",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(202);
+    expect(appendTranscriptEntry).toHaveBeenCalledTimes(1);
+    const [convId, entry] = appendTranscriptEntry.mock.calls[0]!;
+    expect(convId).toBe("conv-trans");
+    expect(entry).toMatchObject({
+      type: "user",
+      role: "user",
+      content: [{ type: "text", text: "/collab investigate flaky test" }],
+    });
+    expect(order).toEqual(["transcript", "manager.start"]);
+    expect(startCalls).toHaveLength(1);
+  });
+
+  it("updates conversation metadata so a fresh /collab-started conversation leaves the new status with a transcriptPath", async () => {
+    const { manager, startCalls } = buildScriptedManager({
+      startResult: { workflowId: "wf-meta", status: "started" },
+    });
+
+    type ConversationLike = {
+      id: string;
+      status: string;
+      transcriptPath: string | null;
+      promptCount: number;
+      lastActivityAt: string;
+    };
+
+    const fakeConversation: ConversationLike = {
+      id: "conv-meta",
+      status: "new",
+      transcriptPath: null,
+      promptCount: 0,
+      lastActivityAt: "2026-04-28T09:00:00.000Z",
+    };
+
+    const mutateCalls: Array<{
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+      reason: string;
+    }> = [];
+
+    const mutateConversation = vi.fn(
+      async (
+        projectPath: string,
+        sessionName: string,
+        conversationId: string,
+        reason: string,
+        mutator: (c: ConversationLike) => void | Promise<void>,
+      ) => {
+        mutateCalls.push({ projectPath, sessionName, conversationId, reason });
+        await mutator(fakeConversation);
+      },
+    );
+
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+      mutateConversation: mutateConversation as unknown as Parameters<
+        typeof createCollaborationRouteHandlers
+      >[0] extends { mutateConversation?: infer F }
+        ? F
+        : never,
+    } as Partial<Parameters<typeof createCollaborationRouteHandlers>[0]>);
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "kick off a new design",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-meta",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(202);
+    expect(startCalls).toHaveLength(1);
+    expect(mutateConversation).toHaveBeenCalled();
+    expect(mutateCalls[0]).toMatchObject({
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      conversationId: "conv-meta",
+    });
+
+    expect(fakeConversation.transcriptPath).not.toBeNull();
+    expect(fakeConversation.status).not.toBe("new");
+    expect(fakeConversation.promptCount).toBeGreaterThan(0);
   });
 
   it("returns 500 when the manager throws an unexpected error", async () => {
@@ -304,8 +519,9 @@ describe("collaboration route handlers — START", () => {
         method: "POST",
         body: JSON.stringify({
           brief: "design Y",
-          maxIterations: 3,
-          scribeBackend: "claude",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
         }),
       }),
       buildContext("example", "sess-1"),
@@ -326,8 +542,9 @@ describe("collaboration route handlers — START", () => {
         method: "POST",
         body: JSON.stringify({
           brief: "design Y",
-          maxIterations: 3,
-          scribeBackend: "claude",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
         }),
       }),
       buildContext("example", "feature%2Fnew%20design"),
@@ -403,7 +620,11 @@ describe("collaboration route handlers — RESUME", () => {
     const response = await handlers.RESUME(
       new Request("http://test/collab/wf-1/resume", {
         method: "POST",
-        body: JSON.stringify({ resumeToken: "tok", userAnswers: {} }),
+        body: JSON.stringify({
+          resumeToken: "tok",
+          conversationId: "conv-1",
+          userAnswers: {},
+        }),
       }),
       buildWorkflowContext("missing", "sess-1", "wf-1"),
     );
@@ -423,7 +644,11 @@ describe("collaboration route handlers — RESUME", () => {
     const response = await handlers.RESUME(
       new Request("http://test/collab//resume", {
         method: "POST",
-        body: JSON.stringify({ resumeToken: "tok", userAnswers: {} }),
+        body: JSON.stringify({
+          resumeToken: "tok",
+          conversationId: "conv-1",
+          userAnswers: {},
+        }),
       }),
       buildWorkflowContext("example", "sess-1", ""),
     );
@@ -462,7 +687,11 @@ describe("collaboration route handlers — RESUME", () => {
     const response = await handlers.RESUME(
       new Request("http://test/collab/wf-1/resume", {
         method: "POST",
-        body: JSON.stringify({ resumeToken: "", userAnswers: {} }),
+        body: JSON.stringify({
+          resumeToken: "",
+          conversationId: "conv-1",
+          userAnswers: {},
+        }),
       }),
       buildWorkflowContext("example", "sess-1", "wf-1"),
     );
@@ -483,7 +712,11 @@ describe("collaboration route handlers — RESUME", () => {
     const response = await handlers.RESUME(
       new Request("http://test/collab/wf-missing/resume", {
         method: "POST",
-        body: JSON.stringify({ resumeToken: "tok", userAnswers: {} }),
+        body: JSON.stringify({
+          resumeToken: "tok",
+          conversationId: "conv-1",
+          userAnswers: {},
+        }),
       }),
       buildWorkflowContext("example", "sess-1", "wf-missing"),
     );
@@ -507,6 +740,7 @@ describe("collaboration route handlers — RESUME", () => {
         method: "POST",
         body: JSON.stringify({
           resumeToken: "wrong-token",
+          conversationId: "conv-1",
           userAnswers: { q1: "yes" },
         }),
       }),
@@ -522,7 +756,38 @@ describe("collaboration route handlers — RESUME", () => {
       sessionName: "sess-1",
       workflowId: "wf-1",
       resumeToken: "wrong-token",
+      conversationId: "conv-1",
     });
+  });
+
+  it("returns 403 when the conversationId does not match the workflow", async () => {
+    const { manager } = buildScriptedManager({
+      resumeError: new CollaborationConversationMismatchError(
+        "wf-1",
+        "conv-A",
+        "conv-B",
+      ),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.RESUME(
+      new Request("http://test/collab/wf-1/resume", {
+        method: "POST",
+        body: JSON.stringify({
+          resumeToken: "tok",
+          conversationId: "conv-B",
+          userAnswers: {},
+        }),
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("conv-B");
   });
 
   it("returns 409 when the workflow is not paused", async () => {
@@ -537,7 +802,11 @@ describe("collaboration route handlers — RESUME", () => {
     const response = await handlers.RESUME(
       new Request("http://test/collab/wf-1/resume", {
         method: "POST",
-        body: JSON.stringify({ resumeToken: "tok", userAnswers: {} }),
+        body: JSON.stringify({
+          resumeToken: "tok",
+          conversationId: "conv-1",
+          userAnswers: {},
+        }),
       }),
       buildWorkflowContext("example", "sess-1", "wf-1"),
     );
@@ -559,6 +828,7 @@ describe("collaboration route handlers — RESUME", () => {
         method: "POST",
         body: JSON.stringify({
           resumeToken: "good-tok",
+          conversationId: "conv-1",
           userAnswers: { question_a: "answer-a" },
         }),
       }),
@@ -578,6 +848,7 @@ describe("collaboration route handlers — RESUME", () => {
       sessionName: "sess-1",
       workflowId: "wf-1",
       resumeToken: "good-tok",
+      conversationId: "conv-1",
       userAnswers: { question_a: "answer-a" },
     });
   });
@@ -594,7 +865,11 @@ describe("collaboration route handlers — RESUME", () => {
     const response = await handlers.RESUME(
       new Request("http://test/collab/wf-1/resume", {
         method: "POST",
-        body: JSON.stringify({ resumeToken: "tok", userAnswers: {} }),
+        body: JSON.stringify({
+          resumeToken: "tok",
+          conversationId: "conv-1",
+          userAnswers: {},
+        }),
       }),
       buildWorkflowContext("example", "sess-1", "wf-1"),
     );
@@ -612,12 +887,199 @@ describe("collaboration route handlers — RESUME", () => {
     await handlers.RESUME(
       new Request("http://test/collab/wf%2Fabc/resume", {
         method: "POST",
-        body: JSON.stringify({ resumeToken: "tok", userAnswers: {} }),
+        body: JSON.stringify({
+          resumeToken: "tok",
+          conversationId: "conv-1",
+          userAnswers: {},
+        }),
       }),
       buildWorkflowContext("example", "sess-1", "wf%2Fabc"),
     );
 
     expect(resumeCalls[0]?.workflowId).toBe("wf/abc");
+  });
+});
+
+describe("collaboration route handlers — STOP", () => {
+  it("returns 404 when the project cannot be resolved", async () => {
+    const { manager } = buildScriptedManager();
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => null,
+      manager,
+    });
+
+    const response = await handlers.STOP(
+      new Request("http://test/collab/wf-1/stop", {
+        method: "POST",
+        body: JSON.stringify({ conversationId: "conv-1" }),
+      }),
+      buildWorkflowContext("missing", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe("Project not found");
+  });
+
+  it("returns 400 when the body is not valid JSON", async () => {
+    const { manager } = buildScriptedManager();
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.STOP(
+      new Request("http://test/collab/wf-1/stop", {
+        method: "POST",
+        body: "{not json",
+        headers: { "content-type": "application/json" },
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe("Request body must be valid JSON");
+  });
+
+  it("returns 400 when conversationId is missing", async () => {
+    const { manager, stopCalls } = buildScriptedManager();
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.STOP(
+      new Request("http://test/collab/wf-1/stop", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(stopCalls).toHaveLength(0);
+  });
+
+  it("returns 404 when the workflow does not exist", async () => {
+    const { manager } = buildScriptedManager({
+      stopError: new CollaborationWorkflowNotFoundError("wf-missing"),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.STOP(
+      new Request("http://test/collab/wf-missing/stop", {
+        method: "POST",
+        body: JSON.stringify({ conversationId: "conv-1" }),
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-missing"),
+    );
+
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("wf-missing");
+  });
+
+  it("returns 403 when the conversationId does not own the workflow", async () => {
+    const { manager } = buildScriptedManager({
+      stopError: new CollaborationConversationMismatchError(
+        "wf-1",
+        "conv-A",
+        "conv-B",
+      ),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.STOP(
+      new Request("http://test/collab/wf-1/stop", {
+        method: "POST",
+        body: JSON.stringify({ conversationId: "conv-B" }),
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("conv-B");
+  });
+
+  it("returns 409 when the workflow is not stoppable", async () => {
+    const { manager } = buildScriptedManager({
+      stopError: new CollaborationNotStoppableError("wf-1", "completed"),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.STOP(
+      new Request("http://test/collab/wf-1/stop", {
+        method: "POST",
+        body: JSON.stringify({ conversationId: "conv-1" }),
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
+  it("returns 200 with workflowId on successful stop", async () => {
+    const { manager, stopCalls } = buildScriptedManager({
+      stopResult: { workflowId: "wf-1", status: "stopped" },
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.STOP(
+      new Request("http://test/collab/wf-1/stop", {
+        method: "POST",
+        body: JSON.stringify({ conversationId: "conv-1" }),
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      workflowId: string;
+      status: string;
+    };
+    expect(body).toEqual({ workflowId: "wf-1", status: "stopped" });
+
+    expect(stopCalls).toHaveLength(1);
+    expect(stopCalls[0]).toEqual({
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      workflowId: "wf-1",
+      conversationId: "conv-1",
+    });
+  });
+
+  it("returns 500 when the manager throws an unexpected error", async () => {
+    const { manager } = buildScriptedManager({
+      stopError: new Error("disk full"),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.STOP(
+      new Request("http://test/collab/wf-1/stop", {
+        method: "POST",
+        body: JSON.stringify({ conversationId: "conv-1" }),
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(500);
   });
 });
 

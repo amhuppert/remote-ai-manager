@@ -56,6 +56,75 @@ export interface ActiveGraphWorkflowExecution {
   startedAt: string;
 }
 
+export interface ActiveCollaborationExecution {
+  workflowId: string;
+  status: "running" | "paused";
+  phase: string;
+  projectName: string;
+  projectPath: string;
+  sessionName: string;
+  conversationId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ExtractedCollaborationEnvelope {
+  workflowId: string;
+  status: "running" | "paused";
+  phase: string;
+  conversationId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function extractActiveCollaborationEnvelopes(session: {
+  workflowEnvelopes?: Record<string, unknown>;
+}): ExtractedCollaborationEnvelope[] {
+  if (!session.workflowEnvelopes) return [];
+  const out: ExtractedCollaborationEnvelope[] = [];
+  for (const raw of Object.values(session.workflowEnvelopes)) {
+    if (!raw || typeof raw !== "object") continue;
+    const envelope = raw as {
+      workflowId?: unknown;
+      workflowType?: unknown;
+      status?: unknown;
+      phase?: unknown;
+      createdAt?: unknown;
+      updatedAt?: unknown;
+      featureSnapshot?: unknown;
+    };
+    if (envelope.workflowType !== "collaboration") continue;
+    if (envelope.status !== "running" && envelope.status !== "paused") continue;
+    if (
+      typeof envelope.workflowId !== "string" ||
+      typeof envelope.phase !== "string" ||
+      typeof envelope.createdAt !== "string" ||
+      typeof envelope.updatedAt !== "string"
+    ) {
+      continue;
+    }
+    let conversationId: string | null = null;
+    if (
+      envelope.featureSnapshot &&
+      typeof envelope.featureSnapshot === "object"
+    ) {
+      const snap = envelope.featureSnapshot as { conversationId?: unknown };
+      if (typeof snap.conversationId === "string") {
+        conversationId = snap.conversationId;
+      }
+    }
+    out.push({
+      workflowId: envelope.workflowId,
+      status: envelope.status,
+      phase: envelope.phase,
+      conversationId,
+      createdAt: envelope.createdAt,
+      updatedAt: envelope.updatedAt,
+    });
+  }
+  return out;
+}
+
 /** Statuses that qualify a conversation as "active" (visible in panels). */
 const ACTIVE_STATUSES: ReadonlySet<ConversationStatus> = new Set([
   "new",
@@ -83,6 +152,7 @@ export function createActiveConversationsRouteHandlers(
       const state = await deps.readState();
       const conversations: ActiveConversation[] = [];
       const graphWorkflowExecutions: ActiveGraphWorkflowExecution[] = [];
+      const activeCollaborationExecutions: ActiveCollaborationExecution[] = [];
 
       for (const [projectPath, project] of Object.entries(state.projects)) {
         if (state.archivedProjects.includes(projectPath)) continue;
@@ -91,6 +161,20 @@ export function createActiveConversationsRouteHandlers(
 
         for (const session of Object.values(project.sessions)) {
           if (session.archived) continue;
+
+          for (const envelope of extractActiveCollaborationEnvelopes(session)) {
+            activeCollaborationExecutions.push({
+              workflowId: envelope.workflowId,
+              status: envelope.status,
+              phase: envelope.phase,
+              projectName,
+              projectPath,
+              sessionName: session.sessionName,
+              conversationId: envelope.conversationId,
+              createdAt: envelope.createdAt,
+              updatedAt: envelope.updatedAt,
+            });
+          }
 
           for (const convo of session.conversations) {
             if (convo.archived) continue;
@@ -144,7 +228,11 @@ export function createActiveConversationsRouteHandlers(
           new Date(a.lastActivityAt).getTime(),
       );
 
-      return NextResponse.json({ conversations, graphWorkflowExecutions });
+      return NextResponse.json({
+        conversations,
+        graphWorkflowExecutions,
+        activeCollaborationExecutions,
+      });
     } catch (err) {
       const message =
         err instanceof Error

@@ -35,6 +35,7 @@ export default function BackendToggle({
           key={b.id}
           type="button"
           className={`backend-toggle-btn${b.id === value ? " active" : ""}`}
+          data-backend={b.id}
           onClick={() => onChange(b.id)}
           disabled={disabled}
         >

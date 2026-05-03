@@ -14,22 +14,30 @@ import { describe, it, expect } from "vitest";
 
 import {
   createCollaborationManager,
+  createInMemoryCollaborationStopRegistry,
+  CollaborationConversationMismatchError,
+  CollaborationConversationNotFoundError,
   CollaborationNotPausedError,
+  CollaborationNotStoppableError,
   CollaborationResumeTokenMismatchError,
   CollaborationSessionNotFoundError,
   CollaborationWorkflowNotFoundError,
   type CollaborationManagerDeps,
+  type CollaborationStopRegistry,
 } from "./manager";
+import type { AgentBackendId } from "@/types";
+import type { AgentSessionRef } from "@/lib/schemas";
 import type {
-  CollaborationSliceDeps,
-  CollaborationSliceInput,
-  CollaborationSliceResult,
-} from "./slice";
+  AsymmetricCollaborationSliceDeps,
+  AsymmetricCollaborationSliceInput,
+  AsymmetricCollaborationSliceResult,
+} from "./asymmetric-slice";
 import { createInMemoryWorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
 import { createWorkflowEnvelopeRepository } from "@/lib/workflows/primitives/workflow-envelope-repository";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
+import type { PublishScopedStatusEventInput } from "@/lib/workflows/primitives/default-session-status-bus";
 
 function buildEnvelope(
   overrides: Partial<WorkflowEnvelope> = {},
@@ -46,49 +54,86 @@ function buildEnvelope(
   };
 }
 
-function makeStubSliceDeps(): CollaborationSliceDeps {
+function makeStubSliceDeps(): AsymmetricCollaborationSliceDeps {
   // The manager only forwards this object to runSlice; tests substitute
   // runSlice itself, so the slice deps shape is irrelevant beyond being
   // present. Cast intentionally minimizes setup noise.
-  return {} as CollaborationSliceDeps;
+  return {} as AsymmetricCollaborationSliceDeps;
 }
 
 interface ScriptedDepsOptions {
   resolveSessionResult?: { worktreePath: string } | null | "throw";
-  runSliceResult?: CollaborationSliceResult;
+  resolveConversationResult?:
+    | {
+        agentBackend: AgentBackendId;
+        backendRef?: AgentSessionRef | null;
+      }
+    | null
+    | "throw";
+  runSliceResult?: AsymmetricCollaborationSliceResult;
   runSliceError?: Error;
   envelopeStoreOverride?: ReturnType<
     typeof createInMemoryWorkflowEnvelopeStore
   >;
+  stopRegistryOverride?: CollaborationStopRegistry;
 }
 
 function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   deps: Partial<CollaborationManagerDeps>;
   runSliceCalls: Array<{
-    input: CollaborationSliceInput;
-    deps: CollaborationSliceDeps;
+    input: AsymmetricCollaborationSliceInput;
+    deps: AsymmetricCollaborationSliceDeps;
   }>;
   buildCallAgentCalls: Array<{
     workflowId: string;
     worktreePath: string;
   }>;
+  publishedStatuses: Array<
+    Omit<
+      PublishScopedStatusEventInput,
+      "scope" | "scopeId" | "projectName" | "sessionName"
+    > & {
+      projectPath: string;
+      sessionName: string;
+      workflowId: string;
+    }
+  >;
+  dispatchedPushes: Array<
+    Parameters<CollaborationManagerDeps["dispatchPush"]>[0]
+  >;
   envelopeStore: ReturnType<typeof createInMemoryWorkflowEnvelopeStore>;
   runSliceCompletion: Promise<void>;
+  stopRegistry: CollaborationStopRegistry;
 } {
   const runSliceCalls: Array<{
-    input: CollaborationSliceInput;
-    deps: CollaborationSliceDeps;
+    input: AsymmetricCollaborationSliceInput;
+    deps: AsymmetricCollaborationSliceDeps;
   }> = [];
   const buildCallAgentCalls: Array<{
     workflowId: string;
     worktreePath: string;
   }> = [];
+  const publishedStatuses: Array<
+    Omit<
+      PublishScopedStatusEventInput,
+      "scope" | "scopeId" | "projectName" | "sessionName"
+    > & {
+      projectPath: string;
+      sessionName: string;
+      workflowId: string;
+    }
+  > = [];
+  const dispatchedPushes: Array<
+    Parameters<CollaborationManagerDeps["dispatchPush"]>[0]
+  > = [];
   let resolveCompletion: () => void = () => undefined;
   const runSliceCompletion = new Promise<void>((resolve) => {
     resolveCompletion = resolve;
   });
   const envelopeStore =
     options.envelopeStoreOverride ?? createInMemoryWorkflowEnvelopeStore();
+  const stopRegistry =
+    options.stopRegistryOverride ?? createInMemoryCollaborationStopRegistry();
 
   let workflowIdCounter = 0;
 
@@ -104,6 +149,19 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
         }
       );
     },
+    resolveConversation: async () => {
+      if (options.resolveConversationResult === "throw") {
+        throw new Error("synthetic resolveConversation failure");
+      }
+      if (options.resolveConversationResult === null) return null;
+      return (
+        options.resolveConversationResult ?? {
+          agentBackend: "claude",
+          backendRef: null,
+        }
+      );
+    },
+    stopRegistry,
     createDeps: () => makeStubSliceDeps(),
     buildLaneService: () =>
       createLaneService({ store: createInMemoryLaneStore() }),
@@ -122,11 +180,9 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
         if (options.runSliceError) throw options.runSliceError;
         return (
           options.runSliceResult ?? {
-            kind: "completed",
-            rounds: 2,
-            mergedDesignArtifactId: "art-1",
-            transcriptArtifactId: "art-2",
-            openQuestionsArtifactId: "art-3",
+            kind: "completed_final",
+            finalAnswerArtifactId: "art-final",
+            negotiationRoundsCompleted: 2,
           }
         );
       } finally {
@@ -135,6 +191,12 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     },
     createEnvelopeRepository: () =>
       createWorkflowEnvelopeRepository({ store: envelopeStore }),
+    publishStatus: (input) => {
+      publishedStatuses.push(input);
+    },
+    dispatchPush: (input) => {
+      dispatchedPushes.push(input);
+    },
     newWorkflowId: () => {
       workflowIdCounter += 1;
       return `wf-${workflowIdCounter}`;
@@ -146,8 +208,11 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     deps,
     runSliceCalls,
     buildCallAgentCalls,
+    publishedStatuses,
+    dispatchedPushes,
     envelopeStore,
     runSliceCompletion,
+    stopRegistry,
   };
 }
 
@@ -161,13 +226,14 @@ describe("createCollaborationManager.start", () => {
         projectPath: "/p",
         sessionName: "s",
         brief: "",
-        maxIterations: 3,
-        scribeBackend: "claude",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
       }),
     ).rejects.toThrow();
   });
 
-  it("rejects out-of-range maxIterations via Zod", async () => {
+  it("rejects out-of-range negotiationRounds via Zod", async () => {
     const { deps } = buildScriptedDeps();
     const manager = createCollaborationManager(deps);
 
@@ -176,8 +242,41 @@ describe("createCollaborationManager.start", () => {
         projectPath: "/p",
         sessionName: "s",
         brief: "design X",
-        maxIterations: 0,
-        scribeBackend: "claude",
+        negotiationRounds: 0,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an invalid autonomousResolutionThreshold via Zod", async () => {
+    const { deps } = buildScriptedDeps();
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "extreme" as unknown as "major",
+        conversationId: "conv-1",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an empty conversationId via Zod", async () => {
+    const { deps } = buildScriptedDeps();
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        conversationId: "",
       }),
     ).rejects.toThrow();
   });
@@ -191,15 +290,36 @@ describe("createCollaborationManager.start", () => {
         projectPath: "/p",
         sessionName: "missing",
         brief: "design X",
-        maxIterations: 3,
-        scribeBackend: "claude",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
       }),
     ).rejects.toBeInstanceOf(CollaborationSessionNotFoundError);
   });
 
-  it("returns a workflowId immediately and runs the slice in the background", async () => {
+  it("throws CollaborationConversationNotFoundError when the conversation does not exist", async () => {
+    const { deps } = buildScriptedDeps({
+      resolveSessionResult: { worktreePath: "/wt/abc" },
+      resolveConversationResult: null,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        conversationId: "missing-conv",
+      }),
+    ).rejects.toBeInstanceOf(CollaborationConversationNotFoundError);
+  });
+
+  it("derives the primary agent backend from the conversation's agent backend", async () => {
     const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
       resolveSessionResult: { worktreePath: "/wt/abc" },
+      resolveConversationResult: { agentBackend: "codex" },
     });
     const manager = createCollaborationManager(deps);
 
@@ -207,8 +327,9 @@ describe("createCollaborationManager.start", () => {
       projectPath: "/p",
       sessionName: "s",
       brief: "design X",
-      maxIterations: 4,
-      scribeBackend: "codex",
+      negotiationRounds: 4,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
     });
 
     expect(result).toEqual({ workflowId: "wf-1", status: "started" });
@@ -223,9 +344,35 @@ describe("createCollaborationManager.start", () => {
       brief: "design X",
       worktreePath: "/wt/abc",
       sessionKey: "/p::s",
-      maxIterations: 4,
-      scribeBackend: "codex",
+      negotiationRounds: 4,
+      primaryAgentBackend: "codex",
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
     });
+    expect(call.input.stopSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("uses claude as the primary agent backend when the conversation backend is claude", async () => {
+    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
+      resolveSessionResult: { worktreePath: "/wt/abc" },
+      resolveConversationResult: { agentBackend: "claude" },
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    await runSliceCompletion;
+
+    const call = runSliceCalls[0];
+    if (!call) throw new Error("expected one runSlice call");
+    expect(call.input.primaryAgentBackend).toBe("claude");
   });
 
   it("forwards the workflowId and worktreePath to buildCallAgent", async () => {
@@ -240,8 +387,9 @@ describe("createCollaborationManager.start", () => {
       projectPath: "/p",
       sessionName: "s",
       brief: "design X",
-      maxIterations: 2,
-      scribeBackend: "claude",
+      negotiationRounds: 2,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
     });
 
     await runSliceCompletion;
@@ -249,6 +397,92 @@ describe("createCollaborationManager.start", () => {
     expect(buildCallAgentCalls).toEqual([
       { workflowId: "wf-1", worktreePath: "/wt/xyz" },
     ]);
+  });
+
+  it("threads conversation.backendRef into sliceInput.priorBackendRef when present", async () => {
+    const savedRef: AgentSessionRef = {
+      backend: "claude",
+      sessionId: "claude-saved-session",
+    };
+    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
+      resolveSessionResult: { worktreePath: "/wt/abc" },
+      resolveConversationResult: {
+        agentBackend: "claude",
+        backendRef: savedRef,
+      },
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    await runSliceCompletion;
+
+    const call = runSliceCalls[0];
+    if (!call) throw new Error("expected one runSlice call");
+    expect(call.input.priorBackendRef).toEqual(savedRef);
+  });
+
+  it("passes priorBackendRef as undefined when conversation.backendRef is null", async () => {
+    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
+      resolveSessionResult: { worktreePath: "/wt/abc" },
+      resolveConversationResult: {
+        agentBackend: "claude",
+        backendRef: null,
+      },
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    await runSliceCompletion;
+
+    const call = runSliceCalls[0];
+    if (!call) throw new Error("expected one runSlice call");
+    expect(call.input.priorBackendRef).toBeUndefined();
+  });
+
+  it("threads a codex-typed conversation.backendRef into sliceInput.priorBackendRef", async () => {
+    const savedRef: AgentSessionRef = {
+      backend: "codex",
+      threadId: "codex-saved-thread",
+    };
+    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
+      resolveSessionResult: { worktreePath: "/wt/abc" },
+      resolveConversationResult: {
+        agentBackend: "codex",
+        backendRef: savedRef,
+      },
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    await runSliceCompletion;
+
+    const call = runSliceCalls[0];
+    if (!call) throw new Error("expected one runSlice call");
+    expect(call.input.priorBackendRef).toEqual(savedRef);
   });
 
   it("does not throw when the slice fails — failures are logged, not surfaced", async () => {
@@ -261,8 +495,9 @@ describe("createCollaborationManager.start", () => {
       projectPath: "/p",
       sessionName: "s",
       brief: "design X",
-      maxIterations: 2,
-      scribeBackend: "claude",
+      negotiationRounds: 2,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
     });
 
     expect(result.status).toBe("started");
@@ -335,6 +570,23 @@ describe("createCollaborationManager.resume", () => {
         sessionName: "s",
         workflowId: "wf-1",
         resumeToken: "",
+        conversationId: "conv-1",
+        userAnswers: {},
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an empty conversationId via Zod", async () => {
+    const { deps } = buildScriptedDeps();
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.resume({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-1",
+        resumeToken: "tok",
+        conversationId: "",
         userAnswers: {},
       }),
     ).rejects.toThrow();
@@ -353,9 +605,43 @@ describe("createCollaborationManager.resume", () => {
         sessionName: "s",
         workflowId: "wf-missing",
         resumeToken: "tok",
+        conversationId: "conv-1",
         userAnswers: {},
       }),
     ).rejects.toBeInstanceOf(CollaborationWorkflowNotFoundError);
+  });
+
+  it("throws CollaborationConversationMismatchError when the supplied conversationId does not own the workflow", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-paused",
+        status: "running",
+        featureSnapshot: { brief: "design X", conversationId: "conv-A" },
+      }),
+    );
+    await repo.markPaused("wf-paused", {
+      pauseKind: "post_turn",
+      gateKind: "human_approval",
+      resumeToken: "tok",
+    });
+
+    const { deps } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.resume({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-paused",
+        resumeToken: "tok",
+        conversationId: "conv-B",
+        userAnswers: {},
+      }),
+    ).rejects.toBeInstanceOf(CollaborationConversationMismatchError);
   });
 
   it("throws CollaborationNotPausedError when the workflow is not paused", async () => {
@@ -365,6 +651,7 @@ describe("createCollaborationManager.resume", () => {
       buildEnvelope({
         workflowId: "wf-running",
         status: "running",
+        featureSnapshot: { brief: "design X", conversationId: "conv-1" },
       }),
     );
 
@@ -379,6 +666,7 @@ describe("createCollaborationManager.resume", () => {
         sessionName: "s",
         workflowId: "wf-running",
         resumeToken: "tok",
+        conversationId: "conv-1",
         userAnswers: {},
       }),
     ).rejects.toBeInstanceOf(CollaborationNotPausedError);
@@ -391,6 +679,7 @@ describe("createCollaborationManager.resume", () => {
       buildEnvelope({
         workflowId: "wf-paused",
         status: "running",
+        featureSnapshot: { brief: "design X", conversationId: "conv-1" },
       }),
     );
     await repo.markPaused("wf-paused", {
@@ -410,6 +699,7 @@ describe("createCollaborationManager.resume", () => {
         sessionName: "s",
         workflowId: "wf-paused",
         resumeToken: "wrong-token",
+        conversationId: "conv-1",
         userAnswers: {},
       }),
     ).rejects.toBeInstanceOf(CollaborationResumeTokenMismatchError);
@@ -422,7 +712,14 @@ describe("createCollaborationManager.resume", () => {
       buildEnvelope({
         workflowId: "wf-paused",
         status: "running",
-        featureSnapshot: { brief: "design X", rounds: 2 },
+        featureSnapshot: {
+          brief: "design X",
+          negotiationRounds: 5,
+          negotiationRoundsCompleted: 2,
+          conversationId: "conv-1",
+          primaryAgentBackend: "claude",
+          autonomousResolutionThreshold: "major",
+        },
       }),
     );
     await repo.markPaused("wf-paused", {
@@ -431,7 +728,7 @@ describe("createCollaborationManager.resume", () => {
       resumeToken: "good-token",
     });
 
-    const { deps } = buildScriptedDeps({
+    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
       envelopeStoreOverride: envelopeStore,
     });
     const manager = createCollaborationManager(deps);
@@ -441,6 +738,7 @@ describe("createCollaborationManager.resume", () => {
       sessionName: "s",
       workflowId: "wf-paused",
       resumeToken: "good-token",
+      conversationId: "conv-1",
       userAnswers: { q1: "yes", q2: "no" },
     });
 
@@ -450,8 +748,243 @@ describe("createCollaborationManager.resume", () => {
     expect(reread?.status).toBe("running");
     expect(reread?.pause).toBeUndefined();
     const snapshot = reread?.featureSnapshot as Record<string, unknown>;
-    expect(snapshot["userAnswersByRound"]).toEqual({
-      "2": { q1: "yes", q2: "no" },
+    expect(snapshot["userAnswersByQuestionId"]).toEqual({
+      q1: "yes",
+      q2: "no",
     });
+
+    await runSliceCompletion;
+    expect(runSliceCalls).toHaveLength(1);
+    expect(runSliceCalls[0]?.input.primaryAgentBackend).toBe("claude");
+    expect(runSliceCalls[0]?.input.negotiationRounds).toBe(5);
+    expect(runSliceCalls[0]?.input.autonomousResolutionThreshold).toBe("major");
+    expect(runSliceCalls[0]?.input.resume?.userAnswersByQuestionId).toEqual({
+      q1: "yes",
+      q2: "no",
+    });
+  });
+});
+
+describe("createCollaborationManager.stop", () => {
+  it("rejects an empty conversationId via Zod", async () => {
+    const { deps } = buildScriptedDeps();
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.stop({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-1",
+        conversationId: "",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("throws CollaborationWorkflowNotFoundError when the envelope is missing", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const { deps } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.stop({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-missing",
+        conversationId: "conv-1",
+      }),
+    ).rejects.toBeInstanceOf(CollaborationWorkflowNotFoundError);
+  });
+
+  it("throws CollaborationConversationMismatchError when the conversationId does not own the workflow", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-1",
+        status: "running",
+        featureSnapshot: { brief: "design X", conversationId: "conv-A" },
+      }),
+    );
+
+    const { deps } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.stop({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-1",
+        conversationId: "conv-B",
+      }),
+    ).rejects.toBeInstanceOf(CollaborationConversationMismatchError);
+  });
+
+  it("throws CollaborationNotStoppableError when the workflow is already completed", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-done",
+        status: "running",
+        featureSnapshot: { brief: "design X", conversationId: "conv-1" },
+      }),
+    );
+    await repo.markCompleted("wf-done");
+
+    const { deps } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.stop({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-done",
+        conversationId: "conv-1",
+      }),
+    ).rejects.toBeInstanceOf(CollaborationNotStoppableError);
+  });
+
+  it("transitions a running workflow to completed_unresolved with reason user_stopped and no merged artifact", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-1",
+        status: "running",
+        featureSnapshot: {
+          brief: "design X",
+          conversationId: "conv-1",
+          status: "running",
+        },
+      }),
+    );
+
+    const stopRegistry = createInMemoryCollaborationStopRegistry();
+    const controller = stopRegistry.register("wf-1");
+
+    const { deps } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+      stopRegistryOverride: stopRegistry,
+    });
+    const manager = createCollaborationManager(deps);
+
+    const result = await manager.stop({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-1",
+      conversationId: "conv-1",
+    });
+
+    expect(result).toEqual({ workflowId: "wf-1", status: "stopped" });
+    expect(controller.signal.aborted).toBe(true);
+
+    const reread = await repo.get("wf-1");
+    expect(reread?.status).toBe("completed");
+    expect(reread?.phase).toBe("asymmetric_user_stopped");
+    expect(reread?.errorSummary).toContain("stopped");
+    const snapshot = reread?.featureSnapshot as Record<string, unknown>;
+    expect(snapshot["status"]).toBe("completed_unresolved");
+    expect(snapshot["unresolvedReason"]).toBe("user_stopped");
+  });
+
+  it("transitions a paused workflow to completed_unresolved and clears the pause", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-paused",
+        status: "running",
+        featureSnapshot: { brief: "design X", conversationId: "conv-1" },
+      }),
+    );
+    await repo.markPaused("wf-paused", {
+      pauseKind: "post_turn",
+      gateKind: "human_approval",
+      resumeToken: "tok",
+    });
+
+    const { deps } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const manager = createCollaborationManager(deps);
+
+    const result = await manager.stop({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-paused",
+      conversationId: "conv-1",
+    });
+
+    expect(result).toEqual({ workflowId: "wf-paused", status: "stopped" });
+
+    const reread = await repo.get("wf-paused");
+    expect(reread?.status).toBe("completed");
+    expect(reread?.phase).toBe("asymmetric_user_stopped");
+    expect(reread?.pause).toBeUndefined();
+  });
+
+  it("publishes terminal status and push notification when direct stop completes a paused workflow", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-paused-notify",
+        status: "running",
+        featureSnapshot: {
+          brief: "design X",
+          conversationId: "conv-1",
+          negotiationRoundsCompleted: 2,
+          status: "paused",
+        },
+      }),
+    );
+    await repo.markPaused("wf-paused-notify", {
+      pauseKind: "post_turn",
+      gateKind: "human_approval",
+      resumeToken: "tok",
+    });
+
+    const { deps, publishedStatuses, dispatchedPushes } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.stop({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-paused-notify",
+      conversationId: "conv-1",
+    });
+
+    expect(publishedStatuses).toEqual([
+      {
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-paused-notify",
+        status: "completed",
+        timestamp: "2026-04-28T10:00:00.000Z",
+        reason: "user_stopped",
+        payload: {
+          kind: "completed_unresolved",
+          reason: "user_stopped",
+          negotiationRoundsCompleted: 2,
+        },
+      },
+    ]);
+    expect(dispatchedPushes).toEqual([
+      {
+        kind: "completed-unresolved",
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-paused-notify",
+        reason: "user_stopped",
+      },
+    ]);
   });
 });

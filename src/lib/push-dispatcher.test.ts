@@ -3,6 +3,7 @@ import {
   pushForNotification,
   pushForConversationStatus,
   pushForGraphWorkflowEvent,
+  pushForCollaborationEvent,
 } from "./push-dispatcher";
 import type { PushNotificationConfig, Notification } from "@/types";
 import * as pushMod from "./push-notification";
@@ -276,6 +277,78 @@ describe("pushForGraphWorkflowEvent", () => {
       kind: "workflow-completed",
       projectName: "proj",
       sessionName: "sess",
+    });
+
+    expect(sendPushNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe("pushForCollaborationEvent", () => {
+  beforeEach(() => {
+    sendPushNotification.mockReset();
+  });
+
+  it("sends waiting-for-input push when collab pauses", async () => {
+    await pushForCollaborationEvent(pushConfig, {
+      kind: "paused-for-user-input",
+      projectName: "proj",
+      sessionName: "sess",
+      workflowId: "collab-1",
+    });
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "waiting-for-input",
+      title: "Collab paused — Alex's input needed",
+      message: "Collaboration paused on session sess",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+  });
+
+  it("sends workflow-completed push when collab converges", async () => {
+    await pushForCollaborationEvent(pushConfig, {
+      kind: "completed-converged",
+      projectName: "proj",
+      sessionName: "sess",
+      workflowId: "collab-1",
+    });
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "workflow-completed",
+      title: "Collab converged — merged report ready",
+      message: "Collaboration converged on session sess",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+  });
+
+  it("sends workflow-halted push when collab ends unresolved", async () => {
+    await pushForCollaborationEvent(pushConfig, {
+      kind: "completed-unresolved",
+      projectName: "proj",
+      sessionName: "sess",
+      workflowId: "collab-1",
+      reason: "max_iterations_exceeded",
+    });
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "workflow-halted",
+      title: "Collab ended unresolved — latest reports are linked",
+      message: "Collaboration ended unresolved on session sess",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+  });
+
+  it("does not send push when config is undefined", async () => {
+    await pushForCollaborationEvent(undefined, {
+      kind: "paused-for-user-input",
+      projectName: "proj",
+      sessionName: "sess",
+      workflowId: "collab-1",
     });
 
     expect(sendPushNotification).not.toHaveBeenCalled();

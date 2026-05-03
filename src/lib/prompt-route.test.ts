@@ -5,6 +5,7 @@ import {
   createPromptRouteHandlers,
   type PromptRouteDeps,
 } from "./prompt-route-handlers";
+import type { CollaborationManager } from "./workflows/collaboration/manager";
 
 // ---------------------------------------------------------------------------
 // Mock deps (no vi.mock needed)
@@ -17,7 +18,24 @@ function createTestDeps(): PromptRouteDeps {
     getConversation: vi.fn().mockResolvedValue(testConversation),
     isConversationBusy: vi.fn().mockReturnValue(false),
     executePromptStream: vi.fn().mockResolvedValue(undefined),
+    getCollaborationManager: vi.fn().mockReturnValue(makeMockManager()),
   };
+}
+
+function makeMockManager(
+  overrides: Partial<CollaborationManager> = {},
+): CollaborationManager {
+  return {
+    start: vi
+      .fn()
+      .mockResolvedValue({ workflowId: "wf-test-1", status: "started" }),
+    resume: vi.fn(),
+    stop: vi.fn(),
+    getEnvelope: vi.fn(),
+    listActive: vi.fn(),
+    listAll: vi.fn(),
+    ...overrides,
+  } as unknown as CollaborationManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +98,7 @@ const testConversation = {
   debugMode: null,
   machineSnapshot: null,
   archived: false,
+  agentBackend: "claude" as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -180,6 +199,40 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("text/event-stream");
   });
+
+  it("dispatches /collab prompt via executePromptStream collab options instead of rejecting", async () => {
+    const executeMock = vi.fn().mockResolvedValue({
+      conversationId: "conv-new",
+      contextTokens: null,
+      contextWindowMax: null,
+    });
+    deps.executePromptStream = executeMock;
+    handlers = createPromptRouteHandlers(deps);
+
+    const response = await handlers.POST(
+      makeRequest({
+        prompt: "/collab investigate the regression",
+        collab: {
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+        },
+      }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+    expect(executeMock).toHaveBeenCalledTimes(1);
+    const callArgs = executeMock.mock.calls[0]!;
+    expect(callArgs[2]).toBe("/collab investigate the regression");
+    const callOptions = callArgs[7];
+    expect(callOptions).toMatchObject({
+      collab: {
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+      },
+    });
+  });
 });
 
 // ===========================================================================
@@ -224,6 +277,87 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+  });
+
+  it("dispatches /collab prompt to collaboration manager.start with originating agent and config", async () => {
+    const startMock = vi
+      .fn()
+      .mockResolvedValue({ workflowId: "wf-77", status: "started" });
+    const manager = makeMockManager({ start: startMock });
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(manager);
+    vi.mocked(deps.getConversation).mockResolvedValue({
+      ...testConversation,
+      agentBackend: "codex",
+    } as ConversationState);
+
+    const response = await handlers.conversationPOST(
+      makeRequest({
+        prompt: "/collab redesign auth flow",
+        collab: {
+          negotiationRounds: 6,
+          autonomousResolutionThreshold: "blocking",
+        },
+      }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(202);
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    const body = await response.json();
+    expect(body.workflowId).toBe("wf-77");
+    expect(body.statusUrl).toContain("/collaboration/wf-77");
+    expect(deps.executePromptStream).not.toHaveBeenCalled();
+    expect(startMock).toHaveBeenCalledTimes(1);
+    expect(startMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: "/projects/my-project",
+        sessionName: "test-session",
+        conversationId: "conv-1",
+        brief: "redesign auth flow",
+        negotiationRounds: 6,
+        autonomousResolutionThreshold: "blocking",
+      }),
+    );
+  });
+
+  it("dispatches /collab prompt with default negotiationRounds when collab body is omitted", async () => {
+    const startMock = vi
+      .fn()
+      .mockResolvedValue({ workflowId: "wf-78", status: "started" });
+    const manager = makeMockManager({ start: startMock });
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(manager);
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "/collab quick spike" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(202);
+    expect(deps.executePromptStream).not.toHaveBeenCalled();
+    expect(startMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        brief: "quick spike",
+        conversationId: "conv-1",
+        negotiationRounds: expect.any(Number),
+        autonomousResolutionThreshold: expect.any(String),
+      }),
+    );
+  });
+
+  it("returns 400 when /collab prompt has no brief", async () => {
+    const startMock = vi.fn();
+    const manager = makeMockManager({ start: startMock });
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(manager);
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "/collab" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(startMock).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.code).toBe("COLLAB_BRIEF_REQUIRED");
   });
 
   it("returns 409 with CONVERSATION_BUSY code when conversation has an in-flight prompt", async () => {

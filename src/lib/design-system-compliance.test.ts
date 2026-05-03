@@ -118,7 +118,7 @@ describe("Task 1.1: Text Contrast Tokens", () => {
       .filter(
         (line) =>
           line.includes("color: var(--red-dim)") &&
-          !line.includes("border-color") &&
+          !/border(-(left|right|top|bottom))?-color/.test(line) &&
           !line.includes("background"),
       );
     expect(textUsages).toHaveLength(0);

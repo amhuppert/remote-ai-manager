@@ -168,6 +168,20 @@ export const collaborationKeys = {
       sessionName,
       workflowId,
     ] as const,
+  artifact: (
+    projectName: string,
+    sessionName: string,
+    workflowId: string,
+    artifactType: string,
+  ) =>
+    [
+      ...collaborationKeys.all,
+      "artifact",
+      projectName,
+      sessionName,
+      workflowId,
+      artifactType,
+    ] as const,
 };
 
 export const kiroDocKeys = {

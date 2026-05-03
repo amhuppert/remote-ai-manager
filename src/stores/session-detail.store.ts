@@ -44,6 +44,7 @@ interface SessionDetailState {
   editingIndex: number | null;
   pendingForkPrompt: { conversationId: string; text: string } | null;
   specBrowserSelection: SpecBrowserSelection | null;
+  selectedDocId: string | null;
 }
 
 interface SessionDetailActions {
@@ -96,6 +97,8 @@ interface SessionDetailActions {
   selectSpecCategory: (category: string) => void;
   selectSpecFile: (category: string, file: string) => void;
   clearSpecSelection: () => void;
+  openDocById: (docId: string) => void;
+  selectDocId: (docId: string | null) => void;
   clearConversationMessages: () => void;
   resetStore: () => void;
 }
@@ -134,6 +137,7 @@ const initialState: SessionDetailState = {
   editingIndex: null,
   pendingForkPrompt: null,
   specBrowserSelection: null,
+  selectedDocId: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -429,6 +433,20 @@ const useSessionDetailStore = create<SessionDetailStore>()(
         state.specBrowserSelection = null;
       }),
 
+    // -- Docs Panel --
+
+    openDocById: (docId) =>
+      set((state) => {
+        state.selectedDocId = docId;
+        state.rightPaneTab = "docs";
+        state.mobilePanel = "docs";
+      }),
+
+    selectDocId: (docId) =>
+      set((state) => {
+        state.selectedDocId = docId;
+      }),
+
     // -- Reset --
 
     clearConversationMessages: () =>
@@ -481,6 +499,8 @@ export const useRightPaneTab = () =>
   useSessionDetailStore((s) => s.rightPaneTab);
 export const useSpecBrowserSelection = () =>
   useSessionDetailStore((s) => s.specBrowserSelection);
+export const useSelectedDocId = () =>
+  useSessionDetailStore((s) => s.selectedDocId);
 
 // ---------------------------------------------------------------------------
 // Action hooks
@@ -564,6 +584,8 @@ export const useSelectSpecFile = () =>
   useSessionDetailStore((s) => s.selectSpecFile);
 export const useClearSpecSelection = () =>
   useSessionDetailStore((s) => s.clearSpecSelection);
+export const useOpenDocById = () => useSessionDetailStore((s) => s.openDocById);
+export const useSelectDocId = () => useSessionDetailStore((s) => s.selectDocId);
 export const useClearConversationMessages = () =>
   useSessionDetailStore((s) => s.clearConversationMessages);
 export const useResetSessionDetailStore = () =>

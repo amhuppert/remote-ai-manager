@@ -1,9 +1,9 @@
 /**
- * Production wiring for `CollaborationSliceDeps`.
+ * Production wiring for `AsymmetricCollaborationSliceDeps`.
  *
  * Composes the primitive-layer services into a single deps object so a route
- * handler / manager can call `runCollaborationSlice(input, deps)` without
- * threading every primitive through manually:
+ * handler / manager can call `runAsymmetricCollaborationSlice(input, deps)`
+ * without threading every primitive through manually:
  *
  *  - `laneService` is constructed per-call unless the manager passes a shared
  *    instance. Production lane state is session-state backed so backend
@@ -11,12 +11,9 @@
  *    `laneScheduler` is shared across deps instances so write-capable lanes
  *    from separate runs in the same session serialize against each other on
  *    the session worktree.
- *  - `envelopeStore` and `artifactRegistry` are session-scoped: they hang off
- *    the `(projectPath, sessionName)` pair so durable lifecycle and reference
- *    documents land in the correct session state and the correct worktree
- *    subtree. Artifact writes go through `worktreePath` which the caller
- *    resolves from the session record (per CLAUDE.md worktree isolation: the
- *    `worktreePath` on `SessionState` is the only path the slice writes to).
+ *  - `envelopeStore` is session-scoped: it hangs off the
+ *    `(projectPath, sessionName)` pair so durable lifecycle records land in
+ *    the correct session state.
  *  - `statusBus` is the production session status bus, so scoped envelopes
  *    (`scope: "collaboration"`) are broadcast through the same SSE pipeline
  *    that drives the rest of the dashboard.
@@ -39,16 +36,14 @@ import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/
 import { createSessionWorkflowEnvelopeStoreForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
 import type { WorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
 import {
-  createDefaultSessionArtifactRegistry,
-  createSessionArtifactRegistryForProduction,
-  type ReferenceDocumentRegistrarFn,
-} from "@/lib/workflows/primitives/default-session-artifact-registry";
-import {
   createStatusBus,
   type StatusBus,
 } from "@/lib/workflows/primitives/status-bus";
 import { publishScopedStatusEvent } from "@/lib/workflows/primitives/default-session-status-bus";
-import type { CollaborationSliceDeps } from "./slice";
+import { safeAppendTranscriptEntry } from "@/lib/transcript";
+import { dispatchPushForCollaborationEvent } from "@/lib/push-dispatcher";
+import type { AsymmetricCollaborationSliceDeps } from "./asymmetric-slice";
+import { mutateConversation as defaultMutateConversation } from "@/lib/state";
 
 export interface CreateCollaborationDepsInput {
   projectPath: string;
@@ -60,7 +55,7 @@ export interface CreateCollaborationDepsInput {
    * per the worktree-isolation rule in CLAUDE.md.
    */
   worktreePath: string;
-  callAgent: CollaborationSliceDeps["callAgent"];
+  callAgent: AsymmetricCollaborationSliceDeps["callAgent"];
   /**
    * Optional override for the in-process StatusBus the slice publishes scoped
    * `collaboration` envelopes through. When omitted the factory builds a
@@ -88,22 +83,11 @@ export interface CreateCollaborationDepsInput {
    */
   projectName?: string;
   /**
-   * Optional override for the reference-document registrar the
-   * production session ArtifactRegistry calls when registering
-   * collaboration artifacts (merged design, transcript, open-questions
-   * punch list). When omitted the factory wires the project state's
-   * `createReferenceDocument` via `getDefaultReferenceDocumentRegistrar()`.
-   * Tests inject a capturing stub so they can assert the slice's three
-   * artifact registrations land on the production registry without
-   * bootstrapping `@/lib/state`.
-   */
-  registerReferenceDocument?: ReferenceDocumentRegistrarFn;
-  /**
    * Optional override for the WorkflowEnvelopeStore. Tests inject an
-   * in-memory envelope store so the integration path can exercise the
-   * production ArtifactRegistry wiring without bootstrapping the on-disk
-   * state manager. Production callers leave this undefined so the
-   * envelope persists through the singleton state manager.
+   * in-memory envelope store so they can assert envelope state without
+   * bootstrapping the on-disk state manager. Production callers leave
+   * this undefined so the envelope persists through the singleton state
+   * manager.
    */
   envelopeStore?: WorkflowEnvelopeStore;
   /**
@@ -119,7 +103,7 @@ const defaultCollaborationLaneScheduler = createLaneScheduler();
 
 export function createCollaborationDeps(
   input: CreateCollaborationDepsInput,
-): CollaborationSliceDeps {
+): AsymmetricCollaborationSliceDeps {
   const laneService =
     input.laneService ??
     createLaneService({
@@ -137,17 +121,6 @@ export function createCollaborationDeps(
       projectPath: input.projectPath,
       sessionName: input.sessionName,
     });
-
-  const artifactRegistry = input.registerReferenceDocument
-    ? createDefaultSessionArtifactRegistry({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        registerReferenceDocument: input.registerReferenceDocument,
-      })
-    : createSessionArtifactRegistryForProduction({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-      });
 
   const projectName = input.projectName ?? path.basename(input.projectPath);
   const sessionName = input.sessionName;
@@ -187,7 +160,37 @@ export function createCollaborationDeps(
     laneService,
     laneScheduler,
     envelopeStore,
-    artifactRegistry,
     statusBus,
+    dispatchPush: (info) => {
+      dispatchPushForCollaborationEvent({
+        ...info,
+        projectName,
+        sessionName,
+      });
+    },
+    appendTranscriptEntry: (conversationId, entry) =>
+      safeAppendTranscriptEntry(conversationId, entry),
+    markConversationAwaiting: (conversationId) =>
+      defaultMutateConversation(
+        input.projectPath,
+        input.sessionName,
+        conversationId,
+        "collab.final_metadata",
+        (conversation) => {
+          conversation.status = "awaiting";
+          conversation.pendingQuestionId = null;
+          conversation.pendingQuestions = null;
+        },
+      ),
+    updateConversationBackendRef: (conversationId, ref) =>
+      defaultMutateConversation(
+        input.projectPath,
+        input.sessionName,
+        conversationId,
+        "collab.backendref_advance",
+        (conversation) => {
+          conversation.backendRef = ref;
+        },
+      ),
   };
 }

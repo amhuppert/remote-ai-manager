@@ -18,6 +18,15 @@ import {
 } from "@/lib/queries";
 import type { AgentBackendId, CommandItem } from "@/types";
 
+const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
+  {
+    name: "/collab",
+    description: "Run two agents in parallel and converge to a merged result.",
+    type: "command",
+    source: "built-in",
+  },
+];
+
 interface ScoredItem {
   item: CommandItem;
   tier: MatchTier;
@@ -101,13 +110,24 @@ export const CommandAutocomplete = forwardRef<
     enabled: !sessionName,
   });
   const commandsQuery = sessionName ? sessionQuery : projectQuery;
-  const items = useMemo(
-    () => commandsQuery.data?.items ?? [],
-    [commandsQuery.data?.items],
-  );
 
   // Mode detection: command mode vs feature argument mode
-  const commandPrefix = backend === "codex" ? "$" : "/";
+  const commandPrefix =
+    backend === "codex" && promptText.startsWith("/")
+      ? "/"
+      : backend === "codex"
+        ? "$"
+        : "/";
+  const isCodexSkillMode = backend === "codex" && commandPrefix === "$";
+  const items = useMemo(() => {
+    const fetched = commandsQuery.data?.items ?? [];
+    if (isCodexSkillMode) return fetched;
+    const fetchedNames = new Set(fetched.map((i) => i.name));
+    const builtIns = BUILT_IN_CLAUDE_COMMANDS.filter(
+      (i) => !fetchedNames.has(i.name),
+    );
+    return backend === "codex" ? builtIns : [...builtIns, ...fetched];
+  }, [commandsQuery.data?.items, backend, isCodexSkillMode]);
   const commandMode =
     !disabled &&
     promptText.startsWith(commandPrefix) &&
@@ -139,7 +159,7 @@ export const CommandAutocomplete = forwardRef<
   const error =
     commandMode && commandsQuery.isError
       ? (commandsQuery.error?.message ??
-        (backend === "codex"
+        (isCodexSkillMode
           ? "Failed to load skills"
           : "Failed to load commands"))
       : !!featureArg && kiroDocTree.isError
@@ -342,17 +362,17 @@ export const CommandAutocomplete = forwardRef<
 
   const headerLabel = featureArg
     ? "Features"
-    : backend === "codex"
+    : isCodexSkillMode
       ? "Skills"
       : "Commands";
   const emptyLabel = featureArg
     ? "No matching features"
-    : backend === "codex"
+    : isCodexSkillMode
       ? "No matching skills"
       : "No matching commands";
   const loadingLabel = featureArg
     ? "features"
-    : backend === "codex"
+    : isCodexSkillMode
       ? "skills"
       : "commands";
 

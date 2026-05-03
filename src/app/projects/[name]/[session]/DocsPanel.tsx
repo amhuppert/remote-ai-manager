@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
 import MarkdownViewer from "@/components/MarkdownViewer";
 import {
   useReferenceDocumentsQuery,
   useReferenceDocumentContentQuery,
 } from "@/lib/queries";
+import {
+  useSelectedDocId,
+  useSelectDocId,
+} from "@/stores/session-detail.store";
 
 interface DocsPanelProps {
   projectName: string;
@@ -16,7 +19,8 @@ export default function DocsPanel({
   projectName,
   sessionName,
 }: DocsPanelProps): React.JSX.Element {
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const selectedDocId = useSelectedDocId();
+  const selectDocId = useSelectDocId();
 
   const docsQuery = useReferenceDocumentsQuery(projectName, sessionName);
   const contentQuery = useReferenceDocumentContentQuery(
@@ -33,7 +37,7 @@ export default function DocsPanel({
       <div className="docs-panel">
         <div className="docs-panel-header">
           <button
-            onClick={() => setSelectedDocId(null)}
+            onClick={() => selectDocId(null)}
             className="docs-panel-back"
             type="button"
           >
@@ -70,7 +74,7 @@ export default function DocsPanel({
         {docs.map((doc) => (
           <button
             key={doc.id}
-            onClick={() => setSelectedDocId(doc.id)}
+            onClick={() => selectDocId(doc.id)}
             type="button"
             className="docs-panel-item"
           >

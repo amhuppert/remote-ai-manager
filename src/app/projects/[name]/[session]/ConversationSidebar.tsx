@@ -90,6 +90,10 @@ export default function ConversationSidebar({
     () => activeData?.graphWorkflowExecutions ?? [],
     [activeData],
   );
+  const activeCollaborations = useMemo(
+    () => activeData?.activeCollaborationExecutions ?? [],
+    [activeData],
+  );
 
   // --- Session mutations ---
   const createConvoMutation = useCreateConversationMutation(
@@ -317,9 +321,12 @@ export default function ConversationSidebar({
               >
                 Active
                 {(activeConvoList.length > 0 ||
-                  activeGraphWorkflows.length > 0) && (
+                  activeGraphWorkflows.length > 0 ||
+                  activeCollaborations.length > 0) && (
                   <span className="cc-tab-count">
-                    {activeConvoList.length + activeGraphWorkflows.length}
+                    {activeConvoList.length +
+                      activeGraphWorkflows.length +
+                      activeCollaborations.length}
                   </span>
                 )}
               </button>
@@ -512,8 +519,46 @@ export default function ConversationSidebar({
                     ))}
                   </div>
                 )}
+                {activeCollaborations.length > 0 && (
+                  <div className="convo-sidebar-project-group">
+                    <div className="cc-section-header convo-sidebar-group-header">
+                      <span className="cc-section-label">Collaborations</span>
+                      <span className="cc-section-count">
+                        {activeCollaborations.length}
+                      </span>
+                    </div>
+                    {activeCollaborations.map((collab) => {
+                      const href = collab.conversationId
+                        ? `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}/${collab.conversationId}`
+                        : `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}`;
+                      return (
+                        <Link
+                          key={collab.workflowId}
+                          href={href}
+                          className="convo-sidebar-item"
+                        >
+                          {statusDot(collab.status)}
+                          <div className="convo-sidebar-item-body">
+                            <div className="convo-sidebar-item-name-row">
+                              <div className="convo-sidebar-item-summary">
+                                Collaboration ({collab.status})
+                              </div>
+                              <span className="convo-sidebar-active-time">
+                                {formatRelativeTime(collab.updatedAt)}
+                              </span>
+                            </div>
+                            <span className="convo-sidebar-session-label">
+                              {collab.projectName} / {collab.sessionName}
+                            </span>
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
                 {activeConvoList.length === 0 &&
-                activeGraphWorkflows.length === 0 ? (
+                activeGraphWorkflows.length === 0 &&
+                activeCollaborations.length === 0 ? (
                   <div className="convo-sidebar-empty">
                     No active conversations.
                     <span className="convo-sidebar-empty-hint">

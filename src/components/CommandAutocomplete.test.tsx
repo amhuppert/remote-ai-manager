@@ -199,7 +199,7 @@ describe("CommandAutocomplete", () => {
       renderAutocomplete({ promptText: "/" });
     });
 
-    expect(screen.getByText("5 items")).toBeInTheDocument();
+    expect(screen.getByText("6 items")).toBeInTheDocument();
   });
 
   it("shows keyboard hints in footer", async () => {
@@ -278,8 +278,7 @@ describe("CommandAutocomplete", () => {
     } as unknown as React.KeyboardEvent);
 
     expect(consumed).toBe(true);
-    // First sorted item (/commit) should be inserted with trailing space
-    expect(onPromptChange).toHaveBeenCalledWith("/commit ");
+    expect(onPromptChange).toHaveBeenCalledWith("/collab ");
   });
 
   it("Escape calls onPromptChange with empty string", async () => {
@@ -367,8 +366,7 @@ describe("CommandAutocomplete", () => {
     const items = document.querySelectorAll(".cmd-item");
     fireEvent.click(items[0]!);
 
-    // First item is /commit (sorted alphabetically)
-    expect(onPromptChange).toHaveBeenCalledWith("/commit ");
+    expect(onPromptChange).toHaveBeenCalledWith("/collab ");
   });
 
   it("displays type badges", async () => {
@@ -406,6 +404,30 @@ describe("CommandAutocomplete", () => {
     expect(screen.queryByText("/commit")).toBeNull();
   });
 
+  it("shows the /collab command for Codex conversations when the prompt starts with /", async () => {
+    await act(async () => {
+      render(
+        <CommandAutocomplete
+          {...({
+            promptText: "/",
+            onPromptChange: vi.fn(),
+            onPlaceholderChange: vi.fn(),
+            projectName: "test-project",
+            sessionName: "test-session",
+            disabled: false,
+            backend: "codex",
+          } as unknown as React.ComponentPropsWithoutRef<
+            typeof CommandAutocomplete
+          >)}
+        />,
+      );
+    });
+
+    expect(screen.getByText("Commands")).toBeInTheDocument();
+    expect(screen.getByText("/collab")).toBeInTheDocument();
+    expect(screen.queryByText("$debug-logs")).toBeNull();
+  });
+
   it("selects the active Codex skill with Enter", async () => {
     const onPromptChange = vi.fn();
     const ref = createRef<CommandAutocompleteHandle>();
@@ -439,6 +461,73 @@ describe("CommandAutocomplete", () => {
     expect(onPromptChange).toHaveBeenCalledWith("$debug-logs ");
   });
 
+  it("includes /collab built-in even when no project commands are loaded", async () => {
+    mockUseCommandsQuery.mockImplementation(() => ({
+      data: { items: [] },
+      isPending: false,
+      isError: false,
+      error: null,
+    }));
+
+    await act(async () => {
+      renderAutocomplete({ promptText: "/" });
+    });
+
+    expect(screen.getByText("/collab")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Run two agents in parallel and converge to a merged result.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("does not duplicate /collab when a project also defines it", async () => {
+    mockUseCommandsQuery.mockImplementation(() => ({
+      data: {
+        items: [
+          {
+            name: "/collab",
+            description: "Project-defined collab",
+            type: "command",
+            source: "project",
+          },
+        ],
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    }));
+
+    await act(async () => {
+      renderAutocomplete({ promptText: "/" });
+    });
+
+    const matches = screen.getAllByText("/collab");
+    expect(matches.length).toBe(1);
+  });
+
+  it("does not show /collab built-in for the codex backend ($ prefix)", async () => {
+    await act(async () => {
+      render(
+        <CommandAutocomplete
+          {...({
+            promptText: "$",
+            onPromptChange: vi.fn(),
+            onPlaceholderChange: vi.fn(),
+            projectName: "test-project",
+            sessionName: "test-session",
+            disabled: false,
+            backend: "codex",
+          } as unknown as React.ComponentPropsWithoutRef<
+            typeof CommandAutocomplete
+          >)}
+        />,
+      );
+    });
+
+    expect(screen.queryByText("/collab")).toBeNull();
+  });
+
   it("Tab selects the active item like Enter", async () => {
     const onPromptChange = vi.fn();
     const ref = createRef<CommandAutocompleteHandle>();
@@ -453,7 +542,7 @@ describe("CommandAutocomplete", () => {
     } as unknown as React.KeyboardEvent);
 
     expect(consumed).toBe(true);
-    expect(onPromptChange).toHaveBeenCalledWith("/commit ");
+    expect(onPromptChange).toHaveBeenCalledWith("/collab ");
   });
 });
 

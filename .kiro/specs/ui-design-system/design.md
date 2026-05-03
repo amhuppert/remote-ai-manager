@@ -62,6 +62,7 @@ Key qualities:
    - **Green** = ready, success, diff additions
    - **Amber** = warning, user-authored content
    - **Red** = danger, error, diff deletions
+   - **Violet** = Codex agent identity (second active agent, pairs with cyan)
    - These meanings are consistent everywhere. Using a color outside its semantic role is a design violation.
 
 7. **Responsive, not stripped down.** Mobile is a first-class experience, not a degraded desktop view. Every feature is accessible on every screen size; nothing is hidden or removed. Desktop uses density and side-by-side panels; mobile uses vertical stacking and panel switching with full-width controls.
@@ -98,6 +99,7 @@ Glow effects (using `box-shadow`, `background` tint, or `text-shadow`) are not d
 - **Green glow** (`--green-glow`): Ready/success state dot halos
 - **Amber glow** (`--amber-glow`): Warning banner backgrounds
 - **Red glow** (`--red-glow`): Danger button hover backgrounds
+- **Violet glow** (`--violet-glow`, `--violet-glow-strong`): Codex-side hover/focus states, Codex column rail tint, Codex round-indicator halos
 
 Apply as `box-shadow` on dots/buttons, `background` tint on banners/badges, and `text-shadow` on the logo.
 
@@ -413,12 +415,13 @@ The token layer maintains state through CSS custom properties:
   /* Border intensity scale (4 levels) */
   --border-dim, --border-subtle, --border-default, --border-strong
 
-  /* Accent families (4 × base/dim/glow) */
+  /* Accent families (5 × base/dim/glow) */
   --cyan, --cyan-dim, --cyan-glow, --cyan-glow-strong, --cyan-glow-text
   --amber, --amber-dim, --amber-glow
   --green, --green-dim, --green-glow
   --red, --red-dim, --red-glow
   --red-text: #e8506c  /* WCAG AA compliant red for text on dark backgrounds */
+  --violet, --violet-dim, --violet-glow, --violet-glow-strong  /* Codex agent identity */
 
   /* Text hierarchy (4 levels) */
   --text-primary, --text-secondary, --text-tertiary: #738699, --text-inverse

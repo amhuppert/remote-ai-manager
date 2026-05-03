@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import {
+  useEffect,
+  useState,
+  useRef,
+  useCallback,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
 
 interface TooltipState {
@@ -9,6 +15,10 @@ interface TooltipState {
   y: number;
   visible: boolean;
 }
+
+const subscribeToMount = () => () => undefined;
+const getMountedSnapshot = () => true;
+const getServerSnapshot = () => false;
 
 /**
  * Global tooltip provider that renders tooltips via portal.
@@ -19,6 +29,11 @@ interface TooltipState {
  * regardless of the trigger element's stacking context.
  */
 export default function TooltipProvider(): React.JSX.Element | null {
+  const mounted = useSyncExternalStore(
+    subscribeToMount,
+    getMountedSnapshot,
+    getServerSnapshot,
+  );
   const [tooltip, setTooltip] = useState<TooltipState>({
     text: "",
     x: 0,
@@ -173,7 +188,7 @@ export default function TooltipProvider(): React.JSX.Element | null {
     return () => observer.disconnect();
   }, [tooltip.visible, tooltip.text, positionTooltip]);
 
-  if (typeof window === "undefined") return null;
+  if (!mounted) return null;
 
   return createPortal(
     <div

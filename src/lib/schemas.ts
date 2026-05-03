@@ -1654,6 +1654,14 @@ export const runPromptRequestSchema = z
     effort: z.string().trim().min(1).optional(),
     images: z.array(imagePayloadSchema).max(5).optional(),
     backend: agentBackendSchema.optional(),
+    collab: z
+      .object({
+        negotiationRounds: z.number().int().min(1).max(20).optional(),
+        autonomousResolutionThreshold: z
+          .enum(["none", "minor", "major", "blocking"])
+          .optional(),
+      })
+      .optional(),
   })
   .refine(
     (data) => data.prompt.length > 0 || (data.images && data.images.length > 0),
@@ -2058,3 +2066,256 @@ export const projectFilesResponseSchema = z.object({
   items: z.array(fileItemSchema),
 });
 export type ProjectFilesResponse = z.infer<typeof projectFilesResponseSchema>;
+
+// ============================================================
+// Collaboration Mode — asymmetric artifact contract
+// ============================================================
+
+// Source of truth: memory-bank/COLLABORATION_MODE_FLOW.md §"Agent output
+// contract". The primary (agent_one) and secondary (agent_two) agents emit
+// kind-discriminated artifact records (initial_draft, cross_review,
+// proposed_changes, counter_proposal, resolution_decision, final_answer,
+// open_conflicts). Convergence and routing are decided by the orchestrator
+// from the resolution_decision artifact, not by the agent narrative.
+
+export const collaborationDisagreementSeveritySchema = z.enum([
+  "minor",
+  "major",
+  "blocking",
+]);
+export type CollaborationDisagreementSeverity = z.infer<
+  typeof collaborationDisagreementSeveritySchema
+>;
+
+export const collaborationFlowAgentSchema = z.enum(["agent_one", "agent_two"]);
+export type CollaborationFlowAgent = z.infer<
+  typeof collaborationFlowAgentSchema
+>;
+
+export const collaborationDisagreementCategorySchema = z.enum([
+  "objective",
+  "implementation",
+]);
+export type CollaborationDisagreementCategory = z.infer<
+  typeof collaborationDisagreementCategorySchema
+>;
+
+export const collaborationAutonomousResolutionThresholdSchema = z.enum([
+  "none",
+  "minor",
+  "major",
+  "blocking",
+]);
+export type CollaborationAutonomousResolutionThreshold = z.infer<
+  typeof collaborationAutonomousResolutionThresholdSchema
+>;
+
+export const collaborationReferenceSchema = z
+  .object({
+    artifact: z.string().min(1),
+    locator: z.string().min(1).optional(),
+  })
+  .strict();
+export type CollaborationReference = z.infer<
+  typeof collaborationReferenceSchema
+>;
+
+export const collaborationArtifactAgreementSchema = z
+  .object({
+    id: z.string().min(1),
+    claim: z.string().min(1),
+    ref: collaborationReferenceSchema.optional(),
+  })
+  .strict();
+export type CollaborationArtifactAgreement = z.infer<
+  typeof collaborationArtifactAgreementSchema
+>;
+
+export const collaborationArtifactDisagreementSchema = z
+  .object({
+    id: z.string().min(1),
+    category: collaborationDisagreementCategorySchema,
+    severity: collaborationDisagreementSeveritySchema,
+    claim: z.string().min(1),
+    reason: z.string().min(1),
+    proposedResolution: z.string().min(1).optional(),
+    ref: collaborationReferenceSchema.optional(),
+  })
+  .strict();
+export type CollaborationArtifactDisagreement = z.infer<
+  typeof collaborationArtifactDisagreementSchema
+>;
+
+export const collaborationUserQuestionSchema = z
+  .object({
+    id: z.string().min(1),
+    question: z.string().min(1),
+    relatedDisagreementIds: z.array(z.string().min(1)),
+  })
+  .strict();
+export type CollaborationUserQuestion = z.infer<
+  typeof collaborationUserQuestionSchema
+>;
+
+export const collaborationReviseSelfArtifactSchema = z
+  .object({
+    change: z.string().min(1),
+    because: z.string().min(1),
+  })
+  .strict();
+export type CollaborationReviseSelfArtifact = z.infer<
+  typeof collaborationReviseSelfArtifactSchema
+>;
+
+export const collaborationChangeProposalSchema = z
+  .object({
+    id: z.string().min(1),
+    change: z.string().min(1),
+    rationale: z.string().min(1),
+    addressesDisagreementIds: z.array(z.string().min(1)),
+  })
+  .strict();
+export type CollaborationChangeProposal = z.infer<
+  typeof collaborationChangeProposalSchema
+>;
+
+export const collaborationInitialDraftOutputSchema = z
+  .object({
+    kind: z.literal("initial_draft"),
+    agent: collaborationFlowAgentSchema,
+    narrative: z.string().min(1),
+    report: z.string().min(1),
+    supporting: z.array(z.string().min(1)),
+    assumptions: z.array(z.string().min(1)),
+    keyClaims: z.array(collaborationArtifactAgreementSchema),
+  })
+  .strict();
+export type CollaborationInitialDraftOutput = z.infer<
+  typeof collaborationInitialDraftOutputSchema
+>;
+
+export const collaborationCrossReviewOutputSchema = z
+  .object({
+    kind: z.literal("cross_review"),
+    agent: collaborationFlowAgentSchema,
+    targetAgent: collaborationFlowAgentSchema,
+    narrative: z.string().min(1),
+    report: z.string().min(1),
+    supporting: z.array(z.string().min(1)),
+    agree: z.array(collaborationArtifactAgreementSchema),
+    disagree: z.array(collaborationArtifactDisagreementSchema),
+    reviseSelf: z.array(collaborationReviseSelfArtifactSchema),
+  })
+  .strict();
+export type CollaborationCrossReviewOutput = z.infer<
+  typeof collaborationCrossReviewOutputSchema
+>;
+
+export const collaborationProposedChangesOutputSchema = z
+  .object({
+    kind: z.literal("proposed_changes"),
+    agent: z.literal("agent_one"),
+    targetAgent: z.literal("agent_two"),
+    narrative: z.string().min(1),
+    acceptedFromAgentTwoDraft: z.array(collaborationArtifactAgreementSchema),
+    proposedChanges: z.array(collaborationChangeProposalSchema),
+    remainingDisagreements: z.array(collaborationArtifactDisagreementSchema),
+    report: z.string().min(1),
+    supporting: z.array(z.string().min(1)),
+  })
+  .strict();
+export type CollaborationProposedChangesOutput = z.infer<
+  typeof collaborationProposedChangesOutputSchema
+>;
+
+export const collaborationCounterProposalOutputSchema = z
+  .object({
+    kind: z.literal("counter_proposal"),
+    agent: z.literal("agent_two"),
+    narrative: z.string().min(1),
+    acceptedProposedChangeIds: z.array(z.string().min(1)),
+    rejectedProposedChangeIds: z.array(z.string().min(1)),
+    alternativeChanges: z.array(collaborationChangeProposalSchema),
+    agree: z.array(collaborationArtifactAgreementSchema),
+    disagree: z.array(collaborationArtifactDisagreementSchema),
+    report: z.string().min(1),
+    supporting: z.array(z.string().min(1)),
+  })
+  .strict();
+export type CollaborationCounterProposalOutput = z.infer<
+  typeof collaborationCounterProposalOutputSchema
+>;
+
+export const collaborationResolutionDecisionNextActionSchema = z.enum([
+  "final",
+  "continue_negotiation",
+  "ask_user",
+  "fail",
+]);
+export type CollaborationResolutionDecisionNextAction = z.infer<
+  typeof collaborationResolutionDecisionNextActionSchema
+>;
+
+export const collaborationResolvedDisagreementSchema = z
+  .object({
+    disagreementId: z.string().min(1),
+    resolution: z.string().min(1),
+    resolvedAutonomously: z.boolean(),
+    rationale: z.string().min(1),
+  })
+  .strict();
+export type CollaborationResolvedDisagreement = z.infer<
+  typeof collaborationResolvedDisagreementSchema
+>;
+
+export const collaborationResolutionDecisionOutputSchema = z
+  .object({
+    kind: z.literal("resolution_decision"),
+    agent: z.literal("agent_one"),
+    agreementReached: z.boolean(),
+    nextAction: collaborationResolutionDecisionNextActionSchema,
+    acceptedPoints: z.array(collaborationArtifactAgreementSchema),
+    resolvedDisagreements: z.array(collaborationResolvedDisagreementSchema),
+    remainingDisagreements: z.array(collaborationArtifactDisagreementSchema),
+    userQuestions: z.array(collaborationUserQuestionSchema),
+    rationale: z.string().min(1),
+  })
+  .strict();
+export type CollaborationResolutionDecisionOutput = z.infer<
+  typeof collaborationResolutionDecisionOutputSchema
+>;
+
+export const collaborationOpenConflictsOutputSchema = z
+  .object({
+    kind: z.literal("open_conflicts"),
+    disagreements: z.array(collaborationArtifactDisagreementSchema),
+    questions: z.array(collaborationUserQuestionSchema),
+  })
+  .strict();
+export type CollaborationOpenConflictsOutput = z.infer<
+  typeof collaborationOpenConflictsOutputSchema
+>;
+
+export const collaborationFinalAnswerOutputSchema = z
+  .object({
+    kind: z.literal("final_answer"),
+    agent: z.literal("agent_one"),
+    answer: z.string().min(1),
+    report: z.string().min(1),
+    supporting: z.array(z.string().min(1)),
+  })
+  .strict();
+export type CollaborationFinalAnswerOutput = z.infer<
+  typeof collaborationFinalAnswerOutputSchema
+>;
+
+export const collaborationArtifactSchema = z.discriminatedUnion("kind", [
+  collaborationInitialDraftOutputSchema,
+  collaborationCrossReviewOutputSchema,
+  collaborationProposedChangesOutputSchema,
+  collaborationCounterProposalOutputSchema,
+  collaborationResolutionDecisionOutputSchema,
+  collaborationOpenConflictsOutputSchema,
+  collaborationFinalAnswerOutputSchema,
+]);
+export type CollaborationArtifact = z.infer<typeof collaborationArtifactSchema>;

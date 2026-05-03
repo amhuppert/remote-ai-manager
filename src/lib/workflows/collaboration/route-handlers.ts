@@ -22,12 +22,24 @@ import {
   resolveProjectPath as defaultResolveProjectPath,
   type ProjectResolver,
 } from "@/lib/project-resolver";
-import { getSession as defaultGetSession } from "@/lib/state";
-import type { ApiError } from "@/types";
+import {
+  getSession as defaultGetSession,
+  mutateConversation as defaultMutateConversation,
+} from "@/lib/state";
+import {
+  getTranscriptPath as defaultGetTranscriptPath,
+  safeAppendTranscriptEntry as defaultSafeAppendTranscriptEntry,
+  type TranscriptEntry,
+} from "@/lib/transcript";
+import type { ApiError, ConversationState } from "@/types";
 import {
   collaborationResumeRequestSchema,
   collaborationStartRequestSchema,
+  collaborationStopRequestSchema,
+  CollaborationConversationMismatchError,
+  CollaborationConversationNotFoundError,
   CollaborationNotPausedError,
+  CollaborationNotStoppableError,
   CollaborationResumeTokenMismatchError,
   CollaborationSessionNotFoundError,
   CollaborationWorkflowNotFoundError,
@@ -46,6 +58,39 @@ export interface CollaborationRouteDeps {
   manager: CollaborationManager;
   getSession: typeof defaultGetSession;
   readArtifactFile: (absolutePath: string) => Promise<string>;
+  /**
+   * Persists the user's `/collab <brief>` prompt as a user transcript entry
+   * before the manager begins the run. This is what lets the conversation
+   * timeline (and the inline `CollabPassage` anchor logic) render the start
+   * passage in the position the user submitted it from. Defaults to
+   * `safeAppendTranscriptEntry` from `@/lib/transcript`; tests override.
+   */
+  appendTranscriptEntry: (
+    conversationId: string,
+    entry: TranscriptEntry,
+  ) => Promise<unknown>;
+  /**
+   * Resolves the canonical transcript file path for a conversation. Used to
+   * stamp `transcriptPath` on conversations that were /collab-started before
+   * any normal prompt has run, so the conversation no longer appears with a
+   * `null` transcriptPath in lists/active surfaces. Defaults to
+   * `getTranscriptPath` from `@/lib/transcript`; tests override.
+   */
+  getTranscriptPath: (conversationId: string) => Promise<string>;
+  /**
+   * Mutates a conversation entry in session state under the durable lock.
+   * Called from START to flip a `new` conversation to a started state with a
+   * stamped transcriptPath, incremented promptCount, and refreshed
+   * lastActivityAt. Defaults to `mutateConversation` from `@/lib/state`; tests
+   * override.
+   */
+  mutateConversation: <T = void>(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    label: string,
+    mutate: (conversation: ConversationState) => T | Promise<T>,
+  ) => Promise<T>;
 }
 
 const defaultDeps: CollaborationRouteDeps = {
@@ -55,6 +100,10 @@ const defaultDeps: CollaborationRouteDeps = {
   },
   getSession: defaultGetSession,
   readArtifactFile: (absolutePath) => readFile(absolutePath, "utf-8"),
+  appendTranscriptEntry: defaultSafeAppendTranscriptEntry,
+  getTranscriptPath: (conversationId) =>
+    defaultGetTranscriptPath(conversationId),
+  mutateConversation: defaultMutateConversation,
 };
 
 async function resolveSessionParams(
@@ -163,6 +212,7 @@ export interface CollaborationRouteHandlers {
     context: ArtifactRouteContext,
   ): Promise<Response>;
   RESUME(request: Request, context: WorkflowRouteContext): Promise<Response>;
+  STOP(request: Request, context: WorkflowRouteContext): Promise<Response>;
 }
 
 type ArtifactRouteContext = {
@@ -219,15 +269,58 @@ export function createCollaborationRouteHandlers(
       }
 
       try {
+        await deps.appendTranscriptEntry(parsed.data.conversationId, {
+          timestamp: new Date().toISOString(),
+          type: "user",
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `/collab ${parsed.data.brief}`,
+            },
+          ],
+        });
         const result = await deps.manager.start({
           projectPath: sessionResolution.projectPath,
           sessionName: sessionResolution.sessionName,
           ...parsed.data,
         });
+        try {
+          const stampedTranscriptPath = await deps.getTranscriptPath(
+            parsed.data.conversationId,
+          );
+          await deps.mutateConversation(
+            sessionResolution.projectPath,
+            sessionResolution.sessionName,
+            parsed.data.conversationId,
+            "collab.start",
+            (conversation) => {
+              if (conversation.transcriptPath === null) {
+                conversation.transcriptPath = stampedTranscriptPath;
+              }
+              if (conversation.status === "new") {
+                conversation.status = "running";
+              }
+              conversation.promptCount = (conversation.promptCount ?? 0) + 1;
+              conversation.lastActivityAt = new Date().toISOString();
+            },
+          );
+        } catch (mutationErr) {
+          logger.warn("collaboration.route.start_metadata_sync_failed", {
+            workflowId: result.workflowId,
+            conversationId: parsed.data.conversationId,
+            error: getErrorMessage(mutationErr),
+          });
+        }
         const statusUrl = `/api/projects/${encodeURIComponent(sessionResolution.projectName)}/sessions/${encodeURIComponent(sessionResolution.sessionName)}/collaboration/${encodeURIComponent(result.workflowId)}`;
         return NextResponse.json({ ...result, statusUrl }, { status: 202 });
       } catch (err) {
         if (err instanceof CollaborationSessionNotFoundError) {
+          return NextResponse.json({ error: err.message } satisfies ApiError, {
+            status: 404,
+          });
+        }
+        if (err instanceof CollaborationConversationNotFoundError) {
           return NextResponse.json({ error: err.message } satisfies ApiError, {
             status: 404,
           });
@@ -434,6 +527,11 @@ export function createCollaborationRouteHandlers(
             status: 404,
           });
         }
+        if (err instanceof CollaborationConversationMismatchError) {
+          return NextResponse.json({ error: err.message } satisfies ApiError, {
+            status: 403,
+          });
+        }
         if (err instanceof CollaborationResumeTokenMismatchError) {
           return NextResponse.json({ error: err.message } satisfies ApiError, {
             status: 403,
@@ -451,6 +549,62 @@ export function createCollaborationRouteHandlers(
         return NextResponse.json(
           {
             error: "Failed to resume collaboration run",
+          } satisfies ApiError,
+          { status: 500 },
+        );
+      }
+    },
+
+    async STOP(request, context) {
+      const workflowResolution = await resolveWorkflowParams(context, deps);
+      if ("error" in workflowResolution) return workflowResolution.error;
+
+      let body: unknown;
+      try {
+        body = await request.json();
+      } catch {
+        return NextResponse.json(
+          { error: "Request body must be valid JSON" } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+
+      const parsed = collaborationStopRequestSchema.safeParse(body);
+      if (!parsed.success) {
+        return buildValidationErrorResponse(parsed.error);
+      }
+
+      try {
+        const result = await deps.manager.stop({
+          projectPath: workflowResolution.projectPath,
+          sessionName: workflowResolution.sessionName,
+          workflowId: workflowResolution.workflowId,
+          conversationId: parsed.data.conversationId,
+        });
+        return NextResponse.json(result, { status: 200 });
+      } catch (err) {
+        if (err instanceof CollaborationWorkflowNotFoundError) {
+          return NextResponse.json({ error: err.message } satisfies ApiError, {
+            status: 404,
+          });
+        }
+        if (err instanceof CollaborationConversationMismatchError) {
+          return NextResponse.json({ error: err.message } satisfies ApiError, {
+            status: 403,
+          });
+        }
+        if (err instanceof CollaborationNotStoppableError) {
+          return NextResponse.json({ error: err.message } satisfies ApiError, {
+            status: 409,
+          });
+        }
+        logger.error("collaboration.route.stop_failed", {
+          workflowId: workflowResolution.workflowId,
+          error: getErrorMessage(err),
+        });
+        return NextResponse.json(
+          {
+            error: "Failed to stop collaboration run",
           } satisfies ApiError,
           { status: 500 },
         );

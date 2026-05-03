@@ -1,136 +1,394 @@
 /**
- * Collaboration Mode round-response vocabulary.
+ * Collaboration Mode types.
  *
- * The structured per-round response shape every participating agent emits is
- * the load-bearing schema for both convergence and the user-input pause gate:
- *
- *  - `decision` is the top-level accept/reject signal that feeds the
- *    convergence gate. Both agents emitting `accept` in the same round is the
- *    canonical convergence condition.
- *  - `openQuestions[].requiresUserInput` is the pause trigger — any open
- *    question in the latest round flagged with `requiresUserInput: true`
- *    parks the workflow on a human-approval gate until the user resolves it.
- *  - `agreements`, `disagreements`, `overallAssessment`, and `designDocument`
- *    feed the transcript and the scribe's final merge pass.
- *
- * The schema is intentionally narrow: this is the contract between the
- * primitive composition (the slice) and the per-round agent prompt. Adding
- * fields the agents do not actually emit would only mask drift between the
- * agent prompt and the schema.
+ * The wire-shape contracts — the asymmetric per-artifact outputs every
+ * participating agent emits — live in `src/lib/schemas.ts` and are
+ * documented in `memory-bank/COLLABORATION_MODE_FLOW.md`. This module
+ * re-exports them so feature code keeps a stable import site, adds the
+ * lane-identity enum that is internal to the orchestrator, and projects
+ * each artifact schema to a JSON Schema constant for backends that enforce
+ * structured output natively.
  */
 
 import { z } from "zod";
 
+export {
+  collaborationArtifactAgreementSchema,
+  type CollaborationArtifactAgreement,
+  collaborationArtifactDisagreementSchema,
+  type CollaborationArtifactDisagreement,
+  collaborationArtifactSchema,
+  type CollaborationArtifact,
+  collaborationAutonomousResolutionThresholdSchema,
+  type CollaborationAutonomousResolutionThreshold,
+  collaborationChangeProposalSchema,
+  type CollaborationChangeProposal,
+  collaborationCounterProposalOutputSchema,
+  type CollaborationCounterProposalOutput,
+  collaborationCrossReviewOutputSchema,
+  type CollaborationCrossReviewOutput,
+  collaborationDisagreementCategorySchema,
+  type CollaborationDisagreementCategory,
+  collaborationDisagreementSeveritySchema,
+  type CollaborationDisagreementSeverity,
+  collaborationFinalAnswerOutputSchema,
+  type CollaborationFinalAnswerOutput,
+  collaborationFlowAgentSchema,
+  type CollaborationFlowAgent,
+  collaborationInitialDraftOutputSchema,
+  type CollaborationInitialDraftOutput,
+  collaborationOpenConflictsOutputSchema,
+  type CollaborationOpenConflictsOutput,
+  collaborationProposedChangesOutputSchema,
+  type CollaborationProposedChangesOutput,
+  collaborationReferenceSchema,
+  type CollaborationReference,
+  collaborationReviseSelfArtifactSchema,
+  type CollaborationReviseSelfArtifact,
+  collaborationResolvedDisagreementSchema,
+  type CollaborationResolvedDisagreement,
+  collaborationResolutionDecisionNextActionSchema,
+  type CollaborationResolutionDecisionNextAction,
+  collaborationResolutionDecisionOutputSchema,
+  type CollaborationResolutionDecisionOutput,
+  collaborationUserQuestionSchema,
+  type CollaborationUserQuestion,
+} from "@/lib/schemas";
+
 export const collaborationAgentSchema = z.enum(["claude", "codex"]);
 export type CollaborationAgent = z.infer<typeof collaborationAgentSchema>;
 
-export const collaborationDisagreementSeveritySchema = z.enum([
-  "minor",
-  "major",
-  "blocking",
-]);
-export type CollaborationDisagreementSeverity = z.infer<
-  typeof collaborationDisagreementSeveritySchema
->;
+const REFERENCE_JSON_SCHEMA = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["artifact"],
+      properties: {
+        artifact: { type: "string", minLength: 1 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["artifact", "locator"],
+      properties: {
+        artifact: { type: "string", minLength: 1 },
+        locator: { type: "string", minLength: 1 },
+      },
+    },
+  ],
+} as const;
 
-export const collaborationDisagreementSchema = z
-  .object({
-    description: z.string().min(1),
-    severity: collaborationDisagreementSeveritySchema,
-    proposedResolution: z.string().min(1),
-  })
-  .strict();
-export type CollaborationDisagreement = z.infer<
-  typeof collaborationDisagreementSchema
->;
+const AGREEMENT_JSON_SCHEMA = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "claim"],
+      properties: {
+        id: { type: "string", minLength: 1 },
+        claim: { type: "string", minLength: 1 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "claim", "ref"],
+      properties: {
+        id: { type: "string", minLength: 1 },
+        claim: { type: "string", minLength: 1 },
+        ref: REFERENCE_JSON_SCHEMA,
+      },
+    },
+  ],
+} as const;
 
-export const collaborationOpenQuestionSchema = z
-  .object({
-    question: z.string().min(1),
-    requiresUserInput: z.boolean(),
-  })
-  .strict();
-export type CollaborationOpenQuestion = z.infer<
-  typeof collaborationOpenQuestionSchema
->;
+const DISAGREEMENT_BASE_PROPERTIES = {
+  id: { type: "string", minLength: 1 },
+  category: { type: "string", enum: ["objective", "implementation"] },
+  severity: { type: "string", enum: ["minor", "major", "blocking"] },
+  claim: { type: "string", minLength: 1 },
+  reason: { type: "string", minLength: 1 },
+} as const;
 
-export const collaborationDecisionSchema = z.enum(["accept", "reject"]);
-export type CollaborationDecision = z.infer<typeof collaborationDecisionSchema>;
+const DISAGREEMENT_JSON_SCHEMA = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "category", "severity", "claim", "reason"],
+      properties: { ...DISAGREEMENT_BASE_PROPERTIES },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "id",
+        "category",
+        "severity",
+        "claim",
+        "reason",
+        "proposedResolution",
+      ],
+      properties: {
+        ...DISAGREEMENT_BASE_PROPERTIES,
+        proposedResolution: { type: "string", minLength: 1 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "category", "severity", "claim", "reason", "ref"],
+      properties: {
+        ...DISAGREEMENT_BASE_PROPERTIES,
+        ref: REFERENCE_JSON_SCHEMA,
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "id",
+        "category",
+        "severity",
+        "claim",
+        "reason",
+        "proposedResolution",
+        "ref",
+      ],
+      properties: {
+        ...DISAGREEMENT_BASE_PROPERTIES,
+        proposedResolution: { type: "string", minLength: 1 },
+        ref: REFERENCE_JSON_SCHEMA,
+      },
+    },
+  ],
+} as const;
 
-export const collaborationRoundResponseSchema = z
-  .object({
-    agent: collaborationAgentSchema,
-    round: z.number().int().nonnegative(),
-    overallAssessment: z.string().min(1),
-    agreements: z.array(z.string().min(1)),
-    disagreements: z.array(collaborationDisagreementSchema),
-    openQuestions: z.array(collaborationOpenQuestionSchema),
-    designDocument: z.string().min(1),
-    decision: collaborationDecisionSchema,
-  })
-  .strict();
-export type CollaborationRoundResponse = z.infer<
-  typeof collaborationRoundResponseSchema
->;
-
-/**
- * JSON-schema projection of `collaborationRoundResponseSchema` that the slice
- * passes as `AgentCallRequest.outputSchema` so the shared structured-output
- * gate enforces the contract at request time, before the local Zod parse runs
- * as a defensive boundary.
- *
- * Kept as a hand-maintained constant (mirrors the `VALIDATOR_OUTPUT_SCHEMA`
- * pattern in `workflow-graph/validator-runner.ts`) so backends that natively
- * enforce JSON Schema receive a stable shape and don't depend on a Zod-to-JSON
- * Schema conversion step.
- */
-export const COLLABORATION_ROUND_RESPONSE_OUTPUT_SCHEMA = {
+const REVISE_SELF_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: [
-    "agent",
-    "round",
-    "overallAssessment",
-    "agreements",
-    "disagreements",
-    "openQuestions",
-    "designDocument",
-    "decision",
-  ],
+  required: ["change", "because"],
   properties: {
-    agent: { type: "string", enum: ["claude", "codex"] },
-    round: { type: "integer", minimum: 0 },
-    overallAssessment: { type: "string", minLength: 1 },
-    agreements: {
+    change: { type: "string", minLength: 1 },
+    because: { type: "string", minLength: 1 },
+  },
+} as const;
+
+const CHANGE_PROPOSAL_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "change", "rationale", "addressesDisagreementIds"],
+  properties: {
+    id: { type: "string", minLength: 1 },
+    change: { type: "string", minLength: 1 },
+    rationale: { type: "string", minLength: 1 },
+    addressesDisagreementIds: {
       type: "array",
       items: { type: "string", minLength: 1 },
     },
-    disagreements: {
+  },
+} as const;
+
+const USER_QUESTION_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "question", "relatedDisagreementIds"],
+  properties: {
+    id: { type: "string", minLength: 1 },
+    question: { type: "string", minLength: 1 },
+    relatedDisagreementIds: {
       type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["description", "severity", "proposedResolution"],
-        properties: {
-          description: { type: "string", minLength: 1 },
-          severity: { type: "string", enum: ["minor", "major", "blocking"] },
-          proposedResolution: { type: "string", minLength: 1 },
-        },
-      },
+      items: { type: "string", minLength: 1 },
     },
-    openQuestions: {
+  },
+} as const;
+
+const RESOLVED_DISAGREEMENT_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "disagreementId",
+    "resolution",
+    "resolvedAutonomously",
+    "rationale",
+  ],
+  properties: {
+    disagreementId: { type: "string", minLength: 1 },
+    resolution: { type: "string", minLength: 1 },
+    resolvedAutonomously: { type: "boolean" },
+    rationale: { type: "string", minLength: 1 },
+  },
+} as const;
+
+const FLOW_AGENT_JSON_SCHEMA = {
+  type: "string",
+  enum: ["agent_one", "agent_two"],
+} as const;
+
+const STRING_LIST_JSON_SCHEMA = {
+  type: "array",
+  items: { type: "string", minLength: 1 },
+} as const;
+
+export const COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "kind",
+    "agent",
+    "narrative",
+    "report",
+    "supporting",
+    "assumptions",
+    "keyClaims",
+  ],
+  properties: {
+    kind: { type: "string", enum: ["initial_draft"] },
+    agent: FLOW_AGENT_JSON_SCHEMA,
+    narrative: { type: "string", minLength: 1 },
+    report: { type: "string", minLength: 1 },
+    supporting: STRING_LIST_JSON_SCHEMA,
+    assumptions: STRING_LIST_JSON_SCHEMA,
+    keyClaims: { type: "array", items: AGREEMENT_JSON_SCHEMA },
+  },
+} as const;
+
+export const COLLABORATION_CROSS_REVIEW_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "kind",
+    "agent",
+    "targetAgent",
+    "narrative",
+    "report",
+    "supporting",
+    "agree",
+    "disagree",
+    "reviseSelf",
+  ],
+  properties: {
+    kind: { type: "string", enum: ["cross_review"] },
+    agent: FLOW_AGENT_JSON_SCHEMA,
+    targetAgent: FLOW_AGENT_JSON_SCHEMA,
+    narrative: { type: "string", minLength: 1 },
+    report: { type: "string", minLength: 1 },
+    supporting: STRING_LIST_JSON_SCHEMA,
+    agree: { type: "array", items: AGREEMENT_JSON_SCHEMA },
+    disagree: { type: "array", items: DISAGREEMENT_JSON_SCHEMA },
+    reviseSelf: { type: "array", items: REVISE_SELF_JSON_SCHEMA },
+  },
+} as const;
+
+export const COLLABORATION_PROPOSED_CHANGES_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "kind",
+    "agent",
+    "targetAgent",
+    "narrative",
+    "acceptedFromAgentTwoDraft",
+    "proposedChanges",
+    "remainingDisagreements",
+    "report",
+    "supporting",
+  ],
+  properties: {
+    kind: { type: "string", enum: ["proposed_changes"] },
+    agent: { type: "string", enum: ["agent_one"] },
+    targetAgent: { type: "string", enum: ["agent_two"] },
+    narrative: { type: "string", minLength: 1 },
+    acceptedFromAgentTwoDraft: {
       type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["question", "requiresUserInput"],
-        properties: {
-          question: { type: "string", minLength: 1 },
-          requiresUserInput: { type: "boolean" },
-        },
-      },
+      items: AGREEMENT_JSON_SCHEMA,
     },
-    designDocument: { type: "string", minLength: 1 },
-    decision: { type: "string", enum: ["accept", "reject"] },
+    proposedChanges: { type: "array", items: CHANGE_PROPOSAL_JSON_SCHEMA },
+    remainingDisagreements: {
+      type: "array",
+      items: DISAGREEMENT_JSON_SCHEMA,
+    },
+    report: { type: "string", minLength: 1 },
+    supporting: STRING_LIST_JSON_SCHEMA,
+  },
+} as const;
+
+export const COLLABORATION_COUNTER_PROPOSAL_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "kind",
+    "agent",
+    "narrative",
+    "acceptedProposedChangeIds",
+    "rejectedProposedChangeIds",
+    "alternativeChanges",
+    "agree",
+    "disagree",
+    "report",
+    "supporting",
+  ],
+  properties: {
+    kind: { type: "string", enum: ["counter_proposal"] },
+    agent: { type: "string", enum: ["agent_two"] },
+    narrative: { type: "string", minLength: 1 },
+    acceptedProposedChangeIds: STRING_LIST_JSON_SCHEMA,
+    rejectedProposedChangeIds: STRING_LIST_JSON_SCHEMA,
+    alternativeChanges: { type: "array", items: CHANGE_PROPOSAL_JSON_SCHEMA },
+    agree: { type: "array", items: AGREEMENT_JSON_SCHEMA },
+    disagree: { type: "array", items: DISAGREEMENT_JSON_SCHEMA },
+    report: { type: "string", minLength: 1 },
+    supporting: STRING_LIST_JSON_SCHEMA,
+  },
+} as const;
+
+export const COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "kind",
+    "agent",
+    "agreementReached",
+    "nextAction",
+    "acceptedPoints",
+    "resolvedDisagreements",
+    "remainingDisagreements",
+    "userQuestions",
+    "rationale",
+  ],
+  properties: {
+    kind: { type: "string", enum: ["resolution_decision"] },
+    agent: { type: "string", enum: ["agent_one"] },
+    agreementReached: { type: "boolean" },
+    nextAction: {
+      type: "string",
+      enum: ["final", "continue_negotiation", "ask_user", "fail"],
+    },
+    acceptedPoints: { type: "array", items: AGREEMENT_JSON_SCHEMA },
+    resolvedDisagreements: {
+      type: "array",
+      items: RESOLVED_DISAGREEMENT_JSON_SCHEMA,
+    },
+    remainingDisagreements: {
+      type: "array",
+      items: DISAGREEMENT_JSON_SCHEMA,
+    },
+    userQuestions: { type: "array", items: USER_QUESTION_JSON_SCHEMA },
+    rationale: { type: "string", minLength: 1 },
+  },
+} as const;
+
+export const COLLABORATION_FINAL_ANSWER_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "agent", "answer", "report", "supporting"],
+  properties: {
+    kind: { type: "string", enum: ["final_answer"] },
+    agent: { type: "string", enum: ["agent_one"] },
+    answer: { type: "string", minLength: 1 },
+    report: { type: "string", minLength: 1 },
+    supporting: STRING_LIST_JSON_SCHEMA,
   },
 } as const;

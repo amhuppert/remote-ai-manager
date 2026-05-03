@@ -14,8 +14,13 @@ import {
   useSessionDiffQuery,
   useCommitsQuery,
   useConversationsQuery,
+  useCollaborationListQuery,
+  useReferenceDocumentsQuery,
 } from "@/lib/queries";
 import {
+  useCollaborationStartMutation,
+  useCollaborationResumeMutation,
+  useCollaborationStopMutation,
   useDebugModeToggleMutation,
   useDeleteSessionMutation,
   useFinalizeInitializationMutation,
@@ -75,6 +80,7 @@ import {
   useSwitchRightPaneTab,
   useSidebarCollapsed,
   useToggleSidebar,
+  useOpenDocById,
 } from "@/stores/session-detail.store";
 import Topbar from "@/components/Topbar";
 import LayoutSwitcher from "./LayoutSwitcher";
@@ -120,7 +126,7 @@ import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import ImageAttachmentPreview from "./ImageAttachmentPreview";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import type { ImagePayload } from "@/types";
+import type { ImagePayload, TranscriptMessage } from "@/types";
 import CopyableId from "@/components/CopyableId";
 import InfoDetailsPopover from "./InfoDetailsPopover";
 import { KiroCommandProvider } from "@/components/KiroCommandContext";
@@ -132,6 +138,22 @@ import {
   useToggleDevServerDrawer,
   useCloseDevServerDrawer,
 } from "@/stores/dev-server-drawer.store";
+import {
+  useCollabConfigDraft,
+  useSetCollabConfigDraft,
+  useClearCollabConfigDraft,
+  useUserAnswerDrafts,
+  useSetUserAnswerDraft,
+  useClearUserAnswerDrafts,
+} from "@/stores/collaboration.store";
+import CollabConfigRow from "./collab/CollabConfigRow";
+import CollabPassage, { isCollabPassageTerminal } from "./collab/CollabPassage";
+import { envelopeToCollabPassageProps } from "./collab/envelope-adapter";
+import { resolveRefToDocumentId } from "./collab/ref-resolver";
+import type {
+  CollaborationArtifact,
+  CollaborationReference,
+} from "@/lib/workflows/collaboration/types";
 
 interface Props {
   projectName: string;
@@ -183,6 +205,123 @@ function shortenWorktreePath(fullPath: string): string {
   return fullPath.slice(idx + marker.length);
 }
 
+function hasCollabPrefix(text: string): boolean {
+  return text === "/collab" || text.startsWith("/collab ");
+}
+
+function stripCollabPrefix(text: string): string {
+  if (text === "/collab") return "";
+  if (text.startsWith("/collab ")) return text.slice("/collab ".length);
+  return text;
+}
+
+const COLLAB_RUNNING_TOOLTIP =
+  "collaboration in progress \u00b7 stop the run to continue";
+
+interface CollabEnvelopeLike {
+  status: "running" | "paused" | "completed" | "failed";
+  featureSnapshot: unknown;
+}
+
+function findActiveCollab<T extends CollabEnvelopeLike>(
+  envelopes: readonly T[] | undefined,
+  conversationId: string,
+): T | undefined {
+  if (!envelopes) return undefined;
+  return envelopes.find((envelope) => {
+    if (envelope.status !== "running" && envelope.status !== "paused") {
+      return false;
+    }
+    const snapshot = envelope.featureSnapshot;
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      return false;
+    }
+    return (
+      (snapshot as Record<string, unknown>)["conversationId"] === conversationId
+    );
+  });
+}
+
+function findCollabEnvelopeForConversation<T extends CollabEnvelopeLike>(
+  envelopes: readonly T[] | undefined,
+  conversationId: string,
+): T | undefined {
+  if (!envelopes) return undefined;
+  const matching = envelopes.filter((envelope) => {
+    const snapshot = envelope.featureSnapshot;
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      return false;
+    }
+    return (
+      (snapshot as Record<string, unknown>)["conversationId"] === conversationId
+    );
+  });
+  if (matching.length === 0) return undefined;
+  const active = matching.find(
+    (envelope) => envelope.status === "running" || envelope.status === "paused",
+  );
+  return active ?? matching.at(-1);
+}
+
+function transcriptText(message: TranscriptMessage): string | null {
+  return (
+    message.content.find(
+      (block): block is { type: "text"; text: string } => block.type === "text",
+    )?.text ?? null
+  );
+}
+
+function isCollabTriggerMessage(message: TranscriptMessage): boolean {
+  for (const block of message.content) {
+    if (block.type === "text" && hasCollabPrefix(block.text.trim())) {
+      return true;
+    }
+    if (block.type === "command" && block.name === "/collab") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function latestFinalAnswerText(
+  artifacts: readonly CollaborationArtifact[],
+): string | null {
+  for (let i = artifacts.length - 1; i >= 0; i--) {
+    const artifact = artifacts[i];
+    if (artifact?.kind === "final_answer") return artifact.answer;
+  }
+  return null;
+}
+
+function dedupeCollabFinalTranscriptMessage(
+  messages: readonly TranscriptMessage[],
+  finalAnswerText: string | null,
+): TranscriptMessage[] {
+  if (!finalAnswerText) return [...messages];
+  const normalizedFinal = finalAnswerText.trim();
+  if (normalizedFinal.length === 0) return [...messages];
+
+  let latestCollabUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || message.role !== "user") continue;
+    if (isCollabTriggerMessage(message)) {
+      latestCollabUserIndex = i;
+      break;
+    }
+  }
+  if (latestCollabUserIndex === -1) return [...messages];
+
+  const duplicateIndex = messages.findIndex((message, index) => {
+    if (index <= latestCollabUserIndex || message.role !== "assistant") {
+      return false;
+    }
+    return transcriptText(message)?.trim() === normalizedFinal;
+  });
+  if (duplicateIndex === -1) return [...messages];
+  return messages.filter((_, index) => index !== duplicateIndex);
+}
+
 export default function ConversationDetailPage({
   projectName,
   sessionName,
@@ -197,6 +336,11 @@ export default function ConversationDetailPage({
   // --- TanStack Query ---
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const conversationsQuery = useConversationsQuery(projectName, sessionName);
+  const collaborationListQuery = useCollaborationListQuery(
+    projectName,
+    sessionName,
+    { includeAll: true },
+  );
 
   // --- Zustand: state ---
   const layout = useLayout();
@@ -258,6 +402,7 @@ export default function ConversationDetailPage({
   const cancelEditing = useCancelEditing();
   const setPendingForkPrompt = useSetPendingForkPrompt();
   const consumePendingForkPrompt = useConsumePendingForkPrompt();
+  const openDocById = useOpenDocById();
 
   // --- Dev server ---
   const dsOpen = useDevServerDrawerOpen();
@@ -282,7 +427,17 @@ export default function ConversationDetailPage({
   )?.role;
   const isWorkflowManagedConversation =
     conversationRole === "iteration" || conversationRole === "validator";
-  const isReadOnly = isFinished || isWorkflowManagedConversation;
+  const activeCollabEnvelope = findActiveCollab(
+    collaborationListQuery.data,
+    conversationId,
+  );
+  const collabEnvelopeForConversation = findCollabEnvelopeForConversation(
+    collaborationListQuery.data,
+    conversationId,
+  );
+  const hasActiveCollab = activeCollabEnvelope !== undefined;
+  const isReadOnly =
+    isFinished || isWorkflowManagedConversation || hasActiveCollab;
   const isBusy =
     sending ||
     sessionStatus === "running" ||
@@ -315,7 +470,7 @@ export default function ConversationDetailPage({
   });
   const commitsQuery = useCommitsQuery(projectName, sessionName);
 
-  const messages = useMemo(
+  const rawMessages = useMemo(
     () => messagesQuery.data ?? [],
     [messagesQuery.data],
   );
@@ -333,6 +488,71 @@ export default function ConversationDetailPage({
     sessionName,
   );
   const tddMutation = useTddToggleMutation(projectName, sessionName);
+  const collaborationStartMutation = useCollaborationStartMutation(
+    projectName,
+    sessionName,
+  );
+  const collabResumeMutation = useCollaborationResumeMutation(
+    projectName,
+    sessionName,
+    collabEnvelopeForConversation?.workflowId ?? "",
+  );
+  const collabStopMutation = useCollaborationStopMutation(
+    projectName,
+    sessionName,
+    collabEnvelopeForConversation?.workflowId ?? "",
+  );
+  const handleCollabStop = useCallback(() => {
+    if (!collabEnvelopeForConversation) return;
+    collabStopMutation.mutate({ conversationId });
+  }, [collabEnvelopeForConversation, collabStopMutation, conversationId]);
+  const collabUserAnswerDrafts = useUserAnswerDrafts(
+    projectName,
+    sessionName,
+    collabEnvelopeForConversation?.workflowId ?? "",
+  );
+  const setCollabUserAnswerDraft = useSetUserAnswerDraft();
+  const clearCollabUserAnswerDrafts = useClearUserAnswerDrafts();
+  const collabPassageProps = useMemo(
+    () =>
+      collabEnvelopeForConversation
+        ? envelopeToCollabPassageProps({
+            workflowId: collabEnvelopeForConversation.workflowId,
+            status: collabEnvelopeForConversation.status,
+            phase: collabEnvelopeForConversation.phase,
+            featureSnapshot: collabEnvelopeForConversation.featureSnapshot,
+          })
+        : null,
+    [collabEnvelopeForConversation],
+  );
+  const collabPassageStatus = collabPassageProps?.status ?? null;
+  const isCollabRunning =
+    collabPassageStatus !== null &&
+    !isCollabPassageTerminal(collabPassageStatus);
+  const collabFinalAnswerText =
+    collabPassageProps && isCollabPassageTerminal(collabPassageProps.status)
+      ? latestFinalAnswerText(collabPassageProps.artifacts)
+      : null;
+  const messages = useMemo(
+    () =>
+      dedupeCollabFinalTranscriptMessage(rawMessages, collabFinalAnswerText),
+    [rawMessages, collabFinalAnswerText],
+  );
+  const referenceDocumentsQuery = useReferenceDocumentsQuery(
+    projectName,
+    sessionName,
+  );
+  const referenceDocuments = referenceDocumentsQuery.data ?? [];
+
+  const handleCollabRefClick = useCallback(
+    (ref: CollaborationReference) => {
+      const docId = resolveRefToDocumentId(ref.artifact, referenceDocuments);
+      if (docId) {
+        openDocById(docId);
+      }
+    },
+    [referenceDocuments, openDocById],
+  );
 
   // --- Prompt streaming ---
   const {
@@ -344,6 +564,29 @@ export default function ConversationDetailPage({
 
   // --- Local state ---
   const [promptText, setPromptText] = useState("");
+  const collabConfigDraft = useCollabConfigDraft(
+    projectName,
+    sessionName,
+    conversationId,
+  );
+  const setCollabConfigDraft = useSetCollabConfigDraft();
+  const clearCollabConfigDraft = useClearCollabConfigDraft();
+  const hasCollabChip = hasCollabPrefix(promptText);
+  const originatingCollabAgent: "claude" | "codex" =
+    activeConversation?.agentBackend === "codex" ? "codex" : "claude";
+  const effectiveCollabConfig = useMemo(
+    () =>
+      collabConfigDraft.secondAgent === originatingCollabAgent
+        ? {
+            ...collabConfigDraft,
+            secondAgent:
+              originatingCollabAgent === "claude"
+                ? ("codex" as const)
+                : ("claude" as const),
+          }
+        : collabConfigDraft,
+    [collabConfigDraft, originatingCollabAgent],
+  );
   // When the user submits a prompt while another conversation in this session
   // is actively running, we surface a confirmation dialog rather than blocking.
   // The pending submission is captured here while the user decides; on
@@ -466,6 +709,30 @@ export default function ConversationDetailPage({
   const conversationEndRef = useRef<HTMLDivElement>(null);
   const currentMsgIndexRef = useRef(currentMsgIndex);
   currentMsgIndexRef.current = currentMsgIndex;
+
+  const [collabPinnedTopTarget, setCollabPinnedTopTarget] =
+    useState<HTMLDivElement | null>(null);
+  const [collabRowEl, setCollabRowEl] = useState<HTMLDivElement | null>(null);
+  const [isCollabPassageInView, setIsCollabPassageInView] =
+    useState<boolean>(false);
+
+  useEffect(() => {
+    if (!collabRowEl) {
+      setIsCollabPassageInView(false);
+      return;
+    }
+    const root = panelBodyRef.current;
+    if (!root) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry) setIsCollabPassageInView(entry.isIntersecting);
+      },
+      { root, threshold: 0 },
+    );
+    observer.observe(collabRowEl);
+    return () => observer.disconnect();
+  }, [collabRowEl]);
 
   // --- Auto-resize textarea to fit content ---
   useEffect(() => {
@@ -630,8 +897,33 @@ export default function ConversationDetailPage({
 
   // --- Virtualizer for conversation messages ---
 
+  const collabRowVisible = collabEnvelopeForConversation !== undefined;
+
+  // Anchor the CollabPassage row directly after the most recent user message
+  // whose text begins with `/collab`. When the trigger message hasn't yet
+  // landed in the transcript (race during start), fall back to appending the
+  // row at the end of the list.
+  const collabAnchorIndex = useMemo(() => {
+    if (!collabRowVisible) return -1;
+    for (let i = displayMessages.length - 1; i >= 0; i--) {
+      const msg = displayMessages[i];
+      if (!msg || msg.role !== "user") continue;
+      if (isCollabTriggerMessage(msg)) return i;
+    }
+    return -1;
+  }, [collabRowVisible, displayMessages]);
+
+  const collabRowVirtualIndex = useMemo(() => {
+    if (!collabRowVisible) return -1;
+    return collabAnchorIndex >= 0
+      ? collabAnchorIndex + 1
+      : displayMessages.length;
+  }, [collabRowVisible, collabAnchorIndex, displayMessages.length]);
+
+  const virtualRowCount = displayMessages.length + (collabRowVisible ? 1 : 0);
+
   const virtualizer = useVirtualizer({
-    count: displayMessages.length,
+    count: virtualRowCount,
     getScrollElement: () => panelBodyRef.current,
     estimateSize: () => 120,
     overscan: 5,
@@ -801,6 +1093,21 @@ export default function ConversationDetailPage({
     const hasImages = pendingImages.length > 0;
     if (!currentText.trim() && !hasImages) return;
 
+    if (hasCollabPrefix(currentText)) {
+      const brief = stripCollabPrefix(currentText).trim();
+      if (!brief) return;
+      setPromptText("");
+      collaborationStartMutation.mutate({
+        brief,
+        negotiationRounds: effectiveCollabConfig.negotiationRounds,
+        autonomousResolutionThreshold:
+          effectiveCollabConfig.autonomousResolutionThreshold,
+        conversationId,
+      });
+      clearCollabConfigDraft(projectName, sessionName, conversationId);
+      return;
+    }
+
     // Queue into running conversation instead of starting a new prompt
     if (sending && conversationId) {
       setPromptText("");
@@ -840,6 +1147,12 @@ export default function ConversationDetailPage({
     conversationId,
     queueMessage,
     pendingImages,
+    collaborationStartMutation,
+    effectiveCollabConfig.negotiationRounds,
+    effectiveCollabConfig.autonomousResolutionThreshold,
+    clearCollabConfigDraft,
+    projectName,
+    sessionName,
     conversations,
     dispatchPrompt,
   ]);
@@ -1342,12 +1655,7 @@ export default function ConversationDetailPage({
                 );
                 if (!conv) return null;
                 return (
-                  <span
-                    className="cc-badge cc-badge--status"
-                    data-status={
-                      conv.agentBackend === "claude" ? "active" : "awaiting"
-                    }
-                  >
+                  <span className="cc-badge" data-backend={conv.agentBackend}>
                     {conv.agentBackend}
                   </span>
                 );
@@ -1497,7 +1805,12 @@ export default function ConversationDetailPage({
                   isBusy={isBusy}
                   selectedModel={selectedModel}
                 >
-                  <div className="conversation">
+                  <div className="conversation" data-backend={selectedBackend}>
+                    <div
+                      ref={setCollabPinnedTopTarget}
+                      className="collab-pinned-top-target"
+                      data-visible={isCollabPassageInView ? "true" : "false"}
+                    />
                     {messagesQuery.isPending ? (
                       <div
                         className="empty-state"
@@ -1507,7 +1820,7 @@ export default function ConversationDetailPage({
                           Loading conversation...
                         </div>
                       </div>
-                    ) : displayMessages.length > 0 ? (
+                    ) : virtualRowCount > 0 ? (
                       <div
                         style={{
                           height: virtualizer.getTotalSize(),
@@ -1518,8 +1831,104 @@ export default function ConversationDetailPage({
                         {virtualizer
                           .getVirtualItems()
                           .map((virtualRow: VirtualItem) => {
-                            const msg = displayMessages[virtualRow.index]!;
-                            const isEditing = editingIndex === virtualRow.index;
+                            if (
+                              collabRowVisible &&
+                              virtualRow.index === collabRowVirtualIndex
+                            ) {
+                              return (
+                                <div
+                                  key="collab-row"
+                                  ref={(el) => {
+                                    virtualizer.measureElement(el);
+                                    setCollabRowEl(el);
+                                  }}
+                                  data-index={virtualRow.index}
+                                  data-collab-row="true"
+                                  style={{
+                                    position: "absolute",
+                                    top: 0,
+                                    left: 0,
+                                    width: "100%",
+                                    transform: `translateY(${virtualRow.start}px)`,
+                                  }}
+                                >
+                                  <CollabPassage
+                                    {...collabPassageProps!}
+                                    onStop={handleCollabStop}
+                                    hideInlinePhaseStrip={isCollabRunning}
+                                    pinnedTopTarget={collabPinnedTopTarget}
+                                    pauseHandlers={
+                                      collabEnvelopeForConversation!.status ===
+                                        "paused" &&
+                                      collabEnvelopeForConversation!.pause
+                                        ?.resumeToken
+                                        ? {
+                                            drafts: collabUserAnswerDrafts,
+                                            onDraftChange: (q, value) =>
+                                              setCollabUserAnswerDraft(
+                                                projectName,
+                                                sessionName,
+                                                collabEnvelopeForConversation!
+                                                  .workflowId,
+                                                q,
+                                                value,
+                                              ),
+                                            onSubmit: () => {
+                                              const resumeToken =
+                                                collabEnvelopeForConversation!
+                                                  .pause!.resumeToken;
+                                              const userAnswers: Record<
+                                                string,
+                                                string
+                                              > = {};
+                                              for (const [
+                                                k,
+                                                v,
+                                              ] of Object.entries(
+                                                collabUserAnswerDrafts,
+                                              )) {
+                                                if (
+                                                  typeof v === "string" &&
+                                                  v.trim().length > 0
+                                                ) {
+                                                  userAnswers[k] = v.trim();
+                                                }
+                                              }
+                                              collabResumeMutation.mutate(
+                                                {
+                                                  resumeToken,
+                                                  conversationId,
+                                                  userAnswers,
+                                                },
+                                                {
+                                                  onSuccess: () => {
+                                                    clearCollabUserAnswerDrafts(
+                                                      projectName,
+                                                      sessionName,
+                                                      collabEnvelopeForConversation!
+                                                        .workflowId,
+                                                    );
+                                                  },
+                                                },
+                                              );
+                                            },
+                                            isSubmitting:
+                                              collabResumeMutation.isPending,
+                                          }
+                                        : undefined
+                                    }
+                                    onRefClick={handleCollabRefClick}
+                                  />
+                                </div>
+                              );
+                            }
+                            const messageIndex =
+                              collabRowVisible &&
+                              virtualRow.index > collabRowVirtualIndex
+                                ? virtualRow.index - 1
+                                : virtualRow.index;
+                            const msg = displayMessages[messageIndex]!;
+                            const isEditing = editingIndex === messageIndex;
                             const isUserMsg = msg.role === "user";
                             return (
                               <div
@@ -1527,7 +1936,7 @@ export default function ConversationDetailPage({
                                 ref={virtualizer.measureElement}
                                 data-index={virtualRow.index}
                                 className={`message ${msg.role}${isEditing ? " editing" : ""}`}
-                                data-msg-index={virtualRow.index}
+                                data-msg-index={messageIndex}
                                 style={{
                                   position: "absolute",
                                   top: 0,
@@ -1577,10 +1986,10 @@ export default function ConversationDetailPage({
                                         ) as { text: string } | undefined
                                       )?.text ?? ""
                                     }
-                                    messageIndex={virtualRow.index}
+                                    messageIndex={messageIndex}
                                     onSave={handleEditSave}
                                     onCancel={cancelEditing}
-                                    saving={forkingIndex === virtualRow.index}
+                                    saving={forkingIndex === messageIndex}
                                   />
                                 ) : (
                                   <div className="message-content">
@@ -1591,8 +2000,7 @@ export default function ConversationDetailPage({
                                   </div>
                                 )}
                                 {!isUserMsg &&
-                                  virtualRow.index ===
-                                    displayMessages.length - 1 &&
+                                  messageIndex === displayMessages.length - 1 &&
                                   activeConversation && (
                                     <DebugActionCard
                                       projectName={projectName}
@@ -1604,7 +2012,7 @@ export default function ConversationDetailPage({
                                   )}
                                 {isUserMsg && !isEditing && (
                                   <MessageActions
-                                    messageIndex={virtualRow.index}
+                                    messageIndex={messageIndex}
                                     content={msg.content}
                                     onFork={handleFork}
                                     onEdit={startEditing}
@@ -1631,11 +2039,15 @@ export default function ConversationDetailPage({
                         </div>
                       </div>
                     )}
-                    {(sending || displayStatus === "running") &&
+                    {!hasActiveCollab &&
+                      (sending || displayStatus === "running") &&
                       (optimisticMessages.some(
                         (m) => m.role === "assistant",
                       ) ? (
-                        <div className="streaming-indicator">
+                        <div
+                          className="streaming-indicator"
+                          data-backend={selectedBackend}
+                        >
                           <div className="typing-dots">
                             <span />
                             <span />
@@ -1643,7 +2055,10 @@ export default function ConversationDetailPage({
                           </div>
                         </div>
                       ) : (
-                        <div className="message assistant typing-indicator">
+                        <div
+                          className="message assistant typing-indicator"
+                          data-backend={selectedBackend}
+                        >
                           <div className="message-role">
                             {selectedBackend === "codex" ? "Codex" : "Claude"}
                           </div>
@@ -1724,9 +2139,36 @@ export default function ConversationDetailPage({
                       onSelect={fileAutocomplete.onSelect}
                       onClose={fileAutocomplete.onClose}
                     />
+                    {hasCollabChip ? (
+                      <CollabConfigRow
+                        config={effectiveCollabConfig}
+                        originatingAgent={originatingCollabAgent}
+                        onChange={(next) =>
+                          setCollabConfigDraft(
+                            projectName,
+                            sessionName,
+                            conversationId,
+                            next,
+                          )
+                        }
+                        onDismiss={() => {
+                          setPromptText(stripCollabPrefix(promptText));
+                          clearCollabConfigDraft(
+                            projectName,
+                            sessionName,
+                            conversationId,
+                          );
+                        }}
+                      />
+                    ) : null}
                     <textarea
                       ref={textareaRef}
                       className="prompt-textarea"
+                      data-backend={selectedBackend}
+                      readOnly={hasActiveCollab}
+                      title={
+                        hasActiveCollab ? COLLAB_RUNNING_TOOLTIP : undefined
+                      }
                       placeholder={
                         isFinished
                           ? "Session is merged and read-only"

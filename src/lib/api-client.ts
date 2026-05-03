@@ -130,10 +130,25 @@ export const activeGraphWorkflowExecutionSchema = z.object({
   startedAt: z.string(),
 });
 
+export const activeCollaborationExecutionSchema = z.object({
+  workflowId: z.string(),
+  status: z.enum(["running", "paused"]),
+  phase: z.string(),
+  projectName: z.string(),
+  projectPath: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
 export const activeConversationsResponseSchema = z.object({
   conversations: z.array(activeConversationSchema),
   graphWorkflowExecutions: z
     .array(activeGraphWorkflowExecutionSchema)
+    .default([]),
+  activeCollaborationExecutions: z
+    .array(activeCollaborationExecutionSchema)
     .default([]),
 });
 
@@ -252,6 +267,11 @@ export const collaborationStartResponseSchema = z.object({
 export const collaborationResumeResponseSchema = z.object({
   workflowId: z.string(),
   status: z.literal("resumed"),
+});
+
+export const collaborationStopResponseSchema = z.object({
+  workflowId: z.string(),
+  status: z.literal("stopped"),
 });
 
 // -- Session mutations --

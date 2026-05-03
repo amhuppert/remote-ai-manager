@@ -53,6 +53,7 @@ function makeState(
         archived?: boolean;
         conversations: ReturnType<typeof makeConversation>[];
         graphWorkflowExecution?: unknown;
+        workflowEnvelopes?: Record<string, unknown>;
       }
     >;
   } = {},
@@ -74,6 +75,9 @@ function makeState(
       tddEnabled: true,
       graphWorkflowExecution: s.graphWorkflowExecution ?? null,
       graphWorkflowExecutionHistory: [],
+      ...(s.workflowEnvelopes
+        ? { workflowEnvelopes: s.workflowEnvelopes }
+        : {}),
     };
   }
 
@@ -357,6 +361,161 @@ describe("GET /api/conversations/active", () => {
 
     expect(body.conversations).toHaveLength(1);
     expect(body.conversations[0].id).toBe("c1");
+  });
+
+  it("returns active collaboration executions read from session.workflowEnvelopes", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [makeConversation({ id: "c1", status: "running" })],
+            workflowEnvelopes: {
+              "collab-running": {
+                workflowId: "collab-running",
+                workflowType: "collaboration",
+                status: "running",
+                phase: "round_2",
+                createdAt: "2026-01-01T10:00:00.000Z",
+                updatedAt: "2026-01-01T10:30:00.000Z",
+                featureSnapshot: {
+                  rounds: 2,
+                  conversationId: "conv-x",
+                },
+              },
+              "collab-paused": {
+                workflowId: "collab-paused",
+                workflowType: "collaboration",
+                status: "paused",
+                phase: "paused_round_2",
+                createdAt: "2026-01-01T11:00:00.000Z",
+                updatedAt: "2026-01-01T11:15:00.000Z",
+                featureSnapshot: { rounds: 2, conversationId: "conv-y" },
+              },
+              "collab-completed": {
+                workflowId: "collab-completed",
+                workflowType: "collaboration",
+                status: "completed",
+                phase: "completed_converged",
+                createdAt: "2026-01-01T09:00:00.000Z",
+                updatedAt: "2026-01-01T09:30:00.000Z",
+                featureSnapshot: {},
+              },
+              "graph-wf-1": {
+                workflowId: "graph-wf-1",
+                workflowType: "graph_workflow",
+                status: "running",
+                phase: "iteration",
+                createdAt: "2026-01-01T12:00:00.000Z",
+                updatedAt: "2026-01-01T12:00:00.000Z",
+                featureSnapshot: {},
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.activeCollaborationExecutions).toHaveLength(2);
+    const ids = body.activeCollaborationExecutions
+      .map((e: { workflowId: string }) => e.workflowId)
+      .sort();
+    expect(ids).toEqual(["collab-paused", "collab-running"]);
+
+    const running = body.activeCollaborationExecutions.find(
+      (e: { workflowId: string }) => e.workflowId === "collab-running",
+    );
+    expect(running).toEqual({
+      workflowId: "collab-running",
+      status: "running",
+      phase: "round_2",
+      projectName: "my-project",
+      projectPath: "/home/user/my-project",
+      sessionName: "my-session",
+      conversationId: "conv-x",
+      createdAt: "2026-01-01T10:00:00.000Z",
+      updatedAt: "2026-01-01T10:30:00.000Z",
+    });
+  });
+
+  it("returns an empty activeCollaborationExecutions array when no envelopes exist", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [makeConversation({ id: "c1", status: "running" })],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.activeCollaborationExecutions).toEqual([]);
+  });
+
+  it("ignores non-collaboration workflow envelopes when computing activeCollaborationExecutions", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [makeConversation({ id: "c1", status: "running" })],
+            workflowEnvelopes: {
+              "graph-wf-1": {
+                workflowId: "graph-wf-1",
+                workflowType: "graph_workflow",
+                status: "running",
+                phase: "iteration",
+                createdAt: "2026-01-01T12:00:00.000Z",
+                updatedAt: "2026-01-01T12:00:00.000Z",
+                featureSnapshot: {},
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.activeCollaborationExecutions).toEqual([]);
+  });
+
+  it("excludes collaboration envelopes from archived sessions", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "archived-session": {
+            sessionName: "archived-session",
+            archived: true,
+            conversations: [],
+            workflowEnvelopes: {
+              "collab-1": {
+                workflowId: "collab-1",
+                workflowType: "collaboration",
+                status: "running",
+                phase: "round_1",
+                createdAt: "2026-01-01T10:00:00.000Z",
+                updatedAt: "2026-01-01T10:00:00.000Z",
+                featureSnapshot: {},
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.activeCollaborationExecutions).toEqual([]);
   });
 
   it("returns 500 when readState fails", async () => {

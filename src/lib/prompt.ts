@@ -13,6 +13,7 @@ import type {
   ConversationToolingOverrides,
   AgentBackendId,
 } from "@/types";
+import type { CollaborationAutonomousResolutionThreshold } from "@/lib/schemas";
 import type { ConversationActorRef } from "./workflows/conversation/machine";
 import type { ConversationEvent } from "./workflows/conversation/types";
 import { createLogger } from "./logging";
@@ -249,14 +250,38 @@ export interface PromptDeps {
     conversationId: string,
     skip: boolean,
   ): void;
+
+  /**
+   * Dispatches a `/collab` prompt to the collaboration manager.
+   *
+   * `executePromptStream` calls this when it detects a /collab prefix instead
+   * of running the normal SUBMIT_PROMPT flow. The dispatcher is responsible
+   * for persisting the user's prompt to the conversation transcript and
+   * starting the collaboration workflow. Returns the workflowId so the caller
+   * can emit a `collab-started` SSE event.
+   */
+  dispatchCollabStart?(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    brief: string;
+    negotiationRounds?: number;
+    autonomousResolutionThreshold?: CollaborationAutonomousResolutionThreshold;
+  }): Promise<{ workflowId: string }>;
 }
 
 let _defaultPromptDeps: PromptDeps | null = null;
+
+const DEFAULT_NEGOTIATION_ROUNDS = 3;
+const DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD: CollaborationAutonomousResolutionThreshold =
+  "major";
 
 async function getDefaultPromptDeps(): Promise<PromptDeps> {
   if (_defaultPromptDeps) return _defaultPromptDeps;
   const manager = await import("./workflows/conversation/manager");
   const runtimeState = await import("./workflows/conversation/runtime-state");
+  const collabModule = await import("./workflows/collaboration/manager");
+  const transcriptMod = await import("./transcript");
   _defaultPromptDeps = {
     getConversation,
     createConversation,
@@ -268,6 +293,33 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
     attachPromptStream: manager.attachPromptStream,
     detachPromptStream: manager.detachPromptStream,
     sendConversationEvent: manager.sendConversationEvent,
+    async dispatchCollabStart(input) {
+      await transcriptMod.safeAppendTranscriptEntry(input.conversationId, {
+        timestamp: new Date().toISOString(),
+        type: "user",
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `/collab ${input.brief}`,
+          },
+        ],
+      });
+      const collabManager = collabModule.getDefaultCollaborationManager();
+      const startInput: Parameters<typeof collabManager.start>[0] = {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        brief: input.brief,
+        negotiationRounds:
+          input.negotiationRounds ?? DEFAULT_NEGOTIATION_ROUNDS,
+        autonomousResolutionThreshold:
+          input.autonomousResolutionThreshold ??
+          DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
+      };
+      const result = await collabManager.start(startInput);
+      return { workflowId: result.workflowId };
+    },
     setTooling: (projectPath, sessionName, conversationId, tooling) => {
       const key = runtimeState.conversationRuntimeKey(
         projectPath,
@@ -341,6 +393,7 @@ export interface PromptStreamOptions {
   // validator, collaboration round responses) opt in explicitly so the SDK
   // enforces their schema; everyone else gets unconstrained text.
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
+  collab?: CollabPromptConfig;
 }
 
 export interface PromptStreamResult {
@@ -350,6 +403,43 @@ export interface PromptStreamResult {
   structuredOutput?: unknown;
   aborted?: boolean;
   error?: string | null;
+}
+
+export interface CollabPromptConfig {
+  negotiationRounds?: number;
+  autonomousResolutionThreshold?: CollaborationAutonomousResolutionThreshold;
+}
+
+export class CollabBriefRequiredError extends Error {
+  readonly statusCode = 400;
+  readonly code = "COLLAB_BRIEF_REQUIRED";
+  constructor() {
+    super("/collab prompt must include a brief after the slash command");
+    this.name = "CollabBriefRequiredError";
+  }
+}
+
+export class CollabDispatcherUnavailableError extends Error {
+  readonly statusCode = 500;
+  readonly code = "COLLAB_DISPATCHER_UNAVAILABLE";
+  constructor() {
+    super(
+      "Collaboration dispatcher is not configured for this prompt executor",
+    );
+    this.name = "CollabDispatcherUnavailableError";
+  }
+}
+
+export function hasCollabPrefix(text: string): boolean {
+  const trimmed = text.trimStart();
+  return trimmed === "/collab" || trimmed.startsWith("/collab ");
+}
+
+export function stripCollabPrefix(text: string): string {
+  const trimmed = text.trimStart();
+  if (trimmed === "/collab") return "";
+  if (trimmed.startsWith("/collab ")) return trimmed.slice("/collab ".length);
+  return trimmed;
 }
 
 /**
@@ -374,6 +464,8 @@ export async function executePromptStream(
   deps?: PromptDeps,
 ): Promise<PromptStreamResult> {
   const resolvedDeps = deps ?? (await getDefaultPromptDeps());
+
+  const isCollab = hasCollabPrefix(promptText);
 
   // Get or create conversation, resolving backend along the way
   let resolvedBackend: AgentBackendId;
@@ -428,6 +520,72 @@ export async function executePromptStream(
       { agentBackend: resolvedBackend },
     );
     conversationId = conversation.id;
+  }
+
+  if (isCollab) {
+    const brief = stripCollabPrefix(promptText).trim();
+    if (brief.length === 0) {
+      logger.warn("prompt.collab_brief_required", {
+        sessionName: session.sessionName,
+        conversationId,
+      });
+      throw new CollabBriefRequiredError();
+    }
+    if (!resolvedDeps.dispatchCollabStart) {
+      logger.error("prompt.collab_dispatcher_unavailable", {
+        sessionName: session.sessionName,
+        conversationId,
+      });
+      throw new CollabDispatcherUnavailableError();
+    }
+    logger.info("prompt.collab_dispatch", {
+      sessionName: session.sessionName,
+      conversationId,
+      briefLength: brief.length,
+    });
+    try {
+      const result = await resolvedDeps.dispatchCollabStart({
+        projectPath,
+        sessionName: session.sessionName,
+        conversationId,
+        brief,
+        ...(options?.collab?.negotiationRounds !== undefined
+          ? { negotiationRounds: options.collab.negotiationRounds }
+          : {}),
+        ...(options?.collab?.autonomousResolutionThreshold !== undefined
+          ? {
+              autonomousResolutionThreshold:
+                options.collab.autonomousResolutionThreshold,
+            }
+          : {}),
+      });
+      emit("collab-started", {
+        workflowId: result.workflowId,
+        conversationId,
+      });
+      emit("done", {});
+      return {
+        conversationId,
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    } catch (err) {
+      const errorMsg =
+        err instanceof Error ? err.message : "Collaboration dispatch failed";
+      logger.error("prompt.collab_dispatch_failed", {
+        sessionName: session.sessionName,
+        conversationId,
+        error: errorMsg,
+      });
+      emit("error", { message: errorMsg });
+      emit("done", {});
+      return {
+        conversationId,
+        contextTokens: null,
+        contextWindowMax: null,
+        error: errorMsg,
+      };
+    }
   }
 
   // Validate model/effort via the backend factory before execution

@@ -13,15 +13,28 @@ import {
   executePromptStream as defaultExecutePromptStream,
   BackendMismatchError,
   ModelEffortValidationError,
+  CollabBriefRequiredError,
+  CollabDispatcherUnavailableError,
+  hasCollabPrefix,
+  stripCollabPrefix,
 } from "@/lib/prompt";
 import { isConversationBusy as defaultIsConversationBusy } from "@/lib/lock";
 import { runPromptRequestSchema } from "@/lib/schemas";
+import {
+  getDefaultCollaborationManager,
+  type CollaborationManager,
+  CollaborationConversationNotFoundError,
+  CollaborationSessionNotFoundError,
+} from "@/lib/workflows/collaboration/manager";
 import type {
   RunPromptRequest,
   SessionState,
   ConversationState,
   ApiError,
 } from "@/types";
+
+const DEFAULT_NEGOTIATION_ROUNDS = 3;
+const DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD = "major" as const;
 
 // ---------------------------------------------------------------------------
 // Deps interface
@@ -44,6 +57,7 @@ export interface PromptRouteDeps {
     conversationId: string,
   ) => boolean;
   executePromptStream: typeof defaultExecutePromptStream;
+  getCollaborationManager: () => CollaborationManager;
 }
 
 const defaultDeps: PromptRouteDeps = {
@@ -52,6 +66,7 @@ const defaultDeps: PromptRouteDeps = {
   getConversation: defaultGetConversation,
   isConversationBusy: defaultIsConversationBusy,
   executePromptStream: defaultExecutePromptStream,
+  getCollaborationManager: getDefaultCollaborationManager,
 };
 
 // ---------------------------------------------------------------------------
@@ -108,6 +123,22 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       );
     }
 
+    const trimmedSessionPrompt = body.prompt.trim();
+    const isSessionCollab = hasCollabPrefix(trimmedSessionPrompt);
+    if (isSessionCollab) {
+      const sessionBrief = stripCollabPrefix(trimmedSessionPrompt).trim();
+      if (sessionBrief.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "/collab prompt must include a brief after the slash command",
+            code: "COLLAB_BRIEF_REQUIRED",
+          } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+    }
+
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
@@ -135,9 +166,35 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             {
               effort: body.effort,
               backend: body.backend,
+              ...(isSessionCollab && body.collab
+                ? {
+                    collab: {
+                      ...(body.collab.negotiationRounds !== undefined
+                        ? { negotiationRounds: body.collab.negotiationRounds }
+                        : {}),
+                      ...(body.collab.autonomousResolutionThreshold !==
+                      undefined
+                        ? {
+                            autonomousResolutionThreshold:
+                              body.collab.autonomousResolutionThreshold,
+                          }
+                        : {}),
+                    },
+                  }
+                : {}),
             },
           );
         } catch (err) {
+          if (err instanceof CollabBriefRequiredError) {
+            emit("error", { message: err.message, code: err.code });
+            emit("done", {});
+            return;
+          }
+          if (err instanceof CollabDispatcherUnavailableError) {
+            emit("error", { message: err.message, code: err.code });
+            emit("done", {});
+            return;
+          }
           if (err instanceof BackendMismatchError) {
             emit("error", { message: err.message, code: "BACKEND_MISMATCH" });
             emit("done", {});
@@ -246,6 +303,53 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
         } satisfies ApiError,
         { status: 400 },
       );
+    }
+
+    const trimmedPrompt = body.prompt.trim();
+    if (hasCollabPrefix(trimmedPrompt)) {
+      const brief = stripCollabPrefix(trimmedPrompt).trim();
+      if (brief.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "/collab prompt must include a brief after the slash command",
+            code: "COLLAB_BRIEF_REQUIRED",
+          } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+      try {
+        const manager = deps.getCollaborationManager();
+        const result = await manager.start({
+          projectPath,
+          sessionName,
+          conversationId,
+          brief,
+          negotiationRounds:
+            body.collab?.negotiationRounds ?? DEFAULT_NEGOTIATION_ROUNDS,
+          autonomousResolutionThreshold:
+            body.collab?.autonomousResolutionThreshold ??
+            DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
+        });
+        const statusUrl = `/api/projects/${encodeURIComponent(name)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(result.workflowId)}`;
+        return NextResponse.json({ ...result, statusUrl }, { status: 202 });
+      } catch (err) {
+        if (err instanceof CollaborationSessionNotFoundError) {
+          return NextResponse.json({ error: err.message } satisfies ApiError, {
+            status: 404,
+          });
+        }
+        if (err instanceof CollaborationConversationNotFoundError) {
+          return NextResponse.json({ error: err.message } satisfies ApiError, {
+            status: 404,
+          });
+        }
+        const message =
+          err instanceof Error ? err.message : "Failed to start collaboration";
+        return NextResponse.json({ error: message } satisfies ApiError, {
+          status: 500,
+        });
+      }
     }
 
     const encoder = new TextEncoder();

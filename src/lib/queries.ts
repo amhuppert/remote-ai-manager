@@ -597,3 +597,42 @@ export function useCollaborationListQuery(
     refetchInterval: options?.refetchInterval,
   });
 }
+
+export type CollaborationArtifactType =
+  | "merged-design"
+  | "transcript"
+  | "open-questions";
+
+export function useCollaborationArtifactQuery(
+  projectName: string,
+  sessionName: string,
+  workflowId: string,
+  artifactType: CollaborationArtifactType,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: collaborationKeys.artifact(
+      projectName,
+      sessionName,
+      workflowId,
+      artifactType,
+    ),
+    queryFn: async () => {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(workflowId)}/artifacts/${encodeURIComponent(artifactType)}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        throw new Error(
+          `Failed to fetch collaboration artifact (${artifactType}): ${response.status}`,
+        );
+      }
+      return response.text();
+    },
+    enabled:
+      (options?.enabled ?? true) &&
+      projectName.length > 0 &&
+      sessionName.length > 0 &&
+      workflowId.length > 0,
+  });
+}

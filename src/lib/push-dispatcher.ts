@@ -177,6 +177,101 @@ export async function pushForGraphWorkflowEvent(
 }
 
 // ============================================================
+// Push for collaboration events
+// ============================================================
+
+export type CollaborationPushInfo =
+  | {
+      kind: "paused-for-user-input";
+      projectName: string;
+      sessionName: string;
+      workflowId: string;
+    }
+  | {
+      kind: "completed-converged";
+      projectName: string;
+      sessionName: string;
+      workflowId: string;
+    }
+  | {
+      kind: "completed-final";
+      projectName: string;
+      sessionName: string;
+      workflowId: string;
+    }
+  | {
+      kind: "completed-unresolved";
+      projectName: string;
+      sessionName: string;
+      workflowId: string;
+      reason: string;
+    }
+  | {
+      kind: "failed";
+      projectName: string;
+      sessionName: string;
+      workflowId: string;
+      agent: string;
+    };
+
+export async function pushForCollaborationEvent(
+  config: PushNotificationConfig | undefined,
+  info: CollaborationPushInfo,
+): Promise<void> {
+  if (!config) return;
+
+  switch (info.kind) {
+    case "paused-for-user-input":
+      await sendPushNotification(config, {
+        trigger: "waiting-for-input",
+        title: "Collab paused — Alex's input needed",
+        message: `Collaboration paused on session ${info.sessionName}`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
+    case "completed-converged":
+      await sendPushNotification(config, {
+        trigger: "workflow-completed",
+        title: "Collab converged — merged report ready",
+        message: `Collaboration converged on session ${info.sessionName}`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
+    case "completed-final":
+      await sendPushNotification(config, {
+        trigger: "workflow-completed",
+        title: "Collab completed — final answer ready",
+        message: `Collaboration completed on session ${info.sessionName}`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
+    case "completed-unresolved":
+      await sendPushNotification(config, {
+        trigger: "workflow-halted",
+        title: "Collab ended unresolved — latest reports are linked",
+        message: `Collaboration ended unresolved on session ${info.sessionName}`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
+    case "failed":
+      await sendPushNotification(config, {
+        trigger: "workflow-halted",
+        title: "Collab failed — see latest reports",
+        message: `Collaboration failed on session ${info.sessionName} (${info.agent})`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
+    default:
+      assertNever(info);
+  }
+}
+
+// ============================================================
 // Fire-and-forget dispatchers (read config internally)
 // ============================================================
 
@@ -199,5 +294,13 @@ export function dispatchPushForGraphWorkflowEvent(
 ): void {
   getPushConfig()
     .then((config) => pushForGraphWorkflowEvent(config, info))
+    .catch(() => {});
+}
+
+export function dispatchPushForCollaborationEvent(
+  info: CollaborationPushInfo,
+): void {
+  getPushConfig()
+    .then((config) => pushForCollaborationEvent(config, info))
     .catch(() => {});
 }

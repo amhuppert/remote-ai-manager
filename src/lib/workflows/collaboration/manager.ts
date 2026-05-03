@@ -1,17 +1,17 @@
 /**
  * Collaboration Mode manager.
  *
- * The thin glue between an HTTP entrypoint and `runCollaborationSlice`. The
- * manager:
+ * The thin glue between an HTTP entrypoint and `runAsymmetricCollaborationSlice`.
+ * The manager:
  *
  *  - validates the start request (Zod schema mirrors the route body),
  *  - resolves the session worktree path so the slice writes artifacts under
  *    `SessionState.worktreePath` only (per the worktree-isolation rule in
  *    CLAUDE.md),
  *  - constructs production deps via `createCollaborationDeps`,
- *  - kicks off `runCollaborationSlice` in the background so the route can
- *    return a `workflowId` immediately (rounds take minutes; the UI polls the
- *    envelope status for progress),
+ *  - kicks off `runAsymmetricCollaborationSlice` in the background so the route
+ *    can return a `workflowId` immediately (rounds take minutes; the UI polls
+ *    the envelope status for progress),
  *  - exposes `getEnvelope` and `listActive` so the route layer can answer
  *    status questions without re-implementing the repository wiring.
  *
@@ -23,17 +23,17 @@
  * later does not require touching the manager's contract.
  */
 
+import path from "node:path";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/errors";
 import {
-  runCollaborationSlice,
-  type CollaborationResumeContext,
-  type CollaborationRoundResponse,
-  type CollaborationSliceDeps,
-  type CollaborationSliceInput,
-  type CollaborationSliceResult,
-} from "./slice";
+  runAsymmetricCollaborationSlice,
+  type AsymmetricCollaborationSliceDeps,
+  type AsymmetricCollaborationSliceInput,
+  type AsymmetricCollaborationSliceResult,
+  type AsymmetricDispatchInfo,
+} from "./asymmetric-slice";
 import { createCollaborationDeps } from "./deps-factory";
 import { createCollaborationProductionCallAgent } from "./agent-caller-production";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
@@ -45,32 +45,44 @@ import {
 } from "@/lib/workflows/primitives/lane-service";
 import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/lane-store";
 import { getSession as defaultGetSession } from "@/lib/state";
-import { collaborationRoundResponseSchema } from "./types";
+import { getConversation as defaultGetConversation } from "@/lib/conversations";
+import type { AgentBackendId } from "@/types";
+import type { AgentSessionRef } from "@/lib/schemas";
+import { collaborationAutonomousResolutionThresholdSchema } from "./types";
+import { dispatchPushForCollaborationEvent } from "@/lib/push-dispatcher";
+import {
+  publishScopedStatusEvent,
+  type PublishScopedStatusEventInput,
+} from "@/lib/workflows/primitives/default-session-status-bus";
 
-function extractTranscriptFromSnapshot(
-  snapshot: Record<string, unknown>,
-): CollaborationRoundResponse[][] {
-  const raw = snapshot["transcript"];
-  if (!Array.isArray(raw)) return [];
-  const result: CollaborationRoundResponse[][] = [];
-  for (const round of raw) {
-    if (!Array.isArray(round)) continue;
-    const parsed: CollaborationRoundResponse[] = [];
-    for (const entry of round) {
-      const candidate = collaborationRoundResponseSchema.safeParse(entry);
-      if (candidate.success) parsed.push(candidate.data);
-    }
-    result.push(parsed);
+function extractConversationIdFromEnvelope(
+  envelope: WorkflowEnvelope,
+): string | null {
+  const snapshot = envelope.featureSnapshot;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return null;
   }
-  return result;
+  const candidate = (snapshot as Record<string, unknown>)["conversationId"];
+  return typeof candidate === "string" && candidate.length > 0
+    ? candidate
+    : null;
+}
+
+function extractCompletedRounds(snapshot: Record<string, unknown>): number {
+  const candidate = snapshot["negotiationRoundsCompleted"];
+  return typeof candidate === "number" && Number.isFinite(candidate)
+    ? candidate
+    : 0;
 }
 
 const logger = createLogger("workflows.collaboration.manager");
 
 export const collaborationStartRequestSchema = z.object({
   brief: z.string().trim().min(1, "brief is required"),
-  maxIterations: z.number().int().min(1).max(20),
-  scribeBackend: z.enum(["claude", "codex"]),
+  negotiationRounds: z.number().int().min(1).max(20),
+  autonomousResolutionThreshold:
+    collaborationAutonomousResolutionThresholdSchema,
+  conversationId: z.string().trim().min(1, "conversationId is required"),
 });
 export type CollaborationStartRequest = z.infer<
   typeof collaborationStartRequestSchema
@@ -78,10 +90,18 @@ export type CollaborationStartRequest = z.infer<
 
 export const collaborationResumeRequestSchema = z.object({
   resumeToken: z.string().trim().min(1, "resumeToken is required"),
+  conversationId: z.string().trim().min(1, "conversationId is required"),
   userAnswers: z.record(z.string(), z.string()).default({}),
 });
 export type CollaborationResumeRequest = z.infer<
   typeof collaborationResumeRequestSchema
+>;
+
+export const collaborationStopRequestSchema = z.object({
+  conversationId: z.string().trim().min(1, "conversationId is required"),
+});
+export type CollaborationStopRequest = z.infer<
+  typeof collaborationStopRequestSchema
 >;
 
 export interface CollaborationManagerStartInput extends CollaborationStartRequest {
@@ -94,8 +114,29 @@ export interface CollaborationManagerStartResult {
   status: "started";
 }
 
+export interface CollaborationManagerStopInput extends CollaborationStopRequest {
+  projectPath: string;
+  sessionName: string;
+  workflowId: string;
+}
+
+export interface CollaborationManagerStopResult {
+  workflowId: string;
+  status: "stopped";
+}
+
 export interface CollaborationManagerSessionResolution {
   worktreePath: string;
+}
+
+export interface CollaborationManagerConversationResolution {
+  agentBackend: AgentBackendId;
+  /**
+   * The conversation's stored backend session ref. The manager forwards
+   * this onto the slice as `priorBackendRef` so Agent One's first turn can
+   * resume the originating conversation's backend session.
+   */
+  backendRef?: AgentSessionRef | null;
 }
 
 export interface CollaborationManagerDeps {
@@ -110,6 +151,28 @@ export interface CollaborationManagerDeps {
   }): Promise<CollaborationManagerSessionResolution | null>;
 
   /**
+   * Resolves the active conversation referenced by the start payload so the
+   * manager can derive the originating agent (and synthesizer) from the
+   * conversation's `agentBackend`. Returning `null` means the conversation
+   * does not exist within the session; the manager surfaces this as a typed
+   * error to the caller.
+   */
+  resolveConversation(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): Promise<CollaborationManagerConversationResolution | null>;
+
+  /**
+   * Tracks abort signals for in-flight collaboration runs so a stop request
+   * can interrupt the slice between rounds. The default implementation uses
+   * a process-local Map keyed by `workflowId`. Tests can substitute a
+   * deterministic registry to assert stop signaling without relying on
+   * shared module state.
+   */
+  stopRegistry: CollaborationStopRegistry;
+
+  /**
    * Builds the slice deps. Production wiring composes `createCollaborationDeps`
    * with a real `callAgent`; tests inject deterministic deps here. Receives
    * an optional `laneService` so the manager can share one LaneService
@@ -120,9 +183,9 @@ export interface CollaborationManagerDeps {
     projectPath: string;
     sessionName: string;
     worktreePath: string;
-    callAgent: CollaborationSliceDeps["callAgent"];
+    callAgent: AsymmetricCollaborationSliceDeps["callAgent"];
     laneService?: LaneService;
-  }): CollaborationSliceDeps;
+  }): AsymmetricCollaborationSliceDeps;
 
   /**
    * Constructs the per-run LaneService that the manager will share between
@@ -149,17 +212,17 @@ export interface CollaborationManagerDeps {
     worktreePath: string;
     workflowId: string;
     laneService: LaneService;
-  }): CollaborationSliceDeps["callAgent"];
+  }): AsymmetricCollaborationSliceDeps["callAgent"];
 
   /**
-   * Runs the slice. Production uses the imported `runCollaborationSlice`;
-   * tests can substitute a deterministic implementation that resolves with a
-   * scripted result.
+   * Runs the slice. Production uses the imported
+   * `runAsymmetricCollaborationSlice`; tests can substitute a deterministic
+   * implementation that resolves with a scripted result.
    */
   runSlice(
-    input: CollaborationSliceInput,
-    deps: CollaborationSliceDeps,
-  ): Promise<CollaborationSliceResult>;
+    input: AsymmetricCollaborationSliceInput,
+    deps: AsymmetricCollaborationSliceDeps,
+  ): Promise<AsymmetricCollaborationSliceResult>;
 
   /**
    * Builds the envelope repository scoped to a single session. Defaults to
@@ -170,9 +233,65 @@ export interface CollaborationManagerDeps {
     sessionName: string;
   }): WorkflowEnvelopeRepository;
 
+  publishStatus(
+    input: Omit<
+      PublishScopedStatusEventInput,
+      "scope" | "scopeId" | "projectName" | "sessionName"
+    > & {
+      projectPath: string;
+      sessionName: string;
+      workflowId: string;
+    },
+  ): void;
+
+  dispatchPush(
+    input: AsymmetricDispatchInfo & {
+      projectPath: string;
+      sessionName: string;
+    },
+  ): void;
+
   newWorkflowId(): string;
   now(): string;
 }
+
+/**
+ * Registers and signals abort controllers per workflow so the manager can
+ * interrupt a running slice when a stop request arrives. The slice is
+ * expected to observe `signalFor(workflowId)` between rounds and break out
+ * to a `completed_unresolved` finalization with reason `user_stopped`.
+ */
+export interface CollaborationStopRegistry {
+  register(workflowId: string): AbortController;
+  signal(workflowId: string): boolean;
+  signalFor(workflowId: string): AbortSignal | null;
+  release(workflowId: string): void;
+}
+
+export function createInMemoryCollaborationStopRegistry(): CollaborationStopRegistry {
+  const controllers = new Map<string, AbortController>();
+  return {
+    register(workflowId) {
+      const controller = new AbortController();
+      controllers.set(workflowId, controller);
+      return controller;
+    },
+    signal(workflowId) {
+      const controller = controllers.get(workflowId);
+      if (!controller) return false;
+      if (!controller.signal.aborted) controller.abort();
+      return true;
+    },
+    signalFor(workflowId) {
+      return controllers.get(workflowId)?.signal ?? null;
+    },
+    release(workflowId) {
+      controllers.delete(workflowId);
+    },
+  };
+}
+
+const defaultStopRegistry = createInMemoryCollaborationStopRegistry();
 
 const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
   input,
@@ -195,6 +314,16 @@ const defaultDeps: CollaborationManagerDeps = {
     if (!session) return null;
     return { worktreePath: session.worktreePath };
   },
+  async resolveConversation(input) {
+    const conv = await defaultGetConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    if (!conv) return null;
+    return { agentBackend: conv.agentBackend, backendRef: conv.backendRef };
+  },
+  stopRegistry: defaultStopRegistry,
   createDeps(input) {
     return createCollaborationDeps({
       projectPath: input.projectPath,
@@ -212,11 +341,39 @@ const defaultDeps: CollaborationManagerDeps = {
       }),
     }),
   buildCallAgent: defaultBuildCallAgent,
-  runSlice: runCollaborationSlice,
+  runSlice: runAsymmetricCollaborationSlice,
   createEnvelopeRepository(input) {
     return createSessionWorkflowEnvelopeRepositoryForProduction({
       projectPath: input.projectPath,
       sessionName: input.sessionName,
+    });
+  },
+  publishStatus(input) {
+    const projectName = path.basename(input.projectPath);
+    const outcome = publishScopedStatusEvent({
+      scope: "collaboration",
+      scopeId: input.workflowId,
+      status: input.status,
+      timestamp: input.timestamp,
+      projectName,
+      sessionName: input.sessionName,
+      payload: input.payload,
+      reason: input.reason,
+    });
+    if (!outcome.delivered) {
+      logger.warn("collaboration.manager.status_bus.sse_delivery_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        workflowId: input.workflowId,
+        status: input.status,
+        error: outcome.error ? getErrorMessage(outcome.error) : "unknown",
+      });
+    }
+  },
+  dispatchPush(input) {
+    dispatchPushForCollaborationEvent({
+      ...input,
+      projectName: path.basename(input.projectPath),
     });
   },
   newWorkflowId: () => crypto.randomUUID(),
@@ -230,6 +387,19 @@ export class CollaborationSessionNotFoundError extends Error {
   ) {
     super(`Session "${sessionName}" not found under project "${projectPath}"`);
     this.name = "CollaborationSessionNotFoundError";
+  }
+}
+
+export class CollaborationConversationNotFoundError extends Error {
+  constructor(
+    public readonly projectPath: string,
+    public readonly sessionName: string,
+    public readonly conversationId: string,
+  ) {
+    super(
+      `Conversation "${conversationId}" not found in session "${sessionName}" under project "${projectPath}"`,
+    );
+    this.name = "CollaborationConversationNotFoundError";
   }
 }
 
@@ -247,6 +417,19 @@ export class CollaborationResumeTokenMismatchError extends Error {
   }
 }
 
+export class CollaborationConversationMismatchError extends Error {
+  constructor(
+    public readonly workflowId: string,
+    public readonly expectedConversationId: string,
+    public readonly suppliedConversationId: string,
+  ) {
+    super(
+      `Workflow "${workflowId}" belongs to conversation "${expectedConversationId}", not "${suppliedConversationId}"`,
+    );
+    this.name = "CollaborationConversationMismatchError";
+  }
+}
+
 export class CollaborationNotPausedError extends Error {
   constructor(
     public readonly workflowId: string,
@@ -256,6 +439,18 @@ export class CollaborationNotPausedError extends Error {
       `Workflow "${workflowId}" is not paused (status=${status}); resume only valid for paused workflows`,
     );
     this.name = "CollaborationNotPausedError";
+  }
+}
+
+export class CollaborationNotStoppableError extends Error {
+  constructor(
+    public readonly workflowId: string,
+    public readonly status: string,
+  ) {
+    super(
+      `Workflow "${workflowId}" is not stoppable (status=${status}); stop only valid for running or paused workflows`,
+    );
+    this.name = "CollaborationNotStoppableError";
   }
 }
 
@@ -277,6 +472,9 @@ export interface CollaborationManager {
   resume(
     input: CollaborationManagerResumeInput,
   ): Promise<CollaborationManagerResumeResult>;
+  stop(
+    input: CollaborationManagerStopInput,
+  ): Promise<CollaborationManagerStopResult>;
   getEnvelope(input: {
     projectPath: string;
     sessionName: string;
@@ -301,8 +499,9 @@ export function createCollaborationManager(
     async start(input) {
       const parsed = collaborationStartRequestSchema.parse({
         brief: input.brief,
-        maxIterations: input.maxIterations,
-        scribeBackend: input.scribeBackend,
+        negotiationRounds: input.negotiationRounds,
+        autonomousResolutionThreshold: input.autonomousResolutionThreshold,
+        conversationId: input.conversationId,
       });
 
       const session = await deps.resolveSession({
@@ -315,6 +514,21 @@ export function createCollaborationManager(
           input.sessionName,
         );
       }
+
+      const conversation = await deps.resolveConversation({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: parsed.conversationId,
+      });
+      if (!conversation) {
+        throw new CollaborationConversationNotFoundError(
+          input.projectPath,
+          input.sessionName,
+          parsed.conversationId,
+        );
+      }
+
+      const primaryAgentBackend: AgentBackendId = conversation.agentBackend;
 
       const workflowId = deps.newWorkflowId();
       const sessionKey = `${input.projectPath}::${input.sessionName}`;
@@ -340,21 +554,30 @@ export function createCollaborationManager(
         laneService,
       });
 
-      const sliceInput: CollaborationSliceInput = {
+      const stopController = deps.stopRegistry.register(workflowId);
+
+      const sliceInput: AsymmetricCollaborationSliceInput = {
         workflowId,
         brief: parsed.brief,
         worktreePath: session.worktreePath,
         sessionKey,
-        maxIterations: parsed.maxIterations,
-        scribeBackend: parsed.scribeBackend,
+        primaryAgentBackend,
+        negotiationRounds: parsed.negotiationRounds,
+        autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
+        conversationId: parsed.conversationId,
+        priorBackendRef: conversation.backendRef ?? undefined,
+        stopSignal: stopController.signal,
       };
 
       logger.info("collaboration.manager.start", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         workflowId,
-        maxIterations: parsed.maxIterations,
-        scribeBackend: parsed.scribeBackend,
+        negotiationRounds: parsed.negotiationRounds,
+        autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
+        primaryAgentBackend,
+        conversationId: parsed.conversationId,
+        priorBackendRefBackend: conversation.backendRef?.backend ?? null,
       });
 
       void deps
@@ -374,6 +597,9 @@ export function createCollaborationManager(
             workflowId,
             error: getErrorMessage(err),
           });
+        })
+        .finally(() => {
+          deps.stopRegistry.release(workflowId);
         });
 
       return { workflowId, status: "started" };
@@ -382,6 +608,7 @@ export function createCollaborationManager(
     async resume(input) {
       const parsed = collaborationResumeRequestSchema.parse({
         resumeToken: input.resumeToken,
+        conversationId: input.conversationId,
         userAnswers: input.userAnswers,
       });
 
@@ -393,6 +620,17 @@ export function createCollaborationManager(
       const envelope = await repo.get(input.workflowId);
       if (!envelope) {
         throw new CollaborationWorkflowNotFoundError(input.workflowId);
+      }
+      const ownedConversationId = extractConversationIdFromEnvelope(envelope);
+      if (
+        ownedConversationId === null ||
+        ownedConversationId !== parsed.conversationId
+      ) {
+        throw new CollaborationConversationMismatchError(
+          input.workflowId,
+          ownedConversationId ?? "<unknown>",
+          parsed.conversationId,
+        );
       }
       if (envelope.status !== "paused") {
         throw new CollaborationNotPausedError(
@@ -426,47 +664,39 @@ export function createCollaborationManager(
         typeof existingSnapshot["brief"] === "string"
           ? (existingSnapshot["brief"] as string)
           : "";
-      const maxIterations =
-        typeof existingSnapshot["maxIterations"] === "number"
-          ? (existingSnapshot["maxIterations"] as number)
+      const negotiationRounds =
+        typeof existingSnapshot["negotiationRounds"] === "number"
+          ? (existingSnapshot["negotiationRounds"] as number)
           : 5;
-      const scribeBackend: "claude" | "codex" =
-        existingSnapshot["scribeBackend"] === "claude" ||
-        existingSnapshot["scribeBackend"] === "codex"
-          ? (existingSnapshot["scribeBackend"] as "claude" | "codex")
+      const primaryAgentBackend: AgentBackendId =
+        existingSnapshot["primaryAgentBackend"] === "claude" ||
+        existingSnapshot["primaryAgentBackend"] === "codex"
+          ? (existingSnapshot["primaryAgentBackend"] as AgentBackendId)
           : "claude";
-      const completedRounds =
-        typeof existingSnapshot["rounds"] === "number"
-          ? (existingSnapshot["rounds"] as number)
-          : 0;
+      const autonomousResolutionThreshold =
+        collaborationAutonomousResolutionThresholdSchema.safeParse(
+          existingSnapshot["autonomousResolutionThreshold"],
+        );
+      const conversationId = parsed.conversationId;
+      const completedRounds = extractCompletedRounds(existingSnapshot);
 
-      const priorTranscript = extractTranscriptFromSnapshot(existingSnapshot);
-
-      const priorAnswers =
-        existingSnapshot["userAnswersByRound"] &&
-        typeof existingSnapshot["userAnswersByRound"] === "object"
-          ? (existingSnapshot["userAnswersByRound"] as Record<
+      const priorAnswersByQuestionId =
+        existingSnapshot["userAnswersByQuestionId"] &&
+        typeof existingSnapshot["userAnswersByQuestionId"] === "object" &&
+        !Array.isArray(existingSnapshot["userAnswersByQuestionId"])
+          ? (existingSnapshot["userAnswersByQuestionId"] as Record<
               string,
-              Record<string, string>
+              string
             >)
           : {};
-      const userAnswersByRound: Record<number, Record<string, string>> = {};
-      for (const [k, v] of Object.entries(priorAnswers)) {
-        const n = Number(k);
-        if (Number.isFinite(n)) userAnswersByRound[n] = v;
-      }
-      userAnswersByRound[completedRounds] = parsed.userAnswers;
+      const userAnswersByQuestionId: Record<string, string> = {
+        ...priorAnswersByQuestionId,
+        ...parsed.userAnswers,
+      };
 
-      const userAnswersByRoundString: Record<
-        string,
-        Record<string, string>
-      > = {};
-      for (const [k, v] of Object.entries(userAnswersByRound)) {
-        userAnswersByRoundString[String(k)] = v;
-      }
       const updatedSnapshot: Record<string, unknown> = {
         ...existingSnapshot,
-        userAnswersByRound: userAnswersByRoundString,
+        userAnswersByQuestionId,
       };
 
       await repo.update(input.workflowId, {
@@ -494,20 +724,21 @@ export function createCollaborationManager(
         laneService,
       });
 
-      const resumeContext: CollaborationResumeContext = {
-        resumeFromRound: completedRounds,
-        priorTranscript,
-        userAnswersByRound,
-      };
+      const stopController = deps.stopRegistry.register(input.workflowId);
 
-      const sliceInput: CollaborationSliceInput = {
+      const sliceInput: AsymmetricCollaborationSliceInput = {
         workflowId: input.workflowId,
         brief,
         worktreePath: session.worktreePath,
         sessionKey,
-        maxIterations,
-        scribeBackend,
-        resume: resumeContext,
+        primaryAgentBackend,
+        negotiationRounds,
+        autonomousResolutionThreshold: autonomousResolutionThreshold.success
+          ? autonomousResolutionThreshold.data
+          : "major",
+        conversationId,
+        stopSignal: stopController.signal,
+        resume: { userAnswersByQuestionId },
       };
 
       logger.info("collaboration.manager.resume", {
@@ -515,7 +746,7 @@ export function createCollaborationManager(
         sessionName: input.sessionName,
         workflowId: input.workflowId,
         userAnswerCount: Object.keys(parsed.userAnswers).length,
-        resumeFromRound: completedRounds,
+        completedRounds,
       });
 
       void deps
@@ -535,9 +766,126 @@ export function createCollaborationManager(
             workflowId: input.workflowId,
             error: getErrorMessage(err),
           });
+        })
+        .finally(() => {
+          deps.stopRegistry.release(input.workflowId);
         });
 
       return { workflowId: input.workflowId, status: "resumed" as const };
+    },
+
+    async stop(input) {
+      const parsed = collaborationStopRequestSchema.parse({
+        conversationId: input.conversationId,
+      });
+
+      const repo = deps.createEnvelopeRepository({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+      });
+
+      const envelope = await repo.get(input.workflowId);
+      if (!envelope) {
+        throw new CollaborationWorkflowNotFoundError(input.workflowId);
+      }
+      const ownedConversationId = extractConversationIdFromEnvelope(envelope);
+      if (
+        ownedConversationId === null ||
+        ownedConversationId !== parsed.conversationId
+      ) {
+        throw new CollaborationConversationMismatchError(
+          input.workflowId,
+          ownedConversationId ?? "<unknown>",
+          parsed.conversationId,
+        );
+      }
+      if (envelope.status !== "running" && envelope.status !== "paused") {
+        throw new CollaborationNotStoppableError(
+          input.workflowId,
+          envelope.status,
+        );
+      }
+
+      // Signal any in-flight slice so it can break out between rounds. The
+      // slice is responsible for transitioning the envelope to the
+      // unresolved terminal state via finalizeUnresolved.
+      const signaled = deps.stopRegistry.signal(input.workflowId);
+
+      // Always perform a direct envelope transition so that callers (and
+      // tests) observe a terminal completed_unresolved state even if no
+      // slice was running locally — e.g. paused workflows or workflows
+      // resumed across process restarts.
+      const existingSnapshot =
+        envelope.featureSnapshot &&
+        typeof envelope.featureSnapshot === "object" &&
+        !Array.isArray(envelope.featureSnapshot)
+          ? (envelope.featureSnapshot as Record<string, unknown>)
+          : {};
+      const nextSnapshot: Record<string, unknown> = { ...existingSnapshot };
+      nextSnapshot["status"] = "completed_unresolved";
+      nextSnapshot["unresolvedReason"] = "user_stopped";
+      const completedRounds = extractCompletedRounds(nextSnapshot);
+
+      await repo.update(input.workflowId, {
+        status: "completed",
+        phase: "asymmetric_user_stopped",
+        errorSummary: "Run stopped by user before convergence",
+        featureSnapshot: nextSnapshot,
+        ...(envelope.pause !== undefined ? { pause: undefined } : {}),
+      });
+
+      try {
+        deps.publishStatus({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          workflowId: input.workflowId,
+          status: "completed",
+          timestamp: deps.now(),
+          reason: "user_stopped",
+          payload: {
+            kind: "completed_unresolved",
+            reason: "user_stopped",
+            negotiationRoundsCompleted: completedRounds,
+          },
+        });
+      } catch (err) {
+        logger.warn("collaboration.manager.stop_status_publish_failed", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          workflowId: input.workflowId,
+          error: getErrorMessage(err),
+        });
+      }
+
+      if (!signaled) {
+        try {
+          deps.dispatchPush({
+            kind: "completed-unresolved",
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            workflowId: input.workflowId,
+            reason: "user_stopped",
+          });
+        } catch (err) {
+          logger.warn("collaboration.manager.stop_push_dispatch_failed", {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            workflowId: input.workflowId,
+            error: getErrorMessage(err),
+          });
+        }
+      }
+
+      logger.info("collaboration.manager.stop", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        workflowId: input.workflowId,
+        conversationId: parsed.conversationId,
+        signaledRunningSlice: signaled,
+        directTerminalPushDispatched: !signaled,
+      });
+
+      return { workflowId: input.workflowId, status: "stopped" as const };
     },
 
     async getEnvelope(input) {

@@ -1,103 +1,22 @@
 /**
  * Tests for the Collaboration UI store.
  *
- * The store only holds ephemeral UI drafts (brief, selected workflow, user
- * answer drafts) — it does not own any server state. These tests exercise
- * the per-session/per-workflow scoping so a draft for session A cannot
- * leak into session B.
+ * The store only holds ephemeral UI drafts (user answer drafts when a paused
+ * workflow needs input, and per-conversation /collab config drafts) — it does
+ * not own any server state. These tests exercise the per-(session,workflow)
+ * and per-conversation scoping so a draft for one scope cannot leak into
+ * another.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { useCollaborationStore } from "./collaboration.store";
+import {
+  DEFAULT_COLLAB_CONFIG_DRAFT,
+  useCollaborationStore,
+} from "./collaboration.store";
 
 afterEach(() => {
   useCollaborationStore.setState({
-    briefDraftsBySession: {},
-    selectedWorkflowIdBySession: {},
     userAnswerDraftsByWorkflow: {},
-  });
-});
-
-describe("collaboration store — brief drafts", () => {
-  it("stores a brief draft scoped to the project+session pair", () => {
-    useCollaborationStore
-      .getState()
-      .setBriefDraft("proj", "sess-a", { brief: "design X" });
-
-    expect(
-      useCollaborationStore.getState().briefDraftsBySession["proj::sess-a"]
-        ?.brief,
-    ).toBe("design X");
-    expect(
-      useCollaborationStore.getState().briefDraftsBySession["proj::sess-b"],
-    ).toBeUndefined();
-  });
-
-  it("merges patches into the existing draft, preserving other fields", () => {
-    useCollaborationStore
-      .getState()
-      .setBriefDraft("proj", "sess-a", { brief: "design X" });
-    useCollaborationStore
-      .getState()
-      .setBriefDraft("proj", "sess-a", { maxIterations: 6 });
-
-    const draft =
-      useCollaborationStore.getState().briefDraftsBySession["proj::sess-a"];
-    expect(draft).toMatchObject({ brief: "design X", maxIterations: 6 });
-  });
-
-  it("clears a draft for one session without affecting others", () => {
-    useCollaborationStore
-      .getState()
-      .setBriefDraft("proj", "sess-a", { brief: "A" });
-    useCollaborationStore
-      .getState()
-      .setBriefDraft("proj", "sess-b", { brief: "B" });
-    useCollaborationStore.getState().clearBriefDraft("proj", "sess-a");
-
-    expect(
-      useCollaborationStore.getState().briefDraftsBySession["proj::sess-a"],
-    ).toBeUndefined();
-    expect(
-      useCollaborationStore.getState().briefDraftsBySession["proj::sess-b"]
-        ?.brief,
-    ).toBe("B");
-  });
-});
-
-describe("collaboration store — selected workflow", () => {
-  it("scopes selection per session", () => {
-    useCollaborationStore
-      .getState()
-      .setSelectedWorkflowId("proj", "sess-a", "wf-1");
-    useCollaborationStore
-      .getState()
-      .setSelectedWorkflowId("proj", "sess-b", "wf-2");
-
-    expect(
-      useCollaborationStore.getState().selectedWorkflowIdBySession[
-        "proj::sess-a"
-      ],
-    ).toBe("wf-1");
-    expect(
-      useCollaborationStore.getState().selectedWorkflowIdBySession[
-        "proj::sess-b"
-      ],
-    ).toBe("wf-2");
-  });
-
-  it("clears selection when set to null", () => {
-    useCollaborationStore
-      .getState()
-      .setSelectedWorkflowId("proj", "sess-a", "wf-1");
-    useCollaborationStore
-      .getState()
-      .setSelectedWorkflowId("proj", "sess-a", null);
-
-    expect(
-      useCollaborationStore.getState().selectedWorkflowIdBySession[
-        "proj::sess-a"
-      ],
-    ).toBeNull();
+    collabConfigDraftsByConversation: {},
   });
 });
 
@@ -128,5 +47,50 @@ describe("collaboration store — user answer drafts", () => {
 
     const drafts = useCollaborationStore.getState().userAnswerDraftsByWorkflow;
     expect(drafts["proj::sess-a::wf-1"]).toBeUndefined();
+  });
+});
+
+describe("collaboration store — /collab config drafts", () => {
+  it("scopes drafts per conversation", () => {
+    useCollaborationStore
+      .getState()
+      .setCollabConfigDraft("proj", "sess-a", "conv-1", {
+        ...DEFAULT_COLLAB_CONFIG_DRAFT,
+        negotiationRounds: 5,
+      });
+    useCollaborationStore
+      .getState()
+      .setCollabConfigDraft("proj", "sess-a", "conv-2", {
+        ...DEFAULT_COLLAB_CONFIG_DRAFT,
+        secondAgent: "claude",
+      });
+
+    const drafts =
+      useCollaborationStore.getState().collabConfigDraftsByConversation;
+    expect(drafts["proj::sess-a::conv-1"]?.negotiationRounds).toBe(5);
+    expect(drafts["proj::sess-a::conv-2"]?.secondAgent).toBe("claude");
+  });
+
+  it("clears a draft for one conversation without affecting others", () => {
+    useCollaborationStore
+      .getState()
+      .setCollabConfigDraft("proj", "sess-a", "conv-1", {
+        ...DEFAULT_COLLAB_CONFIG_DRAFT,
+        negotiationRounds: 7,
+      });
+    useCollaborationStore
+      .getState()
+      .setCollabConfigDraft("proj", "sess-a", "conv-2", {
+        ...DEFAULT_COLLAB_CONFIG_DRAFT,
+        negotiationRounds: 9,
+      });
+    useCollaborationStore
+      .getState()
+      .clearCollabConfigDraft("proj", "sess-a", "conv-1");
+
+    const drafts =
+      useCollaborationStore.getState().collabConfigDraftsByConversation;
+    expect(drafts["proj::sess-a::conv-1"]).toBeUndefined();
+    expect(drafts["proj::sess-a::conv-2"]?.negotiationRounds).toBe(9);
   });
 });

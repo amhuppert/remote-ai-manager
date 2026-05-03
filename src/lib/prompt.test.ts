@@ -25,6 +25,8 @@ import {
   createPromptExecutor,
   BackendMismatchError,
   ModelEffortValidationError,
+  hasCollabPrefix,
+  stripCollabPrefix,
   type PromptDeps,
 } from "./prompt";
 
@@ -857,5 +859,194 @@ describe("executePromptStream (facade)", () => {
     );
 
     expect(deps.sendConversationEvent).toHaveBeenCalled();
+  });
+});
+
+describe("/collab prompt interception", () => {
+  describe("hasCollabPrefix", () => {
+    it("returns true for exact /collab", () => {
+      expect(hasCollabPrefix("/collab")).toBe(true);
+    });
+
+    it("returns true for /collab with trailing space and brief", () => {
+      expect(hasCollabPrefix("/collab fix the bug")).toBe(true);
+    });
+
+    it("returns true with leading whitespace before /collab", () => {
+      expect(hasCollabPrefix("  /collab brief")).toBe(true);
+    });
+
+    it("returns false for prompts not starting with /collab", () => {
+      expect(hasCollabPrefix("hello /collab")).toBe(false);
+      expect(hasCollabPrefix("/collaborate")).toBe(false);
+    });
+  });
+
+  describe("stripCollabPrefix", () => {
+    it("returns empty string for exact /collab", () => {
+      expect(stripCollabPrefix("/collab")).toBe("");
+    });
+
+    it("strips /collab and the following space", () => {
+      expect(stripCollabPrefix("/collab fix the bug")).toBe("fix the bug");
+    });
+
+    it("preserves whitespace within the brief", () => {
+      expect(stripCollabPrefix("/collab  multi  word")).toBe(" multi  word");
+    });
+  });
+
+  describe("executePromptStream dispatch", () => {
+    it("dispatches /collab to dispatchCollabStart instead of submitting a prompt", async () => {
+      const dispatchCollabStart = vi
+        .fn()
+        .mockResolvedValue({ workflowId: "wf-1" });
+      deps = createTestDeps({ dispatchCollabStart });
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      const result = await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/collab build the migration plan",
+        vi.fn(),
+        "conv-123",
+      );
+
+      expect(dispatchCollabStart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: "/projects/repo",
+          sessionName: "test-session",
+          conversationId: "conv-123",
+          brief: "build the migration plan",
+        }),
+      );
+      expect(deps.sendConversationEvent).not.toHaveBeenCalled();
+      expect(result.conversationId).toBe("conv-123");
+    });
+
+    it("creates a conversation when /collab arrives without conversationId", async () => {
+      const dispatchCollabStart = vi
+        .fn()
+        .mockResolvedValue({ workflowId: "wf-2" });
+      deps = createTestDeps({ dispatchCollabStart });
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      const result = await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/collab refactor the auth flow",
+        vi.fn(),
+      );
+
+      expect(deps.createConversation).toHaveBeenCalledWith(
+        "/projects/repo",
+        "test-session",
+        { agentBackend: "claude" },
+      );
+      expect(dispatchCollabStart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationId: "conv-123",
+          brief: "refactor the auth flow",
+        }),
+      );
+      expect(result.conversationId).toBe("conv-123");
+    });
+
+    it("emits collab-started SSE event with workflowId and done", async () => {
+      const dispatchCollabStart = vi
+        .fn()
+        .mockResolvedValue({ workflowId: "wf-3" });
+      deps = createTestDeps({ dispatchCollabStart });
+      const events: Array<[string, unknown]> = [];
+      const emit = (event: string, data: unknown) => events.push([event, data]);
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/collab fix the bug",
+        emit,
+        "conv-123",
+      );
+
+      const started = events.find(([e]) => e === "collab-started");
+      expect(started).toBeTruthy();
+      expect(started?.[1]).toMatchObject({ workflowId: "wf-3" });
+      expect(events.find(([e]) => e === "done")).toBeTruthy();
+    });
+
+    it("does not dispatch when /collab appears mid-prompt", async () => {
+      const dispatchCollabStart = vi.fn();
+      deps = createTestDeps({ dispatchCollabStart });
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "talk about /collab as a topic",
+        vi.fn(),
+        "conv-123",
+      );
+
+      expect(dispatchCollabStart).not.toHaveBeenCalled();
+      expect(deps.sendConversationEvent).toHaveBeenCalled();
+    });
+
+    it("forwards collab options (negotiationRounds, autonomousResolutionThreshold)", async () => {
+      const dispatchCollabStart = vi
+        .fn()
+        .mockResolvedValue({ workflowId: "wf-4" });
+      deps = createTestDeps({ dispatchCollabStart });
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/collab investigate",
+        vi.fn(),
+        "conv-123",
+        undefined,
+        undefined,
+        {
+          collab: {
+            negotiationRounds: 6,
+            autonomousResolutionThreshold: "blocking",
+          },
+        },
+      );
+
+      expect(dispatchCollabStart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          negotiationRounds: 6,
+          autonomousResolutionThreshold: "blocking",
+        }),
+      );
+    });
+
+    it("emits error and done if dispatchCollabStart throws", async () => {
+      const dispatchCollabStart = vi.fn().mockRejectedValue(new Error("boom"));
+      deps = createTestDeps({ dispatchCollabStart });
+      const events: Array<[string, unknown]> = [];
+      const emit = (event: string, data: unknown) => events.push([event, data]);
+      const executor = createPromptExecutor(deps);
+      executePromptStream = executor.executePromptStream;
+
+      await executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/collab investigate",
+        emit,
+        "conv-123",
+      );
+
+      const error = events.find(([e]) => e === "error");
+      expect(error).toBeTruthy();
+      expect(events.find(([e]) => e === "done")).toBeTruthy();
+    });
   });
 });

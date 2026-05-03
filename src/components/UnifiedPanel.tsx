@@ -28,6 +28,8 @@ export default function UnifiedPanel(): React.JSX.Element | null {
   const { data: activeData, isPending } = useActiveConversationsQuery();
   const conversations = activeData?.conversations;
   const graphWorkflowExecutions = activeData?.graphWorkflowExecutions;
+  const activeCollaborationExecutions =
+    activeData?.activeCollaborationExecutions;
   const pathname = usePathname();
   // Extract conversation ID from URL: /projects/<name>/<session>/<conversationId>
   const pathSegments = pathname.split("/");
@@ -42,8 +44,11 @@ export default function UnifiedPanel(): React.JSX.Element | null {
 
   const hasGraphWorkflows =
     graphWorkflowExecutions && graphWorkflowExecutions.length > 0;
+  const hasCollaborations =
+    activeCollaborationExecutions && activeCollaborationExecutions.length > 0;
   const hasConversations = conversations && conversations.length > 0;
-  const hasAnyContent = hasGraphWorkflows || hasConversations;
+  const hasAnyContent =
+    hasGraphWorkflows || hasCollaborations || hasConversations;
 
   return (
     <>
@@ -90,6 +95,44 @@ export default function UnifiedPanel(): React.JSX.Element | null {
                     </Link>
                   </li>
                 ))}
+              </ul>
+            </div>
+          )}
+
+          {hasCollaborations && (
+            <div className="unified-panel-section">
+              <div className="unified-panel-section-title">Collaborations</div>
+              <ul className="unified-panel-list">
+                {activeCollaborationExecutions.map((collab) => {
+                  const href = collab.conversationId
+                    ? `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}/${collab.conversationId}`
+                    : `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}`;
+                  return (
+                    <li key={collab.workflowId}>
+                      <Link
+                        href={href}
+                        className="unified-panel-item"
+                        onClick={close}
+                      >
+                        <span
+                          className={`unified-panel-dot ${collab.status}`}
+                          title={collab.status}
+                        />
+                        <div className="unified-panel-item-body">
+                          <div className="unified-panel-item-name">
+                            Collaboration ({collab.status})
+                          </div>
+                          <div className="unified-panel-item-meta">
+                            {collab.projectName} / {collab.sessionName}
+                          </div>
+                        </div>
+                        <div className="unified-panel-item-time">
+                          {formatRelativeTime(collab.updatedAt)}
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}

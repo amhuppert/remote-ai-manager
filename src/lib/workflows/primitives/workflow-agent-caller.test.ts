@@ -355,6 +355,66 @@ describe("createWorkflowAgentCaller", () => {
         ),
       ).rejects.toThrow(/not initialized/);
     });
+
+    it("starts a fresh Claude conversation when the lane policy disables continuity, even if a prior conversationId is recorded", async () => {
+      const { deps, recorded } = buildHarness();
+      const laneRef = { workflowId: "wf-no-cont", laneId: "claude" };
+      await deps.laneService.initialize({
+        workflowId: laneRef.workflowId,
+        laneId: laneRef.laneId,
+        backend: "claude",
+        writeCapability: "write_capable",
+        policy: { continuityEnabled: false },
+        backendState: {
+          backend: "claude",
+          conversationId: "claude-prior-disabled",
+        },
+        metrics: { backend: "claude", rotateBeforeNextTurn: false },
+        lastUsedAt: "2026-04-28T00:00:00.000Z",
+      });
+      const caller = createWorkflowAgentCaller(deps);
+
+      await caller.call(buildClaudeRequest(laneRef));
+
+      expect(recorded.validateClaudeCalls).toBe(0);
+      expect(recorded.createClaudeCalls).toBe(1);
+      const continuity = recorded.continuities[0];
+      expect(continuity?.laneAction).toBe("create");
+      expect(continuity?.resumeRef).toEqual({
+        backend: "claude",
+        sessionId: "claude-conv-1",
+      });
+    });
+
+    it("starts a fresh Codex thread when the lane policy disables continuity, even if a prior threadId is recorded", async () => {
+      const { deps, recorded } = buildHarness();
+      const laneRef = { workflowId: "wf-no-cont", laneId: "codex" };
+      await deps.laneService.initialize({
+        workflowId: laneRef.workflowId,
+        laneId: laneRef.laneId,
+        backend: "codex",
+        writeCapability: "write_capable",
+        policy: { continuityEnabled: false },
+        backendState: {
+          backend: "codex",
+          threadId: "codex-prior-disabled",
+        },
+        metrics: { backend: "codex", rotateBeforeNextTurn: false },
+        lastUsedAt: "2026-04-28T00:00:00.000Z",
+      });
+      const caller = createWorkflowAgentCaller(deps);
+
+      await caller.call(buildCodexRequest(laneRef));
+
+      expect(recorded.resumeCodexCalls).toBe(0);
+      expect(recorded.startCodexCalls).toBe(1);
+      const continuity = recorded.continuities[0];
+      expect(continuity?.laneAction).toBe("create");
+      expect(continuity?.resumeRef).toEqual({
+        backend: "codex",
+        threadId: "codex-thread-1",
+      });
+    });
   });
 
   describe("LaneScheduler integration", () => {

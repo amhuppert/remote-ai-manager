@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { createCollaborationProductionCallAgent } from "./agent-caller-production";
 import {
-  COLLABORATION_ROUND_RESPONSE_OUTPUT_SCHEMA,
-  type CollaborationRoundResponse,
+  COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA,
+  type CollaborationInitialDraftOutput,
 } from "./types";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type {
@@ -20,16 +20,20 @@ import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { AgentCallRequest } from "@/lib/workflows/primitives/agent-call-vocabulary";
 
-function roundResponse(round: number): CollaborationRoundResponse {
+function draftOutput(round: number): CollaborationInitialDraftOutput {
   return {
-    agent: "codex",
-    round,
-    overallAssessment: `codex round ${round}`,
-    agreements: [],
-    disagreements: [],
-    openQuestions: [],
-    designDocument: `# Codex round ${round}`,
-    decision: "reject",
+    kind: "initial_draft",
+    agent: "agent_one",
+    narrative: `# Round ${round} draft`,
+    report: `memory-bank/collaboration/round-${round}/report.md`,
+    supporting: [],
+    assumptions: [],
+    keyClaims: [
+      {
+        id: `claim-${round}`,
+        claim: `round ${round} key claim`,
+      },
+    ],
   };
 }
 
@@ -77,10 +81,8 @@ describe("createCollaborationProductionCallAgent", () => {
             _turn: ConversationBackendTurnInput,
           ): Promise<ConversationBackendTurnResult> {
             callCount += 1;
-            const structuredOutput: CollaborationRoundResponse = {
-              ...roundResponse(callCount),
-              agent: "claude",
-            };
+            const structuredOutput: CollaborationInitialDraftOutput =
+              draftOutput(callCount);
             return {
               backendRef: {
                 backend: "claude",
@@ -92,7 +94,7 @@ describe("createCollaborationProductionCallAgent", () => {
               contextTokens: null,
               contextWindowMax: null,
               contentBlocks: [
-                { type: "text", text: structuredOutput.designDocument },
+                { type: "text", text: structuredOutput.narrative },
               ],
               structuredOutput,
               aborted: false,
@@ -122,7 +124,7 @@ describe("createCollaborationProductionCallAgent", () => {
       laneRef: { workflowId: "wf-claude-continuity", laneId: "claude" },
       writeCapability: "write_capable",
       outputSchema:
-        COLLABORATION_ROUND_RESPONSE_OUTPUT_SCHEMA as unknown as Record<
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
           string,
           unknown
         >,
@@ -177,10 +179,8 @@ describe("createCollaborationProductionCallAgent", () => {
             errors: {},
           }),
           async sendTurn(): Promise<ConversationBackendTurnResult> {
-            const structuredOutput: CollaborationRoundResponse = {
-              ...roundResponse(1),
-              agent: "claude",
-            };
+            const structuredOutput: CollaborationInitialDraftOutput =
+              draftOutput(1);
             return {
               backendRef: {
                 backend: "claude",
@@ -192,7 +192,7 @@ describe("createCollaborationProductionCallAgent", () => {
               contextTokens: null,
               contextWindowMax: null,
               contentBlocks: [
-                { type: "text", text: structuredOutput.designDocument },
+                { type: "text", text: structuredOutput.narrative },
               ],
               structuredOutput,
               aborted: false,
@@ -216,7 +216,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     const schema =
-      COLLABORATION_ROUND_RESPONSE_OUTPUT_SCHEMA as unknown as Record<
+      COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
         string,
         unknown
       >;
@@ -236,14 +236,14 @@ describe("createCollaborationProductionCallAgent", () => {
     });
   });
 
-  it("starts a fresh Codex thread on the first lane call and resumes the SDK-returned thread later", async () => {
+  it("starts a fresh Codex thread on the first lane call and resumes the SDK-returned thread later when the lane has continuity enabled (collaboration mode default)", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-codex-continuity",
       laneId: "codex",
       backend: "codex",
       writeCapability: "write_capable",
-      policy: { continuityEnabled: false },
+      policy: { continuityEnabled: true },
       backendState: { backend: "codex" },
       metrics: { backend: "codex", rotateBeforeNextTurn: false },
       lastUsedAt: "2026-04-28T10:00:00.000Z",
@@ -256,7 +256,7 @@ describe("createCollaborationProductionCallAgent", () => {
       async run(request): Promise<AgentTaskResult> {
         taskRequests.push(request);
         callCount += 1;
-        const structuredOutput = roundResponse(callCount);
+        const structuredOutput = draftOutput(callCount);
         return {
           backendRef: {
             backend: "codex",
@@ -288,7 +288,7 @@ describe("createCollaborationProductionCallAgent", () => {
       laneRef: { workflowId: "wf-codex-continuity", laneId: "codex" },
       writeCapability: "write_capable",
       outputSchema:
-        COLLABORATION_ROUND_RESPONSE_OUTPUT_SCHEMA as unknown as Record<
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
           string,
           unknown
         >,
@@ -302,6 +302,72 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "codex",
       threadId: "real-thread-1",
     });
+    expect(taskRequests[1]?.prompt).toBe("round 2");
+  });
+
+  it("does NOT pass a Codex resumeRef when the lane policy disables continuity, even if a prior threadId is recorded", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-codex-no-continuity",
+      laneId: "codex",
+      backend: "codex",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: false },
+      backendState: { backend: "codex" },
+      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const taskRequests: AgentTaskRequest[] = [];
+    let callCount = 0;
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(request): Promise<AgentTaskResult> {
+        taskRequests.push(request);
+        callCount += 1;
+        const structuredOutput = draftOutput(callCount);
+        return {
+          backendRef: {
+            backend: "codex",
+            threadId: `real-thread-${callCount}`,
+          },
+          text: JSON.stringify(structuredOutput),
+          structuredOutput,
+          usage: null,
+          error: null,
+          timedOut: false,
+        };
+      },
+    };
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-codex-no-continuity",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      laneService,
+      getTaskRunner: () => runner,
+    });
+
+    const request = (round: number): AgentCallRequest => ({
+      kind: "task_run",
+      backend: "codex",
+      prompt: `round ${round}`,
+      laneRef: { workflowId: "wf-codex-no-continuity", laneId: "codex" },
+      writeCapability: "write_capable",
+      outputSchema:
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+    });
+
+    await callAgent(request(1));
+    await callAgent(request(2));
+
+    expect(taskRequests[0]?.resumeRef).toBeUndefined();
+    expect(taskRequests[1]?.resumeRef).toBeUndefined();
   });
 
   it("retries a stale Claude resume once with a fresh runtime", async () => {
@@ -358,10 +424,8 @@ describe("createCollaborationProductionCallAgent", () => {
                 error: "resume session not found",
               };
             }
-            const structuredOutput: CollaborationRoundResponse = {
-              ...roundResponse(sendTurnCount),
-              agent: "claude",
-            };
+            const structuredOutput: CollaborationInitialDraftOutput =
+              draftOutput(sendTurnCount);
             return {
               backendRef: {
                 backend: "claude",
@@ -374,7 +438,7 @@ describe("createCollaborationProductionCallAgent", () => {
               contextTokens: null,
               contextWindowMax: null,
               contentBlocks: [
-                { type: "text", text: structuredOutput.designDocument },
+                { type: "text", text: structuredOutput.narrative },
               ],
               structuredOutput,
               aborted: false,
@@ -404,7 +468,7 @@ describe("createCollaborationProductionCallAgent", () => {
       laneRef: { workflowId: "wf-claude-stale", laneId: "claude" },
       writeCapability: "write_capable",
       outputSchema:
-        COLLABORATION_ROUND_RESPONSE_OUTPUT_SCHEMA as unknown as Record<
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
           string,
           unknown
         >,

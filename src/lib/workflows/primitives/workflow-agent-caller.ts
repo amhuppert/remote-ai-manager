@@ -229,6 +229,15 @@ async function resolveContinuity(
     return startFreshBackend(lane, deps, log);
   }
 
+  if (!lane.policy.continuityEnabled) {
+    log.debug("workflow_agent_caller.continuity.disabled", {
+      workflowId: lane.workflowId,
+      laneId: lane.laneId,
+      backend: lane.backend,
+    });
+    return startFreshBackend(lane, deps, log);
+  }
+
   if (lane.backend === "claude") {
     if (lane.backendState.backend !== "claude") {
       throw new Error(

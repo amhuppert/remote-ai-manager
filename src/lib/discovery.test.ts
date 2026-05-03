@@ -343,6 +343,47 @@ describe("discoverProjects — session metadata enrichment", () => {
     expect(projects[0]!.activeSessions).toBe(0);
     expect(projects[0]!.hasRunningSession).toBe(false);
   });
+
+  it("marks a project running when a session has a running collaboration envelope but no active conversation", async () => {
+    const repoPath = await createGitRepo("collab-running-project");
+
+    const state = {
+      projects: {
+        [repoPath]: {
+          rootPath: repoPath,
+          sessions: {
+            "session-collab": {
+              sessionName: "session-collab",
+              worktreePath: "/tmp/wt-collab",
+              branchName: "csm/session-collab",
+              createdAt: "2026-01-01T00:00:00Z",
+              lastActivityAt: "2026-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+              workflowEnvelopes: {
+                "wf-1": {
+                  workflowId: "wf-1",
+                  workflowType: "collaboration",
+                  status: "running",
+                  phase: "round",
+                  createdAt: "2026-01-01T00:00:00Z",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                  featureSnapshot: {},
+                },
+              },
+            },
+          },
+        } as never,
+      },
+    };
+
+    const service = createTestService(state);
+    const projects = await service.discoverProjects();
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0]!.hasRunningSession).toBe(true);
+  });
 });
 
 // ============================================================
