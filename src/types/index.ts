@@ -29,6 +29,8 @@ export type {
   ReferenceDocument,
   AgentBackendId,
   AgentSessionRef,
+  ImageMediaType,
+  ImagePayload,
 } from "@/lib/schemas";
 
 export type {
@@ -38,6 +40,7 @@ export type {
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
   ConversationBackendEvent,
+  ConversationImageRef,
   ConversationQueuedUserInput,
 } from "@/lib/agent-backends/conversation";
 
@@ -270,7 +273,7 @@ export interface SessionDiff {
   totalDeletions: number;
 }
 
-export type { RunPromptRequest, ImagePayload } from "@/lib/schemas";
+export type { RunPromptRequest } from "@/lib/schemas";
 
 /** Layout mode for the session detail view */
 export type LayoutMode = "conversation" | "default" | "split" | "diff";

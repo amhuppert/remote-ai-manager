@@ -69,6 +69,67 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
+// Tiptap depends on layout APIs jsdom doesn't implement; render a plain
+// <textarea> that satisfies the same imperative handle and props contract.
+vi.mock("./PromptEditor", async () => {
+  const React = await import("react");
+  type Props = {
+    value: string;
+    onChange: (text: string) => void;
+    onSubmit: () => void;
+    placeholder?: string;
+    disabled?: boolean;
+    readOnly?: boolean;
+    title?: string;
+  };
+  const PromptEditor = React.forwardRef(function MockPromptEditor(
+    props: Props,
+    ref: React.Ref<unknown>,
+  ) {
+    // Mirror Tiptap's behavior: imperative mutations update an internal value
+    // synchronously (so serialize() sees them in the same tick), and also
+    // notify React via onChange.
+    const internalRef = React.useRef(props.value);
+    React.useEffect(() => {
+      internalRef.current = props.value;
+    }, [props.value]);
+    React.useImperativeHandle(
+      ref,
+      () => ({
+        serialize: () => ({ prompt: internalRef.current, images: [] }),
+        clear: () => {
+          internalRef.current = "";
+          props.onChange("");
+        },
+        focus: () => {},
+        insertText: (text: string) => {
+          internalRef.current = internalRef.current + text;
+          props.onChange(internalRef.current);
+        },
+        editor: null,
+      }),
+      [props.onChange],
+    );
+    return (
+      <textarea
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            props.onSubmit();
+          }
+        }}
+        placeholder={props.placeholder}
+        disabled={props.disabled}
+        readOnly={props.readOnly}
+        title={props.title}
+      />
+    );
+  });
+  return { PromptEditor };
+});
+
 // ---------------------------------------------------------------------------
 // Hook mocks — external API calls / browser APIs unavailable in JSDOM
 // ---------------------------------------------------------------------------

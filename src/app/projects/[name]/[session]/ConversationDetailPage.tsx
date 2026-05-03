@@ -55,7 +55,6 @@ import {
   useNavigateToMessage,
   useStartRecording,
   useStopRecording,
-  useShowPlaceholderAction,
   useClearPlaceholder,
   useRequestCommit,
   useCancelCommit,
@@ -98,12 +97,7 @@ import AssistantMessageActions from "@/components/AssistantMessageActions";
 import MessageEditor from "@/components/MessageEditor";
 import ConversationNav from "@/components/ConversationNav";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
-import {
-  CommandAutocomplete,
-  type CommandAutocompleteHandle,
-} from "@/components/CommandAutocomplete";
-import { FileAutocomplete } from "@/components/FileAutocomplete";
-import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
+import { PromptEditor, type PromptEditorHandle } from "./PromptEditor";
 import ModelSelector from "@/components/ModelSelector";
 import { getModelsForBackend } from "@/components/ModelSelector";
 import ReasoningLevelSelector, {
@@ -124,6 +118,7 @@ import FocusConfirmationBar from "@/components/FocusConfirmationBar";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
+import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
 import ImageAttachmentPreview from "./ImageAttachmentPreview";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import type { ImagePayload, TranscriptMessage } from "@/types";
@@ -381,7 +376,6 @@ export default function ConversationDetailPage({
   const navigateToMessage = useNavigateToMessage();
   const startRecording = useStartRecording();
   const stopRecording = useStopRecording();
-  const showPlaceholder = useShowPlaceholderAction();
   const clearPlaceholder = useClearPlaceholder();
   const requestCommit = useRequestCommit();
   const cancelCommit = useCancelCommit();
@@ -676,19 +670,9 @@ export default function ConversationDetailPage({
     [selectedBackend, selectedEffort],
   );
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const autocompleteRef = useRef<CommandAutocompleteHandle>(null);
-  const [cursorPosition, setCursorPosition] = useState(0);
+  const editorRef = useRef<PromptEditorHandle>(null);
   const promptTextRef = useRef(promptText);
   promptTextRef.current = promptText;
-
-  const fileAutocomplete = useFileAutocomplete({
-    projectName,
-    text: promptText,
-    cursorPosition,
-    disabled: isBusy || isReadOnly,
-    onTextChange: setPromptText,
-  });
   const fireAndForgetRef = useRef(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -696,6 +680,13 @@ export default function ConversationDetailPage({
   // --- Image attachments ---
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
     useImageAttachments();
+  const [inlineMarkerIds, setInlineMarkerIds] = useState<string[]>([]);
+  const cumulativeImageCountQuery = useImageIndexCountQuery(
+    projectName,
+    sessionName,
+    conversationId,
+  );
+  const cumulativeImageCount = cumulativeImageCountQuery.data ?? 0;
   const failPrompt = useFailPrompt();
 
   const debugToggleMutation = useDebugModeToggleMutation(
@@ -733,14 +724,6 @@ export default function ConversationDetailPage({
     observer.observe(collabRowEl);
     return () => observer.disconnect();
   }, [collabRowEl]);
-
-  // --- Auto-resize textarea to fit content ---
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [promptText]);
 
   // Derive display messages: server messages + optimistic (non-overlapping).
   // During streaming, the server transcript is written in real-time and polled
@@ -1041,6 +1024,7 @@ export default function ConversationDetailPage({
       if (sending) abortClient();
       void abortPrompt();
     } else {
+      editorRef.current?.clear();
       setPromptText("");
       clearPlaceholder();
       clearImages();
@@ -1066,6 +1050,7 @@ export default function ConversationDetailPage({
 
   const dispatchPrompt = useCallback(
     async (text: string, images: ImagePayload[]) => {
+      editorRef.current?.clear();
       setPromptText("");
       clearImages();
       await sendPrompt(
@@ -1089,13 +1074,18 @@ export default function ConversationDetailPage({
   );
 
   const handleSendPrompt = useCallback(async () => {
-    const currentText = promptTextRef.current;
-    const hasImages = pendingImages.length > 0;
-    if (!currentText.trim() && !hasImages) return;
+    const serialized = editorRef.current?.serialize(pendingImages) ?? {
+      prompt: promptTextRef.current,
+      images: [],
+    };
+    const trimmedPrompt = serialized.prompt.trim();
+    const hasImages = serialized.images.length > 0;
+    if (!trimmedPrompt && !hasImages) return;
 
-    if (hasCollabPrefix(currentText)) {
-      const brief = stripCollabPrefix(currentText).trim();
+    if (hasCollabPrefix(trimmedPrompt)) {
+      const brief = stripCollabPrefix(trimmedPrompt).trim();
       if (!brief) return;
+      editorRef.current?.clear();
       setPromptText("");
       collaborationStartMutation.mutate({
         brief,
@@ -1110,20 +1100,15 @@ export default function ConversationDetailPage({
 
     // Queue into running conversation instead of starting a new prompt
     if (sending && conversationId) {
+      editorRef.current?.clear();
       setPromptText("");
-      await queueMessage(currentText.trim());
+      await queueMessage(trimmedPrompt);
       return;
     }
 
     if (sending) return;
 
-    // Collect image payloads before clearing
-    const imagePayloads: ImagePayload[] = hasImages
-      ? pendingImages.map((img) => ({
-          mediaType: img.mediaType as ImagePayload["mediaType"],
-          base64Data: img.base64Data,
-        }))
-      : [];
+    const imagePayloads: ImagePayload[] = hasImages ? serialized.images : [];
 
     // Warn — but do not block — when other conversations in this session are
     // actively running. Trust the user; concurrent edits in the same worktree
@@ -1134,14 +1119,14 @@ export default function ConversationDetailPage({
     );
     if (busyOthers.length > 0) {
       setPendingConcurrentSubmission({
-        text: currentText.trim(),
+        text: trimmedPrompt,
         images: imagePayloads,
         busyNames: busyOthers.map((c, i) => c.name ?? `Conversation ${i + 1}`),
       });
       return;
     }
 
-    await dispatchPrompt(currentText.trim(), imagePayloads);
+    await dispatchPrompt(trimmedPrompt, imagePayloads);
   }, [
     sending,
     conversationId,
@@ -1410,12 +1395,9 @@ export default function ConversationDetailPage({
 
   const handleVoiceResult = useCallback(
     (text: string) => {
-      const newText = promptTextRef.current.trim()
-        ? `${promptTextRef.current}\n${text}`
-        : text;
-      promptTextRef.current = newText;
-      setPromptText(newText);
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      const insertion = promptTextRef.current.trim() ? `\n${text}` : text;
+      editorRef.current?.insertText(insertion);
+      requestAnimationFrame(() => editorRef.current?.focus());
 
       if (fireAndForgetRef.current) {
         fireAndForgetRef.current = false;
@@ -2112,32 +2094,40 @@ export default function ConversationDetailPage({
                         conversation={activeConversation}
                       />
                     )}
-                    <CommandAutocomplete
-                      ref={autocompleteRef}
-                      promptText={promptText}
-                      onPromptChange={(text) => {
-                        setPromptText(text);
-                        const commandPrefix =
-                          selectedBackend === "codex" ? "$" : "/";
-                        if (!text.startsWith(commandPrefix)) {
-                          clearPlaceholder();
+                    <PromptEditor
+                      ref={editorRef}
+                      conversationId={conversationId}
+                      value={promptText}
+                      onChange={setPromptText}
+                      onSubmit={() => {
+                        if (isRecording) {
+                          toggleRecording();
+                          return;
                         }
+                        void handleSendPrompt();
                       }}
-                      onPlaceholderChange={showPlaceholder}
-                      projectName={projectName}
-                      sessionName={session.sessionName}
-                      backend={selectedBackend}
-                      disabled={isBusy || isReadOnly}
-                    />
-                    <FileAutocomplete
-                      ref={fileAutocomplete.autocompleteRef}
-                      items={fileAutocomplete.items}
-                      visible={fileAutocomplete.visible}
-                      loading={fileAutocomplete.loading}
-                      error={fileAutocomplete.error}
-                      totalCount={fileAutocomplete.totalCount}
-                      onSelect={fileAutocomplete.onSelect}
-                      onClose={fileAutocomplete.onClose}
+                      pendingImages={pendingImages}
+                      onAddImage={async (file) => {
+                        const result = await addImage(file);
+                        if (result.error) {
+                          failPrompt(result.error);
+                          return null;
+                        }
+                        return result.attachment;
+                      }}
+                      onRemoveImage={removeImage}
+                      cumulativeImageCount={cumulativeImageCount}
+                      onInlineMarkersChange={setInlineMarkerIds}
+                      disabled={isReadOnly}
+                      readOnly={hasActiveCollab}
+                      title={
+                        hasActiveCollab ? COLLAB_RUNNING_TOOLTIP : undefined
+                      }
+                      placeholder={
+                        isFinished
+                          ? "Session is merged and read-only"
+                          : (promptPlaceholder ?? "Send a prompt to Claude...")
+                      }
                     />
                     {hasCollabChip ? (
                       <CollabConfigRow
@@ -2161,69 +2151,6 @@ export default function ConversationDetailPage({
                         }}
                       />
                     ) : null}
-                    <textarea
-                      ref={textareaRef}
-                      className="prompt-textarea"
-                      data-backend={selectedBackend}
-                      readOnly={hasActiveCollab}
-                      title={
-                        hasActiveCollab ? COLLAB_RUNNING_TOOLTIP : undefined
-                      }
-                      placeholder={
-                        isFinished
-                          ? "Session is merged and read-only"
-                          : (promptPlaceholder ?? "Send a prompt to Claude...")
-                      }
-                      rows={1}
-                      value={promptText}
-                      onChange={(e) => {
-                        setPromptText(e.target.value);
-                        setCursorPosition(e.target.selectionStart);
-                      }}
-                      onSelect={(e) => {
-                        setCursorPosition(
-                          (e.target as HTMLTextAreaElement).selectionStart,
-                        );
-                      }}
-                      onPaste={(e) => {
-                        const items = e.clipboardData.items;
-                        for (const item of items) {
-                          if (item.type.startsWith("image/")) {
-                            e.preventDefault();
-                            const file = item.getAsFile();
-                            if (file) {
-                              void addImage(file).then((err) => {
-                                if (err) failPrompt(err);
-                              });
-                            }
-                            return;
-                          }
-                        }
-                        // Text paste — let default behavior proceed
-                      }}
-                      onKeyDown={(e) => {
-                        if (
-                          fileAutocomplete.autocompleteRef.current?.handleKeyDown(
-                            e,
-                          )
-                        ) {
-                          return;
-                        }
-                        if (autocompleteRef.current?.handleKeyDown(e)) {
-                          return;
-                        }
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          // Stop voice recording instead of submitting
-                          if (isRecording) {
-                            toggleRecording();
-                            return;
-                          }
-                          void handleSendPrompt();
-                        }
-                      }}
-                      disabled={isReadOnly}
-                    />
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -2234,8 +2161,8 @@ export default function ConversationDetailPage({
                         const files = e.target.files;
                         if (!files) return;
                         for (const file of files) {
-                          void addImage(file).then((err) => {
-                            if (err) failPrompt(err);
+                          void addImage(file).then((result) => {
+                            if (result.error) failPrompt(result.error);
                           });
                         }
                         // Reset so re-selecting the same file works
@@ -2243,7 +2170,9 @@ export default function ConversationDetailPage({
                       }}
                     />
                     <ImageAttachmentPreview
-                      images={pendingImages}
+                      images={pendingImages.filter(
+                        (img) => !inlineMarkerIds.includes(img.id),
+                      )}
                       onRemove={removeImage}
                     />
                     <div className="prompt-toolbar">

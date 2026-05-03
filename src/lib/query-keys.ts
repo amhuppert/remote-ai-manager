@@ -116,6 +116,18 @@ export const debugLogKeys = {
     ] as const,
 };
 
+export const imageIndexKeys = {
+  all: ["image-index"] as const,
+  count: (projectName: string, sessionName: string, conversationId: string) =>
+    [
+      ...imageIndexKeys.all,
+      "count",
+      projectName,
+      sessionName,
+      conversationId,
+    ] as const,
+};
+
 export const mcpConfigKeys = {
   all: ["mcp-config"] as const,
   global: () => [...mcpConfigKeys.all, "global"] as const,

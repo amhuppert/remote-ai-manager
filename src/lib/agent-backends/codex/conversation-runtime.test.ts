@@ -65,7 +65,7 @@ function makeTurnInput(
 ): ConversationBackendTurnInput {
   return {
     promptText: "Do the thing",
-    images: [],
+    imageRefs: [],
     sessionInstructions: [],
     autonomous: true,
     signal: new AbortController().signal,
@@ -329,9 +329,6 @@ describe("CodexConversationRuntime", () => {
         .fn()
         .mockReturnValue({ mcpServers: {}, droppedFields: [] }),
       listNativeCodexMcpServerNames: vi.fn().mockResolvedValue([]),
-      mkdir: vi.fn().mockResolvedValue(undefined),
-      writeFile: vi.fn().mockResolvedValue(undefined),
-      rm: vi.fn().mockResolvedValue(undefined),
       now: vi.fn().mockReturnValue(1000),
     };
   });
@@ -1131,68 +1128,55 @@ describe("CodexConversationRuntime", () => {
   // --------------------------------------------------------
 
   describe("sendTurn — images", () => {
-    it("materializes image payloads to temp files and cleans up", async () => {
+    it("forwards persistent image paths as local_image inputs without temp materialization", async () => {
       const thread = makeCapturingThread(minimalSuccessEvents());
       startThreadFn.mockReturnValue(thread);
 
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       await runtime.sendTurn(
         makeTurnInput({
-          images: [
-            { mediaType: "image/png", base64Data: "aGVsbG8=" },
-            { mediaType: "image/jpeg", base64Data: "d29ybGQ=" },
+          imageRefs: [
+            {
+              index: 1,
+              mediaType: "image/png",
+              path: "/cfg/transcripts/images/conv-123/1.png",
+              base64Data: "aGVsbG8=",
+            },
+            {
+              index: 2,
+              mediaType: "image/jpeg",
+              path: "/cfg/transcripts/images/conv-123/2.jpg",
+              base64Data: "d29ybGQ=",
+            },
           ],
         }),
       );
 
-      // Should create temp directory
-      expect(deps.mkdir).toHaveBeenCalledWith(
-        expect.stringContaining(".cc-tmp/codex-images/conv-123/turn-1000"),
-        { recursive: true },
-      );
-
-      // Should write two files
-      expect(deps.writeFile).toHaveBeenCalledTimes(2);
-      expect(deps.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining("0.png"),
-        expect.any(Buffer),
-      );
-      expect(deps.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining("1.jpg"),
-        expect.any(Buffer),
-      );
-
-      // Should pass local_image inputs to runStreamed
       const input = thread.capturedInput as Array<{
         type: string;
         path?: string;
         text?: string;
       }>;
       expect(Array.isArray(input)).toBe(true);
-      expect(input.some((i) => i.type === "local_image")).toBe(true);
-      expect(input.some((i) => i.type === "text")).toBe(true);
-
-      // Should clean up
-      expect(deps.rm).toHaveBeenCalledWith(
-        expect.stringContaining(".cc-tmp/codex-images/conv-123/turn-1000"),
-        { recursive: true, force: true },
+      const localImages = input.filter((i) => i.type === "local_image");
+      expect(localImages).toHaveLength(2);
+      expect(localImages[0]?.path).toBe(
+        "/cfg/transcripts/images/conv-123/1.png",
       );
+      expect(localImages[1]?.path).toBe(
+        "/cfg/transcripts/images/conv-123/2.jpg",
+      );
+      expect(input.some((i) => i.type === "text")).toBe(true);
     });
 
-    it("cleans up temp files even on error", async () => {
-      const thread = makeThread([], {
-        runStreamedThrows: new Error("Boom"),
-      });
+    it("passes prompt as plain string when there are no imageRefs", async () => {
+      const thread = makeCapturingThread(minimalSuccessEvents());
       startThreadFn.mockReturnValue(thread);
 
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
-      await runtime.sendTurn(
-        makeTurnInput({
-          images: [{ mediaType: "image/png", base64Data: "aGVsbG8=" }],
-        }),
-      );
+      await runtime.sendTurn(makeTurnInput({ imageRefs: [] }));
 
-      expect(deps.rm).toHaveBeenCalled();
+      expect(typeof thread.capturedInput).toBe("string");
     });
   });
 

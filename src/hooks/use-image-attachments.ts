@@ -29,9 +29,14 @@ export interface ImageAttachment {
   sizeBytes: number;
 }
 
+export interface AddImageResult {
+  attachment: ImageAttachment | null;
+  error: string | null;
+}
+
 export interface UseImageAttachmentsReturn {
   pendingImages: ImageAttachment[];
-  addImage: (file: File | Blob, fileName?: string) => Promise<string | null>;
+  addImage: (file: File | Blob, fileName?: string) => Promise<AddImageResult>;
   removeImage: (id: string) => void;
   clearImages: () => void;
   isAtLimit: boolean;
@@ -99,15 +104,15 @@ export function useImageAttachments(): UseImageAttachmentsReturn {
   }, []);
 
   const addImage = useCallback(
-    async (file: File | Blob, fileName?: string): Promise<string | null> => {
+    async (file: File | Blob, fileName?: string): Promise<AddImageResult> => {
       const error = validateImage(file, pendingImagesRef.current.length);
-      if (error) return error;
+      if (error) return { attachment: null, error };
 
       let base64Data: string;
       try {
         base64Data = await readFileAsBase64(file);
       } catch {
-        return "Failed to read image file";
+        return { attachment: null, error: "Failed to read image file" };
       }
 
       const id = `img-${++idCounter.current}`;
@@ -125,7 +130,7 @@ export function useImageAttachments(): UseImageAttachmentsReturn {
       };
 
       setPendingImages((prev) => [...prev, attachment]);
-      return null;
+      return { attachment, error: null };
     },
     [],
   );

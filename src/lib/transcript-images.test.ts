@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, rm, readFile } from "node:fs/promises";
+import { mkdir, rm, readFile, writeFile, copyFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { MessageContentBlock } from "@/types";
@@ -8,6 +8,8 @@ import {
   readTranscriptImage,
   externalizeImageBlocks,
   resolveImageRefs,
+  getNextImageIndex,
+  mediaTypeToExt,
 } from "./transcript-images";
 
 const TEST_DIR = path.join("/tmp", "cc-transcript-images-test-" + Date.now());
@@ -25,14 +27,32 @@ afterEach(async () => {
 });
 
 // ==========================================================================
+// mediaTypeToExt
+// ==========================================================================
+
+describe("mediaTypeToExt", () => {
+  it("maps known image MIME types to extensions", () => {
+    expect(mediaTypeToExt("image/jpeg")).toBe("jpg");
+    expect(mediaTypeToExt("image/png")).toBe("png");
+    expect(mediaTypeToExt("image/gif")).toBe("gif");
+    expect(mediaTypeToExt("image/webp")).toBe("webp");
+  });
+
+  it("throws on unknown MIME types", () => {
+    expect(() => mediaTypeToExt("image/tiff")).toThrow();
+    expect(() => mediaTypeToExt("application/octet-stream")).toThrow();
+  });
+});
+
+// ==========================================================================
 // saveTranscriptImage
 // ==========================================================================
 
 describe("saveTranscriptImage", () => {
-  it("saves binary file and returns absolute path", async () => {
+  it("saves binary file with predictable {N}.{ext} name", async () => {
     const filePath = await saveTranscriptImage(
       "conv-1",
-      0,
+      1,
       "image/png",
       TINY_PNG_BASE64,
       TEST_DIR,
@@ -40,9 +60,8 @@ describe("saveTranscriptImage", () => {
 
     expect(existsSync(filePath)).toBe(true);
     expect(filePath).toContain("conv-1");
-    expect(filePath).toMatch(/0-[a-f0-9]{8}\.png$/);
+    expect(filePath).toMatch(/[/\\]1\.png$/);
 
-    // Verify the binary content round-trips correctly
     const buffer = await readFile(filePath);
     expect(buffer.toString("base64")).toBe(TINY_PNG_BASE64);
   });
@@ -50,7 +69,7 @@ describe("saveTranscriptImage", () => {
   it("creates per-conversation images directory", async () => {
     await saveTranscriptImage(
       "conv-new",
-      0,
+      1,
       "image/png",
       TINY_PNG_BASE64,
       TEST_DIR,
@@ -60,32 +79,32 @@ describe("saveTranscriptImage", () => {
     expect(existsSync(dir)).toBe(true);
   });
 
-  it("maps media types to correct extensions", async () => {
+  it("writes correct extension per media type", async () => {
     const jpg = await saveTranscriptImage(
       "conv-ext",
-      0,
+      1,
       "image/jpeg",
       TINY_PNG_BASE64,
       TEST_DIR,
     );
     const gif = await saveTranscriptImage(
       "conv-ext",
-      1,
+      2,
       "image/gif",
       TINY_PNG_BASE64,
       TEST_DIR,
     );
     const webp = await saveTranscriptImage(
       "conv-ext",
-      2,
+      3,
       "image/webp",
       TINY_PNG_BASE64,
       TEST_DIR,
     );
 
-    expect(jpg).toMatch(/\.jpg$/);
-    expect(gif).toMatch(/\.gif$/);
-    expect(webp).toMatch(/\.webp$/);
+    expect(jpg).toMatch(/[/\\]1\.jpg$/);
+    expect(gif).toMatch(/[/\\]2\.gif$/);
+    expect(webp).toMatch(/[/\\]3\.webp$/);
   });
 });
 
@@ -97,7 +116,7 @@ describe("readTranscriptImage", () => {
   it("reads saved image back as base64", async () => {
     const filePath = await saveTranscriptImage(
       "conv-read",
-      0,
+      1,
       "image/png",
       TINY_PNG_BASE64,
       TEST_DIR,
@@ -111,6 +130,16 @@ describe("readTranscriptImage", () => {
     const result = await readTranscriptImage("/tmp/does-not-exist.png");
     expect(result).toBeNull();
   });
+
+  it("reads legacy {N}-{hash}.{ext} files (lazy compat)", async () => {
+    const dir = path.join(TEST_DIR, "transcripts", "images", "conv-legacy");
+    await mkdir(dir, { recursive: true });
+    const legacyPath = path.join(dir, "0-abcd1234.png");
+    await writeFile(legacyPath, Buffer.from(TINY_PNG_BASE64, "base64"));
+
+    const result = await readTranscriptImage(legacyPath);
+    expect(result).toBe(TINY_PNG_BASE64);
+  });
 });
 
 // ==========================================================================
@@ -118,21 +147,60 @@ describe("readTranscriptImage", () => {
 // ==========================================================================
 
 describe("externalizeImageBlocks", () => {
-  it("converts image blocks to image_ref blocks", async () => {
+  it("converts each image block to a marker + ref pair with sequential indices", async () => {
     const blocks: MessageContentBlock[] = [
       { type: "text", text: "Look at this:" },
       { type: "image", mediaType: "image/png", base64Data: TINY_PNG_BASE64 },
     ];
 
-    const result = await externalizeImageBlocks("conv-ext", blocks, TEST_DIR);
+    const result = await externalizeImageBlocks(
+      "conv-ext",
+      blocks,
+      1,
+      TEST_DIR,
+    );
 
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(3);
     expect(result[0]).toEqual({ type: "text", text: "Look at this:" });
-    expect(result[1]!.type).toBe("image_ref");
-    if (result[1]!.type === "image_ref") {
+    expect(result[1]!.type).toBe("image_marker");
+    expect(result[2]!.type).toBe("image_ref");
+
+    if (result[1]!.type === "image_marker" && result[2]!.type === "image_ref") {
+      expect(result[1]!.index).toBe(1);
       expect(result[1]!.mediaType).toBe("image/png");
-      expect(result[1]!.imagePath).toMatch(/\.png$/);
-      expect(existsSync(result[1]!.imagePath)).toBe(true);
+      expect(result[1]!.imagePath).toMatch(/[/\\]1\.png$/);
+      expect(result[2]!.mediaType).toBe("image/png");
+      expect(result[2]!.imagePath).toBe(result[1]!.imagePath);
+      expect(existsSync(result[2]!.imagePath)).toBe(true);
+    }
+  });
+
+  it("respects startIndex (cumulative numbering)", async () => {
+    const blocks: MessageContentBlock[] = [
+      { type: "image", mediaType: "image/png", base64Data: TINY_PNG_BASE64 },
+      { type: "image", mediaType: "image/jpeg", base64Data: TINY_PNG_BASE64 },
+    ];
+
+    const result = await externalizeImageBlocks(
+      "conv-cum",
+      blocks,
+      5,
+      TEST_DIR,
+    );
+
+    expect(result).toHaveLength(4);
+    if (
+      result[0]!.type === "image_marker" &&
+      result[1]!.type === "image_ref" &&
+      result[2]!.type === "image_marker" &&
+      result[3]!.type === "image_ref"
+    ) {
+      expect(result[0]!.index).toBe(5);
+      expect(result[0]!.imagePath).toMatch(/[/\\]5\.png$/);
+      expect(result[1]!.imagePath).toBe(result[0]!.imagePath);
+      expect(result[2]!.index).toBe(6);
+      expect(result[2]!.imagePath).toMatch(/[/\\]6\.jpg$/);
+      expect(result[3]!.imagePath).toBe(result[2]!.imagePath);
     }
   });
 
@@ -142,25 +210,34 @@ describe("externalizeImageBlocks", () => {
       { type: "tool_use", name: "Read", input: { file_path: "/tmp/x" } },
     ];
 
-    const result = await externalizeImageBlocks("conv-pass", blocks, TEST_DIR);
+    const result = await externalizeImageBlocks(
+      "conv-pass",
+      blocks,
+      1,
+      TEST_DIR,
+    );
     expect(result).toEqual(blocks);
   });
 
-  it("handles multiple images with sequential indices", async () => {
+  it("preserves pre-existing image_marker blocks alongside images", async () => {
     const blocks: MessageContentBlock[] = [
+      { type: "text", text: "first " },
       { type: "image", mediaType: "image/png", base64Data: TINY_PNG_BASE64 },
-      { type: "image", mediaType: "image/jpeg", base64Data: TINY_PNG_BASE64 },
+      { type: "text", text: " second" },
     ];
 
-    const result = await externalizeImageBlocks("conv-multi", blocks, TEST_DIR);
+    const result = await externalizeImageBlocks(
+      "conv-mix",
+      blocks,
+      3,
+      TEST_DIR,
+    );
 
-    expect(result).toHaveLength(2);
-    expect(result[0]!.type).toBe("image_ref");
-    expect(result[1]!.type).toBe("image_ref");
-    if (result[0]!.type === "image_ref" && result[1]!.type === "image_ref") {
-      expect(result[0]!.imagePath).toMatch(/^.*0-[a-f0-9]{8}\.png$/);
-      expect(result[1]!.imagePath).toMatch(/^.*1-[a-f0-9]{8}\.jpg$/);
-    }
+    expect(result).toHaveLength(4);
+    expect(result[0]).toEqual({ type: "text", text: "first " });
+    expect(result[1]!.type).toBe("image_marker");
+    expect(result[2]!.type).toBe("image_ref");
+    expect(result[3]).toEqual({ type: "text", text: " second" });
   });
 });
 
@@ -172,7 +249,7 @@ describe("resolveImageRefs", () => {
   it("resolves image_ref blocks back to image blocks", async () => {
     const filePath = await saveTranscriptImage(
       "conv-resolve",
-      0,
+      1,
       "image/png",
       TINY_PNG_BASE64,
       TEST_DIR,
@@ -185,6 +262,24 @@ describe("resolveImageRefs", () => {
     const result = await resolveImageRefs(blocks);
 
     expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      type: "image",
+      mediaType: "image/png",
+      base64Data: TINY_PNG_BASE64,
+    });
+  });
+
+  it("resolves legacy {N}-{hash}.{ext} image_ref paths", async () => {
+    const dir = path.join(TEST_DIR, "transcripts", "images", "conv-legacy");
+    await mkdir(dir, { recursive: true });
+    const legacyPath = path.join(dir, "2-deadbeef.png");
+    await writeFile(legacyPath, Buffer.from(TINY_PNG_BASE64, "base64"));
+
+    const blocks: MessageContentBlock[] = [
+      { type: "image_ref", mediaType: "image/png", imagePath: legacyPath },
+    ];
+
+    const result = await resolveImageRefs(blocks);
     expect(result[0]).toEqual({
       type: "image",
       mediaType: "image/png",
@@ -210,10 +305,15 @@ describe("resolveImageRefs", () => {
     });
   });
 
-  it("passes through non-image_ref blocks unchanged", async () => {
+  it("passes through non-image_ref blocks unchanged (including image_marker)", async () => {
     const blocks: MessageContentBlock[] = [
       { type: "text", text: "Hello" },
-      { type: "image", mediaType: "image/png", base64Data: TINY_PNG_BASE64 },
+      {
+        type: "image_marker",
+        index: 1,
+        mediaType: "image/png",
+        imagePath: "/tmp/whatever.png",
+      },
     ];
 
     const result = await resolveImageRefs(blocks);
@@ -222,11 +322,98 @@ describe("resolveImageRefs", () => {
 });
 
 // ==========================================================================
+// getNextImageIndex
+// ==========================================================================
+
+describe("getNextImageIndex", () => {
+  async function writeTranscriptLine(
+    conversationId: string,
+    entry: Record<string, unknown>,
+  ): Promise<void> {
+    const dir = path.join(TEST_DIR, "transcripts");
+    await mkdir(dir, { recursive: true });
+    const filePath = path.join(dir, `${conversationId}.jsonl`);
+    const line = JSON.stringify(entry) + "\n";
+    const existing = existsSync(filePath)
+      ? await readFile(filePath, "utf-8")
+      : "";
+    await writeFile(filePath, existing + line, "utf-8");
+  }
+
+  it("returns 1 for an empty conversation", async () => {
+    const next = await getNextImageIndex("conv-empty", TEST_DIR);
+    expect(next).toBe(1);
+  });
+
+  it("returns 1 when transcript has no image blocks", async () => {
+    await writeTranscriptLine("conv-text", {
+      timestamp: "2026-01-01T00:00:00Z",
+      type: "user",
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+    });
+
+    const next = await getNextImageIndex("conv-text", TEST_DIR);
+    expect(next).toBe(1);
+  });
+
+  it("counts image_ref blocks across messages", async () => {
+    await writeTranscriptLine("conv-refs", {
+      timestamp: "2026-01-01T00:00:00Z",
+      type: "user",
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        {
+          type: "image_marker",
+          index: 1,
+          mediaType: "image/png",
+          imagePath: "/x/1.png",
+        },
+        { type: "image_ref", mediaType: "image/png", imagePath: "/x/1.png" },
+      ],
+    });
+    await writeTranscriptLine("conv-refs", {
+      timestamp: "2026-01-01T00:01:00Z",
+      type: "user",
+      role: "user",
+      content: [
+        {
+          type: "image_marker",
+          index: 2,
+          mediaType: "image/png",
+          imagePath: "/x/2.png",
+        },
+        { type: "image_ref", mediaType: "image/png", imagePath: "/x/2.png" },
+      ],
+    });
+
+    const next = await getNextImageIndex("conv-refs", TEST_DIR);
+    expect(next).toBe(3);
+  });
+
+  it("counts inline image blocks (legacy transcripts without externalization)", async () => {
+    await writeTranscriptLine("conv-inline", {
+      timestamp: "2026-01-01T00:00:00Z",
+      type: "user",
+      role: "user",
+      content: [
+        { type: "image", mediaType: "image/png", base64Data: "abc" },
+        { type: "image", mediaType: "image/png", base64Data: "def" },
+      ],
+    });
+
+    const next = await getNextImageIndex("conv-inline", TEST_DIR);
+    expect(next).toBe(3);
+  });
+});
+
+// ==========================================================================
 // Round-trip
 // ==========================================================================
 
 describe("round-trip: externalize then resolve", () => {
-  it("produces original content blocks", async () => {
+  it("preserves image content; image_marker is added (not in original)", async () => {
     const original: MessageContentBlock[] = [
       { type: "text", text: "Check this image:" },
       { type: "image", mediaType: "image/png", base64Data: TINY_PNG_BASE64 },
@@ -235,10 +422,21 @@ describe("round-trip: externalize then resolve", () => {
     const externalized = await externalizeImageBlocks(
       "conv-rt",
       original,
+      1,
       TEST_DIR,
     );
     const resolved = await resolveImageRefs(externalized);
 
-    expect(resolved).toEqual(original);
+    expect(resolved).toHaveLength(3);
+    expect(resolved[0]).toEqual({ type: "text", text: "Check this image:" });
+    expect(resolved[1]!.type).toBe("image_marker");
+    expect(resolved[2]).toEqual({
+      type: "image",
+      mediaType: "image/png",
+      base64Data: TINY_PNG_BASE64,
+    });
   });
 });
+
+// Suppress unused-import warning
+void copyFile;

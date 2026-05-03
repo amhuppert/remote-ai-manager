@@ -109,9 +109,17 @@ function createMockDeps(
         `http://localhost:3000/api/debug-logs?conversationId=${id}`,
     ),
     safeAppendTranscriptEntry: vi.fn(async () => {}),
-    externalizeImageBlocks: vi.fn(
-      async (_id: string, blocks: unknown[]) => blocks,
+    saveTranscriptImage: vi.fn(
+      async (
+        _id: string,
+        index: number,
+        mediaType: string,
+      ): Promise<string> => {
+        const ext = mediaType.split("/")[1] ?? "bin";
+        return `/persisted/${index}.${ext}`;
+      },
     ),
+    getNextImageIndex: vi.fn(async () => 1),
     getConversationBackendFactory: vi.fn(() => mockFactory),
     registerBackendRuntime: vi.fn(),
     unregisterBackendRuntime: vi.fn(),
@@ -2023,5 +2031,181 @@ describe("executePromptForMachine", () => {
       writeCapability: "write_capable",
     });
     expect(typeof facadeDeps.resolveConversationRuntime).toBe("function");
+  });
+
+  // ---------------------------------------------------------------
+  // Image flow: server-side cumulative numbering + persisted paths.
+  // ---------------------------------------------------------------
+  describe("image attachment flow", () => {
+    it("assigns server indices, persists images by index, rewrites markers, and forwards imageRefs to the backend", async () => {
+      const saveTranscriptImage = vi.fn(
+        async (
+          _id: string,
+          index: number,
+          mediaType: string,
+        ): Promise<string> => {
+          const ext = mediaType.split("/")[1] ?? "bin";
+          return `/persisted/${index}.${ext}`;
+        },
+      );
+      const getNextImageIndex = vi.fn(async () => 5);
+
+      mockDeps = createMockDeps({
+        saveTranscriptImage,
+        getNextImageIndex,
+      });
+      setActorDeps(mockDeps);
+
+      const input = makeExecutePromptInput({
+        promptText: "look at [Image #1] and [Image #2]",
+        images: [
+          {
+            attachmentId: "att-a",
+            mediaType: "image/png",
+            base64Data: "AAAA",
+            inlineMarkerIndex: 1,
+          },
+          {
+            attachmentId: "att-b",
+            mediaType: "image/jpeg",
+            base64Data: "BBBB",
+            inlineMarkerIndex: 2,
+          },
+          {
+            attachmentId: "att-c",
+            mediaType: "image/webp",
+            base64Data: "CCCC",
+          },
+        ],
+      });
+
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      await executePromptForMachine(input);
+
+      expect(getNextImageIndex).toHaveBeenCalledWith(input.conversationId);
+
+      expect(saveTranscriptImage).toHaveBeenCalledTimes(3);
+      expect(saveTranscriptImage).toHaveBeenNthCalledWith(
+        1,
+        input.conversationId,
+        5,
+        "image/png",
+        "AAAA",
+      );
+      expect(saveTranscriptImage).toHaveBeenNthCalledWith(
+        2,
+        input.conversationId,
+        6,
+        "image/jpeg",
+        "BBBB",
+      );
+      expect(saveTranscriptImage).toHaveBeenNthCalledWith(
+        3,
+        input.conversationId,
+        7,
+        "image/webp",
+        "CCCC",
+      );
+
+      const sendTurnCall = mockSendTurn.mock.calls[0]! as unknown[];
+      const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
+      expect(turnInput.promptText).toBe("look at [Image #5] and [Image #6]");
+      expect(turnInput.imageRefs).toEqual([
+        {
+          index: 5,
+          mediaType: "image/png",
+          path: "/persisted/5.png",
+          base64Data: "AAAA",
+        },
+        {
+          index: 6,
+          mediaType: "image/jpeg",
+          path: "/persisted/6.jpeg",
+          base64Data: "BBBB",
+        },
+        {
+          index: 7,
+          mediaType: "image/webp",
+          path: "/persisted/7.webp",
+          base64Data: "CCCC",
+        },
+      ]);
+
+      const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
+      const userEntry = calls.find(
+        ([, entry]) => (entry as { role?: string }).role === "user",
+      );
+      expect(userEntry).toBeDefined();
+      const content = (userEntry![1] as { content: unknown[] }).content;
+      expect(content).toEqual([
+        { type: "text", text: "look at " },
+        {
+          type: "image_marker",
+          index: 5,
+          mediaType: "image/png",
+          imagePath: "/persisted/5.png",
+        },
+        {
+          type: "image_ref",
+          mediaType: "image/png",
+          imagePath: "/persisted/5.png",
+        },
+        { type: "text", text: " and " },
+        {
+          type: "image_marker",
+          index: 6,
+          mediaType: "image/jpeg",
+          imagePath: "/persisted/6.jpeg",
+        },
+        {
+          type: "image_ref",
+          mediaType: "image/jpeg",
+          imagePath: "/persisted/6.jpeg",
+        },
+        {
+          type: "image_marker",
+          index: 7,
+          mediaType: "image/webp",
+          imagePath: "/persisted/7.webp",
+        },
+        {
+          type: "image_ref",
+          mediaType: "image/webp",
+          imagePath: "/persisted/7.webp",
+        },
+      ]);
+    });
+
+    it("does not call getNextImageIndex when there are no images", async () => {
+      const getNextImageIndex = vi.fn(async () => 1);
+      mockDeps = createMockDeps({ getNextImageIndex });
+      setActorDeps(mockDeps);
+
+      const input = makeExecutePromptInput({ images: [] });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      await executePromptForMachine(input);
+
+      expect(getNextImageIndex).not.toHaveBeenCalled();
+
+      const sendTurnCall = mockSendTurn.mock.calls[0]! as unknown[];
+      const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
+      expect(turnInput.imageRefs).toEqual([]);
+    });
   });
 });

@@ -33,7 +33,9 @@ vi.mock("@/lib/mutations", () => ({
   useCreateSessionMutation: () => ({ mutate: mutateMock, isPending: false }),
 }));
 
-const addImageMock = vi.fn().mockResolvedValue(null);
+const addImageMock = vi
+  .fn()
+  .mockResolvedValue({ attachment: null, error: null });
 const removeImageMock = vi.fn();
 const clearImagesMock = vi.fn();
 
@@ -505,7 +507,13 @@ describe("CreateSessionModal", () => {
           {
             mode: "optimistic",
             instructions: "Fix with this screenshot",
-            images: [{ mediaType: "image/png", base64Data: "abc123" }],
+            images: [
+              {
+                attachmentId: "img-1",
+                mediaType: "image/png",
+                base64Data: "abc123",
+              },
+            ],
             tddEnabled: true,
           },
           expect.objectContaining({ onSuccess: expect.any(Function) }),

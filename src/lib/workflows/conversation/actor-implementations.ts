@@ -26,8 +26,12 @@ import type {
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
   ConversationBackendEvent,
+  ConversationImageRef,
+  ImagePayload,
   AskQuestionItem,
 } from "@/types";
+import { assembleUserContentBlocks } from "./assemble-user-blocks";
+import { buildUserTranscriptBlocks } from "./build-user-transcript-blocks";
 import type { TranscriptEntry } from "@/lib/transcript";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationApplyResult } from "@/lib/mcp/runtime-apply";
@@ -175,10 +179,13 @@ export interface ActorImplementationDeps {
     conversationId: string,
     entry: TranscriptEntry,
   ): Promise<void>;
-  externalizeImageBlocks(
+  saveTranscriptImage(
     conversationId: string,
-    blocks: MessageContentBlock[],
-  ): Promise<MessageContentBlock[]>;
+    index: number,
+    mediaType: string,
+    base64Data: string,
+  ): Promise<string>;
+  getNextImageIndex(conversationId: string): Promise<number>;
 
   // Backend runtime lifecycle
   getConversationBackendFactory(
@@ -366,7 +373,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     getTranscriptPath: transcriptMod.getTranscriptPath,
     readConfig: configMod.readConfig,
     safeAppendTranscriptEntry: transcriptMod.safeAppendTranscriptEntry,
-    externalizeImageBlocks: transcriptImagesMod.externalizeImageBlocks,
+    saveTranscriptImage: transcriptImagesMod.saveTranscriptImage,
+    getNextImageIndex: transcriptImagesMod.getNextImageIndex,
     getConversationBackendFactory: registryMod.getConversationBackendFactory,
     registerBackendRuntime: runtimeRegistryMod.registerRuntime,
     unregisterBackendRuntime: runtimeRegistryMod.unregisterRuntime,
@@ -857,7 +865,7 @@ interface DispatchTurnViaAgentCallInput {
   sessionName: string;
   backend: AgentBackendId;
   promptText: string;
-  images: ConversationBackendTurnInput["images"] | undefined;
+  imageRefs: ConversationBackendTurnInput["imageRefs"] | undefined;
   modelId: string | null | undefined;
   reasoningEffort: string | undefined;
   autonomous: boolean;
@@ -962,7 +970,9 @@ async function dispatchTurnViaAgentCall(
           : {}),
         autonomous: input.autonomous,
         sessionInstructions: [],
-        ...(input.images !== undefined ? { images: input.images } : {}),
+        ...(input.imageRefs !== undefined
+          ? { imageRefs: input.imageRefs }
+          : {}),
         onEvent: input.onEvent,
         ...(input.onAskQuestion !== undefined
           ? { answerAskUser: input.onAskQuestion }
@@ -1108,22 +1118,52 @@ export async function executePromptForMachine(
     }
   }
 
-  // Build user content blocks
-  const userContentBlocks: MessageContentBlock[] = [
-    ...(input.promptText
-      ? [{ type: "text" as const, text: input.promptText }]
-      : []),
-    ...(input.images ?? []).map((img) => ({
-      type: "image" as const,
-      mediaType: img.mediaType,
-      base64Data: img.base64Data,
-    })),
-  ];
+  // Server-side image indexing: scan transcript for cumulative count, then
+  // assemble inline+strip images into a coherent block sequence with rewritten
+  // markers. Images are persisted to disk by serverIndex before dispatch so
+  // the backend (and downstream readers) can refer to them by path.
+  const startIndex =
+    input.images && input.images.length > 0
+      ? await deps.getNextImageIndex(input.conversationId)
+      : 1;
 
-  // Externalize images for transcript storage
-  const transcriptBlocks = input.images?.length
-    ? await deps.externalizeImageBlocks(input.conversationId, userContentBlocks)
-    : userContentBlocks;
+  const assembled = assembleUserContentBlocks({
+    promptText: input.promptText,
+    images: input.images ?? [],
+    startIndex,
+  });
+
+  const imagesByAttachmentId = new Map<string, ImagePayload>(
+    (input.images ?? []).map((img) => [img.attachmentId, img]),
+  );
+
+  const imageRefs: ConversationImageRef[] = [];
+  for (const assignment of assembled.assignments) {
+    const image = imagesByAttachmentId.get(assignment.attachmentId);
+    if (!image) continue;
+    const persistedPath = await deps.saveTranscriptImage(
+      input.conversationId,
+      assignment.serverIndex,
+      assignment.mediaType,
+      image.base64Data,
+    );
+    imageRefs.push({
+      index: assignment.serverIndex,
+      mediaType: assignment.mediaType,
+      path: persistedPath,
+      base64Data: image.base64Data,
+    });
+  }
+
+  const transcriptBlocks =
+    imageRefs.length > 0
+      ? buildUserTranscriptBlocks({
+          rewrittenPromptText: assembled.rewrittenPromptText,
+          imageRefs,
+        })
+      : input.promptText
+        ? [{ type: "text" as const, text: input.promptText }]
+        : [];
 
   // Persist user prompt in transcript
   await deps.safeAppendTranscriptEntry(input.conversationId, {
@@ -1403,16 +1443,17 @@ export async function executePromptForMachine(
         deps.mutateConversation,
       );
 
-  // Prepend debug mode instructions
+  // Prepend debug mode instructions to the rewritten prompt text. Backends
+  // receive a single string with `[Image #N]` markers; image data is carried
+  // separately on `imageRefs`.
   const effectivePrompt = buildEffectivePrompt(
-    input.promptText,
-    (input.images?.length ?? 0) > 0,
-    userContentBlocks,
+    assembled.rewrittenPromptText,
+    false,
+    [],
     input.debugMode,
     deps.getDebugLogUrl(input.conversationId),
   );
 
-  // Determine prompt text — backend receives string, images are separate
   const promptText =
     typeof effectivePrompt === "string"
       ? effectivePrompt
@@ -1522,7 +1563,7 @@ export async function executePromptForMachine(
       sessionName: input.sessionName,
       backend: input.agentBackend,
       promptText,
-      images: input.images,
+      imageRefs: imageRefs.length > 0 ? imageRefs : undefined,
       modelId: effectiveModel,
       reasoningEffort: effectiveEffort,
       autonomous: input.autonomous ?? false,

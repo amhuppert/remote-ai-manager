@@ -25,8 +25,8 @@ import type {
   ConversationBackendEvent,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
+  ConversationImageRef,
   PortableMcpConfig,
-  ImagePayload,
 } from "@/types";
 import type { AskQuestionItem } from "@/lib/schemas";
 import {
@@ -58,7 +58,7 @@ export interface DispatchConversationTurnDeps {
   reasoningEffort?: string;
   autonomous?: boolean;
   sessionInstructions?: string[];
-  images?: readonly ImagePayload[];
+  imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
   /**
    * If present, mid-turn questions from the backend are forwarded to this
@@ -127,7 +127,7 @@ export async function dispatchConversationTurn(
 
   const turnInput: ConversationBackendTurnInput = {
     promptText: request.prompt,
-    images: [...(deps.images ?? [])],
+    imageRefs: deps.imageRefs ?? [],
     sessionInstructions: [...(deps.sessionInstructions ?? [])],
     modelId: deps.modelId,
     reasoningEffort: deps.reasoningEffort,

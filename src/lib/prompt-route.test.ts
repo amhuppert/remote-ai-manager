@@ -394,3 +394,162 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     expect(response.headers.get("Content-Type")).toBe("text/event-stream");
   });
 });
+
+// ===========================================================================
+// Image payload forwarding
+// ===========================================================================
+
+describe("image payload forwarding", () => {
+  const validImagePayload = {
+    attachmentId: "att-1",
+    mediaType: "image/png" as const,
+    base64Data: "BASE64DATA",
+    inlineMarkerIndex: 1,
+  };
+
+  it("accepts new image payload shape (attachmentId + inlineMarkerIndex) and forwards to executePromptStream on session POST", async () => {
+    const response = await handlers.POST(
+      makeRequest({
+        prompt: "look at [Image #1]",
+        images: [validImagePayload],
+      }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+
+    const stream = response.body;
+    if (stream) {
+      const reader = stream.getReader();
+      while (!(await reader.read()).done) {
+        // drain
+      }
+    }
+
+    expect(deps.executePromptStream).toHaveBeenCalledTimes(1);
+    const callArgs = vi.mocked(deps.executePromptStream).mock.calls[0]!;
+    const forwardedImages = callArgs[6];
+    expect(forwardedImages).toEqual([validImagePayload]);
+  });
+
+  it("forwards images with attachmentId + inlineMarkerIndex to executePromptStream on conversation POST", async () => {
+    const img1 = {
+      attachmentId: "att-1",
+      mediaType: "image/png" as const,
+      base64Data: "DATA1",
+      inlineMarkerIndex: 1,
+    };
+    const img2 = {
+      attachmentId: "att-2",
+      mediaType: "image/jpeg" as const,
+      base64Data: "DATA2",
+      inlineMarkerIndex: 2,
+    };
+
+    const response = await handlers.conversationPOST(
+      makeRequest({
+        prompt: "compare [Image #1] and [Image #2]",
+        images: [img1, img2],
+      }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(200);
+
+    const stream = response.body;
+    if (stream) {
+      const reader = stream.getReader();
+      while (!(await reader.read()).done) {
+        // drain
+      }
+    }
+
+    expect(deps.executePromptStream).toHaveBeenCalledTimes(1);
+    const callArgs = vi.mocked(deps.executePromptStream).mock.calls[0]!;
+    const forwardedConversationId = callArgs[4];
+    const forwardedImages = callArgs[6];
+    expect(forwardedConversationId).toBe("conv-1");
+    expect(forwardedImages).toEqual([img1, img2]);
+  });
+
+  it("accepts images with no inlineMarkerIndex (strip-only attachments)", async () => {
+    const stripOnly = {
+      attachmentId: "att-strip",
+      mediaType: "image/png" as const,
+      base64Data: "STRIP",
+    };
+
+    const response = await handlers.POST(
+      makeRequest({
+        prompt: "describe these",
+        images: [stripOnly],
+      }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+
+    const stream = response.body;
+    if (stream) {
+      const reader = stream.getReader();
+      while (!(await reader.read()).done) {
+        // drain
+      }
+    }
+
+    const callArgs = vi.mocked(deps.executePromptStream).mock.calls[0]!;
+    const forwardedImages = callArgs[6];
+    expect(forwardedImages).toEqual([stripOnly]);
+  });
+
+  it("rejects image payloads missing attachmentId with 400", async () => {
+    const response = await handlers.POST(
+      makeRequest({
+        prompt: "hi",
+        images: [
+          {
+            mediaType: "image/png",
+            base64Data: "BASE64",
+            inlineMarkerIndex: 1,
+          },
+        ],
+      }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(deps.executePromptStream).not.toHaveBeenCalled();
+  });
+
+  it("rejects image payloads with non-positive inlineMarkerIndex with 400", async () => {
+    const response = await handlers.POST(
+      makeRequest({
+        prompt: "hi",
+        images: [
+          {
+            attachmentId: "att-1",
+            mediaType: "image/png",
+            base64Data: "BASE64",
+            inlineMarkerIndex: 0,
+          },
+        ],
+      }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(deps.executePromptStream).not.toHaveBeenCalled();
+  });
+
+  it("accepts request with images but empty prompt text", async () => {
+    const response = await handlers.POST(
+      makeRequest({
+        prompt: "",
+        images: [validImagePayload],
+      }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+  });
+});

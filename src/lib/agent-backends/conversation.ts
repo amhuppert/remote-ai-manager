@@ -1,8 +1,4 @@
-import type {
-  MessageContentBlock,
-  AskQuestionItem,
-  ImagePayload,
-} from "@/types";
+import type { MessageContentBlock, AskQuestionItem } from "@/types";
 import type {
   AgentBackendId,
   AgentSessionRef,
@@ -11,6 +7,23 @@ import type {
 } from "./types";
 import type { PortableMcpConfig, McpApplyResult } from "./portable-mcp";
 import type { McpDiscoveredTool } from "@/lib/schemas";
+
+/**
+ * Server-side reference to an image already saved on disk under the
+ * conversation's transcript images directory. Each ref carries the assigned
+ * cumulative `index` (used in `[Image #N]` markers in the prompt text), the
+ * media type, the absolute filesystem `path`, and the in-memory `base64Data`
+ * the actor still holds from the inbound request. Backends consume whichever
+ * fields their SDK requires — Claude uses `base64Data` for inline image
+ * blocks plus `path` for the `[Image #N source: …]` annotation, while Codex
+ * passes `path` directly through `local_image`.
+ */
+export interface ConversationImageRef {
+  index: number;
+  mediaType: string;
+  path: string;
+  base64Data: string;
+}
 
 export type ConversationBackendEvent =
   | { type: "backend_init"; backendRef: AgentSessionRef }
@@ -25,7 +38,7 @@ export type ConversationBackendEvent =
 
 export interface ConversationBackendTurnInput {
   promptText: string;
-  images: ImagePayload[];
+  imageRefs: readonly ConversationImageRef[];
   sessionInstructions: string[];
   modelId?: string;
   reasoningEffort?: string;

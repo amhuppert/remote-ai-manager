@@ -133,6 +133,13 @@ export default memo(function MessageContent({
             />
           );
         }
+        if (block.type === "image_marker") {
+          return (
+            <span key={i} className="message-image-caption">
+              #{block.index}
+            </span>
+          );
+        }
         if (block.type === "tool_use") {
           const formatted = formatToolUse(block.name, block.input, {
             worktreePath,

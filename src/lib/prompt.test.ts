@@ -576,7 +576,13 @@ describe("executePromptStream (facade)", () => {
     const executor = createPromptExecutor(deps);
     executePromptStream = executor.executePromptStream;
 
-    const images = [{ mediaType: "image/png" as const, base64Data: "abc123" }];
+    const images = [
+      {
+        attachmentId: "img-1",
+        mediaType: "image/png" as const,
+        base64Data: "abc123",
+      },
+    ];
 
     await executePromptStream(
       "/projects/repo",

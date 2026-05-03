@@ -28,6 +28,7 @@ import {
   type QuerySessionOptions,
   type TurnResult,
 } from "./query-session";
+import { buildClaudePromptBlocks } from "./build-prompt-blocks";
 import { createCanUseTool, type CanUseToolTurnContext } from "./native-tooling";
 import { buildChildEnv } from "@/lib/child-env";
 import { createLogger } from "@/lib/logging";
@@ -139,19 +140,11 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       }
     }
 
-    // Build prompt content — text + images
-    const promptBlocks: MessageContentBlock[] = [];
-    if (input.syntheticForkSeed) {
-      promptBlocks.push({ type: "text", text: input.syntheticForkSeed });
-    }
-    promptBlocks.push({ type: "text", text: input.promptText });
-    for (const img of input.images) {
-      promptBlocks.push({
-        type: "image",
-        mediaType: img.mediaType,
-        base64Data: img.base64Data,
-      });
-    }
+    const promptBlocks: MessageContentBlock[] = buildClaudePromptBlocks({
+      promptText: input.promptText,
+      imageRefs: input.imageRefs,
+      syntheticForkSeed: input.syntheticForkSeed ?? null,
+    });
 
     const prompt: string | MessageContentBlock[] =
       promptBlocks.length === 1 && promptBlocks[0]!.type === "text"

@@ -230,6 +230,11 @@ export const debugLogStatsResponseSchema = z.object({
   entryCount: z.number(),
 });
 
+// -- Image count --
+export const imageCountResponseSchema = z.object({
+  count: z.number().int().nonnegative(),
+});
+
 // -- Collaboration --
 export const collaborationEnvelopeSchema = z.object({
   workflowId: z.string(),

@@ -18,7 +18,7 @@ import type {
   AgentBackendId,
   ConversationBackendEvent,
   ConversationBackendTurnInput,
-  ImagePayload,
+  ConversationImageRef,
 } from "@/types";
 import type { AskQuestionItem } from "@/lib/schemas";
 import { dispatchConversationTurn } from "./agent-call-conversation";
@@ -48,7 +48,7 @@ export interface ConversationRuntimeResolution {
   reasoningEffort?: string;
   autonomous?: boolean;
   sessionInstructions?: string[];
-  images?: readonly ImagePayload[];
+  imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
   answerAskUser?: (
     questions: AskQuestionItem[],
@@ -157,7 +157,9 @@ async function executeConversationTurn(
     ...(resolution.sessionInstructions !== undefined
       ? { sessionInstructions: [...resolution.sessionInstructions] }
       : {}),
-    ...(resolution.images !== undefined ? { images: resolution.images } : {}),
+    ...(resolution.imageRefs !== undefined
+      ? { imageRefs: resolution.imageRefs }
+      : {}),
     ...(resolution.onEvent !== undefined
       ? { onEvent: resolution.onEvent }
       : {}),

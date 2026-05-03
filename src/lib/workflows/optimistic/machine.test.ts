@@ -320,7 +320,13 @@ describe("optimisticMachine", () => {
     it("includes images in context when provided", async () => {
       const inputWithImages: OptimisticInput = {
         ...defaultInput,
-        images: [{ mediaType: "image/png", base64Data: "abc123" }],
+        images: [
+          {
+            attachmentId: "img-1",
+            mediaType: "image/png",
+            base64Data: "abc123",
+          },
+        ],
       };
 
       const machine = createTestMachine();

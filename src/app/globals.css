@@ -4615,6 +4615,109 @@ textarea {
   color: var(--text-tertiary);
 }
 
+.prompt-editor {
+  position: relative;
+}
+
+.prompt-editor__content {
+  min-height: 80px;
+  max-height: 50vh;
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  overflow-y: auto;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.prompt-editor__content:focus-within {
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 0 3px var(--cyan-glow);
+}
+
+.prompt-editor__content .ProseMirror {
+  outline: none;
+  min-height: 56px;
+}
+
+.prompt-editor__content .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-tertiary);
+  pointer-events: none;
+  height: 0;
+  float: left;
+}
+
+.image-marker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 2px 6px 2px 2px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1;
+  vertical-align: baseline;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.image-marker-chip[data-selected="true"] {
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 0 2px var(--cyan-glow);
+}
+
+.image-marker-chip__thumbnail {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.image-marker-chip__index {
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+.image-marker-chip__remove {
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 3px;
+  line-height: 1;
+  padding: 0;
+  font-size: 12px;
+}
+
+.image-marker-chip__remove:hover {
+  background: var(--red-glow);
+  color: var(--red-text);
+}
+
+@media (max-width: 768px) {
+  .image-marker-chip {
+    min-height: 28px;
+    padding: 4px 8px 4px 4px;
+  }
+  .image-marker-chip__remove {
+    min-width: 24px;
+    min-height: 24px;
+  }
+}
+
 /* Rainbow effect for max effort level */
 @keyframes rainbow-shift {
   0% {
@@ -6561,6 +6664,20 @@ textarea {
   border-radius: var(--radius-sm);
   margin: var(--space-sm) 0;
   display: block;
+}
+
+.message-image-caption {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: var(--space-sm);
+  margin-bottom: 2px;
+  letter-spacing: 0.04em;
+}
+
+.message-image-caption + .message-inline-image {
+  margin-top: 0;
 }
 
 .tool-use-indicator {

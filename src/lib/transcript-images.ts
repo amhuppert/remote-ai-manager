@@ -1,7 +1,6 @@
 import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { getConfigDirPath } from "./config";
 import type { MessageContentBlock } from "@/types";
 
@@ -31,8 +30,11 @@ async function ensureImagesDir(
   return dir;
 }
 
-/** Map MIME type to file extension */
-function mediaTypeToExtension(mediaType: string): string {
+/**
+ * Map a known image MIME type to its file extension.
+ * Throws on unknown types — callers should validate input via `imageMediaTypeSchema`.
+ */
+export function mediaTypeToExt(mediaType: string): string {
   switch (mediaType) {
     case "image/jpeg":
       return "jpg";
@@ -43,7 +45,7 @@ function mediaTypeToExtension(mediaType: string): string {
     case "image/webp":
       return "webp";
     default:
-      return "bin";
+      throw new Error(`Unsupported image media type: ${mediaType}`);
   }
 }
 
@@ -52,8 +54,8 @@ function mediaTypeToExtension(mediaType: string): string {
 // ============================================================
 
 /**
- * Save a base64-encoded image to disk as a binary file.
- * Returns the absolute path to the saved file.
+ * Save a base64-encoded image to disk as a binary file using a predictable
+ * `{N}.{ext}` filename. Returns the absolute path to the saved file.
  */
 export async function saveTranscriptImage(
   conversationId: string,
@@ -63,12 +65,8 @@ export async function saveTranscriptImage(
   configDir?: string,
 ): Promise<string> {
   const dir = await ensureImagesDir(conversationId, configDir);
-  const hash = createHash("sha256")
-    .update(base64Data)
-    .digest("hex")
-    .slice(0, 8);
-  const ext = mediaTypeToExtension(mediaType);
-  const filename = `${index}-${hash}.${ext}`;
+  const ext = mediaTypeToExt(mediaType);
+  const filename = `${index}.${ext}`;
   const filePath = path.join(dir, filename);
 
   const buffer = Buffer.from(base64Data, "base64");
@@ -84,6 +82,9 @@ export async function saveTranscriptImage(
 /**
  * Read an image file from disk and return base64-encoded data.
  * Returns null if the file does not exist.
+ *
+ * Reads any path that exists — including legacy `{N}-{hash}.{ext}` files
+ * written before the predictable-naming migration.
  */
 export async function readTranscriptImage(
   imagePath: string,
@@ -98,26 +99,36 @@ export async function readTranscriptImage(
 // ============================================================
 
 /**
- * Replace inline `image` blocks with `image_ref` blocks backed by files on disk.
+ * Replace inline `image` blocks with paired `image_marker` + `image_ref`
+ * blocks backed by files on disk. Indices are assigned sequentially starting
+ * at `startIndex` to support cumulative numbering across a conversation.
  * Non-image blocks pass through unchanged.
  */
 export async function externalizeImageBlocks(
   conversationId: string,
   blocks: MessageContentBlock[],
+  startIndex: number = 1,
   configDir?: string,
 ): Promise<MessageContentBlock[]> {
   const result: MessageContentBlock[] = [];
-  let imageIndex = 0;
+  let nextIndex = startIndex;
 
   for (const block of blocks) {
     if (block.type === "image") {
+      const index = nextIndex++;
       const filePath = await saveTranscriptImage(
         conversationId,
-        imageIndex++,
+        index,
         block.mediaType,
         block.base64Data,
         configDir,
       );
+      result.push({
+        type: "image_marker" as const,
+        index,
+        mediaType: block.mediaType,
+        imagePath: filePath,
+      });
       result.push({
         type: "image_ref" as const,
         mediaType: block.mediaType,
@@ -132,9 +143,9 @@ export async function externalizeImageBlocks(
 }
 
 /**
- * Resolve `image_ref` blocks back to inline `image` blocks by reading files from disk.
- * Falls back to a placeholder text block if the file is missing.
- * Blocks of other types pass through unchanged.
+ * Resolve `image_ref` blocks back to inline `image` blocks by reading files
+ * from disk. Falls back to a placeholder text block if the file is missing.
+ * Blocks of other types (including `image_marker`) pass through unchanged.
  */
 export async function resolveImageRefs(
   blocks: MessageContentBlock[],
@@ -162,4 +173,54 @@ export async function resolveImageRefs(
   }
 
   return result;
+}
+
+// ============================================================
+// Cumulative Index Calculation
+// ============================================================
+
+/**
+ * Scan a conversation's JSONL transcript and return the next 1-based image
+ * index. Counts every image-bearing content block (`image`, `image_ref`)
+ * across all entries — `image_marker` blocks are paired with `image_ref`
+ * and would double-count, so they are ignored here.
+ *
+ * Returns 1 when the transcript file does not exist or contains no images.
+ */
+export async function getNextImageIndex(
+  conversationId: string,
+  configDir?: string,
+): Promise<number> {
+  const filePath = path.join(
+    configDir ?? getConfigDirPath(),
+    "transcripts",
+    `${conversationId}.jsonl`,
+  );
+
+  if (!existsSync(filePath)) return 1;
+
+  const raw = await readFile(filePath, "utf-8");
+  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+
+  let count = 0;
+  for (const line of lines) {
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof entry !== "object" || entry === null) continue;
+    const content = (entry as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (typeof block !== "object" || block === null) continue;
+      const type = (block as { type?: unknown }).type;
+      if (type === "image" || type === "image_ref") {
+        count++;
+      }
+    }
+  }
+
+  return count + 1;
 }

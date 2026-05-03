@@ -31,7 +31,6 @@ import {
   getCodexReasoningLevelsForModel,
 } from "@/lib/schemas";
 import { createLogger } from "@/lib/logging";
-import path from "node:path";
 
 // Default dep implementations (used at runtime, injected in tests)
 import { Codex } from "@openai/codex-sdk";
@@ -42,7 +41,6 @@ import {
   buildCodexMcpServersConfig,
   listNativeCodexMcpServerNames,
 } from "./native-mcp-suppression";
-import { mkdir, writeFile, rm } from "node:fs/promises";
 
 const logger = createLogger("codex:conversation-runtime");
 
@@ -74,12 +72,6 @@ export interface CodexConversationRuntimeDeps {
     cwd: string;
     env: Record<string, string>;
   }): Promise<string[]>;
-  mkdir(path: string, options: { recursive: boolean }): Promise<void>;
-  writeFile(path: string, data: Buffer): Promise<void>;
-  rm(
-    path: string,
-    options: { recursive: boolean; force: boolean },
-  ): Promise<void>;
   now(): number;
 }
 
@@ -89,11 +81,6 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   toStringEnv,
   translatePortableMcpToCodex,
   listNativeCodexMcpServerNames,
-  mkdir: async (path, options) => {
-    await mkdir(path, options);
-  },
-  writeFile: (path, data) => writeFile(path, data),
-  rm: (path, options) => rm(path, options),
   now: () => Date.now(),
 };
 
@@ -160,7 +147,6 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     input: ConversationBackendTurnInput,
   ): Promise<ConversationBackendTurnResult> {
     const startedAt = this.deps.now();
-    let cleanupImageDir: (() => Promise<void>) | null = null;
     const wasFirstTurn = this.isFirstTurn;
 
     // Mutable accumulator — mutated from inside event callbacks, so must be
@@ -176,9 +162,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     const contentBlocks: MessageContentBlock[] = [];
 
     try {
-      // Build prompt payload
-      const promptInput = await this.buildPromptInput(input);
-      cleanupImageDir = promptInput.cleanup;
+      const promptInput = this.buildPromptInput(input);
 
       // Build per-turn Codex client options
       const codexOptions = await this.buildCodexOptions();
@@ -202,15 +186,15 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         hasOutputFormat: !!this.outputFormat,
         hasMcpServers: !!codexOptions.config,
         promptLength:
-          typeof promptInput.input === "string"
-            ? promptInput.input.length
-            : Array.isArray(promptInput.input)
-              ? promptInput.input.length
+          typeof promptInput === "string"
+            ? promptInput.length
+            : Array.isArray(promptInput)
+              ? promptInput.length
               : 0,
       });
 
       // Start streaming
-      const streamed = await thread.runStreamed(promptInput.input, {
+      const streamed = await thread.runStreamed(promptInput, {
         signal: input.signal,
         ...(this.outputFormat
           ? { outputSchema: this.outputFormat.schema }
@@ -265,14 +249,6 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
           reasoningEffort: this.reasoningEffort,
           wasFirstTurn,
         });
-      }
-    } finally {
-      if (cleanupImageDir) {
-        try {
-          await cleanupImageDir();
-        } catch {
-          // Best-effort cleanup
-        }
       }
     }
 
@@ -363,10 +339,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
   // Private helpers
   // ============================================================
 
-  private async buildPromptInput(
-    input: ConversationBackendTurnInput,
-  ): Promise<{ input: Input; cleanup: (() => Promise<void>) | null }> {
-    // Assemble text sections
+  private buildPromptInput(input: ConversationBackendTurnInput): Input {
     const textParts: string[] = [];
 
     if (this.isFirstTurn && this.sessionInstructions.length > 0) {
@@ -384,43 +357,17 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     textParts.push(input.promptText);
     const finalPrompt = textParts.join("\n\n");
 
-    // If no images, pass as plain string
-    if (input.images.length === 0) {
-      return { input: finalPrompt, cleanup: null };
+    if (input.imageRefs.length === 0) {
+      return finalPrompt;
     }
 
-    // Materialize images to temp files
-    const turnDir = path.join(
-      this.worktreePath,
-      ".cc-tmp",
-      "codex-images",
-      this.conversationId,
-      `turn-${this.deps.now()}`,
-    );
-    await this.deps.mkdir(turnDir, { recursive: true });
+    const imageInputs: Array<{ type: "local_image"; path: string }> =
+      input.imageRefs.map((ref) => ({
+        type: "local_image",
+        path: ref.path,
+      }));
 
-    const imageInputs: Array<{ type: "local_image"; path: string }> = [];
-    for (let i = 0; i < input.images.length; i++) {
-      const img = input.images[i]!;
-      const ext = mimeToExt(img.mediaType);
-      const filePath = path.join(turnDir, `${i}.${ext}`);
-      await this.deps.writeFile(
-        filePath,
-        Buffer.from(img.base64Data, "base64"),
-      );
-      imageInputs.push({ type: "local_image", path: filePath });
-    }
-
-    const userInput: Input = [
-      { type: "text", text: finalPrompt },
-      ...imageInputs,
-    ];
-
-    const cleanup = async () => {
-      await this.deps.rm(turnDir, { recursive: true, force: true });
-    };
-
-    return { input: userInput, cleanup };
+    return [{ type: "text", text: finalPrompt }, ...imageInputs];
   }
 
   private async buildCodexOptions(): Promise<CodexOptions> {
@@ -655,16 +602,6 @@ const BASH_WRAPPER_RE = /^\/bin\/bash\s+-lc\s+(['"])(.*)\1$/s;
 function unwrapBashCommand(raw: string): string {
   const m = BASH_WRAPPER_RE.exec(raw);
   return m ? m[2]! : raw;
-}
-
-function mimeToExt(mediaType: string): string {
-  const map: Record<string, string> = {
-    "image/png": "png",
-    "image/jpeg": "jpg",
-    "image/webp": "webp",
-    "image/gif": "gif",
-  };
-  return map[mediaType] ?? "bin";
 }
 
 function isAbortError(err: unknown): boolean {

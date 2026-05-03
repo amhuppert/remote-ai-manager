@@ -105,7 +105,7 @@ describe("ClaudeConversationRuntime — external turn events", () => {
     // Run one caller-initiated turn so the session is past first-prompt state
     const turnPromise = runtime.sendTurn({
       promptText: "hello",
-      images: [],
+      imageRefs: [],
       sessionInstructions: [],
       autonomous: false,
       signal: new AbortController().signal,
@@ -217,7 +217,7 @@ describe("ClaudeConversationRuntime — external turn events", () => {
 
     const turnPromise = runtime.sendTurn({
       promptText: "hello",
-      images: [],
+      imageRefs: [],
       sessionInstructions: [],
       autonomous: false,
       signal: new AbortController().signal,
@@ -351,7 +351,7 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", ()
     // Kick off a turn but never push a result: it stays running.
     const turnPromise = runtime.sendTurn({
       promptText: "hello",
-      images: [],
+      imageRefs: [],
       sessionInstructions: [],
       autonomous: false,
       signal: new AbortController().signal,
@@ -549,7 +549,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
 
     const turnPromise = runtime.sendTurn({
       promptText: "hello",
-      images: [],
+      imageRefs: [],
       sessionInstructions: [],
       autonomous: false,
       signal: new AbortController().signal,

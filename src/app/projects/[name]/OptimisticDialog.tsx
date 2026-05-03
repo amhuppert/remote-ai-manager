@@ -157,6 +157,7 @@ export default function OptimisticDialog({
 
     const imagePayloads: ImagePayload[] = hasImages
       ? pendingImages.map((img) => ({
+          attachmentId: img.id,
           mediaType: img.mediaType as ImagePayload["mediaType"],
           base64Data: img.base64Data,
         }))
@@ -306,8 +307,8 @@ export default function OptimisticDialog({
                     e.preventDefault();
                     const file = item.getAsFile();
                     if (file) {
-                      void addImage(file).then((err) => {
-                        if (err) setError(err);
+                      void addImage(file).then((result) => {
+                        if (result.error) setError(result.error);
                       });
                     }
                     return;
@@ -344,8 +345,8 @@ export default function OptimisticDialog({
                 const files = e.target.files;
                 if (!files) return;
                 for (const file of files) {
-                  void addImage(file).then((err) => {
-                    if (err) setError(err);
+                  void addImage(file).then((result) => {
+                    if (result.error) setError(result.error);
                   });
                 }
                 // Reset so re-selecting the same file works
