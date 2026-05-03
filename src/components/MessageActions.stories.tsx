@@ -7,6 +7,12 @@ const meta = {
   component: MessageActions,
   args: {
     messageIndex: 2,
+    content: [
+      {
+        type: "text",
+        text: "Can you refactor the authentication module to use JWT tokens instead of session cookies? Make sure to update the middleware as well.",
+      },
+    ],
     onFork: fn(),
     onEdit: fn(),
   },

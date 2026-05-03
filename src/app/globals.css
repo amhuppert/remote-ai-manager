@@ -4221,35 +4221,19 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Message actions — hover overlay on user messages */
+/* Message actions — flow below message content, right-aligned */
 .msg-actions {
-  position: absolute;
-  top: 0;
-  right: 0;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease;
-  z-index: 2;
-}
-
-.message.user:hover .msg-actions,
-.message.user:focus-within .msg-actions,
-.message.assistant:hover .msg-actions,
-.message.assistant:focus-within .msg-actions {
-  opacity: 1;
-  pointer-events: auto;
+  margin-top: var(--space-xs);
+  margin-left: auto;
+  width: fit-content;
 }
 
 .msg-actions--disabled {
-  pointer-events: none !important;
-  opacity: 0.3 !important;
+  pointer-events: none;
+  opacity: 0.3;
 }
 
 .msg-action-btn {
@@ -7978,19 +7962,7 @@ textarea {
     min-width: 40px;
   }
 
-  /* ---- Message actions: flow below content on mobile ---- */
-  .msg-actions {
-    position: static;
-    opacity: 1;
-    pointer-events: auto;
-    margin-top: var(--space-xs);
-    margin-left: auto;
-    width: fit-content;
-    background: transparent;
-    border: none;
-    padding: 0;
-  }
-
+  /* ---- Message actions: enlarge buttons for touch on mobile ---- */
   .msg-action-btn {
     width: 44px;
     height: 44px;

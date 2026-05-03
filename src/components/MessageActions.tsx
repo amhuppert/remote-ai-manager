@@ -1,10 +1,14 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import type { MessageContentBlock } from "@/types";
+import CopyMessageButton from "./CopyMessageButton";
 
 interface MessageActionsProps {
   /** The 0-based index of this message in the conversation */
   messageIndex: number;
+  /** Content blocks of the message — used for the Copy action */
+  content: MessageContentBlock[];
   /** Called when user clicks Fork — forks conversation from this message */
   onFork: (messageIndex: number) => void;
   /** Called when user clicks Edit — enters inline edit mode */
@@ -22,6 +26,7 @@ interface MessageActionsProps {
  */
 export default function MessageActions({
   messageIndex,
+  content,
   onFork,
   onEdit,
   disabled = false,
@@ -99,6 +104,7 @@ export default function MessageActions({
         </div>
       ) : (
         <>
+          <CopyMessageButton content={content} />
           <button
             className="msg-action-btn"
             onClick={handleFork}

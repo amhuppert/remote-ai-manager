@@ -1557,6 +1557,7 @@ export default function ConversationDetailPage({
                                 {isUserMsg && !isEditing && (
                                   <MessageActions
                                     messageIndex={virtualRow.index}
+                                    content={msg.content}
                                     onFork={handleFork}
                                     onEdit={startEditing}
                                     disabled={isBusy || isReadOnly}
