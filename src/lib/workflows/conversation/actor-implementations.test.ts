@@ -1338,6 +1338,59 @@ describe("executePromptForMachine", () => {
     expect(result.aborted).toBe(true);
   });
 
+  it("aborts the controller before closing the runtime when the safety-net timeout fires", async () => {
+    vi.mocked(mockDeps.readConfig).mockResolvedValue({
+      claudeTimeoutMs: 30,
+      defaultModel: "opus",
+      maxTurns: 50,
+      idleQuerySessionTtlMs: 300_000,
+      defaultEffort: undefined,
+    });
+
+    const events: string[] = [];
+    const abortController = new AbortController();
+    abortController.signal.addEventListener("abort", () => {
+      events.push("abort");
+    });
+
+    const closingRuntime = createMockBackendRuntime({
+      close: vi.fn(() => {
+        events.push(
+          abortController.signal.aborted ? "close-after-abort" : "close",
+        );
+      }),
+    });
+    mockFactory.createRuntime.mockResolvedValueOnce(closingRuntime);
+
+    mockSendTurn.mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) => {
+        await new Promise<void>((_resolve, reject) => {
+          turnInput.signal.addEventListener("abort", () => {
+            reject(new Error("QuerySession closed while turn was in progress"));
+          });
+        });
+        throw new Error("unreachable");
+      },
+    );
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, { abortController });
+
+    await executePromptForMachine(input);
+
+    expect(events).toContain("abort");
+    expect(events).toContain("close-after-abort");
+    expect(events.indexOf("abort")).toBeLessThan(
+      events.indexOf("close-after-abort"),
+    );
+    expect(events).not.toContain("close");
+  });
+
   it("merges portable MCP tooling overrides from runtime state into factory.createRuntime", async () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(

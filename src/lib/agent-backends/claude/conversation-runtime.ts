@@ -151,9 +151,17 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         ? (promptBlocks[0] as { type: "text"; text: string }).text
         : promptBlocks;
 
-    // Emit adapter: translates raw SDK messages to backend events
+    // Track the most recent session_id observed on any raw SDK message so
+    // that a turn aborted or terminated mid-flight (timeout, runtime close)
+    // can still surface the live SDK session for the next turn's `resume:`.
+    let lastKnownSessionId: string | null = null;
+
     const emit = (event: string, data: unknown) => {
       if (event === "__raw_message") {
+        const msg = data as { session_id?: string } | null;
+        if (msg && typeof msg.session_id === "string" && msg.session_id) {
+          lastKnownSessionId = msg.session_id;
+        }
         input.onEvent({ type: "provider_event", payload: data });
       }
     };
@@ -200,23 +208,32 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       return result;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
+      const wasAborted = input.signal.aborted;
+      const backendRef: AgentSessionRef | null = lastKnownSessionId
+        ? { backend: "claude", sessionId: lastKnownSessionId }
+        : null;
+
       logger.error("claude-runtime.turn_error", {
         conversationId: this.querySession.conversationId,
         error: errorMsg,
+        aborted: wasAborted,
+        sessionId: lastKnownSessionId,
       });
 
-      input.onEvent({ type: "error", message: errorMsg });
+      if (!wasAborted) {
+        input.onEvent({ type: "error", message: errorMsg });
+      }
 
       return {
-        backendRef: null,
+        backendRef,
         costUsd: null,
         durationMs: Date.now() - startTime,
         numTurns: null,
         contextTokens: null,
         contextWindowMax: null,
         contentBlocks: [],
-        aborted: false,
-        error: errorMsg,
+        aborted: wasAborted,
+        error: wasAborted ? null : errorMsg,
       };
     }
   }

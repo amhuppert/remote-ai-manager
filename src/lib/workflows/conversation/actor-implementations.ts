@@ -1355,8 +1355,10 @@ export async function executePromptForMachine(
         sessionName: input.sessionName,
         timeoutMs,
       });
-      backendRuntime?.close();
+      // Abort first so the backend's `signal.aborted` check classifies the
+      // failure as `aborted` rather than a generic error.
       abortController.abort();
+      backendRuntime?.close();
     }, timeoutMs);
   }
 

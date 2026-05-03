@@ -649,3 +649,102 @@ describe("ClaudeConversationRuntime — initial MCP policy extraction", () => {
     expect(mock.query.setMcpServers).not.toHaveBeenCalled();
   });
 });
+
+describe("ClaudeConversationRuntime — error result classification", () => {
+  it("preserves the learned sessionId in backendRef when the turn fails after init", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-err-1",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-after-init",
+      uuid: "u-init",
+      tools: [],
+      mcp_servers: [],
+      model: "claude",
+    } as unknown as SDKMessage);
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    runtime.close();
+
+    const result = await turnPromise;
+
+    expect(result.error).toContain("QuerySession closed");
+    expect(result.backendRef).toEqual({
+      backend: "claude",
+      sessionId: "sess-after-init",
+    });
+  });
+
+  it("classifies a closed-during-abort failure as aborted with no error", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-err-2",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const ac = new AbortController();
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: ac.signal,
+      onEvent: () => {},
+    });
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-aborted",
+      uuid: "u-init",
+      tools: [],
+      mcp_servers: [],
+      model: "claude",
+    } as unknown as SDKMessage);
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    ac.abort();
+    runtime.close();
+
+    const result = await turnPromise;
+
+    expect(result.aborted).toBe(true);
+    expect(result.error).toBeNull();
+    expect(result.backendRef).toEqual({
+      backend: "claude",
+      sessionId: "sess-aborted",
+    });
+  });
+});
