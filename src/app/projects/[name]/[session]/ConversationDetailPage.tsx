@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   deriveSessionStatus,
   deriveSessionPromptCount,
+  findBusyOtherConversations,
 } from "@/lib/session-derived";
 import { buildConversationContext } from "@/lib/copy-context";
 import {
@@ -343,6 +344,16 @@ export default function ConversationDetailPage({
 
   // --- Local state ---
   const [promptText, setPromptText] = useState("");
+  // When the user submits a prompt while another conversation in this session
+  // is actively running, we surface a confirmation dialog rather than blocking.
+  // The pending submission is captured here while the user decides; on
+  // confirm we replay it, on cancel we drop it (the input keeps its text).
+  const [pendingConcurrentSubmission, setPendingConcurrentSubmission] =
+    useState<{
+      text: string;
+      images: ImagePayload[];
+      busyNames: string[];
+    } | null>(null);
   // Initialize backend/model/effort consistently from the active conversation's
   // stored backend. The Claude `defaultModel` from server config must not leak
   // into a Codex conversation — picking the first backend-appropriate model
@@ -761,6 +772,30 @@ export default function ConversationDetailPage({
     [switchLayout, storageKey],
   );
 
+  const dispatchPrompt = useCallback(
+    async (text: string, images: ImagePayload[]) => {
+      setPromptText("");
+      clearImages();
+      await sendPrompt(
+        text,
+        messages.length,
+        selectedModel,
+        images.length > 0 ? images : undefined,
+        effortSupported ? selectedEffort : undefined,
+        selectedBackend,
+      );
+    },
+    [
+      sendPrompt,
+      messages.length,
+      selectedModel,
+      effortSupported,
+      selectedEffort,
+      selectedBackend,
+      clearImages,
+    ],
+  );
+
   const handleSendPrompt = useCallback(async () => {
     const currentText = promptTextRef.current;
     const hasImages = pendingImages.length > 0;
@@ -783,29 +818,42 @@ export default function ConversationDetailPage({
         }))
       : [];
 
-    setPromptText("");
-    clearImages();
-    await sendPrompt(
-      currentText.trim(),
-      messages.length,
-      selectedModel,
-      imagePayloads.length > 0 ? imagePayloads : undefined,
-      effortSupported ? selectedEffort : undefined,
-      selectedBackend,
+    // Warn — but do not block — when other conversations in this session are
+    // actively running. Trust the user; concurrent edits in the same worktree
+    // can step on each other but read-only / review prompts are fine.
+    const busyOthers = findBusyOtherConversations(
+      conversations,
+      conversationId,
     );
+    if (busyOthers.length > 0) {
+      setPendingConcurrentSubmission({
+        text: currentText.trim(),
+        images: imagePayloads,
+        busyNames: busyOthers.map((c, i) => c.name ?? `Conversation ${i + 1}`),
+      });
+      return;
+    }
+
+    await dispatchPrompt(currentText.trim(), imagePayloads);
   }, [
     sending,
     conversationId,
-    messages.length,
-    sendPrompt,
     queueMessage,
-    selectedModel,
-    selectedEffort,
-    effortSupported,
-    selectedBackend,
     pendingImages,
-    clearImages,
+    conversations,
+    dispatchPrompt,
   ]);
+
+  const confirmConcurrentSubmission = useCallback(async () => {
+    if (!pendingConcurrentSubmission) return;
+    const { text, images } = pendingConcurrentSubmission;
+    setPendingConcurrentSubmission(null);
+    await dispatchPrompt(text, images);
+  }, [pendingConcurrentSubmission, dispatchPrompt]);
+
+  const cancelConcurrentSubmission = useCallback(() => {
+    setPendingConcurrentSubmission(null);
+  }, []);
 
   const handleDebugPrompt = useCallback(
     (text: string) => {
@@ -2117,6 +2165,25 @@ export default function ConversationDetailPage({
         danger
         onConfirm={handleDelete}
         onCancel={cancelDelete}
+      />
+
+      <ConfirmDialog
+        open={pendingConcurrentSubmission !== null}
+        title="Another agent is working"
+        message={
+          pendingConcurrentSubmission
+            ? `${
+                pendingConcurrentSubmission.busyNames.length === 1
+                  ? `${pendingConcurrentSubmission.busyNames[0]} is currently running`
+                  : `${pendingConcurrentSubmission.busyNames.length} other conversations are currently running`
+              } in this session. If this new agent edits files, its changes can conflict with the other agent's work in the same worktree. Continue anyway?`
+            : ""
+        }
+        confirmLabel="Send anyway"
+        onConfirm={() => {
+          void confirmConcurrentSubmission();
+        }}
+        onCancel={cancelConcurrentSubmission}
       />
 
       <CommitDialog

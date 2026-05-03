@@ -247,8 +247,8 @@ function createProvidedMachine() {
         );
         const runtime = getConversationRuntime(key);
         if (runtime) {
-          runtime.releaseSessionLock?.();
-          runtime.releaseSessionLock = undefined;
+          runtime.releaseConversationLock?.();
+          runtime.releaseConversationLock = undefined;
           runtime.releaseQuerySlot?.();
           runtime.releaseQuerySlot = undefined;
           if (runtime.timeoutHandle) {

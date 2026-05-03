@@ -15,7 +15,7 @@ function createTestDeps(): PromptRouteDeps {
     resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
     getSession: vi.fn().mockResolvedValue(testSession),
     getConversation: vi.fn().mockResolvedValue(testConversation),
-    isSessionBusy: vi.fn().mockReturnValue(false),
+    isConversationBusy: vi.fn().mockReturnValue(false),
     executePromptStream: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -158,17 +158,17 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     expect(body.error).toBe("Session not found");
   });
 
-  it("returns 409 with SESSION_BUSY code when session is busy", async () => {
-    vi.mocked(deps.isSessionBusy).mockReturnValue(true);
+  it("does not consult conversation busy state for new-conversation POSTs", async () => {
+    // The session-level POST creates a fresh conversation; there is no
+    // existing conversation to be busy. The handler should not call
+    // `isConversationBusy` and should proceed straight to streaming.
     const response = await handlers.POST(
       makeRequest({ prompt: "test" }),
       makeParams(),
     );
 
-    expect(response.status).toBe(409);
-    const body = await response.json();
-    expect(body.code).toBe("SESSION_BUSY");
-    expect(body.error).toContain("Session is busy");
+    expect(response.status).toBe(200);
+    expect(deps.isConversationBusy).not.toHaveBeenCalled();
   });
 
   it("trims prompt text (whitespace-only rejected as empty)", async () => {
@@ -219,6 +219,40 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
   it("returns SSE stream on valid conversation prompt", async () => {
     const response = await handlers.conversationPOST(
       makeRequest({ prompt: "Hello Claude" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+  });
+
+  it("returns 409 with CONVERSATION_BUSY code when conversation has an in-flight prompt", async () => {
+    vi.mocked(deps.isConversationBusy).mockReturnValue(true);
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "test" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.code).toBe("CONVERSATION_BUSY");
+    expect(body.error).toContain("Conversation is busy");
+    expect(deps.isConversationBusy).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "test-session",
+      "conv-1",
+    );
+  });
+
+  it("allows a different conversation to start while another runs in the same session", async () => {
+    // Models the new behavior: multiple conversations in the same session
+    // can run concurrently. Only the targeted conversation is gated.
+    vi.mocked(deps.isConversationBusy).mockImplementation(
+      (_p, _s, conversationId) => conversationId === "other-conv",
+    );
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "Hello" }),
       makeConvParams(),
     );
 

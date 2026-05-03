@@ -18,8 +18,8 @@ export interface ConversationRuntimeState {
   /** AbortController for cancelling in-flight SDK queries. */
   abortController: AbortController;
 
-  /** Release function for the per-session single-flight lock. */
-  releaseSessionLock?: () => void;
+  /** Release function for the per-conversation single-flight lock. */
+  releaseConversationLock?: () => void;
 
   /** Release function for the global query slot semaphore. */
   releaseQuerySlot?: () => void;
@@ -45,8 +45,8 @@ export interface ConversationRuntimeState {
   /** Per-conversation tooling overrides injected by callers (e.g., graph workflow execution tools). Applied to backend runtime on creation. */
   tooling?: ConversationToolingOverrides;
 
-  /** When true, prepareTurnForMachine skips session lock acquisition. Used by validator agents that run within an already-locked session. */
-  skipSessionLock?: boolean;
+  /** When true, prepareTurnForMachine skips conversation lock acquisition. Used by validator agents whose runtime lifetime is owned by a parent conversation. */
+  skipConversationLock?: boolean;
 }
 
 const GLOBAL_KEY = "__cc_conversation_runtime_state" as const;
@@ -88,7 +88,7 @@ export function cleanupConversationRuntime(key: string): void {
   const state = getRegistry().get(key);
   if (state) {
     state.abortController.abort();
-    state.releaseSessionLock?.();
+    state.releaseConversationLock?.();
     state.releaseQuerySlot?.();
     if (state.timeoutHandle) {
       clearTimeout(state.timeoutHandle);

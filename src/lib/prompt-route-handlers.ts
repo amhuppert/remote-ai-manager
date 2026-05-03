@@ -14,7 +14,7 @@ import {
   BackendMismatchError,
   ModelEffortValidationError,
 } from "@/lib/prompt";
-import { isSessionBusy as defaultIsSessionBusy } from "@/lib/lock";
+import { isConversationBusy as defaultIsConversationBusy } from "@/lib/lock";
 import { runPromptRequestSchema } from "@/lib/schemas";
 import type {
   RunPromptRequest,
@@ -38,7 +38,11 @@ export interface PromptRouteDeps {
     sessionName: string,
     conversationId: string,
   ) => Promise<ConversationState | null>;
-  isSessionBusy: (projectPath: string, sessionName: string) => boolean;
+  isConversationBusy: (
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ) => boolean;
   executePromptStream: typeof defaultExecutePromptStream;
 }
 
@@ -46,7 +50,7 @@ const defaultDeps: PromptRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
   getConversation: defaultGetConversation,
-  isSessionBusy: defaultIsSessionBusy,
+  isConversationBusy: defaultIsConversationBusy,
   executePromptStream: defaultExecutePromptStream,
 };
 
@@ -88,15 +92,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       );
     }
 
-    if (deps.isSessionBusy(projectPath, sessionName)) {
-      return NextResponse.json(
-        {
-          error: "Session is busy — a prompt is already running",
-          code: "SESSION_BUSY",
-        } satisfies ApiError,
-        { status: 409 },
-      );
-    }
+    // Session-level POSTs create a fresh conversation, so there is nothing
+    // to be busy. Concurrency across conversations within a session is
+    // allowed by design — gating happens at the conversation level.
 
     let body: RunPromptRequest;
     try {
@@ -228,11 +226,11 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       );
     }
 
-    if (deps.isSessionBusy(projectPath, sessionName)) {
+    if (deps.isConversationBusy(projectPath, sessionName, conversationId)) {
       return NextResponse.json(
         {
-          error: "Session is busy — a prompt is already running",
-          code: "SESSION_BUSY",
+          error: "Conversation is busy — a prompt is already running",
+          code: "CONVERSATION_BUSY",
         } satisfies ApiError,
         { status: 409 },
       );

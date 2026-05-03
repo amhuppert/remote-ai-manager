@@ -49,12 +49,12 @@ describe("conversation runtime-state", () => {
       expect(hasConversationRuntime(key)).toBe(false);
     });
 
-    it("calls releaseSessionLock if present", () => {
+    it("calls releaseConversationLock if present", () => {
       const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
       let lockReleased = false;
       registerConversationRuntime(key, {
         abortController: new AbortController(),
-        releaseSessionLock: () => {
+        releaseConversationLock: () => {
           lockReleased = true;
         },
       });

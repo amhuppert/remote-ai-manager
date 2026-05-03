@@ -459,9 +459,9 @@ describe("executePromptStream (facade)", () => {
     expect(setTooling).not.toHaveBeenCalled();
   });
 
-  it("forwards skipSessionLock to deps.setSkipSessionLock after actor creation", async () => {
-    const setSkipSessionLock = vi.fn();
-    deps = createTestDeps({ setSkipSessionLock });
+  it("forwards skipConversationLock to deps.setSkipConversationLock after actor creation", async () => {
+    const setSkipConversationLock = vi.fn();
+    deps = createTestDeps({ setSkipConversationLock });
     const executor = createPromptExecutor(deps);
     executePromptStream = executor.executePromptStream;
 
@@ -473,10 +473,10 @@ describe("executePromptStream (facade)", () => {
       "conv-123",
       undefined,
       undefined,
-      { skipSessionLock: true },
+      { skipConversationLock: true },
     );
 
-    expect(setSkipSessionLock).toHaveBeenCalledWith(
+    expect(setSkipConversationLock).toHaveBeenCalledWith(
       "/projects/repo",
       "test-session",
       "conv-123",
@@ -484,9 +484,9 @@ describe("executePromptStream (facade)", () => {
     );
   });
 
-  it("does not call setSkipSessionLock when option not provided", async () => {
-    const setSkipSessionLock = vi.fn();
-    deps = createTestDeps({ setSkipSessionLock });
+  it("does not call setSkipConversationLock when option not provided", async () => {
+    const setSkipConversationLock = vi.fn();
+    deps = createTestDeps({ setSkipConversationLock });
     const executor = createPromptExecutor(deps);
     executePromptStream = executor.executePromptStream;
 
@@ -498,7 +498,7 @@ describe("executePromptStream (facade)", () => {
       "conv-123",
     );
 
-    expect(setSkipSessionLock).not.toHaveBeenCalled();
+    expect(setSkipConversationLock).not.toHaveBeenCalled();
   });
 
   it("returns contextTokens and contextWindowMax from actor snapshot", async () => {

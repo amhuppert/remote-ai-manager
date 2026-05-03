@@ -2,7 +2,11 @@
  * Pure derive functions for session-level properties computed from conversations.
  * This module has NO Node.js dependencies and is safe to import from client components.
  */
-import type { SessionState, DerivedSessionStatus } from "@/types";
+import type {
+  SessionState,
+  DerivedSessionStatus,
+  ConversationState,
+} from "@/types";
 
 /**
  * Derive session status from workflow state and conversations:
@@ -42,6 +46,24 @@ export function deriveSessionStatus(
 /** Derive session prompt count: sum of all conversation prompt counts */
 export function deriveSessionPromptCount(session: SessionState): number {
   return session.conversations.reduce((sum, c) => sum + c.promptCount, 0);
+}
+
+/**
+ * Return conversations other than `currentConversationId` that are currently
+ * executing a prompt. Used by the prompt-submit flow to warn the user before
+ * launching a concurrent agent in the same session.
+ *
+ * "Busy" here means status === "running"; awaiting / waiting_for_input are
+ * paused states where no agent is actively editing files.
+ */
+export function findBusyOtherConversations(
+  conversations: ConversationState[] | undefined,
+  currentConversationId: string,
+): ConversationState[] {
+  if (!conversations) return [];
+  return conversations.filter(
+    (c) => c.id !== currentConversationId && c.status === "running",
+  );
 }
 
 /**

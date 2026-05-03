@@ -4,6 +4,8 @@ import {
   isSessionBusy,
   acquireProjectLock,
   isProjectLocked,
+  acquireConversationLock,
+  isConversationBusy,
 } from "./lock";
 
 describe("lock", () => {
@@ -133,5 +135,63 @@ describe("project lock", () => {
     release();
     expect(() => release()).not.toThrow();
     expect(isProjectLocked(projectA)).toBe(false);
+  });
+});
+
+describe("conversation lock", () => {
+  const project = "/tmp/test-project-conv";
+  const session = "conv-session";
+
+  it("isConversationBusy returns false when no lock held", () => {
+    expect(isConversationBusy(project, session, "conv-1")).toBe(false);
+  });
+
+  it("acquireConversationLock succeeds and marks conversation as busy", () => {
+    const release = acquireConversationLock(project, session, "conv-a1");
+    expect(isConversationBusy(project, session, "conv-a1")).toBe(true);
+    release();
+    expect(isConversationBusy(project, session, "conv-a1")).toBe(false);
+  });
+
+  it("acquireConversationLock throws when conversation is already busy", () => {
+    const release = acquireConversationLock(project, session, "conv-a2");
+    expect(() => acquireConversationLock(project, session, "conv-a2")).toThrow(
+      "Conversation is busy",
+    );
+    release();
+  });
+
+  it("different conversations in same session can hold locks concurrently", () => {
+    const release1 = acquireConversationLock(project, session, "conv-x");
+    const release2 = acquireConversationLock(project, session, "conv-y");
+
+    expect(isConversationBusy(project, session, "conv-x")).toBe(true);
+    expect(isConversationBusy(project, session, "conv-y")).toBe(true);
+
+    release1();
+    expect(isConversationBusy(project, session, "conv-x")).toBe(false);
+    expect(isConversationBusy(project, session, "conv-y")).toBe(true);
+
+    release2();
+  });
+
+  it("conversation locks are independent from session locks", () => {
+    const sessionRelease = acquireSessionLock(project, session);
+    const convRelease = acquireConversationLock(project, session, "conv-z");
+
+    expect(isSessionBusy(project, session)).toBe(true);
+    expect(isConversationBusy(project, session, "conv-z")).toBe(true);
+
+    sessionRelease();
+    expect(isSessionBusy(project, session)).toBe(false);
+    expect(isConversationBusy(project, session, "conv-z")).toBe(true);
+
+    convRelease();
+  });
+
+  it("release is idempotent (no error on double release)", () => {
+    const release = acquireConversationLock(project, session, "conv-idem");
+    release();
+    expect(() => release()).not.toThrow();
   });
 });

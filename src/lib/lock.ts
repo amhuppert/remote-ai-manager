@@ -1,11 +1,18 @@
 /**
- * Single-flight lock per session and project-level lock for merge serialization.
+ * Locks for serializing operations that share state.
  *
- * Session locks prevent concurrent prompt executions on the same session.
+ * Conversation locks prevent two prompts from running concurrently against
+ * the same conversation (same transcript / runtime). Multiple conversations
+ * in the same session may hold their locks simultaneously, allowing parallel
+ * agent activity within a single worktree.
+ *
+ * Session locks serialize git-mutating background jobs (merge / commit /
+ * resolve-conflicts) within a session.
+ *
  * Project locks serialize squash merge operations across sessions within
  * the same project, ensuring only one squash merge targets main at a time.
  *
- * Both use in-memory Maps — if a lock is already held, callers receive
+ * All three use in-memory Maps — if a lock is already held, callers receive
  * an immediate rejection rather than queuing.
  */
 
@@ -26,6 +33,16 @@ export interface LockManager {
     projectPath: string;
     sessionName: string;
   }>;
+  isConversationBusy(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): boolean;
+  acquireConversationLock(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): () => void;
 }
 
 /** Create an isolated LockManager instance with its own lock state. */
@@ -34,9 +51,18 @@ export function createLockManager(
 ): LockManager {
   const sessionLocks = new Map<string, Promise<void>>();
   const projectLocks = new Map<string, true>();
+  const conversationLocks = new Map<string, Promise<void>>();
 
   function lockKey(projectPath: string, sessionName: string): string {
     return `${projectPath}::${sessionName}`;
+  }
+
+  function conversationLockKey(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): string {
+    return `${projectPath}::${sessionName}::${conversationId}`;
   }
 
   return {
@@ -108,6 +134,57 @@ export function createLockManager(
         };
       });
     },
+
+    isConversationBusy(
+      projectPath: string,
+      sessionName: string,
+      conversationId: string,
+    ): boolean {
+      return conversationLocks.has(
+        conversationLockKey(projectPath, sessionName, conversationId),
+      );
+    },
+
+    acquireConversationLock(
+      projectPath: string,
+      sessionName: string,
+      conversationId: string,
+    ): () => void {
+      const key = conversationLockKey(projectPath, sessionName, conversationId);
+
+      if (conversationLocks.has(key)) {
+        log.warn("conversation-lock.rejected", {
+          projectPath,
+          sessionName,
+          conversationId,
+        });
+        throw new Error(
+          "Conversation is busy — a prompt is already running for this conversation",
+        );
+      }
+
+      let releaseFn: (() => void) | undefined;
+      const promise = new Promise<void>((resolve) => {
+        releaseFn = resolve;
+      });
+
+      conversationLocks.set(key, promise);
+      log.debug("conversation-lock.acquired", {
+        projectPath,
+        sessionName,
+        conversationId,
+      });
+
+      return () => {
+        conversationLocks.delete(key);
+        releaseFn?.();
+        log.debug("conversation-lock.released", {
+          projectPath,
+          sessionName,
+          conversationId,
+        });
+      };
+    },
   };
 }
 
@@ -175,4 +252,37 @@ export function getHeldSessionLocks(): Array<{
   sessionName: string;
 }> {
   return getDefaultLockManager().getHeldSessionLocks();
+}
+
+/** Check whether a specific conversation currently has a running prompt. */
+export function isConversationBusy(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+): boolean {
+  return getDefaultLockManager().isConversationBusy(
+    projectPath,
+    sessionName,
+    conversationId,
+  );
+}
+
+/**
+ * Acquire a single-flight lock for a conversation.
+ * Returns a release function if the lock was acquired.
+ * Throws if the conversation is already running a prompt.
+ *
+ * Multiple conversations within the same session may hold their locks
+ * simultaneously — concurrency is restricted only at the conversation level.
+ */
+export function acquireConversationLock(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+): () => void {
+  return getDefaultLockManager().acquireConversationLock(
+    projectPath,
+    sessionName,
+    conversationId,
+  );
 }

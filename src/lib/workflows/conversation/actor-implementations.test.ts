@@ -93,7 +93,7 @@ function createMockDeps(
   overrides: Partial<ActorImplementationDeps> = {},
 ): ActorImplementationDeps {
   return {
-    acquireSessionLock: vi.fn(() => vi.fn()),
+    acquireConversationLock: vi.fn(() => vi.fn()),
     acquireQuerySlot: vi.fn(async () => vi.fn()),
     getTranscriptPath: vi.fn(async (id: string) => `/transcripts/${id}.jsonl`),
     readConfig: vi.fn(async () => ({
@@ -823,10 +823,10 @@ describe("prepareTurnForMachine", () => {
     _resetForTesting();
   });
 
-  it("acquires session lock and query slot", async () => {
+  it("acquires conversation lock and query slot", async () => {
     const releaseLock = vi.fn();
     const releaseSlot = vi.fn();
-    vi.mocked(mockDeps.acquireSessionLock).mockReturnValue(releaseLock);
+    vi.mocked(mockDeps.acquireConversationLock).mockReturnValue(releaseLock);
     vi.mocked(mockDeps.acquireQuerySlot).mockResolvedValue(releaseSlot);
 
     const input = makePrepareTurnInput();
@@ -841,9 +841,10 @@ describe("prepareTurnForMachine", () => {
 
     const result = await prepareTurnForMachine(input);
 
-    expect(mockDeps.acquireSessionLock).toHaveBeenCalledWith(
+    expect(mockDeps.acquireConversationLock).toHaveBeenCalledWith(
       input.projectPath,
       input.sessionName,
+      input.conversationId,
     );
     expect(mockDeps.acquireQuerySlot).toHaveBeenCalledWith(
       `prompt:${input.sessionName}`,
@@ -851,7 +852,7 @@ describe("prepareTurnForMachine", () => {
     expect(result.transcriptPath).toBe("/transcripts/conv-1.jsonl");
 
     const runtime = getConversationRuntime(key);
-    expect(runtime?.releaseSessionLock).toBe(releaseLock);
+    expect(runtime?.releaseConversationLock).toBe(releaseLock);
     expect(runtime?.releaseQuerySlot).toBe(releaseSlot);
   });
 
@@ -898,7 +899,7 @@ describe("prepareTurnForMachine", () => {
     );
   });
 
-  it("skips session lock acquisition when skipSessionLock is set on runtime", async () => {
+  it("skips conversation lock acquisition when skipConversationLock is set on runtime", async () => {
     const releaseSlot = vi.fn();
     vi.mocked(mockDeps.acquireQuerySlot).mockResolvedValue(releaseSlot);
 
@@ -910,22 +911,22 @@ describe("prepareTurnForMachine", () => {
     );
     registerConversationRuntime(key, {
       abortController: new AbortController(),
-      skipSessionLock: true,
+      skipConversationLock: true,
     });
 
     const result = await prepareTurnForMachine(input);
 
-    // Session lock should NOT be acquired
-    expect(mockDeps.acquireSessionLock).not.toHaveBeenCalled();
+    // Conversation lock should NOT be acquired
+    expect(mockDeps.acquireConversationLock).not.toHaveBeenCalled();
     // Query slot should still be acquired
     expect(mockDeps.acquireQuerySlot).toHaveBeenCalledWith(
       `prompt:${input.sessionName}`,
     );
     expect(result.transcriptPath).toBe("/transcripts/conv-1.jsonl");
 
-    // Runtime should NOT have a releaseSessionLock
+    // Runtime should NOT have a releaseConversationLock
     const runtime = getConversationRuntime(key);
-    expect(runtime?.releaseSessionLock).toBeUndefined();
+    expect(runtime?.releaseConversationLock).toBeUndefined();
     expect(runtime?.releaseQuerySlot).toBe(releaseSlot);
   });
 });

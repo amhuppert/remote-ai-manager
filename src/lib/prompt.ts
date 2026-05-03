@@ -243,7 +243,7 @@ export interface PromptDeps {
     tooling: ConversationToolingOverrides,
   ): void;
 
-  setSkipSessionLock?(
+  setSkipConversationLock?(
     projectPath: string,
     sessionName: string,
     conversationId: string,
@@ -279,7 +279,12 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
         runtime.tooling = tooling;
       }
     },
-    setSkipSessionLock: (projectPath, sessionName, conversationId, skip) => {
+    setSkipConversationLock: (
+      projectPath,
+      sessionName,
+      conversationId,
+      skip,
+    ) => {
       const key = runtimeState.conversationRuntimeKey(
         projectPath,
         sessionName,
@@ -287,7 +292,7 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
       );
       const runtime = runtimeState.getConversationRuntime(key);
       if (runtime) {
-        runtime.skipSessionLock = skip;
+        runtime.skipConversationLock = skip;
       }
     },
   };
@@ -329,7 +334,7 @@ export interface PromptStreamOptions {
   effort?: string;
   backend?: AgentBackendId;
   tooling?: ConversationToolingOverrides;
-  skipSessionLock?: boolean;
+  skipConversationLock?: boolean;
   // `outputFormat` is intentionally opt-in. Regular user-facing chat is
   // free-form markdown by design — forcing a JSON schema would prevent the
   // streaming chat response the UI renders. Workflow callers (debug mode,
@@ -475,9 +480,9 @@ export async function executePromptStream(
     );
   }
 
-  // Allow validator conversations to bypass the session lock
-  if (options?.skipSessionLock) {
-    resolvedDeps.setSkipSessionLock?.(
+  // Allow validator conversations to bypass the conversation lock
+  if (options?.skipConversationLock) {
+    resolvedDeps.setSkipConversationLock?.(
       projectPath,
       session.sessionName,
       conversationId,

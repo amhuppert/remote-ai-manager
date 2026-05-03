@@ -157,7 +157,11 @@ export interface ActorConfig {
 
 export interface ActorImplementationDeps {
   // Resource acquisition
-  acquireSessionLock(projectPath: string, sessionName: string): () => void;
+  acquireConversationLock(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): () => void;
   acquireQuerySlot(label: string): Promise<() => void>;
   getTranscriptPath(conversationId: string): Promise<string>;
 
@@ -357,7 +361,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     });
 
   return {
-    acquireSessionLock: lockMod.acquireSessionLock,
+    acquireConversationLock: lockMod.acquireConversationLock,
     acquireQuerySlot: semaphoreMod.acquireQuerySlot,
     getTranscriptPath: transcriptMod.getTranscriptPath,
     readConfig: configMod.readConfig,
@@ -1010,14 +1014,15 @@ export async function prepareTurnForMachine(
     );
   }
 
-  // Acquire session lock (throws if already busy) — skip for validator
-  // conversations that run within an already-locked session
-  if (!runtime.skipSessionLock) {
-    const releaseSessionLock = deps.acquireSessionLock(
+  // Acquire conversation lock (throws if already busy) — skip for validator
+  // conversations that run within an already-locked parent conversation
+  if (!runtime.skipConversationLock) {
+    const releaseConversationLock = deps.acquireConversationLock(
       input.projectPath,
       input.sessionName,
+      input.conversationId,
     );
-    runtime.releaseSessionLock = releaseSessionLock;
+    runtime.releaseConversationLock = releaseConversationLock;
   }
 
   // Acquire concurrency slot (waits if at capacity)
