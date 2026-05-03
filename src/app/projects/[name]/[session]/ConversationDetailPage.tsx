@@ -55,6 +55,7 @@ import {
   useNavigateToMessage,
   useStartRecording,
   useStopRecording,
+  useShowPlaceholderAction,
   useClearPlaceholder,
   useRequestCommit,
   useCancelCommit,
@@ -376,6 +377,7 @@ export default function ConversationDetailPage({
   const navigateToMessage = useNavigateToMessage();
   const startRecording = useStartRecording();
   const stopRecording = useStopRecording();
+  const showPlaceholder = useShowPlaceholderAction();
   const clearPlaceholder = useClearPlaceholder();
   const requestCommit = useRequestCommit();
   const cancelCommit = useCancelCommit();
@@ -2118,6 +2120,10 @@ export default function ConversationDetailPage({
                       onRemoveImage={removeImage}
                       cumulativeImageCount={cumulativeImageCount}
                       onInlineMarkersChange={setInlineMarkerIds}
+                      projectName={projectName}
+                      sessionName={session.sessionName}
+                      backend={selectedBackend}
+                      onShowPlaceholder={showPlaceholder}
                       disabled={isReadOnly}
                       readOnly={hasActiveCollab}
                       title={

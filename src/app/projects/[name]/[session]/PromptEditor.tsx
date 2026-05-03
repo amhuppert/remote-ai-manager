@@ -1,6 +1,12 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -14,6 +20,15 @@ import {
   type SerializedPromptDoc,
 } from "@/lib/prompt-editor";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
+import type { AgentBackendId } from "@/types";
+import {
+  PromptEditorSlashCommandPopup,
+  type SlashCommandPopupHandle,
+} from "./PromptEditorSlashCommandPopup";
+import {
+  PromptEditorFileMentionPopup,
+  type FileMentionPopupHandle,
+} from "./PromptEditorFileMentionPopup";
 
 export interface PromptEditorHandle {
   /** Serialize the current document to `{ prompt, images }`. */
@@ -53,6 +68,23 @@ export interface PromptEditorProps {
    * the same image.
    */
   onInlineMarkersChange?: (attachmentIds: string[]) => void;
+  /** Project context used to power the `/` command and `@` file autocompletes. */
+  projectName?: string;
+  sessionName?: string;
+  backend?: AgentBackendId;
+  /** Called when a selected slash command exposes an `argumentHint`. */
+  onShowPlaceholder?: (text: string) => void;
+}
+
+interface SlashSuggestionState {
+  triggerChar: string;
+  query: string;
+  command: (item: { insertText: string }) => void;
+}
+
+interface FileSuggestionState {
+  query: string;
+  command: (item: { path: string }) => void;
 }
 
 /**
@@ -128,6 +160,10 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       title,
       placeholder = "Type a message…",
       onInlineMarkersChange,
+      projectName,
+      sessionName,
+      backend,
+      onShowPlaceholder,
     } = props;
     const editable = !disabled && !readOnly;
 
@@ -142,6 +178,15 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     const onInlineMarkersChangeRef = useRef(onInlineMarkersChange);
     onInlineMarkersChangeRef.current = onInlineMarkersChange;
     const lastMarkerIdsRef = useRef<string[]>([]);
+
+    const [slashState, setSlashState] = useState<SlashSuggestionState | null>(
+      null,
+    );
+    const [fileState, setFileState] = useState<FileSuggestionState | null>(
+      null,
+    );
+    const slashPopupRef = useRef<SlashCommandPopupHandle>(null);
+    const filePopupRef = useRef<FileMentionPopupHandle>(null);
 
     const editor = useEditor({
       immediatelyRender: true,
@@ -181,11 +226,53 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         }),
         SlashCommand.configure({
           items: () => [],
-          render: () => ({}),
+          render: () => ({
+            onStart: (props) => {
+              setSlashState({
+                triggerChar: "/",
+                query: props.query,
+                command: props.command as (item: {
+                  insertText: string;
+                }) => void,
+              });
+            },
+            onUpdate: (props) => {
+              setSlashState({
+                triggerChar: "/",
+                query: props.query,
+                command: props.command as (item: {
+                  insertText: string;
+                }) => void,
+              });
+            },
+            onExit: () => {
+              setSlashState(null);
+            },
+            onKeyDown: ({ event }) =>
+              slashPopupRef.current?.handleKeyDown(event) ?? false,
+          }),
         }),
         FileMention.configure({
           items: () => [],
-          render: () => ({}),
+          render: () => ({
+            onStart: (props) => {
+              setFileState({
+                query: props.query,
+                command: props.command as (item: { path: string }) => void,
+              });
+            },
+            onUpdate: (props) => {
+              setFileState({
+                query: props.query,
+                command: props.command as (item: { path: string }) => void,
+              });
+            },
+            onExit: () => {
+              setFileState(null);
+            },
+            onKeyDown: ({ event }) =>
+              filePopupRef.current?.handleKeyDown(event) ?? false,
+          }),
         }),
       ],
       content: value,
@@ -264,6 +351,26 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
 
     return (
       <div className="prompt-editor" title={title}>
+        {slashState && projectName ? (
+          <PromptEditorSlashCommandPopup
+            ref={slashPopupRef}
+            query={slashState.query}
+            triggerChar={slashState.triggerChar}
+            projectName={projectName}
+            sessionName={sessionName}
+            backend={backend}
+            onSelect={(insertText) => slashState.command({ insertText })}
+            onShowPlaceholder={onShowPlaceholder}
+          />
+        ) : null}
+        {fileState && projectName ? (
+          <PromptEditorFileMentionPopup
+            ref={filePopupRef}
+            query={fileState.query}
+            projectName={projectName}
+            onSelect={(path) => fileState.command({ path })}
+          />
+        ) : null}
         <EditorContent editor={editor} className="prompt-editor__content" />
       </div>
     );
