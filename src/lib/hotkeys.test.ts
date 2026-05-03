@@ -57,6 +57,23 @@ describe("HOTKEY_REGISTRY", () => {
     expect(HOTKEY_REGISTRY.abortPrompt.enableOnFormTags).toBe(true);
   });
 
+  it("voiceToggle has enableOnContentEditable so it fires inside the Tiptap prompt editor", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    expect(HOTKEY_REGISTRY.voiceToggle.enableOnContentEditable).toBe(true);
+  });
+
+  it("voiceFireAndForget has enableOnContentEditable so it fires inside the Tiptap prompt editor", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    expect(HOTKEY_REGISTRY.voiceFireAndForget.enableOnContentEditable).toBe(
+      true,
+    );
+  });
+
+  it("abortPrompt has enableOnContentEditable so Escape clears the Tiptap prompt editor", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    expect(HOTKEY_REGISTRY.abortPrompt.enableOnContentEditable).toBe(true);
+  });
+
   it("non-modifier hotkeys do not have enableOnFormTags", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     const nonModifierIds: HotkeyId[] = [
@@ -72,6 +89,24 @@ describe("HOTKEY_REGISTRY", () => {
     ];
     for (const id of nonModifierIds) {
       expect(HOTKEY_REGISTRY[id].enableOnFormTags).toBeFalsy();
+    }
+  });
+
+  it("non-modifier hotkeys do not have enableOnContentEditable", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    const nonModifierIds: HotkeyId[] = [
+      "toggleSidebar",
+      "nextMessage",
+      "prevMessage",
+      "firstMessage",
+      "lastMessage",
+      "nextFile",
+      "prevFile",
+      "nextChange",
+      "prevChange",
+    ];
+    for (const id of nonModifierIds) {
+      expect(HOTKEY_REGISTRY[id].enableOnContentEditable).toBeFalsy();
     }
   });
 

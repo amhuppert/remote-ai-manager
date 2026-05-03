@@ -7,6 +7,7 @@ export interface HotkeyDefinition {
   readonly description: string;
   readonly category: HotkeyCategory;
   readonly enableOnFormTags?: boolean;
+  readonly enableOnContentEditable?: boolean;
   readonly useKey?: boolean;
 }
 
@@ -45,6 +46,7 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     description: "Start or stop voice recording for prompt input",
     category: "general",
     enableOnFormTags: true,
+    enableOnContentEditable: true,
   },
   voiceFireAndForget: {
     id: "voiceFireAndForget",
@@ -53,6 +55,7 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     description: "Record voice and auto-submit when transcription completes",
     category: "general",
     enableOnFormTags: true,
+    enableOnContentEditable: true,
   },
   abortPrompt: {
     id: "abortPrompt",
@@ -61,6 +64,7 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     description: "Cancel a running prompt, or clear the input field when idle",
     category: "general",
     enableOnFormTags: true,
+    enableOnContentEditable: true,
   },
   toggleSidebar: {
     id: "toggleSidebar",
