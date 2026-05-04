@@ -136,7 +136,7 @@ describe("PromptEditor", () => {
     expect(pm?.getAttribute("contenteditable")).toBe("false");
   });
 
-  it("calls onSubmit when Enter is pressed without Shift", () => {
+  it("does NOT call onSubmit when plain Enter is pressed", () => {
     const onSubmit = vi.fn();
     const { container } = render(
       <PromptEditor
@@ -152,10 +152,10 @@ describe("PromptEditor", () => {
     );
     const pm = container.querySelector(".ProseMirror") as HTMLElement;
     fireEvent.keyDown(pm, { key: "Enter", shiftKey: false });
-    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("does NOT call onSubmit when Enter is pressed with Shift", () => {
+  it("does NOT call onSubmit when Shift+Enter is pressed", () => {
     const onSubmit = vi.fn();
     const { container } = render(
       <PromptEditor
@@ -174,10 +174,12 @@ describe("PromptEditor", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("does NOT call onSubmit while IME composition is active", () => {
+  it("calls onSubmit when Ctrl+Enter is pressed", () => {
     const onSubmit = vi.fn();
+    const ref = createRef<PromptEditorHandle>();
     const { container } = render(
       <PromptEditor
+        ref={ref}
         conversationId="conv-1"
         value="hi"
         onChange={() => {}}
@@ -188,9 +190,12 @@ describe("PromptEditor", () => {
         cumulativeImageCount={0}
       />,
     );
+    act(() => {
+      ref.current?.focus();
+    });
     const pm = container.querySelector(".ProseMirror") as HTMLElement;
-    fireEvent.keyDown(pm, { key: "Enter", shiftKey: false, isComposing: true });
-    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(pm, { key: "Enter", ctrlKey: true });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it("inserts a chip and forwards the file when an image is pasted", async () => {

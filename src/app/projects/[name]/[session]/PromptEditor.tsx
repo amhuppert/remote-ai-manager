@@ -17,6 +17,7 @@ import {
   ImagePasteHandler,
   serializePromptDoc,
   SlashCommand,
+  TerminalHotkeys,
   type SerializedPromptDoc,
 } from "@/lib/prompt-editor";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
@@ -274,19 +275,14 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
               filePopupRef.current?.handleKeyDown(event) ?? false,
           }),
         }),
+        TerminalHotkeys.configure({
+          onSubmit: () => onSubmitRef.current(),
+        }),
       ],
       content: value,
       editorProps: {
         attributes: {
           class: "prompt-editor__content-inner",
-        },
-        handleKeyDown: (_view, event) => {
-          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-            event.preventDefault();
-            onSubmitRef.current();
-            return true;
-          }
-          return false;
         },
       },
       onUpdate: ({ editor: ed }) => {

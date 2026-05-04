@@ -17,3 +17,5 @@ export type {
   FileMentionItem,
   FileMentionExtensionOptions,
 } from "./file-mention-extension";
+export { TerminalHotkeys } from "./terminal-hotkeys-extension";
+export type { TerminalHotkeysOptions } from "./terminal-hotkeys-extension";
