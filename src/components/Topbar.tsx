@@ -18,7 +18,7 @@ export interface BreadcrumbSegment {
 interface TopbarProps {
   breadcrumbs: BreadcrumbSegment[];
   /** Controls which right-side content to show */
-  page: "projects" | "sessions" | "detail";
+  page: "projects" | "sessions" | "detail" | "workflows";
   /** Session detail controls — only rendered when page === "detail" */
   sessionControls?: React.ReactNode;
   /** Global status indicators — rendered when page !== "detail" */
@@ -85,6 +85,47 @@ export default function Topbar({
         </nav>
       </div>
       <div className="topbar-status">
+        <Link
+          href="/workflows"
+          className={`topbar-nav-link${pathname?.startsWith("/workflows") ? " active" : ""}`}
+          title="Workflow Atlas"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <circle
+              cx="3.5"
+              cy="3.5"
+              r="2.1"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+            <circle
+              cx="12.5"
+              cy="3.5"
+              r="2.1"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+            <circle
+              cx="8"
+              cy="12.5"
+              r="2.1"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+            <path
+              d="M5 4.5 L11 4.5 M4.5 5.2 L7.4 11 M11.5 5.2 L8.6 11"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+            />
+          </svg>
+        </Link>
         <Link
           href="/config"
           className={`topbar-config-link${pathname === "/config" ? " active" : ""}`}
