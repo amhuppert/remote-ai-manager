@@ -1204,6 +1204,59 @@ describe("runAsymmetricCollaborationSlice — feature snapshot artifact persiste
   });
 });
 
+describe("runAsymmetricCollaborationSlice — mid-run progress envelopes", () => {
+  // Regression: without per-artifact progress envelopes, the UI cache only
+  // invalidates at lifecycle boundaries (running/paused/completed/failed),
+  // so the inline collab UI sticks on the initial "drafting" frame even
+  // though the slice has progressed through cross-review and negotiation
+  // rounds server-side. A page refresh is the only way to see the latest
+  // featureSnapshot. Each `persistArtifactsSnapshot` MUST broadcast a
+  // status envelope so SSE consumers can refetch the envelope between
+  // lifecycle transitions.
+  it("publishes a running status envelope after each persisted artifact between the initial running envelope and the final completed envelope", async () => {
+    const programmed = makeProgrammedCallAgent({
+      claude: [
+        makeBackendResult("claude", makeAgentOneInitialDraft()),
+        makeBackendResult("claude", makeAgentOneProposedChanges()),
+        makeBackendResult(
+          "claude",
+          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+        ),
+        makeBackendResult("claude", makeFinalAnswer()),
+      ],
+      codex: [
+        makeBackendResult("codex", makeAgentTwoInitialDraft()),
+        makeBackendResult("codex", makeAgentTwoCrossReview()),
+        makeBackendResult("codex", makeAgentTwoCounterProposalRound1()),
+      ],
+    });
+    const built = await buildDeps(programmed);
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput(),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("completed_final");
+
+    const collabEnvelopes = built.capturedEnvelopes.filter(
+      (e) => e.scope === "collaboration" && e.scopeId === "wf-asym",
+    );
+
+    expect(collabEnvelopes.length).toBeGreaterThanOrEqual(3);
+
+    expect(collabEnvelopes[0]?.status).toBe("running");
+    const last = collabEnvelopes[collabEnvelopes.length - 1];
+    expect(last?.status).toBe("completed");
+
+    const middle = collabEnvelopes.slice(1, -1);
+    expect(middle.length).toBeGreaterThan(0);
+    for (const env of middle) {
+      expect(env.status).toBe("running");
+    }
+  });
+});
+
 describe("runAsymmetricCollaborationSlice — resume short-circuit from paused open_conflicts", () => {
   it("rehydrates the artifact stream, skips drafts and negotiation, calls only the final-answer prompt with user answers, and preserves all original artifacts on the snapshot", async () => {
     const agentOneInitialDraft = makeAgentOneInitialDraft();

@@ -947,6 +947,19 @@ async function persistArtifactsSnapshot(
       updatedAt: now(),
     };
   });
+  // Broadcast a progress envelope so SSE consumers can refetch the envelope
+  // between lifecycle transitions. Without this, the inline collab UI sticks
+  // on whatever phase the last lifecycle event reported (typically the
+  // initial "drafting" frame) until the run pauses, completes, or fails.
+  const latestArtifact = tracker.artifacts[tracker.artifacts.length - 1];
+  publishStatus(deps, input.workflowId, "running", {
+    kind: "asymmetric_progress",
+    artifactCount: tracker.artifacts.length,
+    negotiationRoundsCompleted: tracker.negotiationRoundsCompleted,
+    ...(latestArtifact !== undefined
+      ? { latestArtifactKind: latestArtifact.kind }
+      : {}),
+  });
 }
 
 async function updateEnvelope(

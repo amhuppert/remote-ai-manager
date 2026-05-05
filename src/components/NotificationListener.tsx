@@ -322,8 +322,13 @@ export default function NotificationListener(): null {
           });
           void queryClient.invalidateQueries({ queryKey: sessionDetail });
           void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+          // The slice writes the final answer onto the conversation
+          // transcript via `appendTranscriptEntry`, and progress envelopes
+          // can also land while the messages query has stopped polling —
+          // invalidate the whole conversation subtree so any open
+          // transcript view refetches.
           void queryClient.invalidateQueries({
-            queryKey: conversationKeys.active,
+            queryKey: conversationKeys.all,
           });
           void queryClient.invalidateQueries({
             queryKey: projectKeys.list(),

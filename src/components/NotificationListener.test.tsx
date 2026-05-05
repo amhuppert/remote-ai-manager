@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import NotificationListener from "./NotificationListener";
 import {
   collaborationKeys,
+  conversationKeys,
   mcpConfigKeys,
   mcpToolsKeys,
   sessionKeys,
@@ -145,6 +146,41 @@ describe("NotificationListener", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: sessionKeys.all,
     });
+  });
+
+  // Regression: the asymmetric collab slice writes the final answer onto
+  // the conversation transcript via `appendTranscriptEntry`. If the
+  // scope=collaboration listener does not invalidate the conversation
+  // messages cache, the transcript stays stale until the user manually
+  // refreshes (the messages query only re-fetches while `isBusy`, which
+  // can flip false before the final transcript flush).
+  it("invalidates conversation queries on scoped-status events with scope=collaboration so the transcript refetches when the slice writes the final answer", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) {
+      throw new Error("expected EventSource instance");
+    }
+
+    es.emit("scoped-status", {
+      type: "scoped-status",
+      scope: "collaboration",
+      scopeId: "wf-collab-1",
+      status: "completed",
+      timestamp: "2026-04-28T00:00:00.000Z",
+      projectName: "proj",
+      sessionName: "sess",
+      payload: { kind: "asymmetric_completed_final" },
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: conversationKeys.all,
+      }),
+    );
   });
 
   it("invalidates only session queries on scoped-status events with scope=workflow", async () => {
