@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "CC_CONFIG_DIR=$PWD/.config next dev",
+    "dev:main": "next dev",
     "build": "next build",
     "start": "next start",
     "migrate:state-agent-backend": "bun scripts/migrate-state-agent-backend.ts",
