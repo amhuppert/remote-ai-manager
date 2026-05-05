@@ -33,43 +33,43 @@ type Story = StoryObj<typeof meta>;
 
 export const Default = {
   args: {
-    currentTurn: 4,
-    totalTurns: 12,
+    currentIndex: 4,
+    totalCount: 12,
   },
 } satisfies Story;
 
 export const AtStart = {
   args: {
-    currentTurn: 0,
-    totalTurns: 12,
+    currentIndex: 0,
+    totalCount: 12,
   },
 } satisfies Story;
 
 export const AtEnd = {
   args: {
-    currentTurn: 11,
-    totalTurns: 12,
+    currentIndex: 11,
+    totalCount: 12,
   },
 } satisfies Story;
 
 export const Empty = {
   args: {
-    currentTurn: 0,
-    totalTurns: 0,
+    currentIndex: 0,
+    totalCount: 0,
   },
 } satisfies Story;
 
-export const SingleTurn = {
+export const SingleMessage = {
   args: {
-    currentTurn: 0,
-    totalTurns: 1,
+    currentIndex: 0,
+    totalCount: 1,
   },
 } satisfies Story;
 
 export const MobileWidth = {
   args: {
-    currentTurn: 4,
-    totalTurns: 12,
+    currentIndex: 4,
+    totalCount: 12,
   },
   parameters: {
     viewport: { defaultViewport: "mobile1" },

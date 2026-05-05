@@ -29,7 +29,7 @@ describe("ConversationNav", () => {
   // -------------------------------------------------------------------------
 
   it("keeps all buttons enabled when conversation is empty", () => {
-    render(<ConversationNav currentTurn={0} totalTurns={0} {...handlers} />);
+    render(<ConversationNav currentIndex={0} totalCount={0} {...handlers} />);
     const { first, prev, next, last } = getButtons();
     expect(first).not.toBeDisabled();
     expect(prev).not.toBeDisabled();
@@ -37,8 +37,8 @@ describe("ConversationNav", () => {
     expect(last).not.toBeDisabled();
   });
 
-  it("keeps all buttons enabled at the first turn", () => {
-    render(<ConversationNav currentTurn={0} totalTurns={5} {...handlers} />);
+  it("keeps all buttons enabled at the first message", () => {
+    render(<ConversationNav currentIndex={0} totalCount={5} {...handlers} />);
     const { first, prev, next, last } = getButtons();
     expect(first).not.toBeDisabled();
     expect(prev).not.toBeDisabled();
@@ -46,8 +46,8 @@ describe("ConversationNav", () => {
     expect(last).not.toBeDisabled();
   });
 
-  it("keeps all buttons enabled at the last turn", () => {
-    render(<ConversationNav currentTurn={4} totalTurns={5} {...handlers} />);
+  it("keeps all buttons enabled at the last message", () => {
+    render(<ConversationNav currentIndex={4} totalCount={5} {...handlers} />);
     const { first, prev, next, last } = getButtons();
     expect(first).not.toBeDisabled();
     expect(prev).not.toBeDisabled();
@@ -60,12 +60,12 @@ describe("ConversationNav", () => {
   // -------------------------------------------------------------------------
 
   it("shows '0 / 0' when empty", () => {
-    render(<ConversationNav currentTurn={0} totalTurns={0} {...handlers} />);
+    render(<ConversationNav currentIndex={0} totalCount={0} {...handlers} />);
     expect(screen.getByText("0 / 0")).toBeInTheDocument();
   });
 
   it("shows 1-indexed counter for current position", () => {
-    render(<ConversationNav currentTurn={4} totalTurns={12} {...handlers} />);
+    render(<ConversationNav currentIndex={4} totalCount={12} {...handlers} />);
     expect(screen.getByText("5 / 12")).toBeInTheDocument();
   });
 
@@ -77,8 +77,8 @@ describe("ConversationNav", () => {
     const onFirst = vi.fn();
     render(
       <ConversationNav
-        currentTurn={2}
-        totalTurns={5}
+        currentIndex={2}
+        totalCount={5}
         {...handlers}
         onFirst={onFirst}
       />,
@@ -91,8 +91,8 @@ describe("ConversationNav", () => {
     const onPrevious = vi.fn();
     render(
       <ConversationNav
-        currentTurn={2}
-        totalTurns={5}
+        currentIndex={2}
+        totalCount={5}
         {...handlers}
         onPrevious={onPrevious}
       />,
@@ -105,8 +105,8 @@ describe("ConversationNav", () => {
     const onNext = vi.fn();
     render(
       <ConversationNav
-        currentTurn={2}
-        totalTurns={5}
+        currentIndex={2}
+        totalCount={5}
         {...handlers}
         onNext={onNext}
       />,
@@ -119,8 +119,8 @@ describe("ConversationNav", () => {
     const onLast = vi.fn();
     render(
       <ConversationNav
-        currentTurn={2}
-        totalTurns={5}
+        currentIndex={2}
+        totalCount={5}
         {...handlers}
         onLast={onLast}
       />,
@@ -134,8 +134,8 @@ describe("ConversationNav", () => {
     const onPrevious = vi.fn();
     render(
       <ConversationNav
-        currentTurn={0}
-        totalTurns={5}
+        currentIndex={0}
+        totalCount={5}
         {...handlers}
         onFirst={onFirst}
         onPrevious={onPrevious}

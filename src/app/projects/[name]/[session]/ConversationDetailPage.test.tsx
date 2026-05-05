@@ -69,6 +69,11 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
+// JSDOM doesn't implement Element.scrollTo, which the panel uses for nav.
+if (!Element.prototype.scrollTo) {
+  Element.prototype.scrollTo = function () {} as Element["scrollTo"];
+}
+
 // Tiptap depends on layout APIs jsdom doesn't implement; render a plain
 // <textarea> that satisfies the same imperative handle and props contract.
 vi.mock("./PromptEditor", async () => {
@@ -427,9 +432,9 @@ describe("ConversationDetailPage", () => {
     expect(screen.getAllByText("5").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("shows turn counter with position / total", () => {
+  it("shows message counter with position / total", () => {
     renderPage();
-    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    expect(screen.getByText("1 / 3")).toBeInTheDocument();
   });
 
   it("shows 0 / 0 counter when no messages", () => {
@@ -630,28 +635,63 @@ describe("ConversationDetailPage", () => {
   });
 
   describe("scroll navigation", () => {
-    it("scrolls to last message via virtualizer on initial load", () => {
-      scrollToIndexMock.mockClear();
-      renderPage();
-      // Should use virtualizer.scrollToIndex to reach the last message (index 2)
-      // with align: "end" and no animation
-      expect(scrollToIndexMock).toHaveBeenCalledWith(2, {
-        align: "end",
-        behavior: "auto",
+    it("snaps the panel to its bottom on initial load (stick-to-bottom)", () => {
+      // Spy on Element.scrollTop assignment so we can verify the layout effect
+      // sets it to scrollHeight when stick-to-bottom is engaged.
+      const scrollTopSetter = vi.fn();
+      const originalDescriptor = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        "scrollTop",
+      );
+      Object.defineProperty(Element.prototype, "scrollTop", {
+        configurable: true,
+        get() {
+          return 0;
+        },
+        set(v: number) {
+          scrollTopSetter(v);
+        },
       });
+      try {
+        renderPage();
+        // Layout effect should have written to scrollTop at least once while
+        // stick-to-bottom was engaged.
+        expect(scrollTopSetter).toHaveBeenCalled();
+      } finally {
+        if (originalDescriptor) {
+          Object.defineProperty(
+            Element.prototype,
+            "scrollTop",
+            originalDescriptor,
+          );
+        }
+      }
     });
 
-    it("navigate-to-end button scrolls to last message via virtualizer", () => {
-      renderPage();
-      scrollToIndexMock.mockClear();
+    it("Last message button calls scrollTo on the panel with smooth behavior", () => {
+      const scrollToSpy = vi.fn();
+      const original = Element.prototype.scrollTo;
+      Element.prototype.scrollTo = scrollToSpy as Element["scrollTo"];
+      try {
+        renderPage();
+        scrollToSpy.mockClear();
 
-      const lastBtn = screen.getByTitle("Last message");
-      fireEvent.click(lastBtn);
+        const lastBtn = screen.getByTitle("Last message");
+        fireEvent.click(lastBtn);
 
-      expect(scrollToIndexMock).toHaveBeenCalledWith(2, {
-        align: "end",
-        behavior: "auto",
-      });
+        // Find the click-driven call (top: scrollHeight which is 0 in jsdom,
+        // behavior: "smooth"). Stick-to-bottom uses scrollTop assignment, not
+        // scrollTo, so any scrollTo call here is from the button handler.
+        const smoothCall = scrollToSpy.mock.calls.find(
+          (call) =>
+            typeof call[0] === "object" &&
+            call[0] !== null &&
+            (call[0] as { behavior?: string }).behavior === "smooth",
+        );
+        expect(smoothCall).toBeDefined();
+      } finally {
+        Element.prototype.scrollTo = original;
+      }
     });
   });
 

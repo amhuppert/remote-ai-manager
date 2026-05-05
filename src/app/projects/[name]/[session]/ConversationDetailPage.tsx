@@ -1,6 +1,20 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useMemo,
+} from "react";
+import {
+  classifyScrollPosition,
+  computeCurrentMessageIndex,
+  findTopmostVisibleItem,
+  getNextMessageIndex,
+  getPrevMessageIndex,
+} from "@/lib/conversation-nav";
 import { useRouter } from "next/navigation";
 import {
   deriveSessionStatus,
@@ -40,7 +54,6 @@ import {
   usePromptCancelled,
   useOptimisticMessages,
   useMessageCountBeforeSubmit,
-  useCurrentMsgIndex,
   useShowDeleteConfirm,
   useShowCommitDialog,
   useShowMergeDialog,
@@ -52,7 +65,6 @@ import {
   useDismissError,
   useDismissCancelled,
   useReconcileMessages,
-  useNavigateToMessage,
   useStartRecording,
   useStopRecording,
   useShowPlaceholderAction,
@@ -349,7 +361,6 @@ export default function ConversationDetailPage({
   const promptCancelled = usePromptCancelled();
   const optimisticMessages = useOptimisticMessages();
   const messageCountBeforeSubmit = useMessageCountBeforeSubmit();
-  const currentMsgIndex = useCurrentMsgIndex();
   const showDeleteConfirm = useShowDeleteConfirm();
   const showCommitDialog = useShowCommitDialog();
   const showMergeDialog = useShowMergeDialog();
@@ -374,7 +385,6 @@ export default function ConversationDetailPage({
   const dismissError = useDismissError();
   const dismissCancelled = useDismissCancelled();
   const reconcileMessages = useReconcileMessages();
-  const navigateToMessage = useNavigateToMessage();
   const startRecording = useStartRecording();
   const stopRecording = useStopRecording();
   const showPlaceholder = useShowPlaceholderAction();
@@ -700,8 +710,6 @@ export default function ConversationDetailPage({
   // --- Refs for message navigation ---
   const panelBodyRef = useRef<HTMLDivElement>(null);
   const conversationEndRef = useRef<HTMLDivElement>(null);
-  const currentMsgIndexRef = useRef(currentMsgIndex);
-  currentMsgIndexRef.current = currentMsgIndex;
 
   const [collabPinnedTopTarget, setCollabPinnedTopTarget] =
     useState<HTMLDivElement | null>(null);
@@ -771,7 +779,6 @@ export default function ConversationDetailPage({
 
   // --- Reset conversation-specific state when switching conversations ---
   useEffect(() => {
-    initialScrollDone.current = false;
     clearConversationMessages();
 
     // Reset any accidental scroll on ancestors (overflow:clip prevents new
@@ -855,31 +862,6 @@ export default function ConversationDetailPage({
     conversationId,
   ]);
 
-  // --- Turn-based navigation ---
-  // A "turn" = one user prompt + all subsequent Claude responses until the next prompt.
-  // Navigation jumps between user messages, skipping intermediate assistant messages.
-  const turnStartIndices = useMemo(() => {
-    const indices: number[] = [];
-    for (let i = 0; i < displayMessages.length; i++) {
-      if (displayMessages[i]!.role === "user") {
-        indices.push(i);
-      }
-    }
-    return indices;
-  }, [displayMessages]);
-
-  const currentTurnIndex = useMemo(() => {
-    let turn = 0;
-    for (let t = 0; t < turnStartIndices.length; t++) {
-      if ((turnStartIndices[t] ?? 0) <= currentMsgIndex) {
-        turn = t;
-      } else {
-        break;
-      }
-    }
-    return turn;
-  }, [turnStartIndices, currentMsgIndex]);
-
   // --- Virtualizer for conversation messages ---
 
   const collabRowVisible = collabEnvelopeForConversation !== undefined;
@@ -915,105 +897,225 @@ export default function ConversationDetailPage({
     gap: 24,
   });
 
-  // Track visible message from virtualizer for turn navigation counter
-  const virtualItems = virtualizer.getVirtualItems();
-  const visibleMidIndex =
-    virtualItems.length > 0
-      ? virtualItems[Math.floor(virtualItems.length / 2)]!.index
-      : 0;
-
-  useEffect(() => {
-    if (
-      displayMessages.length > 0 &&
-      visibleMidIndex !== currentMsgIndexRef.current
-    ) {
-      navigateToMessage(visibleMidIndex);
-    }
-  }, [visibleMidIndex, displayMessages.length, navigateToMessage]);
-
-  // Scroll panel body to bottom — avoids scrollIntoView which propagates
-  // through overflow:hidden ancestors and shifts the entire page up.
-  const scrollPanelToBottom = useCallback(
-    (behavior: ScrollBehavior = "smooth") => {
-      const el = panelBodyRef.current;
-      if (el?.scrollTo) el.scrollTo({ top: el.scrollHeight, behavior });
+  // Convert a virtual row index (which may include the collab row) to the
+  // underlying message index in `displayMessages`. The collab row sits between
+  // its anchor user message and the next message, so virtual indices above it
+  // are shifted by one.
+  const virtualIndexToMessageIndex = useCallback(
+    (virtualIdx: number): number => {
+      if (!collabRowVisible) return virtualIdx;
+      if (virtualIdx < collabRowVirtualIndex) return virtualIdx;
+      if (virtualIdx === collabRowVirtualIndex) {
+        return collabAnchorIndex >= 0
+          ? collabAnchorIndex
+          : Math.max(0, displayMessages.length - 1);
+      }
+      return virtualIdx - 1;
     },
-    [],
+    [
+      collabRowVisible,
+      collabRowVirtualIndex,
+      collabAnchorIndex,
+      displayMessages.length,
+    ],
   );
 
-  // Auto-scroll to bottom on initial load
-  const initialScrollDone = useRef(false);
-  useEffect(() => {
-    if (!initialScrollDone.current && displayMessages.length > 0) {
-      initialScrollDone.current = true;
-      virtualizer.scrollToIndex(displayMessages.length - 1, {
-        align: "end",
-        behavior: "auto",
-      });
-    }
-  }, [displayMessages.length, virtualizer]);
-
-  // Auto-scroll to bottom when new messages arrive
-  const prevMessageCountRef = useRef(displayMessages.length);
-  useEffect(() => {
-    if (displayMessages.length > prevMessageCountRef.current) {
-      scrollPanelToBottom();
-    }
-    prevMessageCountRef.current = displayMessages.length;
-  }, [displayMessages.length, scrollPanelToBottom]);
-
-  // Auto-scroll as streaming content blocks arrive
-  const optimisticContentCount = useMemo(
-    () => optimisticMessages.reduce((sum, m) => sum + m.content.length, 0),
-    [optimisticMessages],
+  const messageIndexToVirtualIndex = useCallback(
+    (messageIdx: number): number => {
+      if (!collabRowVisible) return messageIdx;
+      // Messages strictly after the collab anchor are pushed down by one row.
+      if (collabAnchorIndex >= 0 && messageIdx > collabAnchorIndex) {
+        return messageIdx + 1;
+      }
+      return messageIdx;
+    },
+    [collabRowVisible, collabAnchorIndex],
   );
+
+  // --- Scroll-derived navigation state ---
+  // `currentMessageIndex` is computed from the actual scroll position so the
+  // counter always reflects what the user sees. Two pieces of state:
+  //   - `topmostMessageIndex`: which message is at the top of the viewport
+  //   - `edgePosition`: top / middle / bottom of scroll range
+  // Updates fire on scroll events and whenever the virtualizer re-measures.
+  const [navState, setNavState] = useState<{
+    topmostMessageIndex: number;
+    edgePosition: "top" | "middle" | "bottom";
+  }>({ topmostMessageIndex: 0, edgePosition: "top" });
+
+  const updateNavState = useCallback(() => {
+    const el = panelBodyRef.current;
+    if (!el) return;
+    const items = virtualizer.getVirtualItems();
+    const edgePosition = classifyScrollPosition({
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    });
+    const topmostItem = findTopmostVisibleItem(items, el.scrollTop);
+    const topmostMessageIndex = topmostItem
+      ? virtualIndexToMessageIndex(topmostItem.index)
+      : 0;
+    setNavState((prev) =>
+      prev.edgePosition === edgePosition &&
+      prev.topmostMessageIndex === topmostMessageIndex
+        ? prev
+        : { edgePosition, topmostMessageIndex },
+    );
+  }, [virtualizer, virtualIndexToMessageIndex]);
+
   useEffect(() => {
-    if (optimisticContentCount > 0) {
-      scrollPanelToBottom();
-    }
-  }, [optimisticContentCount, scrollPanelToBottom]);
+    const el = panelBodyRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", updateNavState, { passive: true });
+    updateNavState();
+    return () => el.removeEventListener("scroll", updateNavState);
+  }, [updateNavState]);
+
+  // Re-derive nav state when virtualizer measurements change (item heights
+  // settle, new content arrives, etc.). `getTotalSize()` is a stable proxy.
+  const virtualizerTotalSize = virtualizer.getTotalSize();
+  useEffect(() => {
+    updateNavState();
+  }, [virtualizerTotalSize, virtualRowCount, updateNavState]);
+
+  const currentMessageIndex = useMemo(
+    () =>
+      computeCurrentMessageIndex({
+        topmostMessageIndex: navState.topmostMessageIndex,
+        edgePosition: navState.edgePosition,
+        totalMessages: displayMessages.length,
+      }),
+    [navState, displayMessages.length],
+  );
+
+  // --- Stick-to-bottom autoscroll ---
+  // While `stickToBottom` is true, every measurement update snaps the panel to
+  // the absolute bottom. The user un-sticks by scrolling up; scrolling back to
+  // the bottom (or pressing the "Last" button) re-sticks. This subsumes:
+  // initial scroll-to-end, autoscroll on new messages, and autoscroll during
+  // streaming — all of which were prone to landing short when item heights
+  // weren't measured yet.
+  const stickToBottomRef = useRef(true);
+
+  // Re-stick on conversation change so opening any conversation always lands
+  // at the latest message, even if cached messages render before fresh ones
+  // arrive (which would otherwise cause a "lands on second-to-last" effect).
+  useEffect(() => {
+    stickToBottomRef.current = true;
+  }, [conversationId]);
+
+  // User-driven scrolls toggle the stick-to-bottom flag. Programmatic scrolls
+  // (from nav buttons, autoscroll) set `programmaticScrollRef` to skip this.
+  const programmaticScrollRef = useRef(false);
+  useEffect(() => {
+    const el = panelBodyRef.current;
+    if (!el) return;
+    const handleUserIntent = () => {
+      programmaticScrollRef.current = false;
+    };
+    const handleScroll = () => {
+      if (programmaticScrollRef.current) return;
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
+      stickToBottomRef.current = atBottom;
+    };
+    el.addEventListener("wheel", handleUserIntent, { passive: true });
+    el.addEventListener("touchmove", handleUserIntent, { passive: true });
+    el.addEventListener("keydown", handleUserIntent);
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      el.removeEventListener("wheel", handleUserIntent);
+      el.removeEventListener("touchmove", handleUserIntent);
+      el.removeEventListener("keydown", handleUserIntent);
+      el.removeEventListener("scroll", handleScroll);
+    };
+  }, []);
+
+  // Snap to bottom whenever virtualizer dimensions change while sticky. Use
+  // useLayoutEffect so the snap happens before paint (no flash of mid-scroll).
+  useLayoutEffect(() => {
+    if (!stickToBottomRef.current) return;
+    const el = panelBodyRef.current;
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+  }, [virtualizerTotalSize, virtualRowCount]);
 
   const scrollToMessage = useCallback(
-    (index: number) => {
-      const clamped = Math.max(0, Math.min(index, displayMessages.length - 1));
-      virtualizer.scrollToIndex(clamped, {
+    (messageIdx: number) => {
+      const clamped = Math.max(
+        0,
+        Math.min(messageIdx, displayMessages.length - 1),
+      );
+      stickToBottomRef.current = false;
+      programmaticScrollRef.current = true;
+      virtualizer.scrollToIndex(messageIndexToVirtualIndex(clamped), {
         align: "start",
         behavior: "smooth",
       });
-      navigateToMessage(clamped);
     },
-    [displayMessages.length, navigateToMessage, virtualizer],
+    [displayMessages.length, messageIndexToVirtualIndex, virtualizer],
   );
 
-  const scrollToEnd = useCallback(() => {
-    if (displayMessages.length > 0) {
-      virtualizer.scrollToIndex(displayMessages.length - 1, {
-        align: "end",
-        behavior: "auto",
-      });
-      navigateToMessage(displayMessages.length - 1);
-    }
-  }, [displayMessages.length, navigateToMessage, virtualizer]);
+  const scrollToTop = useCallback(() => {
+    const el = panelBodyRef.current;
+    if (!el) return;
+    stickToBottomRef.current = false;
+    programmaticScrollRef.current = true;
+    el.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = panelBodyRef.current;
+    if (!el) return;
+    stickToBottomRef.current = true;
+    programmaticScrollRef.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  const handleFirstMessage = useCallback(() => {
+    if (displayMessages.length === 0) return;
+    scrollToTop();
+  }, [displayMessages.length, scrollToTop]);
+
+  const handleLastMessage = useCallback(() => {
+    if (displayMessages.length === 0) return;
+    scrollToBottom();
+  }, [displayMessages.length, scrollToBottom]);
 
   const handlePrevMessage = useCallback(() => {
-    const prevTurnStart = turnStartIndices[currentTurnIndex - 1];
-    if (prevTurnStart !== undefined) {
-      scrollToMessage(prevTurnStart);
+    const target = getPrevMessageIndex({ currentIndex: currentMessageIndex });
+    if (target === null) return;
+    if (target === 0) {
+      scrollToTop();
+    } else {
+      scrollToMessage(target);
     }
-  }, [currentTurnIndex, turnStartIndices, scrollToMessage]);
+  }, [currentMessageIndex, scrollToMessage, scrollToTop]);
 
   const handleNextMessage = useCallback(() => {
-    const nextTurnStart = turnStartIndices[currentTurnIndex + 1];
-    if (nextTurnStart !== undefined) {
-      scrollToMessage(nextTurnStart);
+    const target = getNextMessageIndex({
+      currentIndex: currentMessageIndex,
+      totalMessages: displayMessages.length,
+    });
+    if (target === null) return;
+    if (target === displayMessages.length - 1) {
+      scrollToBottom();
+    } else {
+      scrollToMessage(target);
     }
-  }, [currentTurnIndex, turnStartIndices, scrollToMessage]);
+  }, [
+    currentMessageIndex,
+    displayMessages.length,
+    scrollToMessage,
+    scrollToBottom,
+  ]);
 
   // Hotkey bindings — message navigation
   useAppHotkey("nextMessage", handleNextMessage);
   useAppHotkey("prevMessage", handlePrevMessage);
-  useAppHotkey("firstMessage", () => scrollToMessage(0));
-  useAppHotkey("lastMessage", scrollToEnd);
+  useAppHotkey("firstMessage", handleFirstMessage);
+  useAppHotkey("lastMessage", handleLastMessage);
 
   // Abort / clear input hotkey (Escape)
   // Check both the client-side SSE stream flag AND the server-side conversation
@@ -1748,12 +1850,12 @@ export default function ConversationDetailPage({
                 )}
                 <span className="panel-title">Conversation</span>
                 <ConversationNav
-                  currentTurn={currentTurnIndex}
-                  totalTurns={turnStartIndices.length}
-                  onFirst={() => scrollToMessage(0)}
+                  currentIndex={currentMessageIndex}
+                  totalCount={displayMessages.length}
+                  onFirst={handleFirstMessage}
                   onPrevious={handlePrevMessage}
                   onNext={handleNextMessage}
-                  onLast={scrollToEnd}
+                  onLast={handleLastMessage}
                 />
               </div>
               {contextPercent != null && (

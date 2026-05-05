@@ -1,6 +1,6 @@
 interface ConversationNavProps {
-  currentTurn: number;
-  totalTurns: number;
+  currentIndex: number;
+  totalCount: number;
   onFirst: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -8,14 +8,14 @@ interface ConversationNavProps {
 }
 
 export default function ConversationNav({
-  currentTurn,
-  totalTurns,
+  currentIndex,
+  totalCount,
   onFirst,
   onPrevious,
   onNext,
   onLast,
 }: ConversationNavProps) {
-  const isEmpty = totalTurns === 0;
+  const isEmpty = totalCount === 0;
 
   return (
     <div className="msg-nav">
@@ -69,7 +69,7 @@ export default function ConversationNav({
         </button>
       </div>
       <span className="msg-counter">
-        {isEmpty ? "0 / 0" : `${currentTurn + 1} / ${totalTurns}`}
+        {isEmpty ? "0 / 0" : `${currentIndex + 1} / ${totalCount}`}
       </span>
       <div className="msg-nav-group">
         <button className="nav-btn" onClick={onNext} title="Next message">

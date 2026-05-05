@@ -155,8 +155,8 @@ function MobileSessionViewDemo({
                     &#9776; Conversations
                   </button>
                   <ConversationNav
-                    currentTurn={1}
-                    totalTurns={messageCount}
+                    currentIndex={1}
+                    totalCount={messageCount}
                     onFirst={fn()}
                     onPrevious={fn()}
                     onNext={fn()}

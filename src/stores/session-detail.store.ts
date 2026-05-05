@@ -32,7 +32,6 @@ interface SessionDetailState {
   promptCancelled: boolean;
   optimisticMessages: TranscriptMessage[];
   messageCountBeforeSubmit: number;
-  currentMsgIndex: number;
   showDeleteConfirm: boolean;
   showCommitDialog: boolean;
   showMergeDialog: boolean;
@@ -67,7 +66,6 @@ interface SessionDetailActions {
   markCancelled: () => void;
   dismissCancelled: () => void;
   reconcileMessages: (serverCount: number) => void;
-  navigateToMessage: (index: number) => void;
   startRecording: () => void;
   stopRecording: () => void;
   showPlaceholder: (text: string) => void;
@@ -125,7 +123,6 @@ const initialState: SessionDetailState = {
   promptCancelled: false,
   optimisticMessages: [],
   messageCountBeforeSubmit: 0,
-  currentMsgIndex: 0,
   showDeleteConfirm: false,
   showCommitDialog: false,
   showMergeDialog: false,
@@ -272,13 +269,6 @@ const useSessionDetailStore = create<SessionDetailStore>()(
         state.optimisticMessages = [];
       });
     },
-
-    // -- Message navigation --
-
-    navigateToMessage: (index) =>
-      set((state) => {
-        state.currentMsgIndex = index;
-      }),
 
     // -- Voice recording --
 
@@ -453,7 +443,6 @@ const useSessionDetailStore = create<SessionDetailStore>()(
       set((state) => {
         state.optimisticMessages = [];
         state.messageCountBeforeSubmit = 0;
-        state.currentMsgIndex = 0;
         state.editingIndex = null;
       }),
 
@@ -479,8 +468,6 @@ export const useOptimisticMessages = () =>
   useSessionDetailStore((s) => s.optimisticMessages);
 export const useMessageCountBeforeSubmit = () =>
   useSessionDetailStore((s) => s.messageCountBeforeSubmit);
-export const useCurrentMsgIndex = () =>
-  useSessionDetailStore((s) => s.currentMsgIndex);
 export const useShowDeleteConfirm = () =>
   useSessionDetailStore((s) => s.showDeleteConfirm);
 export const useShowCommitDialog = () =>
@@ -531,8 +518,6 @@ export const useDismissCancelled = () =>
   useSessionDetailStore((s) => s.dismissCancelled);
 export const useReconcileMessages = () =>
   useSessionDetailStore((s) => s.reconcileMessages);
-export const useNavigateToMessage = () =>
-  useSessionDetailStore((s) => s.navigateToMessage);
 export const useStartRecording = () =>
   useSessionDetailStore((s) => s.startRecording);
 export const useStopRecording = () =>
