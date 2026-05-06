@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent, render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithQuery } from "@/test/component-mocks";
 import ConversationDetailPage from "./ConversationDetailPage";
 import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
@@ -663,6 +664,119 @@ describe("ConversationDetailPage", () => {
             Element.prototype,
             "scrollTop",
             originalDescriptor,
+          );
+        }
+      }
+    });
+
+    it("does not snap back to bottom after a scrollbar drag (no wheel/touch/keydown precedes)", () => {
+      // Repro for the regression introduced when virtualizer measurements
+      // started churning `getTotalSize()` mid-stream: scrollbar drags fire
+      // only `scroll` events (no wheel/touch/keydown), and the previous
+      // `programmaticScrollRef` flag stayed `true` after each snap, so the
+      // user's drag was silently ignored and the next streaming-driven snap
+      // yanked them back to the bottom.
+      let mockScrollTop = 0;
+      const scrollTopSetter = vi.fn();
+      const originalScrollTop = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        "scrollTop",
+      );
+      const originalClientHeight = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        "clientHeight",
+      );
+      const originalScrollHeight = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        "scrollHeight",
+      );
+      Object.defineProperty(Element.prototype, "scrollTop", {
+        configurable: true,
+        get() {
+          return mockScrollTop;
+        },
+        set(v: number) {
+          mockScrollTop = v;
+          scrollTopSetter(v);
+        },
+      });
+      Object.defineProperty(Element.prototype, "clientHeight", {
+        configurable: true,
+        get() {
+          return 100;
+        },
+      });
+      Object.defineProperty(Element.prototype, "scrollHeight", {
+        configurable: true,
+        get() {
+          return 1000;
+        },
+      });
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const buildUi = () => (
+        <QueryClientProvider client={queryClient}>
+          <ConversationDetailPage
+            projectName="repo"
+            sessionName="test-session"
+            conversationId="conv-1"
+            defaultModel="sonnet"
+          />
+        </QueryClientProvider>
+      );
+
+      try {
+        const { rerender } = render(buildUi());
+        // Initial render should engage stick-to-bottom and snap once.
+        expect(scrollTopSetter).toHaveBeenCalled();
+        scrollTopSetter.mockClear();
+
+        // Simulate a scrollbar drag that lands the user at the top: the user
+        // doesn't fire wheel/touchmove/keydown — only `scroll`.
+        const panelBody = document.querySelector(".panel-body");
+        expect(panelBody).toBeTruthy();
+        mockScrollTop = 0;
+        fireEvent.scroll(panelBody!);
+
+        // Simulate streaming: a new message arrives, which changes
+        // virtualRowCount and re-fires the snap effect.
+        testMessages = [
+          ...sampleMessages,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "streaming chunk" }],
+            timestamp: "2024-06-15T10:03:00Z",
+          },
+        ];
+        rerender(buildUi());
+
+        // Sanity: rerender propagated (counter shows 4 messages now).
+        expect(screen.getByText(/\/ 4$/)).toBeInTheDocument();
+
+        // The user is at the top, so the snap-to-bottom must NOT fire.
+        expect(scrollTopSetter).not.toHaveBeenCalled();
+      } finally {
+        if (originalScrollTop) {
+          Object.defineProperty(
+            Element.prototype,
+            "scrollTop",
+            originalScrollTop,
+          );
+        }
+        if (originalClientHeight) {
+          Object.defineProperty(
+            Element.prototype,
+            "clientHeight",
+            originalClientHeight,
+          );
+        }
+        if (originalScrollHeight) {
+          Object.defineProperty(
+            Element.prototype,
+            "scrollHeight",
+            originalScrollHeight,
           );
         }
       }

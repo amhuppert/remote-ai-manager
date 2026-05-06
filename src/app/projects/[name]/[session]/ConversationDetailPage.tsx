@@ -1071,10 +1071,15 @@ export default function ConversationDetailPage({
   // --- Stick-to-bottom autoscroll ---
   // While `stickToBottom` is true, every measurement update snaps the panel to
   // the absolute bottom. The user un-sticks by scrolling up; scrolling back to
-  // the bottom (or pressing the "Last" button) re-sticks. This subsumes:
-  // initial scroll-to-end, autoscroll on new messages, and autoscroll during
-  // streaming — all of which were prone to landing short when item heights
-  // weren't measured yet.
+  // the bottom re-sticks. This subsumes initial scroll-to-end, autoscroll on
+  // new messages, and autoscroll during streaming.
+  //
+  // The single source of truth is the actual scroll position: every `scroll`
+  // event recomputes `atBottom` and updates the flag. This works uniformly
+  // for wheel, touch, keyboard, AND scrollbar drags (which fire `scroll` but
+  // not the other input events). Programmatic scrolls don't need special
+  // handling — they all land at positions that imply the correct stick state
+  // (snap/scrollToBottom → atBottom; scrollToTop/scrollToMessage → not).
   const stickToBottomRef = useRef(true);
 
   // Re-stick on conversation change so opening any conversation always lands
@@ -1084,30 +1089,15 @@ export default function ConversationDetailPage({
     stickToBottomRef.current = true;
   }, [conversationId]);
 
-  // User-driven scrolls toggle the stick-to-bottom flag. Programmatic scrolls
-  // (from nav buttons, autoscroll) set `programmaticScrollRef` to skip this.
-  const programmaticScrollRef = useRef(false);
   useEffect(() => {
     const el = panelBodyRef.current;
     if (!el) return;
-    const handleUserIntent = () => {
-      programmaticScrollRef.current = false;
-    };
     const handleScroll = () => {
-      if (programmaticScrollRef.current) return;
-      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
-      stickToBottomRef.current = atBottom;
+      stickToBottomRef.current =
+        el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
     };
-    el.addEventListener("wheel", handleUserIntent, { passive: true });
-    el.addEventListener("touchmove", handleUserIntent, { passive: true });
-    el.addEventListener("keydown", handleUserIntent);
     el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => {
-      el.removeEventListener("wheel", handleUserIntent);
-      el.removeEventListener("touchmove", handleUserIntent);
-      el.removeEventListener("keydown", handleUserIntent);
-      el.removeEventListener("scroll", handleScroll);
-    };
+    return () => el.removeEventListener("scroll", handleScroll);
   }, []);
 
   // Snap to bottom whenever virtualizer dimensions change while sticky. Use
@@ -1116,7 +1106,6 @@ export default function ConversationDetailPage({
     if (!stickToBottomRef.current) return;
     const el = panelBodyRef.current;
     if (!el) return;
-    programmaticScrollRef.current = true;
     el.scrollTop = el.scrollHeight;
   }, [virtualizerTotalSize, virtualRowCount]);
 
@@ -1127,7 +1116,6 @@ export default function ConversationDetailPage({
         Math.min(messageIdx, displayMessages.length - 1),
       );
       stickToBottomRef.current = false;
-      programmaticScrollRef.current = true;
       virtualizer.scrollToIndex(messageIndexToVirtualIndex(clamped), {
         align: "start",
         behavior: "smooth",
@@ -1140,7 +1128,6 @@ export default function ConversationDetailPage({
     const el = panelBodyRef.current;
     if (!el) return;
     stickToBottomRef.current = false;
-    programmaticScrollRef.current = true;
     el.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -1148,7 +1135,6 @@ export default function ConversationDetailPage({
     const el = panelBodyRef.current;
     if (!el) return;
     stickToBottomRef.current = true;
-    programmaticScrollRef.current = true;
     el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
