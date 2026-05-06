@@ -7,10 +7,13 @@ import {
   useLayoutEffect,
   useRef,
   useMemo,
+  lazy,
+  Suspense,
 } from "react";
 import {
   classifyScrollPosition,
   computeCurrentMessageIndex,
+  estimateVirtualRowSize,
   findTopmostVisibleItem,
   getNextMessageIndex,
   getPrevMessageIndex,
@@ -110,7 +113,11 @@ import AssistantMessageActions from "@/components/AssistantMessageActions";
 import MessageEditor from "@/components/MessageEditor";
 import ConversationNav from "@/components/ConversationNav";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
-import { PromptEditor, type PromptEditorHandle } from "./PromptEditor";
+import type { PromptEditorHandle } from "./PromptEditor";
+
+const PromptEditor = lazy(() =>
+  import("./PromptEditor").then((m) => ({ default: m.PromptEditor })),
+);
 import ModelSelector from "@/components/ModelSelector";
 import { getModelsForBackend } from "@/components/ModelSelector";
 import ReasoningLevelSelector, {
@@ -133,7 +140,11 @@ import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
 import ImageAttachmentPreview from "./ImageAttachmentPreview";
-import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
+import {
+  useVirtualizer,
+  type VirtualItem,
+  type Virtualizer,
+} from "@tanstack/react-virtual";
 import type { ImagePayload, TranscriptMessage } from "@/types";
 import CopyableId from "@/components/CopyableId";
 import InfoDetailsPopover from "./InfoDetailsPopover";
@@ -889,14 +900,6 @@ export default function ConversationDetailPage({
 
   const virtualRowCount = displayMessages.length + (collabRowVisible ? 1 : 0);
 
-  const virtualizer = useVirtualizer({
-    count: virtualRowCount,
-    getScrollElement: () => panelBodyRef.current,
-    estimateSize: () => 120,
-    overscan: 5,
-    gap: 24,
-  });
-
   // Convert a virtual row index (which may include the collab row) to the
   // underlying message index in `displayMessages`. The collab row sits between
   // its anchor user message and the next message, so virtual indices above it
@@ -919,6 +922,82 @@ export default function ConversationDetailPage({
       displayMessages.length,
     ],
   );
+
+  // Per-row size cache keyed by virtualizer item key. `measureElement` reads
+  // and writes here so the entry-absent path (initial mount before the
+  // ResizeObserver fires) can return a cached or estimated height instead of
+  // reading `offsetHeight` and triggering forced layout.
+  const rowSizeCacheRef = useRef<Map<string | number | bigint, number>>(
+    new Map(),
+  );
+
+  const isCollabVirtualIndex = useCallback(
+    (i: number): boolean => collabRowVisible && i === collabRowVirtualIndex,
+    [collabRowVisible, collabRowVirtualIndex],
+  );
+
+  const getVirtualItemKey = useCallback(
+    (i: number): string => {
+      if (isCollabVirtualIndex(i)) return "collab-row";
+      const messageIdx = virtualIndexToMessageIndex(i);
+      const msg = displayMessages[messageIdx];
+      if (!msg) return `idx-${i}`;
+      return `${messageIdx}:${msg.role}:${msg.timestamp ?? "no-ts"}`;
+    },
+    [isCollabVirtualIndex, virtualIndexToMessageIndex, displayMessages],
+  );
+
+  const estimateRowSize = useCallback(
+    (i: number): number => {
+      if (isCollabVirtualIndex(i))
+        return estimateVirtualRowSize({ kind: "collab" });
+      const messageIdx = virtualIndexToMessageIndex(i);
+      const msg = displayMessages[messageIdx];
+      if (!msg) return estimateVirtualRowSize({ kind: "collab" });
+      return estimateVirtualRowSize({ kind: "message", message: msg });
+    },
+    [isCollabVirtualIndex, virtualIndexToMessageIndex, displayMessages],
+  );
+
+  const measureRow = useCallback(
+    (
+      element: Element,
+      entry: ResizeObserverEntry | undefined,
+      instance: Virtualizer<HTMLDivElement, Element>,
+    ): number => {
+      const indexFromAttr = Number(
+        (element as HTMLElement).getAttribute("data-index"),
+      );
+      const safeIndex = Number.isFinite(indexFromAttr) ? indexFromAttr : 0;
+      const key: string | number | bigint = instance.options.getItemKey
+        ? instance.options.getItemKey(safeIndex)
+        : safeIndex;
+
+      if (entry) {
+        const box = entry.borderBoxSize?.[0];
+        const measured = box
+          ? Math.round(box.blockSize)
+          : Math.round(entry.contentRect.height);
+        rowSizeCacheRef.current.set(key, measured);
+        return measured;
+      }
+
+      const cached = rowSizeCacheRef.current.get(key);
+      const estimate = estimateRowSize(safeIndex);
+      return Math.max(cached ?? 0, estimate);
+    },
+    [estimateRowSize],
+  );
+
+  const virtualizer = useVirtualizer({
+    count: virtualRowCount,
+    getScrollElement: () => panelBodyRef.current,
+    estimateSize: estimateRowSize,
+    getItemKey: getVirtualItemKey,
+    measureElement: measureRow,
+    overscan: 5,
+    gap: 24,
+  });
 
   const messageIndexToVirtualIndex = useCallback(
     (messageIdx: number): number => {
@@ -2018,7 +2097,7 @@ export default function ConversationDetailPage({
                             const isUserMsg = msg.role === "user";
                             return (
                               <div
-                                key={virtualRow.index}
+                                key={virtualRow.key}
                                 ref={virtualizer.measureElement}
                                 data-index={virtualRow.index}
                                 className={`message ${msg.role}${isEditing ? " editing" : ""}`}
@@ -2198,45 +2277,48 @@ export default function ConversationDetailPage({
                         conversation={activeConversation}
                       />
                     )}
-                    <PromptEditor
-                      ref={editorRef}
-                      conversationId={conversationId}
-                      value={promptText}
-                      onChange={setPromptText}
-                      onSubmit={() => {
-                        if (isRecording) {
-                          toggleRecording();
-                          return;
+                    <Suspense fallback={null}>
+                      <PromptEditor
+                        ref={editorRef}
+                        conversationId={conversationId}
+                        value={promptText}
+                        onChange={setPromptText}
+                        onSubmit={() => {
+                          if (isRecording) {
+                            toggleRecording();
+                            return;
+                          }
+                          void handleSendPrompt();
+                        }}
+                        pendingImages={pendingImages}
+                        onAddImage={async (file) => {
+                          const result = await addImage(file);
+                          if (result.error) {
+                            failPrompt(result.error);
+                            return null;
+                          }
+                          return result.attachment;
+                        }}
+                        onRemoveImage={removeImage}
+                        cumulativeImageCount={cumulativeImageCount}
+                        onInlineMarkersChange={setInlineMarkerIds}
+                        projectName={projectName}
+                        sessionName={session.sessionName}
+                        backend={selectedBackend}
+                        onShowPlaceholder={showPlaceholder}
+                        disabled={isReadOnly}
+                        readOnly={hasActiveCollab}
+                        title={
+                          hasActiveCollab ? COLLAB_RUNNING_TOOLTIP : undefined
                         }
-                        void handleSendPrompt();
-                      }}
-                      pendingImages={pendingImages}
-                      onAddImage={async (file) => {
-                        const result = await addImage(file);
-                        if (result.error) {
-                          failPrompt(result.error);
-                          return null;
+                        placeholder={
+                          isFinished
+                            ? "Session is merged and read-only"
+                            : (promptPlaceholder ??
+                              "Send a prompt to Claude...")
                         }
-                        return result.attachment;
-                      }}
-                      onRemoveImage={removeImage}
-                      cumulativeImageCount={cumulativeImageCount}
-                      onInlineMarkersChange={setInlineMarkerIds}
-                      projectName={projectName}
-                      sessionName={session.sessionName}
-                      backend={selectedBackend}
-                      onShowPlaceholder={showPlaceholder}
-                      disabled={isReadOnly}
-                      readOnly={hasActiveCollab}
-                      title={
-                        hasActiveCollab ? COLLAB_RUNNING_TOOLTIP : undefined
-                      }
-                      placeholder={
-                        isFinished
-                          ? "Session is merged and read-only"
-                          : (promptPlaceholder ?? "Send a prompt to Claude...")
-                      }
-                    />
+                      />
+                    </Suspense>
                     {hasCollabChip ? (
                       <CollabConfigRow
                         config={effectiveCollabConfig}

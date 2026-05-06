@@ -2,10 +2,12 @@ import { describe, it, expect } from "vitest";
 import {
   classifyScrollPosition,
   computeCurrentMessageIndex,
+  estimateVirtualRowSize,
   findTopmostVisibleItem,
   getNextMessageIndex,
   getPrevMessageIndex,
 } from "./conversation-nav";
+import type { TranscriptMessage } from "@/types";
 
 describe("classifyScrollPosition", () => {
   it("returns 'top' when scrolled to absolute top", () => {
@@ -187,5 +189,117 @@ describe("getNextMessageIndex / getPrevMessageIndex", () => {
 
   it("getPrevMessageIndex returns null at the first message", () => {
     expect(getPrevMessageIndex({ currentIndex: 0 })).toBeNull();
+  });
+});
+
+describe("estimateVirtualRowSize", () => {
+  function msg(
+    role: "user" | "assistant",
+    content: TranscriptMessage["content"],
+  ): TranscriptMessage {
+    return { role, content, timestamp: null };
+  }
+
+  it("returns the collab-row constant for kind 'collab'", () => {
+    expect(estimateVirtualRowSize({ kind: "collab" })).toBe(220);
+  });
+
+  it("clamps a tiny user message to the floor", () => {
+    expect(
+      estimateVirtualRowSize({
+        kind: "message",
+        message: msg("user", [{ type: "text", text: "hi" }]),
+      }),
+    ).toBe(96);
+  });
+
+  it("clamps a huge text block to the ceiling", () => {
+    const huge = "x".repeat(10_000) + "\n".repeat(200);
+    expect(
+      estimateVirtualRowSize({
+        kind: "message",
+        message: msg("assistant", [{ type: "text", text: huge }]),
+      }),
+    ).toBe(800);
+  });
+
+  it("grows with newline count and character count for text blocks", () => {
+    const small = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("assistant", [{ type: "text", text: "one line" }]),
+    });
+    const big = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("assistant", [
+        {
+          type: "text",
+          text: "line\nline\nline\nline\nline\nline\nline\nline",
+        },
+      ]),
+    });
+    expect(big).toBeGreaterThan(small);
+  });
+
+  it("adds height for tool_use blocks", () => {
+    const base = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("assistant", [{ type: "text", text: "hi" }]),
+    });
+    const withTool = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("assistant", [
+        { type: "text", text: "hi" },
+        { type: "tool_use", name: "Bash", input: { command: "ls" } },
+      ]),
+    });
+    expect(withTool).toBeGreaterThan(base);
+  });
+
+  it("adds height for tool_result blocks based on content length", () => {
+    const short = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("user", [
+        { type: "tool_result", tool_use_id: "t", content: "ok" },
+      ]),
+    });
+    const long = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("user", [
+        {
+          type: "tool_result",
+          tool_use_id: "t",
+          content: "x\n".repeat(50),
+        },
+      ]),
+    });
+    expect(long).toBeGreaterThan(short);
+  });
+
+  it("adds height for image blocks", () => {
+    const base = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("user", [{ type: "text", text: "see attached" }]),
+    });
+    const withImage = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("user", [
+        { type: "text", text: "see attached" },
+        { type: "image", mediaType: "image/png", base64Data: "..." },
+      ]),
+    });
+    expect(withImage).toBeGreaterThan(base);
+  });
+
+  it("falls back to a role-based estimate when content is empty", () => {
+    const userEmpty = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("user", []),
+    });
+    const assistantEmpty = estimateVirtualRowSize({
+      kind: "message",
+      message: msg("assistant", []),
+    });
+    expect(userEmpty).toBeGreaterThanOrEqual(96);
+    expect(assistantEmpty).toBeGreaterThanOrEqual(96);
   });
 });
