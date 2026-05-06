@@ -9,6 +9,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { buildChildEnv } from "./child-env";
 
 const execFileAsync = promisify(execFile);
 
@@ -33,7 +34,11 @@ export class ExecFileGitClient implements GitClient {
     cwd: string,
     options?: { maxBuffer?: number },
   ): Promise<GitResult> {
-    return execFileAsync("git", args, { cwd, maxBuffer: options?.maxBuffer });
+    return execFileAsync("git", args, {
+      cwd,
+      maxBuffer: options?.maxBuffer,
+      env: buildChildEnv(),
+    });
   }
 }
 

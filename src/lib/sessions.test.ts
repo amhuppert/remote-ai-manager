@@ -453,6 +453,29 @@ describe("generateSessionName", () => {
       service.generateSessionName("Bad name", "/projects/repo"),
     ).rejects.toThrow("Generated session name is invalid");
   });
+
+  it("passes a sanitized child env (from buildChildEnv) to the SDK so NODE_ENV from CC's parent process does not leak", async () => {
+    queryMock.mockReturnValue(mockQueryResponse("Sanitized Env"));
+    (deps.buildChildEnv as Mock).mockReturnValue({
+      PATH: "/usr/bin",
+      HOME: "/home/test",
+    });
+
+    await service.generateSessionName("Add feature", "/projects/repo");
+
+    expect(deps.buildChildEnv).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          env: {
+            PATH: "/usr/bin",
+            HOME: "/home/test",
+            CLAUDECODE: "",
+          },
+        }),
+      }),
+    );
+  });
 });
 
 // ===========================================================================

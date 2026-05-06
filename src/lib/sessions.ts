@@ -167,7 +167,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
           abortController,
-          env: { CLAUDECODE: "" },
+          env: { ...buildChildEnv(), CLAUDECODE: "" } as Record<string, string>,
         },
       });
 
