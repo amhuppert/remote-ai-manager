@@ -830,7 +830,6 @@ describe("globalConfigSchema workflowDefaults", () => {
     const result = globalConfigSchema.safeParse({
       baseDir: "/projects",
       ignorePatterns: [],
-      stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 3600000,
       workflowDefaults: createWorkflowDefaults(),
     });
@@ -846,7 +845,6 @@ describe("globalConfigSchema workflowDefaults", () => {
     const result = globalConfigSchema.safeParse({
       baseDir: "/projects",
       ignorePatterns: [],
-      stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 3600000,
     });
     expect(result.success).toBe(true);

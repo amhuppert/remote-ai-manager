@@ -10,8 +10,8 @@
  * Atomicity lives in the store layer. The repository delegates every
  * read-modify-write to `store.upsert(workflowId, mutator)`, so the production
  * `createSessionStateWorkflowEnvelopeStore` can route the entire mutation
- * through `mutateSession` / `withStateLock` and the in-memory store can apply
- * a per-key promise chain — both without extra locking here.
+ * through `mutateSession` / the session-state write queue, and the in-memory
+ * store can apply a per-key promise chain — both without extra locking here.
  *
  * The repository deliberately keeps the envelope minimal. Feature-specific
  * recovery decisions stay with the owning workflow's snapshot.

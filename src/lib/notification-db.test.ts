@@ -14,8 +14,15 @@ import {
   deriveNotificationType,
   deriveNotificationTitle,
   _createTestDb,
+  _installTestDb,
   _resetForTesting,
 } from "./notification-db";
+import {
+  _createTestDb as createSharedStateDb,
+  getDb as getSharedStateDb,
+} from "./state-store/state-db";
+import { PersistenceError } from "./errors";
+import { randomUUID } from "node:crypto";
 
 // Prevent tests from sending real push notifications to ntfy
 vi.mock("./push-dispatcher");
@@ -479,5 +486,221 @@ describe("deriveNotificationTitle", () => {
     expect(deriveNotificationTitle("resolve-failed")).toBe(
       "Conflict resolution failed",
     );
+  });
+});
+
+// ============================================================
+// Zod boundary validation (consolidated state-db)
+// ============================================================
+
+describe("schema validation at the persistence boundary", () => {
+  it("surfaces a PersistenceError when a notification row has an invalid type/kind", () => {
+    const db = getSharedStateDb();
+    db.prepare(
+      `INSERT INTO notifications (id, type, title, message, project_name, session_name, branch_name, job_id, job_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      "not-a-real-notification-type",
+      "Bogus",
+      "Row inserted with an invalid `type` enum value to exercise safeParse",
+      "p",
+      "s",
+      "csm/s",
+      "job-x",
+      "merge",
+    );
+
+    let caught: unknown;
+    try {
+      getNotifications();
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PersistenceError);
+    const failure = (caught as PersistenceError).failure;
+    expect(failure.kind).toBe("validation");
+    if (failure.kind === "validation") {
+      expect(failure.entity).toBe("notification");
+    }
+  });
+
+  it("surfaces a PersistenceError when a stale job_record row has an invalid jobType", () => {
+    const db = getSharedStateDb();
+    // Row IS in the 'running' set so recoverStaleJobs reads it; the corrupt
+    // job_type column trips backgroundJobSchema.safeParse.
+    db.prepare(
+      `INSERT INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "job-stale-bad",
+      "not-a-job-type",
+      "running",
+      "p",
+      "s",
+      "csm/s",
+      new Date().toISOString(),
+    );
+
+    let caught: unknown;
+    try {
+      recoverStaleJobs();
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PersistenceError);
+    const failure = (caught as PersistenceError).failure;
+    expect(failure.kind).toBe("validation");
+    if (failure.kind === "validation") {
+      expect(failure.entity).toBe("job_record");
+    }
+  });
+});
+
+describe("schema validation on the write path", () => {
+  it("rejects createNotification when input fails notificationSchema BEFORE the INSERT commits", () => {
+    const db = getSharedStateDb();
+
+    let caught: unknown;
+    try {
+      createNotification(
+        {
+          // Type assertion bypasses the compile-time guard so we can simulate
+          // a runtime caller that hands us an invalid enum value.
+          type: "not-a-real-notification-type" as unknown as "merge-completed",
+          title: "x",
+          message: "x",
+          projectName: "p",
+          sessionName: "s",
+          branchName: "csm/s",
+          jobId: "job-write-bad",
+          jobType: "merge",
+        },
+        mockBroadcast,
+      );
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PersistenceError);
+    const failure = (caught as PersistenceError).failure;
+    expect(failure.kind).toBe("validation");
+    if (failure.kind === "validation") {
+      expect(failure.entity).toBe("notification");
+    }
+
+    const row = db
+      .prepare("SELECT COUNT(*) AS count FROM notifications")
+      .get() as { count: number };
+    expect(row.count).toBe(0);
+    expect(mockBroadcast).not.toHaveBeenCalled();
+  });
+
+  it("rejects createJobRecord when input fails backgroundJobSchema BEFORE the INSERT commits", () => {
+    const db = getSharedStateDb();
+
+    let caught: unknown;
+    try {
+      createJobRecord({
+        jobId: "job-bad-create",
+        jobType: "not-a-job-type" as unknown as "merge",
+        status: "running",
+        projectName: "p",
+        sessionName: "s",
+        branchName: "csm/s",
+        startedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PersistenceError);
+    const failure = (caught as PersistenceError).failure;
+    expect(failure.kind).toBe("validation");
+    if (failure.kind === "validation") {
+      expect(failure.entity).toBe("job_record");
+    }
+
+    const row = db
+      .prepare("SELECT COUNT(*) AS count FROM job_records WHERE job_id = ?")
+      .get("job-bad-create") as { count: number };
+    expect(row.count).toBe(0);
+  });
+
+  it("rejects updateJobRecord when input fails the update schema BEFORE the UPDATE commits", () => {
+    const db = getSharedStateDb();
+    createJobRecord({
+      jobId: "job-update-target",
+      jobType: "merge",
+      status: "running",
+      projectName: "p",
+      sessionName: "s",
+      branchName: "csm/s",
+      startedAt: new Date().toISOString(),
+    });
+
+    let caught: unknown;
+    try {
+      updateJobRecord("job-update-target", {
+        status: "not-a-status" as unknown as "completed",
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PersistenceError);
+    const failure = (caught as PersistenceError).failure;
+    expect(failure.kind).toBe("validation");
+    if (failure.kind === "validation") {
+      expect(failure.entity).toBe("job_record");
+      expect(failure.identifier).toBe("job-update-target");
+    }
+
+    const row = db
+      .prepare("SELECT status FROM job_records WHERE job_id = ?")
+      .get("job-update-target") as { status: string };
+    expect(row.status).toBe("running");
+  });
+});
+
+// ============================================================
+// Boot-order integration: schema init → CRUD → recovery
+// ============================================================
+
+describe("boot-order integration", () => {
+  it("initialises schema, then performs createNotification + recoverStaleJobs without errors", () => {
+    // Reset the singleton so this test owns the full boot path.
+    _resetForTesting();
+    const db = createSharedStateDb({ inMemory: true });
+    _installTestDb(db);
+
+    // Sanity: tables exist after schema init
+    const tables = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('notifications','job_records')",
+      )
+      .all() as { name: string }[];
+    const tableNames = new Set(tables.map((r) => r.name));
+    expect(tableNames.has("notifications")).toBe(true);
+    expect(tableNames.has("job_records")).toBe(true);
+
+    const notification = createNotification(
+      {
+        type: "merge-completed",
+        title: "Merge completed",
+        message: "ok",
+        projectName: "p",
+        sessionName: "s",
+        branchName: "csm/s",
+        jobId: "job-boot",
+        jobType: "merge",
+      },
+      mockBroadcast,
+    );
+    expect(notification.id).toBeDefined();
+
+    const recovered = recoverStaleJobs();
+    expect(recovered).toBe(0);
+
+    const result = getNotifications();
+    expect(result.total).toBe(1);
+    expect(result.notifications[0]!.id).toBe(notification.id);
   });
 });

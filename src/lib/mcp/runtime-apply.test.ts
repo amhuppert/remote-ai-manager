@@ -13,7 +13,12 @@ import type { McpApplyResult } from "@/lib/agent-backends/portable-mcp";
 import { createConfigReader } from "@/lib/config";
 import type { ManagerState } from "@/lib/schemas";
 import { createStateManager } from "@/lib/state";
-import { _resetForTesting as resetMutex } from "@/lib/state-mutex";
+import {
+  _createTestDb,
+  _installTestDb,
+  _resetForTesting as _resetStateDb,
+} from "@/lib/state-store/state-db";
+import { _resetForTesting as resetMutex } from "@/lib/state-store/write-queue";
 
 import {
   computeEffectiveConfigHash,
@@ -195,10 +200,12 @@ function createDeps(
 
 beforeEach(async () => {
   resetMutex();
+  _installTestDb(_createTestDb({ inMemory: true }));
   await mkdir(TEST_DIR, { recursive: true });
 });
 
 afterEach(async () => {
+  _resetStateDb();
   await rm(TEST_DIR, { recursive: true, force: true });
   vi.restoreAllMocks();
 });

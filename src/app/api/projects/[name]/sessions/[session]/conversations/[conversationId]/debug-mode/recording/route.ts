@@ -66,7 +66,7 @@ export const POST = withTracing(async (request, { params }) => {
     );
 
     // syncDerivedFields is fire-and-forget in the machine, so the SSE broadcast
-    // and query invalidation can race ahead of the state.json write. Await the
+    // and query invalidation can race ahead of the persisted write. Await the
     // write here so callers always re-fetch up-to-date recording state.
     const { mutateConversation } = await import("@/lib/state");
     await mutateConversation(

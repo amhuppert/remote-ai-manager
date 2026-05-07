@@ -3,6 +3,11 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "@/lib/config";
 import { createStateManager } from "@/lib/state";
+import {
+  _createTestDb,
+  _installTestDb,
+  _resetForTesting as _resetStateDb,
+} from "@/lib/state-store/state-db";
 import { createDefaultSessionWorkflowEnvelopeRepository } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
 import { createWorkflowEnvelopesRouteHandlers } from "./workflow-envelopes-route-handlers";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
@@ -64,10 +69,12 @@ beforeEach(async () => {
     `cc-envelope-route-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   await mkdir(TEST_DIR, { recursive: true });
+  _installTestDb(_createTestDb({ inMemory: true }));
   await seedSession();
 });
 
 afterEach(async () => {
+  _resetStateDb();
   await rm(TEST_DIR, { recursive: true, force: true });
 });
 

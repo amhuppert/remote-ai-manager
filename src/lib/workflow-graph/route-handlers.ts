@@ -45,7 +45,7 @@ export interface WorkflowDefinitionRouteDeps {
   deleteDefinition(projectPath: string, workflowId: string): Promise<boolean>;
 }
 
-const defaultStorage = createWorkflowStorageService({ readConfig });
+const defaultStorage = createWorkflowStorageService();
 
 const defaultDeps: WorkflowDefinitionRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,

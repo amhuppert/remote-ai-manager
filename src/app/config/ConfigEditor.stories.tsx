@@ -16,7 +16,6 @@ const defaultConfig: GlobalConfig = {
   maxConcurrentQueries: 3,
   mergeCheckIntervalMs: 300_000,
   preMergeTimeoutMs: 300_000,
-  stateFilePath: "/home/user/.config/cc/state.json",
   ignorePatterns: [
     "node_modules",
     ".next",

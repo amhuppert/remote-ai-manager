@@ -20,6 +20,7 @@ export type {
   DerivedSessionStatus,
   SessionState,
   ProjectState,
+  ProjectRow,
   ManagerState,
   PerRepoConfig,
   ConversationState,
@@ -105,6 +106,7 @@ export type {
   JobStatus,
   JobStatusEvent,
   JobDispatchResponse,
+  BackgroundJob,
   SessionFinishedEvent,
   SmartMergeRequest,
   ConflictEntry,
@@ -277,25 +279,6 @@ export type { RunPromptRequest } from "@/lib/schemas";
 
 /** Layout mode for the session detail view */
 export type LayoutMode = "conversation" | "default" | "split" | "diff";
-
-/** Background job state */
-export interface BackgroundJob {
-  jobId: string;
-  jobType: "commit" | "merge" | "resolve-conflicts";
-  status: "running" | "completed" | "failed" | "conflicts";
-  projectName: string;
-  sessionName: string;
-  branchName: string;
-  targetBranch?: string;
-  startedAt: string;
-  completedAt?: string;
-  mergeHash?: string;
-  commitHash?: string;
-  conflictCount?: number;
-  conflictFiles?: string[];
-  errorMessage?: string;
-  phase?: string;
-}
 
 /** Conflict analysis result stored in memory */
 export interface ConflictAnalysis {

@@ -5,7 +5,6 @@ import type {
   WorkflowPlanRequest,
   WorkflowSemanticDefinition,
 } from "@/types";
-import { readConfig } from "@/lib/config";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
 import {
@@ -60,7 +59,7 @@ export interface DefaultPlannerRunnerDeps {
   ) => PortableMcpConfig;
 }
 
-const defaultStorage = createWorkflowStorageService({ readConfig });
+const defaultStorage = createWorkflowStorageService();
 
 export function createDefaultPlannerRunner(
   deps: DefaultPlannerRunnerDeps = {},

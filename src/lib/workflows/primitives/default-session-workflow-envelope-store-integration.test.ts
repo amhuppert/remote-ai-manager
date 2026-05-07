@@ -15,6 +15,11 @@ import path from "node:path";
 import { createConfigReader } from "@/lib/config";
 import { createStateManager } from "@/lib/state";
 import {
+  _createTestDb,
+  _installTestDb,
+  _resetForTesting as _resetStateDb,
+} from "@/lib/state-store/state-db";
+import {
   createDefaultSessionWorkflowEnvelopeRepository,
   createDefaultSessionWorkflowEnvelopeStore,
 } from "./default-session-workflow-envelope-store";
@@ -77,10 +82,12 @@ beforeEach(async () => {
     `cc-envelope-wiring-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   await mkdir(TEST_DIR, { recursive: true });
+  _installTestDb(_createTestDb({ inMemory: true }));
   await seedSession();
 });
 
 afterEach(async () => {
+  _resetStateDb();
   await rm(TEST_DIR, { recursive: true, force: true });
 });
 

@@ -801,22 +801,6 @@ export default function ConfigEditor(): React.JSX.Element {
             onToggle={toggleSection}
           >
             <ConfigField
-              label={formatFieldLabel("stateFilePath")}
-              fieldPath="stateFilePath"
-              isDefault={isDefault("stateFilePath")}
-              isModified={false}
-              readOnly
-            >
-              <input
-                className="form-input"
-                type="text"
-                value={formState.stateFilePath}
-                readOnly
-                tabIndex={-1}
-              />
-            </ConfigField>
-
-            <ConfigField
               label={formatFieldLabel("ignorePatterns")}
               fieldPath="ignorePatterns"
               isDefault={isDefault("ignorePatterns")}

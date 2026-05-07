@@ -1,0 +1,350 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/logging", () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
+import type Database from "better-sqlite3";
+import { _createTestDb } from "./state-db";
+import {
+  canonicalSessionRow,
+  createSessionsRepo,
+  type SessionsRepo,
+} from "./sessions-repo";
+import { sessionStateSchema } from "../schemas";
+import type { SessionState } from "@/types";
+
+type Db = InstanceType<typeof Database>;
+
+let db: Db;
+let repo: SessionsRepo;
+
+const PROJECT_PATH = "/p1";
+
+beforeEach(() => {
+  db = _createTestDb({ inMemory: true });
+  db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
+  repo = createSessionsRepo(db);
+});
+
+afterEach(() => {
+  db.close();
+});
+
+function makeMinimalSession(
+  overrides: Partial<SessionState> = {},
+): SessionState {
+  return sessionStateSchema.parse({
+    sessionName: "s1",
+    worktreePath: "/wt/s1",
+    branchName: "csm/s1",
+    createdAt: "2026-01-01T00:00:00Z",
+    lastActivityAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  });
+}
+
+function makeFullSession(overrides: Partial<SessionState> = {}): SessionState {
+  return sessionStateSchema.parse({
+    sessionName: "full",
+    worktreePath: "/wt/full",
+    branchName: "csm/full",
+    createdAt: "2026-01-01T00:00:00Z",
+    lastActivityAt: "2026-02-01T12:34:56Z",
+    archived: true,
+    finished: true,
+    source: "imported",
+    objective: "make it fast",
+    creationMode: "focus",
+    tddEnabled: false,
+    targetBranch: "develop",
+    parentSessionName: "ancestor",
+    graphWorkflowExecution: {
+      id: "wf-1",
+      seedDefinitionId: "seed-1",
+      seedDefinitionRevision: 1,
+      workingDefinition: {},
+      status: "pending",
+      startedAt: "2026-01-01T00:00:00Z",
+    },
+    graphWorkflowExecutionHistory: [
+      {
+        id: "wf-h-1",
+        seedDefinitionId: "seed-h",
+        seedDefinitionRevision: 1,
+        workingDefinition: {},
+        status: "completed",
+        startedAt: "2025-12-01T00:00:00Z",
+      },
+    ],
+    workflowEnvelopes: { env1: { kind: "primitive", payload: 42 } },
+    workflowLanes: { lane1: { engine: "noop" } },
+    mcpOverrides: {
+      servers: {
+        stripe: { enabled: true, tools: { charge: { enabled: false } } },
+      },
+    },
+    ...overrides,
+  });
+}
+
+describe("sessions-repo round-trip contract", () => {
+  it("upsert + findByKey round-trips a minimal fixture (all nullable/optional fields default)", () => {
+    const fixture = makeMinimalSession();
+    repo.upsert(PROJECT_PATH, fixture);
+
+    const out = repo.findByKey(PROJECT_PATH, fixture.sessionName);
+    expect(out).not.toBeNull();
+    if (!out) return;
+
+    expect(out.sessionName).toBe(fixture.sessionName);
+    expect(out.objective).toBeNull();
+    expect(out.parentSessionName).toBeNull();
+    expect(out.graphWorkflowExecution).toBeNull();
+    expect(out.workflowEnvelopes).toBeUndefined();
+    expect(out.workflowLanes).toBeUndefined();
+    expect(out.mcpOverrides).toBeUndefined();
+
+    expect(sessionStateSchema.parse(out)).toEqual(fixture);
+  });
+
+  it("upsert + findByKey round-trips a fully populated fixture (every field set, JSON sub-trees included)", () => {
+    const fixture = makeFullSession();
+    repo.upsert(PROJECT_PATH, fixture);
+
+    const out = repo.findByKey(PROJECT_PATH, fixture.sessionName);
+    expect(out).not.toBeNull();
+    if (!out) return;
+
+    expect(out).toEqual(fixture);
+    expect(sessionStateSchema.parse(out)).toEqual(fixture);
+  });
+
+  it("findByProject returns all sessions belonging to a project, no others", () => {
+    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run("/p2");
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "a" }));
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "b" }));
+    repo.upsert("/p2", makeMinimalSession({ sessionName: "x" }));
+
+    const p1Sessions = repo.findByProject(PROJECT_PATH);
+    expect(p1Sessions.map((s) => s.sessionName).sort()).toEqual(["a", "b"]);
+    const p2Sessions = repo.findByProject("/p2");
+    expect(p2Sessions.map((s) => s.sessionName)).toEqual(["x"]);
+  });
+
+  it("findAll returns every session paired with its projectPath", () => {
+    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run("/p2");
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "a" }));
+    repo.upsert("/p2", makeMinimalSession({ sessionName: "x" }));
+
+    const all = repo.findAll();
+    const pairs = all
+      .map((entry) => `${entry.projectPath}::${entry.session.sessionName}`)
+      .sort();
+    expect(pairs).toEqual(["/p1::a", "/p2::x"]);
+  });
+
+  it("delete removes only the targeted session", () => {
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "a" }));
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "b" }));
+
+    repo.delete(PROJECT_PATH, "a");
+    expect(repo.findByKey(PROJECT_PATH, "a")).toBeNull();
+    expect(repo.findByKey(PROJECT_PATH, "b")).not.toBeNull();
+  });
+});
+
+describe("sessions-repo cascading-FK invariant", () => {
+  it("upsert on an existing session does NOT delete child conversations or reference_documents", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({ sessionName: "with-children" }),
+    );
+
+    const insertConversation = db.prepare(
+      `INSERT INTO conversations
+        (id, project_path, session_name, status, prompt_count,
+         created_at, last_activity_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertConversation.run(
+      "c1",
+      PROJECT_PATH,
+      "with-children",
+      "active",
+      0,
+      "2026-01-01T00:00:00Z",
+      "2026-01-01T00:00:00Z",
+    );
+    insertConversation.run(
+      "c2",
+      PROJECT_PATH,
+      "with-children",
+      "active",
+      0,
+      "2026-01-02T00:00:00Z",
+      "2026-01-02T00:00:00Z",
+    );
+
+    const insertRefDoc = db.prepare(
+      `INSERT INTO reference_documents
+        (id, project_path, session_name, file_path, description, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    insertRefDoc.run(
+      "r1",
+      PROJECT_PATH,
+      "with-children",
+      "/docs/a.md",
+      "ref a",
+      "2026-01-01T00:00:00Z",
+    );
+    insertRefDoc.run(
+      "r2",
+      PROJECT_PATH,
+      "with-children",
+      "/docs/b.md",
+      "ref b",
+      "2026-01-02T00:00:00Z",
+    );
+
+    const beforeConvos = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM conversations WHERE project_path = ? AND session_name = ?",
+        )
+        .get(PROJECT_PATH, "with-children") as { n: number }
+    ).n;
+    const beforeRefs = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM reference_documents WHERE project_path = ? AND session_name = ?",
+        )
+        .get(PROJECT_PATH, "with-children") as { n: number }
+    ).n;
+    expect(beforeConvos).toBe(2);
+    expect(beforeRefs).toBe(2);
+
+    const mutated = makeMinimalSession({
+      sessionName: "with-children",
+      objective: "mutated payload",
+      lastActivityAt: "2026-03-01T00:00:00Z",
+    });
+    repo.upsert(PROJECT_PATH, mutated);
+
+    const afterConvos = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM conversations WHERE project_path = ? AND session_name = ?",
+        )
+        .get(PROJECT_PATH, "with-children") as { n: number }
+    ).n;
+    const afterRefs = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM reference_documents WHERE project_path = ? AND session_name = ?",
+        )
+        .get(PROJECT_PATH, "with-children") as { n: number }
+    ).n;
+
+    expect(afterConvos).toBe(2);
+    expect(afterRefs).toBe(2);
+
+    const updated = repo.findByKey(PROJECT_PATH, "with-children");
+    expect(updated?.objective).toBe("mutated payload");
+    expect(updated?.lastActivityAt).toBe("2026-03-01T00:00:00Z");
+  });
+
+  it("delete on a session cascades to its conversations and reference_documents (sanity)", () => {
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "doomed" }));
+    db.prepare(
+      `INSERT INTO conversations
+        (id, project_path, session_name, status, prompt_count,
+         created_at, last_activity_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "c1",
+      PROJECT_PATH,
+      "doomed",
+      "active",
+      0,
+      "2026-01-01T00:00:00Z",
+      "2026-01-01T00:00:00Z",
+    );
+    db.prepare(
+      `INSERT INTO reference_documents
+        (id, project_path, session_name, file_path, description, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "r1",
+      PROJECT_PATH,
+      "doomed",
+      "/docs/a.md",
+      "ref a",
+      "2026-01-01T00:00:00Z",
+    );
+
+    repo.delete(PROJECT_PATH, "doomed");
+
+    const convos = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM conversations WHERE project_path = ? AND session_name = ?",
+        )
+        .get(PROJECT_PATH, "doomed") as { n: number }
+    ).n;
+    const refs = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM reference_documents WHERE project_path = ? AND session_name = ?",
+        )
+        .get(PROJECT_PATH, "doomed") as { n: number }
+    ).n;
+    expect(convos).toBe(0);
+    expect(refs).toBe(0);
+  });
+});
+
+describe("canonicalSessionRow", () => {
+  it("returns the same string for two SessionState values that are deep-equal post-Zod-parse", () => {
+    const a = makeFullSession();
+    const b = makeFullSession();
+    expect(canonicalSessionRow(PROJECT_PATH, a)).toBe(
+      canonicalSessionRow(PROJECT_PATH, b),
+    );
+  });
+
+  it("is insensitive to mcpOverrides.servers key insertion order", () => {
+    const a = makeMinimalSession({
+      mcpOverrides: {
+        servers: { alpha: { enabled: true }, beta: { enabled: false } },
+      },
+    });
+    const b = makeMinimalSession({
+      mcpOverrides: {
+        servers: { beta: { enabled: false }, alpha: { enabled: true } },
+      },
+    });
+    expect(canonicalSessionRow(PROJECT_PATH, a)).toBe(
+      canonicalSessionRow(PROJECT_PATH, b),
+    );
+  });
+
+  it("differs when any field differs", () => {
+    const base = makeMinimalSession();
+    expect(canonicalSessionRow(PROJECT_PATH, base)).not.toBe(
+      canonicalSessionRow(PROJECT_PATH, makeMinimalSession({ objective: "a" })),
+    );
+    expect(canonicalSessionRow(PROJECT_PATH, base)).not.toBe(
+      canonicalSessionRow("/p2", base),
+    );
+    expect(canonicalSessionRow(PROJECT_PATH, base)).not.toBe(
+      canonicalSessionRow(PROJECT_PATH, makeMinimalSession({ archived: true })),
+    );
+  });
+});

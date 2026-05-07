@@ -7,7 +7,6 @@
     "dev:main": "next dev",
     "build": "next build",
     "start": "next start",
-    "migrate:state-agent-backend": "bun scripts/migrate-state-agent-backend.ts",
     "lint": "npx eslint .",
     "lint:ai": "npx eslint . --quiet --no-color --no-warn-ignored",
     "test:watch": "NODE_ENV=test vitest",

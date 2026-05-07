@@ -95,7 +95,6 @@ beforeEach(() => {
   mockReadConfig = vi.fn().mockResolvedValue({
     baseDir: "/projects",
     ignorePatterns: [],
-    stateFilePath: "/config/state.json",
     claudeTimeoutMs: 3_600_000,
     defaultModel: "opus",
     mergeCheckIntervalMs: 5 * 60 * 1000,
@@ -415,7 +414,6 @@ describe("startMergeDetection / stopMergeDetection", () => {
     mockReadConfig.mockResolvedValue({
       baseDir: "/projects",
       ignorePatterns: [],
-      stateFilePath: "/config/state.json",
       claudeTimeoutMs: 3_600_000,
       defaultModel: "opus",
       mergeCheckIntervalMs: 60_000, // 1 minute

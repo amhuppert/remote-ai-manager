@@ -5,6 +5,11 @@ import path from "node:path";
 import type { ConversationState, SessionState } from "@/types";
 import { createConfigReader } from "./config";
 import { createStateManager } from "./state";
+import {
+  _createTestDb,
+  _installTestDb,
+  _resetForTesting as _resetStateDb,
+} from "./state-store/state-db";
 import { createConversationService } from "./conversations";
 import {
   deriveSessionStatus,
@@ -26,8 +31,9 @@ function createTestServices() {
   });
   const conversations = createConversationService({
     mutateSession: state.mutateSession,
-    readState: state.readState,
     getSession: state.getSession,
+    getConversation: state.getConversation,
+    getSessionConversations: state.getSessionConversations,
   });
   return { state, conversations };
 }
@@ -134,9 +140,11 @@ async function seedSession(
 beforeEach(async () => {
   TEST_DIR = path.join("/tmp", "cc-conversations-test-" + Date.now());
   await mkdir(TEST_DIR, { recursive: true });
+  _installTestDb(_createTestDb({ inMemory: true }));
 });
 
 afterEach(async () => {
+  _resetStateDb();
   await rm(TEST_DIR, { recursive: true, force: true });
 });
 

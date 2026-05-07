@@ -3,6 +3,11 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "./config";
 import { createStateManager } from "./state";
+import {
+  _createTestDb,
+  _installTestDb,
+  _resetForTesting as _resetStateDb,
+} from "./state-store/state-db";
 import type { ManagerState } from "./schemas";
 
 const TEST_DIR = path.join("/tmp", "cc-refdoc-test-" + Date.now());
@@ -53,9 +58,11 @@ function stateWithSession(): ManagerState {
 
 beforeEach(async () => {
   await mkdir(TEST_DIR, { recursive: true });
+  _installTestDb(_createTestDb({ inMemory: true }));
 });
 
 afterEach(async () => {
+  _resetStateDb();
   await rm(TEST_DIR, { recursive: true, force: true });
 });
 
@@ -200,8 +207,7 @@ describe("getReferenceDocuments", () => {
 
     const docs = await getReferenceDocuments(PROJECT_PATH, SESSION_NAME);
     expect(docs).toHaveLength(2);
-    expect(docs[0]!.filePath).toBe("a.md");
-    expect(docs[1]!.filePath).toBe("b.md");
+    expect(docs.map((d) => d.filePath).sort()).toEqual(["a.md", "b.md"]);
   });
 
   it("returns empty array for session with no documents", async () => {

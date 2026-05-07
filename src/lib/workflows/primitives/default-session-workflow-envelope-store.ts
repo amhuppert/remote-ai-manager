@@ -6,8 +6,8 @@
  * pair) and the singleton state manager exported from `@/lib/state`. Long-
  * running primitive-native workflows (Collaboration Mode is the first) call
  * `createSessionWorkflowEnvelopeStoreForProduction({ projectPath, sessionName
- * })` to obtain a store backed by the on-disk session-state JSON, inheriting
- * the `withStateLock` mutex automatically.
+ * })` to obtain a store backed by the session-state store, inheriting the
+ * session-state write queue automatically.
  *
  * The state-module accessors are resolved lazily through `require()` to mirror
  * the dynamic-import deferral pattern used in `default-session-status-bus.ts`

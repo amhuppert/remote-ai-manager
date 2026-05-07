@@ -57,7 +57,7 @@ const executionRepository = createGraphWorkflowExecutionRepository({
   eventPublisher,
 });
 
-const workflowStorage = createWorkflowStorageService({ readConfig });
+const workflowStorage = createWorkflowStorageService();
 
 const workflowManager = createGraphWorkflowManager({
   executionRepository,

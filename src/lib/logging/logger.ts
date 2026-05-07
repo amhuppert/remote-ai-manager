@@ -1,20 +1,34 @@
 /**
  * Structured NDJSON logger with AsyncLocalStorage trace context enrichment.
  *
- * Each log call emits a single JSON line to the log file.
- * Trace context (traceId, action, projectName, sessionName) is
- * automatically read from AsyncLocalStorage when available.
+ * Each log call emits a single JSON line to a file resolved at write time
+ * from the active TraceContext.
+ *
+ * Routing policy (when CC_LOG_FILE is unset and CC_LOG_SCOPED !== "0"):
+ *   - <config-dir>/logs/global.log                                              (default + fallback)
+ *   - <config-dir>/logs/sessions/<projectSlug>__<sessionSlug>/session.log       (project + session)
+ *   - <config-dir>/logs/sessions/<projectSlug>__<sessionSlug>/conversations/<conversationSlug>.log
+ *                                                                               (project + session + conversation)
+ *
+ * Resolution priority: conversation > session > global. The dynamic path components
+ * (projectSlug, sessionSlug, conversationSlug) are sanitized on every call.
+ *
+ * Documented exception — request.start / request.complete from the "tracing"
+ * module are written to BOTH the scoped destination AND the global log so
+ * operators retain a chronological cross-session timeline.
  *
  * Configuration:
  * - CC_LOG_LEVEL: "debug" | "info" | "warn" | "error" (default: "info")
- * - CC_LOG_FILE: absolute path to log file (default: <config-dir>/cc-debug.log)
+ * - CC_LOG_FILE: explicit single-file destination (overrides scoped routing)
+ * - CC_LOG_SCOPED: "0" disables scoped routing (everything → global.log)
  *
  * The logger never throws — failed writes are silently dropped.
  */
 
 import { appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
-import { getTraceContext } from "./context";
+import { getTraceContext, type TraceContext } from "./context";
 import { resolveConfigDir } from "../config";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -28,6 +42,44 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 
 const VALID_LEVELS = new Set<string>(Object.keys(LOG_LEVELS));
 
+const SAFE_CHAR_PATTERN = /[^A-Za-z0-9._-]/g;
+const MAX_COMPONENT_LENGTH = 80;
+const HASH_SUFFIX_LENGTH = 8;
+
+const TRACING_MODULE = "tracing";
+const TRACING_DUAL_MESSAGES = new Set(["request.start", "request.complete"]);
+
+/**
+ * Sanitize a single path component (projectSlug / sessionSlug / conversationSlug).
+ *
+ * - Replace any character outside [A-Za-z0-9._-] with `_`.
+ * - Collapse leading dots so the value cannot resolve to a hidden file or
+ *   escape via `..`.
+ * - Truncate to 80 characters; on truncation, append a short SHA-256 hash
+ *   of the original to preserve uniqueness across distinct long inputs.
+ * - Returns null for inputs that sanitize to an empty string — callers
+ *   fall back to the next-priority scope and emit `logger.path.sanitize_failure`.
+ */
+export function sanitizePathComponent(value: string): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+
+  let sanitized = value.replace(SAFE_CHAR_PATTERN, "_");
+  sanitized = sanitized.replace(/^\.+/, "");
+
+  if (sanitized.length === 0) return null;
+
+  if (sanitized.length > MAX_COMPONENT_LENGTH) {
+    const hash = createHash("sha256")
+      .update(value)
+      .digest("hex")
+      .slice(0, HASH_SUFFIX_LENGTH);
+    const headLen = MAX_COMPONENT_LENGTH - HASH_SUFFIX_LENGTH - 1;
+    sanitized = `${sanitized.slice(0, headLen)}-${hash}`;
+  }
+
+  return sanitized;
+}
+
 /** Resolve the configured log level, falling back to "info" on invalid values */
 function resolveLogLevel(): LogLevel {
   const env = process.env["CC_LOG_LEVEL"];
@@ -35,7 +87,6 @@ function resolveLogLevel(): LogLevel {
     return env as LogLevel;
   }
   if (env) {
-    // Invalid value — warn on stderr and fall back
     process.stderr.write(
       `[cc] Invalid CC_LOG_LEVEL="${env}", falling back to "info"\n`,
     );
@@ -43,50 +94,145 @@ function resolveLogLevel(): LogLevel {
   return "info";
 }
 
-/**
- * Resolve the log file path.
- * Uses CC_LOG_FILE env var if set, otherwise derives from config directory.
- */
-function resolveLogFilePath(): string {
-  const envPath = process.env["CC_LOG_FILE"];
-  if (envPath) {
-    return envPath;
-  }
-
-  return path.join(resolveConfigDir(), "cc-debug.log");
-}
-
-// Lazy-initialized state (resolved on first log call)
 let logLevel: LogLevel | undefined;
-let logFilePath: string | undefined;
+let logsRoot: string | undefined;
+let singleFileOverride: string | undefined;
+let scopedRoutingEnabled = true;
 let initialized = false;
+const ensuredDirs = new Set<string>();
 
-/** Initialize logger state (once guard) */
 function ensureInitialized(): void {
   if (initialized) return;
   initialized = true;
   logLevel = resolveLogLevel();
-  logFilePath = resolveLogFilePath();
 
-  // Ensure parent directory exists
+  singleFileOverride = process.env["CC_LOG_FILE"] || undefined;
+  scopedRoutingEnabled = process.env["CC_LOG_SCOPED"] !== "0";
+  logsRoot = path.join(resolveConfigDir(), "logs");
+}
+
+function ensureDir(dir: string): void {
+  if (ensuredDirs.has(dir)) return;
   try {
-    const dir = path.dirname(logFilePath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
+    ensuredDirs.add(dir);
   } catch {
-    // Silent — if we can't create the dir, writes will fail silently later
+    // Silent — write attempts will fail (and be dropped) below.
   }
 }
 
-/** Check if a log level passes the current filter */
-function shouldLog(level: LogLevel): boolean {
-  if (process.env["CC_LOG_SILENT"] === "1") return false;
-  ensureInitialized();
-  return LOG_LEVELS[level] >= LOG_LEVELS[logLevel!];
+function globalLogPath(): string {
+  if (singleFileOverride) return singleFileOverride;
+  return path.join(logsRoot!, "global.log");
 }
 
-/** Build a log entry with trace context and additional fields */
+function sessionDirPath(projectSlug: string, sessionSlug: string): string {
+  return path.join(logsRoot!, "sessions", `${projectSlug}__${sessionSlug}`);
+}
+
+function sessionLogPath(projectSlug: string, sessionSlug: string): string {
+  return path.join(sessionDirPath(projectSlug, sessionSlug), "session.log");
+}
+
+function conversationLogPath(
+  projectSlug: string,
+  sessionSlug: string,
+  conversationSlug: string,
+): string {
+  return path.join(
+    sessionDirPath(projectSlug, sessionSlug),
+    "conversations",
+    `${conversationSlug}.log`,
+  );
+}
+
+interface RouteDecision {
+  paths: string[];
+  diagnostics: { event: string; fields?: Record<string, unknown> }[];
+}
+
+function resolveDestinations(
+  entry: Record<string, unknown>,
+  ctx: TraceContext | undefined,
+): RouteDecision {
+  ensureInitialized();
+
+  if (singleFileOverride || !scopedRoutingEnabled) {
+    return { paths: [globalLogPath()], diagnostics: [] };
+  }
+
+  const diagnostics: { event: string; fields?: Record<string, unknown> }[] = [];
+  let scopedPath: string | undefined;
+
+  if (ctx) {
+    const projectSlug = ctx.projectName
+      ? sanitizePathComponent(ctx.projectName)
+      : null;
+    const sessionSlug = ctx.sessionName
+      ? sanitizePathComponent(ctx.sessionName)
+      : null;
+    const conversationSlug = ctx.conversationId
+      ? sanitizePathComponent(ctx.conversationId)
+      : null;
+
+    if (ctx.projectName && projectSlug === null) {
+      diagnostics.push({
+        event: "logger.path.sanitize_failure",
+        fields: { component: "projectName", value: ctx.projectName },
+      });
+    }
+    if (ctx.sessionName && sessionSlug === null) {
+      diagnostics.push({
+        event: "logger.path.sanitize_failure",
+        fields: { component: "sessionName", value: ctx.sessionName },
+      });
+    }
+    if (ctx.conversationId && conversationSlug === null) {
+      diagnostics.push({
+        event: "logger.path.sanitize_failure",
+        fields: { component: "conversationId", value: ctx.conversationId },
+      });
+    }
+
+    if (ctx.conversationId && (!ctx.sessionName || !ctx.projectName)) {
+      diagnostics.push({
+        event: "logger.path.unscoped_conversation",
+        fields: {
+          conversationId: ctx.conversationId,
+          projectName: ctx.projectName,
+          sessionName: ctx.sessionName,
+        },
+      });
+    }
+
+    if (projectSlug && sessionSlug && conversationSlug) {
+      scopedPath = conversationLogPath(
+        projectSlug,
+        sessionSlug,
+        conversationSlug,
+      );
+    } else if (projectSlug && sessionSlug) {
+      scopedPath = sessionLogPath(projectSlug, sessionSlug);
+    }
+  }
+
+  const primaryPath = scopedPath ?? globalLogPath();
+
+  const isDual =
+    scopedPath !== undefined &&
+    entry["module"] === TRACING_MODULE &&
+    typeof entry["message"] === "string" &&
+    TRACING_DUAL_MESSAGES.has(entry["message"]);
+
+  const paths: string[] = isDual
+    ? [primaryPath, globalLogPath()]
+    : [primaryPath];
+
+  return { paths, diagnostics };
+}
+
 function buildEntry(
   level: LogLevel,
   module: string,
@@ -100,20 +246,18 @@ function buildEntry(
     message,
   };
 
-  // Auto-enrich from ALS trace context
   const ctx = getTraceContext();
   if (ctx) {
     entry["traceId"] = ctx.traceId;
     if (ctx.action) entry["action"] = ctx.action;
     if (ctx.projectName) entry["projectName"] = ctx.projectName;
     if (ctx.sessionName) entry["sessionName"] = ctx.sessionName;
+    if (ctx.conversationId) entry["conversationId"] = ctx.conversationId;
   }
 
-  // Merge additional fields
   if (fields) {
     for (const [key, value] of Object.entries(fields)) {
       if (value !== undefined) {
-        // Preserve full error stack traces
         if (value instanceof Error) {
           entry[key] = value.message;
           if (value.stack) {
@@ -129,18 +273,33 @@ function buildEntry(
   return entry;
 }
 
-/** Write a single NDJSON line to the log file */
-function writeEntry(entry: Record<string, unknown>): void {
+function appendLine(filePath: string, entry: Record<string, unknown>): void {
   try {
-    ensureInitialized();
+    ensureDir(path.dirname(filePath));
     const line = JSON.stringify(entry) + "\n";
-    appendFileSync(logFilePath!, line, "utf-8");
+    appendFileSync(filePath, line, "utf-8");
   } catch {
-    // Never throw — silently drop on write failure
+    // Never throw — silently drop on write failure.
   }
 }
 
-/** Write to stderr for warn/error level entries */
+function writeEntry(entry: Record<string, unknown>): void {
+  const ctx = getTraceContext();
+  const { paths, diagnostics } = resolveDestinations(entry, ctx);
+  const uniquePaths = Array.from(new Set(paths));
+
+  for (const p of uniquePaths) {
+    appendLine(p, entry);
+  }
+
+  for (const diag of diagnostics) {
+    const diagEntry = buildEntry("warn", "logger", diag.event, diag.fields);
+    for (const p of uniquePaths) {
+      appendLine(p, diagEntry);
+    }
+  }
+}
+
 function writeStderr(entry: Record<string, unknown>): void {
   try {
     const line = JSON.stringify(entry) + "\n";
@@ -148,6 +307,12 @@ function writeStderr(entry: Record<string, unknown>): void {
   } catch {
     // Never throw
   }
+}
+
+function shouldLog(level: LogLevel): boolean {
+  if (process.env["CC_LOG_SILENT"] === "1") return false;
+  ensureInitialized();
+  return LOG_LEVELS[level] >= LOG_LEVELS[logLevel!];
 }
 
 export interface Logger {
@@ -169,7 +334,6 @@ export function createLogger(module: string): Logger {
     const entry = buildEntry(level, module, message, fields);
     writeEntry(entry);
 
-    // Also write warn/error to stderr
     if (level === "warn" || level === "error") {
       writeStderr(entry);
     }
@@ -190,5 +354,8 @@ export function createLogger(module: string): Logger {
 export function _resetLoggerForTesting(): void {
   initialized = false;
   logLevel = undefined;
-  logFilePath = undefined;
+  logsRoot = undefined;
+  singleFileOverride = undefined;
+  scopedRoutingEnabled = true;
+  ensuredDirs.clear();
 }

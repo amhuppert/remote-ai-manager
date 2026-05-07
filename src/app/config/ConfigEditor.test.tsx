@@ -32,7 +32,6 @@ const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
     maxConcurrentQueries: 3,
     mergeCheckIntervalMs: 300_000,
     preMergeTimeoutMs: 300_000,
-    stateFilePath: "/tmp/state.json",
     ignorePatterns: ["node_modules"],
     tailscaleEnabled: false,
     workflowDefaults: structuredClone(SEEDED_WORKFLOW_DEFAULTS),

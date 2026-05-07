@@ -12,6 +12,11 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "@/lib/config";
 import { createStateManager } from "@/lib/state";
+import {
+  _createTestDb,
+  _installTestDb,
+  _resetForTesting as _resetStateDb,
+} from "@/lib/state-store/state-db";
 import { createDefaultSessionWorkflowEnvelopeRepository } from "./default-session-workflow-envelope-store";
 import { recoverActiveWorkflowEnvelopes } from "./recover-workflow-envelopes";
 import type { WorkflowEnvelope } from "./workflow-envelope-vocabulary";
@@ -72,10 +77,12 @@ beforeEach(async () => {
     `cc-envelope-recovery-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   await mkdir(TEST_DIR, { recursive: true });
+  _installTestDb(_createTestDb({ inMemory: true }));
   await seedSession(SESSION_NAME);
 });
 
 afterEach(async () => {
+  _resetStateDb();
   await rm(TEST_DIR, { recursive: true, force: true });
 });
 

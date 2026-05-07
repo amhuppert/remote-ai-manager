@@ -17,7 +17,7 @@ import type {
   McpToolInventoryResult,
 } from "@/lib/schemas";
 import { createStateManager } from "@/lib/state";
-import { withStateLock } from "@/lib/state-mutex";
+import { withWriteQueue } from "@/lib/state-store/write-queue";
 import type {
   ConversationState,
   ManagerState,
@@ -105,7 +105,7 @@ export function createMcpConfigMutationService(
     operations: readonly McpOverrideOperation[];
     expectedEffectiveConfigHash?: string;
   }): Promise<McpConfigMutationResult> {
-    return withStateLock("mcp.patchGlobalChecked", async () => {
+    return withWriteQueue("mcp.patchGlobalChecked", async () => {
       const currentOverrides = await deps.globalStore.read();
       const current = await resolveGlobalView(currentOverrides);
       if (

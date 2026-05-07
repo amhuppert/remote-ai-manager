@@ -11,14 +11,13 @@
  *    `workflowId` via an in-memory promise chain so concurrent updates do not
  *    interleave a read→merge→write sequence.
  *  - `createSessionStateWorkflowEnvelopeStore` — used by production; routes
- *    every write through `mutateSession` so the full session-state mutex
- *    (`withStateLock`) covers the read-modify-write, and envelope writes are
- *    serialized against any other session-state mutation.
+ *    every write through `mutateSession` so the session-state write queue
+ *    covers the read-modify-write, and envelope writes are serialized
+ *    against any other session-state mutation.
  */
 
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
-import { withStateLock } from "@/lib/state-mutex";
 import {
   workflowEnvelopeSchema,
   type WorkflowEnvelope,
@@ -119,8 +118,8 @@ export interface SessionStateWorkflowEnvelopeStoreDeps {
   /**
    * Atomic session-state mutator. In production this is the `mutateSession`
    * exported from `src/lib/state.ts`; the store wraps it so envelope writes
-   * inherit the same `withStateLock` mutex that protects every other session
-   * field.
+   * inherit the same write queue that serializes every other session-state
+   * mutation.
    */
   mutateSession: <T>(
     projectPath: string,
@@ -279,9 +278,3 @@ export async function writeFeatureSnapshotAsArtifact(
     relativePath: record.relativePath,
   };
 }
-
-// Re-export so callers can use the mutex helper if they need to combine
-// envelope writes with other state operations under the same lock. Not
-// strictly required by this module but kept here so consumers don't have to
-// reach into `state-mutex` directly.
-export { withStateLock };

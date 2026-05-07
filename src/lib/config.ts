@@ -38,7 +38,7 @@ const CONFIG_DIR = resolveConfigDir();
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
 /** Default global config values */
-function defaultConfig(configDir: string = CONFIG_DIR): GlobalConfig {
+function defaultConfig(): GlobalConfig {
   return {
     baseDir: path.join(os.homedir(), "projects"),
     ignorePatterns: [
@@ -51,7 +51,6 @@ function defaultConfig(configDir: string = CONFIG_DIR): GlobalConfig {
       ".turbo",
       ".venv",
     ],
-    stateFilePath: path.join(configDir, "state.json"),
     claudeTimeoutMs: 3_600_000,
     defaultModel: "opus",
     defaultAgentBackend: "claude",
@@ -182,7 +181,7 @@ export function createConfigReader(configDir: string): ConfigReader {
       await ensureDir();
 
       if (!existsSync(configFile)) {
-        const config = defaultConfig(configDir);
+        const config = defaultConfig();
         await this.writeConfig(config);
         return config;
       }
@@ -190,7 +189,7 @@ export function createConfigReader(configDir: string): ConfigReader {
       const raw = await readFile(configFile, "utf-8");
       const parsed = rawGlobalConfigSchema.parse(JSON.parse(raw));
 
-      return mergeConfigWithDefaults(defaultConfig(configDir), parsed);
+      return mergeConfigWithDefaults(defaultConfig(), parsed);
     },
 
     async readRawConfig(): Promise<Partial<GlobalConfig>> {

@@ -76,7 +76,7 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
   registerRoadmapTools,
   registerReferenceDocumentTools,
   registerPlannerTools(server, context) {
-    const storage = createWorkflowStorageService({ readConfig });
+    const storage = createWorkflowStorageService();
     registerPlannerTools(server, context, {
       readConfig,
       listWorkflows: storage.list,

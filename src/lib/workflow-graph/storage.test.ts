@@ -1,8 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { createConfigReader } from "@/lib/config";
 import { createStateManager } from "@/lib/state";
+import {
+  _createTestDb,
+  _installTestDb,
+  _resetForTesting as _resetStateDb,
+} from "@/lib/state-store/state-db";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
@@ -21,7 +26,7 @@ function createServices() {
   return {
     stateManager,
     storage: createWorkflowStorageService({
-      readConfig: () => configReader.readConfig(),
+      resolveConfigDir: () => TEST_DIR,
     }),
     repository: createGraphWorkflowExecutionRepository({
       getSession: stateManager.getSession,
@@ -34,6 +39,11 @@ function createServices() {
 beforeEach(async () => {
   await rm(TEST_DIR, { recursive: true, force: true });
   await mkdir(TEST_DIR, { recursive: true });
+  _installTestDb(_createTestDb({ inMemory: true }));
+});
+
+afterEach(() => {
+  _resetStateDb();
 });
 
 describe("workflow-graph storage", () => {

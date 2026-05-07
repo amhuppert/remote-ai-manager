@@ -10,11 +10,11 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
-  GlobalConfig,
   GraphWorkflowVisualLayout,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/types";
+import { getConfigDirPath } from "../config";
 import { validateWorkflowDefinition } from "./validation";
 import {
   assertDefinitionRecordSupported,
@@ -22,7 +22,7 @@ import {
 } from "./schema-cutover-guard";
 
 export interface WorkflowStorageDeps {
-  readConfig(): Promise<GlobalConfig>;
+  resolveConfigDir?: () => string;
 }
 
 export interface WorkflowDefinitionDraft {
@@ -41,12 +41,9 @@ export interface WorkflowDefinitionSummary {
   updatedAt: string;
 }
 
-function getProjectStorageDir(
-  config: GlobalConfig,
-  projectPath: string,
-): string {
+function getProjectStorageDir(configDir: string, projectPath: string): string {
   const projectKey = Buffer.from(projectPath).toString("base64url");
-  return path.join(path.dirname(config.stateFilePath), "workflows", projectKey);
+  return path.join(configDir, "workflows", projectKey);
 }
 
 async function ensureDir(dir: string): Promise<void> {
@@ -78,12 +75,13 @@ function assertValidDefinition(definition: WorkflowSemanticDefinition): void {
   }
 }
 
-export function createWorkflowStorageService(deps: WorkflowStorageDeps) {
+export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
+  const resolveConfigDir = deps.resolveConfigDir ?? getConfigDirPath;
+
   async function list(
     projectPath: string,
   ): Promise<WorkflowDefinitionSummary[]> {
-    const config = await deps.readConfig();
-    const dir = getProjectStorageDir(config, projectPath);
+    const dir = getProjectStorageDir(resolveConfigDir(), projectPath);
     if (!existsSync(dir)) {
       return [];
     }
@@ -109,9 +107,8 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps) {
     projectPath: string,
     workflowId: string,
   ): Promise<WorkflowDefinitionRecord | null> {
-    const config = await deps.readConfig();
     const filePath = path.join(
-      getProjectStorageDir(config, projectPath),
+      getProjectStorageDir(resolveConfigDir(), projectPath),
       `${workflowId}.json`,
     );
     if (!existsSync(filePath)) {
@@ -130,7 +127,6 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps) {
     );
     assertValidDefinition(draft.definition);
 
-    const config = await deps.readConfig();
     const workflowId = randomUUID();
     const now = new Date().toISOString();
     const record: WorkflowDefinitionRecord = {
@@ -149,7 +145,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps) {
     };
 
     const filePath = path.join(
-      getProjectStorageDir(config, projectPath),
+      getProjectStorageDir(resolveConfigDir(), projectPath),
       `${workflowId}.json`,
     );
     await writeJsonAtomically(filePath, record);
@@ -172,7 +168,6 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps) {
       throw new Error(`Workflow "${workflowId}" not found`);
     }
 
-    const config = await deps.readConfig();
     const record: WorkflowDefinitionRecord = {
       ...existing,
       name: draft.name,
@@ -187,7 +182,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps) {
     };
 
     const filePath = path.join(
-      getProjectStorageDir(config, projectPath),
+      getProjectStorageDir(resolveConfigDir(), projectPath),
       `${workflowId}.json`,
     );
     await writeJsonAtomically(filePath, record);
@@ -198,9 +193,8 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps) {
     projectPath: string,
     workflowId: string,
   ): Promise<boolean> {
-    const config = await deps.readConfig();
     const filePath = path.join(
-      getProjectStorageDir(config, projectPath),
+      getProjectStorageDir(resolveConfigDir(), projectPath),
       `${workflowId}.json`,
     );
     if (!existsSync(filePath)) {

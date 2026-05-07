@@ -349,7 +349,6 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
     const baseConfig = {
       baseDir: "/home/user/projects",
       ignorePatterns: [],
-      stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 60_000,
       defaultModel: "opus",
     };

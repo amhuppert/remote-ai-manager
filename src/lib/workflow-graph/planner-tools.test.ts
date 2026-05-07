@@ -47,7 +47,6 @@ function getHandler(name: string): ToolHandler {
 const MOCK_CONFIG: GlobalConfig = {
   baseDir: "/projects",
   ignorePatterns: [],
-  stateFilePath: "/tmp/state.json",
   claudeTimeoutMs: 3600000,
   defaultModel: "opus",
   defaultAgentBackend: "claude",

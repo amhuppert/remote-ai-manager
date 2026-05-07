@@ -11,7 +11,6 @@ import {
 const fullConfig = {
   baseDir: "/home/user/projects",
   ignorePatterns: ["node_modules", ".next"],
-  stateFilePath: "/home/user/.config/cc/state.json",
   claudeTimeoutMs: 3_600_000,
   defaultModel: "opus" as const,
   defaultAgentBackend: "claude" as const,
@@ -92,7 +91,6 @@ describe("GET /api/config", () => {
 
     expect(body.raw).toEqual(rawConfig);
     expect(body.raw).not.toHaveProperty("ignorePatterns");
-    expect(body.raw).not.toHaveProperty("stateFilePath");
   });
 
   it("returns 500 with { error } when readConfig throws", async () => {

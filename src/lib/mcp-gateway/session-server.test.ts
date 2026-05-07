@@ -5,7 +5,6 @@ function makeConfig(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
   return {
     baseDir: "/projects",
     ignorePatterns: [],
-    stateFilePath: "/tmp/state.json",
     claudeTimeoutMs: 3_600_000,
     defaultModel: "opus",
     defaultAgentBackend: "claude",

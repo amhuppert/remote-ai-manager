@@ -133,7 +133,7 @@ sequenceDiagram
         API->>FS: Append to transcript
     end
     SDK-->>API: Result
-    API->>FS: Update state.json
+    API->>DB: Persist state
     API-->>UI: SSE status update
 \`\`\``,
   },

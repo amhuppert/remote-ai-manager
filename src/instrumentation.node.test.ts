@@ -2,25 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createStartupRegistrar } from "./instrumentation.node";
 
 describe("createStartupRegistrar", () => {
-  it("runs the graph workflow cutover before rehydrating conversation actors", async () => {
+  it("rehydrates conversation actors before envelope recovery and notifications init", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
-      runGraphWorkflowContextValidatorCutover: async () => {
-        calls.push("cutover");
-        return {
-          status: "completed",
-          markerPath: "/tmp/marker.json",
-          stateFilePath: "/tmp/state.json",
-          stateBackupPath: null,
-          workflowDefinitionsBackupPath: null,
-          summary: {
-            sessionsScanned: 0,
-            sessionsCleared: 0,
-            activeExecutionsCleared: 0,
-            archivedExecutionsCleared: 0,
-          },
-        };
-      },
       loadConversationManager: async () => ({
         rehydrateConversationActors: async () => {
           calls.push("rehydrate");
@@ -56,27 +40,16 @@ describe("createStartupRegistrar", () => {
 
     await register();
 
-    expect(calls[0]).toBe("cutover");
-    expect(calls.indexOf("cutover")).toBeLessThan(calls.indexOf("rehydrate"));
+    expect(calls.indexOf("rehydrate")).toBeLessThan(
+      calls.indexOf("envelope-recovery"),
+    );
     expect(calls).toContain("envelope-recovery");
+    expect(calls).toContain("notifications");
   });
 
   it("invokes envelope recovery and surfaces failures without breaking startup", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({
-      runGraphWorkflowContextValidatorCutover: async () => ({
-        status: "completed",
-        markerPath: "/tmp/marker.json",
-        stateFilePath: "/tmp/state.json",
-        stateBackupPath: null,
-        workflowDefinitionsBackupPath: null,
-        summary: {
-          sessionsScanned: 0,
-          sessionsCleared: 0,
-          activeExecutionsCleared: 0,
-          archivedExecutionsCleared: 0,
-        },
-      }),
       loadConversationManager: async () => ({
         rehydrateConversationActors: async () => 0,
       }),

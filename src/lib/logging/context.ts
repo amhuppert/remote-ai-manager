@@ -14,6 +14,7 @@ export interface TraceContext {
   action?: string;
   projectName?: string;
   sessionName?: string;
+  conversationId?: string;
 }
 
 const traceStore = new AsyncLocalStorage<TraceContext>();

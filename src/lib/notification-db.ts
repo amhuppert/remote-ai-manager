@@ -1,136 +1,244 @@
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
-import path from "node:path";
-import { getConfigDirPath } from "./config";
+import { z } from "zod";
+import { getStateDb } from "./state-store/state-store";
+import {
+  _createTestDb as _createSharedStateDb,
+  _installTestDb as _installSharedStateDb,
+  _resetForTesting as _resetSharedStateDb,
+} from "./state-store/state-db";
 import {
   broadcast as defaultBroadcast,
   type BroadcastFn,
 } from "./sse-broadcaster";
 import { createLogger } from "./logging";
 import {
-  getGlobalSingleton,
-  getGlobalValue,
-  setGlobalValue,
-  deleteGlobalValue,
-} from "./global-singleton";
+  notificationSchema,
+  backgroundJobSchema,
+  jobStatusSchema,
+} from "./schemas";
 import type {
   Notification,
   NotificationType,
   JobType,
   JobStatus,
+  BackgroundJob,
 } from "@/types";
-import type { BackgroundJob } from "@/types";
+import { PersistenceError } from "./errors";
 import { dispatchPushForNotification } from "./push-dispatcher";
 
-const logger = createLogger("notification-db");
+type Db = InstanceType<typeof Database>;
+
+const notificationLogger = createLogger("state-store.notifications");
+const jobRecordLogger = createLogger("state-store.job-records");
 
 // ============================================================
-// Database singleton (HMR-safe via globalThis)
+// Row schemas (raw SQLite shape) — first-pass validation gate
 // ============================================================
 
-const GLOBAL_KEY = "__cc_notification_db" as const;
+const notificationRowSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  title: z.string(),
+  message: z.string(),
+  read: z.union([z.literal(0), z.literal(1)]),
+  project_name: z.string(),
+  session_name: z.string(),
+  branch_name: z.string(),
+  job_id: z.string(),
+  job_type: z.string(),
+  merge_hash: z.string().nullable(),
+  commit_hash: z.string().nullable(),
+  conflict_count: z.number().int().nullable(),
+  conflict_files: z.string().nullable(),
+  target_branch: z.string().nullable(),
+  error_message: z.string().nullable(),
+  created_at: z.string(),
+});
+type NotificationRow = z.infer<typeof notificationRowSchema>;
 
-function getDb(): InstanceType<typeof Database> {
-  return getGlobalSingleton(GLOBAL_KEY, () => {
-    const configDir = getConfigDirPath();
-    if (!existsSync(configDir)) {
-      mkdirSync(configDir, { recursive: true });
-    }
-    const dbPath = path.join(configDir, "notifications.db");
-    const db = new Database(dbPath);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    initializeSchema(db);
-    return db;
+const jobRecordRowSchema = z.object({
+  job_id: z.string(),
+  job_type: z.string(),
+  status: z.string(),
+  project_name: z.string(),
+  session_name: z.string(),
+  branch_name: z.string(),
+  started_at: z.string(),
+  completed_at: z.string().nullable(),
+  merge_hash: z.string().nullable(),
+  commit_hash: z.string().nullable(),
+  conflict_count: z.number().int().nullable(),
+  conflict_files: z.string().nullable(),
+  error_message: z.string().nullable(),
+});
+type JobRecordRow = z.infer<typeof jobRecordRowSchema>;
+
+// ============================================================
+// Write-input schemas — validated BEFORE the SQL commit so corrupt
+// runtime input cannot leave an invalid row in the database.
+// ============================================================
+
+const jobRecordUpdateSchema = z.object({
+  status: jobStatusSchema,
+  mergeHash: z.string().optional(),
+  commitHash: z.string().optional(),
+  conflictCount: z.number().optional(),
+  conflictFiles: z.array(z.string()).optional(),
+  errorMessage: z.string().optional(),
+});
+
+// ============================================================
+// Row → domain mappers (Zod safeParse at the persistence boundary)
+// ============================================================
+
+function logAndThrowNotificationValidationFailure(
+  identifier: string | undefined,
+  issues: unknown,
+): never {
+  const payload: Record<string, unknown> = { issues };
+  if (identifier !== undefined) payload.identifier = identifier;
+  notificationLogger.error(
+    "state-store.notifications.schema_validation_failure",
+    payload,
+  );
+  throw new PersistenceError({
+    kind: "validation",
+    entity: "notification",
+    ...(identifier !== undefined ? { identifier } : {}),
+    issues,
   });
 }
 
-// ============================================================
-// Schema initialization
-// ============================================================
+function logAndThrowJobRecordValidationFailure(
+  identifier: string | undefined,
+  issues: unknown,
+): never {
+  const payload: Record<string, unknown> = { issues };
+  if (identifier !== undefined) payload.identifier = identifier;
+  jobRecordLogger.error(
+    "state-store.job-records.schema_validation_failure",
+    payload,
+  );
+  throw new PersistenceError({
+    kind: "validation",
+    entity: "job_record",
+    ...(identifier !== undefined ? { identifier } : {}),
+    issues,
+  });
+}
 
-function initializeSchema(db: InstanceType<typeof Database>): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS notifications (
-      id            TEXT PRIMARY KEY,
-      type          TEXT NOT NULL,
-      title         TEXT NOT NULL,
-      message       TEXT NOT NULL,
-      read          INTEGER NOT NULL DEFAULT 0,
-      project_name  TEXT NOT NULL,
-      session_name  TEXT NOT NULL,
-      branch_name   TEXT NOT NULL,
-      job_id        TEXT NOT NULL,
-      job_type      TEXT NOT NULL,
-      merge_hash    TEXT,
-      commit_hash   TEXT,
-      conflict_count INTEGER,
-      conflict_files TEXT,
-      error_message TEXT,
-      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+function parseNotificationOrFail(
+  candidate: unknown,
+  identifier: string | undefined,
+): Notification {
+  const result = notificationSchema.safeParse(candidate);
+  if (!result.success) {
+    return logAndThrowNotificationValidationFailure(
+      identifier,
+      result.error.issues,
     );
-
-    CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
-    CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
-    CREATE INDEX IF NOT EXISTS idx_notifications_project_session ON notifications(project_name, session_name);
-
-    CREATE TABLE IF NOT EXISTS job_records (
-      job_id        TEXT PRIMARY KEY,
-      job_type      TEXT NOT NULL,
-      status        TEXT NOT NULL,
-      project_name  TEXT NOT NULL,
-      session_name  TEXT NOT NULL,
-      branch_name   TEXT NOT NULL,
-      started_at    TEXT NOT NULL,
-      completed_at  TEXT,
-      merge_hash    TEXT,
-      commit_hash   TEXT,
-      conflict_count INTEGER,
-      conflict_files TEXT,
-      error_message TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
-  `);
-
-  // Migration: add target_branch column if missing
-  const cols = db.prepare("PRAGMA table_info(notifications)").all() as {
-    name: string;
-  }[];
-  if (!cols.some((c) => c.name === "target_branch")) {
-    db.exec(`ALTER TABLE notifications ADD COLUMN target_branch TEXT`);
   }
+  return result.data;
 }
 
-// ============================================================
-// Row <-> Domain mapping
-// ============================================================
-
-interface NotificationRow {
-  id: string;
-  type: string;
-  title: string;
-  message: string;
-  read: number;
-  project_name: string;
-  session_name: string;
-  branch_name: string;
-  job_id: string;
-  job_type: string;
-  merge_hash: string | null;
-  commit_hash: string | null;
-  conflict_count: number | null;
-  conflict_files: string | null;
-  target_branch: string | null;
-  error_message: string | null;
-  created_at: string;
+function parseBackgroundJobOrFail(
+  candidate: unknown,
+  identifier: string | undefined,
+): BackgroundJob {
+  const result = backgroundJobSchema.safeParse(candidate);
+  if (!result.success) {
+    return logAndThrowJobRecordValidationFailure(
+      identifier,
+      result.error.issues,
+    );
+  }
+  return result.data;
 }
 
-function rowToNotification(row: NotificationRow): Notification {
-  return {
+/**
+ * Render a UTC timestamp string in the same format as SQLite's `datetime('now')`
+ * — `YYYY-MM-DD HH:MM:SS` — so that retention comparisons against
+ * `datetime('now', ?)` remain lexicographically correct after we move
+ * timestamp generation from SQL into JS (required to validate the row through
+ * notificationSchema BEFORE the INSERT commits).
+ */
+function sqliteUtcNow(): string {
+  const iso = new Date().toISOString();
+  return iso.slice(0, 10) + " " + iso.slice(11, 19);
+}
+
+function parseJobRecordUpdateOrFail(
+  candidate: unknown,
+  identifier: string,
+): z.infer<typeof jobRecordUpdateSchema> {
+  const result = jobRecordUpdateSchema.safeParse(candidate);
+  if (!result.success) {
+    return logAndThrowJobRecordValidationFailure(
+      identifier,
+      result.error.issues,
+    );
+  }
+  return result.data;
+}
+
+function parseConflictFilesColumn(
+  identifier: string,
+  raw: string | null,
+): { ok: true; value: string[] | undefined } | { ok: false; issues: unknown } {
+  if (raw === null) return { ok: true, value: undefined };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return {
+      ok: false,
+      issues: [
+        {
+          code: "invalid_json",
+          path: ["conflictFiles"],
+          message: err instanceof Error ? err.message : String(err),
+          identifier,
+        },
+      ],
+    };
+  }
+  const result = z.array(z.string()).safeParse(parsed);
+  if (!result.success) return { ok: false, issues: result.error.issues };
+  return { ok: true, value: result.data };
+}
+
+function rowToNotification(rawRow: unknown): Notification {
+  const candidateId =
+    typeof rawRow === "object" &&
+    rawRow !== null &&
+    typeof (rawRow as { id?: unknown }).id === "string"
+      ? (rawRow as { id: string }).id
+      : undefined;
+
+  const rowResult = notificationRowSchema.safeParse(rawRow);
+  if (!rowResult.success) {
+    return logAndThrowNotificationValidationFailure(
+      candidateId,
+      rowResult.error.issues,
+    );
+  }
+  const row: NotificationRow = rowResult.data;
+
+  const conflictFilesResult = parseConflictFilesColumn(
+    row.id,
+    row.conflict_files,
+  );
+  if (!conflictFilesResult.ok) {
+    return logAndThrowNotificationValidationFailure(
+      row.id,
+      conflictFilesResult.issues,
+    );
+  }
+
+  const candidate: Record<string, unknown> = {
     id: row.id,
-    type: row.type as NotificationType,
+    type: row.type,
     title: row.title,
     message: row.message,
     read: row.read === 1,
@@ -138,21 +246,70 @@ function rowToNotification(row: NotificationRow): Notification {
     sessionName: row.session_name,
     branchName: row.branch_name,
     jobId: row.job_id,
-    jobType: row.job_type as JobType,
-    ...(row.merge_hash != null && { mergeHash: row.merge_hash }),
-    ...(row.commit_hash != null && { commitHash: row.commit_hash }),
-    ...(row.conflict_count != null && { conflictCount: row.conflict_count }),
-    ...(row.conflict_files != null && {
-      conflictFiles: JSON.parse(row.conflict_files) as string[],
-    }),
-    ...(row.target_branch != null && { targetBranch: row.target_branch }),
-    ...(row.error_message != null && { errorMessage: row.error_message }),
+    jobType: row.job_type,
     createdAt: row.created_at,
   };
+  if (row.merge_hash !== null) candidate.mergeHash = row.merge_hash;
+  if (row.commit_hash !== null) candidate.commitHash = row.commit_hash;
+  if (row.conflict_count !== null) candidate.conflictCount = row.conflict_count;
+  if (conflictFilesResult.value !== undefined)
+    candidate.conflictFiles = conflictFilesResult.value;
+  if (row.target_branch !== null) candidate.targetBranch = row.target_branch;
+  if (row.error_message !== null) candidate.errorMessage = row.error_message;
+
+  return parseNotificationOrFail(candidate, row.id);
+}
+
+function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
+  const candidateId =
+    typeof rawRow === "object" &&
+    rawRow !== null &&
+    typeof (rawRow as { job_id?: unknown }).job_id === "string"
+      ? (rawRow as { job_id: string }).job_id
+      : undefined;
+
+  const rowResult = jobRecordRowSchema.safeParse(rawRow);
+  if (!rowResult.success) {
+    return logAndThrowJobRecordValidationFailure(
+      candidateId,
+      rowResult.error.issues,
+    );
+  }
+  const row: JobRecordRow = rowResult.data;
+
+  const conflictFilesResult = parseConflictFilesColumn(
+    row.job_id,
+    row.conflict_files,
+  );
+  if (!conflictFilesResult.ok) {
+    return logAndThrowJobRecordValidationFailure(
+      row.job_id,
+      conflictFilesResult.issues,
+    );
+  }
+
+  const candidate: Record<string, unknown> = {
+    jobId: row.job_id,
+    jobType: row.job_type,
+    status: row.status,
+    projectName: row.project_name,
+    sessionName: row.session_name,
+    branchName: row.branch_name,
+    startedAt: row.started_at,
+  };
+  if (row.completed_at !== null) candidate.completedAt = row.completed_at;
+  if (row.merge_hash !== null) candidate.mergeHash = row.merge_hash;
+  if (row.commit_hash !== null) candidate.commitHash = row.commit_hash;
+  if (row.conflict_count !== null) candidate.conflictCount = row.conflict_count;
+  if (conflictFilesResult.value !== undefined)
+    candidate.conflictFiles = conflictFilesResult.value;
+  if (row.error_message !== null) candidate.errorMessage = row.error_message;
+
+  return parseBackgroundJobOrFail(candidate, row.job_id);
 }
 
 // ============================================================
-// Notification CRUD (Task 2.2)
+// Notification CRUD
 // ============================================================
 
 export interface CreateNotificationInput {
@@ -176,50 +333,71 @@ export function createNotification(
   input: CreateNotificationInput,
   broadcast: BroadcastFn = defaultBroadcast,
 ): Notification {
-  const db = getDb();
   const id = randomUUID();
-  const stmt = db.prepare(`
-    INSERT INTO notifications (id, type, title, message, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, target_branch, error_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run(
+  const createdAt = sqliteUtcNow();
+
+  const candidate: Record<string, unknown> = {
     id,
-    input.type,
-    input.title,
-    input.message,
-    input.projectName,
-    input.sessionName,
-    input.branchName,
-    input.jobId,
-    input.jobType,
-    input.mergeHash ?? null,
-    input.commitHash ?? null,
-    input.conflictCount ?? null,
-    input.conflictFiles ? JSON.stringify(input.conflictFiles) : null,
-    input.targetBranch ?? null,
-    input.errorMessage ?? null,
+    type: input.type,
+    title: input.title,
+    message: input.message,
+    read: false,
+    projectName: input.projectName,
+    sessionName: input.sessionName,
+    branchName: input.branchName,
+    jobId: input.jobId,
+    jobType: input.jobType,
+    createdAt,
+  };
+  if (input.mergeHash !== undefined) candidate.mergeHash = input.mergeHash;
+  if (input.commitHash !== undefined) candidate.commitHash = input.commitHash;
+  if (input.conflictCount !== undefined)
+    candidate.conflictCount = input.conflictCount;
+  if (input.conflictFiles !== undefined)
+    candidate.conflictFiles = input.conflictFiles;
+  if (input.targetBranch !== undefined)
+    candidate.targetBranch = input.targetBranch;
+  if (input.errorMessage !== undefined)
+    candidate.errorMessage = input.errorMessage;
+
+  const validated = parseNotificationOrFail(candidate, id);
+
+  const db = getStateDb();
+  db.prepare(
+    `INSERT INTO notifications (id, type, title, message, read, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, target_branch, error_message, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    validated.id,
+    validated.type,
+    validated.title,
+    validated.message,
+    validated.read ? 1 : 0,
+    validated.projectName,
+    validated.sessionName,
+    validated.branchName,
+    validated.jobId,
+    validated.jobType,
+    validated.mergeHash ?? null,
+    validated.commitHash ?? null,
+    validated.conflictCount ?? null,
+    validated.conflictFiles ? JSON.stringify(validated.conflictFiles) : null,
+    validated.targetBranch ?? null,
+    validated.errorMessage ?? null,
+    validated.createdAt,
   );
 
-  // Read back from DB to get the server-generated created_at
-  const row = db
-    .prepare("SELECT * FROM notifications WHERE id = ?")
-    .get(id) as NotificationRow;
-  const notification = rowToNotification(row);
+  broadcast({ type: "notification-created", notification: validated });
 
-  // Broadcast notification-created SSE event
-  broadcast({ type: "notification-created", notification });
+  dispatchPushForNotification(validated);
 
-  // Fire-and-forget push notification to phone
-  dispatchPushForNotification(notification);
-
-  logger.info("notification.created", {
+  notificationLogger.info("notification.created", {
     notificationId: id,
     notificationType: input.type,
     projectName: input.projectName,
     sessionName: input.sessionName,
   });
 
-  return notification;
+  return validated;
 }
 
 export interface GetNotificationsOptions {
@@ -237,7 +415,7 @@ export interface PaginatedNotifications {
 export function getNotifications(
   options: GetNotificationsOptions = {},
 ): PaginatedNotifications {
-  const db = getDb();
+  const db = getStateDb();
   const { unread, limit = 50, offset = 0 } = options;
 
   const whereClauses: string[] = [];
@@ -264,7 +442,7 @@ export function getNotifications(
     .prepare(
       `SELECT * FROM notifications ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     )
-    .all(...params, limit, offset) as NotificationRow[];
+    .all(...params, limit, offset) as unknown[];
 
   return {
     notifications: rows.map(rowToNotification),
@@ -274,20 +452,16 @@ export function getNotifications(
 }
 
 export function deleteNotification(id: string): boolean {
-  const db = getDb();
+  const db = getStateDb();
   const result = db.prepare("DELETE FROM notifications WHERE id = ?").run(id);
   return result.changes > 0;
 }
-
-// ============================================================
-// Read/Unread operations (Task 2.3)
-// ============================================================
 
 export function markAsRead(
   id: string,
   broadcast: BroadcastFn = defaultBroadcast,
 ): boolean {
-  const db = getDb();
+  const db = getStateDb();
   const result = db
     .prepare("UPDATE notifications SET read = 1 WHERE id = ? AND read = 0")
     .run(id);
@@ -295,7 +469,6 @@ export function markAsRead(
     broadcast({ type: "notification-updated", id, read: true });
     return true;
   }
-  // Check if notification exists but was already read
   const exists = db
     .prepare("SELECT id FROM notifications WHERE id = ?")
     .get(id);
@@ -305,7 +478,7 @@ export function markAsRead(
 export function markAllAsRead(
   broadcast: BroadcastFn = defaultBroadcast,
 ): number {
-  const db = getDb();
+  const db = getStateDb();
   const result = db
     .prepare("UPDATE notifications SET read = 1 WHERE read = 0")
     .run();
@@ -316,13 +489,13 @@ export function markAllAsRead(
 }
 
 export function deleteAllNotifications(): number {
-  const db = getDb();
+  const db = getStateDb();
   const result = db.prepare("DELETE FROM notifications").run();
   return result.changes;
 }
 
 export function getUnreadCount(): number {
-  const db = getDb();
+  const db = getStateDb();
   const row = db
     .prepare("SELECT COUNT(*) as count FROM notifications WHERE read = 0")
     .get() as { count: number };
@@ -330,7 +503,7 @@ export function getUnreadCount(): number {
 }
 
 // ============================================================
-// Job record operations (Task 2.4)
+// Job record operations
 // ============================================================
 
 export interface JobRecordUpdate {
@@ -343,23 +516,25 @@ export interface JobRecordUpdate {
 }
 
 export function createJobRecord(job: BackgroundJob): void {
-  const db = getDb();
+  const validated = parseBackgroundJobOrFail(job, job.jobId);
+  const db = getStateDb();
   db.prepare(
     `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    job.jobId,
-    job.jobType,
-    job.status,
-    job.projectName,
-    job.sessionName,
-    job.branchName,
-    job.startedAt,
+    validated.jobId,
+    validated.jobType,
+    validated.status,
+    validated.projectName,
+    validated.sessionName,
+    validated.branchName,
+    validated.startedAt,
   );
 }
 
 export function updateJobRecord(jobId: string, update: JobRecordUpdate): void {
-  const db = getDb();
+  const validated = parseJobRecordUpdateOrFail(update, jobId);
+  const db = getStateDb();
   db.prepare(
     `UPDATE job_records SET
        status = ?,
@@ -371,18 +546,18 @@ export function updateJobRecord(jobId: string, update: JobRecordUpdate): void {
        error_message = ?
      WHERE job_id = ?`,
   ).run(
-    update.status,
-    update.mergeHash ?? null,
-    update.commitHash ?? null,
-    update.conflictCount ?? null,
-    update.conflictFiles ? JSON.stringify(update.conflictFiles) : null,
-    update.errorMessage ?? null,
+    validated.status,
+    validated.mergeHash ?? null,
+    validated.commitHash ?? null,
+    validated.conflictCount ?? null,
+    validated.conflictFiles ? JSON.stringify(validated.conflictFiles) : null,
+    validated.errorMessage ?? null,
     jobId,
   );
 }
 
 // ============================================================
-// Startup recovery & retention cleanup (Task 2.5)
+// Startup recovery & retention cleanup
 // ============================================================
 
 /**
@@ -428,22 +603,16 @@ export function deriveNotificationTitle(type: NotificationType): string {
   }
 }
 
-interface StaleJobRow {
-  job_id: string;
-  job_type: string;
-  project_name: string;
-  session_name: string;
-  branch_name: string;
-}
-
 export function recoverStaleJobs(): number {
-  const db = getDb();
+  const db = getStateDb();
 
-  const staleJobs = db
+  const rawStaleRows = db
     .prepare("SELECT * FROM job_records WHERE status = 'running'")
-    .all() as StaleJobRow[];
+    .all() as unknown[];
 
-  if (staleJobs.length === 0) return 0;
+  if (rawStaleRows.length === 0) return 0;
+
+  const staleJobs = rawStaleRows.map(rowToBackgroundJob);
 
   const updateStmt = db.prepare(
     `UPDATE job_records SET status = 'failed', completed_at = datetime('now'), error_message = ? WHERE job_id = ?`,
@@ -457,36 +626,51 @@ export function recoverStaleJobs(): number {
 
   const recoverAll = db.transaction(() => {
     for (const job of staleJobs) {
-      updateStmt.run(errorMsg, job.job_id);
-      const notifType = deriveNotificationType(
-        job.job_type as JobType,
-        "failed",
+      updateStmt.run(errorMsg, job.jobId);
+      const notifType = deriveNotificationType(job.jobType, "failed");
+      const candidateId = randomUUID();
+      const validated = parseNotificationOrFail(
+        {
+          id: candidateId,
+          type: notifType,
+          title: deriveNotificationTitle(notifType),
+          message: `${job.jobType} job on ${job.branchName} was interrupted by server restart`,
+          read: false,
+          projectName: job.projectName,
+          sessionName: job.sessionName,
+          branchName: job.branchName,
+          jobId: job.jobId,
+          jobType: job.jobType,
+          errorMessage: errorMsg,
+          createdAt: sqliteUtcNow(),
+        },
+        candidateId,
       );
       insertNotification.run(
-        randomUUID(),
-        notifType,
-        deriveNotificationTitle(notifType),
-        `${job.job_type} job on ${job.branch_name} was interrupted by server restart`,
-        job.project_name,
-        job.session_name,
-        job.branch_name,
-        job.job_id,
-        job.job_type,
-        errorMsg,
+        validated.id,
+        validated.type,
+        validated.title,
+        validated.message,
+        validated.projectName,
+        validated.sessionName,
+        validated.branchName,
+        validated.jobId,
+        validated.jobType,
+        validated.errorMessage ?? null,
       );
     }
   });
 
   recoverAll();
 
-  logger.info("notification-db.stale_jobs_recovered", {
+  jobRecordLogger.info("notification-db.stale_jobs_recovered", {
     count: staleJobs.length,
   });
   return staleJobs.length;
 }
 
 export function cleanupOldNotifications(retentionDays = 7): number {
-  const db = getDb();
+  const db = getStateDb();
   // Use <= for the boundary so that retentionDays=0 correctly deletes everything
   const result = db
     .prepare(
@@ -494,7 +678,9 @@ export function cleanupOldNotifications(retentionDays = 7): number {
     )
     .run(`-${retentionDays}`);
   if (result.changes > 0) {
-    logger.info("notification-db.cleanup", { deleted: result.changes });
+    notificationLogger.info("notification-db.cleanup", {
+      deleted: result.changes,
+    });
   }
   return result.changes;
 }
@@ -504,11 +690,11 @@ export function cleanupOldNotifications(retentionDays = 7): number {
 // ============================================================
 
 export function initialize(): void {
-  // getDb() initializes the schema if needed
-  getDb();
+  // getStateDb() initializes the schema if needed (via state-store/state-db.ts).
+  getStateDb();
   const recovered = recoverStaleJobs();
   const cleaned = cleanupOldNotifications();
-  logger.info("notification-db.initialized", {
+  notificationLogger.info("notification-db.initialized", {
     recoveredJobs: recovered,
     cleanedNotifications: cleaned,
   });
@@ -518,34 +704,36 @@ export function initialize(): void {
  * Check if a notification exists by id.
  */
 export function notificationExists(id: string): boolean {
-  const db = getDb();
+  const db = getStateDb();
   const row = db.prepare("SELECT id FROM notifications WHERE id = ?").get(id);
   return row != null;
 }
 
 // ============================================================
-// Test helpers
+// Test helpers — delegate to the shared state-db singleton
 // ============================================================
 
-/** Reset database for testing — do not use in production */
-export function _resetForTesting(): void {
-  const db = getGlobalValue<InstanceType<typeof Database>>(GLOBAL_KEY);
-  if (db) {
-    db.close();
-    deleteGlobalValue(GLOBAL_KEY);
-  }
-}
+/**
+ * Test helper: reset the shared state-db singleton, closing any open
+ * connection. Re-exported from `state-store/state-db.ts` for backward
+ * compatibility with `notification-db.test.ts`.
+ */
+export const _resetForTesting = _resetSharedStateDb;
 
-/** Create an in-memory database for testing */
-export function _createTestDb(): void {
-  // Close existing if any
-  const existing = getGlobalValue<InstanceType<typeof Database>>(GLOBAL_KEY);
-  if (existing) {
-    existing.close();
-  }
-  const db = new Database(":memory:");
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  initializeSchema(db);
-  setGlobalValue(GLOBAL_KEY, db);
+/**
+ * Test helper: install a caller-provided `Database` into the shared singleton.
+ * Re-exported for tests that need to point notification-db at a specific
+ * connection (e.g. boot-order integration tests).
+ */
+export const _installTestDb = _installSharedStateDb;
+
+/**
+ * Test helper: open a fresh in-memory `command-center.db` connection and
+ * install it onto the shared state-db singleton so that subsequent module-level
+ * functions (which call `getStateDb()`) target an isolated database.
+ */
+export function _createTestDb(): Db {
+  const db = _createSharedStateDb({ inMemory: true });
+  _installSharedStateDb(db);
+  return db;
 }

@@ -38,14 +38,18 @@ export function withTracing(handler: RouteHandler): RouteHandler {
     const traceId = request.headers.get("x-trace-id") ?? randomUUID();
     const action = request.headers.get("x-action") ?? undefined;
 
-    // Extract project/session from URL params if available
+    // Extract project/session/conversation from URL params if available
     let projectName: string | undefined;
     let sessionName: string | undefined;
+    let conversationId: string | undefined;
     try {
       const params = await context.params;
       projectName = params["name"];
       sessionName = params["session"]
         ? decodeURIComponent(params["session"])
+        : undefined;
+      conversationId = params["conversationId"]
+        ? decodeURIComponent(params["conversationId"])
         : undefined;
     } catch {
       // No params or params resolution failed — not all routes have params
@@ -56,6 +60,7 @@ export function withTracing(handler: RouteHandler): RouteHandler {
       action,
       projectName,
       sessionName,
+      conversationId,
     };
 
     return runWithTrace(traceContext, async () => {

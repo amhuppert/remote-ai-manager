@@ -17,7 +17,6 @@ function createTestDeps(
       tailscaleEnabled: true,
       baseDir: "/tmp",
       ignorePatterns: [],
-      stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 300_000,
     }),
     livenessStart: vi.fn(),

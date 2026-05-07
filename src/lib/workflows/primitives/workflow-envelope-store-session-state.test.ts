@@ -134,7 +134,7 @@ describe("createSessionStateWorkflowEnvelopeStore — durable session-state pers
     expect(failed?.completedAt).toBe("2026-04-28T10:01:00.000Z");
   });
 
-  it("serializes concurrent updates against the same workflow via withStateLock so neither write is lost", async () => {
+  it("serializes concurrent updates against the same workflow via the write queue so neither write is lost", async () => {
     const repo = createWorkflowEnvelopeRepository({
       store: buildStore(),
     });
@@ -194,7 +194,7 @@ describe("createSessionStateWorkflowEnvelopeStore — durable session-state pers
     ]);
   });
 
-  it("envelope writes from independent repository instances stay serialized via withStateLock", async () => {
+  it("envelope writes from independent repository instances stay serialized via the write queue", async () => {
     const repoA = createWorkflowEnvelopeRepository({
       store: buildStore(),
     });
@@ -262,7 +262,7 @@ describe("createSessionStateWorkflowEnvelopeStore — durable session-state pers
     expect("featureSnapshot" in (fetched as object)).toBe(true);
   });
 
-  it("envelope writes interleave safely with other session-state mutations under withStateLock", async () => {
+  it("envelope writes interleave safely with other session-state mutations under the write queue", async () => {
     const repo = createWorkflowEnvelopeRepository({
       store: buildStore(),
     });

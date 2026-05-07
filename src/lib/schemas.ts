@@ -1413,7 +1413,6 @@ const rawWorkflowDefaultsSchema = z.object({
 export const globalConfigSchema = z.object({
   baseDir: z.string(),
   ignorePatterns: z.array(z.string()),
-  stateFilePath: z.string(),
   claudeTimeoutMs: z.number(),
   defaultModel: claudeModelSchema.default("opus"),
   defaultEffort: effortLevelSchema.optional(),
@@ -1457,7 +1456,6 @@ const rawCodexConfigSchema = z.object({
 export const rawGlobalConfigSchema = z.object({
   baseDir: z.string().optional(),
   ignorePatterns: z.array(z.string()).optional(),
-  stateFilePath: z.string().optional(),
   claudeTimeoutMs: z.number().optional(),
   defaultModel: claudeModelSchema.optional(),
   defaultEffort: effortLevelSchema.optional(),
@@ -1519,6 +1517,17 @@ export const projectStateSchema = z.object({
   mcpOverrides: mcpOverridesSchema.optional(),
 });
 export type ProjectState = z.infer<typeof projectStateSchema>;
+
+export const projectRowSchema = z.object({
+  rootPath: z.string(),
+  archived: z.boolean(),
+  pinned: z.boolean(),
+  pinOrder: z.number().int().nullable(),
+  mcpOverrides: mcpOverridesSchema.optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ProjectRow = z.infer<typeof projectRowSchema>;
 
 export const managerStateSchema = z.object({
   projects: z.record(z.string(), projectStateSchema),
@@ -1786,6 +1795,25 @@ export const jobStatusSchema = z.enum([
   "conflicts",
 ]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
+
+export const backgroundJobSchema = z.object({
+  jobId: z.string(),
+  jobType: jobTypeSchema,
+  status: jobStatusSchema,
+  projectName: z.string(),
+  sessionName: z.string(),
+  branchName: z.string(),
+  targetBranch: z.string().optional(),
+  startedAt: z.string(),
+  completedAt: z.string().optional(),
+  mergeHash: z.string().optional(),
+  commitHash: z.string().optional(),
+  conflictCount: z.number().optional(),
+  conflictFiles: z.array(z.string()).optional(),
+  errorMessage: z.string().optional(),
+  phase: z.string().optional(),
+});
+export type BackgroundJob = z.infer<typeof backgroundJobSchema>;
 
 export const jobStatusEventSchema = z.object({
   type: z.literal("job-status"),

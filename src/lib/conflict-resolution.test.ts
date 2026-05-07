@@ -37,7 +37,6 @@ function createTestDeps(
     readConfig: vi.fn().mockResolvedValue({
       baseDir: "/home/user/projects",
       ignorePatterns: [],
-      stateFilePath: "/tmp/state.json",
       claudeTimeoutMs: 60_000,
       defaultModel: "opus",
     }) as unknown as ConflictResolutionDeps["readConfig"],

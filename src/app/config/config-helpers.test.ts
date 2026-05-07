@@ -71,8 +71,7 @@ describe("formatFieldLabel", () => {
     expect(formatFieldLabel("reasoningEffort")).toBe("Reasoning Effort");
   });
 
-  it("handles stateFilePath and ignorePatterns", () => {
-    expect(formatFieldLabel("stateFilePath")).toBe("State File Path");
+  it("handles ignorePatterns", () => {
     expect(formatFieldLabel("ignorePatterns")).toBe("Ignore Patterns");
   });
 

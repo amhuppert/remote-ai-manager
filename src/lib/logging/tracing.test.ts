@@ -3,6 +3,7 @@ import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { withTracing } from "./tracing";
+import { getTraceContext } from "./context";
 import { _resetLoggerForTesting } from "./logger";
 
 const tmpDir = path.join(os.tmpdir(), "cc-tracing-test");
@@ -206,6 +207,29 @@ describe("withTracing", () => {
     const lines = readLogLines();
     const startLog = lines.find((l) => l["message"] === "request.start");
     expect(startLog?.["action"]).toBe("send-prompt");
+  });
+
+  it("extracts conversationId route param into the active trace context", async () => {
+    let observed: ReturnType<typeof getTraceContext>;
+    const handler = vi.fn(async () => {
+      observed = getTraceContext();
+      return new Response("ok");
+    });
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest(
+      "http://localhost:3000/api/projects/p/sessions/s/conversations/c/messages",
+      { headers: { "x-trace-id": "conv-trace" } },
+    );
+
+    await wrapped(
+      req,
+      makeParams({ name: "p", session: "s", conversationId: "c" }),
+    );
+
+    expect(observed?.conversationId).toBe("c");
+    expect(observed?.projectName).toBe("p");
+    expect(observed?.sessionName).toBe("s");
   });
 
   it("handles routes without params gracefully", async () => {

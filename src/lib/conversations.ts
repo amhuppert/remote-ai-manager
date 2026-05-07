@@ -8,8 +8,9 @@ import type {
 } from "@/types";
 import {
   mutateSession as defaultMutateSession,
-  readState as defaultReadState,
   getSession as defaultGetSession,
+  getConversation as defaultGetConversation,
+  getSessionConversations as defaultGetSessionConversations,
 } from "./state";
 import { createLogger } from "./logging";
 import {
@@ -27,14 +28,16 @@ const logger = createLogger("conversations");
 
 export interface ConversationsDeps {
   mutateSession: typeof defaultMutateSession;
-  readState: typeof defaultReadState;
   getSession: typeof defaultGetSession;
+  getConversation: typeof defaultGetConversation;
+  getSessionConversations: typeof defaultGetSessionConversations;
 }
 
 export const defaultConversationsDeps: ConversationsDeps = {
   mutateSession: defaultMutateSession,
-  readState: defaultReadState,
   getSession: defaultGetSession,
+  getConversation: defaultGetConversation,
+  getSessionConversations: defaultGetSessionConversations,
 };
 
 // ============================================================
@@ -44,7 +47,12 @@ export const defaultConversationsDeps: ConversationsDeps = {
 export function createConversationService(
   deps: ConversationsDeps = defaultConversationsDeps,
 ) {
-  const { mutateSession, readState, getSession } = deps;
+  const {
+    mutateSession,
+    getSession,
+    getConversation,
+    getSessionConversations,
+  } = deps;
 
   // ============================================================
   // Conversation CRUD
@@ -104,38 +112,20 @@ export function createConversationService(
   }
 
   /** Get a specific conversation by ID within a session */
-  async function getConversation(
+  async function getConversationById(
     projectPath: string,
     sessionName: string,
     conversationId: string,
   ): Promise<ConversationState | null> {
-    const state = await readState();
-    const project = state.projects[projectPath];
-    if (!project) return null;
-
-    const session = project.sessions[sessionName];
-    if (!session) return null;
-
-    return session.conversations.find((c) => c.id === conversationId) ?? null;
+    return getConversation(projectPath, sessionName, conversationId);
   }
 
   /** Get all conversations for a session, ordered by most recently active first */
-  async function getSessionConversations(
+  async function getSessionConversationsList(
     projectPath: string,
     sessionName: string,
   ): Promise<ConversationState[]> {
-    const state = await readState();
-    const project = state.projects[projectPath];
-    if (!project) return [];
-
-    const session = project.sessions[sessionName];
-    if (!session) return [];
-
-    return [...session.conversations].sort(
-      (a, b) =>
-        new Date(b.lastActivityAt).getTime() -
-        new Date(a.lastActivityAt).getTime(),
-    );
+    return getSessionConversations(projectPath, sessionName);
   }
 
   /** Update the agent backend for a conversation that has no prompts yet */
@@ -414,8 +404,8 @@ export function createConversationService(
 
   return {
     createConversation,
-    getConversation,
-    getSessionConversations,
+    getConversation: getConversationById,
+    getSessionConversations: getSessionConversationsList,
     setConversationBackend,
     setConversationArchived,
     renameConversation,

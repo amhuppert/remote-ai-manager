@@ -5,14 +5,12 @@ import { setConfigReader } from "./lib/push-dispatcher";
 import { readConfig } from "./lib/config";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "./lib/logging";
-import { runGraphWorkflowContextValidatorCutover } from "./lib/workflow-graph/context-validator-cutover";
 import { recoverActiveWorkflowEnvelopes } from "./lib/workflows/primitives/recover-workflow-envelopes";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "./lib/workflows/primitives/default-session-workflow-envelope-store";
 
 const logger = createLogger("startup");
 
 export interface StartupDeps {
-  runGraphWorkflowContextValidatorCutover: typeof runGraphWorkflowContextValidatorCutover;
   loadConversationManager(): Promise<{
     rehydrateConversationActors(): Promise<number>;
   }>;
@@ -24,7 +22,6 @@ export interface StartupDeps {
 }
 
 const defaultStartupDeps: StartupDeps = {
-  runGraphWorkflowContextValidatorCutover,
   loadConversationManager: () => import("./lib/workflows/conversation/manager"),
   initNotificationDb,
   setConfigReader,
@@ -37,23 +34,6 @@ export function createStartupRegistrar(
   deps: StartupDeps = defaultStartupDeps,
 ): () => Promise<void> {
   return async () => {
-    try {
-      const cutover = await deps.runGraphWorkflowContextValidatorCutover();
-      logger.info("startup.graph_workflow_cutover_checked", {
-        status: cutover.status,
-        stateBackupPath: cutover.stateBackupPath,
-        workflowDefinitionsBackupPath: cutover.workflowDefinitionsBackupPath,
-        sessionsScanned: cutover.summary.sessionsScanned,
-        sessionsCleared: cutover.summary.sessionsCleared,
-        activeExecutionsCleared: cutover.summary.activeExecutionsCleared,
-        archivedExecutionsCleared: cutover.summary.archivedExecutionsCleared,
-      });
-    } catch (err) {
-      logger.error("startup.graph_workflow_cutover_failed", {
-        error: getErrorMessage(err),
-      });
-    }
-
     // Rehydrate conversation actors from persisted machine snapshots
     try {
       const { rehydrateConversationActors } =

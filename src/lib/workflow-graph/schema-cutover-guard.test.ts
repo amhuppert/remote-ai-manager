@@ -3,7 +3,6 @@ import {
   LegacyWorkflowSchemaError,
   assertDefinitionRecordSupported,
   assertExecutionSupported,
-  checkRawStateForLegacyWorkflowPayloads,
 } from "./schema-cutover-guard";
 
 const timestamp = "2026-04-04T00:00:00.000Z";
@@ -351,111 +350,5 @@ describe("assertExecutionSupported", () => {
     expect(() => assertExecutionSupported(execution)).toThrow(
       LegacyWorkflowSchemaError,
     );
-  });
-});
-
-describe("checkRawStateForLegacyWorkflowPayloads", () => {
-  it("does not throw for state with no graph workflow executions", () => {
-    const rawState = {
-      projects: {
-        "proj-1": {
-          sessions: {
-            "session-1": {
-              graphWorkflowExecution: null,
-            },
-          },
-        },
-      },
-    };
-    expect(() =>
-      checkRawStateForLegacyWorkflowPayloads(rawState),
-    ).not.toThrow();
-  });
-
-  it("does not throw for state with a valid execution", () => {
-    const rawState = {
-      projects: {
-        "proj-1": {
-          sessions: {
-            "session-1": {
-              graphWorkflowExecution: makeValidExecution(),
-            },
-          },
-        },
-      },
-    };
-    expect(() =>
-      checkRawStateForLegacyWorkflowPayloads(rawState),
-    ).not.toThrow();
-  });
-
-  it("throws LegacyWorkflowSchemaError when a session has a legacy execution", () => {
-    const legacyExecution = makeValidExecution();
-    (
-      legacyExecution.workingDefinition.executionContexts[0]!
-        .iterationPolicy as Record<string, unknown>
-    ).contextSoftLimitTokens = 100000;
-
-    const rawState = {
-      projects: {
-        "proj-1": {
-          sessions: {
-            "session-1": {
-              graphWorkflowExecution: legacyExecution,
-            },
-          },
-        },
-      },
-    };
-    expect(() => checkRawStateForLegacyWorkflowPayloads(rawState)).toThrow(
-      LegacyWorkflowSchemaError,
-    );
-  });
-
-  it("throws LegacyWorkflowSchemaError when archived history contains a legacy execution", () => {
-    const legacyExecution = makeValidExecution();
-    (legacyExecution as Record<string, unknown>).laneStates = {
-      task_validator: {
-        engine: "codex",
-        lane: "task_validator",
-        contextId: "ctx-1",
-        sessionRef: {
-          engine: "codex",
-          lane: "task_validator",
-          threadId: "thread-1",
-        },
-        lastTurnUsage: null,
-        rotateBeforeNextTurn: false,
-        limitEvaluation: "disabled",
-        lastUsedAt: timestamp,
-      },
-    };
-
-    const rawState = {
-      projects: {
-        "proj-1": {
-          sessions: {
-            "session-1": {
-              graphWorkflowExecution: null,
-              graphWorkflowExecutionHistory: [legacyExecution],
-            },
-          },
-        },
-      },
-    };
-
-    expect(() => checkRawStateForLegacyWorkflowPayloads(rawState)).toThrow(
-      LegacyWorkflowSchemaError,
-    );
-  });
-
-  it("does not throw for non-object or null state", () => {
-    expect(() => checkRawStateForLegacyWorkflowPayloads(null)).not.toThrow();
-    expect(() =>
-      checkRawStateForLegacyWorkflowPayloads(undefined),
-    ).not.toThrow();
-    expect(() =>
-      checkRawStateForLegacyWorkflowPayloads("not an object"),
-    ).not.toThrow();
   });
 });

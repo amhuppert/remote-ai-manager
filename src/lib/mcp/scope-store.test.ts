@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createConfigReader } from "@/lib/config";
 import type { ManagerState } from "@/lib/schemas";
 import { createStateManager } from "@/lib/state";
-import { _resetForTesting as resetMutex } from "@/lib/state-mutex";
+import { _resetForTesting as resetMutex } from "@/lib/state-store/write-queue";
 
 import { createScopeOverrideStore } from "./scope-store";
 
