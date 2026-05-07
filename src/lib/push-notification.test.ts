@@ -155,7 +155,7 @@ describe("sendPushNotification", () => {
     mockFetch.mockReset();
   });
 
-  it("sends a POST to ntfy with correct headers", async () => {
+  it("sends a POST to ntfy root URL with JSON body", async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
     const config = makeConfig();
     const event: PushEvent = {
@@ -170,15 +170,37 @@ describe("sendPushNotification", () => {
 
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://ntfy.sh/test-topic");
+    expect(url).toBe("https://ntfy.sh/");
     expect(options.method).toBe("POST");
     expect(options.headers).toEqual(
-      expect.objectContaining({
-        Title: "[proj] Merge completed",
-        Tags: "white_check_mark",
-      }),
+      expect.objectContaining({ "Content-Type": "application/json" }),
     );
-    expect(options.body).toBe("Branch merged");
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
+      topic: "test-topic",
+      title: "[proj] Merge completed",
+      message: "Branch merged",
+      tags: ["white_check_mark"],
+    });
+  });
+
+  it("sends non-ASCII titles without throwing (em-dash regression)", async () => {
+    mockFetch.mockImplementationOnce(async (input, init) => {
+      // Force native validation: this is what real fetch does internally.
+      new Request(input as string, init as RequestInit);
+      return { ok: true, status: 200 };
+    });
+    const config = makeConfig();
+    const event: PushEvent = {
+      trigger: "workflow-completed",
+      title: "Collab converged — merged report ready",
+      message: "Collaboration converged on session sess",
+      projectName: "remote-ai-manager",
+      sessionName: "sess",
+    };
+
+    await expect(sendPushNotification(config, event)).resolves.toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledOnce();
   });
 
   it("does not send when shouldSendPush returns false", async () => {
@@ -238,7 +260,7 @@ describe("sendPushNotification", () => {
     await sendPushNotification(config, event);
 
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://my-ntfy.example.com/test-topic");
+    expect(url).toBe("https://my-ntfy.example.com/");
   });
 
   it("strips trailing slash from server URL", async () => {
@@ -255,7 +277,7 @@ describe("sendPushNotification", () => {
     await sendPushNotification(config, event);
 
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://ntfy.sh/test-topic");
+    expect(url).toBe("https://ntfy.sh/");
   });
 });
 
@@ -264,7 +286,7 @@ describe("sendAgentNotification", () => {
     mockFetch.mockReset();
   });
 
-  it("sends POST to correct ntfy URL with correct headers and body", async () => {
+  it("sends POST to ntfy root URL with JSON body", async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
     const config = makeConfig();
 
@@ -279,15 +301,18 @@ describe("sendAgentNotification", () => {
 
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://ntfy.sh/test-topic");
+    expect(url).toBe("https://ntfy.sh/");
     expect(options.method).toBe("POST");
     expect(options.headers).toEqual(
-      expect.objectContaining({
-        Title: "[my-project] Build Done",
-        Tags: "white_check_mark",
-      }),
+      expect.objectContaining({ "Content-Type": "application/json" }),
     );
-    expect(options.body).toBe("All tests passed");
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
+      topic: "test-topic",
+      title: "[my-project] Build Done",
+      message: "All tests passed",
+      tags: ["white_check_mark"],
+    });
   });
 
   it("formats title with project name prefix", async () => {
@@ -304,8 +329,8 @@ describe("sendAgentNotification", () => {
     );
 
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    const headers = options.headers as Record<string, string>;
-    expect(headers.Title).toBe("[cool-project] Task Complete");
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    expect(body.title).toBe("[cool-project] Task Complete");
   });
 
   it("logs warning on HTTP error response", async () => {

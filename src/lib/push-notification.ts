@@ -82,17 +82,21 @@ export async function sendPushNotification(
   // config is guaranteed non-null by shouldSendPush
   const cfg = config!;
   const formatted = formatPushMessage(event);
-  const baseUrl = cfg.serverUrl.replace(/\/+$/, "");
-  const url = `${baseUrl}/${cfg.topic}`;
+  // ntfy JSON publish: POST to root URL, not the topic URL — putting title/tags
+  // in the JSON body avoids HTTP header byte-string limits (Latin-1 only),
+  // which previously broke any title containing characters like em-dash.
+  const url = `${cfg.serverUrl.replace(/\/+$/, "")}/`;
 
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        Title: formatted.title,
-        Tags: formatted.tags,
-      },
-      body: formatted.body,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: cfg.topic,
+        title: formatted.title,
+        message: formatted.body,
+        tags: [formatted.tags],
+      }),
     });
 
     if (!response.ok) {
@@ -129,18 +133,19 @@ export async function sendAgentNotification(
   projectName: string,
   sessionName: string,
 ): Promise<void> {
-  const baseUrl = config.serverUrl.replace(/\/+$/, "");
-  const url = `${baseUrl}/${config.topic}`;
+  const url = `${config.serverUrl.replace(/\/+$/, "")}/`;
   const formattedTitle = `[${projectName}] ${title}`;
 
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        Title: formattedTitle,
-        Tags: tags,
-      },
-      body: message,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: config.topic,
+        title: formattedTitle,
+        message,
+        tags: [tags],
+      }),
     });
 
     if (!response.ok) {
