@@ -14016,6 +14016,32 @@ html[data-dev-tools-enabled] nextjs-portal {
   min-width: 0;
 }
 
+.collab-passage-error-banner {
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+}
+
+.collab-passage-error-banner-label {
+  color: var(--red);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.collab-passage-error-banner-message {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-default);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .collab-card-host {
   min-width: 0;
   scroll-margin-top: 88px;

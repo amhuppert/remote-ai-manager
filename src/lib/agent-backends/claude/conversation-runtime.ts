@@ -493,8 +493,12 @@ const claudeConversationBackendFactory = {
     input: ConversationBackendCreateInput,
     deps: ClaudeFactoryDeps = defaultClaudeFactoryDeps,
   ): Promise<ConversationBackendRuntime> {
+    const mcpScopeConversationId =
+      input.mcpScopeConversationId ?? input.conversationId;
+
     logger.info("claude-factory.create_runtime", {
       conversationId: input.conversationId,
+      mcpScopeConversationId,
       projectName: input.projectName,
       sessionName: input.sessionName,
       modelId: input.modelId,
@@ -503,7 +507,7 @@ const claudeConversationBackendFactory = {
     const sessionToolsInstance = await deps.createSessionMcpServer({
       name: input.projectName,
       session: input.sessionName,
-      conversationId: input.conversationId,
+      conversationId: mcpScopeConversationId,
     });
 
     // Mutable portable-config holder — reflects the resolver's current

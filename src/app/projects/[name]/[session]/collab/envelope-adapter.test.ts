@@ -217,6 +217,28 @@ describe("envelopeToCollabPassageProps", () => {
     expect(props!.status).toBe("failed");
   });
 
+  it("forwards envelope.errorSummary onto the passage props so the UI can surface failure causes", () => {
+    const env = makeEnvelope({
+      status: "failed",
+      phase: "failed_agent_one",
+      errorSummary: "agent_one initial_draft failed: Conversation not found",
+      featureSnapshot: {
+        ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
+        artifacts: [makeAgentTwoInitialDraft()],
+      },
+    });
+    const props = envelopeToCollabPassageProps(env);
+    expect(props!.errorSummary).toBe(
+      "agent_one initial_draft failed: Conversation not found",
+    );
+  });
+
+  it("leaves errorSummary undefined for non-failed envelopes", () => {
+    const env = makeEnvelope({ status: "running" });
+    const props = envelopeToCollabPassageProps(env);
+    expect(props!.errorSummary).toBeUndefined();
+  });
+
   it("preserves the artifact order for the renderer", () => {
     const sequence: CollaborationArtifact[] = [
       makeAgentOneInitialDraft(),

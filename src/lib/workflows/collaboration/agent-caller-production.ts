@@ -69,6 +69,12 @@ export interface CollaborationProductionAgentCallerInput {
   /** Identifier passed to WorkflowAgentCaller as the lane scheduler key. */
   sessionKey: string;
   /**
+   * Conversation that initiated the collaboration. Each Claude lane gets
+   * its own synthetic SDK session ID, but the session MCP server has to
+   * resolve to a conversation that exists in CC state — that's this one.
+   */
+  originatingConversationId: string;
+  /**
    * The slice's lane service. Reused so post-turn outcomes recorded by the
    * WorkflowAgentCaller land on the same `LaneState` the slice operates on.
    */
@@ -174,6 +180,7 @@ function buildInnerCallAgent(
       : undefined;
     const runtime = await factory.createRuntime({
       conversationId,
+      mcpScopeConversationId: input.originatingConversationId,
       projectPath: input.projectPath,
       projectName,
       sessionName: input.sessionName,

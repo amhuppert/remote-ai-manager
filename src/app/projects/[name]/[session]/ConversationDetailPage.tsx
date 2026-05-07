@@ -537,6 +537,9 @@ export default function ConversationDetailPage({
             status: collabEnvelopeForConversation.status,
             phase: collabEnvelopeForConversation.phase,
             featureSnapshot: collabEnvelopeForConversation.featureSnapshot,
+            ...(collabEnvelopeForConversation.errorSummary !== undefined
+              ? { errorSummary: collabEnvelopeForConversation.errorSummary }
+              : {}),
           })
         : null,
     [collabEnvelopeForConversation],

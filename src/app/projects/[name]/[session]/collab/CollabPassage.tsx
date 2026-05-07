@@ -56,6 +56,7 @@ export interface CollabPassageProps {
   pinnedTopTarget?: HTMLElement | null;
   onStop?: () => void;
   onRefClick?: (ref: CollaborationReference) => void;
+  errorSummary?: string;
 }
 
 interface NegotiationRound {
@@ -233,6 +234,12 @@ export function buildPhases(
   if (!isTerminal && phases.every((phase) => phase.status === "done")) {
     const last = phases[phases.length - 1];
     if (last) last.status = "active";
+  }
+
+  if (status === "failed") {
+    for (const phase of phases) {
+      if (phase.status === "active") phase.status = "pending";
+    }
   }
 
   return phases;
@@ -590,6 +597,7 @@ export default function CollabPassage({
   pinnedTopTarget,
   onStop,
   onRefClick,
+  errorSummary,
 }: CollabPassageProps): React.JSX.Element {
   const grouped = groupCollabArtifacts(artifacts);
   const isTerminal = isCollabPassageTerminal(status);
@@ -739,6 +747,8 @@ export default function CollabPassage({
     </div>
   ) : null;
 
+  const showErrorBanner = status === "failed" && errorSummary !== undefined;
+
   return (
     <article
       className="collab-passage"
@@ -750,6 +760,21 @@ export default function CollabPassage({
       {pinnedTopTarget && bandElement
         ? createPortal(bandElement, pinnedTopTarget)
         : bandElement}
+
+      {showErrorBanner ? (
+        <div
+          className="collab-passage-error-banner"
+          role="alert"
+          aria-label="Collaboration failure"
+        >
+          <span className="collab-passage-error-banner-label">
+            Collaboration failed
+          </span>
+          <span className="collab-passage-error-banner-message">
+            {errorSummary}
+          </span>
+        </div>
+      ) : null}
 
       <div className="collab-passage-timeline" ref={containerRef}>
         <CollabCardOrchestrationProvider

@@ -38,6 +38,98 @@ function draftOutput(round: number): CollaborationInitialDraftOutput {
 }
 
 describe("createCollaborationProductionCallAgent", () => {
+  it("passes the originating conversationId to the Claude runtime as mcpScopeConversationId so the session MCP server resolves to a real CC conversation", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-mcp-scope",
+      laneId: "claude",
+      backend: "claude",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      backendState: { backend: "claude" },
+      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const createRuntimeInputs: Array<
+      Parameters<ConversationBackendFactory["createRuntime"]>[0]
+    > = [];
+    const factory: ConversationBackendFactory = {
+      backend: "claude",
+      async createRuntime(input): Promise<ConversationBackendRuntime> {
+        createRuntimeInputs.push(input);
+        const runtime: ConversationBackendRuntime = {
+          backend: "claude",
+          status: "alive",
+          capabilities: {
+            queueWhileRunning: true,
+            askUserQuestion: true,
+            preciseFork: true,
+            portableMcpAtStart: true,
+            portableMcpBetweenTurns: true,
+            contextWindowMetrics: true,
+          },
+          modelId: undefined,
+          reasoningEffort: undefined,
+          outputFormat: undefined,
+          applyPortableMcpConfig: async () => ({
+            disposition: "applied_now",
+            droppedServerIds: [],
+            droppedFields: [],
+            errors: {},
+          }),
+          async sendTurn(): Promise<ConversationBackendTurnResult> {
+            const structuredOutput = draftOutput(1);
+            return {
+              backendRef: { backend: "claude", sessionId: "real-session-1" },
+              costUsd: null,
+              durationMs: 10,
+              numTurns: 1,
+              contextTokens: null,
+              contextWindowMax: null,
+              contentBlocks: [
+                { type: "text", text: structuredOutput.narrative },
+              ],
+              structuredOutput,
+              aborted: false,
+              error: null,
+            };
+          },
+          close: () => undefined,
+        };
+        return runtime;
+      },
+    };
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-mcp-scope",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "real-conv-uuid-1",
+      laneService,
+      getConversationBackendFactory: () => factory,
+    });
+
+    await callAgent({
+      kind: "conversation_turn",
+      backend: "claude",
+      prompt: "round 1",
+      laneRef: { workflowId: "wf-mcp-scope", laneId: "claude" },
+      writeCapability: "write_capable",
+      outputSchema:
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+    });
+
+    expect(createRuntimeInputs[0]?.mcpScopeConversationId).toBe(
+      "real-conv-uuid-1",
+    );
+  });
+
   it("starts a fresh Claude conversation on the first lane call and resumes the SDK-returned session later", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
@@ -113,6 +205,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionName: "sess-1",
       worktreePath: "/worktrees/sess-1",
       sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
       laneService,
       getConversationBackendFactory: () => factory,
     });
@@ -211,6 +304,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionName: "sess-1",
       worktreePath: "/worktrees/sess-1",
       sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
       laneService,
       getConversationBackendFactory: () => factory,
     });
@@ -277,6 +371,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionName: "sess-1",
       worktreePath: "/worktrees/sess-1",
       sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
       laneService,
       getTaskRunner: () => runner,
     });
@@ -346,6 +441,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionName: "sess-1",
       worktreePath: "/worktrees/sess-1",
       sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
       laneService,
       getTaskRunner: () => runner,
     });
@@ -457,6 +553,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionName: "sess-1",
       worktreePath: "/worktrees/sess-1",
       sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
       laneService,
       getConversationBackendFactory: () => factory,
     });

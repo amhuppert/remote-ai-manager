@@ -10,6 +10,7 @@ export interface CollabEnvelopeView {
   status: "running" | "paused" | "completed" | "failed";
   phase: string;
   featureSnapshot: unknown;
+  errorSummary?: string;
 }
 
 export type CollabPassageStatus =
@@ -38,6 +39,7 @@ export interface CollabPassageProps {
   status: CollabPassageStatus;
   artifacts: CollaborationArtifact[];
   submittedAnswers: Record<string, string>;
+  errorSummary?: string;
 }
 
 const VALID_THRESHOLDS: ReadonlySet<CollaborationAutonomousResolutionThreshold> =
@@ -168,5 +170,8 @@ export function envelopeToCollabPassageProps(
     status: passageStatusFor(envelope, snapshot.artifacts),
     artifacts: snapshot.artifacts,
     submittedAnswers: snapshot.userAnswersByQuestionId,
+    ...(envelope.errorSummary !== undefined
+      ? { errorSummary: envelope.errorSummary }
+      : {}),
   };
 }

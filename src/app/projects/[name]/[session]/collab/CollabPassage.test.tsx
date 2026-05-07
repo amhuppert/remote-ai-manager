@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import CollabPassage, {
+  buildPhases,
   flowAgentToBackend,
   groupCollabArtifacts,
   isCollabPassageTerminal,
@@ -435,5 +436,68 @@ describe("CollabPassage rendering", () => {
     const article = document.querySelector(".collab-passage");
     expect(article?.getAttribute("data-status")).toBe("user-stopped");
     expect(article?.getAttribute("data-primary")).toBe("codex");
+  });
+
+  it("renders the errorSummary in a failure banner when status is 'failed'", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        status="failed"
+        artifacts={[makeAgentTwoInitialDraft()]}
+        errorSummary="agent_one initial_draft failed: Conversation not found"
+      />,
+    );
+    const banner = document.querySelector(".collab-passage-error-banner");
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain("Conversation not found");
+  });
+
+  it("does not render the failure banner when status is 'failed' but errorSummary is absent", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        status="failed"
+        artifacts={[makeAgentOneInitialDraft()]}
+      />,
+    );
+    expect(document.querySelector(".collab-passage-error-banner")).toBeNull();
+  });
+
+  it("does not render the failure banner for non-failed statuses even when errorSummary is provided", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        status="converged"
+        artifacts={[makeFinalAnswer()]}
+        errorSummary="lingering message"
+      />,
+    );
+    expect(document.querySelector(".collab-passage-error-banner")).toBeNull();
+  });
+
+  it("clears any active phase pip when the passage has failed (no stalled spinner)", () => {
+    const grouped = groupCollabArtifacts([makeAgentTwoInitialDraft()]);
+    const phases = buildPhases(grouped, "failed");
+    const activePhases = phases.filter((p) => p.status === "active");
+    expect(activePhases).toHaveLength(0);
+  });
+
+  it("renders no phase pip with data-status='active' when status is 'failed' (DOM smoke)", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        status="failed"
+        artifacts={[makeAgentTwoInitialDraft()]}
+        errorSummary="agent_one initial_draft failed"
+      />,
+    );
+    const activePips = document.querySelectorAll(
+      '.collab-phase-strip-pip[data-status="active"]',
+    );
+    expect(activePips).toHaveLength(0);
   });
 });

@@ -100,6 +100,14 @@ export interface ConversationBackendRuntime {
 
 export interface ConversationBackendCreateInput {
   conversationId: string;
+  /**
+   * Conversation ID used to scope the session MCP server (and any
+   * conversation-bound MCP tools registered on it). Defaults to
+   * `conversationId` when omitted. Collaboration lanes set this to the
+   * originating conversation so the synthetic per-lane SDK session ID
+   * doesn't have to exist in CC session state.
+   */
+  mcpScopeConversationId?: string;
   projectPath: string;
   projectName: string;
   sessionName: string;

@@ -157,6 +157,15 @@ export const Failed = {
   },
 } satisfies Story;
 
+export const FailedWithErrorSummary = {
+  args: {
+    status: "failed",
+    artifacts: [makeAgentTwoInitialDraft()],
+    errorSummary:
+      "agent_one initial_draft failed: Conversation not found (Claude session MCP server could not resolve the synthetic per-lane conversationId).",
+  },
+} satisfies Story;
+
 export const PrimaryCodex = {
   args: {
     primary: "codex",

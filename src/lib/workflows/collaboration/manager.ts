@@ -211,6 +211,7 @@ export interface CollaborationManagerDeps {
     sessionName: string;
     worktreePath: string;
     workflowId: string;
+    conversationId: string;
     laneService: LaneService;
   }): AsymmetricCollaborationSliceDeps["callAgent"];
 
@@ -302,6 +303,7 @@ const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
     sessionName: input.sessionName,
     worktreePath: input.worktreePath,
     sessionKey: `${input.projectPath}::${input.sessionName}`,
+    originatingConversationId: input.conversationId,
     laneService: input.laneService,
   });
 
@@ -543,6 +545,7 @@ export function createCollaborationManager(
         sessionName: input.sessionName,
         worktreePath: session.worktreePath,
         workflowId,
+        conversationId: parsed.conversationId,
         laneService,
       });
 
@@ -714,6 +717,7 @@ export function createCollaborationManager(
         sessionName: input.sessionName,
         worktreePath: session.worktreePath,
         workflowId: input.workflowId,
+        conversationId,
         laneService,
       });
       const sliceDeps = deps.createDeps({
