@@ -2,19 +2,29 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { readConfig } from "@/lib/config";
 import { sendAgentNotification } from "@/lib/push-notification";
 import { resolveProjectPath } from "@/lib/project-resolver";
-import { getSession } from "@/lib/state";
+import { getSession, mutateConversation } from "@/lib/state";
 import { registerNotificationTool } from "@/lib/agent-notification-tool";
+import { registerAskUserQuestionTool } from "@/lib/ask-user-question-tool";
 import { registerCodexTool } from "@/lib/codex-tool";
 import { registerReferenceDocumentTools } from "@/lib/reference-document-tools";
 import { registerRoadmapTools } from "@/lib/roadmap-tools";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { registerPlannerTools } from "@/lib/workflow-graph/planner-tools";
+import { getConversationRuntime } from "@/lib/workflows/conversation/runtime-state";
 import type { GlobalConfig, SessionState } from "@/types";
 import { McpRouteError } from "./route-handler";
 
 export interface SessionMcpServerParams {
   name: string;
   session: string;
+  conversationId: string;
+}
+
+interface SessionWithConversations extends Pick<
+  SessionState,
+  "sessionName" | "worktreePath"
+> {
+  conversations: ReadonlyArray<{ id: string }>;
 }
 
 export interface SessionMcpServerDeps {
@@ -22,7 +32,7 @@ export interface SessionMcpServerDeps {
   getSession(
     projectPath: string,
     sessionName: string,
-  ): Promise<Pick<SessionState, "sessionName" | "worktreePath"> | null>;
+  ): Promise<SessionWithConversations | null>;
   readConfig(): Promise<GlobalConfig>;
   registerRoadmapTools(
     server: McpServer,
@@ -48,6 +58,14 @@ export interface SessionMcpServerDeps {
     server: McpServer,
     context: { worktreePath: string; sessionName: string },
     config: NonNullable<GlobalConfig["codex"]>,
+  ): void;
+  registerAskUserQuestionTool(
+    server: McpServer,
+    context: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
   ): void;
 }
 
@@ -107,6 +125,12 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
       timeoutMs,
     });
   },
+  registerAskUserQuestionTool(server, context) {
+    registerAskUserQuestionTool(server, context, {
+      getRuntime: getConversationRuntime,
+      mutateConversation,
+    });
+  },
 };
 
 function isNotificationEnabled(config: GlobalConfig): boolean {
@@ -128,6 +152,13 @@ export async function createSessionMcpServer(
   const session = await deps.getSession(projectPath, params.session);
   if (!session) {
     throw new McpRouteError(404, "Session not found");
+  }
+
+  const conversation = session.conversations.find(
+    (c) => c.id === params.conversationId,
+  );
+  if (!conversation) {
+    throw new McpRouteError(404, "Conversation not found");
   }
 
   const config = await deps.readConfig();
@@ -164,6 +195,12 @@ export async function createSessionMcpServer(
       config.codex,
     );
   }
+
+  deps.registerAskUserQuestionTool(server, {
+    projectPath,
+    sessionName: session.sessionName,
+    conversationId: params.conversationId,
+  });
 
   return server;
 }

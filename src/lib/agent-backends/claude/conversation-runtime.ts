@@ -29,7 +29,7 @@ import {
   type TurnResult,
 } from "./query-session";
 import { buildClaudePromptBlocks } from "./build-prompt-blocks";
-import { createCanUseTool, type CanUseToolTurnContext } from "./native-tooling";
+import { createCanUseTool } from "./native-tooling";
 import { buildChildEnv } from "@/lib/child-env";
 import { createLogger } from "@/lib/logging";
 import {
@@ -445,10 +445,6 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
       modelId: input.modelId,
     });
 
-    // Mutable per-turn context holder — the canUseTool callback reads from
-    // this at invocation time, so autonomy and question handling change per turn.
-    let turnContext: CanUseToolTurnContext | null = null;
-
     // Mutable portable-config holder — reflects the resolver's current
     // effective output. Updated by applyPortableMcpConfig on successful apply.
     // The filter lookup reads from it live, so setMcpServers-driven changes
@@ -456,7 +452,7 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
     let currentPortableConfig: PortableMcpConfig | null =
       input.tooling.portableMcp ?? null;
 
-    const canUseTool = createCanUseTool(() => turnContext, {
+    const canUseTool = createCanUseTool({
       conversationId: input.conversationId,
       mcpFilter: createPortableMcpFilterLookup(() => currentPortableConfig),
     });
@@ -514,7 +510,7 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
       maxTurns: undefined,
       plugins: [],
       settingSources: ["user", "project", "local"],
-      disallowedTools: [],
+      disallowedTools: ["AskUserQuestion"],
       outputFormat: input.outputFormat,
       externalTurnHandler,
     };
@@ -533,27 +529,6 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
         },
       },
     );
-
-    // Wire the runtime's turnContext into the shared mutable holder
-    // so the canUseTool callback can read per-turn state from any
-    // QuerySession the runtime creates (including forks).
-    const originalSendTurn = runtime.sendTurn.bind(runtime);
-    runtime.sendTurn = async (turnInput: ConversationBackendTurnInput) => {
-      turnContext = {
-        autonomous: turnInput.autonomous,
-        onAskQuestion: turnInput.onAskQuestion
-          ? async (questions: unknown[]) => {
-              const typed = questions as import("@/types").AskQuestionItem[];
-              return turnInput.onAskQuestion!(typed);
-            }
-          : undefined,
-      };
-      try {
-        return await originalSendTurn(turnInput);
-      } finally {
-        turnContext = null;
-      }
-    };
 
     if (Object.keys(translatedServers).length > 0) {
       try {

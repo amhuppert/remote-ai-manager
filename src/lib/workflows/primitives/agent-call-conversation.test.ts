@@ -7,7 +7,6 @@ import type {
   PortableMcpConfig,
   McpApplyResult,
 } from "@/types";
-import type { AskQuestionItem } from "@/lib/schemas";
 import { dispatchConversationTurn } from "./agent-call-conversation";
 import type { BackendCapabilityView } from "./agent-call-vocabulary";
 
@@ -22,7 +21,6 @@ const CAPABILITY_VIEW: BackendCapabilityView = {
 
 interface StubRuntimeOptions {
   result?: Partial<ConversationBackendTurnResult>;
-  onSendTurn?(input: ConversationBackendTurnInput): Promise<void> | void;
   applyMcpResult?: McpApplyResult;
 }
 
@@ -66,7 +64,6 @@ function makeStubRuntime(opts: StubRuntimeOptions = {}): {
     async sendTurn(input) {
       sendTurnCalls.value += 1;
       captured.value = input;
-      if (opts.onSendTurn) await opts.onSendTurn(input);
       return { ...baseResult, ...(opts.result ?? {}) };
     },
     async applyPortableMcpConfig(config) {
@@ -244,84 +241,6 @@ describe("dispatchConversationTurn", () => {
       expect(result.outcome.error.failureKind).toBe("capability_unavailable");
       expect(result.outcome.error.backend).toBe("claude");
     }
-  });
-
-  it("surfaces a mid_turn paused result when the backend asks the user a question and no answerer is provided", async () => {
-    const captured: AskQuestionItem[] = [
-      {
-        question: "Approve?",
-        options: [{ label: "Yes" }],
-        multiSelect: false,
-      },
-    ];
-
-    const { runtime } = makeStubRuntime({
-      onSendTurn: async (input) => {
-        if (input.onAskQuestion) {
-          await input.onAskQuestion(captured);
-        }
-      },
-    });
-
-    const result = await dispatchConversationTurn(
-      {
-        kind: "conversation_turn",
-        prompt: "should we?",
-      },
-      {
-        runtime,
-        capabilityView: CAPABILITY_VIEW,
-        signal: new AbortController().signal,
-      },
-    );
-
-    expect(result.outcome.kind).toBe("paused");
-    if (result.outcome.kind === "paused") {
-      expect(result.outcome.pauseKind).toBe("mid_turn");
-      expect(result.outcome.resumeToken).toMatch(/.+/);
-      expect(result.outcome.details).toMatchObject({
-        questions: captured,
-      });
-    }
-    expect(result.backend).toBe("claude");
-  });
-
-  it("forwards inline ask-user answers to the runtime when an answerer is supplied", async () => {
-    const captured: AskQuestionItem[] = [
-      {
-        question: "Pick one",
-        options: [{ label: "A" }, { label: "B" }],
-        multiSelect: false,
-      },
-    ];
-
-    let runtimeAnswers: Record<string, string> | null = null;
-    const { runtime } = makeStubRuntime({
-      onSendTurn: async (input) => {
-        if (input.onAskQuestion) {
-          runtimeAnswers = await input.onAskQuestion(captured);
-        }
-      },
-    });
-
-    const answerSpy = vi.fn(async () => ({ "Pick one": "a" }));
-
-    const result = await dispatchConversationTurn(
-      {
-        kind: "conversation_turn",
-        prompt: "go",
-      },
-      {
-        runtime,
-        capabilityView: CAPABILITY_VIEW,
-        signal: new AbortController().signal,
-        answerAskUser: answerSpy,
-      },
-    );
-
-    expect(answerSpy).toHaveBeenCalledOnce();
-    expect(runtimeAnswers).toEqual({ "Pick one": "a" });
-    expect(result.outcome.kind).toBe("completed");
   });
 
   it("normalizes a backend error result while preserving backend identity", async () => {

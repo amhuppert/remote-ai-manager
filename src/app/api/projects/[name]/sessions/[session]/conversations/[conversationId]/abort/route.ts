@@ -4,6 +4,10 @@ import { getSession } from "@/lib/state";
 import { abortConversation } from "@/lib/abort-registry";
 import { rejectQuestionsForConversation } from "@/lib/question-registry";
 import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
+import {
+  conversationRuntimeKey,
+  rejectActiveQuestionResolver,
+} from "@/lib/workflows/conversation/runtime-state";
 import { withTracing } from "@/lib/logging";
 import type { ApiError } from "@/types";
 
@@ -43,8 +47,14 @@ export const POST = withTracing(async (_request, { params }) => {
     );
   }
 
-  // Reject any pending AskUserQuestion for this conversation
+  // Reject any pending AskUserQuestion for this conversation (legacy registry).
   rejectQuestionsForConversation(conversationId, "Prompt aborted by user");
+
+  // Reject the runtime-scoped resolver used by the MCP AskUserQuestion tool.
+  rejectActiveQuestionResolver(
+    conversationRuntimeKey(projectPath, sessionName, conversationId),
+    "Prompt aborted by user",
+  );
 
   // Signal the AbortController to stop SDK execution
   const aborted = abortConversation(conversationId);

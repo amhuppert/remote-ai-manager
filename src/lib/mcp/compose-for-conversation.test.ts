@@ -310,7 +310,7 @@ describe("createComposePortableMcpForConversation (factory)", () => {
     const customGateway: PortableMcpServerConfig = {
       id: "cc-session-tools",
       transport: "streamable-http",
-      url: "http://localhost:3000/api/projects/x/sessions/y/mcp",
+      url: "http://localhost:3000/api/projects/x/sessions/y/conversations/conv/mcp",
     };
 
     const deps = createDeps({
@@ -328,6 +328,29 @@ describe("createComposePortableMcpForConversation (factory)", () => {
 
     const ids = portable.servers.map((s) => s.id);
     expect(ids).toContain("cc-session-tools");
+  });
+
+  it("passes conversationId to buildGatewayServers", async () => {
+    const buildGatewayServers = vi.fn<
+      ComposePortableMcpDeps["buildGatewayServers"]
+    >(() => []);
+
+    const deps = createDeps({ buildGatewayServers });
+    const compose = createComposePortableMcpForConversation(deps);
+    await compose({
+      backend: "claude",
+      projectPath: "/projects/proj",
+      projectName: "proj-name",
+      sessionName: "sess-name",
+      conversationId: "conv-xyz",
+      worktreePath: "/worktree",
+    });
+
+    expect(buildGatewayServers).toHaveBeenCalledWith(
+      "proj-name",
+      "sess-name",
+      "conv-xyz",
+    );
   });
 
   it("merges transient portable MCP last so graph-workflow tooling wins on id collision", async () => {

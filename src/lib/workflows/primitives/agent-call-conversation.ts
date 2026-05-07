@@ -8,8 +8,6 @@
  *
  * Responsibilities:
  *  - Inject any workflow-specific portable MCP tooling before the turn starts.
- *  - Surface mid-turn ask-user pauses as a paused outcome with a resumable
- *    token when the workflow does not provide an inline answerer.
  *  - Normalize backend errors, aborts, and thrown exceptions into the shared
  *    failure shape while preserving backend identity.
  *
@@ -18,7 +16,6 @@
  * `ConversationBackendRuntime` from the appropriate lane state.
  */
 
-import { randomUUID } from "node:crypto";
 import { createLogger, type Logger } from "@/lib/logging";
 import type {
   ConversationBackendRuntime,
@@ -28,7 +25,6 @@ import type {
   ConversationImageRef,
   PortableMcpConfig,
 } from "@/types";
-import type { AskQuestionItem } from "@/lib/schemas";
 import {
   buildAgentCallLogFields,
   type AgentCallRequest,
@@ -41,15 +37,6 @@ const defaultLogger = createLogger(
   "workflows.primitives.agent-call.conversation",
 );
 
-class AskUserPauseSignal extends Error {
-  readonly questions: readonly AskQuestionItem[];
-  constructor(questions: readonly AskQuestionItem[]) {
-    super("agent_call.mid_turn_ask_user_pause");
-    this.name = "AskUserPauseSignal";
-    this.questions = questions;
-  }
-}
-
 export interface DispatchConversationTurnDeps {
   runtime: ConversationBackendRuntime;
   capabilityView: BackendCapabilityView;
@@ -60,16 +47,6 @@ export interface DispatchConversationTurnDeps {
   sessionInstructions?: string[];
   imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
-  /**
-   * If present, mid-turn questions from the backend are forwarded to this
-   * function for inline answers. If absent, the dispatcher records the
-   * questions and returns a `paused` outcome with `pauseKind: "mid_turn"`.
-   */
-  answerAskUser?: (
-    questions: AskQuestionItem[],
-  ) => Promise<Record<string, string>>;
-  /** Optional override for the resume token issued on a mid-turn pause. */
-  resumeTokenFactory?: () => string;
   /** Pre-known artifact references the caller wants attached to the result. */
   artifacts?: readonly ArtifactRef[];
   nativeFork?: ConversationBackendTurnInput["nativeFork"];
@@ -137,7 +114,6 @@ export async function dispatchConversationTurn(
       : undefined,
     signal,
     onEvent: deps.onEvent ?? (() => {}),
-    onAskQuestion: buildOnAskQuestion(deps),
     nativeFork: deps.nativeFork ?? null,
     syntheticForkSeed: deps.syntheticForkSeed ?? null,
   };
@@ -146,28 +122,6 @@ export async function dispatchConversationTurn(
   try {
     turnResult = await runtime.sendTurn(turnInput);
   } catch (err) {
-    if (err instanceof AskUserPauseSignal) {
-      const resumeToken = (deps.resumeTokenFactory ?? randomUUID)();
-      log.info("agent_call.conversation.paused_mid_turn", {
-        ...baseLogFields,
-        outcome: "paused",
-        resumeToken,
-      });
-      return {
-        backend,
-        backendRef: null,
-        capabilities: capabilityView,
-        usage: {},
-        artifacts: [...(deps.artifacts ?? [])],
-        outcome: {
-          kind: "paused",
-          pauseKind: "mid_turn",
-          resumeToken,
-          details: { questions: [...err.questions] },
-        },
-      };
-    }
-
     const message = err instanceof Error ? err.message : String(err);
     log.warn("agent_call.conversation.send_turn_threw", {
       ...baseLogFields,
@@ -237,17 +191,6 @@ export async function dispatchConversationTurn(
         ? { structuredOutput: turnResult.structuredOutput }
         : {}),
     },
-  };
-}
-
-function buildOnAskQuestion(
-  deps: DispatchConversationTurnDeps,
-): (questions: AskQuestionItem[]) => Promise<Record<string, string>> {
-  if (deps.answerAskUser) {
-    return (questions) => deps.answerAskUser!(questions);
-  }
-  return async (questions) => {
-    throw new AskUserPauseSignal(questions);
   };
 }
 

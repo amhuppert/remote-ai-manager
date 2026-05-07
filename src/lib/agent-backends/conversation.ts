@@ -1,4 +1,4 @@
-import type { MessageContentBlock, AskQuestionItem } from "@/types";
+import type { MessageContentBlock } from "@/types";
 import type {
   AgentBackendId,
   AgentSessionRef,
@@ -46,7 +46,6 @@ export interface ConversationBackendTurnInput {
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   signal: AbortSignal;
   onEvent(event: ConversationBackendEvent): Promise<void> | void;
-  onAskQuestion?(questions: AskQuestionItem[]): Promise<Record<string, string>>;
   nativeFork?: {
     sourceRef: AgentSessionRef;
     forkLocator?: string | null;

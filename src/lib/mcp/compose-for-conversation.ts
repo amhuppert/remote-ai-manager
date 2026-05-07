@@ -100,6 +100,7 @@ export interface ComposePortableMcpDeps {
   buildGatewayServers(
     projectName: string,
     sessionName: string,
+    conversationId: string,
   ): readonly PortableMcpServerConfig[];
 }
 
@@ -158,6 +159,7 @@ export function createComposePortableMcpForConversation(
     const gatewayServers = deps.buildGatewayServers(
       args.projectName,
       args.sessionName,
+      args.conversationId,
     );
 
     const { portable } = composePortableForConversation({

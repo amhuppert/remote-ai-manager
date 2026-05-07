@@ -92,7 +92,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
   readonly backend: AgentBackendId = "codex";
   readonly capabilities: ConversationBackendCapabilities = {
     queueWhileRunning: false,
-    askUserQuestion: false,
+    askUserQuestion: true,
     preciseFork: false,
     portableMcpAtStart: true,
     portableMcpBetweenTurns: true,

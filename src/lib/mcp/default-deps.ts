@@ -146,8 +146,12 @@ const composePortableForConversation = createComposePortableMcpForConversation({
   },
   discoverSources: discoverAllSources,
   globalConfigPath: () => getDefaultGlobalMcpDefinitionPath(),
-  buildGatewayServers(projectName, sessionName) {
-    return buildSessionToolsPortableMcp(projectName, sessionName).servers;
+  buildGatewayServers(projectName, sessionName, conversationId) {
+    return buildSessionToolsPortableMcp(
+      projectName,
+      sessionName,
+      conversationId,
+    ).servers;
   },
 });
 

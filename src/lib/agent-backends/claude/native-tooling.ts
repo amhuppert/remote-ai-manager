@@ -1,17 +1,12 @@
 /**
  * Claude-specific tool permission policy for the Anthropic SDK.
  *
- * Separates tool permission decisions from the query lifecycle so the
- * conversation runtime can compose them independently.
- *
- * The callback reads per-turn context from a mutable holder, allowing the
- * conversation runtime to update autonomous mode and question handlers
- * between turns without recreating the SDK query.
+ * Currently a thin wrapper that applies the MCP-filter denial decision so
+ * server-/tool-level overrides flow through the SDK's permission hook.
  */
 
 import { createLogger } from "@/lib/logging";
 
-const logger = createLogger("claude:native-tooling");
 const denialLogger = createLogger("mcp.tool-denial");
 
 // ============================================================
@@ -26,24 +21,6 @@ export type CanUseToolFn = (
   toolName: string,
   toolInput: Record<string, unknown>,
 ) => Promise<CanUseToolResult>;
-
-/**
- * Handler for AskUserQuestion tool invocations.
- * Called when the SDK wants to ask the user a question in non-autonomous mode.
- * Returns the user's answers keyed by question ID.
- */
-export type AskUserQuestionHandler = (
-  questions: unknown[],
-) => Promise<Record<string, string>>;
-
-/**
- * Per-turn context that the canUseTool callback reads at invocation time.
- * The conversation runtime updates this before each turn starts.
- */
-export interface CanUseToolTurnContext {
-  autonomous: boolean;
-  onAskQuestion?: AskUserQuestionHandler;
-}
 
 /**
  * Resolver-backed lookup consulted by the Claude canUseTool fallback filter.
@@ -91,19 +68,12 @@ function parseMcpToolName(
 /**
  * Create a canUseTool callback for the Anthropic SDK QuerySession.
  *
- * The callback reads per-turn context from getTurnContext() at invocation time,
- * so autonomy and question handling can change between turns.
- *
  * Policy:
- * - MCP filter (when supplied): first check, denies via sanitized deny response
+ * - MCP filter (when supplied): denies via sanitized deny response
  *   without interrupting the turn.
- * - AskUserQuestion: denied in autonomous mode, delegated to onAskQuestion otherwise.
  * - All other tools: allowed (CC runs with bypassPermissions).
  */
-export function createCanUseTool(
-  getTurnContext: () => CanUseToolTurnContext | null,
-  mcpFilterDeps?: McpFilterDeps,
-): CanUseToolFn {
+export function createCanUseTool(mcpFilterDeps?: McpFilterDeps): CanUseToolFn {
   return async (
     toolName: string,
     toolInput: Record<string, unknown>,
@@ -130,47 +100,6 @@ export function createCanUseTool(
           };
         }
       }
-    }
-
-    if (toolName === "AskUserQuestion") {
-      const ctx = getTurnContext();
-
-      if (!ctx || ctx.autonomous) {
-        logger.debug("native-tooling.ask_denied", {
-          reason: ctx ? "autonomous" : "no_context",
-        });
-        return {
-          behavior: "deny",
-          message:
-            "Autonomous optimistic mode — make your best judgment and proceed without asking questions.",
-        };
-      }
-
-      const questions = toolInput.questions;
-      if (!questions || !Array.isArray(questions)) {
-        return { behavior: "allow", updatedInput: toolInput };
-      }
-
-      if (!ctx.onAskQuestion) {
-        logger.warn("native-tooling.ask_no_handler", {
-          questionCount: questions.length,
-        });
-        return {
-          behavior: "deny",
-          message: "No question handler configured — cannot ask user.",
-        };
-      }
-
-      logger.debug("native-tooling.ask_delegating", {
-        questionCount: questions.length,
-      });
-
-      const answers = await ctx.onAskQuestion(questions);
-
-      return {
-        behavior: "allow",
-        updatedInput: { ...toolInput, answers },
-      };
     }
 
     return { behavior: "allow", updatedInput: toolInput };

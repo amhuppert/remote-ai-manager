@@ -20,7 +20,6 @@ import type {
   ConversationBackendTurnInput,
   ConversationImageRef,
 } from "@/types";
-import type { AskQuestionItem } from "@/lib/schemas";
 import { dispatchConversationTurn } from "./agent-call-conversation";
 import { dispatchTaskRun } from "./agent-call-task";
 import {
@@ -50,10 +49,6 @@ export interface ConversationRuntimeResolution {
   sessionInstructions?: string[];
   imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
-  answerAskUser?: (
-    questions: AskQuestionItem[],
-  ) => Promise<Record<string, string>>;
-  resumeTokenFactory?: () => string;
   artifacts?: readonly ArtifactRef[];
   nativeFork?: ConversationBackendTurnInput["nativeFork"];
   syntheticForkSeed?: ConversationBackendTurnInput["syntheticForkSeed"];
@@ -162,12 +157,6 @@ async function executeConversationTurn(
       : {}),
     ...(resolution.onEvent !== undefined
       ? { onEvent: resolution.onEvent }
-      : {}),
-    ...(resolution.answerAskUser !== undefined
-      ? { answerAskUser: resolution.answerAskUser }
-      : {}),
-    ...(resolution.resumeTokenFactory !== undefined
-      ? { resumeTokenFactory: resolution.resumeTokenFactory }
       : {}),
     ...(resolution.artifacts !== undefined
       ? { artifacts: resolution.artifacts }

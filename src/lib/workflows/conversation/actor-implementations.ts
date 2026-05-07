@@ -28,7 +28,6 @@ import type {
   ConversationBackendEvent,
   ConversationImageRef,
   ImagePayload,
-  AskQuestionItem,
 } from "@/types";
 import { assembleUserContentBlocks } from "./assemble-user-blocks";
 import { buildUserTranscriptBlocks } from "./build-user-transcript-blocks";
@@ -43,11 +42,9 @@ import type {
   SDKResultError,
   SDKSystemMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { randomUUID } from "node:crypto";
 import {
   conversationRuntimeKey,
   getConversationRuntime,
-  type ConversationRuntimeState,
 } from "./runtime-state";
 import { createLogger } from "@/lib/logging";
 import {
@@ -360,10 +357,11 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       discoverSources: (input) => discoveryMod.discoverAllSources(input),
       globalConfigPath: () =>
         globalStoreMod.getDefaultGlobalMcpDefinitionPath(),
-      buildGatewayServers: (projectName, sessionName) =>
+      buildGatewayServers: (projectName, sessionName, conversationId) =>
         gatewayPortableConfigMod.buildSessionToolsPortableMcp(
           projectName,
           sessionName,
+          conversationId,
         ).servers,
     });
 
@@ -787,71 +785,6 @@ async function buildSyntheticForkSeed(
 // Backend runtime creation
 // ============================================================
 
-/**
- * Build an onAskQuestion callback that bridges between the backend runtime
- * and the conversation machine's question flow.
- */
-function buildOnAskQuestion(
-  runtimeState: ConversationRuntimeState,
-  identity: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  },
-  mutateConversation: ActorImplementationDeps["mutateConversation"],
-): (questions: AskQuestionItem[]) => Promise<Record<string, string>> {
-  return async (
-    questions: AskQuestionItem[],
-  ): Promise<Record<string, string>> => {
-    const questionId = randomUUID();
-
-    // Send ASK_QUESTION event to the machine
-    runtimeState.sendToMachine?.({
-      type: "ASK_QUESTION",
-      questionId,
-      questions,
-    });
-
-    // Persist question state (for crash recovery)
-    await mutateConversation(
-      identity.projectPath,
-      identity.sessionName,
-      identity.conversationId,
-      "prompt.setWaitingForInput",
-      (c) => {
-        c.status = "waiting_for_input";
-        c.pendingQuestionId = questionId;
-        c.pendingQuestions = questions as typeof c.pendingQuestions;
-      },
-    ).catch(() => {});
-
-    // Emit on prompt stream for SSE
-    runtimeState.streamEmit?.("ask-question", { questionId, questions });
-
-    // Block until user answers — use deferred promise from runtime
-    const answers = await new Promise<Record<string, string>>(
-      (resolve, reject) => {
-        runtimeState.activeQuestionResolver = { resolve, reject };
-      },
-    );
-
-    // Restore running status
-    await mutateConversation(
-      identity.projectPath,
-      identity.sessionName,
-      identity.conversationId,
-      "prompt.resumeRunning",
-      (c) => {
-        c.status = "running";
-        c.pendingQuestionId = null;
-        c.pendingQuestions = null;
-      },
-    ).catch(() => {});
-
-    return answers;
-  };
-}
-
 // ============================================================
 // Shared AgentCall dispatch
 // ============================================================
@@ -871,7 +804,6 @@ interface DispatchTurnViaAgentCallInput {
   autonomous: boolean;
   outputFormat: ConversationBackendTurnInput["outputFormat"];
   onEvent: ConversationBackendTurnInput["onEvent"];
-  onAskQuestion: ConversationBackendTurnInput["onAskQuestion"];
   nativeFork: ConversationBackendTurnInput["nativeFork"];
   syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"];
 }
@@ -974,9 +906,6 @@ async function dispatchTurnViaAgentCall(
           ? { imageRefs: input.imageRefs }
           : {}),
         onEvent: input.onEvent,
-        ...(input.onAskQuestion !== undefined
-          ? { answerAskUser: input.onAskQuestion }
-          : {}),
         ...(input.nativeFork !== undefined
           ? { nativeFork: input.nativeFork }
           : {}),
@@ -1054,7 +983,7 @@ export async function prepareTurnForMachine(
  *
  * Orchestrates turn execution using ConversationBackendRuntime:
  * - Gets or creates the backend runtime via factory
- * - Constructs ConversationBackendTurnInput with onEvent/onAskQuestion callbacks
+ * - Constructs ConversationBackendTurnInput with onEvent callback
  * - Translates backend events into SSE emit and machine events
  */
 export async function executePromptForMachine(
@@ -1074,6 +1003,7 @@ export async function executePromptForMachine(
     );
   }
   const runtimeState = runtime;
+  runtimeState.currentTurnAutonomous = input.autonomous === true;
 
   const config = await deps.readConfig();
   const projectName =
@@ -1432,19 +1362,6 @@ export async function executePromptForMachine(
     }
   };
 
-  // onAskQuestion: bridges question flow between backend and machine
-  const onAskQuestion = input.autonomous
-    ? undefined
-    : buildOnAskQuestion(
-        runtimeState,
-        {
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-        },
-        deps.mutateConversation,
-      );
-
   // Prepend debug mode instructions to the rewritten prompt text. Backends
   // receive a single string with `[Image #N]` markers; image data is carried
   // separately on `imageRefs`.
@@ -1571,7 +1488,6 @@ export async function executePromptForMachine(
       autonomous: input.autonomous ?? false,
       outputFormat: input.outputFormat,
       onEvent,
-      onAskQuestion,
       nativeFork,
       syntheticForkSeed,
     });
@@ -1621,6 +1537,7 @@ export async function executePromptForMachine(
       clearTimeout(runtimeState.timeoutHandle);
       runtimeState.timeoutHandle = undefined;
     }
+    runtimeState.currentTurnAutonomous = undefined;
     deps.unregisterAbortController(input.conversationId);
   }
 

@@ -102,7 +102,7 @@ describe("formatPushMessage", () => {
     const event: PushEvent = {
       trigger: "waiting-for-input",
       title: "Waiting for input",
-      message: "Claude needs your input",
+      message: "Agent needs your input",
       projectName: "my-project",
       sessionName: "feature-session",
     };

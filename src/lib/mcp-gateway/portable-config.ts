@@ -21,12 +21,13 @@ function buildServer(id: string, path: string): PortableMcpServerConfig {
 export function buildSessionToolsPortableMcp(
   projectName: string,
   sessionName: string,
+  conversationId: string,
 ): PortableMcpConfig {
   return {
     servers: [
       buildServer(
         "cc-session-tools",
-        `/api/projects/${encodePathSegment(projectName)}/sessions/${encodePathSegment(sessionName)}/mcp`,
+        `/api/projects/${encodePathSegment(projectName)}/sessions/${encodePathSegment(sessionName)}/conversations/${encodePathSegment(conversationId)}/mcp`,
       ),
     ],
   };

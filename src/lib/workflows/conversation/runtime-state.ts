@@ -47,6 +47,10 @@ export interface ConversationRuntimeState {
 
   /** When true, prepareTurnForMachine skips conversation lock acquisition. Used by validator agents whose runtime lifetime is owned by a parent conversation. */
   skipConversationLock?: boolean;
+
+  /** When true, the current turn was started in autonomous mode; the
+   * AskUserQuestion MCP tool returns a denial result instead of blocking. */
+  currentTurnAutonomous?: boolean;
 }
 
 const GLOBAL_KEY = "__cc_conversation_runtime_state" as const;
@@ -105,6 +109,22 @@ export function hasConversationRuntime(key: string): boolean {
 /** Get all registered conversation runtime keys (for diagnostics). */
 export function getRegisteredConversationKeys(): string[] {
   return [...getRegistry().keys()];
+}
+
+/**
+ * Reject the active question resolver for a conversation, if one is installed.
+ * Returns true when a pending resolver was rejected and cleared.
+ */
+export function rejectActiveQuestionResolver(
+  key: string,
+  reason: string,
+): boolean {
+  const state = getRegistry().get(key);
+  const resolver = state?.activeQuestionResolver;
+  if (!state || !resolver) return false;
+  state.activeQuestionResolver = undefined;
+  resolver.reject(new Error(reason));
+  return true;
 }
 
 /** Reset state for testing — do not use in production. */

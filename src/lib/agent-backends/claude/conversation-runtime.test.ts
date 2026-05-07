@@ -81,6 +81,32 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("ClaudeConversationRuntime — SDK options", () => {
+  it("disallows the native AskUserQuestion tool so the MCP version is the only path", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-disallow",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    const callArg = queryMock.mock.calls[0]![0]! as {
+      options: { disallowedTools?: string[] };
+    };
+    expect(callArg.options.disallowedTools).toContain("AskUserQuestion");
+
+    runtime.close();
+  });
+});
+
 describe("ClaudeConversationRuntime — external turn events", () => {
   it("emits external_turn_started, provider_events, and external_turn_completed for a virtual turn", async () => {
     const mock = createControllableMockQuery();

@@ -1,18 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-  createCanUseTool,
-  type CanUseToolTurnContext,
-  type McpFilterLookup,
-} from "./native-tooling";
-
-function stubTurnContext(
-  overrides: Partial<CanUseToolTurnContext> = {},
-): CanUseToolTurnContext {
-  return {
-    autonomous: false,
-    ...overrides,
-  };
-}
+import { createCanUseTool, type McpFilterLookup } from "./native-tooling";
 
 describe("createCanUseTool — MCP filter fallback", () => {
   it("denies a tool the filter reports as disabled with interrupt: false and sanitized message", async () => {
@@ -23,7 +10,7 @@ describe("createCanUseTool — MCP filter fallback", () => {
       }),
     };
 
-    const canUseTool = createCanUseTool(() => stubTurnContext(), {
+    const canUseTool = createCanUseTool({
       conversationId: "conv-1",
       mcpFilter: filter,
     });
@@ -49,7 +36,7 @@ describe("createCanUseTool — MCP filter fallback", () => {
       isToolAllowed: vi.fn().mockReturnValue({ allowed: true }),
     };
 
-    const canUseTool = createCanUseTool(() => stubTurnContext(), {
+    const canUseTool = createCanUseTool({
       conversationId: "conv-1",
       mcpFilter: filter,
     });
@@ -67,7 +54,7 @@ describe("createCanUseTool — MCP filter fallback", () => {
       isToolAllowed: vi.fn(),
     };
 
-    const canUseTool = createCanUseTool(() => stubTurnContext(), {
+    const canUseTool = createCanUseTool({
       conversationId: "conv-1",
       mcpFilter: filter,
     });
@@ -81,64 +68,31 @@ describe("createCanUseTool — MCP filter fallback", () => {
     expect(filter.isToolAllowed).not.toHaveBeenCalled();
   });
 
-  it("runs MCP filter check BEFORE AskUserQuestion handler (filter denial wins)", async () => {
+  it("denies an MCP-shaped tool name even when it matches the legacy native AskUserQuestion identifier", async () => {
     const filter: McpFilterLookup = {
       isToolAllowed: vi.fn().mockReturnValue({
         allowed: false,
         reason: "server-disabled",
       }),
     };
-    const onAskQuestion = vi.fn();
 
-    const canUseTool = createCanUseTool(
-      () =>
-        stubTurnContext({
-          autonomous: false,
-          onAskQuestion,
-        }),
-      {
-        conversationId: "conv-1",
-        mcpFilter: filter,
-      },
-    );
+    const canUseTool = createCanUseTool({
+      conversationId: "conv-1",
+      mcpFilter: filter,
+    });
 
-    // Even though this is the AskUserQuestion name, an MCP-shaped name is
-    // recognized and filtered first.
     const result = await canUseTool("mcp__askq__AskUserQuestion", {
       questions: [],
     });
 
     expect(result).toMatchObject({ behavior: "deny", interrupt: false });
-    expect(onAskQuestion).not.toHaveBeenCalled();
   });
 
   it("does not invoke MCP filter when no dep is provided (optional)", async () => {
-    const canUseTool = createCanUseTool(() => stubTurnContext());
+    const canUseTool = createCanUseTool();
 
     const result = await canUseTool("mcp__my_server__tool", {});
 
     expect(result).toEqual({ behavior: "allow", updatedInput: {} });
-  });
-
-  it("preserves AskUserQuestion behavior when the filter allows the (non-MCP-named) tool", async () => {
-    const filter: McpFilterLookup = {
-      isToolAllowed: vi.fn().mockReturnValue({ allowed: true }),
-    };
-
-    const canUseTool = createCanUseTool(
-      () =>
-        stubTurnContext({
-          autonomous: true,
-        }),
-      {
-        conversationId: "conv-1",
-        mcpFilter: filter,
-      },
-    );
-
-    const result = await canUseTool("AskUserQuestion", { questions: [] });
-
-    // Autonomous mode still denies AskUserQuestion.
-    expect(result).toMatchObject({ behavior: "deny" });
   });
 });

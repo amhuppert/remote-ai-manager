@@ -13,15 +13,17 @@ describe("mcp-gateway/portable-config", () => {
     process.env = originalEnv;
   });
 
-  it("builds the session tools portable MCP config", async () => {
+  it("builds the session tools portable MCP config with conversationId", async () => {
     const { buildSessionToolsPortableMcp } = await import("./portable-config");
 
-    expect(buildSessionToolsPortableMcp("my-project", "test session")).toEqual({
+    expect(
+      buildSessionToolsPortableMcp("my-project", "test session", "conv-42"),
+    ).toEqual({
       servers: [
         {
           id: "cc-session-tools",
           transport: "streamable-http",
-          url: "http://cc.local:4123/api/projects/my-project/sessions/test%20session/mcp",
+          url: "http://cc.local:4123/api/projects/my-project/sessions/test%20session/conversations/conv-42/mcp",
           headers: {
             Authorization: expect.stringMatching(/^Bearer /),
           },

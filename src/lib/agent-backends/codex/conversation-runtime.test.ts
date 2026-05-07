@@ -1442,7 +1442,7 @@ describe("CodexConversationRuntime", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       expect(runtime.capabilities).toEqual({
         queueWhileRunning: false,
-        askUserQuestion: false,
+        askUserQuestion: true,
         preciseFork: false,
         portableMcpAtStart: true,
         portableMcpBetweenTurns: true,

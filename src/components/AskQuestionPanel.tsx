@@ -139,7 +139,7 @@ export default function AskQuestionPanel({
   return (
     <div className="ask-question-panel">
       <div className="ask-question-header">
-        <div className="ask-question-badge">Claude needs your input</div>
+        <div className="ask-question-badge">Agent needs your input</div>
         {isMultiQuestion && (
           <div className="ask-question-nav">
             <button

@@ -36,6 +36,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     getSession: vi.fn(async () => ({
       sessionName: "test session",
       worktreePath: "/projects/test/.worktrees/test-session",
+      conversations: [{ id: "conv-1" }],
     })),
     readConfig: vi.fn(async () => makeConfig()),
     registerRoadmapTools: vi.fn(),
@@ -43,6 +44,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     registerPlannerTools: vi.fn(),
     registerNotificationTool: vi.fn(),
     registerCodexTool: vi.fn(),
+    registerAskUserQuestionTool: vi.fn(),
     ...overrides,
   };
 }
@@ -57,7 +59,7 @@ describe("mcp-gateway/session-server", () => {
     const deps = createDeps();
 
     await createSessionMcpServer(
-      { name: "my-project", session: "test session" },
+      { name: "my-project", session: "test session", conversationId: "conv-1" },
       deps,
     );
 
@@ -93,7 +95,7 @@ describe("mcp-gateway/session-server", () => {
     });
 
     await createSessionMcpServer(
-      { name: "my-project", session: "test session" },
+      { name: "my-project", session: "test session", conversationId: "conv-1" },
       deps,
     );
 
@@ -106,7 +108,7 @@ describe("mcp-gateway/session-server", () => {
     const deps = createDeps();
 
     await createSessionMcpServer(
-      { name: "my-project", session: "test session" },
+      { name: "my-project", session: "test session", conversationId: "conv-1" },
       deps,
     );
 
@@ -122,7 +124,11 @@ describe("mcp-gateway/session-server", () => {
 
     await expect(
       createSessionMcpServer(
-        { name: "missing-project", session: "test session" },
+        {
+          name: "missing-project",
+          session: "test session",
+          conversationId: "conv-1",
+        },
         deps,
       ),
     ).rejects.toThrow("Project not found");
@@ -136,9 +142,54 @@ describe("mcp-gateway/session-server", () => {
 
     await expect(
       createSessionMcpServer(
-        { name: "my-project", session: "missing session" },
+        {
+          name: "my-project",
+          session: "missing session",
+          conversationId: "conv-1",
+        },
         deps,
       ),
     ).rejects.toThrow("Session not found");
+  });
+
+  it("throws when the conversation cannot be found in the session", async () => {
+    const { createSessionMcpServer } = await import("./session-server");
+    const deps = createDeps({
+      getSession: vi.fn(async () => ({
+        sessionName: "test session",
+        worktreePath: "/projects/test/.worktrees/test-session",
+        conversations: [{ id: "other-conv" }],
+      })),
+    });
+
+    await expect(
+      createSessionMcpServer(
+        {
+          name: "my-project",
+          session: "test session",
+          conversationId: "missing-conv",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("Conversation not found");
+  });
+
+  it("registers the AskUserQuestion tool with the conversation context", async () => {
+    const { createSessionMcpServer } = await import("./session-server");
+    const deps = createDeps();
+
+    await createSessionMcpServer(
+      { name: "my-project", session: "test session", conversationId: "conv-1" },
+      deps,
+    );
+
+    expect(deps.registerAskUserQuestionTool).toHaveBeenCalledOnce();
+    const call = (deps.registerAskUserQuestionTool as ReturnType<typeof vi.fn>)
+      .mock.calls[0]!;
+    expect(call[1]).toMatchObject({
+      projectPath: "/projects/test",
+      sessionName: "test session",
+      conversationId: "conv-1",
+    });
   });
 });

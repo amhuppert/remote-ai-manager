@@ -637,64 +637,6 @@ describe("section 7.1 — native mid-turn ask-user is observable only on backend
     expect(failed).toBeNull();
   });
 
-  it("conversation dispatch surfaces a mid_turn pause when the runtime calls onAskQuestion without an inline answerer (Claude path)", async () => {
-    let onAskQuestionInvocations = 0;
-    const runtime: ConversationBackendRuntime = {
-      backend: "claude",
-      status: "alive",
-      capabilities: {
-        queueWhileRunning: true,
-        askUserQuestion: true,
-        preciseFork: true,
-        portableMcpAtStart: true,
-        portableMcpBetweenTurns: true,
-        contextWindowMetrics: true,
-      },
-      modelId: undefined,
-      reasoningEffort: undefined,
-      outputFormat: undefined,
-      async sendTurn(input) {
-        if (input.onAskQuestion) {
-          onAskQuestionInvocations += 1;
-          await input.onAskQuestion([
-            { question: "Are we done?", multiSelect: false, options: [] },
-          ]);
-        }
-        return {
-          backendRef: {
-            backend: "claude",
-            sessionId: "sess-1",
-          } as AgentSessionRef,
-          costUsd: null,
-          durationMs: 50,
-          numTurns: 1,
-          contextTokens: 5,
-          contextWindowMax: 200_000,
-          contentBlocks: [{ type: "text", text: "ok" }],
-          structuredOutput: undefined,
-          aborted: false,
-          error: null,
-        };
-      },
-      close() {},
-    };
-    const result = await dispatchConversationTurn(
-      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
-      {
-        runtime,
-        capabilityView: CLAUDE_CAPABILITY_VIEW,
-        signal: new AbortController().signal,
-        resumeTokenFactory: () => "static-resume-token",
-      },
-    );
-    expect(onAskQuestionInvocations).toBe(1);
-    expect(result.outcome.kind).toBe("paused");
-    if (result.outcome.kind === "paused") {
-      expect(result.outcome.pauseKind).toBe("mid_turn");
-      expect(result.outcome.resumeToken).toBe("static-resume-token");
-    }
-  });
-
   it("task dispatch has no mid-turn ask-user channel — Codex task results are completed or failed, never mid_turn paused", async () => {
     const runner: AgentTaskRunner = {
       backend: "codex",
