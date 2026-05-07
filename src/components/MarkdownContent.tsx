@@ -28,8 +28,6 @@ import tsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
 import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
 import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 import MermaidDiagram from "./MermaidDiagram";
-import { KiroCommandButton } from "./KiroCommandButton";
-import { KIRO_COMMAND_RE, parseKiroCommand } from "@/lib/kiro-commands";
 
 // Languages registered for syntax highlighting. Names include common aliases
 // (e.g. "ts" → typescript, "sh" → bash) so most fenced code blocks tokenize
@@ -77,81 +75,6 @@ for (const [name, lang] of Object.entries(REGISTERED_LANGUAGES)) {
 
 interface Props {
   content: string;
-}
-
-type HastNode = {
-  type: string;
-  value?: string;
-  tagName?: string;
-  properties?: Record<string, unknown>;
-  children?: HastNode[];
-};
-
-/**
- * Rehype plugin that detects /kiro:* commands in text nodes
- * and wraps them with <span data-kiro-cmd="..."> for the custom
- * span component to render KiroCommandButton.
- */
-function rehypeKiroCommands() {
-  return (tree: HastNode) => {
-    function visit(node: HastNode) {
-      if (!node.children) return;
-
-      // Skip <code> elements — inline code is handled by the custom code component
-      if (node.tagName === "code") return;
-
-      const newChildren: HastNode[] = [];
-      for (const child of node.children) {
-        if (
-          child.type === "text" &&
-          child.value &&
-          new RegExp(KIRO_COMMAND_RE.source).test(child.value)
-        ) {
-          const re = new RegExp(KIRO_COMMAND_RE.source, "g");
-          let lastIndex = 0;
-          let match: RegExpExecArray | null;
-
-          while ((match = re.exec(child.value)) !== null) {
-            // Text before match
-            if (match.index > lastIndex) {
-              newChildren.push({
-                type: "text",
-                value: child.value.slice(lastIndex, match.index),
-              });
-            }
-
-            const commandSuffix = match[1]!;
-            const commandName = `/kiro:${commandSuffix}`;
-
-            newChildren.push({
-              type: "element",
-              tagName: "span",
-              properties: {
-                "data-kiro-cmd": commandName,
-                "data-kiro-args": "",
-              },
-              children: [{ type: "text", value: match[0]! }],
-            });
-
-            lastIndex = match.index + match[0]!.length;
-          }
-
-          // Text after last match
-          if (lastIndex < child.value.length) {
-            newChildren.push({
-              type: "text",
-              value: child.value.slice(lastIndex),
-            });
-          }
-        } else {
-          visit(child);
-          newChildren.push(child);
-        }
-      }
-      node.children = newChildren;
-    }
-    visit(tree);
-  };
 }
 
 const customStyle: Record<string, React.CSSProperties> = {
@@ -244,7 +167,6 @@ export default memo(function MarkdownContent({
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeKiroCommands]}
       components={{
         code({ className, children, ...props }) {
           const rawText = String(children);
@@ -272,43 +194,11 @@ export default memo(function MarkdownContent({
             );
           }
 
-          // Inline code: check if it's a Kiro command
-          const parsed = parseKiroCommand(codeString);
-          if (parsed) {
-            return (
-              <KiroCommandButton
-                commandName={parsed.commandName}
-                args={parsed.args}
-              >
-                <code className={className} {...props}>
-                  {children}
-                </code>
-              </KiroCommandButton>
-            );
-          }
-
           return (
             <code className={className} {...props}>
               {children}
             </code>
           );
-        },
-        // Custom span: render KiroCommandButton for rehype-tagged spans
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        span({ children, node, ...props }) {
-          const cmd = (props as Record<string, unknown>)["data-kiro-cmd"];
-          if (typeof cmd === "string") {
-            const args = (props as Record<string, unknown>)["data-kiro-args"];
-            return (
-              <KiroCommandButton
-                commandName={cmd}
-                args={typeof args === "string" && args ? args : null}
-              >
-                {children}
-              </KiroCommandButton>
-            );
-          }
-          return <span {...props}>{children}</span>;
         },
       }}
     >

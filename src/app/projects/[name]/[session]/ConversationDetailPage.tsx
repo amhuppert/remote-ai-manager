@@ -148,7 +148,6 @@ import {
 import type { ImagePayload, TranscriptMessage } from "@/types";
 import CopyableId from "@/components/CopyableId";
 import InfoDetailsPopover from "./InfoDetailsPopover";
-import { KiroCommandProvider } from "@/components/KiroCommandContext";
 import MobileActionMenu from "@/components/MobileActionMenu";
 import DevServerDrawer from "@/components/DevServerDrawer";
 import { useDevServers } from "@/hooks/use-dev-servers";
@@ -1939,147 +1938,45 @@ export default function ConversationDetailPage({
                     <button onClick={dismissCancelled}>&times;</button>
                   </div>
                 )}
-                <KiroCommandProvider
-                  projectName={projectName}
-                  sessionName={sessionName}
-                  conversationId={conversationId}
-                  sendPrompt={sendPrompt}
-                  messageCount={messages.length}
-                  isBusy={isBusy}
-                  selectedModel={selectedModel}
-                >
-                  <div className="conversation" data-backend={selectedBackend}>
+                <div className="conversation" data-backend={selectedBackend}>
+                  <div
+                    ref={setCollabPinnedTopTarget}
+                    className="collab-pinned-top-target"
+                    data-visible={isCollabPassageInView ? "true" : "false"}
+                  />
+                  {messagesQuery.isPending ? (
                     <div
-                      ref={setCollabPinnedTopTarget}
-                      className="collab-pinned-top-target"
-                      data-visible={isCollabPassageInView ? "true" : "false"}
-                    />
-                    {messagesQuery.isPending ? (
-                      <div
-                        className="empty-state"
-                        style={{ padding: "var(--space-xl) 0" }}
-                      >
-                        <div className="empty-state-title">
-                          Loading conversation...
-                        </div>
+                      className="empty-state"
+                      style={{ padding: "var(--space-xl) 0" }}
+                    >
+                      <div className="empty-state-title">
+                        Loading conversation...
                       </div>
-                    ) : virtualRowCount > 0 ? (
-                      <div
-                        style={{
-                          height: virtualizer.getTotalSize(),
-                          width: "100%",
-                          position: "relative",
-                        }}
-                      >
-                        {virtualizer
-                          .getVirtualItems()
-                          .map((virtualRow: VirtualItem) => {
-                            if (
-                              collabRowVisible &&
-                              virtualRow.index === collabRowVirtualIndex
-                            ) {
-                              return (
-                                <div
-                                  key="collab-row"
-                                  ref={(el) => {
-                                    virtualizer.measureElement(el);
-                                    setCollabRowEl(el);
-                                  }}
-                                  data-index={virtualRow.index}
-                                  data-collab-row="true"
-                                  style={{
-                                    position: "absolute",
-                                    top: 0,
-                                    left: 0,
-                                    width: "100%",
-                                    transform: `translateY(${virtualRow.start}px)`,
-                                  }}
-                                >
-                                  <CollabPassage
-                                    {...collabPassageProps!}
-                                    onStop={handleCollabStop}
-                                    hideInlinePhaseStrip={isCollabRunning}
-                                    pinnedTopTarget={collabPinnedTopTarget}
-                                    pauseHandlers={
-                                      collabEnvelopeForConversation!.status ===
-                                        "paused" &&
-                                      collabEnvelopeForConversation!.pause
-                                        ?.resumeToken
-                                        ? {
-                                            drafts: collabUserAnswerDrafts,
-                                            onDraftChange: (q, value) =>
-                                              setCollabUserAnswerDraft(
-                                                projectName,
-                                                sessionName,
-                                                collabEnvelopeForConversation!
-                                                  .workflowId,
-                                                q,
-                                                value,
-                                              ),
-                                            onSubmit: () => {
-                                              const resumeToken =
-                                                collabEnvelopeForConversation!
-                                                  .pause!.resumeToken;
-                                              const userAnswers: Record<
-                                                string,
-                                                string
-                                              > = {};
-                                              for (const [
-                                                k,
-                                                v,
-                                              ] of Object.entries(
-                                                collabUserAnswerDrafts,
-                                              )) {
-                                                if (
-                                                  typeof v === "string" &&
-                                                  v.trim().length > 0
-                                                ) {
-                                                  userAnswers[k] = v.trim();
-                                                }
-                                              }
-                                              collabResumeMutation.mutate(
-                                                {
-                                                  resumeToken,
-                                                  conversationId,
-                                                  userAnswers,
-                                                },
-                                                {
-                                                  onSuccess: () => {
-                                                    clearCollabUserAnswerDrafts(
-                                                      projectName,
-                                                      sessionName,
-                                                      collabEnvelopeForConversation!
-                                                        .workflowId,
-                                                    );
-                                                  },
-                                                },
-                                              );
-                                            },
-                                            isSubmitting:
-                                              collabResumeMutation.isPending,
-                                          }
-                                        : undefined
-                                    }
-                                    onRefClick={handleCollabRefClick}
-                                  />
-                                </div>
-                              );
-                            }
-                            const messageIndex =
-                              collabRowVisible &&
-                              virtualRow.index > collabRowVirtualIndex
-                                ? virtualRow.index - 1
-                                : virtualRow.index;
-                            const msg = displayMessages[messageIndex]!;
-                            const isEditing = editingIndex === messageIndex;
-                            const isUserMsg = msg.role === "user";
+                    </div>
+                  ) : virtualRowCount > 0 ? (
+                    <div
+                      style={{
+                        height: virtualizer.getTotalSize(),
+                        width: "100%",
+                        position: "relative",
+                      }}
+                    >
+                      {virtualizer
+                        .getVirtualItems()
+                        .map((virtualRow: VirtualItem) => {
+                          if (
+                            collabRowVisible &&
+                            virtualRow.index === collabRowVirtualIndex
+                          ) {
                             return (
                               <div
-                                key={virtualRow.key}
-                                ref={virtualizer.measureElement}
+                                key="collab-row"
+                                ref={(el) => {
+                                  virtualizer.measureElement(el);
+                                  setCollabRowEl(el);
+                                }}
                                 data-index={virtualRow.index}
-                                className={`message ${msg.role}${isEditing ? " editing" : ""}`}
-                                data-msg-index={messageIndex}
+                                data-collab-row="true"
                                 style={{
                                   position: "absolute",
                                   top: 0,
@@ -2088,135 +1985,221 @@ export default function ConversationDetailPage({
                                   transform: `translateY(${virtualRow.start}px)`,
                                 }}
                               >
-                                <div className="message-role">
-                                  {isUserMsg
-                                    ? "You"
-                                    : selectedBackend === "codex"
-                                      ? "Codex"
-                                      : "Claude"}
-                                  {!isUserMsg && (msg.model || msg.effort) && (
-                                    <span className="message-meta">
+                                <CollabPassage
+                                  {...collabPassageProps!}
+                                  onStop={handleCollabStop}
+                                  hideInlinePhaseStrip={isCollabRunning}
+                                  pinnedTopTarget={collabPinnedTopTarget}
+                                  pauseHandlers={
+                                    collabEnvelopeForConversation!.status ===
+                                      "paused" &&
+                                    collabEnvelopeForConversation!.pause
+                                      ?.resumeToken
+                                      ? {
+                                          drafts: collabUserAnswerDrafts,
+                                          onDraftChange: (q, value) =>
+                                            setCollabUserAnswerDraft(
+                                              projectName,
+                                              sessionName,
+                                              collabEnvelopeForConversation!
+                                                .workflowId,
+                                              q,
+                                              value,
+                                            ),
+                                          onSubmit: () => {
+                                            const resumeToken =
+                                              collabEnvelopeForConversation!
+                                                .pause!.resumeToken;
+                                            const userAnswers: Record<
+                                              string,
+                                              string
+                                            > = {};
+                                            for (const [k, v] of Object.entries(
+                                              collabUserAnswerDrafts,
+                                            )) {
+                                              if (
+                                                typeof v === "string" &&
+                                                v.trim().length > 0
+                                              ) {
+                                                userAnswers[k] = v.trim();
+                                              }
+                                            }
+                                            collabResumeMutation.mutate(
+                                              {
+                                                resumeToken,
+                                                conversationId,
+                                                userAnswers,
+                                              },
+                                              {
+                                                onSuccess: () => {
+                                                  clearCollabUserAnswerDrafts(
+                                                    projectName,
+                                                    sessionName,
+                                                    collabEnvelopeForConversation!
+                                                      .workflowId,
+                                                  );
+                                                },
+                                              },
+                                            );
+                                          },
+                                          isSubmitting:
+                                            collabResumeMutation.isPending,
+                                        }
+                                      : undefined
+                                  }
+                                  onRefClick={handleCollabRefClick}
+                                />
+                              </div>
+                            );
+                          }
+                          const messageIndex =
+                            collabRowVisible &&
+                            virtualRow.index > collabRowVirtualIndex
+                              ? virtualRow.index - 1
+                              : virtualRow.index;
+                          const msg = displayMessages[messageIndex]!;
+                          const isEditing = editingIndex === messageIndex;
+                          const isUserMsg = msg.role === "user";
+                          return (
+                            <div
+                              key={virtualRow.key}
+                              ref={virtualizer.measureElement}
+                              data-index={virtualRow.index}
+                              className={`message ${msg.role}${isEditing ? " editing" : ""}`}
+                              data-msg-index={messageIndex}
+                              style={{
+                                position: "absolute",
+                                top: 0,
+                                left: 0,
+                                width: "100%",
+                                transform: `translateY(${virtualRow.start}px)`,
+                              }}
+                            >
+                              <div className="message-role">
+                                {isUserMsg
+                                  ? "You"
+                                  : selectedBackend === "codex"
+                                    ? "Codex"
+                                    : "Claude"}
+                                {!isUserMsg && (msg.model || msg.effort) && (
+                                  <span className="message-meta">
+                                    <span className="message-meta-sep">
+                                      &middot;
+                                    </span>
+                                    {msg.model && (
+                                      <span className="message-meta-model">
+                                        {msg.model}
+                                      </span>
+                                    )}
+                                    {msg.model && msg.effort && (
                                       <span className="message-meta-sep">
                                         &middot;
                                       </span>
-                                      {msg.model && (
-                                        <span className="message-meta-model">
-                                          {msg.model}
-                                        </span>
-                                      )}
-                                      {msg.model && msg.effort && (
-                                        <span className="message-meta-sep">
-                                          &middot;
-                                        </span>
-                                      )}
-                                      {msg.effort && (
-                                        <span
-                                          className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
-                                        >
-                                          {msg.effort}
-                                        </span>
-                                      )}
-                                    </span>
-                                  )}
-                                </div>
-                                {isEditing ? (
-                                  <MessageEditor
-                                    originalText={
-                                      (
-                                        msg.content.find(
-                                          (b) =>
-                                            b.type === "text" && "text" in b,
-                                        ) as { text: string } | undefined
-                                      )?.text ?? ""
-                                    }
-                                    messageIndex={messageIndex}
-                                    onSave={handleEditSave}
-                                    onCancel={cancelEditing}
-                                    saving={forkingIndex === messageIndex}
-                                  />
-                                ) : (
-                                  <div className="message-content">
-                                    <MessageContent
-                                      content={msg.content}
-                                      worktreePath={session?.worktreePath}
-                                    />
-                                  </div>
-                                )}
-                                {!isUserMsg &&
-                                  messageIndex === displayMessages.length - 1 &&
-                                  activeConversation && (
-                                    <DebugActionCard
-                                      projectName={projectName}
-                                      sessionName={sessionName}
-                                      conversation={activeConversation}
-                                      onSendPrompt={handleDebugPrompt}
-                                      isBusy={isBusy}
-                                    />
-                                  )}
-                                {isUserMsg && !isEditing && (
-                                  <MessageActions
-                                    messageIndex={messageIndex}
-                                    content={msg.content}
-                                    onFork={handleFork}
-                                    onEdit={startEditing}
-                                    disabled={isBusy || isReadOnly}
-                                  />
-                                )}
-                                {!isUserMsg && (
-                                  <AssistantMessageActions
-                                    content={msg.content}
-                                  />
+                                    )}
+                                    {msg.effort && (
+                                      <span
+                                        className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
+                                      >
+                                        {msg.effort}
+                                      </span>
+                                    )}
+                                  </span>
                                 )}
                               </div>
-                            );
-                          })}
+                              {isEditing ? (
+                                <MessageEditor
+                                  originalText={
+                                    (
+                                      msg.content.find(
+                                        (b) => b.type === "text" && "text" in b,
+                                      ) as { text: string } | undefined
+                                    )?.text ?? ""
+                                  }
+                                  messageIndex={messageIndex}
+                                  onSave={handleEditSave}
+                                  onCancel={cancelEditing}
+                                  saving={forkingIndex === messageIndex}
+                                />
+                              ) : (
+                                <div className="message-content">
+                                  <MessageContent
+                                    content={msg.content}
+                                    worktreePath={session?.worktreePath}
+                                  />
+                                </div>
+                              )}
+                              {!isUserMsg &&
+                                messageIndex === displayMessages.length - 1 &&
+                                activeConversation && (
+                                  <DebugActionCard
+                                    projectName={projectName}
+                                    sessionName={sessionName}
+                                    conversation={activeConversation}
+                                    onSendPrompt={handleDebugPrompt}
+                                    isBusy={isBusy}
+                                  />
+                                )}
+                              {isUserMsg && !isEditing && (
+                                <MessageActions
+                                  messageIndex={messageIndex}
+                                  content={msg.content}
+                                  onFork={handleFork}
+                                  onEdit={startEditing}
+                                  disabled={isBusy || isReadOnly}
+                                />
+                              )}
+                              {!isUserMsg && (
+                                <AssistantMessageActions
+                                  content={msg.content}
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  ) : (
+                    <div
+                      className="empty-state"
+                      style={{ padding: "var(--space-xl) 0" }}
+                    >
+                      <div className="empty-state-title">No messages yet</div>
+                      <div className="empty-state-desc">
+                        Send a prompt to start the conversation.
+                      </div>
+                    </div>
+                  )}
+                  {!hasActiveCollab &&
+                    (sending || displayStatus === "running") &&
+                    (optimisticMessages.some((m) => m.role === "assistant") ? (
+                      <div
+                        className="streaming-indicator"
+                        data-backend={selectedBackend}
+                      >
+                        <div className="typing-dots">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
                       </div>
                     ) : (
                       <div
-                        className="empty-state"
-                        style={{ padding: "var(--space-xl) 0" }}
+                        className="message assistant typing-indicator"
+                        data-backend={selectedBackend}
                       >
-                        <div className="empty-state-title">No messages yet</div>
-                        <div className="empty-state-desc">
-                          Send a prompt to start the conversation.
+                        <div className="message-role">
+                          {selectedBackend === "codex" ? "Codex" : "Claude"}
                         </div>
-                      </div>
-                    )}
-                    {!hasActiveCollab &&
-                      (sending || displayStatus === "running") &&
-                      (optimisticMessages.some(
-                        (m) => m.role === "assistant",
-                      ) ? (
-                        <div
-                          className="streaming-indicator"
-                          data-backend={selectedBackend}
-                        >
+                        <div className="message-content">
                           <div className="typing-dots">
                             <span />
                             <span />
                             <span />
                           </div>
                         </div>
-                      ) : (
-                        <div
-                          className="message assistant typing-indicator"
-                          data-backend={selectedBackend}
-                        >
-                          <div className="message-role">
-                            {selectedBackend === "codex" ? "Codex" : "Claude"}
-                          </div>
-                          <div className="message-content">
-                            <div className="typing-dots">
-                              <span />
-                              <span />
-                              <span />
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    <div ref={conversationEndRef} />
-                  </div>
-                </KiroCommandProvider>
+                      </div>
+                    ))}
+                  <div ref={conversationEndRef} />
+                </div>
               </div>
 
               {/* Focus initialization confirmation bar */}
