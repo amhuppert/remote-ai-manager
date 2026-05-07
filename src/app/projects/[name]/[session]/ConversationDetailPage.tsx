@@ -1069,45 +1069,40 @@ export default function ConversationDetailPage({
   );
 
   // --- Stick-to-bottom autoscroll ---
-  // While `stickToBottom` is true, every measurement update snaps the panel to
-  // the absolute bottom. The user un-sticks by scrolling up; scrolling back to
-  // the bottom re-sticks. This subsumes initial scroll-to-end, autoscroll on
-  // new messages, and autoscroll during streaming.
+  // When the panel is at the bottom and content arrives (new messages,
+  // streaming chunks, item remeasurement), snap to the new bottom. When the
+  // user has scrolled up, leave them where they are.
   //
-  // The single source of truth is the actual scroll position: every `scroll`
-  // event recomputes `atBottom` and updates the flag. This works uniformly
-  // for wheel, touch, keyboard, AND scrollbar drags (which fire `scroll` but
-  // not the other input events). Programmatic scrolls don't need special
-  // handling — they all land at positions that imply the correct stick state
-  // (snap/scrollToBottom → atBottom; scrollToTop/scrollToMessage → not).
-  const stickToBottomRef = useRef(true);
+  // Truth source is the *previous* scrollHeight, snapshotted at the end of
+  // each layout effect run. If current `scrollTop + clientHeight` is at or
+  // past the previous scrollHeight, the user was at the bottom before this
+  // update and we should snap. If they're below, they scrolled away.
+  //
+  // Why not a flag updated by `scroll` events? The virtualizer's own scroll
+  // listener triggers a synchronous `flushSync` rerender that runs this
+  // layout effect BEFORE any other scroll listener fires — so a flag would
+  // be stale during scroll-induced remeasurements, causing a snap-back when
+  // the user scrolls up.
+  const prevScrollHeightRef = useRef(0);
+  const lastConversationIdRef = useRef<string | null>(null);
 
-  // Re-stick on conversation change so opening any conversation always lands
-  // at the latest message, even if cached messages render before fresh ones
-  // arrive (which would otherwise cause a "lands on second-to-last" effect).
-  useEffect(() => {
-    stickToBottomRef.current = true;
-  }, [conversationId]);
-
-  useEffect(() => {
-    const el = panelBodyRef.current;
-    if (!el) return;
-    const handleScroll = () => {
-      stickToBottomRef.current =
-        el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
-    };
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  // Snap to bottom whenever virtualizer dimensions change while sticky. Use
-  // useLayoutEffect so the snap happens before paint (no flash of mid-scroll).
   useLayoutEffect(() => {
-    if (!stickToBottomRef.current) return;
     const el = panelBodyRef.current;
     if (!el) return;
+    // On conversation change, treat the next compare as "at bottom of empty
+    // content" so opening any conversation always lands at the latest message
+    // — even if cached content renders before fresh content arrives, which
+    // would otherwise leave us at second-to-last.
+    if (lastConversationIdRef.current !== conversationId) {
+      lastConversationIdRef.current = conversationId;
+      prevScrollHeightRef.current = 0;
+    }
+    const prev = prevScrollHeightRef.current;
+    const wasAtBottom = el.scrollTop + el.clientHeight >= prev - 4;
+    prevScrollHeightRef.current = el.scrollHeight;
+    if (!wasAtBottom) return;
     el.scrollTop = el.scrollHeight;
-  }, [virtualizerTotalSize, virtualRowCount]);
+  }, [virtualizerTotalSize, virtualRowCount, conversationId]);
 
   const scrollToMessage = useCallback(
     (messageIdx: number) => {
@@ -1115,7 +1110,6 @@ export default function ConversationDetailPage({
         0,
         Math.min(messageIdx, displayMessages.length - 1),
       );
-      stickToBottomRef.current = false;
       virtualizer.scrollToIndex(messageIndexToVirtualIndex(clamped), {
         align: "start",
         behavior: "smooth",
@@ -1127,14 +1121,12 @@ export default function ConversationDetailPage({
   const scrollToTop = useCallback(() => {
     const el = panelBodyRef.current;
     if (!el) return;
-    stickToBottomRef.current = false;
     el.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = panelBodyRef.current;
     if (!el) return;
-    stickToBottomRef.current = true;
     el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
