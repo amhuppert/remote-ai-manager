@@ -47,6 +47,14 @@ export interface McpComposeInput {
   effective: ReadonlyMap<string, McpEffectiveServerResolution>;
   /** CC-injected gateway server definitions, always appended last. */
   gatewayServers: readonly PortableMcpServerConfig[];
+  /** Gateway ids to reserve even when no gateway server is emitted for them.
+   *
+   * Backends that bind a gateway in-process (e.g. Claude consuming
+   * `cc-session-tools` as an `'sdk'` instance) emit no portable entry for that
+   * id but must still prevent a user-configured server from colliding with it.
+   * The composer reserves the union of `reservedGatewayIds` and the ids of any
+   * emitted gateway servers. */
+  reservedGatewayIds: readonly string[];
 }
 
 export interface McpComposeResult {
@@ -66,9 +74,12 @@ export interface McpComposeResult {
 export function composeRuntimeMcpConfig(
   input: McpComposeInput,
 ): McpComposeResult {
-  const { discovered, effective, gatewayServers } = input;
+  const { discovered, effective, gatewayServers, reservedGatewayIds } = input;
 
-  const gatewayIds = new Set(gatewayServers.map((g) => g.id));
+  const gatewayIds = new Set([
+    ...reservedGatewayIds,
+    ...gatewayServers.map((g) => g.id),
+  ]);
   const userEntries: PortableMcpServerConfig[] = [];
   const droppedServerKeys: string[] = [];
   const collidedGatewayIds: string[] = [];

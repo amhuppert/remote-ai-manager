@@ -357,12 +357,10 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       discoverSources: (input) => discoveryMod.discoverAllSources(input),
       globalConfigPath: () =>
         globalStoreMod.getDefaultGlobalMcpDefinitionPath(),
-      buildGatewayServers: (projectName, sessionName, conversationId) =>
-        gatewayPortableConfigMod.buildSessionToolsPortableMcp(
-          projectName,
-          sessionName,
-          conversationId,
-        ).servers,
+      buildGatewayServers:
+        gatewayPortableConfigMod.buildSessionToolsGatewayServers,
+      buildReservedGatewayIds:
+        gatewayPortableConfigMod.buildSessionToolsReservedIds,
     });
 
   return {

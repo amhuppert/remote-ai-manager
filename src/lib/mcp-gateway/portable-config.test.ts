@@ -123,4 +123,37 @@ describe("mcp-gateway/portable-config", () => {
       undefined,
     );
   });
+
+  it("buildSessionToolsGatewayServers returns [] for backend=claude", async () => {
+    const { buildSessionToolsGatewayServers } =
+      await import("./portable-config");
+
+    expect(
+      buildSessionToolsGatewayServers("claude", "proj", "sess", "conv"),
+    ).toEqual([]);
+  });
+
+  it("buildSessionToolsGatewayServers returns the streamable-http entry for backend=codex", async () => {
+    const { buildSessionToolsGatewayServers } =
+      await import("./portable-config");
+
+    const result = buildSessionToolsGatewayServers(
+      "codex",
+      "proj",
+      "sess",
+      "conv",
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("cc-session-tools");
+    expect(result[0]?.transport).toBe("streamable-http");
+  });
+
+  it("buildSessionToolsReservedIds returns [cc-session-tools] for both backends", async () => {
+    const { buildSessionToolsReservedIds } = await import("./portable-config");
+
+    expect(buildSessionToolsReservedIds("claude")).toEqual([
+      "cc-session-tools",
+    ]);
+    expect(buildSessionToolsReservedIds("codex")).toEqual(["cc-session-tools"]);
+  });
 });

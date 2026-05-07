@@ -30,6 +30,9 @@ export interface ComposePortableForConversationPureInput {
   overrideChain: McpOverrideChain;
   discovered: readonly McpServerDefinition[];
   gatewayServers: readonly PortableMcpServerConfig[];
+  /** Ids reserved on the user-portable surface even when no gateway server is
+   * emitted for them. Forwarded directly to `composeRuntimeMcpConfig`. */
+  reservedGatewayIds: readonly string[];
   transientPortableMcp?: PortableMcpConfig;
 }
 
@@ -51,6 +54,7 @@ export function composePortableForConversation(
     discovered: input.discovered,
     effective,
     gatewayServers: input.gatewayServers,
+    reservedGatewayIds: input.reservedGatewayIds,
   });
 
   const portable = mergeTransientLast(
@@ -98,10 +102,12 @@ export interface ComposePortableMcpDeps {
   }): Promise<McpSourceDiscoveryResult>;
   globalConfigPath(): string;
   buildGatewayServers(
+    backend: AgentBackendId,
     projectName: string,
     sessionName: string,
     conversationId: string,
   ): readonly PortableMcpServerConfig[];
+  buildReservedGatewayIds(backend: AgentBackendId): readonly string[];
 }
 
 export interface ComposePortableMcpArgs {
@@ -157,15 +163,19 @@ export function createComposePortableMcpForConversation(
     };
 
     const gatewayServers = deps.buildGatewayServers(
+      args.backend,
       args.projectName,
       args.sessionName,
       args.conversationId,
     );
 
+    const reservedGatewayIds = deps.buildReservedGatewayIds(args.backend);
+
     const { portable } = composePortableForConversation({
       overrideChain,
       discovered: discovery.servers,
       gatewayServers,
+      reservedGatewayIds,
       ...(args.transientPortableMcp !== undefined
         ? { transientPortableMcp: args.transientPortableMcp }
         : {}),

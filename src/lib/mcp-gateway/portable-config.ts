@@ -2,6 +2,7 @@ import type {
   PortableMcpConfig,
   PortableMcpServerConfig,
 } from "@/lib/agent-backends/portable-mcp";
+import type { AgentBackendId } from "@/lib/schemas";
 import { buildGatewayAuthHeaders } from "./auth";
 import { getCommandCenterOrigin } from "./origin";
 
@@ -31,6 +32,23 @@ export function buildSessionToolsPortableMcp(
       ),
     ],
   };
+}
+
+export function buildSessionToolsGatewayServers(
+  backend: AgentBackendId,
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+): readonly PortableMcpServerConfig[] {
+  if (backend === "claude") return [];
+  return buildSessionToolsPortableMcp(projectName, sessionName, conversationId)
+    .servers;
+}
+
+export function buildSessionToolsReservedIds(
+  _backend: AgentBackendId,
+): readonly string[] {
+  return ["cc-session-tools"];
 }
 
 export function buildGraphWorkflowPortableMcp(

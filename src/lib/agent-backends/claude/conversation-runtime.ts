@@ -4,6 +4,7 @@
  */
 
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { MessageContentBlock } from "@/types";
 import type {
@@ -39,8 +40,22 @@ import {
 } from "@/lib/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
 import { createPortableMcpFilterLookup } from "@/lib/mcp/portable-mcp-filter";
+import {
+  createSessionMcpServer,
+  type SessionMcpServerParams,
+} from "@/lib/mcp-gateway/session-server";
 
 const logger = createLogger("claude:conversation-runtime");
+
+const CC_SESSION_TOOLS_SERVER_NAME = "cc-session-tools";
+
+export interface ClaudeFactoryDeps {
+  createSessionMcpServer(params: SessionMcpServerParams): Promise<McpServer>;
+}
+
+export const defaultClaudeFactoryDeps: ClaudeFactoryDeps = {
+  createSessionMcpServer,
+};
 
 const KNOWN_CLAUDE_MODELS = claudeModelSchema.options;
 const KNOWN_EFFORT_LEVELS = claudeEffortLevelSchema.options;
@@ -72,6 +87,8 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   private readonly onPortableMcpApplied: (
     config: PortableMcpConfig | null,
   ) => void;
+  private readonly sessionToolsInstance: McpServer;
+  private currentTranslatedServers: Record<string, McpServerConfig> = {};
 
   constructor(
     querySession: QuerySession,
@@ -81,6 +98,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       reasoningEffort?: string;
       outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
       onPortableMcpApplied?: (config: PortableMcpConfig | null) => void;
+      sessionToolsInstance: McpServer;
     },
   ) {
     this.querySession = querySession;
@@ -89,11 +107,36 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     this.reasoningEffort = opts.reasoningEffort;
     this.outputFormat = opts.outputFormat;
     this.onPortableMcpApplied = opts.onPortableMcpApplied ?? (() => {});
+    this.sessionToolsInstance = opts.sessionToolsInstance;
 
     logger.info("claude-runtime.created", {
       conversationId: querySession.conversationId,
       modelId: opts.modelId,
     });
+  }
+
+  private mergeSessionToolsServer(
+    base: Record<string, McpServerConfig>,
+  ): Record<string, McpServerConfig> {
+    return {
+      ...base,
+      [CC_SESSION_TOOLS_SERVER_NAME]: {
+        type: "sdk",
+        name: CC_SESSION_TOOLS_SERVER_NAME,
+        instance: this.sessionToolsInstance,
+      },
+    };
+  }
+
+  async init(translated: Record<string, McpServerConfig>): Promise<void> {
+    this.currentTranslatedServers = translated;
+    const merged = this.mergeSessionToolsServer(translated);
+    await this.querySession.query.setMcpServers(merged);
+  }
+
+  private async ensureMcpServersAfterQuerySessionRecreate(): Promise<void> {
+    const merged = this.mergeSessionToolsServer(this.currentTranslatedServers);
+    await this.querySession.query.setMcpServers(merged);
   }
 
   get status(): "alive" | "dead" {
@@ -137,6 +180,8 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
           forkSession: true,
           resumeSessionAt: input.nativeFork.forkLocator ?? undefined,
         });
+
+        await this.ensureMcpServersAfterQuerySessionRecreate();
       }
     }
 
@@ -282,7 +327,10 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     }
 
     try {
-      const result = await this.querySession.query.setMcpServers(servers);
+      this.currentTranslatedServers = servers;
+      const result = await this.querySession.query.setMcpServers(
+        this.mergeSessionToolsServer(servers),
+      );
 
       this.onPortableMcpApplied(config);
 
@@ -350,11 +398,17 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     if (this._status === "dead") return;
     this._status = "dead";
 
-    logger.info("claude-runtime.close", {
-      conversationId: this.querySession.conversationId,
-    });
+    const conversationId = this.querySession.conversationId;
+    logger.info("claude-runtime.close", { conversationId });
 
     this.querySession.close();
+
+    void this.sessionToolsInstance.close().catch((err: unknown) => {
+      logger.warn("claude-runtime.session_tools_close_failed", {
+        conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 }
 
@@ -432,17 +486,24 @@ async function* wrapAsUserMessage(
 // Claude Conversation Backend Factory
 // ============================================================
 
-const claudeConversationBackendFactory: ConversationBackendFactory = {
+const claudeConversationBackendFactory = {
   backend: "claude" as AgentBackendId,
 
   async createRuntime(
     input: ConversationBackendCreateInput,
+    deps: ClaudeFactoryDeps = defaultClaudeFactoryDeps,
   ): Promise<ConversationBackendRuntime> {
     logger.info("claude-factory.create_runtime", {
       conversationId: input.conversationId,
       projectName: input.projectName,
       sessionName: input.sessionName,
       modelId: input.modelId,
+    });
+
+    const sessionToolsInstance = await deps.createSessionMcpServer({
+      name: input.projectName,
+      session: input.sessionName,
+      conversationId: input.conversationId,
     });
 
     // Mutable portable-config holder — reflects the resolver's current
@@ -527,23 +588,32 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
         onPortableMcpApplied: (config) => {
           currentPortableConfig = config;
         },
+        sessionToolsInstance,
       },
     );
 
-    if (Object.keys(translatedServers).length > 0) {
+    try {
+      await runtime.init(translatedServers);
+      logger.info("claude-runtime.initial_mcp_set", {
+        conversationId: input.conversationId,
+        serverCount: Object.keys(translatedServers).length + 1,
+      });
+    } catch (err) {
+      logger.error("claude-runtime.initial_mcp_set_failed", {
+        conversationId: input.conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       try {
-        await querySession.query.setMcpServers(translatedServers);
-        logger.info("claude-runtime.initial_mcp_set", {
-          conversationId: input.conversationId,
-          serverCount: Object.keys(translatedServers).length,
-        });
-      } catch (err) {
-        logger.error("claude-runtime.initial_mcp_set_failed", {
-          conversationId: input.conversationId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        throw err;
+        await sessionToolsInstance.close();
+      } catch {
+        // swallow secondary failure
       }
+      try {
+        querySession.close();
+      } catch {
+        // swallow secondary failure
+      }
+      throw err;
     }
 
     return runtime;
@@ -571,7 +641,7 @@ const claudeConversationBackendFactory: ConversationBackendFactory = {
       }
     }
   },
-};
+} satisfies ConversationBackendFactory;
 
 // ============================================================
 // Register factory

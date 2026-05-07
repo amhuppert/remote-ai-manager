@@ -78,6 +78,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
       discovered: [def],
       effective: new Map(),
       gatewayServers: [],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers).toHaveLength(1);
@@ -108,6 +109,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
       discovered: [def],
       effective: new Map(),
       gatewayServers: [],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers[0]).toEqual({
@@ -133,6 +135,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
         ],
       ]),
       gatewayServers: [],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers).toHaveLength(1);
@@ -154,6 +157,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
         ],
       ]),
       gatewayServers: [],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers.map((s) => s.id)).toEqual(["present"]);
@@ -174,6 +178,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
         ],
       ]),
       gatewayServers: [],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers[0]!.enabledTools).toEqual(["read"]);
@@ -197,6 +202,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
       ],
       effective: new Map(),
       gatewayServers: [],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers[0]!.enabledTools).toEqual(["read", "list"]);
@@ -214,6 +220,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
       ],
       effective: new Map(),
       gatewayServers: [],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers[0]!.enabled).toBe(false);
@@ -228,6 +235,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
       ],
       effective: new Map(),
       gatewayServers: [],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers.map((s) => s.id).sort()).toEqual([
@@ -249,6 +257,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
       ],
       effective: new Map(),
       gatewayServers: [],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers).toHaveLength(0);
@@ -269,6 +278,7 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
         gateway("cc-session-tools"),
         gateway("cc-graph-workflow"),
       ],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers.map((s) => s.id)).toEqual([
@@ -284,6 +294,7 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
       discovered: [],
       effective: new Map(),
       gatewayServers: [gw],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers[0]).toBe(gw);
@@ -301,6 +312,7 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
       ],
       effective: new Map(),
       gatewayServers: [gw],
+      reservedGatewayIds: [],
     });
 
     const ids = result.portable.servers.map((s) => s.id);
@@ -320,6 +332,7 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
         gateway("cc-session-tools"),
         gateway("cc-graph-workflow"),
       ],
+      reservedGatewayIds: [],
     });
 
     expect(result.reservedServerIds).toEqual([
@@ -333,11 +346,30 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
       discovered: [],
       effective: new Map(),
       gatewayServers: [gateway("cc-session-tools")],
+      reservedGatewayIds: [],
     });
 
     expect(result.portable.servers.map((s) => s.id)).toEqual([
       "cc-session-tools",
     ]);
     expect(result.reservedServerIds).toEqual(["cc-session-tools"]);
+  });
+
+  it("reserves explicit gateway ids even when no gateway server is emitted, dropping a colliding user-configured server", () => {
+    const result = composeRuntimeMcpConfig({
+      discovered: [
+        mkDefinition({
+          serverKey: "user-collision",
+          nativeId: "cc-session-tools",
+        }),
+        mkDefinition({ serverKey: "keeper", nativeId: "keeper" }),
+      ],
+      effective: new Map(),
+      gatewayServers: [],
+      reservedGatewayIds: ["cc-session-tools"],
+    });
+
+    expect(result.portable.servers.map((s) => s.id)).toEqual(["keeper"]);
+    expect(result.collidedGatewayIds).toEqual(["cc-session-tools"]);
   });
 });

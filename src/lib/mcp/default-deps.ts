@@ -9,7 +9,10 @@
 import { createStateManager } from "@/lib/state";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
-import { buildSessionToolsPortableMcp } from "@/lib/mcp-gateway/portable-config";
+import {
+  buildSessionToolsGatewayServers,
+  buildSessionToolsReservedIds,
+} from "@/lib/mcp-gateway/portable-config";
 import { getProjectDisplayName } from "@/lib/project-resolver";
 import type { McpOverrides, McpToolInventoryResult } from "@/lib/schemas";
 
@@ -146,13 +149,8 @@ const composePortableForConversation = createComposePortableMcpForConversation({
   },
   discoverSources: discoverAllSources,
   globalConfigPath: () => getDefaultGlobalMcpDefinitionPath(),
-  buildGatewayServers(projectName, sessionName, conversationId) {
-    return buildSessionToolsPortableMcp(
-      projectName,
-      sessionName,
-      conversationId,
-    ).servers;
-  },
+  buildGatewayServers: buildSessionToolsGatewayServers,
+  buildReservedGatewayIds: buildSessionToolsReservedIds,
 });
 
 export const defaultMcpRuntimeApplyService: McpRuntimeApplyService =

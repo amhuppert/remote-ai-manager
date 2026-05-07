@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 const queryMock = vi.hoisted(() => vi.fn());
 
@@ -9,8 +10,43 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 
 vi.mock("@/lib/sdk-env", () => ({}));
 
-import { claudeConversationBackendFactory } from "./conversation-runtime";
+import {
+  claudeConversationBackendFactory,
+  type ClaudeFactoryDeps,
+} from "./conversation-runtime";
 import type { ConversationBackendEvent } from "../conversation";
+
+function createFakeMcpServer(): {
+  instance: McpServer;
+  closeSpy: ReturnType<typeof vi.fn>;
+} {
+  const closeSpy = vi.fn().mockResolvedValue(undefined);
+  const instance = { close: closeSpy } as unknown as McpServer;
+  return { instance, closeSpy };
+}
+
+function depsWithFakeServer(): {
+  deps: ClaudeFactoryDeps;
+  instance: McpServer;
+  closeSpy: ReturnType<typeof vi.fn>;
+  createSpy: ReturnType<typeof vi.fn>;
+} {
+  const { instance, closeSpy } = createFakeMcpServer();
+  const createSpy = vi.fn().mockResolvedValue(instance);
+  return {
+    deps: { createSessionMcpServer: createSpy },
+    instance,
+    closeSpy,
+    createSpy,
+  };
+}
+
+const createRuntimeWithFakeDeps: typeof claudeConversationBackendFactory.createRuntime =
+  (input) =>
+    claudeConversationBackendFactory.createRuntime(
+      input,
+      depsWithFakeServer().deps,
+    );
 
 function createControllableMockQuery() {
   const messages: SDKMessage[] = [];
@@ -86,7 +122,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-disallow",
       projectPath: "/project",
       projectName: "proj",
@@ -114,7 +150,7 @@ describe("ClaudeConversationRuntime — external turn events", () => {
 
     const externalEvents: ConversationBackendEvent[] = [];
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-ext-1",
       projectPath: "/project",
       projectName: "proj",
@@ -227,7 +263,7 @@ describe("ClaudeConversationRuntime — external turn events", () => {
 
     const externalEvents: ConversationBackendEvent[] = [];
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-ext-2",
       projectPath: "/project",
       projectName: "proj",
@@ -329,7 +365,7 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", ()
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-idle",
       projectPath: "/project",
       projectName: "proj",
@@ -351,9 +387,9 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", ()
     });
 
     expect(result.disposition).toBe("applied_now");
-    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
     const passed = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0] as Record<string, unknown>;
+      .calls[1]![0] as Record<string, unknown>;
     expect(passed).toHaveProperty("idle-stdio");
 
     runtime.close();
@@ -363,7 +399,7 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", ()
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-busy",
       projectPath: "/project",
       projectName: "proj",
@@ -398,7 +434,9 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", ()
     });
 
     expect(result.disposition).toBe("deferred_to_next_turn");
-    expect(mock.query.setMcpServers).not.toHaveBeenCalled();
+    // Initial setMcpServers from createRuntime is the only call; the deferred
+    // apply does not invoke setMcpServers again.
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
 
     // Drain the turn so the test doesn't leak a pending promise.
     mock.pushMessage({
@@ -439,7 +477,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-wire-1",
       projectPath: "/project",
       projectName: "proj",
@@ -477,7 +515,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-wire-2",
       projectPath: "/project",
       projectName: "proj",
@@ -511,7 +549,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-wire-3",
       projectPath: "/project",
       projectName: "proj",
@@ -556,7 +594,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-wire-4",
       projectPath: "/project",
       projectName: "proj",
@@ -621,7 +659,7 @@ describe("ClaudeConversationRuntime — initial MCP policy extraction", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    await claudeConversationBackendFactory.createRuntime({
+    await createRuntimeWithFakeDeps({
       conversationId: "conv-init-policy",
       projectPath: "/project",
       projectName: "proj",
@@ -657,22 +695,241 @@ describe("ClaudeConversationRuntime — initial MCP policy extraction", () => {
     });
   });
 
-  it("does not invoke setMcpServers when the portable config carries no servers", async () => {
+  it("invokes setMcpServers exactly once even when the portable config carries no user servers, with cc-session-tools as the only entry", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    await claudeConversationBackendFactory.createRuntime({
-      conversationId: "conv-init-empty",
-      projectPath: "/project",
-      projectName: "proj",
-      sessionName: "sess",
-      worktreePath: "/project/.worktrees/sess",
-      persistedRef: null,
-      sessionInstructions: [],
-      tooling: {},
+    const { deps, instance } = depsWithFakeServer();
+
+    await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-init-empty",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as Record<
+      string,
+      { type?: string; name?: string; instance?: McpServer }
+    >;
+    expect(Object.keys(payload)).toEqual(["cc-session-tools"]);
+    const entry = payload["cc-session-tools"]!;
+    expect(entry.type).toBe("sdk");
+    expect(entry.name).toBe("cc-session-tools");
+    expect(entry.instance).toBe(instance);
+  });
+});
+
+describe("ClaudeConversationRuntime — cc-session-tools sdk entry", () => {
+  it("merges the cc-session-tools sdk entry with user servers on initial setMcpServers", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const { deps, instance } = depsWithFakeServer();
+
+    await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-merge-init",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {
+          portableMcp: {
+            servers: [{ id: "user-srv", transport: "stdio", command: "node" }],
+          },
+        },
+      },
+      deps,
+    );
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as Record<
+      string,
+      { type?: string; name?: string; instance?: McpServer }
+    >;
+    expect(Object.keys(payload).sort()).toEqual([
+      "cc-session-tools",
+      "user-srv",
+    ]);
+    const entry = payload["cc-session-tools"]!;
+    expect(entry.type).toBe("sdk");
+    expect(entry.name).toBe("cc-session-tools");
+    expect(entry.instance).toBe(instance);
+  });
+
+  it("re-merges cc-session-tools on subsequent applyPortableMcpConfig calls", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const { deps, instance } = depsWithFakeServer();
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-merge-apply",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    await runtime.applyPortableMcpConfig!({
+      servers: [{ id: "applied-srv", transport: "stdio", command: "node" }],
     });
 
-    expect(mock.query.setMcpServers).not.toHaveBeenCalled();
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
+    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
+      .calls[1]![0] as Record<
+      string,
+      { type?: string; name?: string; instance?: McpServer }
+    >;
+    expect(Object.keys(payload).sort()).toEqual([
+      "applied-srv",
+      "cc-session-tools",
+    ]);
+    expect(payload["cc-session-tools"]?.instance).toBe(instance);
+  });
+
+  it("reapplies cc-session-tools after the native-fork QuerySession recreation", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const { deps, instance } = depsWithFakeServer();
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-fork",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {
+          portableMcp: {
+            servers: [
+              { id: "pre-fork-srv", transport: "stdio", command: "node" },
+            ],
+          },
+        },
+      },
+      deps,
+    );
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "fork",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+      nativeFork: {
+        sourceRef: { backend: "claude", sessionId: "src-sess" },
+        forkLocator: null,
+      },
+    });
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "fork-1",
+      uuid: "fk1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await turnPromise;
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
+    const reapplied = (mock.query.setMcpServers as ReturnType<typeof vi.fn>)
+      .mock.calls[1]![0] as Record<
+      string,
+      { type?: string; name?: string; instance?: McpServer }
+    >;
+    expect(Object.keys(reapplied).sort()).toEqual([
+      "cc-session-tools",
+      "pre-fork-srv",
+    ]);
+    expect(reapplied["cc-session-tools"]?.instance).toBe(instance);
+
+    runtime.close();
+  });
+
+  it("closes the cc-session-tools instance and the QuerySession when initial setMcpServers rejects", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const setRejection = new Error("setMcpServers failed");
+    (
+      mock.query.setMcpServers as ReturnType<typeof vi.fn>
+    ).mockRejectedValueOnce(setRejection);
+
+    const { deps, closeSpy: instanceClose } = depsWithFakeServer();
+
+    await expect(
+      claudeConversationBackendFactory.createRuntime(
+        {
+          conversationId: "conv-init-fail",
+          projectPath: "/project",
+          projectName: "proj",
+          sessionName: "sess",
+          worktreePath: "/project/.worktrees/sess",
+          persistedRef: null,
+          sessionInstructions: [],
+          tooling: {},
+        },
+        deps,
+      ),
+    ).rejects.toBe(setRejection);
+
+    expect(instanceClose).toHaveBeenCalledTimes(1);
+    expect(mock.query.close).toHaveBeenCalled();
+  });
+
+  it("closes the cc-session-tools instance when runtime.close() is called", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const { deps, closeSpy: instanceClose } = depsWithFakeServer();
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-close",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    runtime.close();
+    await Promise.resolve();
+    expect(instanceClose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -681,7 +938,7 @@ describe("ClaudeConversationRuntime — error result classification", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-err-1",
       projectPath: "/project",
       projectName: "proj",
@@ -728,7 +985,7 @@ describe("ClaudeConversationRuntime — error result classification", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const runtime = await claudeConversationBackendFactory.createRuntime({
+    const runtime = await createRuntimeWithFakeDeps({
       conversationId: "conv-err-2",
       projectPath: "/project",
       projectName: "proj",
