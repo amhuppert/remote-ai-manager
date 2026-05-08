@@ -370,7 +370,9 @@ describe("DebugActionCard Retry CTA", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Mark Reproduced" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Mark Reproduced" }),
+    ).toBeNull();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Exit Debug" })).toBeTruthy();
   });

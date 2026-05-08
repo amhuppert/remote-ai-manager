@@ -119,7 +119,8 @@ export const conversationMachine = setup({
         context.lastResult?.structuredOutput,
       );
       return (
-        parsed.success && parsed.data.recommendedNextStep === "more_instrumentation"
+        parsed.success &&
+        parsed.data.recommendedNextStep === "more_instrumentation"
       );
     },
   },

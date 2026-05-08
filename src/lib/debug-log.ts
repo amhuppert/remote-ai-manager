@@ -179,9 +179,7 @@ export function verifyCleanupAgainstManifest(
     failedConditions.push("grepVerificationPassed must be true");
   }
   if (!cleanup.acknowledgesManifestDeletionContract) {
-    failedConditions.push(
-      "acknowledgesManifestDeletionContract must be true",
-    );
+    failedConditions.push("acknowledgesManifestDeletionContract must be true");
   }
 
   let manifest: DebugInstrumentationManifest | null;
