@@ -4,19 +4,16 @@ import {
   useState,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useMemo,
   lazy,
   Suspense,
 } from "react";
 import {
-  classifyScrollPosition,
   computeCurrentMessageIndex,
-  estimateVirtualRowSize,
-  findTopmostVisibleItem,
   getNextMessageIndex,
   getPrevMessageIndex,
+  type ScrollEdgePosition,
 } from "@/lib/conversation-nav";
 import { useRouter } from "next/navigation";
 import {
@@ -140,11 +137,6 @@ import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
 import ImageAttachmentPreview from "./ImageAttachmentPreview";
-import {
-  useVirtualizer,
-  type VirtualItem,
-  type Virtualizer,
-} from "@tanstack/react-virtual";
 import type { ImagePayload, TranscriptMessage } from "@/types";
 import CopyableId from "@/components/CopyableId";
 import InfoDetailsPopover from "./InfoDetailsPopover";
@@ -168,6 +160,15 @@ import CollabConfigRow from "./collab/CollabConfigRow";
 import CollabPassage, { isCollabPassageTerminal } from "./collab/CollabPassage";
 import { envelopeToCollabPassageProps } from "./collab/envelope-adapter";
 import { resolveRefToDocumentId } from "./collab/ref-resolver";
+import ConversationVirtuosoList, {
+  type ConversationVirtuosoListProps,
+  type VirtuosoHandle,
+} from "./ConversationVirtuosoList";
+import {
+  buildConversationRows,
+  isCollabTriggerMessage,
+  topmostMessageIndexForRange,
+} from "./conversation-rows";
 import type {
   CollaborationArtifact,
   CollaborationReference,
@@ -287,18 +288,6 @@ function transcriptText(message: TranscriptMessage): string | null {
       (block): block is { type: "text"; text: string } => block.type === "text",
     )?.text ?? null
   );
-}
-
-function isCollabTriggerMessage(message: TranscriptMessage): boolean {
-  for (const block of message.content) {
-    if (block.type === "text" && hasCollabPrefix(block.text.trim())) {
-      return true;
-    }
-    if (block.type === "command" && block.name === "/collab") {
-      return true;
-    }
-  }
-  return false;
 }
 
 function latestFinalAnswerText(
@@ -561,7 +550,10 @@ export default function ConversationDetailPage({
     projectName,
     sessionName,
   );
-  const referenceDocuments = referenceDocumentsQuery.data ?? [];
+  const referenceDocuments = useMemo(
+    () => referenceDocumentsQuery.data ?? [],
+    [referenceDocumentsQuery.data],
+  );
 
   const handleCollabRefClick = useCallback(
     (ref: CollaborationReference) => {
@@ -722,7 +714,7 @@ export default function ConversationDetailPage({
 
   // --- Refs for message navigation ---
   const panelBodyRef = useRef<HTMLDivElement>(null);
-  const conversationEndRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   const [collabPinnedTopTarget, setCollabPinnedTopTarget] =
     useState<HTMLDivElement | null>(null);
@@ -736,7 +728,6 @@ export default function ConversationDetailPage({
       return;
     }
     const root = panelBodyRef.current;
-    if (!root) return;
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
@@ -875,190 +866,89 @@ export default function ConversationDetailPage({
     conversationId,
   ]);
 
-  // --- Virtualizer for conversation messages ---
+  // --- Virtuoso conversation rows ---
 
-  const collabRowVisible = collabEnvelopeForConversation !== undefined;
+  const rows = useMemo(
+    () => buildConversationRows(displayMessages, collabEnvelopeForConversation),
+    [displayMessages, collabEnvelopeForConversation],
+  );
+  const programmaticNavTargetRef = useRef<number | null>(null);
+  const clearProgrammaticNavTargetRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
 
-  // Anchor the CollabPassage row directly after the most recent user message
-  // whose text begins with `/collab`. When the trigger message hasn't yet
-  // landed in the transcript (race during start), fall back to appending the
-  // row at the end of the list.
-  const collabAnchorIndex = useMemo(() => {
-    if (!collabRowVisible) return -1;
-    for (let i = displayMessages.length - 1; i >= 0; i--) {
-      const msg = displayMessages[i];
-      if (!msg || msg.role !== "user") continue;
-      if (isCollabTriggerMessage(msg)) return i;
+  useEffect(() => {
+    return () => {
+      if (clearProgrammaticNavTargetRef.current) {
+        clearTimeout(clearProgrammaticNavTargetRef.current);
+      }
+    };
+  }, []);
+
+  const holdProgrammaticNavTarget = useCallback((messageIndex: number) => {
+    programmaticNavTargetRef.current = messageIndex;
+    if (clearProgrammaticNavTargetRef.current) {
+      clearTimeout(clearProgrammaticNavTargetRef.current);
     }
-    return -1;
-  }, [collabRowVisible, displayMessages]);
-
-  const collabRowVirtualIndex = useMemo(() => {
-    if (!collabRowVisible) return -1;
-    return collabAnchorIndex >= 0
-      ? collabAnchorIndex + 1
-      : displayMessages.length;
-  }, [collabRowVisible, collabAnchorIndex, displayMessages.length]);
-
-  const virtualRowCount = displayMessages.length + (collabRowVisible ? 1 : 0);
-
-  // Convert a virtual row index (which may include the collab row) to the
-  // underlying message index in `displayMessages`. The collab row sits between
-  // its anchor user message and the next message, so virtual indices above it
-  // are shifted by one.
-  const virtualIndexToMessageIndex = useCallback(
-    (virtualIdx: number): number => {
-      if (!collabRowVisible) return virtualIdx;
-      if (virtualIdx < collabRowVirtualIndex) return virtualIdx;
-      if (virtualIdx === collabRowVirtualIndex) {
-        return collabAnchorIndex >= 0
-          ? collabAnchorIndex
-          : Math.max(0, displayMessages.length - 1);
-      }
-      return virtualIdx - 1;
-    },
-    [
-      collabRowVisible,
-      collabRowVirtualIndex,
-      collabAnchorIndex,
-      displayMessages.length,
-    ],
-  );
-
-  // Per-row size cache keyed by virtualizer item key. `measureElement` reads
-  // and writes here so the entry-absent path (initial mount before the
-  // ResizeObserver fires) can return a cached or estimated height instead of
-  // reading `offsetHeight` and triggering forced layout.
-  const rowSizeCacheRef = useRef<Map<string | number | bigint, number>>(
-    new Map(),
-  );
-
-  const isCollabVirtualIndex = useCallback(
-    (i: number): boolean => collabRowVisible && i === collabRowVirtualIndex,
-    [collabRowVisible, collabRowVirtualIndex],
-  );
-
-  const getVirtualItemKey = useCallback(
-    (i: number): string => {
-      if (isCollabVirtualIndex(i)) return "collab-row";
-      const messageIdx = virtualIndexToMessageIndex(i);
-      const msg = displayMessages[messageIdx];
-      if (!msg) return `idx-${i}`;
-      return `${messageIdx}:${msg.role}:${msg.timestamp ?? "no-ts"}`;
-    },
-    [isCollabVirtualIndex, virtualIndexToMessageIndex, displayMessages],
-  );
-
-  const estimateRowSize = useCallback(
-    (i: number): number => {
-      if (isCollabVirtualIndex(i))
-        return estimateVirtualRowSize({ kind: "collab" });
-      const messageIdx = virtualIndexToMessageIndex(i);
-      const msg = displayMessages[messageIdx];
-      if (!msg) return estimateVirtualRowSize({ kind: "collab" });
-      return estimateVirtualRowSize({ kind: "message", message: msg });
-    },
-    [isCollabVirtualIndex, virtualIndexToMessageIndex, displayMessages],
-  );
-
-  const measureRow = useCallback(
-    (
-      element: Element,
-      entry: ResizeObserverEntry | undefined,
-      instance: Virtualizer<HTMLDivElement, Element>,
-    ): number => {
-      const indexFromAttr = Number(
-        (element as HTMLElement).getAttribute("data-index"),
-      );
-      const safeIndex = Number.isFinite(indexFromAttr) ? indexFromAttr : 0;
-      const key: string | number | bigint = instance.options.getItemKey
-        ? instance.options.getItemKey(safeIndex)
-        : safeIndex;
-
-      if (entry) {
-        const box = entry.borderBoxSize?.[0];
-        const measured = box
-          ? Math.round(box.blockSize)
-          : Math.round(entry.contentRect.height);
-        rowSizeCacheRef.current.set(key, measured);
-        return measured;
-      }
-
-      const cached = rowSizeCacheRef.current.get(key);
-      const estimate = estimateRowSize(safeIndex);
-      return Math.max(cached ?? 0, estimate);
-    },
-    [estimateRowSize],
-  );
-
-  const virtualizer = useVirtualizer({
-    count: virtualRowCount,
-    getScrollElement: () => panelBodyRef.current,
-    estimateSize: estimateRowSize,
-    getItemKey: getVirtualItemKey,
-    measureElement: measureRow,
-    overscan: 5,
-    gap: 24,
-  });
-
-  const messageIndexToVirtualIndex = useCallback(
-    (messageIdx: number): number => {
-      if (!collabRowVisible) return messageIdx;
-      // Messages strictly after the collab anchor are pushed down by one row.
-      if (collabAnchorIndex >= 0 && messageIdx > collabAnchorIndex) {
-        return messageIdx + 1;
-      }
-      return messageIdx;
-    },
-    [collabRowVisible, collabAnchorIndex],
-  );
+    clearProgrammaticNavTargetRef.current = setTimeout(() => {
+      programmaticNavTargetRef.current = null;
+      clearProgrammaticNavTargetRef.current = null;
+    }, 1500);
+  }, []);
 
   // --- Scroll-derived navigation state ---
   // `currentMessageIndex` is computed from the actual scroll position so the
-  // counter always reflects what the user sees. Two pieces of state:
-  //   - `topmostMessageIndex`: which message is at the top of the viewport
-  //   - `edgePosition`: top / middle / bottom of scroll range
-  // Updates fire on scroll events and whenever the virtualizer re-measures.
+  // counter always reflects what the user sees. Virtuoso reports row ranges
+  // and edge transitions, while message navigation remains message-index based.
   const [navState, setNavState] = useState<{
     topmostMessageIndex: number;
-    edgePosition: "top" | "middle" | "bottom";
-  }>({ topmostMessageIndex: 0, edgePosition: "top" });
+    edgePosition: ScrollEdgePosition;
+    atBottom: boolean;
+    atTop: boolean;
+  }>({
+    topmostMessageIndex: 0,
+    edgePosition: "top",
+    atBottom: false,
+    atTop: true,
+  });
 
-  const updateNavState = useCallback(() => {
-    const el = panelBodyRef.current;
-    if (!el) return;
-    const items = virtualizer.getVirtualItems();
-    const edgePosition = classifyScrollPosition({
-      scrollTop: el.scrollTop,
-      scrollHeight: el.scrollHeight,
-      clientHeight: el.clientHeight,
-    });
-    const topmostItem = findTopmostVisibleItem(items, el.scrollTop);
-    const topmostMessageIndex = topmostItem
-      ? virtualIndexToMessageIndex(topmostItem.index)
-      : 0;
+  const handleRangeChanged = useCallback(
+    ({ startIndex }: { startIndex: number; endIndex: number }) => {
+      const topmostMessageIndex =
+        programmaticNavTargetRef.current ??
+        topmostMessageIndexForRange(rows, startIndex);
+      setNavState((prev) =>
+        prev.topmostMessageIndex === topmostMessageIndex
+          ? prev
+          : { ...prev, topmostMessageIndex },
+      );
+    },
+    [rows],
+  );
+
+  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
     setNavState((prev) =>
-      prev.edgePosition === edgePosition &&
-      prev.topmostMessageIndex === topmostMessageIndex
+      prev.atBottom === atBottom
         ? prev
-        : { edgePosition, topmostMessageIndex },
+        : {
+            ...prev,
+            atBottom,
+            edgePosition: atBottom ? "bottom" : prev.atTop ? "top" : "middle",
+          },
     );
-  }, [virtualizer, virtualIndexToMessageIndex]);
+  }, []);
 
-  useEffect(() => {
-    const el = panelBodyRef.current;
-    if (!el) return;
-    el.addEventListener("scroll", updateNavState, { passive: true });
-    updateNavState();
-    return () => el.removeEventListener("scroll", updateNavState);
-  }, [updateNavState]);
-
-  // Re-derive nav state when virtualizer measurements change (item heights
-  // settle, new content arrives, etc.). `getTotalSize()` is a stable proxy.
-  const virtualizerTotalSize = virtualizer.getTotalSize();
-  useEffect(() => {
-    updateNavState();
-  }, [virtualizerTotalSize, virtualRowCount, updateNavState]);
+  const handleAtTopStateChange = useCallback((atTop: boolean) => {
+    setNavState((prev) =>
+      prev.atTop === atTop
+        ? prev
+        : {
+            ...prev,
+            atTop,
+            edgePosition: prev.atBottom ? "bottom" : atTop ? "top" : "middle",
+          },
+    );
+  }, []);
 
   const currentMessageIndex = useMemo(
     () =>
@@ -1070,67 +960,53 @@ export default function ConversationDetailPage({
     [navState, displayMessages.length],
   );
 
-  // --- Stick-to-bottom autoscroll ---
-  // When the panel is at the bottom and content arrives (new messages,
-  // streaming chunks, item remeasurement), snap to the new bottom. When the
-  // user has scrolled up, leave them where they are.
-  //
-  // Truth source is the *previous* scrollHeight, snapshotted at the end of
-  // each layout effect run. If current `scrollTop + clientHeight` is at or
-  // past the previous scrollHeight, the user was at the bottom before this
-  // update and we should snap. If they're below, they scrolled away.
-  //
-  // Why not a flag updated by `scroll` events? The virtualizer's own scroll
-  // listener triggers a synchronous `flushSync` rerender that runs this
-  // layout effect BEFORE any other scroll listener fires — so a flag would
-  // be stale during scroll-induced remeasurements, causing a snap-back when
-  // the user scrolls up.
-  const prevScrollHeightRef = useRef(0);
-  const lastConversationIdRef = useRef<string | null>(null);
-
-  useLayoutEffect(() => {
-    const el = panelBodyRef.current;
-    if (!el) return;
-    // On conversation change, treat the next compare as "at bottom of empty
-    // content" so opening any conversation always lands at the latest message
-    // — even if cached content renders before fresh content arrives, which
-    // would otherwise leave us at second-to-last.
-    if (lastConversationIdRef.current !== conversationId) {
-      lastConversationIdRef.current = conversationId;
-      prevScrollHeightRef.current = 0;
-    }
-    const prev = prevScrollHeightRef.current;
-    const wasAtBottom = el.scrollTop + el.clientHeight >= prev - 4;
-    prevScrollHeightRef.current = el.scrollHeight;
-    if (!wasAtBottom) return;
-    el.scrollTop = el.scrollHeight;
-  }, [virtualizerTotalSize, virtualRowCount, conversationId]);
-
   const scrollToMessage = useCallback(
     (messageIdx: number) => {
       const clamped = Math.max(
         0,
         Math.min(messageIdx, displayMessages.length - 1),
       );
-      virtualizer.scrollToIndex(messageIndexToVirtualIndex(clamped), {
+      const rowIndex = rows.findIndex(
+        (row) => row.kind === "message" && row.messageIndex === clamped,
+      );
+      if (rowIndex === -1) return;
+      holdProgrammaticNavTarget(clamped);
+      setNavState((prev) => ({
+        ...prev,
+        topmostMessageIndex: clamped,
+        edgePosition: clamped === 0 ? "top" : "middle",
+        atTop: clamped === 0,
+        atBottom: false,
+      }));
+      virtuosoRef.current?.scrollToIndex({
+        index: rowIndex,
         align: "start",
         behavior: "smooth",
       });
     },
-    [displayMessages.length, messageIndexToVirtualIndex, virtualizer],
+    [displayMessages.length, holdProgrammaticNavTarget, rows],
   );
 
   const scrollToTop = useCallback(() => {
-    const el = panelBodyRef.current;
-    if (!el) return;
-    el.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+    holdProgrammaticNavTarget(0);
+    virtuosoRef.current?.scrollToIndex({
+      index: 0,
+      align: "start",
+      behavior: "smooth",
+    });
+  }, [holdProgrammaticNavTarget]);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    const el = panelBodyRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior });
-  }, []);
+  const scrollToBottom = useCallback(
+    (behavior: "auto" | "smooth" = "smooth") => {
+      holdProgrammaticNavTarget(Math.max(0, displayMessages.length - 1));
+      virtuosoRef.current?.scrollToIndex({
+        index: "LAST",
+        align: "end",
+        behavior,
+      });
+    },
+    [displayMessages.length, holdProgrammaticNavTarget],
+  );
 
   const handleFirstMessage = useCallback(() => {
     if (displayMessages.length === 0) return;
@@ -1664,6 +1540,220 @@ export default function ConversationDetailPage({
           ? "amber"
           : "";
 
+  const renderMessageRow = useCallback<
+    ConversationVirtuosoListProps["renderMessage"]
+  >(
+    ({ row }) => {
+      const { messageIndex, msg } = row;
+      const isEditing = editingIndex === messageIndex;
+      const isUserMsg = msg.role === "user";
+      return (
+        <div
+          className={`message ${msg.role}${isEditing ? " editing" : ""}`}
+          data-msg-index={messageIndex}
+        >
+          <div className="message-role">
+            {isUserMsg
+              ? "You"
+              : selectedBackend === "codex"
+                ? "Codex"
+                : "Claude"}
+            {!isUserMsg && (msg.model || msg.effort) && (
+              <span className="message-meta">
+                <span className="message-meta-sep">&middot;</span>
+                {msg.model && (
+                  <span className="message-meta-model">{msg.model}</span>
+                )}
+                {msg.model && msg.effort && (
+                  <span className="message-meta-sep">&middot;</span>
+                )}
+                {msg.effort && (
+                  <span
+                    className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
+                  >
+                    {msg.effort}
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
+          {isEditing ? (
+            <MessageEditor
+              originalText={
+                (
+                  msg.content.find((b) => b.type === "text" && "text" in b) as
+                    | { text: string }
+                    | undefined
+                )?.text ?? ""
+              }
+              messageIndex={messageIndex}
+              onSave={handleEditSave}
+              onCancel={cancelEditing}
+              saving={forkingIndex === messageIndex}
+            />
+          ) : (
+            <div className="message-content">
+              <MessageContent
+                content={msg.content}
+                worktreePath={session?.worktreePath}
+              />
+            </div>
+          )}
+          {!isUserMsg &&
+            messageIndex === displayMessages.length - 1 &&
+            activeConversation && (
+              <DebugActionCard
+                projectName={projectName}
+                sessionName={sessionName}
+                conversation={activeConversation}
+                onSendPrompt={handleDebugPrompt}
+                isBusy={isBusy}
+              />
+            )}
+          {isUserMsg && !isEditing && (
+            <MessageActions
+              messageIndex={messageIndex}
+              content={msg.content}
+              onFork={handleFork}
+              onEdit={startEditing}
+              disabled={isBusy || isReadOnly}
+            />
+          )}
+          {!isUserMsg && <AssistantMessageActions content={msg.content} />}
+        </div>
+      );
+    },
+    [
+      activeConversation,
+      cancelEditing,
+      displayMessages.length,
+      editingIndex,
+      forkingIndex,
+      handleDebugPrompt,
+      handleEditSave,
+      handleFork,
+      isBusy,
+      isReadOnly,
+      projectName,
+      selectedBackend,
+      session?.worktreePath,
+      sessionName,
+      startEditing,
+    ],
+  );
+
+  const renderCollabRow = useCallback<
+    ConversationVirtuosoListProps["renderCollab"]
+  >(() => {
+    if (!collabPassageProps || !collabEnvelopeForConversation) return null;
+    return (
+      <div ref={setCollabRowEl} data-collab-row="true">
+        <CollabPassage
+          {...collabPassageProps}
+          onStop={handleCollabStop}
+          hideInlinePhaseStrip={isCollabRunning}
+          pinnedTopTarget={collabPinnedTopTarget}
+          pauseHandlers={
+            collabEnvelopeForConversation.status === "paused" &&
+            collabEnvelopeForConversation.pause?.resumeToken
+              ? {
+                  drafts: collabUserAnswerDrafts,
+                  onDraftChange: (q, value) =>
+                    setCollabUserAnswerDraft(
+                      projectName,
+                      sessionName,
+                      collabEnvelopeForConversation.workflowId,
+                      q,
+                      value,
+                    ),
+                  onSubmit: () => {
+                    const resumeToken =
+                      collabEnvelopeForConversation.pause!.resumeToken;
+                    const userAnswers: Record<string, string> = {};
+                    for (const [k, v] of Object.entries(
+                      collabUserAnswerDrafts,
+                    )) {
+                      if (typeof v === "string" && v.trim().length > 0) {
+                        userAnswers[k] = v.trim();
+                      }
+                    }
+                    collabResumeMutation.mutate(
+                      {
+                        resumeToken,
+                        conversationId,
+                        userAnswers,
+                      },
+                      {
+                        onSuccess: () => {
+                          clearCollabUserAnswerDrafts(
+                            projectName,
+                            sessionName,
+                            collabEnvelopeForConversation.workflowId,
+                          );
+                        },
+                      },
+                    );
+                  },
+                  isSubmitting: collabResumeMutation.isPending,
+                }
+              : undefined
+          }
+          onRefClick={handleCollabRefClick}
+        />
+      </div>
+    );
+  }, [
+    clearCollabUserAnswerDrafts,
+    collabEnvelopeForConversation,
+    collabPassageProps,
+    collabPinnedTopTarget,
+    collabResumeMutation,
+    collabUserAnswerDrafts,
+    conversationId,
+    handleCollabRefClick,
+    handleCollabStop,
+    isCollabRunning,
+    projectName,
+    sessionName,
+    setCollabUserAnswerDraft,
+  ]);
+
+  const renderTypingIndicator = useCallback(() => {
+    if (hasActiveCollab) return null;
+    if (!sending && displayStatus !== "running") return null;
+    return optimisticMessages.some((m) => m.role === "assistant") ? (
+      <div className="streaming-indicator" data-backend={selectedBackend}>
+        <div className="typing-dots">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+    ) : (
+      <div
+        className="message assistant typing-indicator"
+        data-backend={selectedBackend}
+      >
+        <div className="message-role">
+          {selectedBackend === "codex" ? "Codex" : "Claude"}
+        </div>
+        <div className="message-content">
+          <div className="typing-dots">
+            <span />
+            <span />
+            <span />
+          </div>
+        </div>
+      </div>
+    );
+  }, [
+    displayStatus,
+    hasActiveCollab,
+    optimisticMessages,
+    selectedBackend,
+    sending,
+  ]);
+
   const isLoading = sessionQuery.isPending;
 
   if (isLoading || !session) {
@@ -1921,6 +2011,18 @@ export default function ConversationDetailPage({
                   <ContextFillIndicator percentage={contextPercent} />
                 </div>
               )}
+              {promptError && (
+                <div className="prompt-error">
+                  <span>{promptError}</span>
+                  <button onClick={dismissError}>&times;</button>
+                </div>
+              )}
+              {promptCancelled && (
+                <div className="prompt-cancelled">
+                  <span>Prompt cancelled</span>
+                  <button onClick={dismissCancelled}>&times;</button>
+                </div>
+              )}
               <div
                 className="panel-body"
                 ref={panelBodyRef}
@@ -1928,18 +2030,6 @@ export default function ConversationDetailPage({
                   ? { "data-debug-mode": "" }
                   : {})}
               >
-                {promptError && (
-                  <div className="prompt-error">
-                    <span>{promptError}</span>
-                    <button onClick={dismissError}>&times;</button>
-                  </div>
-                )}
-                {promptCancelled && (
-                  <div className="prompt-cancelled">
-                    <span>Prompt cancelled</span>
-                    <button onClick={dismissCancelled}>&times;</button>
-                  </div>
-                )}
                 <div className="conversation" data-backend={selectedBackend}>
                   <div
                     ref={setCollabPinnedTopTarget}
@@ -1955,210 +2045,18 @@ export default function ConversationDetailPage({
                         Loading conversation...
                       </div>
                     </div>
-                  ) : virtualRowCount > 0 ? (
-                    <div
-                      style={{
-                        height: virtualizer.getTotalSize(),
-                        width: "100%",
-                        position: "relative",
-                      }}
-                    >
-                      {virtualizer
-                        .getVirtualItems()
-                        .map((virtualRow: VirtualItem) => {
-                          if (
-                            collabRowVisible &&
-                            virtualRow.index === collabRowVirtualIndex
-                          ) {
-                            return (
-                              <div
-                                key="collab-row"
-                                ref={(el) => {
-                                  virtualizer.measureElement(el);
-                                  setCollabRowEl(el);
-                                }}
-                                data-index={virtualRow.index}
-                                data-collab-row="true"
-                                style={{
-                                  position: "absolute",
-                                  top: 0,
-                                  left: 0,
-                                  width: "100%",
-                                  transform: `translateY(${virtualRow.start}px)`,
-                                }}
-                              >
-                                <CollabPassage
-                                  {...collabPassageProps!}
-                                  onStop={handleCollabStop}
-                                  hideInlinePhaseStrip={isCollabRunning}
-                                  pinnedTopTarget={collabPinnedTopTarget}
-                                  pauseHandlers={
-                                    collabEnvelopeForConversation!.status ===
-                                      "paused" &&
-                                    collabEnvelopeForConversation!.pause
-                                      ?.resumeToken
-                                      ? {
-                                          drafts: collabUserAnswerDrafts,
-                                          onDraftChange: (q, value) =>
-                                            setCollabUserAnswerDraft(
-                                              projectName,
-                                              sessionName,
-                                              collabEnvelopeForConversation!
-                                                .workflowId,
-                                              q,
-                                              value,
-                                            ),
-                                          onSubmit: () => {
-                                            const resumeToken =
-                                              collabEnvelopeForConversation!
-                                                .pause!.resumeToken;
-                                            const userAnswers: Record<
-                                              string,
-                                              string
-                                            > = {};
-                                            for (const [k, v] of Object.entries(
-                                              collabUserAnswerDrafts,
-                                            )) {
-                                              if (
-                                                typeof v === "string" &&
-                                                v.trim().length > 0
-                                              ) {
-                                                userAnswers[k] = v.trim();
-                                              }
-                                            }
-                                            collabResumeMutation.mutate(
-                                              {
-                                                resumeToken,
-                                                conversationId,
-                                                userAnswers,
-                                              },
-                                              {
-                                                onSuccess: () => {
-                                                  clearCollabUserAnswerDrafts(
-                                                    projectName,
-                                                    sessionName,
-                                                    collabEnvelopeForConversation!
-                                                      .workflowId,
-                                                  );
-                                                },
-                                              },
-                                            );
-                                          },
-                                          isSubmitting:
-                                            collabResumeMutation.isPending,
-                                        }
-                                      : undefined
-                                  }
-                                  onRefClick={handleCollabRefClick}
-                                />
-                              </div>
-                            );
-                          }
-                          const messageIndex =
-                            collabRowVisible &&
-                            virtualRow.index > collabRowVirtualIndex
-                              ? virtualRow.index - 1
-                              : virtualRow.index;
-                          const msg = displayMessages[messageIndex]!;
-                          const isEditing = editingIndex === messageIndex;
-                          const isUserMsg = msg.role === "user";
-                          return (
-                            <div
-                              key={virtualRow.key}
-                              ref={virtualizer.measureElement}
-                              data-index={virtualRow.index}
-                              className={`message ${msg.role}${isEditing ? " editing" : ""}`}
-                              data-msg-index={messageIndex}
-                              style={{
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                width: "100%",
-                                transform: `translateY(${virtualRow.start}px)`,
-                              }}
-                            >
-                              <div className="message-role">
-                                {isUserMsg
-                                  ? "You"
-                                  : selectedBackend === "codex"
-                                    ? "Codex"
-                                    : "Claude"}
-                                {!isUserMsg && (msg.model || msg.effort) && (
-                                  <span className="message-meta">
-                                    <span className="message-meta-sep">
-                                      &middot;
-                                    </span>
-                                    {msg.model && (
-                                      <span className="message-meta-model">
-                                        {msg.model}
-                                      </span>
-                                    )}
-                                    {msg.model && msg.effort && (
-                                      <span className="message-meta-sep">
-                                        &middot;
-                                      </span>
-                                    )}
-                                    {msg.effort && (
-                                      <span
-                                        className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
-                                      >
-                                        {msg.effort}
-                                      </span>
-                                    )}
-                                  </span>
-                                )}
-                              </div>
-                              {isEditing ? (
-                                <MessageEditor
-                                  originalText={
-                                    (
-                                      msg.content.find(
-                                        (b) => b.type === "text" && "text" in b,
-                                      ) as { text: string } | undefined
-                                    )?.text ?? ""
-                                  }
-                                  messageIndex={messageIndex}
-                                  onSave={handleEditSave}
-                                  onCancel={cancelEditing}
-                                  saving={forkingIndex === messageIndex}
-                                />
-                              ) : (
-                                <div className="message-content">
-                                  <MessageContent
-                                    content={msg.content}
-                                    worktreePath={session?.worktreePath}
-                                  />
-                                </div>
-                              )}
-                              {!isUserMsg &&
-                                messageIndex === displayMessages.length - 1 &&
-                                activeConversation && (
-                                  <DebugActionCard
-                                    projectName={projectName}
-                                    sessionName={sessionName}
-                                    conversation={activeConversation}
-                                    onSendPrompt={handleDebugPrompt}
-                                    isBusy={isBusy}
-                                  />
-                                )}
-                              {isUserMsg && !isEditing && (
-                                <MessageActions
-                                  messageIndex={messageIndex}
-                                  content={msg.content}
-                                  onFork={handleFork}
-                                  onEdit={startEditing}
-                                  disabled={isBusy || isReadOnly}
-                                />
-                              )}
-                              {!isUserMsg && (
-                                <AssistantMessageActions
-                                  content={msg.content}
-                                />
-                              )}
-                            </div>
-                          );
-                        })}
-                    </div>
+                  ) : rows.length > 0 ? (
+                    <ConversationVirtuosoList
+                      rows={rows}
+                      virtuosoRef={virtuosoRef}
+                      conversationId={conversationId}
+                      renderMessage={renderMessageRow}
+                      renderCollab={renderCollabRow}
+                      renderFooter={renderTypingIndicator}
+                      onRangeChanged={handleRangeChanged}
+                      onAtBottomStateChange={handleAtBottomStateChange}
+                      onAtTopStateChange={handleAtTopStateChange}
+                    />
                   ) : (
                     <div
                       className="empty-state"
@@ -2170,37 +2068,6 @@ export default function ConversationDetailPage({
                       </div>
                     </div>
                   )}
-                  {!hasActiveCollab &&
-                    (sending || displayStatus === "running") &&
-                    (optimisticMessages.some((m) => m.role === "assistant") ? (
-                      <div
-                        className="streaming-indicator"
-                        data-backend={selectedBackend}
-                      >
-                        <div className="typing-dots">
-                          <span />
-                          <span />
-                          <span />
-                        </div>
-                      </div>
-                    ) : (
-                      <div
-                        className="message assistant typing-indicator"
-                        data-backend={selectedBackend}
-                      >
-                        <div className="message-role">
-                          {selectedBackend === "codex" ? "Codex" : "Claude"}
-                        </div>
-                        <div className="message-content">
-                          <div className="typing-dots">
-                            <span />
-                            <span />
-                            <span />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  <div ref={conversationEndRef} />
                 </div>
               </div>
 

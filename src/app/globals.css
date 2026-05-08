@@ -3978,7 +3978,10 @@ textarea {
 
 .panel-body {
   flex: 1;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   padding: var(--space-lg);
 }
 
@@ -3986,7 +3989,18 @@ textarea {
 .conversation {
   display: flex;
   flex-direction: column;
+  flex: 1;
   gap: var(--space-lg);
+  min-height: 0;
+}
+
+.conversation > * + * {
+  margin-top: 24px;
+}
+
+.conversation-virtuoso-item .message,
+.conversation-virtuoso-item [data-collab-row="true"] {
+  padding-bottom: 24px;
 }
 
 .message {

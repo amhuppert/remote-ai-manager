@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent, render } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { screen, fireEvent, act } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
 import ConversationDetailPage from "./ConversationDetailPage";
 import type { SessionState, SessionDiff, TranscriptMessage } from "@/types";
@@ -53,22 +52,79 @@ vi.mock("@/components/MarkdownViewer", () => ({
   ),
 }));
 
-// JSDOM has no layout engine — virtualizer needs a stub
-const scrollToIndexMock = vi.fn();
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, i) => ({
-        index: i,
-        key: i,
-        start: i * 120,
-        size: 120,
-      })),
-    getTotalSize: () => count * 120,
-    measureElement: vi.fn(),
-    scrollToIndex: scrollToIndexMock,
-  }),
+const { virtuosoMockHandlers, virtuosoMockScrollToIndex } = vi.hoisted(() => ({
+  virtuosoMockHandlers: {
+    rangeChanged: undefined as
+      | ((range: { startIndex: number; endIndex: number }) => void)
+      | undefined,
+    atBottomStateChange: undefined as ((atBottom: boolean) => void) | undefined,
+    atTopStateChange: undefined as ((atTop: boolean) => void) | undefined,
+  },
+  virtuosoMockScrollToIndex: vi.fn(),
 }));
+
+vi.mock("react-virtuoso", async () => {
+  const React = await import("react");
+  type VirtuosoMockProps = {
+    data?: unknown[];
+    itemContent?: (index: number, item: unknown) => React.ReactNode;
+    components?: { Footer?: () => React.ReactNode };
+    rangeChanged?: (range: { startIndex: number; endIndex: number }) => void;
+    atBottomStateChange?: (atBottom: boolean) => void;
+    atTopStateChange?: (atTop: boolean) => void;
+  };
+  const Virtuoso = React.forwardRef(function VirtuosoMock(
+    props: VirtuosoMockProps,
+    ref: React.Ref<unknown>,
+  ) {
+    const {
+      data = [],
+      itemContent,
+      components,
+      rangeChanged,
+      atBottomStateChange,
+      atTopStateChange,
+    } = props;
+    React.useEffect(() => {
+      virtuosoMockHandlers.rangeChanged = rangeChanged;
+      virtuosoMockHandlers.atBottomStateChange = atBottomStateChange;
+      virtuosoMockHandlers.atTopStateChange = atTopStateChange;
+      return () => {
+        virtuosoMockHandlers.rangeChanged = undefined;
+        virtuosoMockHandlers.atBottomStateChange = undefined;
+        virtuosoMockHandlers.atTopStateChange = undefined;
+      };
+    }, [atBottomStateChange, atTopStateChange, rangeChanged]);
+    React.useImperativeHandle(ref, () => ({
+      scrollToIndex: virtuosoMockScrollToIndex,
+    }));
+
+    const Footer = components?.Footer;
+    return (
+      <div data-testid="virtuoso-mock">
+        {data.map((item, index) => {
+          const content = itemContent?.(index, item);
+          return React.isValidElement(content) ? (
+            React.cloneElement(content, {
+              key: index,
+              "data-index": index,
+            } as Record<string, unknown>)
+          ) : (
+            <div key={index} data-index={index}>
+              {content}
+            </div>
+          );
+        })}
+        {Footer ? <Footer /> : null}
+      </div>
+    );
+  });
+  return {
+    Virtuoso,
+    __virtuosoMockHandlers: virtuosoMockHandlers,
+    __virtuosoMockScrollToIndex: virtuosoMockScrollToIndex,
+  };
+});
 
 // JSDOM doesn't implement Element.scrollTo, which the panel uses for nav.
 if (!Element.prototype.scrollTo) {
@@ -92,44 +148,53 @@ vi.mock("./PromptEditor", async () => {
     props: Props,
     ref: React.Ref<unknown>,
   ) {
+    const {
+      value,
+      onChange,
+      onSubmit,
+      placeholder,
+      disabled,
+      readOnly,
+      title,
+    } = props;
     // Mirror Tiptap's behavior: imperative mutations update an internal value
     // synchronously (so serialize() sees them in the same tick), and also
     // notify React via onChange.
-    const internalRef = React.useRef(props.value);
+    const internalRef = React.useRef(value);
     React.useEffect(() => {
-      internalRef.current = props.value;
-    }, [props.value]);
+      internalRef.current = value;
+    }, [value]);
     React.useImperativeHandle(
       ref,
       () => ({
         serialize: () => ({ prompt: internalRef.current, images: [] }),
         clear: () => {
           internalRef.current = "";
-          props.onChange("");
+          onChange("");
         },
         focus: () => {},
         insertText: (text: string) => {
           internalRef.current = internalRef.current + text;
-          props.onChange(internalRef.current);
+          onChange(internalRef.current);
         },
         editor: null,
       }),
-      [props.onChange],
+      [onChange],
     );
     return (
       <textarea
-        value={props.value}
-        onChange={(e) => props.onChange(e.target.value)}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
-            props.onSubmit();
+            onSubmit();
           }
         }}
-        placeholder={props.placeholder}
-        disabled={props.disabled}
-        readOnly={props.readOnly}
-        title={props.title}
+        placeholder={placeholder}
+        disabled={disabled}
+        readOnly={readOnly}
+        title={title}
       />
     );
   });
@@ -358,6 +423,9 @@ const sampleMessages: TranscriptMessage[] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  virtuosoMockHandlers.rangeChanged = undefined;
+  virtuosoMockHandlers.atBottomStateChange = undefined;
+  virtuosoMockHandlers.atTopStateChange = undefined;
   testSession = baseSession;
   testMessages = sampleMessages;
   testDiff = emptyDiff;
@@ -636,176 +704,41 @@ describe("ConversationDetailPage", () => {
   });
 
   describe("scroll navigation", () => {
-    it("snaps the panel to its bottom on initial load (stick-to-bottom)", () => {
-      // Spy on Element.scrollTop assignment so we can verify the layout effect
-      // sets it to scrollHeight when stick-to-bottom is engaged.
-      const scrollTopSetter = vi.fn();
-      const originalDescriptor = Object.getOwnPropertyDescriptor(
-        Element.prototype,
-        "scrollTop",
-      );
-      Object.defineProperty(Element.prototype, "scrollTop", {
-        configurable: true,
-        get() {
-          return 0;
-        },
-        set(v: number) {
-          scrollTopSetter(v);
-        },
+    it("Last message button scrolls Virtuoso to the final row", () => {
+      renderPage();
+      virtuosoMockScrollToIndex.mockClear();
+
+      fireEvent.click(screen.getByTitle("Last message"));
+
+      expect(virtuosoMockScrollToIndex).toHaveBeenCalledWith({
+        index: "LAST",
+        align: "end",
+        behavior: "smooth",
       });
-      try {
-        renderPage();
-        // Layout effect should have written to scrollTop at least once while
-        // stick-to-bottom was engaged.
-        expect(scrollTopSetter).toHaveBeenCalled();
-      } finally {
-        if (originalDescriptor) {
-          Object.defineProperty(
-            Element.prototype,
-            "scrollTop",
-            originalDescriptor,
-          );
-        }
-      }
     });
 
-    it("does not snap back to bottom after a scrollbar drag (no wheel/touch/keydown precedes)", () => {
-      // Repro for the regression introduced when virtualizer measurements
-      // started churning `getTotalSize()` mid-stream: scrollbar drags fire
-      // only `scroll` events (no wheel/touch/keydown), and the previous
-      // `programmaticScrollRef` flag stayed `true` after each snap, so the
-      // user's drag was silently ignored and the next streaming-driven snap
-      // yanked them back to the bottom.
-      let mockScrollTop = 0;
-      const scrollTopSetter = vi.fn();
-      const originalScrollTop = Object.getOwnPropertyDescriptor(
-        Element.prototype,
-        "scrollTop",
-      );
-      const originalClientHeight = Object.getOwnPropertyDescriptor(
-        Element.prototype,
-        "clientHeight",
-      );
-      const originalScrollHeight = Object.getOwnPropertyDescriptor(
-        Element.prototype,
-        "scrollHeight",
-      );
-      Object.defineProperty(Element.prototype, "scrollTop", {
-        configurable: true,
-        get() {
-          return mockScrollTop;
-        },
-        set(v: number) {
-          mockScrollTop = v;
-          scrollTopSetter(v);
-        },
+    it("First message button scrolls Virtuoso to the first row", () => {
+      renderPage();
+      virtuosoMockScrollToIndex.mockClear();
+
+      fireEvent.click(screen.getByTitle("First message"));
+
+      expect(virtuosoMockScrollToIndex).toHaveBeenCalledWith({
+        index: 0,
+        align: "start",
+        behavior: "smooth",
       });
-      Object.defineProperty(Element.prototype, "clientHeight", {
-        configurable: true,
-        get() {
-          return 100;
-        },
-      });
-      Object.defineProperty(Element.prototype, "scrollHeight", {
-        configurable: true,
-        get() {
-          return 1000;
-        },
-      });
-
-      const queryClient = new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      });
-      const buildUi = () => (
-        <QueryClientProvider client={queryClient}>
-          <ConversationDetailPage
-            projectName="repo"
-            sessionName="test-session"
-            conversationId="conv-1"
-            defaultModel="sonnet"
-          />
-        </QueryClientProvider>
-      );
-
-      try {
-        const { rerender } = render(buildUi());
-        // Initial render should engage stick-to-bottom and snap once.
-        expect(scrollTopSetter).toHaveBeenCalled();
-        scrollTopSetter.mockClear();
-
-        // Simulate a scrollbar drag that lands the user at the top: the user
-        // doesn't fire wheel/touchmove/keydown — only `scroll`.
-        const panelBody = document.querySelector(".panel-body");
-        expect(panelBody).toBeTruthy();
-        mockScrollTop = 0;
-        fireEvent.scroll(panelBody!);
-
-        // Simulate streaming: a new message arrives, which changes
-        // virtualRowCount and re-fires the snap effect.
-        testMessages = [
-          ...sampleMessages,
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "streaming chunk" }],
-            timestamp: "2024-06-15T10:03:00Z",
-          },
-        ];
-        rerender(buildUi());
-
-        // Sanity: rerender propagated (counter shows 4 messages now).
-        expect(screen.getByText(/\/ 4$/)).toBeInTheDocument();
-
-        // The user is at the top, so the snap-to-bottom must NOT fire.
-        expect(scrollTopSetter).not.toHaveBeenCalled();
-      } finally {
-        if (originalScrollTop) {
-          Object.defineProperty(
-            Element.prototype,
-            "scrollTop",
-            originalScrollTop,
-          );
-        }
-        if (originalClientHeight) {
-          Object.defineProperty(
-            Element.prototype,
-            "clientHeight",
-            originalClientHeight,
-          );
-        }
-        if (originalScrollHeight) {
-          Object.defineProperty(
-            Element.prototype,
-            "scrollHeight",
-            originalScrollHeight,
-          );
-        }
-      }
     });
 
-    it("Last message button calls scrollTo on the panel with smooth behavior", () => {
-      const scrollToSpy = vi.fn();
-      const original = Element.prototype.scrollTo;
-      Element.prototype.scrollTo = scrollToSpy as Element["scrollTo"];
-      try {
-        renderPage();
-        scrollToSpy.mockClear();
+    it("updates the current message counter from Virtuoso range changes", () => {
+      renderPage();
 
-        const lastBtn = screen.getByTitle("Last message");
-        fireEvent.click(lastBtn);
+      act(() => {
+        virtuosoMockHandlers.atTopStateChange?.(false);
+        virtuosoMockHandlers.rangeChanged?.({ startIndex: 2, endIndex: 2 });
+      });
 
-        // Find the click-driven call (top: scrollHeight which is 0 in jsdom,
-        // behavior: "smooth"). Stick-to-bottom uses scrollTop assignment, not
-        // scrollTo, so any scrollTo call here is from the button handler.
-        const smoothCall = scrollToSpy.mock.calls.find(
-          (call) =>
-            typeof call[0] === "object" &&
-            call[0] !== null &&
-            (call[0] as { behavior?: string }).behavior === "smooth",
-        );
-        expect(smoothCall).toBeDefined();
-      } finally {
-        Element.prototype.scrollTo = original;
-      }
+      expect(screen.getByText("3 / 3")).toBeInTheDocument();
     });
   });
 
@@ -985,7 +918,7 @@ describe("ConversationDetailPage", () => {
         '[data-collab-row="true"]',
       ) as HTMLElement | null;
       expect(row).not.toBeNull();
-      expect(row!.style.position).toBe("absolute");
+      expect(row!.closest('[data-testid="virtuoso-mock"]')).not.toBeNull();
     });
 
     it("inserts the CollabPassage immediately after the latest /collab user message", () => {
@@ -1028,9 +961,6 @@ describe("ConversationDetailPage", () => {
       ) as HTMLElement | null;
       expect(collabRow).not.toBeNull();
       const collabIndex = Number(collabRow!.getAttribute("data-index"));
-      // /collab is at displayMessages index 2; the collab row must sit at
-      // virtualizer index 3 — directly after that user message — so the
-      // subsequent message ("another message after") shifts to index 4.
       expect(collabIndex).toBe(3);
     });
 
