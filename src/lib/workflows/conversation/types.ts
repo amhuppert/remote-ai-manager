@@ -12,11 +12,13 @@ import type {
   AskQuestionItem,
   DebugHypothesis,
   DebugModePhase,
+  DebugModeState,
   ImagePayload,
   MessageContentBlock,
   AgentBackendId,
   AgentSessionRef,
 } from "@/types";
+import type { DebugCleanupResultOutput } from "./debug-schemas";
 
 // ============================================================
 // Context
@@ -71,6 +73,7 @@ export interface ConversationContext {
     hypotheses: DebugHypothesis[];
     instructionsDelivered: boolean;
     phase: DebugModePhase;
+    lastTurnFailed: boolean;
   } | null;
 
   // Accumulated totals
@@ -116,6 +119,9 @@ export type ConversationEvent =
   | { type: "SET_DEBUG_RECORDING"; recording: boolean }
   | { type: "MARK_REPRODUCED" }
   | { type: "MARK_FIX_VERIFIED" }
+  | { type: "REVERT_TO_AWAITING_REPRODUCTION" }
+  | { type: "REVERT_TO_AWAITING_VERIFICATION" }
+  | { type: "RETRY_DEBUG_TURN" }
   | { type: "CLEAR_DEBUG_LOGS" }
   | { type: "EXTERNAL_TURN_STARTED" }
   | { type: "EXTERNAL_TURN_COMPLETED"; result: PromptActorResult };
@@ -137,6 +143,13 @@ export interface ConversationInput {
   agentBackend: AgentBackendId;
   backendRef: AgentSessionRef | null;
   promptCount: number;
+  /**
+   * Persisted debug-mode state to restore when the actor is recreated for
+   * an existing conversation (e.g. after a server restart). When `active`
+   * is true, the machine starts in the debug compound state at the
+   * substate matching `phase`, with context fields hydrated.
+   */
+  debugMode?: DebugModeState | null;
 }
 
 export interface ConversationOutput {
@@ -199,4 +212,19 @@ export interface PrepareTurnInput {
   conversationId: string;
   worktreePath: string;
   transcriptPath: string | null;
+}
+
+/** Input for the verifyCleanup actor. */
+export interface VerifyCleanupInput {
+  worktreePath: string;
+  conversationId: string;
+  cleanup: DebugCleanupResultOutput;
+}
+
+/** Output from the verifyCleanup actor. */
+export interface VerifyCleanupOutput {
+  ok: boolean;
+  failedConditions: string[];
+  missingFiles: string[];
+  remediationPrompt: string | null;
 }

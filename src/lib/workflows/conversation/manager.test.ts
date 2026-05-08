@@ -187,6 +187,19 @@ describe("conversation manager", () => {
       const stateValue = actor.getSnapshot().value;
       expect(stateValue).toEqual({ debug: "hypothesizing" });
     });
+
+    it("returns false when the event has no transition from the current state", () => {
+      startConversationActor(DEFAULT_INPUT);
+      // MARK_REPRODUCED is only valid from `debug.awaiting_reproduction`,
+      // not from idle, so XState ignores it.
+      const result = sendConversationEvent(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        { type: "MARK_REPRODUCED" },
+      );
+      expect(result).toBe(false);
+    });
   });
 
   describe("stopConversationActor", () => {

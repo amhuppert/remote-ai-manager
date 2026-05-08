@@ -180,20 +180,21 @@ const conversationMetadata: MachineMetadata = {
         {
           event: "always",
           target: "debug.hypothesizing",
-          guard: "isDebugAnalyzing && shouldLoopBackToHypothesizing",
+          guard:
+            "isDebugAnalyzing && lastTurnProducedStructuredOutput && shouldLoopBackToHypothesizing",
           description:
             "Evidence analysis recommended more instrumentation — loop.",
         },
         {
           event: "always",
           target: "debug.fixing",
-          guard: "isDebugAnalyzing",
+          guard: "isDebugAnalyzing && lastTurnProducedStructuredOutput",
           description: "Evidence analyzed → proceed to fix.",
         },
         {
           event: "always",
           target: "debug.awaitingVerification",
-          guard: "isDebugFixing",
+          guard: "isDebugFixing && lastTurnProducedStructuredOutput",
           description: "Fix delivered → wait for verification.",
         },
         {
@@ -211,8 +212,14 @@ const conversationMetadata: MachineMetadata = {
         {
           event: "always",
           target: "idle",
-          guard: "isDebugCleanup",
+          guard: "isDebugCleanup && lastTurnProducedStructuredOutput",
           description: "Debug cleanup completed → exit debug mode.",
+        },
+        {
+          event: "always",
+          target: "debug.error",
+          description:
+            "Phase-advancing turn failed (no structured output / SDK error). Preserves phase + activeTurn so the operator can RETRY_DEBUG_TURN.",
         },
         {
           event: "always",
@@ -301,12 +308,31 @@ const conversationMetadata: MachineMetadata = {
         { event: "SUBMIT_PROMPT", description: "Trigger the cleanup turn." },
       ],
     },
+    "debug.error": {
+      status: "warning",
+      description:
+        "Last phase-advancing turn failed (missing structured output or SDK error). Phase and activeTurn are preserved; RETRY_DEBUG_TURN re-runs the same prompt without UI replay.",
+      events: [
+        {
+          event: "RETRY_DEBUG_TURN",
+          description:
+            "Re-runs the failed turn against the preserved phase + activeTurn.",
+        },
+        {
+          event: "SUBMIT_PROMPT",
+          description:
+            "Operator submits a fresh prompt instead of retrying the failed one.",
+        },
+      ],
+    },
   },
   actors: {
     prepareTurn:
       "Acquires the session lock and a query-semaphore slot, ensures the transcript file exists, and returns the resolved transcript path.",
     executePrompt:
       "Streams a turn through the agent backend (Claude Agent SDK or Codex). Stays alive across ASK_QUESTION/ANSWER pauses by virtue of being invoked on the executing compound state.",
+    verifyCleanup:
+      "Cross-checks the agent's cleanup result against the persisted .debug/<conversationId>/instrumentation.json manifest. On a passing verification the manifest is deleted and the conversation exits debug mode; on failure the machine routes to debug.error with a remediation prompt so the agent can be re-run.",
   },
   guards: {
     isDebugModeActive: "True if debugMode is non-null and active.",
@@ -318,6 +344,10 @@ const conversationMetadata: MachineMetadata = {
     isDebugAwaitingVerification:
       'True when debugMode.phase === "awaiting_verification".',
     isDebugCleanup: 'True when debugMode.phase === "cleanup_instrumentation".',
+    isDebugErrorRestore:
+      "True when debugMode.lastTurnFailed === true. Routes idle.always restoration into debug.error rather than the bare phase substate so that on actor rehydration (server restart) the error UX is preserved.",
+    lastTurnProducedStructuredOutput:
+      "True when the last turn finished without an error and produced a non-null structuredOutput. Phase advancement is gated on this so a missing structured response routes to debug.error instead of clobbering activeTurn.",
     shouldLoopBackToHypothesizing:
       "True if the analyzer's structured output recommends gathering more instrumentation.",
   },

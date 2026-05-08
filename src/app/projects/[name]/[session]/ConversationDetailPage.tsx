@@ -1317,16 +1317,15 @@ export default function ConversationDetailPage({
   }, []);
 
   const handleDebugPrompt = useCallback(
-    (text: string) => {
-      void sendPrompt(
+    (text: string): Promise<void> =>
+      sendPrompt(
         text,
         messages.length,
         selectedModel,
         undefined,
         undefined,
         selectedBackend,
-      );
-    },
+      ),
     [sendPrompt, messages.length, selectedModel, selectedBackend],
   );
 

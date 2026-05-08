@@ -55,7 +55,7 @@ const validCleanupResult = {
   removedInstrumentation: true,
   filesModified: ["src/foo.ts"],
   grepVerificationPassed: true,
-  manifestDeleted: true,
+  acknowledgesManifestDeletionContract: true,
   notes: "All probes removed.",
 };
 

@@ -198,6 +198,18 @@ export const toolResultMetricsSchema = z.object({
 });
 export type ToolResultMetrics = z.infer<typeof toolResultMetricsSchema>;
 
+// Forward reference: debugModePhaseSchema is defined below in this file.
+// We inline its values here so messageContentBlockSchema can be defined first
+// without a hoisting cycle.
+const debugModePhaseLiterals = z.enum([
+  "hypothesizing",
+  "awaiting_reproduction",
+  "analyzing_evidence",
+  "fixing",
+  "awaiting_verification",
+  "cleanup_instrumentation",
+]);
+
 export const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
@@ -233,6 +245,15 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
     index: z.number().int().positive(),
     mediaType: z.string(),
     imagePath: z.string(),
+  }),
+  // Structured debug-mode output (hypothesis list, evidence analysis, fix
+  // result, cleanup result). The payload shape varies per phase; the renderer
+  // dispatches on `phase` and gracefully degrades when fields are missing
+  // (e.g., Codex schema-divergent reply).
+  z.object({
+    type: z.literal("debug_structured"),
+    phase: debugModePhaseLiterals,
+    payload: z.unknown(),
   }),
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
@@ -277,6 +298,7 @@ export type ConversationRole = z.infer<typeof conversationRoleSchema>;
 export const debugHypothesisSchema = z.object({
   id: z.string(),
   description: z.string(),
+  instrumentationPlan: z.string().optional(),
 });
 export type DebugHypothesis = z.infer<typeof debugHypothesisSchema>;
 
@@ -298,6 +320,7 @@ export const debugModeStateSchema = z.object({
   hypotheses: z.array(debugHypothesisSchema).default([]),
   instructionsDelivered: z.boolean().default(false),
   phase: debugModePhaseSchema.default("hypothesizing"),
+  lastTurnFailed: z.boolean().default(false),
 });
 export type DebugModeState = z.infer<typeof debugModeStateSchema>;
 
@@ -565,8 +588,18 @@ export type McpToolRefreshRequest = z.infer<typeof mcpToolRefreshRequestSchema>;
 // Conversation State
 // ============================================================
 
+// Restricts conversationId to filesystem-safe characters. The id is used as a
+// directory name for transcripts and debug logs, so any character that could
+// enable path traversal or escape the parent directory must be rejected at
+// the trust boundary. UUIDs and underscored/dashed ids both fit this regex.
+const conversationIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/);
+
 export const conversationStateSchema = z.object({
-  id: z.string(),
+  id: conversationIdSchema,
   name: z.string().nullable().default(null),
   transcriptPath: z.string().nullable(),
   status: conversationStatusSchema,
@@ -1723,7 +1756,15 @@ export const forkRequestSchema = z.object({
 export type ForkRequest = z.infer<typeof forkRequestSchema>;
 
 export const debugModeRequestSchema = z.object({
-  action: z.enum(["enter", "exit", "mark_reproduced", "mark_fix_verified"]),
+  action: z.enum([
+    "enter",
+    "exit",
+    "mark_reproduced",
+    "mark_fix_verified",
+    "revert_to_awaiting_reproduction",
+    "revert_to_awaiting_verification",
+    "retry_turn",
+  ]),
 });
 export type DebugModeRequest = z.infer<typeof debugModeRequestSchema>;
 

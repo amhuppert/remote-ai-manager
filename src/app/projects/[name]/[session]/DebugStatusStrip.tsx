@@ -46,36 +46,51 @@ export default function DebugStatusStrip({
   const entryCount = entryCountQuery.data ?? 0;
 
   return (
-    <div className="debug-status-strip">
-      <div className="debug-status-strip__left">
-        <span className="debug-status-strip__badge">DEBUG</span>
-        <div className="debug-status-strip__sep" />
-        <button
-          type="button"
-          className={`debug-status-strip__rec${isRecording ? " recording" : ""}`}
-          onClick={() => recordingMutation.mutate(!isRecording)}
-          disabled={anyPending}
-          data-tooltip={isRecording ? "Pause recording" : "Resume recording"}
-        >
-          <span className="debug-status-strip__rec-dot" />
-          <span>{isRecording ? "REC" : "PAUSED"}</span>
-        </button>
+    <div
+      className={`debug-status-strip${isRecording ? "" : " paused"}`}
+      data-recording={isRecording ? "on" : "off"}
+    >
+      <div className="debug-status-strip__row">
+        <div className="debug-status-strip__left">
+          <span className="debug-status-strip__badge">DEBUG</span>
+          <div className="debug-status-strip__sep" />
+          <button
+            type="button"
+            className={`debug-status-strip__rec${isRecording ? " recording" : ""}`}
+            onClick={() => recordingMutation.mutate(!isRecording)}
+            disabled={anyPending}
+            data-tooltip={isRecording ? "Pause recording" : "Resume recording"}
+          >
+            <span className="debug-status-strip__rec-dot" />
+            <span>{isRecording ? "REC" : "PAUSED"}</span>
+          </button>
+        </div>
+        <div className="debug-status-strip__right">
+          <span className="debug-status-strip__entry-count">
+            {entryCount} {entryCount === 1 ? "entry" : "entries"}
+          </span>
+          <div className="debug-status-strip__sep" />
+          <button
+            type="button"
+            className="debug-status-strip__clear"
+            onClick={() => clearLogsMutation.mutate()}
+            disabled={anyPending}
+            data-tooltip="Clear debug log entries"
+          >
+            Clear
+          </button>
+        </div>
       </div>
-      <div className="debug-status-strip__right">
-        <span className="debug-status-strip__entry-count">
-          {entryCount} {entryCount === 1 ? "entry" : "entries"}
-        </span>
-        <div className="debug-status-strip__sep" />
-        <button
-          type="button"
-          className="debug-status-strip__clear"
-          onClick={() => clearLogsMutation.mutate()}
-          disabled={anyPending}
-          data-tooltip="Clear debug log entries"
+      {!isRecording && (
+        <div
+          className="debug-status-strip__paused-banner"
+          role="status"
+          aria-live="polite"
         >
-          Clear
-        </button>
-      </div>
+          PAUSED — new debug log entries are being dropped until recording is
+          resumed.
+        </div>
+      )}
     </div>
   );
 }

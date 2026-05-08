@@ -11,6 +11,8 @@ import type {
   PrepareTurnOutput,
   ExecutePromptInput,
   PromptActorResult,
+  VerifyCleanupInput,
+  VerifyCleanupOutput,
 } from "./types";
 
 /**
@@ -35,4 +37,17 @@ export const executePromptActor = fromPromise<
 >(async ({ input }) => {
   const { executePromptForMachine } = await import("./actor-implementations");
   return executePromptForMachine(input);
+});
+
+/**
+ * Cross-check the agent's debug cleanup result against the persisted
+ * instrumentation manifest. On a passing verification the manifest is
+ * deleted as a side-effect.
+ */
+export const verifyCleanupActor = fromPromise<
+  VerifyCleanupOutput,
+  VerifyCleanupInput
+>(async ({ input }) => {
+  const { verifyCleanupForMachine } = await import("./actor-implementations");
+  return verifyCleanupForMachine(input);
 });

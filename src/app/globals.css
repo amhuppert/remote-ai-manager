@@ -11342,8 +11342,8 @@ html[data-dev-tools-enabled] nextjs-portal {
 
 .debug-status-strip {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 6px;
   padding: 6px var(--space-sm);
   border: 1px solid rgba(255, 179, 0, 0.2);
   border-left: 3px solid var(--amber);
@@ -11351,6 +11351,26 @@ html[data-dev-tools-enabled] nextjs-portal {
   background: rgba(255, 179, 0, 0.04);
   font-family: var(--font-mono);
   font-size: 0.7rem;
+}
+
+.debug-status-strip.paused {
+  border-color: rgba(255, 179, 0, 0.45);
+  background: rgba(255, 179, 0, 0.09);
+}
+
+.debug-status-strip__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.debug-status-strip__paused-banner {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 179, 0, 0.18);
+  color: var(--amber);
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .debug-status-strip__left {
@@ -11487,10 +11507,10 @@ html[data-dev-tools-enabled] nextjs-portal {
   margin-left: auto;
 }
 
-/* Merge action card with preceding blockquote into one visual card */
+/* Merge action card with preceding structured card into one visual card */
 [data-debug-mode]
   .message.assistant
-  .message-content:has(blockquote:last-child)
+  .message-content:has(.debug-structured-card:last-child)
   + .debug-action-card {
   margin-top: 0;
   border-top: none;
@@ -11501,16 +11521,15 @@ html[data-dev-tools-enabled] nextjs-portal {
 [data-debug-mode]
   .message.assistant:has(.debug-action-card)
   .message-content
-  blockquote:last-child {
+  .debug-structured-card:last-child {
   margin-bottom: 0;
-  border-bottom: none;
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
 
-/* ---- Debug Mode Reproduction Steps (in-message styling) ---- */
+/* ---- Debug Structured Card (per-phase rendering of structured output) ---- */
 
-[data-debug-mode] .message.assistant .message-content blockquote {
+.debug-structured-card {
   border: 1px solid rgba(255, 179, 0, 0.2);
   border-left: 3px solid var(--amber);
   border-radius: var(--radius-sm);
@@ -11519,49 +11538,184 @@ html[data-dev-tools-enabled] nextjs-portal {
   margin: var(--space-md) 0;
 }
 
-[data-debug-mode]
-  .message.assistant
-  .message-content
-  blockquote
-  strong:first-child {
+.debug-structured-card__header {
   font-family: var(--font-mono);
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--amber);
+  margin-bottom: var(--space-sm);
 }
 
-[data-debug-mode] .message.assistant .message-content blockquote ol {
-  counter-reset: debug-step;
-  list-style: none;
-  padding-left: 0;
+.debug-structured-card__section {
   margin-top: var(--space-sm);
 }
 
-[data-debug-mode] .message.assistant .message-content blockquote ol li {
+.debug-structured-card__field-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--amber-dim);
+}
+
+.debug-structured-card__summary {
+  margin: 4px 0 0 0;
+}
+
+.debug-structured-card__code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--amber-glow);
+  color: var(--amber);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.debug-structured-card__hypotheses {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.debug-structured-card__hypothesis {
+  display: flex;
+  gap: var(--space-sm);
+  padding: 6px 0;
+  border-top: 1px solid rgba(255, 179, 0, 0.08);
+}
+
+.debug-structured-card__hypothesis:first-child {
+  border-top: none;
+}
+
+.debug-structured-card__id {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--amber);
+  flex: 0 0 auto;
+}
+
+.debug-structured-card__hypothesis-body {
+  flex: 1 1 auto;
+}
+
+.debug-structured-card__hypothesis-plan {
+  margin-top: 2px;
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
+.debug-structured-card__steps {
+  counter-reset: debug-step;
+  list-style: none;
+  padding-left: 0;
+  margin-top: 4px;
+}
+
+.debug-structured-card__steps li {
   counter-increment: debug-step;
   padding: 6px 0 6px 2em;
   position: relative;
   border-top: 1px solid rgba(255, 179, 0, 0.08);
 }
 
-[data-debug-mode]
-  .message.assistant
-  .message-content
-  blockquote
-  ol
-  li:first-child {
+.debug-structured-card__steps li:first-child {
   border-top: none;
 }
 
-[data-debug-mode] .message.assistant .message-content blockquote ol li::before {
+.debug-structured-card__steps li::before {
   content: counter(debug-step) ".";
   position: absolute;
   left: 0;
   font-family: var(--font-mono);
   font-weight: 600;
   color: var(--amber);
+}
+
+.debug-structured-card__verdicts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.debug-structured-card__verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 179, 0, 0.15);
+  background: rgba(255, 179, 0, 0.04);
+  min-width: 100px;
+}
+
+.debug-structured-card__verdict-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--amber-dim);
+}
+
+.debug-structured-card__verdict-ids {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--amber);
+}
+
+.debug-structured-card__checks {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.debug-structured-card__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 4px 0;
+}
+
+.debug-structured-card__check-icon {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  width: 1em;
+  display: inline-block;
+  text-align: center;
+}
+
+.debug-structured-card__check--ok .debug-structured-card__check-icon {
+  color: var(--amber);
+}
+
+.debug-structured-card__check--fail .debug-structured-card__check-icon {
+  color: #ef4444;
+}
+
+.debug-structured-card__files {
+  list-style: none;
+  padding-left: 0;
+  margin: 4px 0 0 0;
+}
+
+.debug-structured-card__files li {
+  padding: 2px 0;
+}
+
+.debug-structured-card__fallback {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: rgba(0, 0, 0, 0.2);
+  padding: var(--space-sm);
+  border-radius: 3px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
 }
 
 /* Workflow builder */

@@ -3,7 +3,14 @@
  *
  * These schemas are passed to the Claude Agent SDK via the `outputFormat`
  * option to enforce structured JSON responses during debug workflow phases.
+ *
+ * Each shape has a sibling Zod schema (named `*ZodSchema`) used to
+ * `safeParse` the agent's `structuredOutput` at trust boundaries inside
+ * the conversation machine. The JSON Schemas are the SDK enforcement
+ * contract; the Zod schemas are the runtime validation contract.
  */
+
+import { z } from "zod";
 
 /**
  * Schema for the hypothesizing phase.
@@ -38,15 +45,21 @@ export const debugHypothesisOutputSchema = {
   },
 } as const;
 
+export const debugHypothesisOutputZodSchema = z.object({
+  hypotheses: z.array(
+    z.object({
+      id: z.string(),
+      description: z.string(),
+      instrumentationPlan: z.string().optional(),
+    }),
+  ),
+  reproductionSteps: z.array(z.string()),
+});
+
 /** TypeScript type for the hypothesis output. */
-export interface DebugHypothesisOutput {
-  hypotheses: Array<{
-    id: string;
-    description: string;
-    instrumentationPlan: string;
-  }>;
-  reproductionSteps: string[];
-}
+export type DebugHypothesisOutput = z.infer<
+  typeof debugHypothesisOutputZodSchema
+>;
 
 /**
  * Schema for the evidence analysis phase.
@@ -84,14 +97,18 @@ export const debugEvidenceAnalysisSchema = {
   },
 } as const;
 
+export const debugEvidenceAnalysisZodSchema = z.object({
+  supportedHypotheses: z.array(z.string()),
+  refutedHypotheses: z.array(z.string()),
+  inconclusiveHypotheses: z.array(z.string()),
+  recommendedNextStep: z.enum(["fix", "more_instrumentation"]),
+  evidenceSummary: z.string(),
+});
+
 /** TypeScript type for the evidence analysis output. */
-export interface DebugEvidenceAnalysisOutput {
-  supportedHypotheses: string[];
-  refutedHypotheses: string[];
-  inconclusiveHypotheses: string[];
-  recommendedNextStep: "fix" | "more_instrumentation";
-  evidenceSummary: string;
-}
+export type DebugEvidenceAnalysisOutput = z.infer<
+  typeof debugEvidenceAnalysisZodSchema
+>;
 
 /**
  * Schema for the fixing phase.
@@ -112,11 +129,13 @@ export const debugFixResultSchema = {
   },
 } as const;
 
+export const debugFixResultZodSchema = z.object({
+  fixSummary: z.string(),
+  verificationSteps: z.array(z.string()),
+});
+
 /** TypeScript type for the fix result output. */
-export interface DebugFixResultOutput {
-  fixSummary: string;
-  verificationSteps: string[];
-}
+export type DebugFixResultOutput = z.infer<typeof debugFixResultZodSchema>;
 
 /**
  * Schema for the cleanup instrumentation phase.
@@ -130,7 +149,7 @@ export const debugCleanupResultSchema = {
     "removedInstrumentation",
     "filesModified",
     "grepVerificationPassed",
-    "manifestDeleted",
+    "acknowledgesManifestDeletionContract",
     "notes",
   ],
   properties: {
@@ -145,20 +164,24 @@ export const debugCleanupResultSchema = {
       description:
         'True when `grep -r "@debug-probe" src/` returns zero results after cleanup.',
     },
-    manifestDeleted: {
+    acknowledgesManifestDeletionContract: {
       type: "boolean",
       description:
-        "True when .debug/instrumentation.json was deleted after cleanup.",
+        "True when the agent acknowledges that Command Center is responsible for deleting .debug/instrumentation.json after verification passes (the agent must NOT delete it).",
     },
     notes: { type: "string" },
   },
 } as const;
 
+export const debugCleanupResultZodSchema = z.object({
+  removedInstrumentation: z.boolean(),
+  filesModified: z.array(z.string()),
+  grepVerificationPassed: z.boolean(),
+  acknowledgesManifestDeletionContract: z.boolean(),
+  notes: z.string(),
+});
+
 /** TypeScript type for the cleanup result output. */
-export interface DebugCleanupResultOutput {
-  removedInstrumentation: boolean;
-  filesModified: string[];
-  grepVerificationPassed: boolean;
-  manifestDeleted: boolean;
-  notes: string;
-}
+export type DebugCleanupResultOutput = z.infer<
+  typeof debugCleanupResultZodSchema
+>;

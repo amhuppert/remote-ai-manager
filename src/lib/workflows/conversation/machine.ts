@@ -36,9 +36,18 @@ import type {
   PrepareTurnInput,
   ExecutePromptInput,
   PromptActorResult,
+  VerifyCleanupInput,
 } from "./types";
-import { prepareTurnActor, executePromptActor } from "./actors";
-import type { DebugEvidenceAnalysisOutput } from "./debug-schemas";
+import {
+  prepareTurnActor,
+  executePromptActor,
+  verifyCleanupActor,
+} from "./actors";
+import {
+  debugEvidenceAnalysisZodSchema,
+  debugHypothesisOutputZodSchema,
+  debugCleanupResultZodSchema,
+} from "./debug-schemas";
 import { getDefaultDebugAdapter } from "./debug-adapter";
 
 // ============================================================
@@ -78,6 +87,7 @@ export const conversationMachine = setup({
   actors: {
     prepareTurn: prepareTurnActor,
     executePrompt: executePromptActor,
+    verifyCleanup: verifyCleanupActor,
   },
 
   guards: {
@@ -93,10 +103,25 @@ export const conversationMachine = setup({
       context.debugMode?.phase === "awaiting_verification",
     isDebugCleanup: ({ context }) =>
       context.debugMode?.phase === "cleanup_instrumentation",
+    isDebugErrorRestore: ({ context }) =>
+      context.debugMode?.lastTurnFailed === true,
+    // Phase advancement gate: both backends surface a missing/invalid
+    // structured response as `structuredOutput == null`. Codex never sets
+    // `error` for schema-divergent replies, so the structuredOutput half
+    // is the single load-bearing condition; the error half is belt-and-
+    // suspenders for SDK-level failures. See
+    // .kiro/research/codex-output-format-parity.md.
+    lastTurnProducedStructuredOutput: ({ context }) =>
+      context.lastResult?.error == null &&
+      context.lastResult?.structuredOutput != null,
     shouldLoopBackToHypothesizing: ({ context }) => {
-      const structured = context.lastResult
-        ?.structuredOutput as DebugEvidenceAnalysisOutput | null;
-      return structured?.recommendedNextStep === "more_instrumentation";
+      const parsed = debugEvidenceAnalysisZodSchema.safeParse(
+        context.lastResult?.structuredOutput,
+      );
+      return (
+        parsed.success &&
+        parsed.data.recommendedNextStep === "more_instrumentation"
+      );
     },
   },
 
@@ -131,7 +156,19 @@ export const conversationMachine = setup({
     role: input.role,
     activeTurn: null,
     pendingQuestion: null,
-    debugMode: null,
+    debugMode:
+      input.debugMode && input.debugMode.active
+        ? {
+            active: input.debugMode.active,
+            recording: input.debugMode.recording,
+            logFilePath: input.debugMode.logFilePath,
+            enteredAt: input.debugMode.enteredAt,
+            hypotheses: input.debugMode.hypotheses,
+            instructionsDelivered: input.debugMode.instructionsDelivered,
+            phase: input.debugMode.phase,
+            lastTurnFailed: input.debugMode.lastTurnFailed,
+          }
+        : null,
     totals: {
       totalCostUsd: null,
       totalDurationMs: null,
@@ -150,6 +187,36 @@ export const conversationMachine = setup({
     // IDLE — waiting for prompt or debug mode entry
     // ========================================================
     idle: {
+      always: [
+        {
+          guard: and(["isDebugModeActive", "isDebugErrorRestore"]),
+          target: "debug.error",
+        },
+        {
+          guard: and(["isDebugModeActive", "isDebugHypothesizing"]),
+          target: "debug.hypothesizing",
+        },
+        {
+          guard: and(["isDebugModeActive", "isDebugAwaitingReproduction"]),
+          target: "debug.awaitingReproduction",
+        },
+        {
+          guard: and(["isDebugModeActive", "isDebugAnalyzing"]),
+          target: "debug.analyzingEvidence",
+        },
+        {
+          guard: and(["isDebugModeActive", "isDebugFixing"]),
+          target: "debug.fixing",
+        },
+        {
+          guard: and(["isDebugModeActive", "isDebugAwaitingVerification"]),
+          target: "debug.awaitingVerification",
+        },
+        {
+          guard: and(["isDebugModeActive", "isDebugCleanup"]),
+          target: "debug.cleanupInstrumentation",
+        },
+      ],
       on: {
         SUBMIT_PROMPT: {
           target: "acquiringResources",
@@ -174,12 +241,13 @@ export const conversationMachine = setup({
             assign({
               debugMode: ({ event }) => ({
                 active: true,
-                recording: false,
+                recording: true,
                 logFilePath: event.logFilePath,
                 enteredAt: new Date().toISOString(),
                 hypotheses: [],
                 instructionsDelivered: false,
                 phase: "hypothesizing" as const,
+                lastTurnFailed: false,
               }),
             }),
             "syncDerivedFields",
@@ -392,13 +460,24 @@ export const conversationMachine = setup({
     // ========================================================
     finalizingTurn: {
       always: [
-        // Debug mode: route back to appropriate debug phase
+        // Debug mode: phase-advancing transitions only fire when the turn
+        // produced a valid structured output. Otherwise we route to
+        // debug.error so the user can retry without losing the prior phase.
         {
-          guard: "isDebugHypothesizing",
+          guard: and([
+            "isDebugHypothesizing",
+            "lastTurnProducedStructuredOutput",
+          ]),
           target: "debug.awaitingReproduction",
           actions: [
             assign(({ context }) => {
               const result = context.lastResult;
+              const hypothesisParsed = debugHypothesisOutputZodSchema.safeParse(
+                result?.structuredOutput,
+              );
+              const hypothesisPayload = hypothesisParsed.success
+                ? hypothesisParsed.data
+                : undefined;
               return {
                 promptCount: context.promptCount + 1,
                 totals: result
@@ -412,6 +491,9 @@ export const conversationMachine = setup({
                       ...context.debugMode,
                       phase: "awaiting_reproduction" as const,
                       instructionsDelivered: true,
+                      hypotheses:
+                        hypothesisPayload?.hypotheses ??
+                        context.debugMode.hypotheses,
                     }
                   : null,
               };
@@ -423,9 +505,14 @@ export const conversationMachine = setup({
             "persistSnapshot",
           ],
         },
-        // Evidence analysis: loop back to hypothesizing if more instrumentation needed
+        // Evidence analysis success → loop back to hypothesizing if more
+        // instrumentation needed.
         {
-          guard: and(["isDebugAnalyzing", "shouldLoopBackToHypothesizing"]),
+          guard: and([
+            "isDebugAnalyzing",
+            "lastTurnProducedStructuredOutput",
+            "shouldLoopBackToHypothesizing",
+          ]),
           target: "debug.hypothesizing",
           actions: [
             assign(({ context }) => {
@@ -452,9 +539,9 @@ export const conversationMachine = setup({
             "persistSnapshot",
           ],
         },
-        // Evidence analysis: proceed to fixing (default path)
+        // Evidence analysis success → proceed to fixing (default path).
         {
-          guard: "isDebugAnalyzing",
+          guard: and(["isDebugAnalyzing", "lastTurnProducedStructuredOutput"]),
           target: "debug.fixing",
           actions: [
             assign(({ context }) => {
@@ -482,7 +569,7 @@ export const conversationMachine = setup({
           ],
         },
         {
-          guard: "isDebugFixing",
+          guard: and(["isDebugFixing", "lastTurnProducedStructuredOutput"]),
           target: "debug.awaitingVerification",
           actions: [
             assign(({ context }) => {
@@ -509,7 +596,67 @@ export const conversationMachine = setup({
             "persistSnapshot",
           ],
         },
-        // Debug "waiting" phases: follow-up prompts return to same state
+        // Debug cleanup turn returned a structured response — defer the
+        // success/failure decision to the verifyingCleanup substate, which
+        // cross-checks the agent's report against the persisted manifest.
+        // activeTurn is preserved so RETRY_DEBUG_TURN from debug.error (after
+        // a failed verifyCleanup) can re-run the same cleanup prompt.
+        {
+          guard: and(["isDebugCleanup", "lastTurnProducedStructuredOutput"]),
+          target: "debug.verifyingCleanup",
+          actions: [
+            assign(({ context }) => {
+              const result = context.lastResult;
+              return {
+                promptCount: context.promptCount + 1,
+                totals: result
+                  ? accumulateTotals(context.totals, result)
+                  : context.totals,
+                status: "awaiting" as const,
+                lastActivityAt: new Date().toISOString(),
+              };
+            }),
+            "syncDerivedFields",
+            "releaseResources",
+            "broadcastConversationStatus",
+            "persistSnapshot",
+          ],
+        },
+        // Phase-advancing turn failed (no structured output / error). Route
+        // to debug.error preserving phase + activeTurn so the user can RETRY.
+        {
+          guard: ({ context }) =>
+            context.debugMode?.active === true &&
+            (context.debugMode.phase === "hypothesizing" ||
+              context.debugMode.phase === "analyzing_evidence" ||
+              context.debugMode.phase === "fixing" ||
+              context.debugMode.phase === "cleanup_instrumentation"),
+          target: "debug.error",
+          actions: [
+            assign(({ context }) => {
+              const result = context.lastResult;
+              return {
+                promptCount: context.promptCount + 1,
+                totals: result
+                  ? accumulateTotals(context.totals, result)
+                  : context.totals,
+                status: "awaiting" as const,
+                lastActivityAt: new Date().toISOString(),
+                lastError:
+                  context.lastError ??
+                  result?.error ??
+                  "Turn did not produce a valid structured response",
+              };
+            }),
+            "syncDerivedFields",
+            "releaseResources",
+            "broadcastConversationStatus",
+            "persistSnapshot",
+          ],
+        },
+        // Debug "waiting" phases: follow-up prompts return to same state.
+        // These phases never produce structuredOutput (no schema), so they
+        // are not gated.
         {
           guard: "isDebugAwaitingReproduction",
           target: "debug.awaitingReproduction",
@@ -551,31 +698,6 @@ export const conversationMachine = setup({
             "syncDerivedFields",
             "releaseResources",
             "broadcastConversationStatus",
-            "persistSnapshot",
-          ],
-        },
-        // Debug cleanup done: exit debug mode entirely
-        {
-          guard: "isDebugCleanup",
-          target: "idle",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-                debugMode: null,
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "broadcastDebugModeStatus",
             "persistSnapshot",
           ],
         },
@@ -644,30 +766,31 @@ export const conversationMachine = setup({
           // Side-effect only; state unchanged.
           // The actual file clear is handled by the API route.
         },
+        // Lifted from each substate. The transition body is identical across
+        // hypothesizing / awaiting_reproduction / analyzing_evidence /
+        // fixing / awaiting_verification / cleanup_instrumentation / error,
+        // so define it once at the parent and let the child substates inherit.
+        SUBMIT_PROMPT: {
+          target: "#conversation.acquiringResources",
+          actions: assign({
+            activeTurn: ({ event, context }) => ({
+              promptText: event.promptText,
+              images: event.images ?? [],
+              backend: event.backend ?? context.agentBackend,
+              modelId: event.modelId ?? null,
+              effort: event.effort ?? null,
+              autonomous: event.autonomous ?? false,
+              startedAt: new Date().toISOString(),
+              streamId: event.streamId,
+              outputFormat: event.outputFormat,
+            }),
+            lastError: null,
+          }),
+        },
       },
 
       states: {
-        hypothesizing: {
-          on: {
-            SUBMIT_PROMPT: {
-              target: "#conversation.acquiringResources",
-              actions: assign({
-                activeTurn: ({ event, context }) => ({
-                  promptText: event.promptText,
-                  images: event.images ?? [],
-                  backend: event.backend ?? context.agentBackend,
-                  modelId: event.modelId ?? null,
-                  effort: event.effort ?? null,
-                  autonomous: event.autonomous ?? false,
-                  startedAt: new Date().toISOString(),
-                  streamId: event.streamId,
-                  outputFormat: event.outputFormat,
-                }),
-                lastError: null,
-              }),
-            },
-          },
-        },
+        hypothesizing: {},
 
         awaitingReproduction: {
           on: {
@@ -687,69 +810,31 @@ export const conversationMachine = setup({
                 "persistSnapshot",
               ],
             },
-            SUBMIT_PROMPT: {
-              target: "#conversation.acquiringResources",
-              actions: assign({
-                activeTurn: ({ event, context }) => ({
-                  promptText: event.promptText,
-                  images: event.images ?? [],
-                  backend: event.backend ?? context.agentBackend,
-                  modelId: event.modelId ?? null,
-                  effort: event.effort ?? null,
-                  autonomous: event.autonomous ?? false,
-                  startedAt: new Date().toISOString(),
-                  streamId: event.streamId,
-                  outputFormat: event.outputFormat,
-                }),
-                lastError: null,
-              }),
-            },
           },
         },
 
         analyzingEvidence: {
           on: {
-            SUBMIT_PROMPT: {
-              target: "#conversation.acquiringResources",
-              actions: assign({
-                activeTurn: ({ event, context }) => ({
-                  promptText: event.promptText,
-                  images: event.images ?? [],
-                  backend: event.backend ?? context.agentBackend,
-                  modelId: event.modelId ?? null,
-                  effort: event.effort ?? null,
-                  autonomous: event.autonomous ?? false,
-                  startedAt: new Date().toISOString(),
-                  streamId: event.streamId,
-                  outputFormat: event.outputFormat,
+            REVERT_TO_AWAITING_REPRODUCTION: {
+              target: "awaitingReproduction",
+              actions: [
+                assign({
+                  debugMode: ({ context }) =>
+                    context.debugMode
+                      ? {
+                          ...context.debugMode,
+                          phase: "awaiting_reproduction" as const,
+                        }
+                      : null,
                 }),
-                lastError: null,
-              }),
+                "syncDerivedFields",
+                "persistSnapshot",
+              ],
             },
           },
         },
 
-        fixing: {
-          on: {
-            SUBMIT_PROMPT: {
-              target: "#conversation.acquiringResources",
-              actions: assign({
-                activeTurn: ({ event, context }) => ({
-                  promptText: event.promptText,
-                  images: event.images ?? [],
-                  backend: event.backend ?? context.agentBackend,
-                  modelId: event.modelId ?? null,
-                  effort: event.effort ?? null,
-                  autonomous: event.autonomous ?? false,
-                  startedAt: new Date().toISOString(),
-                  streamId: event.streamId,
-                  outputFormat: event.outputFormat,
-                }),
-                lastError: null,
-              }),
-            },
-          },
-        },
+        fixing: {},
 
         awaitingVerification: {
           on: {
@@ -769,42 +854,125 @@ export const conversationMachine = setup({
                 "persistSnapshot",
               ],
             },
-            SUBMIT_PROMPT: {
-              target: "#conversation.acquiringResources",
-              actions: assign({
-                activeTurn: ({ event, context }) => ({
-                  promptText: event.promptText,
-                  images: event.images ?? [],
-                  backend: event.backend ?? context.agentBackend,
-                  modelId: event.modelId ?? null,
-                  effort: event.effort ?? null,
-                  autonomous: event.autonomous ?? false,
-                  startedAt: new Date().toISOString(),
-                  streamId: event.streamId,
-                  outputFormat: event.outputFormat,
-                }),
-                lastError: null,
-              }),
-            },
           },
         },
 
         cleanupInstrumentation: {
           on: {
-            SUBMIT_PROMPT: {
+            REVERT_TO_AWAITING_VERIFICATION: {
+              target: "awaitingVerification",
+              actions: [
+                assign({
+                  debugMode: ({ context }) =>
+                    context.debugMode
+                      ? {
+                          ...context.debugMode,
+                          phase: "awaiting_verification" as const,
+                        }
+                      : null,
+                }),
+                "syncDerivedFields",
+                "persistSnapshot",
+              ],
+            },
+          },
+        },
+
+        // Cross-checks the agent's debugCleanupResultOutput against the
+        // persisted instrumentation manifest. Only on a passing verification
+        // does the conversation leave debug mode and physically delete the
+        // manifest. A failing verification routes to debug.error with a
+        // structured remediation message so the agent can be re-prompted.
+        verifyingCleanup: {
+          invoke: {
+            src: "verifyCleanup",
+            input: ({ context }): VerifyCleanupInput => {
+              const parsed = debugCleanupResultZodSchema.safeParse(
+                context.lastResult?.structuredOutput,
+              );
+              const cleanup = parsed.success
+                ? parsed.data
+                : {
+                    removedInstrumentation: false,
+                    filesModified: [],
+                    grepVerificationPassed: false,
+                    acknowledgesManifestDeletionContract: false,
+                    notes: "Cleanup payload failed schema validation.",
+                  };
+              return {
+                worktreePath: context.worktreePath,
+                conversationId: context.conversationId,
+                cleanup,
+              };
+            },
+            onDone: [
+              {
+                guard: ({ event }) => event.output.ok === true,
+                target: "#conversation.idle",
+                actions: [
+                  assign({
+                    debugMode: null,
+                    activeTurn: null,
+                  }),
+                  "syncDerivedFields",
+                  "broadcastConversationStatus",
+                  "broadcastDebugModeStatus",
+                  "persistSnapshot",
+                ],
+              },
+              {
+                target: "error",
+                actions: [
+                  assign(({ event }) => ({
+                    lastError: event.output.remediationPrompt,
+                  })),
+                  "syncDerivedFields",
+                  "broadcastConversationStatus",
+                  "persistSnapshot",
+                ],
+              },
+            ],
+            onError: {
+              target: "error",
+              actions: [
+                assign({
+                  lastError: ({ event }) =>
+                    `Cleanup verification failed: ${extractError(event.error)}`,
+                }),
+                "syncDerivedFields",
+                "broadcastConversationStatus",
+                "persistSnapshot",
+              ],
+            },
+          },
+        },
+
+        // Reached when a phase-advancing turn produced no valid structured
+        // output. Phase is preserved so RETRY re-runs the same turn against
+        // the same schema. SUBMIT_PROMPT (inherited from the parent debug
+        // state) replaces the failed turn with a new prompt; EXIT_DEBUG_MODE
+        // is also inherited from the parent debug state.
+        // The lastTurnFailed flag is toggled on entry/exit so that on
+        // actor rehydration (server restart) the idle.always restoration
+        // routes back into debug.error rather than the bare phase substate.
+        error: {
+          entry: assign({
+            debugMode: ({ context }) =>
+              context.debugMode
+                ? { ...context.debugMode, lastTurnFailed: true }
+                : null,
+          }),
+          exit: assign({
+            debugMode: ({ context }) =>
+              context.debugMode
+                ? { ...context.debugMode, lastTurnFailed: false }
+                : null,
+          }),
+          on: {
+            RETRY_DEBUG_TURN: {
+              guard: ({ context }) => context.activeTurn != null,
               target: "#conversation.acquiringResources",
               actions: assign({
-                activeTurn: ({ event, context }) => ({
-                  promptText: event.promptText,
-                  images: event.images ?? [],
-                  backend: event.backend ?? context.agentBackend,
-                  modelId: event.modelId ?? null,
-                  effort: event.effort ?? null,
-                  autonomous: event.autonomous ?? false,
-                  startedAt: new Date().toISOString(),
-                  streamId: event.streamId,
-                  outputFormat: event.outputFormat,
-                }),
                 lastError: null,
               }),
             },

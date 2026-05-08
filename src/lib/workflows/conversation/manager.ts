@@ -105,6 +105,7 @@ export function applySyncDerivedFields(
       hypotheses: context.debugMode.hypotheses,
       instructionsDelivered: context.debugMode.instructionsDelivered,
       phase: context.debugMode.phase,
+      lastTurnFailed: context.debugMode.lastTurnFailed,
     };
   } else {
     c.debugMode = null;
@@ -422,6 +423,7 @@ export async function ensureConversationActor(
     agentBackend: conversation.agentBackend ?? "claude",
     backendRef: conversation.backendRef ?? null,
     promptCount: conversation.promptCount ?? 0,
+    debugMode: conversation.debugMode?.active ? conversation.debugMode : null,
   });
 }
 
@@ -437,6 +439,7 @@ export function sendConversationEvent(
 ): boolean {
   const actor = getConversationActor(projectPath, sessionName, conversationId);
   if (!actor) return false;
+  if (!actor.getSnapshot().can(event)) return false;
   actor.send(event);
   return true;
 }
