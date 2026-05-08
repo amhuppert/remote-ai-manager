@@ -177,6 +177,11 @@ export type {
   GraphWorkflowValidationResultEvent,
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowSharedDocumentsUpdatedEvent,
+  GraphWorkflowPendingHaltReasonEvent,
+  GraphWorkflowMergeStatusEvent,
+  GraphWorkflowBatchScheduledEvent,
+  GraphWorkflowMergeStatusValue,
+  GraphWorkflowCleanupStatusValue,
   // Dev Server types
   DevServerConfig,
   DevServerStatus,

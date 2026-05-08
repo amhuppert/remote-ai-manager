@@ -505,7 +505,9 @@ export default function ConversationSidebar({
                         <div className="convo-sidebar-item-body">
                           <div className="convo-sidebar-item-name-row">
                             <div className="convo-sidebar-item-summary">
-                              {gw.activeContextTitle ?? "Graph Workflow"}
+                              {gw.activeContextTitles.length > 0
+                                ? gw.activeContextTitles.join(" + ")
+                                : "Graph Workflow"}
                             </div>
                             <span className="convo-sidebar-active-time">
                               {gw.completedContexts}/{gw.totalContexts}

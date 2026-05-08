@@ -26,7 +26,7 @@ export function isTaskConversationLive(
   }
 
   const activeContextId =
-    machineSnapshot?.activeContextId ?? execution.activeContextId;
+    machineSnapshot?.activeContextId ?? execution.activeContextIds[0] ?? null;
   if (!activeContextId || activeContextId !== taskState.contextId) {
     return false;
   }

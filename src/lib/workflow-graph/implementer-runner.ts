@@ -10,6 +10,7 @@ import type {
 } from "@/lib/agent-backends/types";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
+import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { MessageContentBlock, SessionState } from "@/types";
 
 const logger = createLogger("graph-workflow-implementer-runner");
@@ -41,6 +42,7 @@ interface ExecutePromptStreamFn {
       effort?: string;
       backend?: AgentBackendId;
       tooling?: { portableMcp?: PortableMcpConfig };
+      executionTarget?: ExecutionTarget;
     },
   ): Promise<PromptStreamResult>;
 }
@@ -61,6 +63,14 @@ export interface RunIterationInput {
   reasoningEffort: string;
   toolServer: unknown;
   emitStreamFrame?(frame: GraphWorkflowStreamFrame): void;
+  /**
+   * When supplied, the iteration runs against this resolved target's
+   * worktree and branch instead of `session.worktreePath` /
+   * `session.branchName`. Solo-eligible contexts (single eligible context per
+   * scheduling tick) leave this undefined, preserving the pre-parallelization
+   * behavior of running directly inside the session worktree.
+   */
+  executionTarget?: ExecutionTarget;
 }
 
 function isMessageContentBlock(value: unknown): value is MessageContentBlock {
@@ -94,6 +104,24 @@ export function createGraphWorkflowImplementerRunner(
     // produces code edits, file writes, and a natural-language summary
     // streamed to the UI as chat content. A JSON schema would suppress the
     // streaming markdown turn body the UI renders.
+    const promptOptions: {
+      autonomous: boolean;
+      backend: AgentBackendId;
+      effort: string;
+      tooling: { portableMcp: PortableMcpConfig };
+      executionTarget?: ExecutionTarget;
+    } = {
+      autonomous: true,
+      backend: input.backend,
+      effort: input.reasoningEffort,
+      tooling: {
+        portableMcp: input.toolServer as PortableMcpConfig,
+      },
+    };
+    if (input.executionTarget !== undefined) {
+      promptOptions.executionTarget = input.executionTarget;
+    }
+
     const result = await executePromptStream(
       input.projectPath,
       input.session,
@@ -113,14 +141,7 @@ export function createGraphWorkflowImplementerRunner(
       input.conversationId,
       input.model,
       undefined,
-      {
-        autonomous: true,
-        backend: input.backend,
-        effort: input.reasoningEffort,
-        tooling: {
-          portableMcp: input.toolServer as PortableMcpConfig,
-        },
-      },
+      promptOptions,
     );
 
     if (result.error) {

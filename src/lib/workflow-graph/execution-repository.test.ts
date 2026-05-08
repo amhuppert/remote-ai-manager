@@ -120,7 +120,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
     });
 
-    expect(execution.activeContextId).toBeNull();
+    expect(execution.activeContextIds).toEqual([]);
     expect(execution.haltReason).toBeNull();
     expect(execution.completedAt).toBeNull();
     expect(execution.sharedDocuments).toEqual([]);
@@ -138,6 +138,13 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        batchId: null,
+        isolation: "session",
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       });
     }
 

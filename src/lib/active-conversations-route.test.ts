@@ -282,7 +282,7 @@ describe("GET /api/conversations/active", () => {
                 edges: [],
               },
               status: "running",
-              activeContextId: "ctx-1",
+              activeContextIds: ["ctx-1"],
               contextStates: {
                 "ctx-1": {
                   contextId: "ctx-1",
@@ -291,6 +291,13 @@ describe("GET /api/conversations/active", () => {
                   completedTaskCount: 1,
                   iterationCount: 1,
                   consecutiveFailureCount: 0,
+                  worktreePath: null,
+                  branchName: null,
+                  isolation: "session",
+                  batchId: null,
+                  mergeStatus: "not-applicable",
+                  cleanupStatus: "not-applicable",
+                  lastMergeError: null,
                 },
                 "ctx-2": {
                   contextId: "ctx-2",
@@ -299,6 +306,13 @@ describe("GET /api/conversations/active", () => {
                   completedTaskCount: 0,
                   iterationCount: 0,
                   consecutiveFailureCount: 0,
+                  worktreePath: null,
+                  branchName: null,
+                  isolation: "session",
+                  batchId: null,
+                  mergeStatus: "not-applicable",
+                  cleanupStatus: "not-applicable",
+                  lastMergeError: null,
                 },
               },
               taskStates: {},
@@ -308,6 +322,7 @@ describe("GET /api/conversations/active", () => {
               startedAt: "2026-01-01T12:00:00.000Z",
               completedAt: null,
               haltReason: null,
+              pendingHaltReason: null,
             },
           },
         },
@@ -325,11 +340,228 @@ describe("GET /api/conversations/active", () => {
       projectName: "my-project",
       projectPath: "/home/user/my-project",
       sessionName: "my-session",
-      activeContextTitle: "Plan",
+      activeContextIds: ["ctx-1"],
+      activeContextTitles: ["Plan"],
+      activeBatchIds: [],
+      pendingHaltReason: null,
+      contextMergeProgress: [],
       completedContexts: 0,
       totalContexts: 2,
       startedAt: "2026-01-01T12:00:00.000Z",
     });
+  });
+
+  it("lists every active context title for parallel graph workflow executions", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [makeConversation({ id: "c1", status: "running" })],
+            graphWorkflowExecution: {
+              id: "exec-1",
+              seedDefinitionId: "def-1",
+              seedDefinitionRevision: 1,
+              workingDefinition: {
+                schemaVersion: 1,
+                executionContexts: [
+                  {
+                    id: "ctx-1",
+                    title: "Plan",
+                    description: "Plan the work",
+                    agent: { model: "opus", reasoningEffort: "high" },
+                    mutability: { allowAgentTaskAdd: false },
+                    circuitBreaker: {},
+                    iterationPolicy: { maxIterations: 3 },
+                  },
+                  {
+                    id: "ctx-2",
+                    title: "Implement",
+                    description: "Do the work",
+                    agent: { model: "sonnet", reasoningEffort: "medium" },
+                    mutability: { allowAgentTaskAdd: false },
+                    circuitBreaker: {},
+                    iterationPolicy: { maxIterations: 3 },
+                  },
+                ],
+                tasks: [],
+                edges: [],
+              },
+              status: "running",
+              activeContextIds: ["ctx-1", "ctx-2"],
+              contextStates: {
+                "ctx-1": {
+                  contextId: "ctx-1",
+                  status: "running",
+                  totalTaskCount: 1,
+                  completedTaskCount: 0,
+                  iterationCount: 0,
+                  consecutiveFailureCount: 0,
+                  worktreePath: null,
+                  branchName: null,
+                  isolation: "session",
+                  batchId: null,
+                  mergeStatus: "not-applicable",
+                  cleanupStatus: "not-applicable",
+                  lastMergeError: null,
+                },
+                "ctx-2": {
+                  contextId: "ctx-2",
+                  status: "running",
+                  totalTaskCount: 1,
+                  completedTaskCount: 0,
+                  iterationCount: 0,
+                  consecutiveFailureCount: 0,
+                  worktreePath: null,
+                  branchName: null,
+                  isolation: "session",
+                  batchId: null,
+                  mergeStatus: "not-applicable",
+                  cleanupStatus: "not-applicable",
+                  lastMergeError: null,
+                },
+              },
+              taskStates: {},
+              sharedDocuments: [],
+              machineSnapshot: null,
+              history: [],
+              startedAt: "2026-01-01T12:00:00.000Z",
+              completedAt: null,
+              haltReason: null,
+              pendingHaltReason: null,
+            },
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.graphWorkflowExecutions).toHaveLength(1);
+    expect(body.graphWorkflowExecutions[0].activeContextTitles).toEqual([
+      "Plan",
+      "Implement",
+    ]);
+    expect(body.graphWorkflowExecutions[0].activeContextIds).toEqual([
+      "ctx-1",
+      "ctx-2",
+    ]);
+    expect(body.graphWorkflowExecutions[0].activeBatchIds).toEqual([]);
+    expect(body.graphWorkflowExecutions[0].pendingHaltReason).toBeNull();
+    expect(body.graphWorkflowExecutions[0].contextMergeProgress).toEqual([]);
+  });
+
+  it("exposes activeBatchIds, pendingHaltReason, and contextMergeProgress in activeContextIds order", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [makeConversation({ id: "c1", status: "running" })],
+            graphWorkflowExecution: {
+              id: "exec-1",
+              seedDefinitionId: "def-1",
+              seedDefinitionRevision: 1,
+              workingDefinition: {
+                schemaVersion: 1,
+                executionContexts: [
+                  {
+                    id: "ctx-a",
+                    title: "A",
+                    description: "First",
+                    agent: { model: "opus", reasoningEffort: "high" },
+                    mutability: { allowAgentTaskAdd: false },
+                    circuitBreaker: {},
+                    iterationPolicy: { maxIterations: 3 },
+                  },
+                  {
+                    id: "ctx-b",
+                    title: "B",
+                    description: "Second",
+                    agent: { model: "sonnet", reasoningEffort: "medium" },
+                    mutability: { allowAgentTaskAdd: false },
+                    circuitBreaker: {},
+                    iterationPolicy: { maxIterations: 3 },
+                  },
+                ],
+                tasks: [],
+                edges: [],
+              },
+              status: "running",
+              activeContextIds: ["ctx-b", "ctx-a"],
+              contextStates: {
+                "ctx-a": {
+                  contextId: "ctx-a",
+                  status: "running",
+                  totalTaskCount: 1,
+                  completedTaskCount: 0,
+                  iterationCount: 0,
+                  consecutiveFailureCount: 0,
+                  worktreePath: "/tmp/wta",
+                  branchName: "csm/ctx-a",
+                  isolation: "worktree",
+                  batchId: "batch-9",
+                  mergeStatus: "in-progress",
+                  cleanupStatus: "pending",
+                  lastMergeError: null,
+                },
+                "ctx-b": {
+                  contextId: "ctx-b",
+                  status: "running",
+                  totalTaskCount: 1,
+                  completedTaskCount: 0,
+                  iterationCount: 0,
+                  consecutiveFailureCount: 0,
+                  worktreePath: "/tmp/wtb",
+                  branchName: "csm/ctx-b",
+                  isolation: "worktree",
+                  batchId: "batch-9",
+                  mergeStatus: "merged-success",
+                  cleanupStatus: "removed",
+                  lastMergeError: null,
+                },
+              },
+              taskStates: {},
+              sharedDocuments: [],
+              machineSnapshot: null,
+              history: [],
+              startedAt: "2026-01-01T12:00:00.000Z",
+              completedAt: null,
+              haltReason: null,
+              pendingHaltReason: {
+                type: "circuit_breaker",
+                contextId: "ctx-a",
+                condition: "retry_exhaustion",
+                summary: null,
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.graphWorkflowExecutions[0].activeContextIds).toEqual([
+      "ctx-b",
+      "ctx-a",
+    ]);
+    expect(body.graphWorkflowExecutions[0].activeContextTitles).toEqual([
+      "B",
+      "A",
+    ]);
+    expect(body.graphWorkflowExecutions[0].activeBatchIds).toEqual(["batch-9"]);
+    expect(body.graphWorkflowExecutions[0].pendingHaltReason).toMatchObject({
+      type: "circuit_breaker",
+      contextId: "ctx-a",
+    });
+    expect(
+      body.graphWorkflowExecutions[0].contextMergeProgress.map(
+        (m: { contextId: string }) => m.contextId,
+      ),
+    ).toEqual(["ctx-b", "ctx-a"]);
   });
 
   it("excludes conversations with role 'iteration' (graph workflow)", async () => {

@@ -192,7 +192,7 @@ export function createWorkflowExecution(
     seedDefinitionRevision: 1,
     workingDefinition: definition,
     status: "pending",
-    activeContextId: null,
+    activeContextIds: [],
     contextStates: {
       "context-plan": {
         contextId: "context-plan",
@@ -201,6 +201,13 @@ export function createWorkflowExecution(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "context-implement": {
         contextId: "context-implement",
@@ -209,6 +216,13 @@ export function createWorkflowExecution(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "context-verify": {
         contextId: "context-verify",
@@ -217,6 +231,13 @@ export function createWorkflowExecution(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {
@@ -264,6 +285,7 @@ export function createWorkflowExecution(
     startedAt: timestamp,
     completedAt: null,
     haltReason: null,
+    pendingHaltReason: null,
     ...overrides,
   };
 }

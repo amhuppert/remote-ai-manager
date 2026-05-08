@@ -3,7 +3,9 @@ import {
   getCodexReasoningLevelsForModel,
   globalConfigSchema,
   graphWorkflowAgentValidatorConfigSchema,
+  graphWorkflowBatchScheduledEventSchema,
   graphWorkflowExecutionContextDefinitionSchema,
+  graphWorkflowExecutionContextStateSchema,
   graphWorkflowExecutionEventSchema,
   graphWorkflowExecutionSchema,
   graphWorkflowExecutionSessionRefSchema,
@@ -11,6 +13,8 @@ import {
   graphWorkflowIterationPolicySchema,
   graphWorkflowLaneContinuityPolicySchema,
   graphWorkflowLaneStateSchema,
+  graphWorkflowMergeStatusEventSchema,
+  graphWorkflowPendingHaltReasonEventSchema,
   graphWorkflowResolvedContextSchema,
   graphWorkflowScriptValidatorConfigSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
@@ -263,7 +267,7 @@ describe("workflow graph execution schemas", () => {
       seedDefinitionRevision: 4,
       workingDefinition: createResolvedDefinition(),
       status: "running",
-      activeContextId: "context-1",
+      activeContextIds: ["context-1"],
       activeTaskId: "task-1",
       contextStates: {
         "context-1": {
@@ -498,10 +502,20 @@ describe("workflow graph session state and SSE schemas", () => {
       sessionName: "validator-loop-design-f93878",
       executionId: "execution-1",
       workflowStatus: "running",
-      activeContextId: "context-1",
+      activeContextIds: ["context-1", "context-2"],
+      activeBatchIds: ["batch-1"],
       haltReason: null,
+      pendingHaltReason: null,
     });
     expect(statusEvent.success).toBe(true);
+    if (statusEvent.success) {
+      expect(statusEvent.data.activeContextIds).toEqual([
+        "context-1",
+        "context-2",
+      ]);
+      expect(statusEvent.data.activeBatchIds).toEqual(["batch-1"]);
+      expect(statusEvent.data.pendingHaltReason).toBeNull();
+    }
 
     const docsEvent = graphWorkflowSharedDocumentsUpdatedEventSchema.safeParse({
       type: "graph-workflow-shared-documents-updated",
@@ -521,6 +535,73 @@ describe("workflow graph session state and SSE schemas", () => {
       ],
     });
     expect(docsEvent.success).toBe(true);
+  });
+
+  it("parses graph-workflow-pending-halt-reason events", () => {
+    const event = graphWorkflowPendingHaltReasonEventSchema.safeParse({
+      type: "graph-workflow-pending-halt-reason",
+      projectName: "remote-ai-manager",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      pendingHaltReason: {
+        type: "circuit_breaker",
+        contextId: "context-1",
+        condition: "retry_exhaustion",
+      },
+    });
+    expect(event.success).toBe(true);
+    if (event.success) {
+      expect(event.data.pendingHaltReason).toEqual({
+        type: "circuit_breaker",
+        contextId: "context-1",
+        condition: "retry_exhaustion",
+        summary: null,
+      });
+    }
+
+    const nullEvent = graphWorkflowPendingHaltReasonEventSchema.safeParse({
+      type: "graph-workflow-pending-halt-reason",
+      projectName: "remote-ai-manager",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      pendingHaltReason: null,
+    });
+    expect(nullEvent.success).toBe(true);
+  });
+
+  it("parses graph-workflow-merge-status events", () => {
+    const event = graphWorkflowMergeStatusEventSchema.safeParse({
+      type: "graph-workflow-merge-status",
+      projectName: "remote-ai-manager",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-1",
+      branchName: "csm/session-1-context-1",
+      mergeStatus: "in-progress",
+      cleanupStatus: "pending",
+      lastMergeError: null,
+    });
+    expect(event.success).toBe(true);
+    if (event.success) {
+      expect(event.data.mergeStatus).toBe("in-progress");
+      expect(event.data.cleanupStatus).toBe("pending");
+    }
+  });
+
+  it("parses graph-workflow-batch-scheduled events", () => {
+    const event = graphWorkflowBatchScheduledEventSchema.safeParse({
+      type: "graph-workflow-batch-scheduled",
+      projectName: "remote-ai-manager",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      batchId: "batch-1",
+      contextIds: ["context-1", "context-2"],
+    });
+    expect(event.success).toBe(true);
+    if (event.success) {
+      expect(event.data.batchId).toBe("batch-1");
+      expect(event.data.contextIds).toEqual(["context-1", "context-2"]);
+    }
   });
 });
 
@@ -1136,7 +1217,83 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
     }
   });
 
-  it("persists laneStates with claude and codex entries", () => {
+  it("persists laneStates keyed first by contextId then by lane", () => {
+    const result = graphWorkflowExecutionSchema.safeParse({
+      id: "exec-1",
+      seedDefinitionId: "def-1",
+      seedDefinitionRevision: 1,
+      workingDefinition: {
+        schemaVersion: 1,
+        executionContexts: [],
+        tasks: [],
+        edges: [],
+      },
+      status: "running",
+      startedAt: timestamp,
+      laneStates: {
+        "ctx-1": {
+          implementer: {
+            engine: "claude",
+            lane: "implementer",
+            contextId: "ctx-1",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-123",
+            },
+            lastContextTokens: 80000,
+            lastContextWindowMax: 200000,
+            rotateBeforeNextTurn: true,
+            limitEvaluation: "supported",
+            lastUsedAt: timestamp,
+          },
+          context_validator: {
+            engine: "codex",
+            lane: "context_validator",
+            contextId: "ctx-1",
+            sessionRef: {
+              engine: "codex",
+              lane: "context_validator",
+              threadId: "thread-xyz",
+            },
+            lastTurnUsage: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "unsupported",
+            lastUsedAt: timestamp,
+          },
+        },
+        "ctx-2": {
+          implementer: {
+            engine: "claude",
+            lane: "implementer",
+            contextId: "ctx-2",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-456",
+            },
+            lastContextTokens: 0,
+            lastContextWindowMax: 200000,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "supported",
+            lastUsedAt: timestamp,
+          },
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(Object.keys(result.data.laneStates)).toEqual(["ctx-1", "ctx-2"]);
+      expect(Object.keys(result.data.laneStates["ctx-1"] ?? {}).sort()).toEqual(
+        ["context_validator", "implementer"],
+      );
+      expect(result.data.laneStates["ctx-2"]?.implementer?.contextId).toBe(
+        "ctx-2",
+      );
+    }
+  });
+
+  it("rejects legacy lane keying that places lane state directly under the lane key", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       id: "exec-1",
       seedDefinitionId: "def-1",
@@ -1159,32 +1316,15 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
             lane: "implementer",
             conversationId: "conv-123",
           },
-          lastContextTokens: 80000,
-          lastContextWindowMax: 200000,
-          rotateBeforeNextTurn: true,
-          limitEvaluation: "supported",
-          lastUsedAt: timestamp,
-        },
-        context_validator: {
-          engine: "codex",
-          lane: "context_validator",
-          contextId: "ctx-1",
-          sessionRef: {
-            engine: "codex",
-            lane: "context_validator",
-            threadId: "thread-xyz",
-          },
-          lastTurnUsage: null,
+          lastContextTokens: null,
+          lastContextWindowMax: null,
           rotateBeforeNextTurn: false,
-          limitEvaluation: "unsupported",
+          limitEvaluation: "disabled",
           lastUsedAt: timestamp,
         },
       },
     });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(Object.keys(result.data.laneStates)).toHaveLength(2);
-    }
+    expect(result.success).toBe(false);
   });
 });
 
@@ -1356,5 +1496,286 @@ describe("graphWorkflowHaltReasonSchema", () => {
       expect(result.data.contextId).toBe("ctx-1");
       expect(result.data.message).toContain("preMergeCommand");
     }
+  });
+
+  it("accepts a merge_failure halt reason with contextId, message, and conflictFiles", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "merge_failure",
+      contextId: "ctx-1",
+      message: "Merge conflict could not be resolved automatically",
+      conflictFiles: ["src/lib/foo.ts", "src/lib/bar.ts"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "merge_failure") {
+      expect(result.data.contextId).toBe("ctx-1");
+      expect(result.data.message).toContain("Merge conflict");
+      expect(result.data.conflictFiles).toEqual([
+        "src/lib/foo.ts",
+        "src/lib/bar.ts",
+      ]);
+    }
+  });
+
+  it("defaults conflictFiles to an empty array on merge_failure", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "merge_failure",
+      contextId: "ctx-1",
+      message: "Merge failed",
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "merge_failure") {
+      expect(result.data.conflictFiles).toEqual([]);
+    }
+  });
+
+  it("rejects a merge_failure halt reason with a blank contextId", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "merge_failure",
+      contextId: "",
+      message: "Merge failed",
+      conflictFiles: [],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("graphWorkflowExecutionContextStateSchema parallel-execution fields", () => {
+  const baseContextState = {
+    contextId: "ctx-1",
+    status: "ready",
+    totalTaskCount: 1,
+  };
+
+  it("defaults the new parallel-execution fields when omitted", () => {
+    const result =
+      graphWorkflowExecutionContextStateSchema.safeParse(baseContextState);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.worktreePath).toBeNull();
+      expect(result.data.branchName).toBeNull();
+      expect(result.data.isolation).toBe("session");
+      expect(result.data.batchId).toBeNull();
+      expect(result.data.mergeStatus).toBe("not-applicable");
+      expect(result.data.cleanupStatus).toBe("not-applicable");
+      expect(result.data.lastMergeError).toBeNull();
+    }
+  });
+
+  it("parses fully populated parallel-execution fields", () => {
+    const result = graphWorkflowExecutionContextStateSchema.safeParse({
+      ...baseContextState,
+      status: "running",
+      worktreePath: "/tmp/.worktrees/session.ctx-1",
+      branchName: "csm/session-ctx-1",
+      isolation: "worktree",
+      batchId: "batch-uuid-1",
+      mergeStatus: "in-progress",
+      cleanupStatus: "pending",
+      lastMergeError: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.worktreePath).toBe("/tmp/.worktrees/session.ctx-1");
+      expect(result.data.branchName).toBe("csm/session-ctx-1");
+      expect(result.data.isolation).toBe("worktree");
+      expect(result.data.batchId).toBe("batch-uuid-1");
+      expect(result.data.mergeStatus).toBe("in-progress");
+      expect(result.data.cleanupStatus).toBe("pending");
+    }
+  });
+
+  it("accepts every mergeStatus enum value", () => {
+    for (const mergeStatus of [
+      "not-applicable",
+      "pending",
+      "in-progress",
+      "merged-success",
+      "merged-failed",
+      "conflicts",
+    ] as const) {
+      const result = graphWorkflowExecutionContextStateSchema.safeParse({
+        ...baseContextState,
+        mergeStatus,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("accepts every cleanupStatus enum value", () => {
+    for (const cleanupStatus of [
+      "not-applicable",
+      "pending",
+      "removed",
+      "failed",
+    ] as const) {
+      const result = graphWorkflowExecutionContextStateSchema.safeParse({
+        ...baseContextState,
+        cleanupStatus,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects unknown isolation values", () => {
+    const result = graphWorkflowExecutionContextStateSchema.safeParse({
+      ...baseContextState,
+      isolation: "shared",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("populates lastMergeError when a merge failed", () => {
+    const result = graphWorkflowExecutionContextStateSchema.safeParse({
+      ...baseContextState,
+      mergeStatus: "merged-failed",
+      lastMergeError: "Conflict in src/lib/foo.ts",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lastMergeError).toBe("Conflict in src/lib/foo.ts");
+    }
+  });
+});
+
+describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
+  const minimalExecution = {
+    id: "exec-1",
+    seedDefinitionId: "def-1",
+    seedDefinitionRevision: 1,
+    workingDefinition: {
+      schemaVersion: 1,
+      executionContexts: [],
+      tasks: [],
+      edges: [],
+    },
+    status: "running" as const,
+    startedAt: timestamp,
+  };
+
+  it("defaults activeContextIds to an empty array when omitted", () => {
+    const result = graphWorkflowExecutionSchema.safeParse(minimalExecution);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.activeContextIds).toEqual([]);
+    }
+  });
+
+  it("defaults pendingHaltReason to null when omitted", () => {
+    const result = graphWorkflowExecutionSchema.safeParse(minimalExecution);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.pendingHaltReason).toBeNull();
+    }
+  });
+
+  it("parses activeContextIds as a string array", () => {
+    const result = graphWorkflowExecutionSchema.safeParse({
+      ...minimalExecution,
+      activeContextIds: ["ctx-1", "ctx-2"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.activeContextIds).toEqual(["ctx-1", "ctx-2"]);
+    }
+  });
+
+  it("persists pendingHaltReason as a merge_failure variant", () => {
+    const result = graphWorkflowExecutionSchema.safeParse({
+      ...minimalExecution,
+      pendingHaltReason: {
+        type: "merge_failure",
+        contextId: "ctx-2",
+        message: "Auto-resolution exhausted",
+        conflictFiles: ["src/lib/foo.ts"],
+      },
+    });
+    expect(result.success).toBe(true);
+    if (
+      result.success &&
+      result.data.pendingHaltReason?.type === "merge_failure"
+    ) {
+      expect(result.data.pendingHaltReason.contextId).toBe("ctx-2");
+      expect(result.data.pendingHaltReason.conflictFiles).toEqual([
+        "src/lib/foo.ts",
+      ]);
+    }
+  });
+
+  it("round-trips a fully populated execution with parallel fields", () => {
+    const fullExecution = {
+      id: "exec-1",
+      seedDefinitionId: "def-1",
+      seedDefinitionRevision: 1,
+      workingDefinition: {
+        schemaVersion: 1,
+        executionContexts: [],
+        tasks: [],
+        edges: [],
+      },
+      status: "running" as const,
+      activeContextIds: ["ctx-1", "ctx-2"],
+      pendingHaltReason: {
+        type: "merge_failure" as const,
+        contextId: "ctx-2",
+        message: "Conflict resolution failed after 3 attempts",
+        conflictFiles: ["src/lib/foo.ts", "src/lib/bar.ts"],
+      },
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "running" as const,
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: "/tmp/.worktrees/session.ctx-1",
+          branchName: "csm/session-ctx-1",
+          isolation: "worktree" as const,
+          batchId: "batch-1",
+          mergeStatus: "in-progress" as const,
+          cleanupStatus: "pending" as const,
+          lastMergeError: null,
+        },
+        "ctx-2": {
+          contextId: "ctx-2",
+          status: "running" as const,
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: "/tmp/.worktrees/session.ctx-2",
+          branchName: "csm/session-ctx-2",
+          isolation: "worktree" as const,
+          batchId: "batch-1",
+          mergeStatus: "merged-failed" as const,
+          cleanupStatus: "not-applicable" as const,
+          lastMergeError: "Conflict in src/lib/foo.ts",
+        },
+      },
+      taskStates: {},
+      sharedDocuments: [],
+      laneStates: {},
+      machineSnapshot: null,
+      history: [],
+      startedAt: timestamp,
+      completedAt: null,
+      haltReason: null,
+    };
+
+    const parsed = graphWorkflowExecutionSchema.parse(fullExecution);
+    const reparsed = graphWorkflowExecutionSchema.parse(parsed);
+    expect(reparsed.activeContextIds).toEqual(["ctx-1", "ctx-2"]);
+    expect(reparsed.pendingHaltReason?.type).toBe("merge_failure");
+    if (reparsed.pendingHaltReason?.type === "merge_failure") {
+      expect(reparsed.pendingHaltReason.conflictFiles).toEqual([
+        "src/lib/foo.ts",
+        "src/lib/bar.ts",
+      ]);
+    }
+    expect(reparsed.contextStates["ctx-1"]?.isolation).toBe("worktree");
+    expect(reparsed.contextStates["ctx-2"]?.mergeStatus).toBe("merged-failed");
+    expect(reparsed.contextStates["ctx-2"]?.lastMergeError).toBe(
+      "Conflict in src/lib/foo.ts",
+    );
   });
 });

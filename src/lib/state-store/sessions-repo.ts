@@ -9,11 +9,16 @@ import {
   sessionStateSchema,
 } from "../schemas";
 import { PersistenceError, getErrorMessage } from "../errors";
-import type { SessionState } from "@/types";
+import {
+  migrateLegacyExecution,
+  needsLegacyMigration,
+} from "@/lib/workflow-graph/migrate-legacy-execution";
+import type { GraphWorkflowExecution, SessionState } from "@/types";
 
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.sessions");
+const parallelLogger = createLogger("graph-workflow-parallel");
 
 export interface SessionsRepo {
   findByKey(projectPath: string, sessionName: string): SessionState | null;
@@ -210,9 +215,95 @@ const graphWorkflowExecutionHistoryArraySchema = z.array(
   graphWorkflowExecutionSchema,
 );
 
+interface GraphWorkflowExecutionMigration {
+  upgradedJson: string;
+  executionId: string | null;
+  repairedFields: string[];
+}
+
+interface GraphWorkflowExecutionLoadSuccess {
+  ok: true;
+  value: GraphWorkflowExecution | null;
+  migration: GraphWorkflowExecutionMigration | null;
+}
+
+function loadGraphWorkflowExecutionColumn(
+  rawJson: string | null,
+): GraphWorkflowExecutionLoadSuccess | JsonParseFailure {
+  if (rawJson === null) return { ok: true, value: null, migration: null };
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(rawJson);
+  } catch (err) {
+    return {
+      ok: false,
+      issues: [
+        {
+          code: "invalid_json",
+          path: ["graphWorkflowExecution"],
+          message: getErrorMessage(err),
+        },
+      ],
+    };
+  }
+
+  if (parsedJson === null) return { ok: true, value: null, migration: null };
+
+  let candidate: unknown = parsedJson;
+  let migrationMeta: {
+    executionId: string | null;
+    repairedFields: string[];
+  } | null = null;
+  if (needsLegacyMigration(parsedJson)) {
+    try {
+      const result = migrateLegacyExecution(parsedJson);
+      candidate = result.upgradedRecord;
+      migrationMeta = {
+        executionId: result.executionId,
+        repairedFields: result.repairedFields,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        issues: [
+          {
+            code: "legacy_migration_failed",
+            path: ["graphWorkflowExecution"],
+            message: getErrorMessage(err),
+          },
+        ],
+      };
+    }
+  }
+
+  const parseResult = graphWorkflowExecutionSchema
+    .nullable()
+    .safeParse(candidate);
+  if (!parseResult.success) {
+    return { ok: false, issues: parseResult.error.issues };
+  }
+  if (parseResult.data === null) {
+    return { ok: true, value: null, migration: null };
+  }
+  if (migrationMeta === null) {
+    return { ok: true, value: parseResult.data, migration: null };
+  }
+  return {
+    ok: true,
+    value: parseResult.data,
+    migration: {
+      upgradedJson: stableStringify(parseResult.data),
+      executionId: migrationMeta.executionId,
+      repairedFields: migrationMeta.repairedFields,
+    },
+  };
+}
+
 function rowToDomain(rawRow: unknown): {
   projectPath: string;
   session: SessionState;
+  graphWorkflowExecutionMigration: GraphWorkflowExecutionMigration | null;
 } {
   const fallbackProjectPath =
     typeof rawRow === "object" &&
@@ -257,13 +348,7 @@ function rowToDomain(rawRow: unknown): {
     );
   }
 
-  const gwExec = parseJsonColumn(
-    "graphWorkflowExecution",
-    row.graph_workflow_execution,
-    graphWorkflowExecutionSchema.nullable(),
-    "default",
-    null,
-  );
+  const gwExec = loadGraphWorkflowExecutionColumn(row.graph_workflow_execution);
   if (!gwExec.ok) {
     return logAndThrowValidationFailure(
       row.project_path,
@@ -361,7 +446,11 @@ function rowToDomain(rawRow: unknown): {
       result.error.issues,
     );
   }
-  return { projectPath: row.project_path, session: result.data };
+  return {
+    projectPath: row.project_path,
+    session: result.data,
+    graphWorkflowExecutionMigration: gwExec.migration,
+  };
 }
 
 function timed<T>(
@@ -435,25 +524,78 @@ export function createSessionsRepo(db: Db): SessionsRepo {
   const deleteStmt = db.prepare(
     `DELETE FROM sessions WHERE project_path = ? AND session_name = ?`,
   );
+  const updateGraphWorkflowExecutionStmt = db.prepare(
+    `UPDATE sessions SET graph_workflow_execution = ?
+     WHERE project_path = ? AND session_name = ?`,
+  );
+
+  function applyGraphWorkflowExecutionMigration(
+    projectPath: string,
+    sessionName: string,
+    migration: GraphWorkflowExecutionMigration,
+  ): void {
+    updateGraphWorkflowExecutionStmt.run(
+      migration.upgradedJson,
+      projectPath,
+      sessionName,
+    );
+    parallelLogger.info("graph-workflow.parallel.legacy_migrated", {
+      projectPath,
+      sessionName,
+      executionId: migration.executionId,
+      repairedFields: migration.repairedFields,
+    });
+  }
 
   return {
     findByKey(projectPath, sessionName) {
       return timed("findByKey", projectPath, sessionName, () => {
         const row: unknown = findByKeyStmt.get(projectPath, sessionName);
         if (row === undefined) return null;
-        return rowToDomain(row).session;
+        const result = rowToDomain(row);
+        if (result.graphWorkflowExecutionMigration !== null) {
+          applyGraphWorkflowExecutionMigration(
+            result.projectPath,
+            result.session.sessionName,
+            result.graphWorkflowExecutionMigration,
+          );
+        }
+        return result.session;
       });
     },
     findByProject(projectPath) {
       return timed("findByProject", projectPath, undefined, () => {
         const rows = findByProjectStmt.all(projectPath) as unknown[];
-        return rows.map((row) => rowToDomain(row).session);
+        return rows.map((row) => {
+          const result = rowToDomain(row);
+          if (result.graphWorkflowExecutionMigration !== null) {
+            applyGraphWorkflowExecutionMigration(
+              result.projectPath,
+              result.session.sessionName,
+              result.graphWorkflowExecutionMigration,
+            );
+          }
+          return result.session;
+        });
       });
     },
     findAll() {
       return timed("findAll", undefined, undefined, () => {
         const rows = findAllStmt.all() as unknown[];
-        return rows.map(rowToDomain);
+        return rows.map((row) => {
+          const result = rowToDomain(row);
+          if (result.graphWorkflowExecutionMigration !== null) {
+            applyGraphWorkflowExecutionMigration(
+              result.projectPath,
+              result.session.sessionName,
+              result.graphWorkflowExecutionMigration,
+            );
+          }
+          return {
+            projectPath: result.projectPath,
+            session: result.session,
+          };
+        });
       });
     },
     upsert(projectPath, session) {

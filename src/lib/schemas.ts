@@ -1007,6 +1007,12 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     contextId: z.string().trim().min(1),
     message: z.string(),
   }),
+  z.object({
+    type: z.literal("merge_failure"),
+    contextId: z.string().trim().min(1),
+    message: z.string(),
+    conflictFiles: z.array(z.string()).default([]),
+  }),
 ]);
 export type GraphWorkflowHaltReason = z.infer<
   typeof graphWorkflowHaltReasonSchema
@@ -1019,6 +1025,24 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
   completedTaskCount: z.number().int().min(0).default(0),
   iterationCount: z.number().int().min(0).default(0),
   consecutiveFailureCount: z.number().int().min(0).default(0),
+  worktreePath: z.string().nullable().default(null),
+  branchName: z.string().nullable().default(null),
+  isolation: z.enum(["session", "worktree"]).default("session"),
+  batchId: z.string().nullable().default(null),
+  mergeStatus: z
+    .enum([
+      "not-applicable",
+      "pending",
+      "in-progress",
+      "merged-success",
+      "merged-failed",
+      "conflicts",
+    ])
+    .default("not-applicable"),
+  cleanupStatus: z
+    .enum(["not-applicable", "pending", "removed", "failed"])
+    .default("not-applicable"),
+  lastMergeError: z.string().nullable().default(null),
 });
 export type GraphWorkflowExecutionContextState = z.infer<
   typeof graphWorkflowExecutionContextStateSchema
@@ -1059,11 +1083,73 @@ export const graphWorkflowStatusEventSchema = z.object({
   sessionName: z.string(),
   executionId: z.string(),
   workflowStatus: graphWorkflowStatusSchema,
-  activeContextId: z.string().nullable().default(null),
+  activeContextIds: z.array(z.string()).default([]),
+  activeBatchIds: z.array(z.string()).default([]),
   haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
+  pendingHaltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
 });
 export type GraphWorkflowStatusEvent = z.infer<
   typeof graphWorkflowStatusEventSchema
+>;
+
+export const graphWorkflowMergeStatusValueSchema = z.enum([
+  "not-applicable",
+  "pending",
+  "in-progress",
+  "merged-success",
+  "merged-failed",
+  "conflicts",
+]);
+export type GraphWorkflowMergeStatusValue = z.infer<
+  typeof graphWorkflowMergeStatusValueSchema
+>;
+
+export const graphWorkflowCleanupStatusValueSchema = z.enum([
+  "not-applicable",
+  "pending",
+  "removed",
+  "failed",
+]);
+export type GraphWorkflowCleanupStatusValue = z.infer<
+  typeof graphWorkflowCleanupStatusValueSchema
+>;
+
+export const graphWorkflowPendingHaltReasonEventSchema = z.object({
+  type: z.literal("graph-workflow-pending-halt-reason"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  pendingHaltReason: graphWorkflowHaltReasonSchema.nullable(),
+});
+export type GraphWorkflowPendingHaltReasonEvent = z.infer<
+  typeof graphWorkflowPendingHaltReasonEventSchema
+>;
+
+export const graphWorkflowMergeStatusEventSchema = z.object({
+  type: z.literal("graph-workflow-merge-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  branchName: z.string().nullable(),
+  mergeStatus: graphWorkflowMergeStatusValueSchema,
+  cleanupStatus: graphWorkflowCleanupStatusValueSchema,
+  lastMergeError: z.string().nullable(),
+});
+export type GraphWorkflowMergeStatusEvent = z.infer<
+  typeof graphWorkflowMergeStatusEventSchema
+>;
+
+export const graphWorkflowBatchScheduledEventSchema = z.object({
+  type: z.literal("graph-workflow-batch-scheduled"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  batchId: z.string(),
+  contextIds: z.array(z.string()),
+});
+export type GraphWorkflowBatchScheduledEvent = z.infer<
+  typeof graphWorkflowBatchScheduledEventSchema
 >;
 
 export const graphWorkflowContextStatusEventSchema = z.object({
@@ -1203,6 +1289,9 @@ export const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowValidationResultEventSchema,
   graphWorkflowCircuitBreakerEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
+  graphWorkflowPendingHaltReasonEventSchema,
+  graphWorkflowMergeStatusEventSchema,
+  graphWorkflowBatchScheduledEventSchema,
 ]);
 export type GraphWorkflowSSEEvent = z.infer<typeof graphWorkflowSseEventSchema>;
 
@@ -1271,18 +1360,21 @@ export const graphWorkflowExecutionSchema = z.object({
   seedDefinitionRevision: z.number().int().min(1),
   workingDefinition: resolvedWorkflowSemanticDefinitionSchema,
   status: graphWorkflowStatusSchema,
-  activeContextId: z.string().nullable().default(null),
+  activeContextIds: z.array(z.string()).default([]),
   contextStates: z
     .record(z.string(), graphWorkflowExecutionContextStateSchema)
     .default({}),
   taskStates: z.record(z.string(), graphWorkflowTaskStateSchema).default({}),
   sharedDocuments: z.array(graphWorkflowSharedDocumentEntrySchema).default([]),
-  laneStates: z.record(z.string(), graphWorkflowLaneStateSchema).default({}),
+  laneStates: z
+    .record(z.string(), z.record(z.string(), graphWorkflowLaneStateSchema))
+    .default({}),
   machineSnapshot: z.unknown().nullable().default(null),
   history: z.array(graphWorkflowExecutionEventSchema).default([]),
   startedAt: z.string(),
   completedAt: z.string().nullable().default(null),
   haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
+  pendingHaltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
 });
 export type GraphWorkflowExecution = z.infer<
   typeof graphWorkflowExecutionSchema
@@ -2110,6 +2202,9 @@ export type SSEEvent =
   | GraphWorkflowValidationResultEvent
   | GraphWorkflowCircuitBreakerEvent
   | GraphWorkflowSharedDocumentsUpdatedEvent
+  | GraphWorkflowPendingHaltReasonEvent
+  | GraphWorkflowMergeStatusEvent
+  | GraphWorkflowBatchScheduledEvent
   | DevServerStatusEvent
   | DebugModeStatusEvent
   | DebugLogReceivedEvent

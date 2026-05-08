@@ -67,7 +67,7 @@ function makeExecution(
     workingDefinition:
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,
     status: "running",
-    activeContextId: "ctx-1",
+    activeContextIds: ["ctx-1"],
     contextStates: {
       "ctx-1": {
         contextId: "ctx-1",
@@ -76,6 +76,13 @@ function makeExecution(
         completedTaskCount: 0,
         iterationCount: 1,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {
@@ -99,8 +106,22 @@ function makeExecution(
     startedAt: NOW,
     completedAt: null,
     haltReason: null,
+    pendingHaltReason: null,
     ...overrides,
   };
+}
+
+function laneStatesByContext(
+  ...states: GraphWorkflowLaneState[]
+): GraphWorkflowExecution["laneStates"] {
+  const laneStates: GraphWorkflowExecution["laneStates"] = {};
+  for (const state of states) {
+    laneStates[state.contextId] = {
+      ...laneStates[state.contextId],
+      [state.lane]: state,
+    };
+  }
+  return laneStates;
 }
 
 function makeDeps(
@@ -142,8 +163,12 @@ describe("resolveImplementerCall", () => {
     expect(result.sessionAction).toBe("create");
     expect(result.promptMode).toBe("iteration_seed");
     expect(result.conversationId).toBe("conv-new");
-    expect(result.execution.laneStates["implementer"]?.engine).toBe("claude");
-    expect(result.execution.laneStates["implementer"]?.contextId).toBe("ctx-1");
+    expect(result.execution.laneStates["ctx-1"]?.["implementer"]?.engine).toBe(
+      "claude",
+    );
+    expect(
+      result.execution.laneStates["ctx-1"]?.["implementer"]?.contextId,
+    ).toBe("ctx-1");
   });
 
   it("reuses existing lane when continuity enabled and same context, no rotation", async () => {
@@ -167,7 +192,7 @@ describe("resolveImplementerCall", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveImplementerCall({
@@ -206,7 +231,7 @@ describe("resolveImplementerCall", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveImplementerCall({
@@ -219,7 +244,9 @@ describe("resolveImplementerCall", () => {
     expect(deps.createConversation).toHaveBeenCalledOnce();
     expect(result.sessionAction).toBe("create");
     expect(result.promptMode).toBe("iteration_seed");
-    expect(result.execution.laneStates["implementer"]?.contextId).toBe("ctx-2");
+    expect(
+      result.execution.laneStates["ctx-2"]?.["implementer"]?.contextId,
+    ).toBe("ctx-2");
   });
 
   it("creates fresh session when continuity disabled", async () => {
@@ -252,7 +279,7 @@ describe("resolveImplementerCall", () => {
     const execution = makeExecution({
       workingDefinition:
         definition as unknown as ResolvedWorkflowSemanticDefinition,
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveImplementerCall({
@@ -288,7 +315,7 @@ describe("resolveImplementerCall", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveImplementerCall({
@@ -302,7 +329,7 @@ describe("resolveImplementerCall", () => {
     expect(result.sessionAction).toBe("create");
     expect(result.promptMode).toBe("iteration_seed");
     // rotateBeforeNextTurn should be reset on the new lane state
-    const newLane = result.execution.laneStates["implementer"];
+    const newLane = result.execution.laneStates["ctx-1"]?.["implementer"];
     if (newLane?.engine === "claude") {
       expect(newLane.rotateBeforeNextTurn).toBe(false);
     }
@@ -340,7 +367,7 @@ describe("resolveImplementerCall (codex)", () => {
     expect(result.sessionAction).toBe("create");
     expect(result.promptMode).toBe("iteration_seed");
     expect(result.conversationId).toBe("conv-cc-new");
-    const lane = result.execution.laneStates["implementer"];
+    const lane = result.execution.laneStates["ctx-1"]?.["implementer"];
     expect(lane?.engine).toBe("codex");
     if (lane?.engine === "codex") {
       expect(lane.sessionRef).toBeUndefined();
@@ -374,7 +401,7 @@ describe("resolveImplementerCall (codex)", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveImplementerCall({
@@ -424,7 +451,7 @@ describe("resolveImplementerCall (codex)", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveImplementerCall({
@@ -466,7 +493,7 @@ describe("resolveImplementerCall (codex)", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: claudeLane },
+      laneStates: laneStatesByContext(claudeLane),
     });
 
     const result = await svc.resolveImplementerCall({
@@ -479,7 +506,9 @@ describe("resolveImplementerCall (codex)", () => {
 
     expect(result.sessionAction).toBe("create");
     expect(result.promptMode).toBe("iteration_seed");
-    expect(result.execution.laneStates["implementer"]?.engine).toBe("codex");
+    expect(result.execution.laneStates["ctx-1"]?.["implementer"]?.engine).toBe(
+      "codex",
+    );
   });
 
   it("resumes codex implementer after execution state is deserialized through the schema (restart recovery)", async () => {
@@ -509,7 +538,9 @@ describe("resolveImplementerCall (codex)", () => {
       lastUsedAt: NOW,
     };
 
-    const execution = makeExecution({ laneStates: { implementer: codexLane } });
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(codexLane),
+    });
 
     // Simulate restart by round-tripping through the schema parser
     const deserialized = graphWorkflowExecutionSchema.parse(
@@ -558,7 +589,9 @@ describe("resolveImplementerCall (codex)", () => {
       lastUsedAt: NOW,
     };
 
-    const execution = makeExecution({ laneStates: { implementer: codexLane } });
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(codexLane),
+    });
 
     const result = await svc.resolveImplementerCall({
       execution,
@@ -602,9 +635,9 @@ describe("resolveValidatorCall", () => {
     if (result.engine === "claude") {
       expect(result.conversationId).toBe("conv-new");
     }
-    expect(result.execution.laneStates["context_validator"]?.lane).toBe(
-      "context_validator",
-    );
+    expect(
+      result.execution.laneStates["ctx-1"]?.["context_validator"]?.lane,
+    ).toBe("context_validator");
   });
 
   it("reuses claude validator session when continuity enabled and same context", async () => {
@@ -628,7 +661,7 @@ describe("resolveValidatorCall", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveValidatorCall({
@@ -690,7 +723,7 @@ describe("resolveValidatorCall", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveValidatorCall({
@@ -741,7 +774,7 @@ describe("resolveValidatorCall", () => {
 
     const execution = makeExecution({
       workingDefinition: definition,
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveValidatorCall({
@@ -787,12 +820,12 @@ describe("resolveValidatorCall", () => {
     if (valResult.engine === "claude") {
       expect(valResult.conversationId).toBe("conv-val");
     }
-    expect(valResult.execution.laneStates["implementer"]?.engine).toBe(
-      "claude",
-    );
-    expect(valResult.execution.laneStates["context_validator"]?.engine).toBe(
-      "claude",
-    );
+    expect(
+      valResult.execution.laneStates["ctx-1"]?.["implementer"]?.engine,
+    ).toBe("claude");
+    expect(
+      valResult.execution.laneStates["ctx-1"]?.["context_validator"]?.engine,
+    ).toBe("claude");
   });
 });
 
@@ -822,18 +855,19 @@ describe("recordClaudeTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordClaudeTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "implementer",
       contextTokens: 50000,
       contextWindowMax: 200000,
       contextLimitTokens: undefined,
     });
 
-    const updated = result.laneStates["implementer"];
+    const updated = result.laneStates["ctx-1"]?.["implementer"];
     expect(updated?.engine).toBe("claude");
     if (updated?.engine === "claude") {
       expect(updated.lastContextTokens).toBe(50000);
@@ -864,18 +898,19 @@ describe("recordClaudeTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordClaudeTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "implementer",
       contextTokens: 150000,
       contextWindowMax: 200000,
       contextLimitTokens: 100000,
     });
 
-    const updated = result.laneStates["implementer"];
+    const updated = result.laneStates["ctx-1"]?.["implementer"];
     if (updated?.engine === "claude") {
       expect(updated.rotateBeforeNextTurn).toBe(true);
       expect(updated.limitEvaluation).toBe("supported");
@@ -903,18 +938,19 @@ describe("recordClaudeTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordClaudeTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "implementer",
       contextTokens: 40000,
       contextWindowMax: 200000,
       contextLimitTokens: 100000,
     });
 
-    const updated = result.laneStates["implementer"];
+    const updated = result.laneStates["ctx-1"]?.["implementer"];
     if (updated?.engine === "claude") {
       expect(updated.rotateBeforeNextTurn).toBe(false);
     }
@@ -941,23 +977,82 @@ describe("recordClaudeTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     // Even with very high tokens, no limit means no rotation
     const result = await svc.recordClaudeTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "implementer",
       contextTokens: 199000,
       contextWindowMax: 200000,
       contextLimitTokens: undefined,
     });
 
-    const updated = result.laneStates["implementer"];
+    const updated = result.laneStates["ctx-1"]?.["implementer"];
     if (updated?.engine === "claude") {
       expect(updated.rotateBeforeNextTurn).toBe(false);
       expect(updated.limitEvaluation).toBe("disabled");
     }
+  });
+
+  it("isolates lane updates between contexts (rotation flag write to one context does not mutate another)", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const ctx1Lane: GraphWorkflowLaneState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-1",
+      },
+      lastContextTokens: 10000,
+      lastContextWindowMax: 200000,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+    const ctx2Lane: GraphWorkflowLaneState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-2",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-2",
+      },
+      lastContextTokens: 20000,
+      lastContextWindowMax: 200000,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(ctx1Lane, ctx2Lane),
+    });
+
+    const result = await svc.recordClaudeTurnOutcome({
+      execution,
+      contextId: "ctx-1",
+      lane: "implementer",
+      contextTokens: 150000,
+      contextWindowMax: 200000,
+      contextLimitTokens: 100000,
+    });
+
+    const ctx1Updated = result.laneStates["ctx-1"]?.["implementer"];
+    const ctx2Untouched = result.laneStates["ctx-2"]?.["implementer"];
+
+    if (ctx1Updated?.engine === "claude") {
+      expect(ctx1Updated.rotateBeforeNextTurn).toBe(true);
+      expect(ctx1Updated.lastContextTokens).toBe(150000);
+    }
+    expect(ctx2Untouched).toEqual(ctx2Lane);
   });
 });
 
@@ -986,17 +1081,18 @@ describe("recordCodexTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordCodexTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "context_validator",
       usage: { inputTokens: 1000, cachedInputTokens: 200, outputTokens: 300 },
       contextLimitTokens: 50000,
     });
 
-    const updated = result.laneStates["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.["context_validator"];
     if (updated?.engine === "codex") {
       expect(updated.lastTurnUsage?.inputTokens).toBe(1000);
       expect(updated.rotateBeforeNextTurn).toBe(false);
@@ -1025,17 +1121,18 @@ describe("recordCodexTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordCodexTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "context_validator",
       usage: null,
       contextLimitTokens: undefined,
     });
 
-    const updated = result.laneStates["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.["context_validator"];
     if (updated?.engine === "codex") {
       expect(updated.limitEvaluation).toBe("disabled");
     }
@@ -1061,18 +1158,19 @@ describe("recordCodexTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordCodexTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "context_validator",
       usage: null,
       contextLimitTokens: undefined,
       newThreadId: "real-thread-abc",
     });
 
-    const updated = result.laneStates["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.["context_validator"];
     if (updated?.engine === "codex" && updated.sessionRef?.engine === "codex") {
       expect(updated.sessionRef.threadId).toBe("real-thread-abc");
     }
@@ -1082,28 +1180,31 @@ describe("recordCodexTurnOutcome", () => {
     const svc = createWorkflowContinuityService(makeDeps());
     const execution = makeExecution({
       laneStates: {
-        implementer: {
-          engine: "codex",
-          lane: "implementer",
-          contextId: "ctx-1",
-          workflowConversationId: "conv-cc-new",
-          lastTurnUsage: null,
-          rotateBeforeNextTurn: false,
-          limitEvaluation: "disabled",
-          lastUsedAt: NOW,
+        "ctx-1": {
+          implementer: {
+            engine: "codex",
+            lane: "implementer",
+            contextId: "ctx-1",
+            workflowConversationId: "conv-cc-new",
+            lastTurnUsage: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: NOW,
+          },
         },
       },
     });
 
     const result = await svc.recordCodexTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "implementer",
       usage: null,
       contextLimitTokens: undefined,
       newThreadId: "real-thread-123",
     });
 
-    const updated = result.laneStates["implementer"];
+    const updated = result.laneStates["ctx-1"]?.["implementer"];
     expect(updated?.engine).toBe("codex");
     if (updated?.engine === "codex") {
       expect(updated.sessionRef).toEqual({
@@ -1134,18 +1235,19 @@ describe("recordCodexTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordCodexTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "context_validator",
       usage: null,
       contextLimitTokens: undefined,
       newThreadId: null,
     });
 
-    const updated = result.laneStates["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.["context_validator"];
     if (updated?.engine === "codex" && updated.sessionRef?.engine === "codex") {
       expect(updated.sessionRef.threadId).toBe("thread-keep");
     }
@@ -1171,11 +1273,12 @@ describe("recordCodexTurnOutcome", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordCodexTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "context_validator",
       usage: null,
       contextLimitTokens: undefined,
@@ -1183,7 +1286,7 @@ describe("recordCodexTurnOutcome", () => {
       failed: true,
     });
 
-    const updated = result.laneStates["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.["context_validator"];
     expect(updated?.rotateBeforeNextTurn).toBe(true);
   });
 });
@@ -1193,7 +1296,7 @@ describe("recordCodexTurnOutcome", () => {
 // ---------------------------------------------------------------------------
 
 describe("clearForNewContext", () => {
-  it("removes all lane state when context changes", () => {
+  it("removes lane state for the target context", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -1214,10 +1317,10 @@ describe("clearForNewContext", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
-    const result = svc.clearForNewContext(execution, "ctx-2");
+    const result = svc.clearForNewContext(execution, "ctx-1");
 
     expect(result.laneStates).toEqual({});
   });
@@ -1228,25 +1331,27 @@ describe("clearForNewContext", () => {
 
     const execution = makeExecution({
       laneStates: {
-        implementer: {
-          engine: "claude",
-          lane: "implementer",
-          contextId: "ctx-1",
-          sessionRef: {
+        "ctx-1": {
+          implementer: {
             engine: "claude",
             lane: "implementer",
-            conversationId: "conv-1",
+            contextId: "ctx-1",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-1",
+            },
+            lastContextTokens: null,
+            lastContextWindowMax: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: NOW,
           },
-          lastContextTokens: null,
-          lastContextWindowMax: null,
-          rotateBeforeNextTurn: false,
-          limitEvaluation: "disabled",
-          lastUsedAt: NOW,
         },
       },
     });
 
-    const result = svc.clearForNewContext(execution, "ctx-2");
+    const result = svc.clearForNewContext(execution, "ctx-1");
 
     expect(result.id).toBe("exec-1");
     expect(result.status).toBe("running");
@@ -1280,7 +1385,9 @@ describe("recovery behaviors", () => {
       lastUsedAt: NOW,
     };
 
-    const execution = makeExecution({ laneStates: { implementer: staleLane } });
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(staleLane),
+    });
 
     const result = await svc.resolveImplementerCall({
       execution,
@@ -1293,7 +1400,9 @@ describe("recovery behaviors", () => {
     expect(result.sessionAction).toBe("create");
     expect(result.conversationId).not.toBe("conv-stale");
     // New lane state reflects the new contextId
-    expect(result.execution.laneStates["implementer"]?.contextId).toBe("ctx-2");
+    expect(
+      result.execution.laneStates["ctx-2"]?.["implementer"]?.contextId,
+    ).toBe("ctx-2");
   });
 
   it("falls back to fresh claude session when implementer conversation is not found", async () => {
@@ -1320,7 +1429,7 @@ describe("recovery behaviors", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveImplementerCall({
@@ -1367,7 +1476,7 @@ describe("recovery behaviors", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveValidatorCall({
@@ -1418,7 +1527,7 @@ describe("recovery behaviors", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.resolveValidatorCall({
@@ -1464,7 +1573,7 @@ describe("recovery behaviors", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: codexLane },
+      laneStates: laneStatesByContext(codexLane),
     });
 
     // Simulate a restart by round-tripping the execution through the schema parser
@@ -1526,8 +1635,12 @@ describe("primitive lane-service integration", () => {
       expect(persisted.backendState.conversationId).toBe("conv-new");
     }
     // The graph execution still carries the same lane state for callers.
-    expect(result.execution.laneStates["implementer"]?.engine).toBe("claude");
-    expect(result.execution.laneStates["implementer"]?.contextId).toBe("ctx-1");
+    expect(result.execution.laneStates["ctx-1"]?.["implementer"]?.engine).toBe(
+      "claude",
+    );
+    expect(
+      result.execution.laneStates["ctx-1"]?.["implementer"]?.contextId,
+    ).toBe("ctx-1");
   });
 
   it("routes recordClaudeTurnOutcome through LaneService.recordOutcome and projects the result back to graph state", async () => {
@@ -1555,11 +1668,12 @@ describe("primitive lane-service integration", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { implementer: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordClaudeTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "implementer",
       contextTokens: 150_000,
       contextWindowMax: 200_000,
@@ -1579,7 +1693,7 @@ describe("primitive lane-service integration", () => {
       contextLimitTokens: 100_000,
     });
 
-    const updated = result.laneStates["implementer"];
+    const updated = result.laneStates["ctx-1"]?.["implementer"];
     if (updated?.engine === "claude") {
       expect(updated.lastContextTokens).toBe(150_000);
       expect(updated.lastContextWindowMax).toBe(200_000);
@@ -1622,11 +1736,12 @@ describe("primitive lane-service integration", () => {
     };
 
     const execution = makeExecution({
-      laneStates: { context_validator: existingLane },
+      laneStates: laneStatesByContext(existingLane),
     });
 
     const result = await svc.recordCodexTurnOutcome({
       execution,
+      contextId: "ctx-1",
       lane: "context_validator",
       usage: null,
       contextLimitTokens: undefined,
@@ -1644,7 +1759,7 @@ describe("primitive lane-service integration", () => {
       failed: true,
     });
 
-    const updated = result.laneStates["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.["context_validator"];
     expect(updated?.engine).toBe("codex");
     if (updated?.engine === "codex") {
       expect(updated.rotateBeforeNextTurn).toBe(true);

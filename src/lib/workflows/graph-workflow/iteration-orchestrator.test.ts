@@ -9,6 +9,7 @@ import {
   createGraphWorkflowIterationOrchestrator,
   IterationHaltedError,
 } from "./iteration-orchestrator";
+import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
 import type {
   ResolveImplementerCallInput,
@@ -22,24 +23,39 @@ interface InMemoryExecutionRepository {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  update(
+  mutateActive(
     projectPath: string,
     sessionName: string,
-    execution: GraphWorkflowExecution,
-  ): Promise<void>;
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution>;
 }
 
 function createRepository(
   initialExecution: GraphWorkflowExecution,
 ): InMemoryExecutionRepository & { read(): GraphWorkflowExecution } {
   let activeExecution = initialExecution;
+  let lock: Promise<void> = Promise.resolve();
 
   return {
     async getActive() {
       return activeExecution;
     },
-    async update(_projectPath, _sessionName, execution) {
-      activeExecution = execution;
+    async mutateActive(_projectPath, _sessionName, fn) {
+      const previous = lock;
+      let release!: () => void;
+      lock = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      try {
+        await previous;
+        const next = await fn(structuredClone(activeExecution));
+        activeExecution = next;
+        return next;
+      } finally {
+        release();
+      }
     },
     read() {
       return activeExecution;
@@ -92,7 +108,7 @@ function createExecutionWithPlanTasks(
 
   return createWorkflowExecution({
     status: "running",
-    activeContextId: "context-plan",
+    activeContextIds: ["context-plan"],
     workingDefinition: definition,
     contextStates: {
       "context-plan": {
@@ -102,6 +118,13 @@ function createExecutionWithPlanTasks(
         completedTaskCount: statuses["task-plan-1"] === "completed" ? 1 : 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "context-implement": {
         contextId: "context-implement",
@@ -110,6 +133,13 @@ function createExecutionWithPlanTasks(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "context-verify": {
         contextId: "context-verify",
@@ -118,6 +148,13 @@ function createExecutionWithPlanTasks(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {
@@ -249,7 +286,7 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 1,
       };
 
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -329,7 +366,7 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 1,
       };
 
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -385,7 +422,7 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 2,
       };
 
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -414,6 +451,69 @@ describe("graph workflow iteration orchestrator", () => {
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
     );
+  });
+
+  it("preserves sibling active contexts when one parallel context starts and completes", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "completed",
+      "task-plan-2": "pending",
+    });
+    execution.activeContextIds = ["context-plan", "context-implement"];
+    execution.contextStates["context-implement"] = {
+      ...execution.contextStates["context-implement"]!,
+      status: "running",
+    };
+    const repository = createRepository(execution);
+    const createConversation = vi.fn(async () => ({ id: "conversation-3" }));
+    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const runAgentIteration = vi.fn(async () => {
+      expect(repository.read().activeContextIds).toEqual([
+        "context-plan",
+        "context-implement",
+      ]);
+
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Finished planning",
+        completedAt: "2026-03-27T16:22:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:20:00.000Z";
+      },
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "completed",
+    );
+    expect(result.execution.activeContextIds).toEqual(["context-implement"]);
   });
 
   it("emits live stream frames for iteration boundaries and agent content", async () => {
@@ -455,7 +555,7 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 2,
       };
 
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         conversationId: "conv-mock",
         contextTokens: 50_000,
@@ -533,7 +633,7 @@ describe("graph workflow iteration orchestrator", () => {
           ...current.contextStates["context-plan"]!,
           completedTaskCount: 1,
         };
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
       }
       // First two calls: agent returns without completing any task
       return {
@@ -652,20 +752,22 @@ describe("graph workflow iteration orchestrator", () => {
       async (input: RecordClaudeLaneTurnInput) => ({
         ...input.execution,
         laneStates: {
-          implementer: {
-            engine: "claude" as const,
-            lane: "implementer" as const,
-            contextId: "context-plan",
-            sessionRef: {
+          "context-plan": {
+            implementer: {
               engine: "claude" as const,
               lane: "implementer" as const,
-              conversationId: "conv-rotate",
+              contextId: "context-plan",
+              sessionRef: {
+                engine: "claude" as const,
+                lane: "implementer" as const,
+                conversationId: "conv-rotate",
+              },
+              lastContextTokens: 180_000,
+              lastContextWindowMax: 200_000,
+              rotateBeforeNextTurn: true,
+              limitEvaluation: "supported" as const,
+              lastUsedAt: "2026-03-27T16:00:00.000Z",
             },
-            lastContextTokens: 180_000,
-            lastContextWindowMax: 200_000,
-            rotateBeforeNextTurn: true,
-            limitEvaluation: "supported" as const,
-            lastUsedAt: "2026-03-27T16:00:00.000Z",
           },
         },
       }),
@@ -919,7 +1021,7 @@ describe("graph workflow iteration orchestrator", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         conversationId: "conv-mock",
         contextTokens: 50000,
@@ -1018,7 +1120,7 @@ describe("graph workflow iteration orchestrator", () => {
         ...next.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.update("/repo", "session-1", next);
+      await repository.mutateActive("/repo", "session-1", () => next);
       return {
         conversationId: "conv-mock",
         contextTokens: 25_000,
@@ -1094,8 +1196,12 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
     const validateContextCompletion = vi.fn(async () => {
       // Simulate validator-runner persisting updated lane states
       const current = structuredClone(repository.read());
-      current.laneStates = { context_validator: validatorLaneState };
-      await repository.update("/repo", "session-1", current);
+      current.laneStates = {
+        [validatorLaneState.contextId]: {
+          context_validator: validatorLaneState,
+        },
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         kind: "pass" as const,
         summary: "Context passed",
@@ -1141,10 +1247,15 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
 
     // Lane states written by the validator-runner must survive subsequent orchestrator writes
     const final = repository.read();
-    expect(final.laneStates["context_validator"]).toBeDefined();
     expect(
-      (final.laneStates["context_validator"] as typeof validatorLaneState)
-        .sessionRef,
+      final.laneStates["context-plan"]?.["context_validator"],
+    ).toBeDefined();
+    expect(
+      (
+        final.laneStates["context-plan"]?.[
+          "context_validator"
+        ] as typeof validatorLaneState
+      ).sessionRef,
     ).toEqual({
       engine: "claude",
       lane: "context_validator",
@@ -1163,22 +1274,24 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     // continuity service finds a session to reuse on the very first call.
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       laneStates: {
-        implementer: {
-          engine: "claude",
-          lane: "implementer",
-          contextId: "context-plan",
-          sessionRef: {
+        "context-plan": {
+          implementer: {
             engine: "claude",
             lane: "implementer",
-            conversationId: "conv-existing",
+            contextId: "context-plan",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-existing",
+            },
+            lastContextTokens: 50_000,
+            lastContextWindowMax: 200_000,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: NOW,
           },
-          lastContextTokens: 50_000,
-          lastContextWindowMax: 200_000,
-          rotateBeforeNextTurn: false,
-          limitEvaluation: "disabled",
-          lastUsedAt: NOW,
         },
       },
     });
@@ -1196,7 +1309,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         summary: "Done",
         completedAt: NOW,
       };
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         conversationId: "conv-mock",
         contextTokens: 60_000,
@@ -1283,7 +1396,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
           completedTaskCount: 1,
         };
       }
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         conversationId: "conv-mock",
         contextTokens: 50_000,
@@ -1342,23 +1455,25 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       workingDefinition: definition,
       laneStates: {
-        implementer: {
-          engine: "claude",
-          lane: "implementer",
-          contextId: "context-plan",
-          sessionRef: {
+        "context-plan": {
+          implementer: {
             engine: "claude",
             lane: "implementer",
-            conversationId: "conv-old",
+            contextId: "context-plan",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-old",
+            },
+            lastContextTokens: null,
+            lastContextWindowMax: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: NOW,
           },
-          lastContextTokens: null,
-          lastContextWindowMax: null,
-          rotateBeforeNextTurn: false,
-          limitEvaluation: "disabled",
-          lastUsedAt: NOW,
         },
       },
     });
@@ -1376,7 +1491,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         summary: "Done",
         completedAt: NOW,
       };
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         conversationId: "conv-mock",
         contextTokens: 50_000,
@@ -1554,7 +1669,8 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     expect(result1.conversationId).toBe("conv-1");
     expect(result2.conversationId).toBe("conv-2");
     // After the second call the fresh session has not exceeded the limit
-    const laneState = repository.read().laneStates["implementer"];
+    const laneState =
+      repository.read().laneStates["context-plan"]?.["implementer"];
     expect(laneState?.rotateBeforeNextTurn).toBe(false);
   });
 
@@ -1612,7 +1728,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     const deserialized = graphWorkflowExecutionSchema.parse(
       JSON.parse(JSON.stringify(repository.read())),
     );
-    await repository.update("/repo", "session-1", deserialized);
+    await repository.mutateActive("/repo", "session-1", () => deserialized);
 
     // Second call after restart: should find and reuse conv-1 from the deserialized lane state
     const result2 = await orchestrator.runIteration(input);
@@ -2109,7 +2225,7 @@ describe("codex implementer continuity", () => {
 
     return createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       workingDefinition: definition,
       contextStates: {
         "context-plan": {
@@ -2119,6 +2235,13 @@ describe("codex implementer continuity", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
       taskStates: {
@@ -2173,7 +2296,7 @@ describe("codex implementer continuity", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -2259,21 +2382,23 @@ describe("codex implementer continuity", () => {
       async (input: RecordCodexLaneTurnInput) => ({
         ...input.execution,
         laneStates: {
-          implementer: {
-            engine: "codex" as const,
-            lane: "implementer" as const,
-            contextId: "context-plan",
-            sessionRef: {
+          "context-plan": {
+            implementer: {
               engine: "codex" as const,
               lane: "implementer" as const,
-              threadId: "thread-1",
+              contextId: "context-plan",
+              sessionRef: {
+                engine: "codex" as const,
+                lane: "implementer" as const,
+                threadId: "thread-1",
+              },
+              lastTurnUsage: null,
+              // Defense-in-depth: Codex schema defines this as literal false, but
+              // the rotation guard should still stop follow-ups if the value is true
+              rotateBeforeNextTurn: true as boolean as false,
+              limitEvaluation: "disabled" as const,
+              lastUsedAt: "2026-03-27T16:00:00.000Z",
             },
-            lastTurnUsage: null,
-            // Defense-in-depth: Codex schema defines this as literal false, but
-            // the rotation guard should still stop follow-ups if the value is true
-            rotateBeforeNextTurn: true as boolean as false,
-            limitEvaluation: "disabled" as const,
-            lastUsedAt: "2026-03-27T16:00:00.000Z",
           },
         },
       }),
@@ -2362,7 +2487,7 @@ describe("codex implementer continuity", () => {
     const deserialized = graphWorkflowExecutionSchema.parse(
       JSON.parse(JSON.stringify(repository.read())),
     );
-    await repository.update("/repo", "session-1", deserialized);
+    await repository.mutateActive("/repo", "session-1", () => deserialized);
 
     // Second iteration after restart: should reuse
     const result2 = await orchestrator.runIteration(input);
@@ -2433,7 +2558,7 @@ describe("mid-iteration halt via signalHalt", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
         return current;
       },
     );
@@ -2543,7 +2668,7 @@ describe("mid-iteration halt via signalHalt", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
         return current;
       },
     );
@@ -2653,7 +2778,7 @@ describe("mid-iteration halt via signalHalt", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
         return current;
       },
     );
@@ -2825,7 +2950,7 @@ describe("mid-iteration halt via signalHalt", () => {
         type: "recovery_error",
         message: "Pre-existing halt",
       };
-      await repository.update("/repo", "session-1", current);
+      await repository.mutateActive("/repo", "session-1", () => current);
       try {
         await capturedCompleteTask!("task-plan-1", "Done");
       } catch (error) {
@@ -3081,7 +3206,7 @@ describe("mid-iteration halt via signalHalt", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
         return current;
       },
     );
@@ -3117,7 +3242,7 @@ describe("mid-iteration halt via signalHalt", () => {
     expect(result.execution.status).toBe("halted");
     expect(result.shouldContinueInContext).toBe(false);
     // The active context should still be "context-plan" since no finalize happened
-    expect(result.execution.activeContextId).toBe("context-plan");
+    expect(result.execution.activeContextIds).toEqual(["context-plan"]);
   });
 });
 
@@ -3188,7 +3313,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     expect(result.shouldContinueInContext).toBe(false);
     expect(result.execution.status).toBe("running");
-    expect(result.execution.activeContextId).toBeNull();
+    expect(result.execution.activeContextIds).toEqual([]);
     expect(result.execution.contextStates["context-plan"]).toMatchObject({
       status: "completed",
       completedTaskCount: 2,
@@ -3231,7 +3356,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
         return current;
       },
     );
@@ -3618,7 +3743,7 @@ describe("script validator integration", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
         return current;
       },
     );
@@ -3690,7 +3815,7 @@ describe("script validator integration", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
         return current;
       },
     );
@@ -3766,7 +3891,7 @@ describe("script validator integration", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
         return current;
       },
     );
@@ -3845,7 +3970,7 @@ describe("script validator integration", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.update("/repo", "session-1", current);
+        await repository.mutateActive("/repo", "session-1", () => current);
         return current;
       },
     );
@@ -3891,5 +4016,95 @@ describe("script validator integration", () => {
     );
     expect(result.execution.status).toBe("halted");
     expect(result.execution.haltReason?.type).toBe("circuit_breaker");
+  });
+});
+
+describe("iteration failure with partial turn progress", () => {
+  it("rethrows as IterationFailureWithProgressError when a follow-up turn fails after a successful first turn", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+
+    let agentCallCount = 0;
+    const runAgentIteration = vi.fn(async () => {
+      agentCallCount += 1;
+      if (agentCallCount === 1) {
+        return {
+          conversationId: "conversation-progress",
+          contextTokens: null,
+          contextWindowMax: null,
+        };
+      }
+      throw new Error("SDK error: QuerySession is dead");
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-progress" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    let caught: unknown;
+    try {
+      await orchestrator.runIteration({
+        projectPath: "/repo",
+        projectName: "repo",
+        sessionName: "session-1",
+        contextId: "context-plan",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(IterationFailureWithProgressError);
+    if (caught instanceof IterationFailureWithProgressError) {
+      expect(caught.completedTurnCount).toBe(1);
+      expect(caught.message).toContain("QuerySession is dead");
+    }
+    expect(agentCallCount).toBe(2);
+  });
+
+  it("rethrows the original error unwrapped when the first turn fails before any progress", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+
+    const runAgentIteration = vi.fn(async () => {
+      throw new Error("SDK error: QuerySession is dead");
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-fail" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    let caught: unknown;
+    try {
+      await orchestrator.runIteration({
+        projectPath: "/repo",
+        projectName: "repo",
+        sessionName: "session-1",
+        contextId: "context-plan",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).not.toBeInstanceOf(IterationFailureWithProgressError);
+    expect(caught).toBeInstanceOf(Error);
+    if (caught instanceof Error) {
+      expect(caught.message).toContain("QuerySession is dead");
+    }
   });
 });

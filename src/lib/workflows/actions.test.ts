@@ -38,8 +38,10 @@ describe("broadcastWorkflowEvent", () => {
       sessionName: "sess",
       executionId: "exec-1",
       workflowStatus: "running" as const,
-      activeContextId: null,
+      activeContextIds: [],
+      activeBatchIds: [],
       haltReason: null,
+      pendingHaltReason: null,
     };
 
     broadcastWorkflowEvent({}, { event });

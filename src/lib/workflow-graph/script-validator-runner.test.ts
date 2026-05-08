@@ -5,6 +5,7 @@ import {
   createScriptValidatorRunner,
   type ScriptValidatorDeps,
 } from "./script-validator-runner";
+import type { ExecutionTarget } from "./execution-target-resolver";
 
 function createDeps(
   overrides: Partial<ScriptValidatorDeps> = {},
@@ -196,6 +197,96 @@ describe("createScriptValidatorRunner", () => {
     if (outcome.kind !== "infra_error") return;
     expect(outcome.reason).toBe("exception");
     expect(outcome.message).toBe("boom");
+  });
+
+  it("uses executionTarget.worktreePath/branchName when an executionTarget is provided", async () => {
+    const executeRepoValidationCommand = vi.fn(async () => ({
+      executed: true,
+      pass: true,
+      stdout: "ok",
+      stderr: "",
+      output: "ok",
+      timedOut: false,
+      message: null,
+    }));
+    const deps = createDeps({ executeRepoValidationCommand });
+    const runner = createScriptValidatorRunner(deps);
+
+    const executionTarget: ExecutionTarget = {
+      worktreePath: "/projects/acme/.worktrees/ctx-abc.ctx-plan",
+      branchName: "csm/ctx-abc-ctx-plan",
+      isolation: "worktree",
+    };
+
+    const outcome = await runner.runScriptValidator({
+      ...BASE_INPUT,
+      executionTarget,
+    });
+
+    expect(outcome.kind).toBe("pass");
+    expect(executeRepoValidationCommand).toHaveBeenCalledWith({
+      projectPath: BASE_INPUT.projectPath,
+      worktreePath: executionTarget.worktreePath,
+      sessionName: BASE_INPUT.sessionName,
+      branchName: executionTarget.branchName,
+      timeoutMs: BASE_INPUT.timeoutMs,
+    });
+  });
+
+  it("writes failure logs under the executionTarget worktree when provided", async () => {
+    const failingResult: RepoValidationCommandResult = {
+      executed: true,
+      pass: false,
+      stdout: "",
+      stderr: "fail",
+      output: "fail",
+      timedOut: false,
+      message: "Pre-merge validation failed",
+    };
+    const deps = createDeps({
+      executeRepoValidationCommand: vi.fn(async () => failingResult),
+    });
+    const runner = createScriptValidatorRunner(deps);
+
+    const executionTarget: ExecutionTarget = {
+      worktreePath: "/projects/acme/.worktrees/ctx-abc.ctx-plan",
+      branchName: "csm/ctx-abc-ctx-plan",
+      isolation: "worktree",
+    };
+
+    const outcome = await runner.runScriptValidator({
+      ...BASE_INPUT,
+      executionTarget,
+    });
+    if (outcome.kind !== "fail") throw new Error("expected fail");
+
+    expect(outcome.logFilePath.startsWith(executionTarget.worktreePath)).toBe(
+      true,
+    );
+  });
+
+  it("falls back to input.worktreePath/branchName when no executionTarget is provided", async () => {
+    const executeRepoValidationCommand = vi.fn(async () => ({
+      executed: true,
+      pass: true,
+      stdout: "ok",
+      stderr: "",
+      output: "ok",
+      timedOut: false,
+      message: null,
+    }));
+    const deps = createDeps({ executeRepoValidationCommand });
+    const runner = createScriptValidatorRunner(deps);
+
+    await runner.runScriptValidator(BASE_INPUT);
+
+    expect(executeRepoValidationCommand).toHaveBeenCalledWith({
+      projectPath: BASE_INPUT.projectPath,
+      worktreePath: BASE_INPUT.worktreePath,
+      sessionName: BASE_INPUT.sessionName,
+      branchName: BASE_INPUT.branchName,
+      timeoutMs: BASE_INPUT.timeoutMs,
+    });
   });
 
   it("places the log file under the worktree at .cc/workflow/<executionId>/", async () => {

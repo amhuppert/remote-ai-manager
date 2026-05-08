@@ -1,8 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
+  ExecutionTarget,
+  ExecutionTargetResolver,
+} from "@/lib/workflow-graph/execution-target-resolver";
+import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
+import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
+import type { SessionGitLock } from "@/lib/workflow-graph/session-git-lock";
+import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
   ResolvedWorkflowSemanticDefinition,
+  SessionState,
   WorkflowSemanticDefinition,
 } from "@/types";
 import {
@@ -10,8 +19,14 @@ import {
   isExecutionLoopActive,
   _resetActiveLoopsForTesting,
   type GraphWorkflowExecutionLoopDeps,
+  type GraphWorkflowExecutionLoopWorkflowManager,
 } from "./execution-loop";
+import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
+import type {
+  RecordPendingHaltReasonResult,
+  ScheduleEligibleContextsResult,
+} from "./workflow-manager";
 
 function createSingleContextDefinition(
   maxIterations: number,
@@ -60,7 +75,7 @@ function createRunningExecution(
     workingDefinition:
       definition as unknown as ResolvedWorkflowSemanticDefinition,
     status: "running",
-    activeContextId: null,
+    activeContextIds: [],
     contextStates: {
       "ctx-1": {
         contextId: "ctx-1",
@@ -69,6 +84,13 @@ function createRunningExecution(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {
@@ -92,129 +114,288 @@ function createRunningExecution(
     startedAt: "2026-03-27T12:00:00.000Z",
     completedAt: null,
     haltReason: null,
+    pendingHaltReason: null,
     ...overrides,
+  };
+}
+
+function makeStubSession(): SessionState {
+  return {
+    name: "session-1",
+    branchName: "csm/session-1",
+    worktreePath: "/repo/.worktrees/session-1",
+    createdAt: "2026-03-27T12:00:00.000Z",
+    targetBranch: "main",
+    conversationIds: [],
+    activeConversationId: null,
+    lastUsedAt: null,
+    devServer: null,
+    devServerLog: null,
+    initSummary: null,
+    workflows: {},
+    archivedAt: null,
+    summary: null,
+    tags: [],
+  } as unknown as SessionState;
+}
+
+interface LoopHarness {
+  deps: GraphWorkflowExecutionLoopDeps;
+  getCurrent: () => GraphWorkflowExecution;
+  setCurrent: (execution: GraphWorkflowExecution) => void;
+  recordPendingHaltReasonSpy: ReturnType<typeof vi.fn>;
+  drainAndHaltSpy: ReturnType<typeof vi.fn>;
+  sendSpy: ReturnType<typeof vi.fn>;
+  scheduleEligibleContextsSpy: ReturnType<typeof vi.fn>;
+}
+
+interface BuildHarnessInput {
+  initialExecution: GraphWorkflowExecution;
+  iterationOrchestrator: GraphWorkflowExecutionLoopDeps["iterationOrchestrator"];
+  recoverRetryableIterationError?: GraphWorkflowExecutionLoopWorkflowManager["recoverRetryableIterationError"];
+  runCircuitBreakerGate?: GraphWorkflowExecutionLoopDeps["runCircuitBreakerGate"];
+  emitStreamFrame?: GraphWorkflowExecutionLoopDeps["emitStreamFrame"];
+  scheduleEligibleContexts?: GraphWorkflowExecutionLoopWorkflowManager["scheduleEligibleContexts"];
+  executionTargetResolver?: ExecutionTargetResolver;
+  parallelWorktrees?: ParallelWorktrees;
+  mergeMutex?: PerSessionMergeMutex;
+  sessionGitLock?: SessionGitLock;
+  mergeRunner?: GraphMergeRunner;
+  soloContextCommitter?: GraphWorkflowExecutionLoopDeps["soloContextCommitter"];
+  getSession?: GraphWorkflowExecutionLoopDeps["getSession"];
+}
+
+function buildHarness(input: BuildHarnessInput): LoopHarness {
+  let current = input.initialExecution;
+  const getCurrent = () => current;
+  const setCurrent = (e: GraphWorkflowExecution) => {
+    current = e;
+  };
+
+  const defaultScheduleEligibleContexts =
+    async (): Promise<ScheduleEligibleContextsResult> => {
+      const e = getCurrent();
+      if (e.status !== "running") {
+        return { execution: e, scheduled: { kind: "none" } };
+      }
+      const ctx = e.contextStates["ctx-1"];
+      if (!ctx) {
+        return { execution: e, scheduled: { kind: "none" } };
+      }
+      if (
+        ctx.status === "completed" ||
+        ctx.completedTaskCount >= ctx.totalTaskCount
+      ) {
+        return { execution: e, scheduled: { kind: "none" } };
+      }
+      const next = structuredClone(e);
+      next.activeContextIds = ["ctx-1"];
+      next.contextStates["ctx-1"]!.status = "running";
+      setCurrent(next);
+      return {
+        execution: next,
+        scheduled: { kind: "solo", contextId: "ctx-1" },
+      };
+    };
+
+  const scheduleEligibleContextsSpy = vi.fn(
+    input.scheduleEligibleContexts ?? defaultScheduleEligibleContexts,
+  );
+
+  const sendSpy = vi.fn(
+    async (
+      _projectPath: string,
+      _sessionName: string,
+      event: { type: "complete" },
+    ): Promise<GraphWorkflowExecution> => {
+      if (event.type === "complete") {
+        const next = {
+          ...structuredClone(getCurrent()),
+          status: "completed" as const,
+          completedAt: "2026-03-27T12:05:00.000Z",
+        };
+        setCurrent(next);
+      }
+      return getCurrent();
+    },
+  );
+
+  const recordPendingHaltReasonSpy = vi.fn(
+    async (input: {
+      projectPath: string;
+      sessionName: string;
+      reason: GraphWorkflowHaltReason;
+    }): Promise<RecordPendingHaltReasonResult> => {
+      const e = getCurrent();
+      if (e.pendingHaltReason !== null) {
+        return { execution: e, accepted: false };
+      }
+      const next = structuredClone(e);
+      next.pendingHaltReason = input.reason;
+      setCurrent(next);
+      return { execution: next, accepted: true };
+    },
+  );
+
+  const drainAndHaltSpy = vi.fn(async (): Promise<GraphWorkflowExecution> => {
+    const e = getCurrent();
+    const haltReason = e.pendingHaltReason;
+    if (!haltReason) {
+      throw new Error("drainAndHalt requires pendingHaltReason");
+    }
+    const next: GraphWorkflowExecution = {
+      ...structuredClone(e),
+      status: "halted",
+      haltReason,
+      pendingHaltReason: null,
+      completedAt: "2026-03-27T12:10:00.000Z",
+    };
+    setCurrent(next);
+    return next;
+  });
+
+  const mutateActive: GraphWorkflowExecutionLoopWorkflowManager["mutateActive"] =
+    async (_p, _s, fn) => {
+      const next = await fn(getCurrent());
+      setCurrent(next);
+      return next;
+    };
+
+  const getActive: GraphWorkflowExecutionLoopWorkflowManager["getActive"] =
+    async () => getCurrent();
+
+  const workflowManager: GraphWorkflowExecutionLoopWorkflowManager = {
+    scheduleEligibleContexts: scheduleEligibleContextsSpy,
+    send: sendSpy,
+    recordPendingHaltReason: recordPendingHaltReasonSpy,
+    drainAndHalt: drainAndHaltSpy,
+    mutateActive,
+    getActive,
+    recoverRetryableIterationError: input.recoverRetryableIterationError,
+  };
+
+  const sessionTarget: ExecutionTarget = {
+    worktreePath: "/repo/.worktrees/session-1",
+    branchName: "csm/session-1",
+    isolation: "session",
+  };
+
+  const executionTargetResolver: ExecutionTargetResolver =
+    input.executionTargetResolver ?? {
+      resolve: () => sessionTarget,
+    };
+
+  const parallelWorktrees: ParallelWorktrees = input.parallelWorktrees ?? {
+    provision: vi.fn(),
+    provisionBatch: vi.fn(),
+    dispose: vi.fn(),
+  };
+
+  const mergeMutex: PerSessionMergeMutex = input.mergeMutex ?? {
+    withMergeMutex: async (_k, fn) => fn(),
+  };
+
+  const sessionGitLock: SessionGitLock = input.sessionGitLock ?? {
+    withSessionGitLock: async (_k, fn) => fn(),
+  };
+
+  const mergeRunner: GraphMergeRunner = input.mergeRunner ?? {
+    run: vi.fn(),
+  };
+
+  const soloContextCommitter: GraphWorkflowExecutionLoopDeps["soloContextCommitter"] =
+    input.soloContextCommitter ?? {
+      commit: async () => ({ status: "skipped" }),
+    };
+
+  const getSession = input.getSession ?? (async () => makeStubSession());
+
+  const deps: GraphWorkflowExecutionLoopDeps = {
+    workflowManager,
+    iterationOrchestrator: input.iterationOrchestrator,
+    parallelWorktrees,
+    mergeMutex,
+    sessionGitLock,
+    mergeRunner,
+    soloContextCommitter,
+    executionTargetResolver,
+    getSession,
+    emitStreamFrame: input.emitStreamFrame ?? vi.fn(),
+    runCircuitBreakerGate: input.runCircuitBreakerGate,
+  };
+
+  return {
+    deps,
+    getCurrent,
+    setCurrent,
+    recordPendingHaltReasonSpy,
+    drainAndHaltSpy,
+    sendSpy,
+    scheduleEligibleContextsSpy,
   };
 }
 
 describe("execution loop", () => {
   it("halts when a context exceeds its maxIterations limit", async () => {
     const definition = createSingleContextDefinition(2);
-    let currentExecution = createRunningExecution(definition);
-    let iterationCallCount = 0;
-
-    const sendSpy = vi.fn(
-      async (
-        _projectPath: string,
-        _sessionName: string,
-        event:
-          | { type: "complete" }
-          | { type: "halt"; reason: GraphWorkflowHaltReason },
-      ): Promise<GraphWorkflowExecution> => {
-        if (event.type === "halt") {
-          currentExecution = {
-            ...structuredClone(currentExecution),
-            status: "halted",
-            haltReason: event.reason,
-            completedAt: "2026-03-27T12:10:00.000Z",
-          };
-        }
-        return currentExecution;
-      },
-    );
-
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          const next = structuredClone(currentExecution);
-          next.activeContextId = "ctx-1";
-          next.contextStates["ctx-1"]!.status = "running";
-          currentExecution = next;
-          return next;
-        },
-        send: sendSpy,
-      },
+    const initial = createRunningExecution(definition);
+    const harness = buildHarness({
+      initialExecution: initial,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
-          iterationCallCount += 1;
-          if (iterationCallCount > 3) {
-            throw new Error("Safety bail-out: too many iterations");
-          }
-          const next = structuredClone(currentExecution);
-          next.contextStates["ctx-1"]!.iterationCount = iterationCallCount;
-          // Agent finished without completing tasks — task stays interrupted
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount += 1;
           next.taskStates["task-1"]!.status = "interrupted";
-          currentExecution = next;
+          harness.setCurrent(next);
           return {
-            conversationId: `conv-${iterationCallCount}`,
+            conversationId: `conv-${next.contextStates["ctx-1"]!.iterationCount}`,
             execution: next,
             shouldContinueInContext: true,
           };
         },
       },
-      emitStreamFrame: vi.fn(),
-    };
+    });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: currentExecution,
+      execution: initial,
     });
 
-    expect(iterationCallCount).toBe(2);
     expect(result.status).toBe("halted");
     expect(result.haltReason).toEqual({
       type: "max_iterations",
       contextId: "ctx-1",
       iterationCount: 2,
     });
-    expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
-      type: "halt",
+    expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
       reason: {
         type: "max_iterations",
         contextId: "ctx-1",
         iterationCount: 2,
       },
     });
+    expect(harness.drainAndHaltSpy).toHaveBeenCalled();
   });
 
   it("completes normally when tasks finish before maxIterations", async () => {
     const definition = createSingleContextDefinition(5);
-    let currentExecution = createRunningExecution(definition);
-
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          const next = structuredClone(currentExecution);
-          if (next.contextStates["ctx-1"]!.status !== "completed") {
-            next.activeContextId = "ctx-1";
-            next.contextStates["ctx-1"]!.status = "running";
-          } else {
-            next.activeContextId = null;
-          }
-          currentExecution = next;
-          return next;
-        },
-        async send(_projectPath, _sessionName, event) {
-          if (event.type === "complete") {
-            currentExecution = {
-              ...structuredClone(currentExecution),
-              status: "completed",
-              completedAt: "2026-03-27T12:05:00.000Z",
-            };
-          }
-          return currentExecution;
-        },
-      },
+    const initial = createRunningExecution(definition);
+    const harness = buildHarness({
+      initialExecution: initial,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
-          const next = structuredClone(currentExecution);
+          const next = structuredClone(harness.getCurrent());
           next.contextStates["ctx-1"]!.iterationCount = 1;
           next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
           next.taskStates["task-1"]!.status = "completed";
-          next.activeContextId = null;
-          currentExecution = next;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
           return {
             conversationId: "conv-1",
             execution: next,
@@ -222,87 +403,61 @@ describe("execution loop", () => {
           };
         },
       },
-      emitStreamFrame: vi.fn(),
-    };
+    });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: currentExecution,
+      execution: initial,
     });
 
     expect(result.status).toBe("completed");
     expect(result.haltReason).toBeNull();
+    expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+      type: "complete",
+    });
   });
 
   it("registers as active while running and deregisters on completion", async () => {
     const definition = createSingleContextDefinition(5);
-    let currentExecution = createRunningExecution(definition, {
-      activeContextId: "ctx-1",
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
     });
     let wasActiveDuringIteration = false;
 
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          currentExecution = {
-            ...structuredClone(currentExecution),
-            activeContextId: null,
-          };
-          return currentExecution;
-        },
-        async send(_p, _s, event) {
-          if (event.type === "complete") {
-            currentExecution = {
-              ...structuredClone(currentExecution),
-              status: "completed",
-              completedAt: "2026-03-27T12:05:00.000Z",
-            };
-          }
-          return currentExecution;
-        },
-      },
+    const harness = buildHarness({
+      initialExecution: initial,
       iterationOrchestrator: {
-        async runIteration() {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
           wasActiveDuringIteration = isExecutionLoopActive(
             "/repo",
             "session-1",
           );
-
-          const ctx = currentExecution.contextStates["ctx-1"]!;
-          currentExecution = {
-            ...structuredClone(currentExecution),
-            activeContextId: null,
-            contextStates: {
-              ...currentExecution.contextStates,
-              "ctx-1": {
-                ...ctx,
-                status: "completed",
-                completedTaskCount: 1,
-              },
-            },
-          };
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
           return {
             conversationId: "conv-1",
-            execution: currentExecution,
+            execution: next,
             shouldContinueInContext: false,
-          } satisfies GraphWorkflowIterationResult;
+          };
         },
       },
-      emitStreamFrame: vi.fn(),
-    };
+    });
 
     _resetActiveLoopsForTesting();
     expect(isExecutionLoopActive("/repo", "session-1")).toBe(false);
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
     await loop.run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: currentExecution,
+      execution: initial,
     });
 
     expect(wasActiveDuringIteration).toBe(true);
@@ -311,8 +466,8 @@ describe("execution loop", () => {
 
   it("retries once when the iteration fails with a stream-closed error", async () => {
     const definition = createSingleContextDefinition(5);
-    let currentExecution = createRunningExecution(definition, {
-      activeContextId: "ctx-1",
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
           contextId: "ctx-1",
@@ -321,240 +476,17 @@ describe("execution loop", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
       laneStates: {
-        implementer: {
-          engine: "claude",
-          lane: "implementer",
-          contextId: "ctx-1",
-          sessionRef: {
-            engine: "claude",
-            lane: "implementer",
-            conversationId: "conv-1",
-          },
-          lastContextTokens: null,
-          lastContextWindowMax: null,
-          rotateBeforeNextTurn: false,
-          limitEvaluation: "disabled",
-          lastUsedAt: "2026-03-27T12:00:00.000Z",
-        },
-      },
-    });
-    let iterationCallCount = 0;
-
-    const recoverRetryableIterationError = vi.fn(
-      async (_projectPath, _sessionName, input) => {
-        expect(input).toEqual({
-          contextId: "ctx-1",
-          errorMessage: "SDK error: MCP error -32000: Stream closed",
-        });
-        const next = structuredClone(currentExecution);
-        next.contextStates["ctx-1"]!.status = "ready";
-        const lane = next.laneStates["implementer"];
-        if (lane?.engine === "claude") {
-          lane.rotateBeforeNextTurn = true;
-        }
-        currentExecution = next;
-        return next;
-      },
-    );
-
-    const sendSpy = vi.fn(async (_projectPath, _sessionName, event) => {
-      if (event.type === "complete") {
-        currentExecution = {
-          ...structuredClone(currentExecution),
-          status: "completed",
-          completedAt: "2026-03-27T12:05:00.000Z",
-        };
-      }
-      return currentExecution;
-    });
-
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          return currentExecution;
-        },
-        send: sendSpy,
-        recoverRetryableIterationError,
-      },
-      iterationOrchestrator: {
-        async runIteration(): Promise<GraphWorkflowIterationResult> {
-          iterationCallCount += 1;
-          if (iterationCallCount === 1) {
-            throw new Error("SDK error: MCP error -32000: Stream closed");
-          }
-
-          const next = structuredClone(currentExecution);
-          next.contextStates["ctx-1"]!.iterationCount = 2;
-          next.contextStates["ctx-1"]!.status = "completed";
-          next.taskStates["task-1"]!.status = "completed";
-          next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
-          next.contextStates["ctx-1"]!.completedTaskCount = 1;
-          next.activeContextId = null;
-          currentExecution = next;
-
-          return {
-            conversationId: "conv-2",
-            execution: next,
-            shouldContinueInContext: false,
-          };
-        },
-      },
-      emitStreamFrame: vi.fn(),
-    };
-
-    const loop = createGraphWorkflowExecutionLoop(deps);
-    const result = await loop.run({
-      projectPath: "/repo",
-      projectName: "test",
-      sessionName: "session-1",
-      execution: currentExecution,
-    });
-
-    expect(iterationCallCount).toBe(2);
-    expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
-    expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
-      type: "complete",
-    });
-    expect(result.status).toBe("completed");
-  });
-
-  it("retries once when the iteration fails before prompt delivery", async () => {
-    const definition = createSingleContextDefinition(5);
-    let currentExecution = createRunningExecution(definition, {
-      activeContextId: "ctx-1",
-      contextStates: {
         "ctx-1": {
-          contextId: "ctx-1",
-          status: "running",
-          totalTaskCount: 1,
-          completedTaskCount: 0,
-          iterationCount: 1,
-          consecutiveFailureCount: 0,
-        },
-      },
-      laneStates: {
-        implementer: {
-          engine: "claude",
-          lane: "implementer",
-          contextId: "ctx-1",
-          sessionRef: {
-            engine: "claude",
-            lane: "implementer",
-            conversationId: "conv-1",
-          },
-          lastContextTokens: null,
-          lastContextWindowMax: null,
-          rotateBeforeNextTurn: false,
-          limitEvaluation: "disabled",
-          lastUsedAt: "2026-03-27T12:00:00.000Z",
-        },
-      },
-    });
-    let iterationCallCount = 0;
-
-    const recoverRetryableIterationError = vi.fn(
-      async (_projectPath, _sessionName, input) => {
-        expect(input).toEqual({
-          contextId: "ctx-1",
-          errorMessage: "SDK error: QuerySession died before prompt delivery",
-        });
-        const next = structuredClone(currentExecution);
-        next.contextStates["ctx-1"]!.status = "ready";
-        const lane = next.laneStates["implementer"];
-        if (lane?.engine === "claude") {
-          lane.rotateBeforeNextTurn = true;
-        }
-        currentExecution = next;
-        return next;
-      },
-    );
-
-    const sendSpy = vi.fn(async (_projectPath, _sessionName, event) => {
-      if (event.type === "complete") {
-        currentExecution = {
-          ...structuredClone(currentExecution),
-          status: "completed",
-          completedAt: "2026-03-27T12:05:00.000Z",
-        };
-      }
-      return currentExecution;
-    });
-
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          return currentExecution;
-        },
-        send: sendSpy,
-        recoverRetryableIterationError,
-      },
-      iterationOrchestrator: {
-        async runIteration(): Promise<GraphWorkflowIterationResult> {
-          iterationCallCount += 1;
-          if (iterationCallCount === 1) {
-            throw new Error(
-              "SDK error: QuerySession died before prompt delivery",
-            );
-          }
-
-          const next = structuredClone(currentExecution);
-          next.contextStates["ctx-1"]!.iterationCount = 2;
-          next.contextStates["ctx-1"]!.status = "completed";
-          next.taskStates["task-1"]!.status = "completed";
-          next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
-          next.contextStates["ctx-1"]!.completedTaskCount = 1;
-          next.activeContextId = null;
-          currentExecution = next;
-
-          return {
-            conversationId: "conv-2",
-            execution: next,
-            shouldContinueInContext: false,
-          };
-        },
-      },
-      emitStreamFrame: vi.fn(),
-    };
-
-    const loop = createGraphWorkflowExecutionLoop(deps);
-    const result = await loop.run({
-      projectPath: "/repo",
-      projectName: "test",
-      sessionName: "session-1",
-      execution: currentExecution,
-    });
-
-    expect(iterationCallCount).toBe(2);
-    expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
-    expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
-      type: "complete",
-    });
-    expect(result.status).toBe("completed");
-  });
-
-  it.each([
-    "QuerySession is dead — cannot send prompt",
-    "QuerySession ended before the turn completed",
-  ])(
-    "retries once when the iteration fails with %j",
-    async (sdkErrorMessage) => {
-      const definition = createSingleContextDefinition(5);
-      let currentExecution = createRunningExecution(definition, {
-        activeContextId: "ctx-1",
-        contextStates: {
-          "ctx-1": {
-            contextId: "ctx-1",
-            status: "running",
-            totalTaskCount: 1,
-            completedTaskCount: 0,
-            iterationCount: 1,
-            consecutiveFailureCount: 0,
-          },
-        },
-        laneStates: {
           implementer: {
             engine: "claude",
             lane: "implementer",
@@ -571,45 +503,246 @@ describe("execution loop", () => {
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
         },
+      },
+    });
+
+    let iterationCallCount = 0;
+
+    const recoverRetryableIterationError = vi.fn(
+      async (_projectPath: string, _sessionName: string, errInput) => {
+        expect(errInput).toEqual({
+          contextId: "ctx-1",
+          errorMessage: "SDK error: MCP error -32000: Stream closed",
+        });
+        const next = structuredClone(harness.getCurrent());
+        next.contextStates["ctx-1"]!.status = "ready";
+        const lane = next.laneStates["ctx-1"]?.["implementer"];
+        if (lane?.engine === "claude") {
+          lane.rotateBeforeNextTurn = true;
+        }
+        harness.setCurrent(next);
+        return next;
+      },
+    );
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          if (iterationCallCount === 1) {
+            throw new Error("SDK error: MCP error -32000: Stream closed");
+          }
+
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 2;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.taskStates["task-1"]!.status = "completed";
+          next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+
+          return {
+            conversationId: "conv-2",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(iterationCallCount).toBe(2);
+    expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+    expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+      type: "complete",
+    });
+    expect(result.status).toBe("completed");
+  });
+
+  it("retries once when the iteration fails before prompt delivery", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
+        },
+      },
+      laneStates: {
+        "ctx-1": {
+          implementer: {
+            engine: "claude",
+            lane: "implementer",
+            contextId: "ctx-1",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-1",
+            },
+            lastContextTokens: null,
+            lastContextWindowMax: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-27T12:00:00.000Z",
+          },
+        },
+      },
+    });
+    let iterationCallCount = 0;
+
+    const recoverRetryableIterationError = vi.fn(
+      async (_projectPath: string, _sessionName: string, errInput) => {
+        expect(errInput).toEqual({
+          contextId: "ctx-1",
+          errorMessage: "SDK error: QuerySession died before prompt delivery",
+        });
+        const next = structuredClone(harness.getCurrent());
+        next.contextStates["ctx-1"]!.status = "ready";
+        const lane = next.laneStates["ctx-1"]?.["implementer"];
+        if (lane?.engine === "claude") {
+          lane.rotateBeforeNextTurn = true;
+        }
+        harness.setCurrent(next);
+        return next;
+      },
+    );
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          if (iterationCallCount === 1) {
+            throw new Error(
+              "SDK error: QuerySession died before prompt delivery",
+            );
+          }
+
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 2;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.taskStates["task-1"]!.status = "completed";
+          next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+
+          return {
+            conversationId: "conv-2",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(iterationCallCount).toBe(2);
+    expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+    expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+      type: "complete",
+    });
+    expect(result.status).toBe("completed");
+  });
+
+  it.each([
+    "QuerySession is dead — cannot send prompt",
+    "QuerySession ended before the turn completed",
+  ])(
+    "retries once when the iteration fails with %j",
+    async (sdkErrorMessage) => {
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition, {
+        activeContextIds: ["ctx-1"],
+        contextStates: {
+          "ctx-1": {
+            contextId: "ctx-1",
+            status: "running",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 1,
+            consecutiveFailureCount: 0,
+            worktreePath: null,
+            branchName: null,
+            isolation: "session",
+            batchId: null,
+            mergeStatus: "not-applicable",
+            cleanupStatus: "not-applicable",
+            lastMergeError: null,
+          },
+        },
+        laneStates: {
+          "ctx-1": {
+            implementer: {
+              engine: "claude",
+              lane: "implementer",
+              contextId: "ctx-1",
+              sessionRef: {
+                engine: "claude",
+                lane: "implementer",
+                conversationId: "conv-1",
+              },
+              lastContextTokens: null,
+              lastContextWindowMax: null,
+              rotateBeforeNextTurn: false,
+              limitEvaluation: "disabled",
+              lastUsedAt: "2026-03-27T12:00:00.000Z",
+            },
+          },
+        },
       });
       let iterationCallCount = 0;
 
       const recoverRetryableIterationError = vi.fn(
-        async (_projectPath, _sessionName, input) => {
-          expect(input).toEqual({
+        async (_projectPath: string, _sessionName: string, errInput) => {
+          expect(errInput).toEqual({
             contextId: "ctx-1",
             errorMessage: `SDK error: ${sdkErrorMessage}`,
           });
-          const next = structuredClone(currentExecution);
+          const next = structuredClone(harness.getCurrent());
           next.contextStates["ctx-1"]!.status = "ready";
-          const lane = next.laneStates["implementer"];
+          const lane = next.laneStates["ctx-1"]?.["implementer"];
           if (lane?.engine === "claude") {
             lane.rotateBeforeNextTurn = true;
           }
-          currentExecution = next;
+          harness.setCurrent(next);
           return next;
         },
       );
 
-      const sendSpy = vi.fn(async (_projectPath, _sessionName, event) => {
-        if (event.type === "complete") {
-          currentExecution = {
-            ...structuredClone(currentExecution),
-            status: "completed",
-            completedAt: "2026-03-27T12:05:00.000Z",
-          };
-        }
-        return currentExecution;
-      });
-
-      const deps: GraphWorkflowExecutionLoopDeps = {
-        workflowManager: {
-          async scheduleNextContext() {
-            return currentExecution;
-          },
-          send: sendSpy,
-          recoverRetryableIterationError,
-        },
+      const harness = buildHarness({
+        initialExecution: initial,
+        recoverRetryableIterationError,
         iterationOrchestrator: {
           async runIteration(): Promise<GraphWorkflowIterationResult> {
             iterationCallCount += 1;
@@ -617,14 +750,14 @@ describe("execution loop", () => {
               throw new Error(`SDK error: ${sdkErrorMessage}`);
             }
 
-            const next = structuredClone(currentExecution);
+            const next = structuredClone(harness.getCurrent());
             next.contextStates["ctx-1"]!.iterationCount = 2;
             next.contextStates["ctx-1"]!.status = "completed";
             next.taskStates["task-1"]!.status = "completed";
             next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
             next.contextStates["ctx-1"]!.completedTaskCount = 1;
-            next.activeContextId = null;
-            currentExecution = next;
+            next.activeContextIds = [];
+            harness.setCurrent(next);
 
             return {
               conversationId: "conv-2",
@@ -633,20 +766,19 @@ describe("execution loop", () => {
             };
           },
         },
-        emitStreamFrame: vi.fn(),
-      };
+      });
 
-      const loop = createGraphWorkflowExecutionLoop(deps);
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
         sessionName: "session-1",
-        execution: currentExecution,
+        execution: initial,
       });
 
       expect(iterationCallCount).toBe(2);
       expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
-      expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+      expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
         type: "complete",
       });
       expect(result.status).toBe("completed");
@@ -655,8 +787,8 @@ describe("execution loop", () => {
 
   it("halts after a second consecutive stream-closed error", async () => {
     const definition = createSingleContextDefinition(5);
-    let currentExecution = createRunningExecution(definition, {
-      activeContextId: "ctx-1",
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
           contextId: "ctx-1",
@@ -665,76 +797,137 @@ describe("execution loop", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });
 
-    const sendSpy = vi.fn(
-      async (
-        _projectPath: string,
-        _sessionName: string,
-        event:
-          | { type: "complete" }
-          | { type: "halt"; reason: GraphWorkflowHaltReason },
-      ) => {
-        if (event.type === "halt") {
-          currentExecution = {
-            ...structuredClone(currentExecution),
-            status: "halted",
-            haltReason: event.reason,
-            completedAt: "2026-03-27T12:06:00.000Z",
-          };
-        }
-        return currentExecution;
-      },
-    );
-
     const recoverRetryableIterationError = vi.fn(async () => {
-      const next = structuredClone(currentExecution);
+      const next = structuredClone(harness.getCurrent());
       next.contextStates["ctx-1"]!.status = "ready";
-      currentExecution = next;
+      harness.setCurrent(next);
       return next;
     });
 
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          return currentExecution;
-        },
-        send: sendSpy,
-        recoverRetryableIterationError,
-      },
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
           throw new Error("SDK error: MCP error -32000: Stream closed");
         },
       },
-      emitStreamFrame: vi.fn(),
-    };
+    });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: currentExecution,
+      execution: initial,
     });
 
     expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
-    expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
-      type: "halt",
+    expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
       reason: {
         type: "recovery_error",
         message: "SDK error: MCP error -32000: Stream closed",
       },
     });
+    expect(harness.drainAndHaltSpy).toHaveBeenCalled();
     expect(result.status).toBe("halted");
+  });
+
+  it("resets the recovery counter when an iteration fails after partial turn progress", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
+        },
+      },
+    });
+
+    let iterationCallCount = 0;
+
+    const recoverRetryableIterationError = vi.fn(async () => {
+      const next = structuredClone(harness.getCurrent());
+      next.contextStates["ctx-1"]!.status = "ready";
+      harness.setCurrent(next);
+      return next;
+    });
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          if (iterationCallCount === 1) {
+            throw new Error("SDK error: MCP error -32000: Stream closed");
+          }
+          if (iterationCallCount === 2) {
+            throw new IterationFailureWithProgressError(
+              new Error("SDK error: QuerySession is dead"),
+              2,
+            );
+          }
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 3;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.taskStates["task-1"]!.status = "completed";
+          next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-3",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(iterationCallCount).toBe(3);
+    expect(recoverRetryableIterationError).toHaveBeenCalledTimes(2);
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
+    expect(result.status).toBe("completed");
   });
 
   it("halts with circuit_breaker when consecutiveFailureCount reaches threshold", async () => {
     const definition = createSingleContextDefinition(10);
-    let currentExecution = createRunningExecution(definition, {
-      activeContextId: "ctx-1",
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
           contextId: "ctx-1",
@@ -743,45 +936,25 @@ describe("execution loop", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 2,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });
 
-    const sendSpy = vi.fn(
-      async (
-        _projectPath: string,
-        _sessionName: string,
-        event:
-          | { type: "complete" }
-          | { type: "halt"; reason: GraphWorkflowHaltReason },
-      ) => {
-        if (event.type === "halt") {
-          currentExecution = {
-            ...structuredClone(currentExecution),
-            status: "halted",
-            haltReason: event.reason,
-            completedAt: "2026-03-27T12:10:00.000Z",
-          };
-        }
-        return currentExecution;
-      },
-    );
-
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          return currentExecution;
-        },
-        send: sendSpy,
-      },
+    const harness = buildHarness({
+      initialExecution: initial,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
-          // Simulate an iteration where validation failed — consecutiveFailureCount
-          // was already incremented by the iteration orchestrator to 3 (threshold)
-          const next = structuredClone(currentExecution);
+          const next = structuredClone(harness.getCurrent());
           next.contextStates["ctx-1"]!.iterationCount += 1;
           next.contextStates["ctx-1"]!.consecutiveFailureCount = 3;
-          currentExecution = next;
+          harness.setCurrent(next);
           return {
             conversationId: "conv-1",
             execution: next,
@@ -789,20 +962,20 @@ describe("execution loop", () => {
           };
         },
       },
-      emitStreamFrame: vi.fn(),
-    };
+    });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: currentExecution,
+      execution: initial,
     });
 
     expect(result.status).toBe("halted");
-    expect(sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
-      type: "halt",
+    expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
       reason: {
         type: "circuit_breaker",
         contextId: "ctx-1",
@@ -811,12 +984,13 @@ describe("execution loop", () => {
         summary: null,
       },
     });
+    expect(harness.drainAndHaltSpy).toHaveBeenCalled();
   });
 
   it("continues iterating when consecutiveFailureCount is below threshold", async () => {
     const definition = createSingleContextDefinition(10);
-    let currentExecution = createRunningExecution(definition, {
-      activeContextId: "ctx-1",
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
           contextId: "ctx-1",
@@ -825,39 +999,29 @@ describe("execution loop", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });
     let iterationCallCount = 0;
 
-    const sendSpy = vi.fn(async (_projectPath, _sessionName, event) => {
-      if (event.type === "complete") {
-        currentExecution = {
-          ...structuredClone(currentExecution),
-          status: "completed",
-          completedAt: "2026-03-27T12:05:00.000Z",
-        };
-      }
-      return currentExecution;
-    });
-
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          return currentExecution;
-        },
-        send: sendSpy,
-      },
+    const harness = buildHarness({
+      initialExecution: initial,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
           iterationCallCount += 1;
-          const next = structuredClone(currentExecution);
+          const next = structuredClone(harness.getCurrent());
           next.contextStates["ctx-1"]!.iterationCount = iterationCallCount;
 
           if (iterationCallCount === 1) {
-            // First iteration: validation fails, count goes to 1 (below threshold of 3)
             next.contextStates["ctx-1"]!.consecutiveFailureCount = 1;
-            currentExecution = next;
+            harness.setCurrent(next);
             return {
               conversationId: "conv-1",
               execution: next,
@@ -865,12 +1029,12 @@ describe("execution loop", () => {
             };
           }
 
-          // Second iteration: task completes, count resets
           next.contextStates["ctx-1"]!.consecutiveFailureCount = 0;
           next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.contextStates["ctx-1"]!.status = "completed";
           next.taskStates["task-1"]!.status = "completed";
-          next.activeContextId = null;
-          currentExecution = next;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
           return {
             conversationId: "conv-2",
             execution: next,
@@ -878,15 +1042,14 @@ describe("execution loop", () => {
           };
         },
       },
-      emitStreamFrame: vi.fn(),
-    };
+    });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: currentExecution,
+      execution: initial,
     });
 
     expect(iterationCallCount).toBe(2);
@@ -895,8 +1058,8 @@ describe("execution loop", () => {
 
   it("routes the circuit-breaker decision through the runCircuitBreakerGate dep", async () => {
     const definition = createSingleContextDefinition(10);
-    let currentExecution = createRunningExecution(definition, {
-      activeContextId: "ctx-1",
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
           contextId: "ctx-1",
@@ -905,29 +1068,16 @@ describe("execution loop", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 2,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });
-
-    const sendSpy = vi.fn(
-      async (
-        _projectPath: string,
-        _sessionName: string,
-        event:
-          | { type: "complete" }
-          | { type: "halt"; reason: GraphWorkflowHaltReason },
-      ) => {
-        if (event.type === "halt") {
-          currentExecution = {
-            ...structuredClone(currentExecution),
-            status: "halted",
-            haltReason: event.reason,
-            completedAt: "2026-03-27T12:10:00.000Z",
-          };
-        }
-        return currentExecution;
-      },
-    );
 
     const runCircuitBreakerGate = vi.fn(
       (input: { failureCount: number; threshold: number }) => {
@@ -955,19 +1105,15 @@ describe("execution loop", () => {
       },
     );
 
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          return currentExecution;
-        },
-        send: sendSpy,
-      },
+    const harness = buildHarness({
+      initialExecution: initial,
+      runCircuitBreakerGate,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
-          const next = structuredClone(currentExecution);
+          const next = structuredClone(harness.getCurrent());
           next.contextStates["ctx-1"]!.iterationCount += 1;
           next.contextStates["ctx-1"]!.consecutiveFailureCount = 3;
-          currentExecution = next;
+          harness.setCurrent(next);
           return {
             conversationId: "conv-1",
             execution: next,
@@ -975,16 +1121,14 @@ describe("execution loop", () => {
           };
         },
       },
-      emitStreamFrame: vi.fn(),
-      runCircuitBreakerGate,
-    };
+    });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: currentExecution,
+      execution: initial,
     });
 
     expect(runCircuitBreakerGate).toHaveBeenCalledWith({
@@ -997,8 +1141,8 @@ describe("execution loop", () => {
 
   it("does not halt when the runCircuitBreakerGate dep returns pass", async () => {
     const definition = createSingleContextDefinition(10);
-    let currentExecution = createRunningExecution(definition, {
-      activeContextId: "ctx-1",
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
           contextId: "ctx-1",
@@ -1007,21 +1151,17 @@ describe("execution loop", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 5,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });
     let iterationCallCount = 0;
-
-    const sendSpy = vi.fn(async (_projectPath, _sessionName, event) => {
-      if (event.type === "complete") {
-        currentExecution = {
-          ...structuredClone(currentExecution),
-          status: "completed",
-          completedAt: "2026-03-27T12:05:00.000Z",
-        };
-      }
-      return currentExecution;
-    });
 
     const runCircuitBreakerGate = vi.fn(() => ({
       status: "pass" as const,
@@ -1029,23 +1169,20 @@ describe("execution loop", () => {
       details: { failureCount: 0, threshold: 99, tripped: false },
     }));
 
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          return currentExecution;
-        },
-        send: sendSpy,
-      },
+    const harness = buildHarness({
+      initialExecution: initial,
+      runCircuitBreakerGate,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
           iterationCallCount += 1;
-          const next = structuredClone(currentExecution);
+          const next = structuredClone(harness.getCurrent());
           next.contextStates["ctx-1"]!.iterationCount = iterationCallCount;
           next.contextStates["ctx-1"]!.consecutiveFailureCount = 5;
           next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.contextStates["ctx-1"]!.status = "completed";
           next.taskStates["task-1"]!.status = "completed";
-          next.activeContextId = null;
-          currentExecution = next;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
           return {
             conversationId: `conv-${iterationCallCount}`,
             execution: next,
@@ -1053,16 +1190,14 @@ describe("execution loop", () => {
           };
         },
       },
-      emitStreamFrame: vi.fn(),
-      runCircuitBreakerGate,
-    };
+    });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: currentExecution,
+      execution: initial,
     });
 
     expect(runCircuitBreakerGate).toHaveBeenCalled();
@@ -1070,10 +1205,10 @@ describe("execution loop", () => {
     expect(result.haltReason).toBeNull();
   });
 
-  it("emits done with validator_infra_error when iteration returns a pre-halted execution", async () => {
+  it("emits done with the haltReason when iteration returns a pre-halted execution", async () => {
     const definition = createSingleContextDefinition(10);
-    const initialExecution = createRunningExecution(definition, {
-      activeContextId: "ctx-1",
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
           contextId: "ctx-1",
@@ -1082,12 +1217,19 @@ describe("execution loop", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });
 
     const haltedExecution: GraphWorkflowExecution = {
-      ...structuredClone(initialExecution),
+      ...structuredClone(initial),
       status: "halted",
       haltReason: {
         type: "validator_infra_error",
@@ -1100,18 +1242,14 @@ describe("execution loop", () => {
       completedAt: "2026-03-27T12:10:00.000Z",
     };
 
-    const sendSpy = vi.fn();
     const emitStreamFrame = vi.fn();
 
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: {
-        async scheduleNextContext() {
-          return initialExecution;
-        },
-        send: sendSpy,
-      },
+    const harness = buildHarness({
+      initialExecution: initial,
+      emitStreamFrame,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
+          harness.setCurrent(haltedExecution);
           return {
             conversationId: "conv-1",
             execution: haltedExecution,
@@ -1119,18 +1257,18 @@ describe("execution loop", () => {
           };
         },
       },
-      emitStreamFrame,
-    };
+    });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: initialExecution,
+      execution: initial,
     });
 
-    expect(sendSpy).not.toHaveBeenCalled();
+    expect(harness.sendSpy).not.toHaveBeenCalled();
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
     expect(emitStreamFrame).toHaveBeenCalledWith("/repo", "session-1", {
       type: "done",
       reason: "validator_infra_error",

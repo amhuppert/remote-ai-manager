@@ -9,8 +9,10 @@ import { getSession as defaultGetSession, mutateSession } from "@/lib/state";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
 import type {
   ApiError,
+  GraphWorkflowCleanupStatusValue,
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+  GraphWorkflowMergeStatusValue,
   GraphWorkflowStatus,
   SessionState,
 } from "@/types";
@@ -32,10 +34,20 @@ import {
   createGraphWorkflowExecutionLoop,
   isExecutionLoopActive,
 } from "@/lib/workflows/graph-workflow/execution-loop";
-import { createGraphWorkflowIterationOrchestrator } from "@/lib/workflows/graph-workflow/iteration-orchestrator";
+import {
+  createGraphWorkflowIterationOrchestrator,
+  type IterationOrchestratorScriptValidatorInput,
+} from "@/lib/workflows/graph-workflow/iteration-orchestrator";
 import { createGraphWorkflowManager } from "@/lib/workflows/graph-workflow/workflow-manager";
 import { createWorkflowContinuityService } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
+import { createParallelWorktrees } from "./parallel-worktrees";
+import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
+import { createSessionGitLock } from "./session-git-lock";
+import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
+import { createExecutionTargetResolver } from "./execution-target-resolver";
+import { createGraphWorkflowSignalHaltHandler } from "./graph-workflow-signal-halt";
+import { createSoloContextCommitter } from "./solo-context-committer";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -59,11 +71,15 @@ const executionRepository = createGraphWorkflowExecutionRepository({
 
 const workflowStorage = createWorkflowStorageService();
 
+const parallelWorktrees = createParallelWorktrees();
+
 const workflowManager = createGraphWorkflowManager({
   executionRepository,
   loadDefinition: (projectPath, definitionId) =>
     workflowStorage.get(projectPath, definitionId),
   isExecutionLoopActive,
+  parallelWorktrees,
+  getSession: defaultGetSession,
 });
 const CODEX_VALIDATOR_TIMEOUT_MS = 300_000;
 
@@ -97,7 +113,7 @@ const validatorRunner = createValidatorRunner({
     return config.claudeTimeoutMs;
   },
   continuityService,
-  executionRepository,
+  executionRepository: workflowManager,
 });
 const implementerRunner = createGraphWorkflowImplementerRunner();
 const validationService = createGraphWorkflowValidationService({
@@ -120,12 +136,9 @@ export function createGraphWorkflowRouteScriptValidatorService(
   deps: GraphWorkflowRouteScriptValidatorServiceDeps,
 ) {
   return {
-    async runScriptValidator(input: {
-      projectPath: string;
-      sessionName: string;
-      execution: GraphWorkflowExecution;
-      contextId: string;
-    }): Promise<ScriptValidatorOutcome> {
+    async runScriptValidator(
+      input: IterationOrchestratorScriptValidatorInput,
+    ): Promise<ScriptValidatorOutcome> {
       const session = await deps.getSession(
         input.projectPath,
         input.sessionName,
@@ -145,6 +158,7 @@ export function createGraphWorkflowRouteScriptValidatorService(
         executionId: input.execution.id,
         contextId: input.contextId,
         timeoutMs,
+        executionTarget: input.executionTarget,
       });
     },
   };
@@ -157,15 +171,10 @@ const scriptValidatorService = createGraphWorkflowRouteScriptValidatorService({
 });
 
 const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
-  executionRepository,
+  executionRepository: workflowManager,
   createConversation,
   continuityService,
-  async signalHalt({ projectPath, sessionName, reason }) {
-    return workflowManager.send(projectPath, sessionName, {
-      type: "halt",
-      reason,
-    });
-  },
+  signalHalt: createGraphWorkflowSignalHaltHandler(workflowManager),
   createToolServer: (input) => ({
     server: buildGraphWorkflowPortableMcp(
       input.projectName,
@@ -194,17 +203,39 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       reasoningEffort: input.reasoningEffort,
       toolServer: input.toolServer,
       emitStreamFrame: input.emitStreamFrame,
+      executionTarget: input.executionTarget,
     });
   },
   validationService,
   scriptValidatorService,
   emitStreamFrame: emitGraphWorkflowStreamFrame,
 });
+const mergeMutex = createPerSessionMergeMutex();
+const sessionGitLock = createSessionGitLock();
+const mergeRunner = createGraphWorkflowMergeRunner();
+const soloContextCommitter = createSoloContextCommitter();
+const executionTargetResolver = createExecutionTargetResolver();
+
 const executionLoop = createGraphWorkflowExecutionLoop({
   workflowManager,
   iterationOrchestrator,
+  parallelWorktrees,
+  mergeMutex,
+  sessionGitLock,
+  mergeRunner,
+  soloContextCommitter,
+  executionTargetResolver,
+  getSession: defaultGetSession,
   emitStreamFrame: emitGraphWorkflowStreamFrame,
 });
+
+export interface GraphWorkflowExecutionContextMergeProgress {
+  contextId: string;
+  branchName: string | null;
+  mergeStatus: GraphWorkflowMergeStatusValue;
+  cleanupStatus: GraphWorkflowCleanupStatusValue;
+  lastMergeError: string | null;
+}
 
 export interface GraphWorkflowExecutionSummary {
   executionId: string;
@@ -213,9 +244,12 @@ export interface GraphWorkflowExecutionSummary {
   status: GraphWorkflowStatus;
   startedAt: string;
   completedAt: string | null;
-  activeContextId: string | null;
-  activeContextTitle: string | null;
+  activeContextIds: string[];
+  activeContextTitles: string[];
+  activeBatchIds: string[];
   haltReason: GraphWorkflowHaltReason | null;
+  pendingHaltReason: GraphWorkflowHaltReason | null;
+  contextMergeProgress: GraphWorkflowExecutionContextMergeProgress[];
   archived: boolean;
 }
 
@@ -289,11 +323,59 @@ function summarizeExecution(
   execution: GraphWorkflowExecution,
   archived: boolean,
 ): GraphWorkflowExecutionSummary {
-  const activeContext = execution.activeContextId
-    ? (execution.workingDefinition.executionContexts.find(
-        (context) => context.id === execution.activeContextId,
-      ) ?? null)
-    : null;
+  const activeContextIds = [...execution.activeContextIds];
+  const activeContextTitles = activeContextIds.map((contextId) => {
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === contextId,
+    );
+    return context?.title ?? contextId;
+  });
+
+  const seenBatches = new Set<string>();
+  const activeBatchIds: string[] = [];
+  for (const contextId of activeContextIds) {
+    const batchId = execution.contextStates[contextId]?.batchId;
+    if (batchId && !seenBatches.has(batchId)) {
+      seenBatches.add(batchId);
+      activeBatchIds.push(batchId);
+    }
+  }
+
+  const seenContexts = new Set<string>();
+  const orderedContextIds: string[] = [];
+  for (const id of activeContextIds) {
+    if (!seenContexts.has(id)) {
+      seenContexts.add(id);
+      orderedContextIds.push(id);
+    }
+  }
+  for (const context of execution.workingDefinition.executionContexts) {
+    if (!seenContexts.has(context.id)) {
+      seenContexts.add(context.id);
+      orderedContextIds.push(context.id);
+    }
+  }
+
+  const contextMergeProgress: GraphWorkflowExecutionContextMergeProgress[] = [];
+  for (const contextId of orderedContextIds) {
+    const state = execution.contextStates[contextId];
+    if (!state) continue;
+    if (
+      state.mergeStatus === "not-applicable" &&
+      state.cleanupStatus === "not-applicable" &&
+      state.lastMergeError === null
+    ) {
+      continue;
+    }
+    contextMergeProgress.push({
+      contextId,
+      branchName: state.branchName,
+      mergeStatus: state.mergeStatus,
+      cleanupStatus: state.cleanupStatus,
+      lastMergeError: state.lastMergeError,
+    });
+  }
+
   return {
     executionId: execution.id,
     definitionId: execution.seedDefinitionId,
@@ -301,9 +383,12 @@ function summarizeExecution(
     status: execution.status,
     startedAt: execution.startedAt,
     completedAt: execution.completedAt,
-    activeContextId: execution.activeContextId,
-    activeContextTitle: activeContext?.title ?? null,
+    activeContextIds,
+    activeContextTitles,
+    activeBatchIds,
     haltReason: execution.haltReason,
+    pendingHaltReason: execution.pendingHaltReason,
+    contextMergeProgress,
     archived,
   };
 }

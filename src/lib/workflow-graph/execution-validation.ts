@@ -9,6 +9,7 @@ import type {
 } from "@/types";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
 import type { ValidatorOutcome, ValidatorRunResult } from "./validator-runner";
+import type { ExecutionTarget } from "./execution-target-resolver";
 
 export interface GraphWorkflowContextValidatorInput {
   projectPath: string;
@@ -16,6 +17,13 @@ export interface GraphWorkflowContextValidatorInput {
   execution: GraphWorkflowExecution;
   context: GraphWorkflowResolvedContext;
   validator: GraphWorkflowAgentValidatorConfig;
+  /**
+   * When supplied, the validator runs against this resolved target's
+   * worktree instead of the session worktree resolved by
+   * `deps.resolveWorktreePath`. Solo-eligible contexts leave this undefined,
+   * preserving the pre-parallelization behavior.
+   */
+  executionTarget?: ExecutionTarget;
 }
 
 export interface GraphWorkflowContextValidationInput {
@@ -23,6 +31,12 @@ export interface GraphWorkflowContextValidationInput {
   sessionName: string;
   execution: GraphWorkflowExecution;
   contextId: string;
+  /**
+   * Resolved per-context execution target. Forwarded to the validator runner
+   * so context validation in a parallel batch runs against the per-context
+   * worktree, matching where the implementer turn ran.
+   */
+  executionTarget?: ExecutionTarget;
 }
 
 export type GraphWorkflowContextValidationOutcome =
@@ -186,6 +200,7 @@ export function createGraphWorkflowValidationService(
       execution: input.execution,
       context,
       validator,
+      executionTarget: input.executionTarget,
     });
 
     const outcome = mapRunnerOutcomeToContextOutcome(

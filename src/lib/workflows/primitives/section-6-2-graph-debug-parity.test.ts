@@ -95,7 +95,7 @@ function makeExecutionWithStatus(
 ): GraphWorkflowExecution {
   return createWorkflowExecution({
     status,
-    activeContextId: status === "running" ? "context-plan" : null,
+    activeContextIds: status === "running" ? ["context-plan"] : [],
   });
 }
 
@@ -157,8 +157,10 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           sessionName: "session-1",
           executionId: nextExecution.id,
           workflowStatus: status,
-          activeContextId: nextExecution.activeContextId,
+          activeContextIds: nextExecution.activeContextIds,
+          activeBatchIds: [],
           haltReason: null,
+          pendingHaltReason: null,
         });
 
         const envelope = envelopes.find(
@@ -266,7 +268,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
     const nextExecution: GraphWorkflowExecution = {
       ...previousExecution,
       status: "halted",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       haltReason: {
         type: "circuit_breaker",
         contextId: "context-plan",
@@ -682,7 +684,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       seedDefinitionRevision: 1,
       workingDefinition: definition,
       status: "running" as const,
-      activeContextId: contextId,
+      activeContextIds: [contextId],
       contextStates: {
         [contextId]: {
           contextId,
@@ -701,22 +703,45 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       startedAt: "2026-04-28T00:00:00.000Z",
       completedAt: null,
       haltReason: null,
+      pendingHaltReason: null,
     } as unknown as GraphWorkflowExecution;
 
     let currentExecution = initialExecution;
 
-    const sendSpy = vi.fn(async (_p: string, _s: string, event: unknown) => {
-      const halt = event as {
-        type: "halt";
-        reason: { type: string; contextId: string; failureCount: number };
-      };
-      if (halt.type === "halt") {
+    const sendSpy = vi.fn(
+      async (_p: string, _s: string, _event: { type: "complete" }) => {
+        return currentExecution;
+      },
+    );
+
+    const recordPendingHaltReasonSpy = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: { type: string; contextId?: string; failureCount?: number };
+      }) => {
+        if (currentExecution.pendingHaltReason !== null) {
+          return { execution: currentExecution, accepted: false };
+        }
         currentExecution = {
           ...currentExecution,
-          status: "halted",
-          haltReason: halt.reason as never,
+          pendingHaltReason: input.reason as never,
         };
+        return { execution: currentExecution, accepted: true };
+      },
+    );
+
+    const drainAndHaltSpy = vi.fn(async () => {
+      const haltReason = currentExecution.pendingHaltReason;
+      if (!haltReason) {
+        throw new Error("drainAndHalt requires pendingHaltReason");
       }
+      currentExecution = {
+        ...currentExecution,
+        status: "halted",
+        haltReason,
+        pendingHaltReason: null,
+      };
       return currentExecution;
     });
 
@@ -744,10 +769,35 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
             },
     );
 
+    const sessionStub = {
+      worktreePath: "/repo/.worktrees/session-1",
+      branchName: "csm/session-1",
+    };
+
     const loop = createGraphWorkflowExecutionLoop({
       workflowManager: {
-        scheduleNextContext: async () => currentExecution,
+        async scheduleEligibleContexts() {
+          if (currentExecution.status !== "running") {
+            return {
+              execution: currentExecution,
+              scheduled: { kind: "none" },
+            };
+          }
+          return {
+            execution: currentExecution,
+            scheduled: { kind: "solo", contextId },
+          };
+        },
         send: sendSpy,
+        recordPendingHaltReason: recordPendingHaltReasonSpy,
+        drainAndHalt: drainAndHaltSpy,
+        async mutateActive(_p, _s, fn) {
+          currentExecution = await fn(currentExecution);
+          return currentExecution;
+        },
+        async getActive() {
+          return currentExecution;
+        },
       },
       iterationOrchestrator: {
         runIteration: async () => {
@@ -769,6 +819,25 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           };
         },
       },
+      parallelWorktrees: {
+        provision: vi.fn(),
+        provisionBatch: vi.fn(),
+        dispose: vi.fn(),
+      },
+      mergeMutex: { withMergeMutex: async (_k, fn) => fn() },
+      sessionGitLock: { withSessionGitLock: async (_k, fn) => fn() },
+      mergeRunner: { run: vi.fn() },
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      executionTargetResolver: {
+        resolve: () => ({
+          worktreePath: sessionStub.worktreePath,
+          branchName: sessionStub.branchName,
+          isolation: "session",
+        }),
+      },
+      getSession: async () => sessionStub as never,
       emitStreamFrame: vi.fn(),
       runCircuitBreakerGate,
     });
@@ -826,7 +895,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
     const nextExecution: GraphWorkflowExecution = {
       ...previousExecution,
       status: "halted",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       haltReason: {
         type: "circuit_breaker",
         contextId: "context-plan",
@@ -930,7 +999,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       });
       const execution = fixtures.createWorkflowExecution({
         status: "running",
-        activeContextId: "context-plan",
+        activeContextIds: ["context-plan"],
         workingDefinition: definition,
       });
       const contextDef = execution.workingDefinition.executionContexts.find(

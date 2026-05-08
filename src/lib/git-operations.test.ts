@@ -364,6 +364,7 @@ describe("squashMerge", () => {
     mockGitSequence([
       { stdout: "" },
       { stdout: "" },
+      { stdout: "src/changed.ts\n" },
       { stdout: "[main abc1234] Merge session\n" },
     ]);
 
@@ -381,6 +382,11 @@ describe("squashMerge", () => {
       "csm/my-session",
     ]);
     expect(gitMock.mock.calls[2]![0]).toEqual([
+      "diff",
+      "--cached",
+      "--name-only",
+    ]);
+    expect(gitMock.mock.calls[3]![0]).toEqual([
       "commit",
       "--no-verify",
       "-m",
@@ -409,6 +415,7 @@ describe("squashMerge", () => {
     mockGitSequence([
       { stdout: "?? some-untracked-file.html\n" }, // status --porcelain
       { stdout: "" }, // merge --squash
+      { stdout: "src/changed.ts\n" }, // diff --cached --name-only
       { stdout: "[main abc1234] Merge\n" }, // commit
     ]);
 
@@ -427,11 +434,29 @@ describe("squashMerge", () => {
     mockGitSequence([
       { stdout: "" },
       { stdout: "" },
+      { stdout: "src/changed.ts\n" },
       { stdout: "Unexpected output" },
     ]);
 
     const result = await ops.squashMerge("/project", "csm/branch", "Merge");
     expect(result.mergeHash).toBe("");
+  });
+
+  it("returns empty hash without committing when squash produced no staged changes", async () => {
+    // Sequence:
+    //  1. status --porcelain (clean target)
+    //  2. merge --squash (succeeds; no-op because feature branch is identical)
+    //  3. diff --cached --name-only (empty → no staged changes)
+    mockGitSequence([{ stdout: "" }, { stdout: "" }, { stdout: "" }]);
+
+    const result = await ops.squashMerge("/project", "csm/branch", "Merge");
+    expect(result.mergeHash).toBe("");
+
+    // Crucially: no `git commit` call is issued.
+    const commands = gitMock.mock.calls.map((call) => call[0]);
+    expect(commands).not.toContainEqual(
+      expect.arrayContaining(["commit", "--no-verify"]),
+    );
   });
 
   it("detects merge conflicts, aborts, and throws descriptive error", async () => {
@@ -463,6 +488,7 @@ describe("squashMerge", () => {
     mockGitSequence([
       { stdout: "" },
       { stdout: "" },
+      { stdout: "src/changed.ts\n" },
       { error: commitError },
       { stdout: "" },
     ]);
@@ -471,7 +497,7 @@ describe("squashMerge", () => {
       ops.squashMerge("/project", "csm/branch", "Merge"),
     ).rejects.toThrow("Commit failed");
 
-    expect(gitMock.mock.calls[3]![0]).toEqual(["reset", "--hard", "HEAD"]);
+    expect(gitMock.mock.calls[4]![0]).toEqual(["reset", "--hard", "HEAD"]);
   });
 
   it("re-throws non-conflict merge errors without conflict message", async () => {

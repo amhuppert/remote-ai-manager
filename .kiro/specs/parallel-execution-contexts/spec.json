@@ -1,0 +1,22 @@
+{
+  "feature_name": "parallel-execution-contexts",
+  "created_at": "2026-05-08T02:28:05Z",
+  "updated_at": "2026-05-08T04:26:55Z",
+  "language": "en",
+  "phase": "design-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}

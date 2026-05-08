@@ -508,7 +508,7 @@ function createGetExecutionStatusHandler(
           {
             id: execution.id,
             status: execution.status,
-            activeContextId: execution.activeContextId,
+            activeContextId: execution.activeContextIds[0] ?? null,
             contextStates: execution.contextStates,
             haltReason: execution.haltReason,
             startedAt: execution.startedAt,

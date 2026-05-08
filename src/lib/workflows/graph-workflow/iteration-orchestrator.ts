@@ -13,6 +13,7 @@ import type {
   WorkflowValidatorIssue,
 } from "@/types";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
+import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import type {
   ResolveImplementerCallInput,
   ResolvedImplementerCall,
@@ -34,6 +35,7 @@ import {
   type GraphWorkflowStreamFrame,
 } from "@/lib/workflow-graph/stream-registry";
 import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validator-runner";
+import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import {
   runCircuitBreakerGate as defaultRunCircuitBreakerGate,
   type CircuitBreakerGateResult,
@@ -46,11 +48,13 @@ export interface GraphWorkflowIterationExecutionRepository {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  update(
+  mutateActive(
     projectPath: string,
     sessionName: string,
-    execution: GraphWorkflowExecution,
-  ): Promise<void>;
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution>;
 }
 
 export interface GraphWorkflowIterationConversation {
@@ -91,6 +95,12 @@ export interface GraphWorkflowRunAgentIterationInput {
   reasoningEffort: string;
   toolServer: unknown;
   emitStreamFrame?(frame: GraphWorkflowStreamFrame): void;
+  /**
+   * Resolved per-context execution target. When the context is isolated in a
+   * sub-worktree (parallel batch), this carries the sub-worktree path and
+   * branch; otherwise it carries the session worktree/branch.
+   */
+  executionTarget?: ExecutionTarget;
 }
 
 export interface GraphWorkflowAgentIterationResult {
@@ -117,6 +127,11 @@ export interface IterationOrchestratorScriptValidatorInput {
   sessionName: string;
   execution: GraphWorkflowExecution;
   contextId: string;
+  /**
+   * Resolved per-context execution target. When provided, the script validator
+   * runs against this target's worktree/branch instead of the session's.
+   */
+  executionTarget?: ExecutionTarget;
 }
 
 export interface IterationOrchestratorScriptValidatorService {
@@ -171,6 +186,13 @@ export interface GraphWorkflowIterationInput {
   projectName: string;
   sessionName: string;
   contextId: string;
+  /**
+   * Resolved per-context execution target supplied by the loop's
+   * ExecutionTargetResolver. When omitted (e.g., legacy callers), the
+   * orchestrator threads `undefined` through and the implementer runner falls
+   * back to the session worktree/branch.
+   */
+  executionTarget?: ExecutionTarget;
 }
 
 export interface GraphWorkflowIterationResult {
@@ -192,6 +214,7 @@ export class IterationHaltedError extends Error {
 export interface GraphWorkflowSignalHaltInput {
   projectPath: string;
   sessionName: string;
+  contextId?: string;
   reason: GraphWorkflowHaltReason;
 }
 
@@ -212,7 +235,7 @@ function buildMachineSnapshot(
   return {
     schemaVersion: 1,
     lifecycleStatus: execution.status,
-    activeContextId: execution.activeContextId,
+    activeContextId: execution.activeContextIds[0] ?? null,
     recoveryMode: "none",
     hasLiveIteration,
   };
@@ -512,160 +535,141 @@ export function createGraphWorkflowIterationOrchestrator(
     return execution;
   }
 
-  async function persistExecution(
-    projectPath: string,
-    sessionName: string,
-    execution: GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution> {
-    await deps.executionRepository.update(projectPath, sessionName, execution);
-    return execution;
-  }
-
   async function markTaskCompleted(input: {
     projectPath: string;
     sessionName: string;
-    execution: GraphWorkflowExecution;
     contextId: string;
     taskId: string;
     summary: string;
     conversationId: string;
     completedAt: string;
   }): Promise<GraphWorkflowExecution> {
-    const nextExecution = cloneExecution(input.execution);
-    const taskState = nextExecution.taskStates[input.taskId];
-    if (!taskState) {
-      throw new Error(`Task "${input.taskId}" does not exist in runtime state`);
-    }
-
-    if (taskState.contextId !== input.contextId) {
-      throw new Error(
-        `Task "${input.taskId}" does not belong to context "${input.contextId}"`,
-      );
-    }
-
-    if (taskState.status === "completed") {
-      throw new Error(`Task "${input.taskId}" is already completed`);
-    }
-
-    const contextState = nextExecution.contextStates[taskState.contextId];
-    if (!contextState) {
-      throw new Error(
-        `Execution context "${taskState.contextId}" does not exist in runtime state`,
-      );
-    }
-
-    taskState.status = "completed";
-    taskState.summary = input.summary;
-    taskState.completedAt = input.completedAt;
-    taskState.lastConversationId = input.conversationId;
-    taskState.failureMessage = null;
-    contextState.completedTaskCount = countCompletedTasks(
-      nextExecution,
-      taskState.contextId,
-    );
-    nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
-
-    return persistExecution(
+    return deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
-      nextExecution,
-    );
-  }
+      (latest) => {
+        const nextExecution = cloneExecution(latest);
+        const taskState = nextExecution.taskStates[input.taskId];
+        if (!taskState) {
+          throw new Error(
+            `Task "${input.taskId}" does not exist in runtime state`,
+          );
+        }
 
-  async function resetContextFailureCount(input: {
-    projectPath: string;
-    sessionName: string;
-    execution: GraphWorkflowExecution;
-    contextId: string;
-  }): Promise<GraphWorkflowExecution> {
-    const nextExecution = cloneExecution(input.execution);
-    const contextState = nextExecution.contextStates[input.contextId];
-    if (!contextState) {
-      throw new Error(
-        `Execution context "${input.contextId}" does not exist in runtime state`,
-      );
-    }
+        if (taskState.contextId !== input.contextId) {
+          throw new Error(
+            `Task "${input.taskId}" does not belong to context "${input.contextId}"`,
+          );
+        }
 
-    contextState.consecutiveFailureCount = 0;
-    nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
+        if (taskState.status === "completed") {
+          throw new Error(`Task "${input.taskId}" is already completed`);
+        }
 
-    return persistExecution(
-      input.projectPath,
-      input.sessionName,
-      nextExecution,
+        const contextState = nextExecution.contextStates[taskState.contextId];
+        if (!contextState) {
+          throw new Error(
+            `Execution context "${taskState.contextId}" does not exist in runtime state`,
+          );
+        }
+
+        taskState.status = "completed";
+        taskState.summary = input.summary;
+        taskState.completedAt = input.completedAt;
+        taskState.lastConversationId = input.conversationId;
+        taskState.failureMessage = null;
+        contextState.completedTaskCount = countCompletedTasks(
+          nextExecution,
+          taskState.contextId,
+        );
+        nextExecution.machineSnapshot = buildMachineSnapshot(
+          nextExecution,
+          true,
+        );
+        return nextExecution;
+      },
     );
   }
 
   async function reopenTasksAfterContextValidationFailure(input: {
     projectPath: string;
     sessionName: string;
-    execution: GraphWorkflowExecution;
     contextId: string;
     reopenTaskIds: string[];
     taskFailureMessages: Record<string, string>;
+    publishValidationEvent?: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution;
   }): Promise<GraphWorkflowExecution> {
-    const nextExecution = cloneExecution(input.execution);
-    const failureTimestamp = getNow(deps);
-    const execLogger = getExecutionLogger(input.execution.id);
-
-    for (const taskId of input.reopenTaskIds) {
-      const taskState = nextExecution.taskStates[taskId];
-      if (!taskState) {
-        throw new Error(`Task "${taskId}" does not exist in runtime state`);
-      }
-
-      if (taskState.contextId !== input.contextId) {
-        throw new Error(
-          `Task "${taskId}" does not belong to context "${input.contextId}"`,
-        );
-      }
-
-      const failureMessage = input.taskFailureMessages[taskId];
-      if (!failureMessage) {
-        throw new Error(
-          `Missing failure message for reopened task "${taskId}"`,
-        );
-      }
-
-      taskState.status = "pending";
-      taskState.summary = null;
-      taskState.completedAt = null;
-      taskState.failureMessage = failureMessage;
-      taskState.failureHistory = [
-        ...(taskState.failureHistory ?? []),
-        {
-          message: failureMessage,
-          timestamp: failureTimestamp,
-        },
-      ];
-
-      execLogger?.task(input.contextId, "task.reopened", {
-        taskId,
-        failureMessage,
-      });
-      logger.info("graph-workflow.task.reopened", {
-        executionId: input.execution.id,
-        contextId: input.contextId,
-        taskId,
-      });
-    }
-
-    const contextState = nextExecution.contextStates[input.contextId];
-    if (contextState) {
-      contextState.completedTaskCount = countCompletedTasks(
-        nextExecution,
-        input.contextId,
-      );
-      contextState.consecutiveFailureCount =
-        (contextState.consecutiveFailureCount ?? 0) + 1;
-    }
-
-    nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
-
-    return persistExecution(
+    return deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
-      nextExecution,
+      (latest) => {
+        const nextExecution = cloneExecution(latest);
+        const failureTimestamp = getNow(deps);
+        const execLogger = getExecutionLogger(nextExecution.id);
+
+        for (const taskId of input.reopenTaskIds) {
+          const taskState = nextExecution.taskStates[taskId];
+          if (!taskState) {
+            throw new Error(`Task "${taskId}" does not exist in runtime state`);
+          }
+
+          if (taskState.contextId !== input.contextId) {
+            throw new Error(
+              `Task "${taskId}" does not belong to context "${input.contextId}"`,
+            );
+          }
+
+          const failureMessage = input.taskFailureMessages[taskId];
+          if (!failureMessage) {
+            throw new Error(
+              `Missing failure message for reopened task "${taskId}"`,
+            );
+          }
+
+          taskState.status = "pending";
+          taskState.summary = null;
+          taskState.completedAt = null;
+          taskState.failureMessage = failureMessage;
+          taskState.failureHistory = [
+            ...(taskState.failureHistory ?? []),
+            {
+              message: failureMessage,
+              timestamp: failureTimestamp,
+            },
+          ];
+
+          execLogger?.task(input.contextId, "task.reopened", {
+            taskId,
+            failureMessage,
+          });
+          logger.info("graph-workflow.task.reopened", {
+            executionId: nextExecution.id,
+            contextId: input.contextId,
+            taskId,
+          });
+        }
+
+        const contextState = nextExecution.contextStates[input.contextId];
+        if (contextState) {
+          contextState.completedTaskCount = countCompletedTasks(
+            nextExecution,
+            input.contextId,
+          );
+          contextState.consecutiveFailureCount =
+            (contextState.consecutiveFailureCount ?? 0) + 1;
+        }
+
+        nextExecution.machineSnapshot = buildMachineSnapshot(
+          nextExecution,
+          true,
+        );
+
+        return input.publishValidationEvent
+          ? input.publishValidationEvent(nextExecution)
+          : nextExecution;
+      },
     );
   }
 
@@ -687,74 +691,77 @@ export function createGraphWorkflowIterationOrchestrator(
   async function applyScriptValidatorFailure(input: {
     projectPath: string;
     sessionName: string;
-    execution: GraphWorkflowExecution;
     contextId: string;
     outcome: Extract<ScriptValidatorOutcome, { kind: "fail" }>;
   }): Promise<GraphWorkflowExecution> {
-    const nextExecution = cloneExecution(input.execution);
-    const failureTimestamp = getNow(deps);
-    const contextTasks = nextExecution.workingDefinition.tasks.filter(
-      (task) => task.contextId === input.contextId,
-    );
-    const maxOrder = contextTasks.reduce(
-      (currentMax, task) => Math.max(currentMax, task.order),
-      0,
-    );
-    const order = maxOrder + 1;
     const taskId = createTaskId();
-
-    const instructions = buildScriptValidatorRemediationTaskInstructions(
-      input.outcome.logRelativePath,
-      input.outcome.summary,
-    );
-    const title = `Fix pre-merge validation errors (${input.outcome.logRelativePath})`;
-
-    nextExecution.workingDefinition.tasks.push({
-      id: taskId,
-      contextId: input.contextId,
-      order,
-      title,
-      instructions,
-      source: "user",
-      metadata: {
-        origin: "script_validator",
-        logRelativePath: input.outcome.logRelativePath,
-      },
-    });
-    nextExecution.taskStates[taskId] = {
-      taskId,
-      contextId: input.contextId,
-      order,
-      status: "pending",
-      summary: null,
-      startedAt: null,
-      completedAt: null,
-      lastConversationId: null,
-      failureMessage: input.outcome.summary,
-      failureHistory: [
-        {
-          message: input.outcome.summary,
-          timestamp: failureTimestamp,
-        },
-      ],
-    };
-
-    const contextState = nextExecution.contextStates[input.contextId];
-    if (contextState) {
-      contextState.totalTaskCount =
-        nextExecution.workingDefinition.tasks.filter(
-          (task) => task.contextId === input.contextId,
-        ).length;
-      contextState.consecutiveFailureCount =
-        (contextState.consecutiveFailureCount ?? 0) + 1;
-    }
-
-    nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution, true);
-
-    return persistExecution(
+    const failureTimestamp = getNow(deps);
+    return deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
-      nextExecution,
+      (latest) => {
+        const nextExecution = cloneExecution(latest);
+        const contextTasks = nextExecution.workingDefinition.tasks.filter(
+          (task) => task.contextId === input.contextId,
+        );
+        const maxOrder = contextTasks.reduce(
+          (currentMax, task) => Math.max(currentMax, task.order),
+          0,
+        );
+        const order = maxOrder + 1;
+
+        const instructions = buildScriptValidatorRemediationTaskInstructions(
+          input.outcome.logRelativePath,
+          input.outcome.summary,
+        );
+        const title = `Fix pre-merge validation errors (${input.outcome.logRelativePath})`;
+
+        nextExecution.workingDefinition.tasks.push({
+          id: taskId,
+          contextId: input.contextId,
+          order,
+          title,
+          instructions,
+          source: "user",
+          metadata: {
+            origin: "script_validator",
+            logRelativePath: input.outcome.logRelativePath,
+          },
+        });
+        nextExecution.taskStates[taskId] = {
+          taskId,
+          contextId: input.contextId,
+          order,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: input.outcome.summary,
+          failureHistory: [
+            {
+              message: input.outcome.summary,
+              timestamp: failureTimestamp,
+            },
+          ],
+        };
+
+        const contextState = nextExecution.contextStates[input.contextId];
+        if (contextState) {
+          contextState.totalTaskCount =
+            nextExecution.workingDefinition.tasks.filter(
+              (task) => task.contextId === input.contextId,
+            ).length;
+          contextState.consecutiveFailureCount =
+            (contextState.consecutiveFailureCount ?? 0) + 1;
+        }
+
+        nextExecution.machineSnapshot = buildMachineSnapshot(
+          nextExecution,
+          true,
+        );
+        return nextExecution;
+      },
     );
   }
 
@@ -787,6 +794,7 @@ export function createGraphWorkflowIterationOrchestrator(
       sessionName: input.sessionName,
       execution,
       contextId: input.contextId,
+      executionTarget: input.executionTarget,
     });
 
     if (outcome.kind === "pass") {
@@ -851,7 +859,6 @@ export function createGraphWorkflowIterationOrchestrator(
     const failedExecution = await applyScriptValidatorFailure({
       projectPath: input.projectPath,
       sessionName: input.sessionName,
-      execution,
       contextId: input.contextId,
       outcome,
     });
@@ -929,12 +936,8 @@ export function createGraphWorkflowIterationOrchestrator(
       sessionName: input.sessionName,
       execution: executionForAgentValidation,
       contextId: input.contextId,
+      executionTarget: input.executionTarget,
     });
-
-    const postValidationExecution = await requireExecution(
-      input.projectPath,
-      input.sessionName,
-    );
 
     if (validation.kind === "infra_error") {
       execLogger?.validation(
@@ -953,24 +956,23 @@ export function createGraphWorkflowIterationOrchestrator(
         reason: validation.reason,
       });
       const infraErrorSummary = `Validator infra error (${validation.reason}): ${validation.message}`;
-      const executionWithValidationEvent =
-        eventPublisher.publishValidationResult({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          execution: postValidationExecution,
-          contextId: input.contextId,
-          validatorType: "context",
-          pass: false,
-          summary: infraErrorSummary,
-          issues: [],
-          reopenTaskIds: [],
-          sessionRef: null,
-          reviewArtifact: null,
-        });
-      await persistExecution(
+      await deps.executionRepository.mutateActive(
         input.projectPath,
         input.sessionName,
-        executionWithValidationEvent,
+        (latest) =>
+          eventPublisher.publishValidationResult({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            execution: latest,
+            contextId: input.contextId,
+            validatorType: "context",
+            pass: false,
+            summary: infraErrorSummary,
+            issues: [],
+            reopenTaskIds: [],
+            sessionRef: null,
+            reviewArtifact: null,
+          }),
       );
       const haltReason: GraphWorkflowHaltReason = {
         type: "validator_infra_error",
@@ -1001,34 +1003,28 @@ export function createGraphWorkflowIterationOrchestrator(
         reopenTaskIds: validation.reopenTaskIds,
       });
 
-      const failedExecution = await reopenTasksAfterContextValidationFailure({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        execution: postValidationExecution,
-        contextId: input.contextId,
-        reopenTaskIds: validation.reopenTaskIds,
-        taskFailureMessages,
-      });
-
       const executionWithValidationEvent =
-        eventPublisher.publishValidationResult({
+        await reopenTasksAfterContextValidationFailure({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
-          execution: failedExecution,
           contextId: input.contextId,
-          validatorType: "context",
-          pass: false,
-          summary: validation.summary,
-          issues: validation.issues,
           reopenTaskIds: validation.reopenTaskIds,
-          sessionRef: validation.sessionRef ?? null,
-          reviewArtifact: validation.reviewArtifact ?? null,
+          taskFailureMessages,
+          publishValidationEvent: (reopened) =>
+            eventPublisher.publishValidationResult({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              execution: reopened,
+              contextId: input.contextId,
+              validatorType: "context",
+              pass: false,
+              summary: validation.summary,
+              issues: validation.issues,
+              reopenTaskIds: validation.reopenTaskIds,
+              sessionRef: validation.sessionRef ?? null,
+              reviewArtifact: validation.reviewArtifact ?? null,
+            }),
         });
-      await persistExecution(
-        input.projectPath,
-        input.sessionName,
-        executionWithValidationEvent,
-      );
 
       const contextDef =
         executionWithValidationEvent.workingDefinition.executionContexts.find(
@@ -1066,31 +1062,33 @@ export function createGraphWorkflowIterationOrchestrator(
       kind: validation.kind,
     });
 
-    const executionWithResetFailureCount = await resetContextFailureCount({
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      execution: postValidationExecution,
-      contextId: input.contextId,
-    });
-    const executionWithValidationEvent = eventPublisher.publishValidationResult(
-      {
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        execution: executionWithResetFailureCount,
-        contextId: input.contextId,
-        validatorType: "context",
-        pass: true,
-        summary: validation.summary,
-        issues: [],
-        reopenTaskIds: [],
-        sessionRef: validation.sessionRef ?? null,
-        reviewArtifact: validation.reviewArtifact ?? null,
-      },
-    );
-    await persistExecution(
+    await deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
-      executionWithValidationEvent,
+      (latest) => {
+        const reset = cloneExecution(latest);
+        const contextState = reset.contextStates[input.contextId];
+        if (!contextState) {
+          throw new Error(
+            `Execution context "${input.contextId}" does not exist in runtime state`,
+          );
+        }
+        contextState.consecutiveFailureCount = 0;
+        reset.machineSnapshot = buildMachineSnapshot(reset, true);
+        return eventPublisher.publishValidationResult({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          execution: reset,
+          contextId: input.contextId,
+          validatorType: "context",
+          pass: true,
+          summary: validation.summary,
+          issues: [],
+          reopenTaskIds: [],
+          sessionRef: validation.sessionRef ?? null,
+          reviewArtifact: validation.reviewArtifact ?? null,
+        });
+      },
     );
   }
 
@@ -1119,57 +1117,69 @@ export function createGraphWorkflowIterationOrchestrator(
         shouldContinueInContext: false,
       };
     }
-    const finalizedExecution = cloneExecution(currentExecution);
-    const finalizedContextState =
-      finalizedExecution.contextStates[input.contextId];
-    if (!finalizedContextState) {
-      throw new Error(
-        `Execution context "${input.contextId}" does not exist in runtime state`,
-      );
-    }
 
-    finalizedContextState.completedTaskCount = countCompletedTasks(
-      finalizedExecution,
-      input.contextId,
-    );
+    let completedTaskCount = 0;
+    let remainingTaskCount = 0;
+    let shouldContinueInContext = false;
+    let iterationNumber = 0;
 
-    const remainingTaskCount = countRemainingTasks(
-      finalizedExecution,
-      input.contextId,
+    const persistedExecution = await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        const finalizedExecution = cloneExecution(latest);
+        const finalizedContextState =
+          finalizedExecution.contextStates[input.contextId];
+        if (!finalizedContextState) {
+          throw new Error(
+            `Execution context "${input.contextId}" does not exist in runtime state`,
+          );
+        }
+
+        finalizedContextState.completedTaskCount = countCompletedTasks(
+          finalizedExecution,
+          input.contextId,
+        );
+
+        remainingTaskCount = countRemainingTasks(
+          finalizedExecution,
+          input.contextId,
+        );
+        completedTaskCount = finalizedContextState.completedTaskCount;
+        shouldContinueInContext = remainingTaskCount > 0;
+        iterationNumber = finalizedContextState.iterationCount;
+
+        finalizedContextState.status = shouldContinueInContext
+          ? "running"
+          : "completed";
+        finalizedExecution.activeContextIds = shouldContinueInContext
+          ? finalizedExecution.activeContextIds.includes(input.contextId)
+            ? finalizedExecution.activeContextIds
+            : [...finalizedExecution.activeContextIds, input.contextId]
+          : finalizedExecution.activeContextIds.filter(
+              (contextId) => contextId !== input.contextId,
+            );
+        finalizedExecution.machineSnapshot = buildMachineSnapshot(
+          finalizedExecution,
+          false,
+        );
+        return finalizedExecution;
+      },
     );
-    const completedTaskCount = finalizedContextState.completedTaskCount;
-    const shouldContinueInContext = remainingTaskCount > 0;
 
     execLogger?.iteration(input.contextId, "iteration.completed", {
       conversationId,
-      iterationNumber: finalizedContextState.iterationCount,
+      iterationNumber,
       completedTaskCount,
       remainingTaskCount,
       shouldContinueInContext,
     });
     logger.info("graph-workflow.iteration.completed", {
-      executionId: finalizedExecution.id,
+      executionId: persistedExecution.id,
       contextId: input.contextId,
       completedTaskCount,
       remainingTaskCount,
     });
-
-    finalizedContextState.status = shouldContinueInContext
-      ? "running"
-      : "completed";
-    finalizedExecution.activeContextId = shouldContinueInContext
-      ? input.contextId
-      : null;
-    finalizedExecution.machineSnapshot = buildMachineSnapshot(
-      finalizedExecution,
-      false,
-    );
-
-    const persistedExecution = await persistExecution(
-      input.projectPath,
-      input.sessionName,
-      finalizedExecution,
-    );
 
     return {
       conversationId,
@@ -1225,6 +1235,7 @@ export function createGraphWorkflowIterationOrchestrator(
         await signalHalt({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
+          contextId: input.contextId,
           reason,
         });
       } catch (haltError) {
@@ -1312,7 +1323,9 @@ export function createGraphWorkflowIterationOrchestrator(
 
     // Resolve the implementer conversation — continuity service decides reuse vs fresh
     let conversationId: string;
-    let executionWithLaneState: GraphWorkflowExecution;
+    let resolvedImplementerLaneState:
+      | GraphWorkflowExecution["laneStates"][string][string]
+      | null = null;
     let promptMode: "iteration_seed" | "follow_up" = "iteration_seed";
     if (deps.continuityService) {
       const resolved = await deps.continuityService.resolveImplementerCall({
@@ -1323,7 +1336,8 @@ export function createGraphWorkflowIterationOrchestrator(
         engine: context.implementer.backend,
       });
       conversationId = resolved.conversationId;
-      executionWithLaneState = resolved.execution;
+      resolvedImplementerLaneState =
+        resolved.execution.laneStates[input.contextId]?.["implementer"] ?? null;
       promptMode = resolved.promptMode;
     } else {
       const conversation = await deps.createConversation(
@@ -1332,7 +1346,6 @@ export function createGraphWorkflowIterationOrchestrator(
         { role: "iteration" },
       );
       conversationId = conversation.id;
-      executionWithLaneState = initialExecution;
     }
 
     execLogger?.iteration(input.contextId, "iteration.conversation_resolved", {
@@ -1342,35 +1355,47 @@ export function createGraphWorkflowIterationOrchestrator(
     });
 
     const conversation = { id: conversationId };
-    const seededExecution = cloneExecution(executionWithLaneState);
+    const seededExecution = await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        const next = cloneExecution(latest);
+        const seededContextState = next.contextStates[input.contextId];
+        if (!seededContextState) {
+          throw new Error(
+            `Execution context "${input.contextId}" does not exist in runtime state`,
+          );
+        }
+
+        if (resolvedImplementerLaneState) {
+          next.laneStates[input.contextId] = {
+            ...next.laneStates[input.contextId],
+            implementer: resolvedImplementerLaneState,
+          };
+        }
+        if (!next.activeContextIds.includes(input.contextId)) {
+          next.activeContextIds = [...next.activeContextIds, input.contextId];
+        }
+        next.completedAt = null;
+        next.haltReason = null;
+        seededContextState.status = "running";
+        seededContextState.iterationCount += 1;
+        bindConversationToIncompleteTasks(
+          next,
+          input.contextId,
+          conversation.id,
+          getNow(deps),
+        );
+        next.machineSnapshot = buildMachineSnapshot(next, true);
+        return next;
+      },
+    );
     const seededContextState = seededExecution.contextStates[input.contextId];
     if (!seededContextState) {
       throw new Error(
         `Execution context "${input.contextId}" does not exist in runtime state`,
       );
     }
-
-    seededExecution.activeContextId = input.contextId;
-    seededExecution.completedAt = null;
-    seededExecution.haltReason = null;
-    seededContextState.status = "running";
-    seededContextState.iterationCount += 1;
-    bindConversationToIncompleteTasks(
-      seededExecution,
-      input.contextId,
-      conversation.id,
-      getNow(deps),
-    );
-    seededExecution.machineSnapshot = buildMachineSnapshot(
-      seededExecution,
-      true,
-    );
-
-    await persistExecution(
-      input.projectPath,
-      input.sessionName,
-      seededExecution,
-    );
 
     // Pre-declare toolServer so haltIteration can close it before toolServer is assigned below.
     // eslint-disable-next-line prefer-const
@@ -1383,6 +1408,7 @@ export function createGraphWorkflowIterationOrchestrator(
         await signalHalt({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
+          contextId: input.contextId,
           reason,
         });
       } catch (haltError) {
@@ -1459,7 +1485,6 @@ export function createGraphWorkflowIterationOrchestrator(
         const completedExecution = await markTaskCompleted({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
-          execution: preValidationExecution,
           contextId: input.contextId,
           taskId,
           summary,
@@ -1480,6 +1505,7 @@ export function createGraphWorkflowIterationOrchestrator(
     });
 
     const MAX_FOLLOW_UPS = 2;
+    let completedTurnCount = 0;
 
     try {
       emitStreamFrame(input.projectPath, input.sessionName, {
@@ -1502,38 +1528,45 @@ export function createGraphWorkflowIterationOrchestrator(
         toolServer: toolServer.server,
         emitStreamFrame: (frame: GraphWorkflowStreamFrame) =>
           emitStreamFrame(input.projectPath, input.sessionName, frame),
+        executionTarget: input.executionTarget,
       } as const;
 
       async function recordTurnOutcome(
         agentResult: GraphWorkflowAgentIterationResult,
       ): Promise<void> {
-        if (!deps.continuityService) return;
-        const current = await requireExecution(
-          input.projectPath,
-          input.sessionName,
-        );
+        const continuityService = deps.continuityService;
+        if (!continuityService) return;
         const contextLimitTokens =
           context.iterationPolicy.continuity.contextLimitTokens;
-        const updated =
-          context.implementer.backend === "codex"
-            ? await deps.continuityService.recordCodexTurnOutcome({
-                execution: current,
-                lane: "implementer",
-                usage: null,
-                contextLimitTokens,
-                newThreadId:
-                  agentResult.sessionRef?.backend === "codex"
-                    ? agentResult.sessionRef.threadId
-                    : null,
-              })
-            : await deps.continuityService.recordClaudeTurnOutcome({
-                execution: current,
-                lane: "implementer",
-                contextTokens: agentResult.contextTokens,
-                contextWindowMax: agentResult.contextWindowMax,
-                contextLimitTokens,
-              });
-        await persistExecution(input.projectPath, input.sessionName, updated);
+        await deps.executionRepository.mutateActive(
+          input.projectPath,
+          input.sessionName,
+          async (latest) => {
+            if (latest.status !== "running") {
+              return latest;
+            }
+            return context.implementer.backend === "codex"
+              ? await continuityService.recordCodexTurnOutcome({
+                  execution: latest,
+                  contextId: input.contextId,
+                  lane: "implementer",
+                  usage: null,
+                  contextLimitTokens,
+                  newThreadId:
+                    agentResult.sessionRef?.backend === "codex"
+                      ? agentResult.sessionRef.threadId
+                      : null,
+                })
+              : await continuityService.recordClaudeTurnOutcome({
+                  execution: latest,
+                  contextId: input.contextId,
+                  lane: "implementer",
+                  contextTokens: agentResult.contextTokens,
+                  contextWindowMax: agentResult.contextWindowMax,
+                  contextLimitTokens,
+                });
+          },
+        );
       }
 
       // Initial agent call — seed prompt for fresh sessions, follow-up for resumed sessions
@@ -1582,6 +1615,7 @@ export function createGraphWorkflowIterationOrchestrator(
         prompt: initialPrompt,
       });
       await recordTurnOutcome(agentResult);
+      completedTurnCount += 1;
 
       execLogger?.iteration(input.contextId, "iteration.agent_turn_completed", {
         turnNumber: 0,
@@ -1624,7 +1658,8 @@ export function createGraphWorkflowIterationOrchestrator(
 
         // Stop if the continuity service has scheduled a rotation due to context limit
         if (deps.continuityService) {
-          const laneState = midExecution.laneStates["implementer"];
+          const laneState =
+            midExecution.laneStates[input.contextId]?.["implementer"];
           if (laneState?.rotateBeforeNextTurn) {
             execLogger?.iteration(
               input.contextId,
@@ -1671,6 +1706,7 @@ export function createGraphWorkflowIterationOrchestrator(
           prompt: followUpPrompt,
         });
         await recordTurnOutcome(agentResult);
+        completedTurnCount += 1;
 
         execLogger?.iteration(
           input.contextId,
@@ -1697,6 +1733,12 @@ export function createGraphWorkflowIterationOrchestrator(
       });
     } catch (error) {
       if (!(error instanceof IterationHaltedError)) {
+        if (completedTurnCount > 0) {
+          throw new IterationFailureWithProgressError(
+            error,
+            completedTurnCount,
+          );
+        }
         throw error;
       }
       execLogger?.iteration(

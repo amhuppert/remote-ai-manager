@@ -48,7 +48,7 @@ function makeExecution(
     workingDefinition:
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,
     status: "running",
-    activeContextId: null,
+    activeContextIds: [],
     activeTaskId: null,
     contextStates: {},
     taskStates: {},
@@ -239,6 +239,13 @@ describe("deriveNodes", () => {
       completedTaskCount: 0,
       iterationCount: 1,
       consecutiveFailureCount: 0,
+      worktreePath: null,
+      branchName: null,
+      isolation: "session",
+      batchId: null,
+      mergeStatus: "not-applicable",
+      cleanupStatus: "not-applicable",
+      lastMergeError: null,
     };
 
     const taskState: GraphWorkflowTaskState = {
@@ -278,6 +285,13 @@ describe("getContextDisplayPhase", () => {
       completedTaskCount: 0,
       iterationCount: 1,
       consecutiveFailureCount: 0,
+      worktreePath: null,
+      branchName: null,
+      isolation: "session",
+      batchId: null,
+      mergeStatus: "not-applicable",
+      cleanupStatus: "not-applicable",
+      lastMergeError: null,
       ...overrides,
     };
   }
@@ -381,6 +395,13 @@ describe("deriveEdges", () => {
           completedTaskCount: 1,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
         "ctx-2": {
           contextId: "ctx-2",
@@ -389,6 +410,13 @@ describe("deriveEdges", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });

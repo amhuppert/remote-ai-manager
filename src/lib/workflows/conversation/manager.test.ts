@@ -21,6 +21,10 @@ import {
   _resetForTesting,
   applySyncDerivedFields,
   shouldRehydrateSnapshot,
+  ensureConversationActor,
+  setEnsureConversationActorDeps,
+  _resetEnsureConversationActorDepsForTesting,
+  type EnsureActorInputData,
 } from "./manager";
 import type { Snapshot } from "xstate";
 import { _resetForTesting as resetRuntime } from "./runtime-state";
@@ -427,6 +431,202 @@ describe("conversation manager", () => {
       expect(conv.totalTurns).toBe(5);
       expect(conv.status).toBe("awaiting");
       expect(conv.promptCount).toBe(3);
+    });
+  });
+
+  describe("ensureConversationActor with executionTarget override", () => {
+    function makeActorInputData(
+      overrides: Partial<EnsureActorInputData> = {},
+    ): EnsureActorInputData {
+      return {
+        projectName: "test-project",
+        sessionWorktreePath: "/test/project/.worktrees/test-session",
+        conversation: {
+          createdAt: "2026-01-01T00:00:00.000Z",
+          forkedFrom: null,
+          role: null,
+          transcriptPath: null,
+          agentBackend: "claude",
+          backendRef: null,
+          promptCount: 0,
+          debugMode: null,
+        },
+        ...overrides,
+      };
+    }
+
+    afterEach(() => {
+      _resetEnsureConversationActorDepsForTesting();
+    });
+
+    it("creates a fresh actor using executionTarget.worktreePath instead of session.worktreePath", async () => {
+      const loadActorInput = vi.fn(
+        async () =>
+          makeActorInputData({
+            sessionWorktreePath: "/session-worktree",
+          }) satisfies EnsureActorInputData,
+      );
+      setEnsureConversationActorDeps({ loadActorInput });
+
+      const actor = await ensureConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        {
+          executionTarget: {
+            worktreePath: "/per-context-worktree",
+            branchName: "csm/sess-context",
+            isolation: "worktree",
+          },
+        },
+      );
+
+      expect(loadActorInput).toHaveBeenCalledWith(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+      );
+      expect(actor.getSnapshot().context.worktreePath).toBe(
+        "/per-context-worktree",
+      );
+    });
+
+    it("returns the existing idle actor when executionTarget matches the actor's worktreePath", async () => {
+      startConversationActor({
+        ...DEFAULT_INPUT,
+        worktreePath: "/per-context-worktree",
+      });
+
+      const loadActorInput = vi.fn(async () => makeActorInputData());
+      setEnsureConversationActorDeps({ loadActorInput });
+
+      const actor = await ensureConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        {
+          executionTarget: {
+            worktreePath: "/per-context-worktree",
+            branchName: "csm/sess-context",
+            isolation: "worktree",
+          },
+        },
+      );
+
+      expect(loadActorInput).not.toHaveBeenCalled();
+      expect(actor.getSnapshot().context.worktreePath).toBe(
+        "/per-context-worktree",
+      );
+    });
+
+    it("stops and recreates the actor when idle and the worktreePath mismatches", async () => {
+      startConversationActor({
+        ...DEFAULT_INPUT,
+        worktreePath: "/old-worktree",
+      });
+      const original = getConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+      )!;
+      expect(original.getSnapshot().value).toBe("idle");
+
+      const loadActorInput = vi.fn(
+        async () =>
+          makeActorInputData({
+            sessionWorktreePath: "/old-worktree",
+          }) satisfies EnsureActorInputData,
+      );
+      setEnsureConversationActorDeps({ loadActorInput });
+
+      const recreated = await ensureConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        {
+          executionTarget: {
+            worktreePath: "/new-worktree",
+            branchName: "csm/sess-context",
+            isolation: "worktree",
+          },
+        },
+      );
+
+      expect(recreated).not.toBe(original);
+      expect(recreated.getSnapshot().context.worktreePath).toBe(
+        "/new-worktree",
+      );
+      expect(loadActorInput).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws an infrastructure error when the actor is running and worktreePath mismatches", async () => {
+      startConversationActor({
+        ...DEFAULT_INPUT,
+        worktreePath: "/old-worktree",
+      });
+      sendConversationEvent(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        { type: "ENTER_DEBUG_MODE", logFilePath: "/tmp/dbg.jsonl" },
+      );
+      const running = getConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+      )!;
+      expect(running.getSnapshot().value).not.toBe("idle");
+
+      const loadActorInput = vi.fn(async () => makeActorInputData());
+      setEnsureConversationActorDeps({ loadActorInput });
+
+      await expect(
+        ensureConversationActor(
+          DEFAULT_INPUT.projectPath,
+          DEFAULT_INPUT.sessionName,
+          DEFAULT_INPUT.conversationId,
+          {
+            executionTarget: {
+              worktreePath: "/new-worktree",
+              branchName: "csm/sess-context",
+              isolation: "worktree",
+            },
+          },
+        ),
+      ).rejects.toThrow(/cannot rebind/);
+
+      const stillRunning = getConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+      );
+      expect(stillRunning).toBe(running);
+      expect(loadActorInput).not.toHaveBeenCalled();
+    });
+
+    it("returns the existing actor unchanged when no executionTarget is provided (no-override fallback)", async () => {
+      startConversationActor({
+        ...DEFAULT_INPUT,
+        worktreePath: "/some-worktree",
+      });
+      const original = getConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+      )!;
+
+      const loadActorInput = vi.fn(async () => makeActorInputData());
+      setEnsureConversationActorDeps({ loadActorInput });
+
+      const actor = await ensureConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+      );
+
+      expect(actor).toBe(original);
+      expect(loadActorInput).not.toHaveBeenCalled();
+      expect(actor.getSnapshot().context.worktreePath).toBe("/some-worktree");
     });
   });
 

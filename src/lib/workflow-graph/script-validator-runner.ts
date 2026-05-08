@@ -13,6 +13,7 @@ import {
   ArtifactRequiredFailure,
   type ArtifactRegistry,
 } from "@/lib/workflows/primitives/artifact-registry";
+import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 
 const logger = createLogger("script-validator-runner");
 
@@ -24,6 +25,14 @@ export interface ScriptValidatorInput {
   executionId: string;
   contextId: string;
   timeoutMs?: number;
+  /**
+   * When supplied, the script validator runs against this resolved target's
+   * worktree and branch instead of `input.worktreePath` / `input.branchName`.
+   * Solo-eligible contexts leave this undefined, preserving the
+   * pre-parallelization behavior of running directly inside the session
+   * worktree.
+   */
+  executionTarget?: ExecutionTarget;
 }
 
 export type ScriptValidatorOutcome =
@@ -81,14 +90,18 @@ function formatTimestampForFilename(now: Date): string {
   return iso.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 }
 
-function buildLogFileHeader(input: ScriptValidatorInput, now: Date): string {
+function buildLogFileHeader(
+  input: ScriptValidatorInput,
+  now: Date,
+  branchName: string,
+): string {
   return [
     "# Pre-merge validation failure",
     `timestamp: ${now.toISOString()}`,
     `execution: ${input.executionId}`,
     `context: ${input.contextId}`,
     `session: ${input.sessionName}`,
-    `branch: ${input.branchName}`,
+    `branch: ${branchName}`,
     "",
   ].join("\n");
 }
@@ -99,13 +112,18 @@ export function createScriptValidatorRunner(
   async function runScriptValidator(
     input: ScriptValidatorInput,
   ): Promise<ScriptValidatorOutcome> {
+    const targetWorktreePath =
+      input.executionTarget?.worktreePath ?? input.worktreePath;
+    const targetBranchName =
+      input.executionTarget?.branchName ?? input.branchName;
+
     let result: RepoValidationCommandResult;
     try {
       result = await deps.executeRepoValidationCommand({
         projectPath: input.projectPath,
-        worktreePath: input.worktreePath,
+        worktreePath: targetWorktreePath,
         sessionName: input.sessionName,
-        branchName: input.branchName,
+        branchName: targetBranchName,
         timeoutMs: input.timeoutMs,
       });
     } catch (err) {
@@ -143,9 +161,9 @@ export function createScriptValidatorRunner(
     const relativeDir = path.join(...LOG_DIR_SEGMENTS, input.executionId);
     const fileName = `pre-merge-${formatTimestampForFilename(now)}.log`;
     const logRelativePath = path.join(relativeDir, fileName);
-    const logFilePath = path.join(input.worktreePath, logRelativePath);
+    const logFilePath = path.join(targetWorktreePath, logRelativePath);
 
-    const header = buildLogFileHeader(input, now);
+    const header = buildLogFileHeader(input, now, targetBranchName);
     const body =
       result.output.length > 0 ? result.output : "(no output captured)";
     const content = `${header}\n${body}\n`;
@@ -170,7 +188,7 @@ export function createScriptValidatorRunner(
     try {
       await registry.write({
         kind: "validation_log",
-        worktreePath: input.worktreePath,
+        worktreePath: targetWorktreePath,
         relativePath: logRelativePath,
         contents: content,
         audience: "internal_log",

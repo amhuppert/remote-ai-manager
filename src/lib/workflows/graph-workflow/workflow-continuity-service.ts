@@ -103,6 +103,7 @@ export interface ResolveValidatorCallInput {
 
 export interface RecordClaudeLaneTurnInput {
   execution: GraphWorkflowExecution;
+  contextId: string;
   lane: GraphWorkflowLaneKind;
   contextTokens: number | null;
   contextWindowMax: number | null;
@@ -111,6 +112,7 @@ export interface RecordClaudeLaneTurnInput {
 
 export interface RecordCodexLaneTurnInput {
   execution: GraphWorkflowExecution;
+  contextId: string;
   lane: GraphWorkflowLaneKind;
   usage: GraphWorkflowLaneTurnUsage | null;
   contextLimitTokens: number | undefined;
@@ -166,23 +168,29 @@ function getValidatorContinuityEnabled(
 
 function withLaneState(
   execution: GraphWorkflowExecution,
+  contextId: string,
   lane: GraphWorkflowLaneKind,
   state: GraphWorkflowLaneState,
 ): GraphWorkflowExecution {
+  const previousContextLanes = execution.laneStates[contextId] ?? {};
   return {
     ...execution,
     laneStates: {
       ...execution.laneStates,
-      [lane]: state,
+      [contextId]: {
+        ...previousContextLanes,
+        [lane]: state,
+      },
     },
   };
 }
 
 function getCurrentLane(
   execution: GraphWorkflowExecution,
+  contextId: string,
   lane: GraphWorkflowLaneKind,
 ): GraphWorkflowLaneState | undefined {
-  return execution.laneStates[lane];
+  return execution.laneStates[contextId]?.[lane];
 }
 
 /**
@@ -326,7 +334,7 @@ export function createWorkflowContinuityService(
     const { execution, projectPath, sessionName, contextId } = input;
     const engine = input.engine ?? "claude";
     const lane: GraphWorkflowLaneKind = "implementer";
-    const laneState = getCurrentLane(execution, lane);
+    const laneState = getCurrentLane(execution, contextId, lane);
     const continuityEnabled = getImplementerContinuityEnabled(
       execution,
       contextId,
@@ -393,7 +401,7 @@ export function createWorkflowContinuityService(
         );
 
       return {
-        execution: withLaneState(execution, lane, newLaneState),
+        execution: withLaneState(execution, contextId, lane, newLaneState),
         conversationId,
         sessionAction: "create",
         promptMode: "iteration_seed",
@@ -450,7 +458,7 @@ export function createWorkflowContinuityService(
         );
 
       return {
-        execution: withLaneState(execution, lane, newLaneState),
+        execution: withLaneState(execution, contextId, lane, newLaneState),
         conversationId: freshId,
         sessionAction: "create",
         promptMode: "iteration_seed",
@@ -470,7 +478,7 @@ export function createWorkflowContinuityService(
     });
 
     return {
-      execution: withLaneState(execution, lane, updatedLaneState),
+      execution: withLaneState(execution, contextId, lane, updatedLaneState),
       conversationId,
       sessionAction: "reuse",
       promptMode: "follow_up",
@@ -514,7 +522,7 @@ export function createWorkflowContinuityService(
     });
 
     return {
-      execution: withLaneState(execution, lane, newLaneState),
+      execution: withLaneState(execution, contextId, lane, newLaneState),
       conversationId: conversation.id,
       sessionAction: "create",
       promptMode: "iteration_seed",
@@ -570,7 +578,7 @@ export function createWorkflowContinuityService(
     });
 
     return {
-      execution: withLaneState(execution, lane, updatedLane),
+      execution: withLaneState(execution, contextId, lane, updatedLane),
       conversationId: ccConversationId,
       sessionAction: "reuse",
       promptMode: "follow_up",
@@ -582,7 +590,7 @@ export function createWorkflowContinuityService(
   ): Promise<ResolvedValidatorCall> {
     const { execution, projectPath, sessionName, contextId, lane, engine } =
       input;
-    const laneState = getCurrentLane(execution, lane);
+    const laneState = getCurrentLane(execution, contextId, lane);
     const continuityEnabled = getValidatorContinuityEnabled(
       execution,
       contextId,
@@ -618,7 +626,7 @@ export function createWorkflowContinuityService(
           );
 
         return {
-          execution: withLaneState(execution, lane, newLaneState),
+          execution: withLaneState(execution, contextId, lane, newLaneState),
           sessionAction: "create",
           engine: "claude",
           conversationId,
@@ -658,7 +666,7 @@ export function createWorkflowContinuityService(
           );
 
         return {
-          execution: withLaneState(execution, lane, newLaneState),
+          execution: withLaneState(execution, contextId, lane, newLaneState),
           sessionAction: "create",
           engine: "claude",
           conversationId: freshId,
@@ -678,7 +686,7 @@ export function createWorkflowContinuityService(
       });
 
       return {
-        execution: withLaneState(execution, lane, updatedLane),
+        execution: withLaneState(execution, contextId, lane, updatedLane),
         sessionAction: "reuse",
         engine: "claude",
         conversationId,
@@ -718,7 +726,7 @@ export function createWorkflowContinuityService(
       });
 
       return {
-        execution: withLaneState(execution, lane, newLaneState),
+        execution: withLaneState(execution, contextId, lane, newLaneState),
         sessionAction: "create",
         engine: "codex",
         threadId,
@@ -747,7 +755,7 @@ export function createWorkflowContinuityService(
       });
 
       return {
-        execution: withLaneState(execution, lane, updatedLane),
+        execution: withLaneState(execution, contextId, lane, updatedLane),
         sessionAction: "reuse",
         engine: "codex",
         threadId: resumedThreadId,
@@ -785,7 +793,7 @@ export function createWorkflowContinuityService(
       });
 
       return {
-        execution: withLaneState(execution, lane, freshLaneState),
+        execution: withLaneState(execution, contextId, lane, freshLaneState),
         sessionAction: "create",
         engine: "codex",
         threadId: freshThreadId,
@@ -798,12 +806,13 @@ export function createWorkflowContinuityService(
   ): Promise<GraphWorkflowExecution> {
     const {
       execution,
+      contextId,
       lane,
       contextTokens,
       contextWindowMax,
       contextLimitTokens,
     } = input;
-    const laneState = getCurrentLane(execution, lane);
+    const laneState = getCurrentLane(execution, contextId, lane);
     if (!laneState || laneState.engine !== "claude") return execution;
 
     if (
@@ -817,7 +826,6 @@ export function createWorkflowContinuityService(
         limit: contextLimitTokens,
       });
 
-      const contextId = laneState.contextId;
       const execLogger = getExecutionLogger(execution.id);
       execLogger?.decision("rotation.scheduled", {
         lane,
@@ -840,15 +848,22 @@ export function createWorkflowContinuityService(
     };
 
     const updatedLane = await recordLaneOutcome(execution, laneState, outcome);
-    return withLaneState(execution, lane, updatedLane);
+    return withLaneState(execution, contextId, lane, updatedLane);
   }
 
   async function recordCodexTurnOutcome(
     input: RecordCodexLaneTurnInput,
   ): Promise<GraphWorkflowExecution> {
-    const { execution, lane, usage, contextLimitTokens, newThreadId, failed } =
-      input;
-    const laneState = getCurrentLane(execution, lane);
+    const {
+      execution,
+      contextId,
+      lane,
+      usage,
+      contextLimitTokens,
+      newThreadId,
+      failed,
+    } = input;
+    const laneState = getCurrentLane(execution, contextId, lane);
     if (!laneState || laneState.engine !== "codex") return execution;
 
     const outcome: LaneOutcome = {
@@ -860,19 +875,22 @@ export function createWorkflowContinuityService(
     };
 
     const updatedLane = await recordLaneOutcome(execution, laneState, outcome);
-    return withLaneState(execution, lane, updatedLane);
+    return withLaneState(execution, contextId, lane, updatedLane);
   }
 
   function clearForNewContext(
     execution: GraphWorkflowExecution,
     nextContextId: string,
   ): GraphWorkflowExecution {
+    const previousLanesForContext = execution.laneStates[nextContextId] ?? {};
     logger.info("workflow-continuity.context.reset", {
       nextContextId,
-      clearedLanes: Object.keys(execution.laneStates),
+      clearedLanes: Object.keys(previousLanesForContext),
     });
 
-    return { ...execution, laneStates: {} };
+    const { [nextContextId]: _cleared, ...remainingLaneStates } =
+      execution.laneStates;
+    return { ...execution, laneStates: remainingLaneStates };
   }
 
   return {

@@ -40,6 +40,13 @@ export function buildInitialContextState(
     completedTaskCount: 0,
     iterationCount: 0,
     consecutiveFailureCount: 0,
+    worktreePath: null,
+    branchName: null,
+    isolation: "session",
+    batchId: null,
+    mergeStatus: "not-applicable",
+    cleanupStatus: "not-applicable",
+    lastMergeError: null,
   };
 }
 

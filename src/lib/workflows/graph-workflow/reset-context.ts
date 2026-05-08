@@ -6,6 +6,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionEvent,
+  GraphWorkflowLaneKind,
   GraphWorkflowLaneState,
   GraphWorkflowTaskState,
 } from "@/types";
@@ -28,7 +29,7 @@ function eventTargetsContext(
     return true;
   }
   if (event.type === "graph-workflow-status") {
-    if (event.activeContextId === contextId) return true;
+    if (event.activeContextIds.includes(contextId)) return true;
     const haltReason = event.haltReason;
     if (
       haltReason &&
@@ -91,10 +92,13 @@ export function resetExecutionContext(
     nextTaskStates[taskId] = buildInitialTaskState(taskDefinition);
   }
 
-  const nextLaneStates: Record<string, GraphWorkflowLaneState> = {};
-  for (const [lane, laneState] of Object.entries(execution.laneStates)) {
-    if (laneState.contextId === contextId) continue;
-    nextLaneStates[lane] = laneState;
+  const nextLaneStates: Record<
+    string,
+    Partial<Record<GraphWorkflowLaneKind, GraphWorkflowLaneState>>
+  > = {};
+  for (const [ctxKey, contextLanes] of Object.entries(execution.laneStates)) {
+    if (ctxKey === contextId) continue;
+    nextLaneStates[ctxKey] = contextLanes;
   }
 
   const nextHistory = execution.history.map(
@@ -108,7 +112,7 @@ export function resetExecutionContext(
   return {
     ...execution,
     status: "paused",
-    activeContextId: null,
+    activeContextIds: [],
     contextStates: nextContextStates,
     taskStates: nextTaskStates,
     laneStates: nextLaneStates,

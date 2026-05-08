@@ -14,10 +14,11 @@ interface ExecutionStatusBarProps {
 function getActiveContextTitle(
   execution: GraphWorkflowExecution,
 ): string | null {
-  if (!execution.activeContextId) return null;
+  const activeContextId = execution.activeContextIds[0];
+  if (!activeContextId) return null;
   return (
     execution.workingDefinition.executionContexts.find(
-      (ctx) => ctx.id === execution.activeContextId,
+      (ctx) => ctx.id === activeContextId,
     )?.title ?? null
   );
 }
@@ -25,9 +26,10 @@ function getActiveContextTitle(
 function getFirstIncompleteTaskTitle(
   execution: GraphWorkflowExecution,
 ): string | null {
-  if (!execution.activeContextId) return null;
+  const activeContextId = execution.activeContextIds[0];
+  if (!activeContextId) return null;
   const contextTasks = execution.workingDefinition.tasks
-    .filter((t) => t.contextId === execution.activeContextId)
+    .filter((t) => t.contextId === activeContextId)
     .sort((a, b) => a.order - b.order);
   const firstIncomplete = contextTasks.find(
     (t) => execution.taskStates[t.id]?.status !== "completed",

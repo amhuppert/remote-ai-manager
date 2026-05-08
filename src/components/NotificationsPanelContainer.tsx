@@ -66,7 +66,7 @@ export default function NotificationsPanelContainer() {
           projectName: gw.projectName,
           sessionName: gw.sessionName,
           status: gw.status,
-          activeContextTitle: gw.activeContextTitle,
+          activeContextTitles: gw.activeContextTitles,
           completedContexts: gw.completedContexts,
           totalContexts: gw.totalContexts,
         } satisfies GraphWorkflowNotification);

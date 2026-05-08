@@ -125,20 +125,19 @@ function appendGraphWorkflowLines(
   );
 
   // Active context info
-  if (execution.activeContextId) {
+  const activeContextId = execution.activeContextIds[0];
+  if (activeContextId) {
     lines.push(
-      `${indent}  <active-context-id>${execution.activeContextId}</active-context-id>`,
+      `${indent}  <active-context-id>${activeContextId}</active-context-id>`,
     );
-    const ctxDef = def.executionContexts.find(
-      (c) => c.id === execution.activeContextId,
-    );
+    const ctxDef = def.executionContexts.find((c) => c.id === activeContextId);
     if (ctxDef) {
       lines.push(
         `${indent}  <active-context-title>${ctxDef.title}</active-context-title>`,
       );
     }
 
-    const ctxState = execution.contextStates[execution.activeContextId];
+    const ctxState = execution.contextStates[activeContextId];
     if (ctxState) {
       lines.push(
         `${indent}  <context-iteration-count>${ctxState.iterationCount}</context-iteration-count>`,

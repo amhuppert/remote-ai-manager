@@ -54,7 +54,7 @@ function makeValidExecution() {
     seedDefinitionId: "wf-1",
     seedDefinitionRevision: 1,
     status: "running",
-    activeContextId: "ctx-1",
+    activeContextIds: ["ctx-1"],
     contextStates: {},
     taskStates: {},
     sharedDocuments: [],

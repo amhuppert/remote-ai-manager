@@ -5,8 +5,13 @@ import { getSession, mutateSession } from "@/lib/state";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
+import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
+import { createGraphWorkflowExecutionToolContext } from "@/lib/workflow-graph/execution-tool-context";
 import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
+import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
+import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import { createGraphWorkflowManager } from "@/lib/workflows/graph-workflow/workflow-manager";
 import {
   registerGraphWorkflowExecutionTools,
   type GraphWorkflowToolServerContext,
@@ -37,55 +42,32 @@ export interface WorkflowExecutionMcpServerDeps {
   ): void;
 }
 
-function cloneExecution(
-  execution: GraphWorkflowExecution,
-): GraphWorkflowExecution {
-  return structuredClone(execution);
-}
-
-function countCompletedTasks(
+export function resolveBoundConversationId(
   execution: GraphWorkflowExecution,
   contextId: string,
-): number {
-  return execution.workingDefinition.tasks.filter((task) => {
-    if (task.contextId !== contextId) {
-      return false;
+): string | null {
+  for (const taskState of Object.values(execution.taskStates)) {
+    if (taskState.contextId !== contextId) {
+      continue;
     }
-
-    return execution.taskStates[task.id]?.status === "completed";
-  }).length;
-}
-
-function buildMachineSnapshot(execution: GraphWorkflowExecution) {
-  return {
-    schemaVersion: 1,
-    lifecycleStatus: execution.status,
-    activeContextId: execution.activeContextId,
-    recoveryMode: "none" as const,
-    hasLiveIteration: true,
-  };
-}
-
-function resolveConversationId(
-  execution: GraphWorkflowExecution,
-  taskId?: string,
-): string {
-  const direct = taskId
-    ? execution.taskStates[taskId]?.lastConversationId
-    : null;
-  const fallback =
-    Object.values(execution.taskStates).find(
-      (taskState) =>
-        taskState.contextId === execution.activeContextId &&
-        taskState.lastConversationId,
-    )?.lastConversationId ?? null;
-  const resolved = direct ?? fallback;
-  if (!resolved) {
-    throw new Error(
-      "Workflow execution tool call is not bound to an active agent conversation",
-    );
+    if (taskState.status !== "running") {
+      continue;
+    }
+    if (taskState.lastConversationId) {
+      return taskState.lastConversationId;
+    }
   }
-  return resolved;
+
+  const laneByKind = execution.laneStates[contextId];
+  if (laneByKind) {
+    for (const lane of Object.values(laneByKind)) {
+      if (lane.workflowConversationId) {
+        return lane.workflowConversationId;
+      }
+    }
+  }
+
+  return null;
 }
 
 const eventPublisher = createGraphWorkflowExecutionEventPublisher({
@@ -98,9 +80,24 @@ const executionRepository = createGraphWorkflowExecutionRepository({
   eventPublisher,
 });
 
+const workflowStorage = createWorkflowStorageService();
+const workflowManager = createGraphWorkflowManager({
+  executionRepository,
+  loadDefinition: (projectPath, definitionId) =>
+    workflowStorage.get(projectPath, definitionId),
+  parallelWorktrees: createParallelWorktrees(),
+  getSession,
+});
+
 const runtimeEditService = createGraphWorkflowRuntimeEditService();
 const sharedDocumentRegistry =
   createGraphWorkflowSharedDocumentRegistryService();
+const executionTargetResolver = createExecutionTargetResolver();
+const executionToolContextFactory = createGraphWorkflowExecutionToolContext({
+  workflowManager,
+  runtimeEditService,
+  sharedDocumentRegistry,
+});
 
 const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
   resolveProjectPath,
@@ -122,125 +119,34 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
       return null;
     }
 
-    return {
+    const conversationId = resolveBoundConversationId(execution, contextId);
+    if (!conversationId) {
+      logger.warn("graph-workflow.tool_context.bind_missing_conversation", {
+        executionId,
+        contextId,
+      });
+      throw new McpRouteError(
+        409,
+        "Workflow execution context has no active agent conversation",
+      );
+    }
+
+    const executionTarget = executionTargetResolver.resolve({
+      execution,
+      contextId,
+      session,
+    });
+
+    return executionToolContextFactory.create({
+      projectPath,
+      sessionName,
+      executionId,
+      contextId,
+      conversationId,
+      executionTarget,
       executionContextTitle: executionContext.title,
       allowAgentTaskAdd: executionContext.mutability.allowAgentTaskAdd,
-      async completeTask(taskId, summary) {
-        const preValidationExecution = await executionRepository.getActive(
-          projectPath,
-          sessionName,
-        );
-        if (
-          !preValidationExecution ||
-          preValidationExecution.id !== executionId
-        ) {
-          throw new Error(
-            "Session does not have the requested graph workflow execution",
-          );
-        }
-
-        const taskStateBeforeValidation =
-          preValidationExecution.taskStates[taskId];
-        if (taskStateBeforeValidation?.status === "completed") {
-          logger.info("graph-workflow.task.completion_idempotent", {
-            executionId: preValidationExecution.id,
-            contextId,
-            taskId,
-            firstCompletedAt: taskStateBeforeValidation.completedAt,
-          });
-          return preValidationExecution;
-        }
-
-        const conversationId = resolveConversationId(
-          preValidationExecution,
-          taskId,
-        );
-        const nextExecution = cloneExecution(preValidationExecution);
-        const taskState = nextExecution.taskStates[taskId];
-        if (!taskState) {
-          throw new Error(`Task "${taskId}" does not exist in runtime state`);
-        }
-        if (taskState.contextId !== contextId) {
-          throw new Error(
-            `Task "${taskId}" does not belong to context "${contextId}"`,
-          );
-        }
-        if (taskState.status === "completed") {
-          throw new Error(`Task "${taskId}" is already completed`);
-        }
-
-        const contextState = nextExecution.contextStates[taskState.contextId];
-        if (!contextState) {
-          throw new Error(
-            `Execution context "${taskState.contextId}" does not exist in runtime state`,
-          );
-        }
-
-        taskState.status = "completed";
-        taskState.summary = summary;
-        taskState.completedAt = new Date().toISOString();
-        taskState.lastConversationId = conversationId;
-        taskState.failureMessage = null;
-        contextState.completedTaskCount = countCompletedTasks(
-          nextExecution,
-          taskState.contextId,
-        );
-        nextExecution.machineSnapshot = buildMachineSnapshot(nextExecution);
-
-        await executionRepository.update(
-          projectPath,
-          sessionName,
-          nextExecution,
-        );
-        return nextExecution;
-      },
-      async addTask(task) {
-        const activeExecution = await executionRepository.getActive(
-          projectPath,
-          sessionName,
-        );
-        if (!activeExecution || activeExecution.id !== executionId) {
-          throw new Error(
-            "Session does not have the requested graph workflow execution",
-          );
-        }
-
-        const updated = runtimeEditService.applyAgentTaskAdd(
-          activeExecution,
-          contextId,
-          task,
-        );
-        await executionRepository.update(projectPath, sessionName, updated);
-        return updated;
-      },
-      async upsertSharedDocument(document) {
-        const activeSession = await getSession(projectPath, sessionName);
-        if (!activeSession) {
-          throw new Error("Session not found");
-        }
-
-        const activeExecution = await executionRepository.getActive(
-          projectPath,
-          sessionName,
-        );
-        if (!activeExecution || activeExecution.id !== executionId) {
-          throw new Error(
-            "Session does not have the requested graph workflow execution",
-          );
-        }
-
-        const updated = await sharedDocumentRegistry.upsert(
-          activeSession.worktreePath,
-          activeExecution,
-          {
-            ...document,
-            conversationId: resolveConversationId(activeExecution),
-          },
-        );
-        await executionRepository.update(projectPath, sessionName, updated);
-        return updated;
-      },
-    };
+    });
   },
   registerGraphWorkflowExecutionTools,
 };

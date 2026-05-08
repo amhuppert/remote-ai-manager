@@ -208,9 +208,9 @@ export function createGraphWorkflowRuntimeEditService(
       );
     }
 
-    if (execution.activeContextId !== contextId) {
+    if (!execution.activeContextIds.includes(contextId)) {
       throw new Error(
-        `Agents can add tasks only to the currently executing context "${execution.activeContextId}"`,
+        `Agents can add tasks only to the currently executing context "${execution.activeContextIds[0] ?? null}"`,
       );
     }
 

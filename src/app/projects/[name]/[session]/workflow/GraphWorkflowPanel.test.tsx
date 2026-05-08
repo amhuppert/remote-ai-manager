@@ -51,7 +51,7 @@ describe("GraphWorkflowPanel", () => {
   it("renders status bar with execution status badge and active context info", () => {
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       workingDefinition: {
         ...createWorkflowExecution().workingDefinition,
         tasks: [
@@ -261,7 +261,7 @@ function createCodexExecutionWithRunningTask() {
 
   return createWorkflowExecution({
     status: "running",
-    activeContextId: "context-codex-impl",
+    activeContextIds: ["context-codex-impl"],
     workingDefinition: definition,
     contextStates: {
       "context-codex-impl": {
@@ -271,6 +271,13 @@ function createCodexExecutionWithRunningTask() {
         completedTaskCount: 0,
         iterationCount: 1,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {
@@ -318,7 +325,7 @@ describe("resolveViewingTask — codex implementer parity", () => {
   it("returns identical shape for a claude-backed task — proving backend-agnostic resolution", () => {
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       taskStates: {
         ...createWorkflowExecution().taskStates,
         "task-plan-1": {

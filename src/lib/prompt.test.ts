@@ -265,6 +265,7 @@ describe("executePromptStream (facade)", () => {
       "/projects/repo",
       "test-session",
       "conv-123",
+      undefined,
     );
   });
 

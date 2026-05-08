@@ -59,7 +59,7 @@ function makeExecution(
     seedDefinitionRevision: 1,
     workingDefinition: definition,
     status: "running",
-    activeContextId: "ctx-1",
+    activeContextIds: ["ctx-1"],
     activeTaskId: null,
     contextStates: {
       "ctx-1": {

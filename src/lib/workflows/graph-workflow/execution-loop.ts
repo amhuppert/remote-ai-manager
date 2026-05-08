@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
@@ -10,9 +11,27 @@ import {
   type CircuitBreakerGateResult,
   type RunCircuitBreakerGateInput,
 } from "@/lib/workflows/primitives/circuit-breaker-gate";
-import type { GraphWorkflowExecution, GraphWorkflowHaltReason } from "@/types";
+import type {
+  ExecutionTargetResolver,
+  ExecutionTarget,
+} from "@/lib/workflow-graph/execution-target-resolver";
+import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
+import type { SessionGitLock } from "@/lib/workflow-graph/session-git-lock";
+import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
+import type { SoloContextCommitter } from "@/lib/workflow-graph/solo-context-committer";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
+  SessionState,
+} from "@/types";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
+import { hasPartialIterationProgress } from "./iteration-failure-with-progress";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
+import type {
+  RecordPendingHaltReasonResult,
+  ScheduleEligibleContextsResult,
+} from "./workflow-manager";
 
 export interface GraphWorkflowExecutionLoopInput {
   projectPath: string;
@@ -21,33 +40,67 @@ export interface GraphWorkflowExecutionLoopInput {
   execution: GraphWorkflowExecution;
 }
 
+export interface GraphWorkflowExecutionLoopWorkflowManager {
+  scheduleEligibleContexts(input: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<ScheduleEligibleContextsResult>;
+  send(
+    projectPath: string,
+    sessionName: string,
+    event: { type: "complete" },
+  ): Promise<GraphWorkflowExecution>;
+  recordPendingHaltReason(input: {
+    projectPath: string;
+    sessionName: string;
+    reason: GraphWorkflowHaltReason;
+    applyAdditionalMutation?(execution: GraphWorkflowExecution): void;
+  }): Promise<RecordPendingHaltReasonResult>;
+  drainAndHalt(input: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<GraphWorkflowExecution>;
+  mutateActive(
+    projectPath: string,
+    sessionName: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution>;
+  getActive(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowExecution | null>;
+  recoverRetryableIterationError?(
+    projectPath: string,
+    sessionName: string,
+    input: { contextId: string; errorMessage: string },
+  ): Promise<GraphWorkflowExecution>;
+}
+
+export interface GraphWorkflowExecutionLoopIterationOrchestrator {
+  runIteration(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    contextId: string;
+    executionTarget?: ExecutionTarget;
+  }): Promise<GraphWorkflowIterationResult>;
+}
+
 export interface GraphWorkflowExecutionLoopDeps {
-  workflowManager: {
-    scheduleNextContext(
-      projectPath: string,
-      sessionName: string,
-    ): Promise<GraphWorkflowExecution>;
-    send(
-      projectPath: string,
-      sessionName: string,
-      event:
-        | { type: "complete" }
-        | { type: "halt"; reason: GraphWorkflowHaltReason },
-    ): Promise<GraphWorkflowExecution>;
-    recoverRetryableIterationError?(
-      projectPath: string,
-      sessionName: string,
-      input: { contextId: string; errorMessage: string },
-    ): Promise<GraphWorkflowExecution>;
-  };
-  iterationOrchestrator: {
-    runIteration(input: {
-      projectPath: string;
-      projectName: string;
-      sessionName: string;
-      contextId: string;
-    }): Promise<GraphWorkflowIterationResult>;
-  };
+  workflowManager: GraphWorkflowExecutionLoopWorkflowManager;
+  iterationOrchestrator: GraphWorkflowExecutionLoopIterationOrchestrator;
+  parallelWorktrees: ParallelWorktrees;
+  mergeMutex: PerSessionMergeMutex;
+  sessionGitLock: SessionGitLock;
+  mergeRunner: GraphMergeRunner;
+  soloContextCommitter: SoloContextCommitter;
+  executionTargetResolver: ExecutionTargetResolver;
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<SessionState | null>;
   emitStreamFrame?(
     projectPath: string,
     sessionName: string,
@@ -62,6 +115,7 @@ export interface GraphWorkflowExecutionLoopDeps {
   runCircuitBreakerGate?: (
     input: RunCircuitBreakerGateInput,
   ) => CircuitBreakerGateResult;
+  createJobId?: () => string;
 }
 
 function emitDone(
@@ -114,6 +168,7 @@ export function createGraphWorkflowExecutionLoop(
 ) {
   const runCircuitBreakerGate =
     deps.runCircuitBreakerGate ?? defaultRunCircuitBreakerGate;
+  const createJobId = deps.createJobId ?? (() => randomUUID());
 
   async function run(
     input: GraphWorkflowExecutionLoopInput,
@@ -122,187 +177,562 @@ export function createGraphWorkflowExecutionLoop(
     activeLoops.add(key);
     let execution = input.execution;
     const retryableRecoveryAttempts = new Map<string, number>();
+    const inFlight = new Map<string, Promise<void>>();
     const execLogger = getExecutionLogger(execution.id);
 
     execLogger?.lifecycle("loop.started", {
       executionId: execution.id,
-      activeContextId: execution.activeContextId,
+      activeContextIds: execution.activeContextIds,
     });
     logger.info("graph-workflow.loop.started", {
       executionId: execution.id,
     });
 
-    try {
-      while (execution.status === "running") {
-        if (!execution.activeContextId) {
-          execution = await deps.workflowManager.scheduleNextContext(
+    async function recordHalt(reason: GraphWorkflowHaltReason): Promise<void> {
+      const result = await deps.workflowManager.recordPendingHaltReason({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason,
+      });
+      execution = result.execution;
+    }
+
+    async function runFanInMerge(
+      contextId: string,
+      featureWorktreePath: string,
+      featureBranchName: string,
+    ): Promise<void> {
+      execLogger?.iteration(contextId, "merge.queued", {
+        branchName: featureBranchName,
+        worktreePath: featureWorktreePath,
+      });
+      logger.info("graph-workflow.merge.queued", {
+        executionId: execution.id,
+        contextId,
+        branchName: featureBranchName,
+      });
+
+      await deps.mergeMutex.withMergeMutex(
+        {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+        },
+        async () => {
+          await deps.workflowManager.mutateActive(
             input.projectPath,
             input.sessionName,
-          );
-
-          if (!execution.activeContextId) {
-            execLogger?.lifecycle("loop.no_eligible_contexts");
-            execution = await deps.workflowManager.send(
-              input.projectPath,
-              input.sessionName,
-              { type: "complete" },
-            );
-            emitDone(deps, input.projectPath, input.sessionName, "completed");
-            return execution;
-          }
-        }
-
-        const contextId = execution.activeContextId;
-        if (!contextId) {
-          continue;
-        }
-
-        let iterationResult: GraphWorkflowIterationResult;
-        try {
-          iterationResult = await deps.iterationOrchestrator.runIteration({
-            projectPath: input.projectPath,
-            projectName: input.projectName,
-            sessionName: input.sessionName,
-            contextId,
-          });
-          retryableRecoveryAttempts.delete(contextId);
-        } catch (error) {
-          const recoveryAttempts =
-            retryableRecoveryAttempts.get(contextId) ?? 0;
-          const recoverRetryableIterationError =
-            deps.workflowManager.recoverRetryableIterationError;
-          const canRecover =
-            isRetryableIterationError(error) &&
-            recoveryAttempts < 1 &&
-            recoverRetryableIterationError;
-
-          if (!canRecover) {
-            throw error;
-          }
-
-          const errorMessage = getErrorMessage(error);
-          retryableRecoveryAttempts.set(contextId, recoveryAttempts + 1);
-          execLogger?.decision("iteration.retryable_error_detected", {
-            contextId,
-            error: errorMessage,
-            recoveryAttempt: recoveryAttempts + 1,
-            maxRecoveryAttempts: 1,
-          });
-          logger.warn("graph-workflow.loop.retryable_iteration_error", {
-            executionId: execution.id,
-            contextId,
-            error: errorMessage,
-            recoveryAttempt: recoveryAttempts + 1,
-          });
-          execution = await recoverRetryableIterationError(
-            input.projectPath,
-            input.sessionName,
-            {
-              contextId,
-              errorMessage,
+            (e) => {
+              const next = structuredClone(e);
+              const cs = next.contextStates[contextId];
+              if (cs) {
+                cs.mergeStatus = "in-progress";
+              }
+              return next;
             },
           );
-          continue;
-        }
-        execution = iterationResult.execution;
 
-        if (execution.status !== "running") {
-          emitDone(
-            deps,
+          execLogger?.iteration(contextId, "merge.started", {
+            branchName: featureBranchName,
+          });
+          logger.info("graph-workflow.merge.started", {
+            executionId: execution.id,
+            contextId,
+            branchName: featureBranchName,
+          });
+
+          const session = await deps.getSession(
             input.projectPath,
             input.sessionName,
-            execution.haltReason?.type ?? execution.status,
           );
-          return execution;
-        }
-
-        const contextState = execution.contextStates[contextId];
-        const contextDef = execution.workingDefinition.executionContexts.find(
-          (c) => c.id === contextId,
-        );
-
-        // Circuit breaker: route the consecutive-failure decision through the
-        // shared gate primitive so the halt vocabulary stays unified with the
-        // iteration orchestrator's gate-based circuit breaker.
-        if (contextState && contextDef) {
-          const threshold =
-            contextDef.circuitBreaker.consecutiveFailureThreshold ??
-            DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD;
-          const gateResult = runCircuitBreakerGate({
-            failureCount: contextState.consecutiveFailureCount,
-            threshold,
-          });
-          if (gateResult.status === "fail") {
-            execLogger?.decision("circuit_breaker.tripped", {
+          if (!session) {
+            const reason: GraphWorkflowHaltReason = {
+              type: "merge_failure",
               contextId,
-              consecutiveFailureCount: contextState.consecutiveFailureCount,
-              threshold,
+              message: `Session "${input.sessionName}" not found during fan-in merge`,
+              conflictFiles: [],
+            };
+            const haltResult =
+              await deps.workflowManager.recordPendingHaltReason({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                reason,
+                applyAdditionalMutation: (next) => {
+                  const cs = next.contextStates[contextId];
+                  if (cs) {
+                    cs.mergeStatus = "merged-failed";
+                    cs.lastMergeError = reason.message;
+                  }
+                },
+              });
+            execution = haltResult.execution;
+            logger.error("graph-workflow.merge.failed", {
+              executionId: execution.id,
+              contextId,
+              reason: reason.message,
             });
-            execution = await deps.workflowManager.send(
+            return;
+          }
+
+          let mergeStatus: "completed" | "failed" | "conflicts";
+          let mergeError: string | null = null;
+          let mergeConflictFiles: string[] = [];
+          try {
+            const output = await deps.sessionGitLock.withSessionGitLock(
+              {
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+              },
+              async () =>
+                deps.mergeRunner.run({
+                  jobId: createJobId(),
+                  projectPath: input.projectPath,
+                  projectName: input.projectName,
+                  sessionName: input.sessionName,
+                  contextId,
+                  branchName: featureBranchName,
+                  featureWorktreePath,
+                  targetBranch: session.branchName,
+                  targetWorktreePath: session.worktreePath,
+                  message: `Graph workflow context ${contextId}`,
+                }),
+            );
+            mergeStatus = output.status;
+            mergeError = output.error;
+            mergeConflictFiles = output.conflictFiles;
+          } catch (error) {
+            mergeStatus = "failed";
+            mergeError = getErrorMessage(error);
+            mergeConflictFiles = [];
+          }
+
+          if (mergeStatus === "completed") {
+            await deps.workflowManager.mutateActive(
               input.projectPath,
               input.sessionName,
-              {
-                type: "halt",
-                reason: {
-                  type: "circuit_breaker",
-                  contextId,
-                  condition: "retry_exhaustion",
-                  failureCount: contextState.consecutiveFailureCount,
-                  summary: null,
-                },
+              (e) => {
+                const next = structuredClone(e);
+                const cs = next.contextStates[contextId];
+                if (cs) {
+                  cs.mergeStatus = "merged-success";
+                  cs.lastMergeError = null;
+                }
+                return next;
               },
             );
-            emitDone(
-              deps,
+
+            execLogger?.iteration(contextId, "merge.completed", {
+              branchName: featureBranchName,
+            });
+            logger.info("graph-workflow.merge.completed", {
+              executionId: execution.id,
+              contextId,
+              branchName: featureBranchName,
+            });
+
+            const dispose = await deps.parallelWorktrees.dispose({
+              projectPath: input.projectPath,
+              worktreePath: featureWorktreePath,
+              branchName: featureBranchName,
+            });
+            await deps.workflowManager.mutateActive(
               input.projectPath,
               input.sessionName,
-              "circuit_breaker",
+              (e) => {
+                const next = structuredClone(e);
+                const cs = next.contextStates[contextId];
+                if (cs) {
+                  cs.cleanupStatus =
+                    dispose.status === "removed" ? "removed" : "failed";
+                }
+                return next;
+              },
             );
-            return execution;
+            execLogger?.lifecycle("parallel.cleanup_attempted", {
+              contextId,
+              status: dispose.status,
+              reason: dispose.status === "failed" ? dispose.reason : undefined,
+            });
+            return;
           }
+
+          const finalMergeStatus =
+            mergeStatus === "conflicts" ? "conflicts" : "merged-failed";
+          const haltReason: GraphWorkflowHaltReason = {
+            type: "merge_failure",
+            contextId,
+            message: mergeError ?? "Fan-in merge failed",
+            conflictFiles: mergeConflictFiles,
+          };
+          const haltResult = await deps.workflowManager.recordPendingHaltReason(
+            {
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              reason: haltReason,
+              applyAdditionalMutation: (next) => {
+                const cs = next.contextStates[contextId];
+                if (cs) {
+                  cs.mergeStatus = finalMergeStatus;
+                  cs.lastMergeError = mergeError;
+                }
+              },
+            },
+          );
+          execution = haltResult.execution;
+          logger.error("graph-workflow.merge.failed", {
+            executionId: execution.id,
+            contextId,
+            mergeStatus: finalMergeStatus,
+            error: mergeError,
+            conflictFiles: mergeConflictFiles.length,
+          });
+        },
+      );
+    }
+
+    async function runContextTask(contextId: string): Promise<void> {
+      execLogger?.lifecycle("parallel.context_started", {
+        contextId,
+      });
+
+      let isolation: "session" | "worktree" = "session";
+      let featureWorktreePath: string | null = null;
+      let featureBranchName: string | null = null;
+
+      try {
+        // Inner per-context iteration loop
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const session = await deps.getSession(
+            input.projectPath,
+            input.sessionName,
+          );
+          if (!session) {
+            await recordHalt({
+              type: "recovery_error",
+              message: `Session "${input.sessionName}" not found during iteration`,
+            });
+            return;
+          }
+
+          const target = deps.executionTargetResolver.resolve({
+            execution,
+            contextId,
+            session,
+          });
+          isolation = target.isolation;
+          if (target.isolation === "worktree") {
+            featureWorktreePath = target.worktreePath;
+            featureBranchName = target.branchName;
+          }
+
+          let iterationResult: GraphWorkflowIterationResult;
+          try {
+            iterationResult = await deps.iterationOrchestrator.runIteration({
+              projectPath: input.projectPath,
+              projectName: input.projectName,
+              sessionName: input.sessionName,
+              contextId,
+              executionTarget: target,
+            });
+            retryableRecoveryAttempts.delete(contextId);
+          } catch (error) {
+            if (hasPartialIterationProgress(error)) {
+              retryableRecoveryAttempts.delete(contextId);
+            }
+            const recoveryAttempts =
+              retryableRecoveryAttempts.get(contextId) ?? 0;
+            const recoverRetryableIterationError =
+              deps.workflowManager.recoverRetryableIterationError;
+            const canRecover =
+              isRetryableIterationError(error) &&
+              recoveryAttempts < 1 &&
+              recoverRetryableIterationError;
+
+            if (!canRecover) {
+              await recordHalt({
+                type: "recovery_error",
+                message: getErrorMessage(error),
+              });
+              return;
+            }
+
+            const errorMessage = getErrorMessage(error);
+            retryableRecoveryAttempts.set(contextId, recoveryAttempts + 1);
+            execLogger?.decision("iteration.retryable_error_detected", {
+              contextId,
+              error: errorMessage,
+              recoveryAttempt: recoveryAttempts + 1,
+              maxRecoveryAttempts: 1,
+            });
+            logger.warn("graph-workflow.loop.retryable_iteration_error", {
+              executionId: execution.id,
+              contextId,
+              error: errorMessage,
+              recoveryAttempt: recoveryAttempts + 1,
+            });
+            execution = await recoverRetryableIterationError(
+              input.projectPath,
+              input.sessionName,
+              { contextId, errorMessage },
+            );
+            continue;
+          }
+
+          execution = iterationResult.execution;
+
+          if (execution.status !== "running") {
+            // Orchestrator-driven halt (e.g., signalHalt). Stop iterating;
+            // the outer loop's drain-then-halt path takes over.
+            return;
+          }
+
+          const contextState = execution.contextStates[contextId];
+          const contextDef = execution.workingDefinition.executionContexts.find(
+            (c) => c.id === contextId,
+          );
+
+          if (contextState?.status === "halted") {
+            execLogger?.iteration(contextId, "loop.context_halted", {
+              pendingHaltReason: execution.pendingHaltReason,
+            });
+            logger.info("graph-workflow.parallel.context_halted", {
+              executionId: execution.id,
+              contextId,
+              haltReasonType: execution.pendingHaltReason?.type ?? null,
+            });
+            return;
+          }
+
+          if (contextState && contextDef) {
+            const threshold =
+              contextDef.circuitBreaker.consecutiveFailureThreshold ??
+              DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD;
+            const gateResult = runCircuitBreakerGate({
+              failureCount: contextState.consecutiveFailureCount,
+              threshold,
+            });
+            if (gateResult.status === "fail") {
+              execLogger?.decision("circuit_breaker.tripped", {
+                contextId,
+                consecutiveFailureCount: contextState.consecutiveFailureCount,
+                threshold,
+              });
+              await recordHalt({
+                type: "circuit_breaker",
+                contextId,
+                condition: "retry_exhaustion",
+                failureCount: contextState.consecutiveFailureCount,
+                summary: null,
+              });
+              return;
+            }
+          }
+
+          if (
+            contextState &&
+            contextDef &&
+            contextState.iterationCount >=
+              contextDef.iterationPolicy.maxIterations
+          ) {
+            execLogger?.decision("max_iterations.reached", {
+              contextId,
+              iterationCount: contextState.iterationCount,
+              maxIterations: contextDef.iterationPolicy.maxIterations,
+            });
+            await recordHalt({
+              type: "max_iterations",
+              contextId,
+              iterationCount: contextState.iterationCount,
+            });
+            return;
+          }
+
+          if (iterationResult.shouldContinueInContext) {
+            execLogger?.iteration(contextId, "loop.continue_in_context", {
+              conversationId: iterationResult.conversationId,
+            });
+            continue;
+          }
+
+          // Context completed all of its tasks — break out for fan-in merge.
+          break;
+        }
+      } finally {
+        execLogger?.lifecycle("parallel.context_finished", {
+          contextId,
+          isolation,
+        });
+      }
+
+      if (
+        isolation === "worktree" &&
+        featureWorktreePath !== null &&
+        featureBranchName !== null
+      ) {
+        await runFanInMerge(contextId, featureWorktreePath, featureBranchName);
+      } else if (isolation === "session") {
+        await runSoloCommit(contextId);
+      }
+    }
+
+    async function runSoloCommit(contextId: string): Promise<void> {
+      await deps.mergeMutex.withMergeMutex(
+        {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+        },
+        async () => {
+          const session = await deps.getSession(
+            input.projectPath,
+            input.sessionName,
+          );
+          if (!session) {
+            const reason: GraphWorkflowHaltReason = {
+              type: "merge_failure",
+              contextId,
+              message: `Session "${input.sessionName}" not found during solo-context commit`,
+              conflictFiles: [],
+            };
+            const haltResult =
+              await deps.workflowManager.recordPendingHaltReason({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                reason,
+              });
+            execution = haltResult.execution;
+            logger.error("graph-workflow.solo_commit.session_missing", {
+              executionId: execution.id,
+              contextId,
+            });
+            return;
+          }
+
+          const result = await deps.sessionGitLock.withSessionGitLock(
+            {
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            },
+            async () =>
+              deps.soloContextCommitter.commit({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                contextId,
+                sessionWorktreePath: session.worktreePath,
+              }),
+          );
+
+          if (result.status === "failed") {
+            const reason: GraphWorkflowHaltReason = {
+              type: "merge_failure",
+              contextId,
+              message: result.errorMessage,
+              conflictFiles: [],
+            };
+            const haltResult =
+              await deps.workflowManager.recordPendingHaltReason({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                reason,
+              });
+            execution = haltResult.execution;
+            logger.error("graph-workflow.solo_commit.failed", {
+              executionId: execution.id,
+              contextId,
+              error: result.errorMessage,
+            });
+            return;
+          }
+
+          execLogger?.iteration(contextId, "solo_commit.completed", {
+            status: result.status,
+          });
+          logger.info("graph-workflow.solo_commit.recorded", {
+            executionId: execution.id,
+            contextId,
+            status: result.status,
+          });
+        },
+      );
+    }
+
+    try {
+      // Outer scheduling loop: schedule batch → run all → check halt → repeat.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (execution.status !== "running") {
+          if (inFlight.size > 0) {
+            await Promise.race(inFlight.values());
+            continue;
+          }
+          break;
         }
 
-        if (
-          contextState &&
-          contextDef &&
-          contextState.iterationCount >=
-            contextDef.iterationPolicy.maxIterations
-        ) {
-          execLogger?.decision("max_iterations.reached", {
-            contextId,
-            iterationCount: contextState.iterationCount,
-            maxIterations: contextDef.iterationPolicy.maxIterations,
+        if (execution.pendingHaltReason !== null) {
+          if (inFlight.size > 0) {
+            await Promise.race(inFlight.values());
+            continue;
+          }
+          execution = await deps.workflowManager.drainAndHalt({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
           });
+          break;
+        }
+
+        const scheduleResult =
+          await deps.workflowManager.scheduleEligibleContexts({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+          });
+        execution = scheduleResult.execution;
+
+        if (scheduleResult.scheduled.kind === "none") {
+          if (inFlight.size > 0) {
+            await Promise.race(inFlight.values());
+            continue;
+          }
+          if (execution.pendingHaltReason !== null) {
+            execution = await deps.workflowManager.drainAndHalt({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            });
+            break;
+          }
           execution = await deps.workflowManager.send(
             input.projectPath,
             input.sessionName,
-            {
-              type: "halt",
-              reason: {
-                type: "max_iterations",
-                contextId,
-                iterationCount: contextState.iterationCount,
-              },
-            },
+            { type: "complete" },
           );
-          emitDone(
-            deps,
-            input.projectPath,
-            input.sessionName,
-            "max_iterations",
-          );
-          return execution;
+          break;
         }
 
-        if (iterationResult.shouldContinueInContext) {
-          execLogger?.iteration(contextId, "loop.continue_in_context", {
-            conversationId: iterationResult.conversationId,
+        const scheduledContextIds =
+          scheduleResult.scheduled.kind === "solo"
+            ? [scheduleResult.scheduled.contextId]
+            : scheduleResult.scheduled.contextIds;
+
+        for (const contextId of scheduledContextIds) {
+          if (inFlight.has(contextId)) continue;
+          const task = runContextTask(contextId).finally(() => {
+            inFlight.delete(contextId);
           });
-          continue;
+          inFlight.set(contextId, task);
         }
 
-        // All tasks completed — context is done, schedule next
-        // (scheduleNextContext will mark the current context as completed)
+        // Wait for the scheduled batch to settle before scheduling the next one.
+        await Promise.all(
+          scheduledContextIds
+            .map((id) => inFlight.get(id))
+            .filter((p): p is Promise<void> => p !== undefined),
+        );
+
+        const refreshed = await deps.workflowManager.getActive(
+          input.projectPath,
+          input.sessionName,
+        );
+        if (refreshed) {
+          execution = refreshed;
+        }
       }
 
       emitDone(
@@ -320,17 +750,26 @@ export function createGraphWorkflowExecutionLoop(
         executionId: execution.id,
         error: getErrorMessage(error),
       });
-      const haltedExecution = await deps.workflowManager.send(
-        input.projectPath,
-        input.sessionName,
-        {
-          type: "halt",
+      try {
+        await deps.workflowManager.recordPendingHaltReason({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
           reason: {
             type: "recovery_error",
             message: getErrorMessage(error),
           },
-        },
-      );
+        });
+      } catch (recordErr) {
+        logger.error("graph-workflow.loop.record_halt_failed", {
+          executionId: execution.id,
+          error: getErrorMessage(recordErr),
+        });
+      }
+      await Promise.allSettled(inFlight.values());
+      const haltedExecution = await deps.workflowManager.drainAndHalt({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+      });
       emitDone(
         deps,
         input.projectPath,

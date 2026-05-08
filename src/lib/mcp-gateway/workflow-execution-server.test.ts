@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { GraphWorkflowExecution } from "@/types";
+import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
+import { resolveBoundConversationId } from "./workflow-execution-server";
 
 function createDeps(overrides: Record<string, unknown> = {}) {
   return {
@@ -82,5 +85,115 @@ describe("mcp-gateway/workflow-execution-server", () => {
         deps,
       ),
     ).rejects.toThrow("Workflow execution context not found");
+  });
+});
+
+describe("resolveBoundConversationId", () => {
+  function buildExecution(): GraphWorkflowExecution {
+    return createWorkflowExecution();
+  }
+
+  it("returns the lane conversation when no task in the bound context is running", () => {
+    const base = buildExecution();
+    const planTask = base.taskStates["task-plan-1"];
+    if (!planTask) throw new Error("missing plan task fixture");
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      taskStates: {
+        ...base.taskStates,
+        "task-plan-1": {
+          ...planTask,
+          status: "completed",
+          lastConversationId: "conv-stale-completed",
+          completedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+      laneStates: {
+        "context-plan": {
+          implementer: {
+            lane: "implementer",
+            contextId: "context-plan",
+            engine: "claude",
+            workflowConversationId: "conv-active-lane",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-session-ref",
+            },
+            lastContextTokens: null,
+            lastContextWindowMax: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-27T12:00:00.000Z",
+          },
+        },
+      },
+    };
+
+    expect(resolveBoundConversationId(execution, "context-plan")).toBe(
+      "conv-active-lane",
+    );
+  });
+
+  it("prefers a running task's lastConversationId over the lane state", () => {
+    const base = buildExecution();
+    const planTask = base.taskStates["task-plan-1"];
+    if (!planTask) throw new Error("missing plan task fixture");
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      taskStates: {
+        ...base.taskStates,
+        "task-plan-1": {
+          ...planTask,
+          status: "running",
+          lastConversationId: "conv-running-task",
+          startedAt: "2026-03-27T12:00:00.000Z",
+        },
+      },
+      laneStates: {
+        "context-plan": {
+          implementer: {
+            lane: "implementer",
+            contextId: "context-plan",
+            engine: "claude",
+            workflowConversationId: "conv-other-lane",
+            sessionRef: {
+              engine: "claude",
+              lane: "implementer",
+              conversationId: "conv-session-ref",
+            },
+            lastContextTokens: null,
+            lastContextWindowMax: null,
+            rotateBeforeNextTurn: false,
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-27T12:00:00.000Z",
+          },
+        },
+      },
+    };
+
+    expect(resolveBoundConversationId(execution, "context-plan")).toBe(
+      "conv-running-task",
+    );
+  });
+
+  it("ignores completed tasks in the bound context when no lane is recorded", () => {
+    const base = buildExecution();
+    const planTask = base.taskStates["task-plan-1"];
+    if (!planTask) throw new Error("missing plan task fixture");
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      taskStates: {
+        ...base.taskStates,
+        "task-plan-1": {
+          ...planTask,
+          status: "completed",
+          lastConversationId: "conv-stale",
+          completedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    };
+
+    expect(resolveBoundConversationId(execution, "context-plan")).toBeNull();
   });
 });

@@ -11,6 +11,9 @@ import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/pro
 import type {
   ManagerState,
   ConversationStatus,
+  GraphWorkflowCleanupStatusValue,
+  GraphWorkflowHaltReason,
+  GraphWorkflowMergeStatusValue,
   GraphWorkflowStatus,
 } from "@/types";
 import type { ApiError } from "@/types";
@@ -44,13 +47,25 @@ interface ActiveConversation {
   agentBackend: "claude" | "codex";
 }
 
+export interface ActiveGraphWorkflowContextMergeProgress {
+  contextId: string;
+  branchName: string | null;
+  mergeStatus: GraphWorkflowMergeStatusValue;
+  cleanupStatus: GraphWorkflowCleanupStatusValue;
+  lastMergeError: string | null;
+}
+
 export interface ActiveGraphWorkflowExecution {
   executionId: string;
   status: GraphWorkflowStatus;
   projectName: string;
   projectPath: string;
   sessionName: string;
-  activeContextTitle: string | null;
+  activeContextIds: string[];
+  activeContextTitles: string[];
+  activeBatchIds: string[];
+  pendingHaltReason: GraphWorkflowHaltReason | null;
+  contextMergeProgress: ActiveGraphWorkflowContextMergeProgress[];
   completedContexts: number;
   totalContexts: number;
   startedAt: string;
@@ -197,11 +212,44 @@ export function createActiveConversationsRouteHandlers(
           // Collect active graph workflow executions
           const exec = session.graphWorkflowExecution;
           if (exec && ACTIVE_GW_STATUSES.has(exec.status)) {
-            const activeContext = exec.activeContextId
-              ? exec.workingDefinition.executionContexts.find(
-                  (c) => c.id === exec.activeContextId,
-                )
-              : null;
+            const activeContextIds = [...exec.activeContextIds];
+            const activeContextTitles = activeContextIds.map((id) => {
+              const context = exec.workingDefinition.executionContexts.find(
+                (c) => c.id === id,
+              );
+              return context?.title ?? id;
+            });
+
+            const seenBatches = new Set<string>();
+            const activeBatchIds: string[] = [];
+            for (const contextId of activeContextIds) {
+              const batchId = exec.contextStates[contextId]?.batchId;
+              if (batchId && !seenBatches.has(batchId)) {
+                seenBatches.add(batchId);
+                activeBatchIds.push(batchId);
+              }
+            }
+
+            const contextMergeProgress: ActiveGraphWorkflowContextMergeProgress[] =
+              [];
+            for (const contextId of activeContextIds) {
+              const state = exec.contextStates[contextId];
+              if (!state) continue;
+              if (
+                state.mergeStatus === "not-applicable" &&
+                state.cleanupStatus === "not-applicable" &&
+                state.lastMergeError === null
+              ) {
+                continue;
+              }
+              contextMergeProgress.push({
+                contextId,
+                branchName: state.branchName,
+                mergeStatus: state.mergeStatus,
+                cleanupStatus: state.cleanupStatus,
+                lastMergeError: state.lastMergeError,
+              });
+            }
 
             const completedContexts = Object.values(exec.contextStates).filter(
               (cs) => cs.status === "completed",
@@ -213,7 +261,11 @@ export function createActiveConversationsRouteHandlers(
               projectName,
               projectPath,
               sessionName: session.sessionName,
-              activeContextTitle: activeContext?.title ?? null,
+              activeContextIds,
+              activeContextTitles,
+              activeBatchIds,
+              pendingHaltReason: exec.pendingHaltReason,
+              contextMergeProgress,
               completedContexts,
               totalContexts: exec.workingDefinition.executionContexts.length,
               startedAt: exec.startedAt,

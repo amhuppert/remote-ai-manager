@@ -9,6 +9,9 @@ import type {
   WorkflowRuntimeEditRequest,
 } from "@/types";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
+import { createWorkflowStorageService } from "./storage";
+import { createGraphWorkflowManager } from "@/lib/workflows/graph-workflow/workflow-manager";
+import { createParallelWorktrees } from "./parallel-worktrees";
 import {
   GraphWorkflowRuntimeEditValidationError,
   createGraphWorkflowRuntimeEditService,
@@ -21,6 +24,14 @@ type RouteContext = {
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
   mutateSession,
+});
+const workflowStorage = createWorkflowStorageService();
+const workflowManager = createGraphWorkflowManager({
+  executionRepository,
+  loadDefinition: (projectPath, definitionId) =>
+    workflowStorage.get(projectPath, definitionId),
+  parallelWorktrees: createParallelWorktrees(),
+  getSession: defaultGetSession,
 });
 const runtimeEditService = createGraphWorkflowRuntimeEditService();
 
@@ -41,19 +52,9 @@ const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
   async applyRuntimeEdits(projectPath, sessionName, request) {
-    const execution = await executionRepository.getActive(
-      projectPath,
-      sessionName,
+    return workflowManager.mutateActive(projectPath, sessionName, (execution) =>
+      runtimeEditService.applyUserEdits(execution, request),
     );
-    if (!execution) {
-      throw new Error(
-        "Session does not have an active graph workflow execution",
-      );
-    }
-
-    const updated = runtimeEditService.applyUserEdits(execution, request);
-    await executionRepository.update(projectPath, sessionName, updated);
-    return updated;
   },
 };
 

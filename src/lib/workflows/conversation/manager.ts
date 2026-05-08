@@ -34,9 +34,93 @@ import {
   unregisterRuntime,
 } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
-import type { ConversationState } from "@/types";
+import type {
+  AgentBackendId,
+  AgentSessionRef,
+  ConversationState,
+  DebugModeState,
+} from "@/types";
+import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
+import type { ForkedFrom, ConversationRole } from "@/types";
 
 const logger = createLogger("conversation-manager");
+
+export interface EnsureActorInputData {
+  projectName: string;
+  sessionWorktreePath: string;
+  conversation: {
+    createdAt: string;
+    forkedFrom: ForkedFrom;
+    role: ConversationRole;
+    transcriptPath: string | null;
+    agentBackend: AgentBackendId;
+    backendRef: AgentSessionRef | null;
+    promptCount: number;
+    debugMode: DebugModeState | null;
+  };
+}
+
+export interface EnsureConversationActorDeps {
+  loadActorInput(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<EnsureActorInputData>;
+}
+
+let _ensureActorDeps: EnsureConversationActorDeps | null = null;
+
+export function setEnsureConversationActorDeps(
+  deps: EnsureConversationActorDeps,
+): void {
+  _ensureActorDeps = deps;
+}
+
+export function _resetEnsureConversationActorDepsForTesting(): void {
+  _ensureActorDeps = null;
+}
+
+async function defaultLoadActorInput(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+): Promise<EnsureActorInputData> {
+  const { readState } = await import("@/lib/state");
+  const { getProjectDisplayName } = await import("@/lib/project-resolver");
+
+  const state = await readState();
+  const project = state.projects[projectPath];
+  if (!project) {
+    throw new Error(`Project not found: ${projectPath}`);
+  }
+
+  const session = project.sessions[sessionName];
+  if (!session) {
+    throw new Error(`Session not found: ${sessionName}`);
+  }
+
+  const conversation = session.conversations.find(
+    (c) => c.id === conversationId,
+  );
+  if (!conversation) {
+    throw new Error(`Conversation not found: ${conversationId}`);
+  }
+
+  return {
+    projectName: getProjectDisplayName(projectPath),
+    sessionWorktreePath: session.worktreePath,
+    conversation: {
+      createdAt: conversation.createdAt,
+      forkedFrom: conversation.forkedFrom ?? null,
+      role: conversation.role ?? null,
+      transcriptPath: conversation.transcriptPath ?? null,
+      agentBackend: conversation.agentBackend ?? "claude",
+      backendRef: conversation.backendRef ?? null,
+      promptCount: conversation.promptCount ?? 0,
+      debugMode: conversation.debugMode?.active ? conversation.debugMode : null,
+    },
+  };
+}
 
 // ============================================================
 // Machine Factory Injection
@@ -370,60 +454,90 @@ export function getConversationActor(
   return getActorRegistry().get(key);
 }
 
+function isActorIdle(actor: ConversationActorRef): boolean {
+  return actor.getSnapshot().value === "idle";
+}
+
 /**
  * Ensure a conversation actor exists, creating one if needed.
  * Loads conversation state from the state file to build input.
+ *
+ * When `options.executionTarget` is supplied, the actor's input
+ * `worktreePath` uses `executionTarget.worktreePath` instead of the session's
+ * persisted worktreePath. If an actor for this conversation already exists
+ * with a different worktreePath in its context, the function:
+ *   - stops and recreates it when the actor is idle (safe transition); or
+ *   - throws an infrastructure error when the actor is mid-turn (running),
+ *     because rebinding a running turn to a different worktree would corrupt
+ *     in-flight state.
  */
 export async function ensureConversationActor(
   projectPath: string,
   sessionName: string,
   conversationId: string,
+  options?: { executionTarget?: ExecutionTarget },
 ): Promise<ConversationActorRef> {
   const existing = getConversationActor(
     projectPath,
     sessionName,
     conversationId,
   );
-  if (existing) return existing;
 
-  // Load conversation state to build input
-  const { readState } = await import("@/lib/state");
-  const { getProjectDisplayName } = await import("@/lib/project-resolver");
+  const requestedWorktreePath = options?.executionTarget?.worktreePath;
 
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
+  if (existing) {
+    if (requestedWorktreePath === undefined) {
+      return existing;
+    }
+    const currentWorktreePath = existing.getSnapshot().context.worktreePath;
+    if (currentWorktreePath === requestedWorktreePath) {
+      return existing;
+    }
+    if (!isActorIdle(existing)) {
+      logger.error("conversation-manager.execution_target_mismatch_running", {
+        conversationId,
+        sessionName,
+        currentWorktreePath,
+        requestedWorktreePath,
+      });
+      throw new Error(
+        `Conversation actor ${conversationId} is running with worktreePath=${currentWorktreePath}; cannot rebind to executionTarget worktreePath=${requestedWorktreePath}`,
+      );
+    }
+    logger.info("conversation-manager.execution_target_mismatch_idle_rebind", {
+      conversationId,
+      sessionName,
+      previousWorktreePath: currentWorktreePath,
+      requestedWorktreePath,
+    });
+    stopConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      "execution_target_rebind",
+    );
   }
 
-  const session = project.sessions[sessionName];
-  if (!session) {
-    throw new Error(`Session not found: ${sessionName}`);
-  }
+  const loadActorInput =
+    _ensureActorDeps?.loadActorInput ?? defaultLoadActorInput;
+  const data = await loadActorInput(projectPath, sessionName, conversationId);
 
-  const conversation = session.conversations.find(
-    (c) => c.id === conversationId,
-  );
-  if (!conversation) {
-    throw new Error(`Conversation not found: ${conversationId}`);
-  }
-
-  const projectName = getProjectDisplayName(projectPath);
+  const worktreePath = requestedWorktreePath ?? data.sessionWorktreePath;
 
   return startConversationActor({
     projectPath,
-    projectName,
+    projectName: data.projectName,
     sessionName,
-    worktreePath: session.worktreePath,
+    worktreePath,
     conversationId,
-    createdAt: conversation.createdAt,
-    forkedFrom: conversation.forkedFrom ?? null,
-    role: conversation.role ?? null,
-    transcriptPath: conversation.transcriptPath ?? null,
-    agentBackend: conversation.agentBackend ?? "claude",
-    backendRef: conversation.backendRef ?? null,
-    promptCount: conversation.promptCount ?? 0,
-    debugMode: conversation.debugMode?.active ? conversation.debugMode : null,
+    createdAt: data.conversation.createdAt,
+    forkedFrom: data.conversation.forkedFrom,
+    role: data.conversation.role,
+    transcriptPath: data.conversation.transcriptPath,
+    agentBackend: data.conversation.agentBackend,
+    backendRef: data.conversation.backendRef,
+    promptCount: data.conversation.promptCount,
+    debugMode: data.conversation.debugMode,
   });
 }
 

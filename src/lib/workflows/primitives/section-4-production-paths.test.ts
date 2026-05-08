@@ -175,13 +175,13 @@ describe("section 4 production paths — migrated publishers go through the shar
 
     const previousExecution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
     });
 
     const nextExecution = createWorkflowExecution({
       ...previousExecution,
       status: "completed",
-      activeContextId: null,
+      activeContextIds: [],
     });
 
     publisher.publishExecutionUpdate({

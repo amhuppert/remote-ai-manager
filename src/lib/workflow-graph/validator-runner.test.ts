@@ -162,7 +162,7 @@ function buildExecutionWithContextValidation(
 
   return createWorkflowExecution({
     status: "running",
-    activeContextId: "context-plan",
+    activeContextIds: ["context-plan"],
     workingDefinition: definition,
     contextStates: {
       ...createWorkflowExecution().contextStates,
@@ -667,11 +667,22 @@ describe("context validator continuity runtime integration", () => {
   function createInMemoryRepo(initial: GraphWorkflowExecution) {
     let state = initial;
     return {
-      async update(_p: string, _s: string, exec: GraphWorkflowExecution) {
-        state = exec;
+      async mutateActive(
+        _p: string,
+        _s: string,
+        fn: (
+          execution: GraphWorkflowExecution,
+        ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+      ): Promise<GraphWorkflowExecution> {
+        const next = await fn(structuredClone(state));
+        state = next;
+        return next;
       },
       read(): GraphWorkflowExecution {
         return state;
+      },
+      write(exec: GraphWorkflowExecution) {
+        state = exec;
       },
     };
   }
@@ -726,7 +737,9 @@ describe("context validator continuity runtime integration", () => {
       sessionId: "sdk-session-1",
     });
     expect(createConversation).toHaveBeenCalledOnce();
-    expect(repo.read().laneStates["context_validator"]?.engine).toBe("claude");
+    expect(
+      repo.read().laneStates["context-plan"]?.["context_validator"]?.engine,
+    ).toBe("claude");
 
     const result2 = await runner.runContextValidator({
       projectPath: "/repo",
@@ -806,7 +819,7 @@ describe("context validator continuity runtime integration", () => {
     const deserialized = graphWorkflowExecutionSchema.parse(
       JSON.parse(JSON.stringify(repo.read())),
     );
-    await repo.update("/repo", "session-1", deserialized);
+    repo.write(deserialized);
 
     const result2 = await runner.runContextValidator({
       projectPath: "/repo",
@@ -877,8 +890,85 @@ describe("context validator continuity runtime integration", () => {
       expect(result.result.engine).toBe("codex");
     }
     expect(
-      repo.read().laneStates["context_validator"]?.rotateBeforeNextTurn,
+      repo.read().laneStates["context-plan"]?.["context_validator"]
+        ?.rotateBeforeNextTurn,
     ).toBe(true);
+  });
+});
+
+describe("validator-runner executionTarget override", () => {
+  it("uses executionTarget.worktreePath as the working directory when provided, ignoring resolveWorktreePath", async () => {
+    const agentResponse = JSON.stringify({
+      summary: "All good",
+      issues: [],
+    });
+
+    const claudeRun = vi.fn(async () => taskResult(agentResponse));
+    const resolveWorktreePath = vi.fn(async () => "/session-worktree");
+    const runner = createValidatorRunner({
+      getTaskRunner: mockGetTaskRunner(claudeRun),
+      resolveWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+      executionTarget: {
+        worktreePath: "/repo/.worktrees/session-1.context-plan",
+        branchName: "csm/session-1-context-plan",
+        isolation: "worktree",
+      },
+    });
+
+    expect(claudeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workingDirectory: "/repo/.worktrees/session-1.context-plan",
+      }),
+    );
+    expect(resolveWorktreePath).not.toHaveBeenCalled();
+    expect(result.result.kind).toBe("pass");
+  });
+
+  it("falls back to resolveWorktreePath when no executionTarget is provided", async () => {
+    const agentResponse = JSON.stringify({
+      summary: "All good",
+      issues: [],
+    });
+
+    const claudeRun = vi.fn(async () => taskResult(agentResponse));
+    const resolveWorktreePath = vi.fn(async () => "/session-worktree");
+    const runner = createValidatorRunner({
+      getTaskRunner: mockGetTaskRunner(claudeRun),
+      resolveWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+
+    await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+    });
+
+    expect(resolveWorktreePath).toHaveBeenCalledWith("/repo", "session-1");
+    expect(claudeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ workingDirectory: "/session-worktree" }),
+    );
   });
 });
 

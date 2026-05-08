@@ -52,7 +52,7 @@ export interface ResolveConflictsNotification extends ServerNotificationBase {
 export interface GraphWorkflowNotification extends BaseNotification {
   type: "graph-workflow";
   status: string;
-  activeContextTitle: string | null;
+  activeContextTitles: string[];
   completedContexts: number;
   totalContexts: number;
 }
@@ -165,7 +165,9 @@ function getItemTitle(item: NotificationItem): string {
     case "resolve-conflicts":
       return `Resolve conflicts on ${item.branchName}`;
     case "graph-workflow":
-      return item.activeContextTitle ?? "Graph Workflow";
+      return item.activeContextTitles.length > 0
+        ? item.activeContextTitles.join(" + ")
+        : "Graph Workflow";
     default:
       return assertNever(item);
   }

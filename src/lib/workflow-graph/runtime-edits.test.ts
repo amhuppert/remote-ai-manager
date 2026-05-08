@@ -14,7 +14,7 @@ describe("graph workflow runtime edit service", () => {
     });
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
           contextId: "context-plan",
@@ -23,6 +23,13 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
         "context-implement": {
           contextId: "context-implement",
@@ -31,6 +38,13 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
         "context-verify": {
           contextId: "context-verify",
@@ -39,6 +53,13 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });
@@ -81,7 +102,7 @@ describe("graph workflow runtime edit service", () => {
     const service = createGraphWorkflowRuntimeEditService();
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
           contextId: "context-plan",
@@ -90,6 +111,13 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
         "context-implement": {
           contextId: "context-implement",
@@ -98,6 +126,13 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
         "context-verify": {
           contextId: "context-verify",
@@ -106,6 +141,13 @@ describe("graph workflow runtime edit service", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });

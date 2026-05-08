@@ -131,7 +131,7 @@ function makeGraphWorkflowExecution(
       ],
     },
     status: "running",
-    activeContextId: "ctx-1",
+    activeContextIds: ["ctx-1"],
     contextStates: {
       "ctx-1": {
         contextId: "ctx-1",
@@ -140,6 +140,13 @@ function makeGraphWorkflowExecution(
         completedTaskCount: 1,
         iterationCount: 2,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "ctx-2": {
         contextId: "ctx-2",
@@ -148,6 +155,13 @@ function makeGraphWorkflowExecution(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {
@@ -195,6 +209,7 @@ function makeGraphWorkflowExecution(
     startedAt: "2026-03-28T10:00:00Z",
     completedAt: null,
     haltReason: null,
+    pendingHaltReason: null,
     ...overrides,
   } as GraphWorkflowExecution;
 }

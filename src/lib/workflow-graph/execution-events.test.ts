@@ -14,7 +14,7 @@ describe("graph workflow execution event publisher", () => {
 
     const previousExecution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
           contextId: "context-plan",
@@ -23,6 +23,13 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
         "context-implement": {
           contextId: "context-implement",
@@ -31,6 +38,13 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
         "context-verify": {
           contextId: "context-verify",
@@ -39,6 +53,13 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
       taskStates: {
@@ -84,7 +105,7 @@ describe("graph workflow execution event publisher", () => {
     const nextExecution = createWorkflowExecution({
       ...previousExecution,
       status: "halted",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       haltReason: {
         type: "circuit_breaker",
         contextId: "context-plan",
@@ -161,7 +182,7 @@ describe("graph workflow execution event publisher", () => {
 
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
     });
 
     const updatedExecution = publisher.publishValidationResult({
@@ -213,7 +234,7 @@ describe("graph workflow execution event publisher", () => {
 
     const previousExecution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       taskStates: {
         "task-plan-1": {
           taskId: "task-plan-1",
@@ -384,7 +405,7 @@ describe("graph workflow execution event publisher", () => {
 
     const prev = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
           contextId: "context-plan",
@@ -393,6 +414,13 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
         "context-implement": {
           contextId: "context-implement",
@@ -401,6 +429,13 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
         "context-verify": {
           contextId: "context-verify",
@@ -409,6 +444,13 @@ describe("graph workflow execution event publisher", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
         },
       },
     });
@@ -438,6 +480,198 @@ describe("graph workflow execution event publisher", () => {
       contextTitle: "Plan",
       completedContexts: 1,
       totalContexts: 3,
+    });
+  });
+
+  it("emits status, batch-scheduled, and merge-status events for two simultaneously active contexts", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-03-28T10:10:00.000Z",
+    });
+
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: [],
+    });
+
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      activeContextIds: ["context-implement", "context-verify"],
+      contextStates: {
+        ...previousExecution.contextStates,
+        "context-implement": {
+          ...previousExecution.contextStates["context-implement"]!,
+          status: "running",
+          isolation: "worktree",
+          worktreePath: "/repo/.worktrees/session-1.context-implement",
+          branchName: "csm/session-1-context-implement",
+          batchId: "batch-7",
+          mergeStatus: "pending",
+          cleanupStatus: "pending",
+        },
+        "context-verify": {
+          ...previousExecution.contextStates["context-verify"]!,
+          status: "running",
+          isolation: "worktree",
+          worktreePath: "/repo/.worktrees/session-1.context-verify",
+          branchName: "csm/session-1-context-verify",
+          batchId: "batch-7",
+          mergeStatus: "pending",
+          cleanupStatus: "pending",
+        },
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const eventTypes = broadcast.mock.calls.map(([event]) => event.type);
+    expect(eventTypes).toContain("graph-workflow-status");
+    expect(eventTypes).toContain("graph-workflow-batch-scheduled");
+    expect(
+      eventTypes.filter((t) => t === "graph-workflow-merge-status"),
+    ).toHaveLength(2);
+
+    const statusEvent = broadcast.mock.calls.find(
+      ([event]) => event.type === "graph-workflow-status",
+    )?.[0];
+    expect(statusEvent).toMatchObject({
+      activeContextIds: ["context-implement", "context-verify"],
+      activeBatchIds: ["batch-7"],
+      pendingHaltReason: null,
+    });
+
+    const batchEvent = broadcast.mock.calls.find(
+      ([event]) => event.type === "graph-workflow-batch-scheduled",
+    )?.[0];
+    expect(batchEvent).toMatchObject({
+      batchId: "batch-7",
+      contextIds: ["context-implement", "context-verify"],
+    });
+
+    const mergeEvents = broadcast.mock.calls
+      .map(([event]) => event)
+      .filter((e) => e.type === "graph-workflow-merge-status");
+    expect(mergeEvents.map((e) => e.contextId)).toEqual([
+      "context-implement",
+      "context-verify",
+    ]);
+    for (const evt of mergeEvents) {
+      expect(evt).toMatchObject({
+        mergeStatus: "pending",
+        cleanupStatus: "pending",
+      });
+    }
+  });
+
+  it("orders batch-scheduled contextIds and merge-status events by activeContextIds, not definition order", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-03-28T10:12:00.000Z",
+    });
+
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: [],
+    });
+
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      activeContextIds: ["context-verify", "context-implement"],
+      contextStates: {
+        ...previousExecution.contextStates,
+        "context-implement": {
+          ...previousExecution.contextStates["context-implement"]!,
+          status: "running",
+          isolation: "worktree",
+          worktreePath: "/repo/.worktrees/session-1.context-implement",
+          branchName: "csm/session-1-context-implement",
+          batchId: "batch-9",
+          mergeStatus: "in-progress",
+          cleanupStatus: "pending",
+        },
+        "context-verify": {
+          ...previousExecution.contextStates["context-verify"]!,
+          status: "running",
+          isolation: "worktree",
+          worktreePath: "/repo/.worktrees/session-1.context-verify",
+          branchName: "csm/session-1-context-verify",
+          batchId: "batch-9",
+          mergeStatus: "pending",
+          cleanupStatus: "pending",
+        },
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const batchEvent = broadcast.mock.calls.find(
+      ([event]) => event.type === "graph-workflow-batch-scheduled",
+    )?.[0];
+    expect(batchEvent.contextIds).toEqual([
+      "context-verify",
+      "context-implement",
+    ]);
+
+    const mergeContextIdsInOrder = broadcast.mock.calls
+      .map(([event]) => event)
+      .filter((e) => e.type === "graph-workflow-merge-status")
+      .map((e) => e.contextId);
+    expect(mergeContextIdsInOrder).toEqual([
+      "context-verify",
+      "context-implement",
+    ]);
+  });
+
+  it("emits a graph-workflow-pending-halt-reason event when pendingHaltReason changes", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-03-28T10:11:00.000Z",
+    });
+
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+      pendingHaltReason: null,
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      pendingHaltReason: {
+        type: "circuit_breaker",
+        contextId: "context-plan",
+        condition: "retry_exhaustion",
+        summary: null,
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const pendingEvent = broadcast.mock.calls.find(
+      ([event]) => event.type === "graph-workflow-pending-halt-reason",
+    )?.[0];
+    expect(pendingEvent).toMatchObject({
+      type: "graph-workflow-pending-halt-reason",
+      pendingHaltReason: {
+        type: "circuit_breaker",
+        contextId: "context-plan",
+      },
     });
   });
 

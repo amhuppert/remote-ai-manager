@@ -415,6 +415,20 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
       throw err;
     }
 
+    // No-op detection: if the feature branch is identical to the merge target,
+    // `git merge --squash` succeeds but stages nothing. Attempting to `git
+    // commit` would then fail with "nothing to commit, working tree clean".
+    // Treat this as a successful no-op merge.
+    const { stdout: stagedOut } = await git(mergePath, [
+      "diff",
+      "--cached",
+      "--name-only",
+    ]);
+    if (stagedOut.trim().length === 0) {
+      logger.info("git.merge.noop", { mergePath, branchName, targetBranch });
+      return { mergeHash: "" };
+    }
+
     // Commit the squash merge
     let commitOutput: string;
     try {

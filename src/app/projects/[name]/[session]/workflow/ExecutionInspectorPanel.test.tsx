@@ -631,7 +631,7 @@ describe("ExecutionInspectorPanel — shared implementer session task history", 
     const sharedConvId = "conv-impl-shared";
     const execution = createWorkflowExecution({
       workingDefinition: definition,
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       taskStates: {
         "task-plan-1": {
           taskId: "task-plan-1",
@@ -715,7 +715,7 @@ describe("ExecutionInspectorPanel — live implementer viewing", () => {
     const onViewTask = vi.fn();
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       taskStates: {
         "task-plan-1": {
           taskId: "task-plan-1",
@@ -781,7 +781,7 @@ describe("ExecutionInspectorPanel — task editability", () => {
     const baseExecution = createWorkflowExecution();
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       taskStates: {
         ...baseExecution.taskStates,
         "task-plan-1": {
@@ -814,7 +814,7 @@ describe("ExecutionInspectorPanel — task editability", () => {
     const baseExecution = createWorkflowExecution();
     const execution = createWorkflowExecution({
       status: "running",
-      activeContextId: "context-plan",
+      activeContextIds: ["context-plan"],
       taskStates: {
         ...baseExecution.taskStates,
         "task-plan-1": {

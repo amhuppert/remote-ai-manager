@@ -83,7 +83,9 @@ export default function UnifiedPanel(): React.JSX.Element | null {
                       />
                       <div className="unified-panel-item-body">
                         <div className="unified-panel-item-name">
-                          {gw.activeContextTitle ?? "Graph Workflow"}
+                          {gw.activeContextTitles.length > 0
+                            ? gw.activeContextTitles.join(" + ")
+                            : "Graph Workflow"}
                         </div>
                         <div className="unified-panel-item-meta">
                           {gw.projectName} / {gw.sessionName}

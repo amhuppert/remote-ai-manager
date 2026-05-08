@@ -272,8 +272,10 @@ describe("publishScopedStatus", () => {
         sessionName: "s",
         executionId: "exec-1",
         workflowStatus: "running",
-        activeContextId: null,
+        activeContextIds: [],
+        activeBatchIds: [],
         haltReason: null,
+        pendingHaltReason: null,
       },
       {
         type: "graph-workflow-task-status",

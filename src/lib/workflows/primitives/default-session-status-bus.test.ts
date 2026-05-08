@@ -90,8 +90,10 @@ describe("default session status bus", () => {
         sessionName: "s",
         executionId: "exec-1",
         workflowStatus: "running",
-        activeContextId: null,
+        activeContextIds: [],
+        activeBatchIds: [],
         haltReason: null,
+        pendingHaltReason: null,
       },
       {
         type: "job-status",
@@ -206,8 +208,10 @@ describe("publishScopedStatusEvent", () => {
       sessionName: "s",
       executionId: "exec-1",
       workflowStatus: "running",
-      activeContextId: null,
+      activeContextIds: [],
+      activeBatchIds: [],
       haltReason: null,
+      pendingHaltReason: null,
     });
     publishSessionStatus({
       type: "job-status",

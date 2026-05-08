@@ -134,7 +134,7 @@ describe("graph workflow execution route handlers", () => {
       makeSession({
         graphWorkflowExecution: createWorkflowExecution({
           status: "paused",
-          activeContextId: "context-plan",
+          activeContextIds: ["context-plan"],
           taskStates: {
             "task-plan-1": {
               taskId: "task-plan-1",
@@ -178,9 +178,12 @@ describe("graph workflow execution route handlers", () => {
         status: "paused",
         startedAt: "2026-03-27T12:00:00.000Z",
         completedAt: null,
-        activeContextId: "context-plan",
-        activeContextTitle: "Plan",
+        activeContextIds: ["context-plan"],
+        activeContextTitles: ["Plan"],
+        activeBatchIds: [],
         haltReason: null,
+        pendingHaltReason: null,
+        contextMergeProgress: [],
         archived: false,
       },
       archivedExecutions: [
@@ -191,13 +194,159 @@ describe("graph workflow execution route handlers", () => {
           status: "aborted",
           startedAt: "2026-03-27T12:00:00.000Z",
           completedAt: "2026-03-27T11:00:00.000Z",
-          activeContextId: null,
-          activeContextTitle: null,
+          activeContextIds: [],
+          activeContextTitles: [],
+          activeBatchIds: [],
           haltReason: { type: "aborted" },
+          pendingHaltReason: null,
+          contextMergeProgress: [],
           archived: true,
         },
       ],
     });
+  });
+
+  it("orders contextMergeProgress by activeContextIds, not workflow definition order", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    const baseExecution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-verify", "context-plan"],
+    });
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: {
+          ...baseExecution,
+          contextStates: {
+            ...baseExecution.contextStates,
+            "context-plan": {
+              ...baseExecution.contextStates["context-plan"]!,
+              status: "running",
+              isolation: "worktree",
+              branchName: "csm/session-1-context-plan",
+              batchId: "batch-9",
+              mergeStatus: "in-progress",
+              cleanupStatus: "pending",
+              lastMergeError: null,
+            },
+            "context-verify": {
+              ...baseExecution.contextStates["context-verify"]!,
+              status: "running",
+              isolation: "worktree",
+              branchName: "csm/session-1-context-verify",
+              batchId: "batch-9",
+              mergeStatus: "pending",
+              cleanupStatus: "pending",
+              lastMergeError: null,
+            },
+          },
+        },
+      }),
+    );
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+
+    const response = await handlers.STATUS(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "GET",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as {
+      execution: {
+        contextMergeProgress: Array<{ contextId: string }>;
+      };
+    };
+    expect(json.execution.contextMergeProgress.map((m) => m.contextId)).toEqual(
+      ["context-verify", "context-plan"],
+    );
+  });
+
+  it("summarizes two simultaneously active contexts with mixed merge progress", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    const baseExecution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan", "context-implement"],
+    });
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: {
+          ...baseExecution,
+          contextStates: {
+            ...baseExecution.contextStates,
+            "context-plan": {
+              ...baseExecution.contextStates["context-plan"]!,
+              status: "running",
+              isolation: "worktree",
+              worktreePath: "/repo/.worktrees/session-1.context-plan",
+              branchName: "csm/session-1-context-plan",
+              batchId: "batch-1",
+              mergeStatus: "in-progress",
+              cleanupStatus: "pending",
+              lastMergeError: null,
+            },
+            "context-implement": {
+              ...baseExecution.contextStates["context-implement"]!,
+              status: "running",
+              isolation: "worktree",
+              worktreePath: "/repo/.worktrees/session-1.context-implement",
+              branchName: "csm/session-1-context-implement",
+              batchId: "batch-1",
+              mergeStatus: "merged-success",
+              cleanupStatus: "removed",
+              lastMergeError: null,
+            },
+          },
+        },
+      }),
+    );
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+
+    const response = await handlers.STATUS(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "GET",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as {
+      execution: {
+        activeContextIds: string[];
+        activeContextTitles: string[];
+        activeBatchIds: string[];
+        contextMergeProgress: Array<{
+          contextId: string;
+          mergeStatus: string;
+          cleanupStatus: string;
+          branchName: string | null;
+        }>;
+      };
+    };
+    expect(json.execution.activeContextIds).toEqual([
+      "context-plan",
+      "context-implement",
+    ]);
+    expect(json.execution.activeContextTitles).toEqual(["Plan", "Implement"]);
+    expect(json.execution.activeBatchIds).toEqual(["batch-1"]);
+    expect(json.execution.contextMergeProgress).toEqual([
+      {
+        contextId: "context-plan",
+        branchName: "csm/session-1-context-plan",
+        mergeStatus: "in-progress",
+        cleanupStatus: "pending",
+        lastMergeError: null,
+      },
+      {
+        contextId: "context-implement",
+        branchName: "csm/session-1-context-implement",
+        mergeStatus: "merged-success",
+        cleanupStatus: "removed",
+        lastMergeError: null,
+      },
+    ]);
   });
 
   it("normalizes an in-flight iteration before returning status", async () => {
@@ -206,7 +355,7 @@ describe("graph workflow execution route handlers", () => {
       makeSession({
         graphWorkflowExecution: createWorkflowExecution({
           status: "running",
-          activeContextId: "context-plan",
+          activeContextIds: ["context-plan"],
           taskStates: {
             "task-plan-1": {
               taskId: "task-plan-1",
@@ -234,7 +383,7 @@ describe("graph workflow execution route handlers", () => {
     normalizeExecutionAfterRestart.mockResolvedValue(
       createWorkflowExecution({
         status: "paused",
-        activeContextId: "context-plan",
+        activeContextIds: ["context-plan"],
         taskStates: {
           "task-plan-1": {
             taskId: "task-plan-1",
@@ -286,7 +435,7 @@ describe("graph workflow execution route handlers", () => {
           id: "execution-halted",
           status: "halted",
           completedAt: "2026-03-27T13:30:00.000Z",
-          activeContextId: "context-plan",
+          activeContextIds: ["context-plan"],
           taskStates: {
             "task-plan-1": {
               taskId: "task-plan-1",
@@ -330,8 +479,9 @@ describe("graph workflow execution route handlers", () => {
           status: "halted",
           startedAt: "2026-03-27T12:00:00.000Z",
           completedAt: "2026-03-27T13:30:00.000Z",
-          activeContextId: "context-plan",
-          activeContextTitle: "Plan",
+          activeContextIds: ["context-plan"],
+          activeContextTitles: ["Plan"],
+          activeBatchIds: [],
           haltReason: {
             type: "circuit_breaker",
             contextId: "context-plan",
@@ -339,6 +489,8 @@ describe("graph workflow execution route handlers", () => {
             summary: "validator blocked completion",
             failureCount: 2,
           },
+          pendingHaltReason: null,
+          contextMergeProgress: [],
           archived: false,
         },
       ],
@@ -352,7 +504,7 @@ describe("graph workflow execution route handlers", () => {
     pauseExecution.mockResolvedValue(
       createWorkflowExecution({
         status: "paused",
-        activeContextId: "context-plan",
+        activeContextIds: ["context-plan"],
         taskStates: {
           "task-plan-1": {
             taskId: "task-plan-1",
@@ -372,7 +524,7 @@ describe("graph workflow execution route handlers", () => {
     resumeExecution.mockResolvedValue(
       createWorkflowExecution({
         status: "running",
-        activeContextId: "context-plan",
+        activeContextIds: ["context-plan"],
         taskStates: {
           "task-plan-1": {
             taskId: "task-plan-1",
@@ -435,7 +587,7 @@ describe("graph workflow execution route handlers", () => {
     normalizeExecutionAfterRestart.mockResolvedValue(
       createWorkflowExecution({
         status: "paused",
-        activeContextId: "context-plan",
+        activeContextIds: ["context-plan"],
         taskStates: {
           "task-plan-1": {
             taskId: "task-plan-1",
@@ -455,7 +607,7 @@ describe("graph workflow execution route handlers", () => {
     resumeExecution.mockResolvedValue(
       createWorkflowExecution({
         status: "running",
-        activeContextId: "context-plan",
+        activeContextIds: ["context-plan"],
         taskStates: {
           "task-plan-1": {
             taskId: "task-plan-1",
@@ -493,7 +645,7 @@ describe("graph workflow execution route handlers", () => {
       sessionName: "session-1",
       execution: expect.objectContaining({
         status: "running",
-        activeContextId: "context-plan",
+        activeContextIds: ["context-plan"],
       }),
     });
   });
@@ -535,7 +687,7 @@ describe("graph workflow execution route handlers", () => {
         graphWorkflowExecution: createWorkflowExecution({
           id: "execution-reset",
           status: "paused",
-          activeContextId: "context-implement",
+          activeContextIds: ["context-implement"],
         }),
       }),
     );
@@ -543,7 +695,7 @@ describe("graph workflow execution route handlers", () => {
       createWorkflowExecution({
         id: "execution-reset",
         status: "paused",
-        activeContextId: null,
+        activeContextIds: [],
       }),
     );
 
@@ -567,7 +719,7 @@ describe("graph workflow execution route handlers", () => {
       execution: {
         executionId: "execution-reset",
         status: "paused",
-        activeContextId: null,
+        activeContextIds: [],
         archived: false,
       },
     });
@@ -776,7 +928,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
 
   return createWorkflowExecution({
     status: "running",
-    activeContextId: "context-codex",
+    activeContextIds: ["context-codex"],
     workingDefinition: definition,
     contextStates: {
       "context-codex": {
@@ -786,6 +938,13 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {
@@ -830,8 +989,10 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
         async getActive() {
           return activeExecution;
         },
-        async update(_p, _s, exec) {
-          activeExecution = exec;
+        async mutateActive(_p, _s, fn) {
+          const next = await fn(structuredClone(activeExecution));
+          activeExecution = next;
+          return next;
         },
       },
       createConversation: vi.fn(async () => ({ id: "conv-codex-1" })),
@@ -902,8 +1063,10 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
         async getActive() {
           return activeExecution;
         },
-        async update(_p, _s, exec) {
-          activeExecution = exec;
+        async mutateActive(_p, _s, fn) {
+          const next = await fn(structuredClone(activeExecution));
+          activeExecution = next;
+          return next;
         },
       },
       createConversation: vi.fn(async () => ({ id: "conv-codex-1" })),

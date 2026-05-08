@@ -328,11 +328,13 @@ export interface ValidatorContinuityService {
 }
 
 export interface ValidatorContinuityRepository {
-  update(
+  mutateActive(
     projectPath: string,
     sessionName: string,
-    execution: GraphWorkflowExecution,
-  ): Promise<void>;
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution>;
 }
 
 export interface ValidatorRunnerDeps {
@@ -516,12 +518,21 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     return agentCallResultToTaskResult(result);
   }
 
-  async function persistLaneState(
+  async function applyLaneStateUpdate(
     projectPath: string,
     sessionName: string,
-    updated: GraphWorkflowExecution,
-  ): Promise<void> {
-    await deps.executionRepository?.update(projectPath, sessionName, updated);
+    transform: (
+      latest: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution | null> {
+    if (!deps.executionRepository) {
+      return null;
+    }
+    return deps.executionRepository.mutateActive(
+      projectPath,
+      sessionName,
+      transform,
+    );
   }
 
   function buildNoServiceMetadata(): ValidatorExecutionMetadata {
@@ -535,12 +546,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
 
   function extractLaneMetadata(
     updatedExecution: GraphWorkflowExecution,
+    contextId: string,
     lane: GraphWorkflowLaneKind,
   ): {
     limitEvaluation: "disabled" | "supported" | "unsupported";
     rotateBeforeNextTurn: boolean;
   } {
-    const laneState = updatedExecution.laneStates[lane];
+    const laneState = updatedExecution.laneStates[contextId]?.[lane];
     if (!laneState) {
       return {
         limitEvaluation: "disabled",
@@ -557,6 +569,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     projectPath: string,
     sessionName: string,
     execution: GraphWorkflowExecution,
+    contextId: string,
     lane: "context_validator",
     validatorType: "claude" | "codex",
     prompt: string,
@@ -564,13 +577,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     reasoningEffort: string | undefined,
     contextLimitTokens: number | undefined,
     allowedTaskIds: string[],
+    overrideWorktreePath: string | undefined,
   ): Promise<ValidatorRunResult> {
-    const contextId = execution.activeContextId ?? "";
     const execLogger = getExecutionLogger(execution.id);
-    const worktreePath = await deps.resolveWorktreePath(
-      projectPath,
-      sessionName,
-    );
+    const worktreePath =
+      overrideWorktreePath ??
+      (await deps.resolveWorktreePath(projectPath, sessionName));
     const timeoutMs = await deps.resolveTimeoutMs(validatorType);
 
     execLogger?.validation(contextId, "validator.invoked", {
@@ -650,6 +662,25 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       engine: validatorType,
     });
 
+    const resolvedLaneState =
+      resolved.execution.laneStates[contextId]?.[lane] ?? null;
+
+    function applyResolvedLaneState(
+      target: GraphWorkflowExecution,
+    ): GraphWorkflowExecution {
+      if (!resolvedLaneState) return target;
+      return {
+        ...target,
+        laneStates: {
+          ...target.laneStates,
+          [contextId]: {
+            ...target.laneStates[contextId],
+            [lane]: resolvedLaneState,
+          },
+        },
+      };
+    }
+
     const resumeRef = resolvedCallToResumeRef(resolved, execution.id, lane);
     const taskResult = await dispatchValidatorTurn({
       prompt,
@@ -701,19 +732,26 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           }
         : null;
 
-      const updatedExecution =
-        await deps.continuityService.recordCodexTurnOutcome({
-          execution: resolved.execution,
-          lane,
-          usage,
-          contextLimitTokens,
-          newThreadId,
-          failed: runnerError != null,
-        });
-      await persistLaneState(projectPath, sessionName, updatedExecution);
+      const continuityService = deps.continuityService;
+      const persistedExecution = await applyLaneStateUpdate(
+        projectPath,
+        sessionName,
+        async (latest) =>
+          continuityService.recordCodexTurnOutcome({
+            execution: applyResolvedLaneState(latest),
+            contextId,
+            lane,
+            usage,
+            contextLimitTokens,
+            newThreadId,
+            failed: runnerError != null,
+          }),
+      );
+      const updatedExecution = persistedExecution ?? execution;
 
       const { limitEvaluation, rotateBeforeNextTurn } = extractLaneMetadata(
         updatedExecution,
+        contextId,
         lane,
       );
 
@@ -754,18 +792,25 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       };
     }
 
-    const updatedExecution =
-      await deps.continuityService.recordClaudeTurnOutcome({
-        execution: resolved.execution,
-        lane,
-        contextTokens: null,
-        contextWindowMax: null,
-        contextLimitTokens,
-      });
-    await persistLaneState(projectPath, sessionName, updatedExecution);
+    const continuityService = deps.continuityService;
+    const persistedExecution = await applyLaneStateUpdate(
+      projectPath,
+      sessionName,
+      async (latest) =>
+        continuityService.recordClaudeTurnOutcome({
+          execution: applyResolvedLaneState(latest),
+          contextId,
+          lane,
+          contextTokens: null,
+          contextWindowMax: null,
+          contextLimitTokens,
+        }),
+    );
+    const updatedExecution = persistedExecution ?? execution;
 
     const { limitEvaluation, rotateBeforeNextTurn } = extractLaneMetadata(
       updatedExecution,
+      contextId,
       lane,
     );
 
@@ -830,12 +875,15 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const contextLimitTokens = input.validator.continuity.contextLimitTokens;
     const allowedTaskIds = getContextTaskIds(input.execution, input.context.id);
 
+    const overrideWorktreePath = input.executionTarget?.worktreePath;
+
     try {
       if (input.validator.type === "codex") {
         return await runValidatorTurn(
           input.projectPath,
           input.sessionName,
           input.execution,
+          input.context.id,
           "context_validator",
           "codex",
           prompt,
@@ -843,6 +891,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           input.validator.codex.reasoningEffort,
           contextLimitTokens,
           allowedTaskIds,
+          overrideWorktreePath,
         );
       }
 
@@ -850,6 +899,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         input.projectPath,
         input.sessionName,
         input.execution,
+        input.context.id,
         "context_validator",
         "claude",
         prompt,
@@ -857,6 +907,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         input.validator.agent.reasoningEffort,
         contextLimitTokens,
         allowedTaskIds,
+        overrideWorktreePath,
       );
     } catch (error) {
       const errorMessage =

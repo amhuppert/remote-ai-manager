@@ -51,7 +51,7 @@ export const Running: Story = {
   args: {
     execution: createWorkflowExecution({
       status: "running",
-      activeContextId: "context-implement",
+      activeContextIds: ["context-implement"],
       taskStates: {
         "task-plan-1": completedTask("task-plan-1", "context-plan", 1),
         "task-implement-1": {
@@ -112,7 +112,7 @@ export const Paused: Story = {
   args: {
     execution: createWorkflowExecution({
       status: "paused",
-      activeContextId: "context-implement",
+      activeContextIds: ["context-implement"],
       taskStates: {
         "task-plan-1": completedTask("task-plan-1", "context-plan", 1),
         "task-implement-1": {

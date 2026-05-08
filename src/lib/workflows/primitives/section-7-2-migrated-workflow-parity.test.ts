@@ -85,7 +85,7 @@ function executionWith(
 ): GraphWorkflowExecution {
   return createWorkflowExecution({
     status,
-    activeContextId: status === "running" ? "context-plan" : null,
+    activeContextIds: status === "running" ? ["context-plan"] : [],
   });
 }
 

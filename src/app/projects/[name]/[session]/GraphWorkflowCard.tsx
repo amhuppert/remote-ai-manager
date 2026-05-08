@@ -80,9 +80,10 @@ export function ExecutionStatusCard({
   const status = execution.status;
   const statusColor = getStatusColor(status);
   const progress = computeProgress(execution);
-  const activeContext = execution.activeContextId
+  const activeContextId = execution.activeContextIds[0];
+  const activeContext = activeContextId
     ? execution.workingDefinition.executionContexts.find(
-        (c) => c.id === execution.activeContextId,
+        (c) => c.id === activeContextId,
       )
     : null;
 

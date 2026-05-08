@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ConversationState, SessionState } from "@/types";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
+import type { ExecutionTarget } from "./execution-target-resolver";
 
 function makeSession(overrides: Partial<SessionState> = {}): SessionState {
   return {
@@ -270,6 +271,90 @@ describe("graph workflow implementer runner", () => {
         text: "Codex output",
       },
     });
+  });
+
+  it("forwards executionTarget through executePromptStream options when provided", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    const executionTarget: ExecutionTarget = {
+      worktreePath: "/repo/.worktrees/session-1.context-plan",
+      branchName: "csm/session-1-context-plan",
+      isolation: "worktree",
+    };
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Inspect the codebase",
+      conversationId: "conversation-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+      executionTarget,
+    });
+
+    expect(executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ sessionName: "session-1" }),
+      "Inspect the codebase",
+      expect.any(Function),
+      "conversation-1",
+      "opus",
+      undefined,
+      expect.objectContaining({
+        executionTarget,
+      }),
+    );
+  });
+
+  it("does not forward an executionTarget when none is provided (solo flow)", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Inspect the codebase",
+      conversationId: "conversation-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+    });
+
+    expect(executePromptStream).toHaveBeenCalledTimes(1);
+    expect(executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ sessionName: "session-1" }),
+      "Inspect the codebase",
+      expect.any(Function),
+      "conversation-1",
+      "opus",
+      undefined,
+      expect.not.objectContaining({ executionTarget: expect.anything() }),
+    );
   });
 
   it("throws when prompt execution returns an SDK error", async () => {

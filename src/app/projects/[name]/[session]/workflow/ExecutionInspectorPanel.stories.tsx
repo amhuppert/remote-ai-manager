@@ -152,7 +152,7 @@ const createUserSchema = z.object({
       ],
     },
     status: "running",
-    activeContextId: "ctx-1",
+    activeContextIds: ["ctx-1"],
     contextStates: {
       "ctx-1": {
         contextId: "ctx-1",
@@ -161,6 +161,13 @@ const createUserSchema = z.object({
         completedTaskCount: 1,
         iterationCount: 2,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "ctx-2": {
         contextId: "ctx-2",
@@ -169,6 +176,13 @@ const createUserSchema = z.object({
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "ctx-3": {
         contextId: "ctx-3",
@@ -177,6 +191,13 @@ const createUserSchema = z.object({
         completedTaskCount: 1,
         iterationCount: 1,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {
@@ -313,6 +334,7 @@ const createUserSchema = z.object({
     startedAt: "2026-03-30T09:00:00Z",
     completedAt: null,
     haltReason: null,
+    pendingHaltReason: null,
     ...overrides,
   };
 }
@@ -320,7 +342,7 @@ const createUserSchema = z.object({
 function makeHaltedExecution(): GraphWorkflowExecution {
   return makeExecution({
     status: "halted",
-    activeContextId: null,
+    activeContextIds: [],
     haltReason: {
       type: "circuit_breaker",
       contextId: "ctx-1",
@@ -336,6 +358,13 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         completedTaskCount: 1,
         iterationCount: 3,
         consecutiveFailureCount: 3,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "ctx-2": {
         contextId: "ctx-2",
@@ -344,6 +373,13 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "ctx-3": {
         contextId: "ctx-3",
@@ -352,6 +388,13 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         completedTaskCount: 1,
         iterationCount: 1,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {

@@ -47,8 +47,10 @@ function makeHistoryEvent(
         sessionName: "s",
         executionId: "execution-1",
         workflowStatus: "running",
-        activeContextId: contextId,
+        activeContextIds: contextId ? [contextId] : [],
+        activeBatchIds: [],
         haltReason: null,
+        pendingHaltReason: null,
       },
     };
   }
@@ -90,7 +92,7 @@ function buildExecution(
 ): GraphWorkflowExecution {
   return createWorkflowExecution({
     status: "paused",
-    activeContextId: "context-implement",
+    activeContextIds: ["context-implement"],
     contextStates: {
       "context-plan": {
         contextId: "context-plan",
@@ -99,6 +101,13 @@ function buildExecution(
         completedTaskCount: 1,
         iterationCount: 2,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "context-implement": {
         contextId: "context-implement",
@@ -107,6 +116,13 @@ function buildExecution(
         completedTaskCount: 1,
         iterationCount: 3,
         consecutiveFailureCount: 2,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
       "context-verify": {
         contextId: "context-verify",
@@ -115,6 +131,13 @@ function buildExecution(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
       },
     },
     taskStates: {
@@ -156,11 +179,13 @@ function buildExecution(
       },
     },
     laneStates: {
-      implementer: makeLaneState("context-implement", "implementer"),
-      context_validator: makeLaneState(
-        "context-implement",
-        "context_validator",
-      ),
+      "context-implement": {
+        implementer: makeLaneState("context-implement", "implementer"),
+        context_validator: makeLaneState(
+          "context-implement",
+          "context_validator",
+        ),
+      },
     },
     haltReason: null,
     completedAt: null,
@@ -189,6 +214,13 @@ describe("resetExecutionContext", () => {
       completedTaskCount: 0,
       iterationCount: 0,
       consecutiveFailureCount: 0,
+      worktreePath: null,
+      branchName: null,
+      isolation: "session",
+      batchId: null,
+      mergeStatus: "not-applicable",
+      cleanupStatus: "not-applicable",
+      lastMergeError: null,
     });
     expect(next.taskStates["task-implement-1"]).toEqual({
       taskId: "task-implement-1",
@@ -226,16 +258,20 @@ describe("resetExecutionContext", () => {
   it("clears lane continuity only for the target context", () => {
     const execution = buildExecution({
       laneStates: {
-        implementer: makeLaneState("context-implement", "implementer"),
-        context_validator: makeLaneState("context-plan", "context_validator"),
+        "context-implement": {
+          implementer: makeLaneState("context-implement", "implementer"),
+        },
+        "context-plan": {
+          context_validator: makeLaneState("context-plan", "context_validator"),
+        },
       },
     });
 
     const next = resetExecutionContext(execution, "context-implement");
 
-    expect(next.laneStates.implementer).toBeUndefined();
-    expect(next.laneStates.context_validator).toEqual(
-      execution.laneStates.context_validator,
+    expect(next.laneStates["context-implement"]).toBeUndefined();
+    expect(next.laneStates["context-plan"]?.["context_validator"]).toEqual(
+      execution.laneStates["context-plan"]?.["context_validator"],
     );
   });
 
@@ -293,22 +329,22 @@ describe("resetExecutionContext", () => {
 
   it("clears activeContextId unconditionally so the workflow has no active iteration", () => {
     const hit = resetExecutionContext(
-      buildExecution({ activeContextId: "context-implement" }),
+      buildExecution({ activeContextIds: ["context-implement"] }),
       "context-implement",
     );
-    expect(hit.activeContextId).toBeNull();
+    expect(hit.activeContextIds).toEqual([]);
 
     const miss = resetExecutionContext(
-      buildExecution({ activeContextId: "context-plan" }),
+      buildExecution({ activeContextIds: ["context-plan"] }),
       "context-implement",
     );
-    expect(miss.activeContextId).toBeNull();
+    expect(miss.activeContextIds).toEqual([]);
 
     const unset = resetExecutionContext(
-      buildExecution({ activeContextId: null }),
+      buildExecution({ activeContextIds: [] }),
       "context-implement",
     );
-    expect(unset.activeContextId).toBeNull();
+    expect(unset.activeContextIds).toEqual([]);
   });
 
   it("allows reset from both paused and halted statuses", () => {
@@ -351,7 +387,7 @@ describe("resetExecutionContext", () => {
     ).toThrow(/not found|unknown/i);
   });
 
-  it("marks graph-workflow-status history rows tied to the target context via activeContextId or haltReason", () => {
+  it("marks graph-workflow-status history rows tied to the target context via activeContextIds or haltReason", () => {
     const execution = buildExecution({
       history: [
         {
@@ -363,8 +399,10 @@ describe("resetExecutionContext", () => {
             sessionName: "s",
             executionId: "execution-1",
             workflowStatus: "running",
-            activeContextId: "context-implement",
+            activeContextIds: ["context-implement"],
+            activeBatchIds: [],
             haltReason: null,
+            pendingHaltReason: null,
           },
         },
         {
@@ -376,12 +414,14 @@ describe("resetExecutionContext", () => {
             sessionName: "s",
             executionId: "execution-1",
             workflowStatus: "halted",
-            activeContextId: null,
+            activeContextIds: [],
+            activeBatchIds: [],
             haltReason: {
               type: "max_iterations",
               contextId: "context-implement",
               iterationCount: 3,
             },
+            pendingHaltReason: null,
           },
         },
         {
@@ -393,8 +433,10 @@ describe("resetExecutionContext", () => {
             sessionName: "s",
             executionId: "execution-1",
             workflowStatus: "running",
-            activeContextId: "context-plan",
+            activeContextIds: ["context-plan"],
+            activeBatchIds: [],
             haltReason: null,
+            pendingHaltReason: null,
           },
         },
       ],

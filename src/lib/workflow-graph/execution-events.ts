@@ -1,10 +1,14 @@
 import path from "node:path";
 import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
 import type {
+  GraphWorkflowBatchScheduledEvent,
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowExecution,
+  GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionEvent,
   GraphWorkflowExecutionSessionRef,
+  GraphWorkflowMergeStatusEvent,
+  GraphWorkflowPendingHaltReasonEvent,
   GraphWorkflowSSEEvent,
   GraphWorkflowSharedDocumentsUpdatedEvent,
   GraphWorkflowStatusEvent,
@@ -94,6 +98,55 @@ function getProjectName(projectPath: string): string {
 function getTaskSource(execution: GraphWorkflowExecution, taskId: string) {
   return execution.workingDefinition.tasks.find((task) => task.id === taskId)
     ?.source;
+}
+
+function orderContextIdsByActive(execution: GraphWorkflowExecution): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of execution.activeContextIds) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  for (const context of execution.workingDefinition.executionContexts) {
+    if (!seen.has(context.id)) {
+      seen.add(context.id);
+      out.push(context.id);
+    }
+  }
+  return out;
+}
+
+function deriveActiveBatchIds(execution: GraphWorkflowExecution): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const contextId of execution.activeContextIds) {
+    const batchId = execution.contextStates[contextId]?.batchId;
+    if (batchId && !seen.has(batchId)) {
+      seen.add(batchId);
+      out.push(batchId);
+    }
+  }
+  return out;
+}
+
+function mergeFieldsChanged(
+  previous: GraphWorkflowExecutionContextState | null,
+  next: GraphWorkflowExecutionContextState,
+): boolean {
+  if (!previous) {
+    return (
+      next.mergeStatus !== "not-applicable" ||
+      next.cleanupStatus !== "not-applicable" ||
+      next.lastMergeError !== null
+    );
+  }
+  return (
+    previous.mergeStatus !== next.mergeStatus ||
+    previous.cleanupStatus !== next.cleanupStatus ||
+    previous.lastMergeError !== next.lastMergeError
+  );
 }
 
 function appendEvents(
@@ -210,12 +263,22 @@ export function createGraphWorkflowExecutionEventPublisher(
     const nextExecution = input.nextExecution;
     const events: GraphWorkflowSSEEvent[] = [];
 
+    const nextActiveBatchIds = deriveActiveBatchIds(nextExecution);
+    const previousActiveBatchIds = previousExecution
+      ? deriveActiveBatchIds(previousExecution)
+      : [];
+
     if (
       !previousExecution ||
       previousExecution.status !== nextExecution.status ||
-      previousExecution.activeContextId !== nextExecution.activeContextId ||
+      JSON.stringify(previousExecution.activeContextIds) !==
+        JSON.stringify(nextExecution.activeContextIds) ||
+      JSON.stringify(previousActiveBatchIds) !==
+        JSON.stringify(nextActiveBatchIds) ||
       JSON.stringify(previousExecution.haltReason) !==
-        JSON.stringify(nextExecution.haltReason)
+        JSON.stringify(nextExecution.haltReason) ||
+      JSON.stringify(previousExecution.pendingHaltReason) !==
+        JSON.stringify(nextExecution.pendingHaltReason)
     ) {
       events.push({
         type: "graph-workflow-status",
@@ -223,9 +286,63 @@ export function createGraphWorkflowExecutionEventPublisher(
         sessionName: input.sessionName,
         executionId: nextExecution.id,
         workflowStatus: nextExecution.status,
-        activeContextId: nextExecution.activeContextId,
+        activeContextIds: [...nextExecution.activeContextIds],
+        activeBatchIds: nextActiveBatchIds,
         haltReason: nextExecution.haltReason,
+        pendingHaltReason: nextExecution.pendingHaltReason,
       } satisfies GraphWorkflowStatusEvent);
+    }
+
+    if (
+      !previousExecution ||
+      JSON.stringify(previousExecution.pendingHaltReason) !==
+        JSON.stringify(nextExecution.pendingHaltReason)
+    ) {
+      if (
+        nextExecution.pendingHaltReason !== null ||
+        previousExecution?.pendingHaltReason
+      ) {
+        events.push({
+          type: "graph-workflow-pending-halt-reason",
+          projectName,
+          sessionName: input.sessionName,
+          executionId: nextExecution.id,
+          pendingHaltReason: nextExecution.pendingHaltReason,
+        } satisfies GraphWorkflowPendingHaltReasonEvent);
+      }
+    }
+
+    const orderedContextIds = orderContextIdsByActive(nextExecution);
+
+    const newlyAssignedBatches = new Map<string, string[]>();
+    const batchOrder: string[] = [];
+    for (const contextId of orderedContextIds) {
+      const previousContext =
+        previousExecution?.contextStates[contextId] ?? null;
+      const nextContext = nextExecution.contextStates[contextId];
+      if (!nextContext) continue;
+      const nextBatchId = nextContext.batchId;
+      const previousBatchId = previousContext?.batchId ?? null;
+      if (nextBatchId && nextBatchId !== previousBatchId) {
+        if (!newlyAssignedBatches.has(nextBatchId)) {
+          batchOrder.push(nextBatchId);
+        }
+        const ids = newlyAssignedBatches.get(nextBatchId) ?? [];
+        ids.push(contextId);
+        newlyAssignedBatches.set(nextBatchId, ids);
+      }
+    }
+    for (const batchId of batchOrder) {
+      const contextIds = newlyAssignedBatches.get(batchId);
+      if (!contextIds) continue;
+      events.push({
+        type: "graph-workflow-batch-scheduled",
+        projectName,
+        sessionName: input.sessionName,
+        executionId: nextExecution.id,
+        batchId,
+        contextIds,
+      } satisfies GraphWorkflowBatchScheduledEvent);
     }
 
     for (const context of nextExecution.workingDefinition.executionContexts) {
@@ -315,6 +432,27 @@ export function createGraphWorkflowExecutionEventPublisher(
             0,
           summary: haltReason.summary ?? null,
         } satisfies GraphWorkflowCircuitBreakerEvent);
+      }
+    }
+
+    for (const contextId of orderedContextIds) {
+      const previousContext =
+        previousExecution?.contextStates[contextId] ?? null;
+      const nextContext = nextExecution.contextStates[contextId];
+      if (!nextContext) continue;
+
+      if (mergeFieldsChanged(previousContext, nextContext)) {
+        events.push({
+          type: "graph-workflow-merge-status",
+          projectName,
+          sessionName: input.sessionName,
+          executionId: nextExecution.id,
+          contextId,
+          branchName: nextContext.branchName,
+          mergeStatus: nextContext.mergeStatus,
+          cleanupStatus: nextContext.cleanupStatus,
+          lastMergeError: nextContext.lastMergeError,
+        } satisfies GraphWorkflowMergeStatusEvent);
       }
     }
 

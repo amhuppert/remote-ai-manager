@@ -73,7 +73,7 @@ async function createExecutionFromSeed(
     seedDefinitionRevision: seed.definitionRevision,
     workingDefinition,
     status: "pending",
-    activeContextId: null,
+    activeContextIds: [],
     activeTaskId: null,
     contextStates,
     taskStates,
@@ -155,6 +155,40 @@ export function createGraphWorkflowExecutionRepository(
     );
   }
 
+  async function mutateActive(
+    projectPath: string,
+    sessionName: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution> {
+    return deps.mutateSession(
+      projectPath,
+      sessionName,
+      "graphWorkflowExecution.mutateActive",
+      async (session) => {
+        if (!session.graphWorkflowExecution) {
+          throw new Error(
+            "Session does not have an active graph workflow execution",
+          );
+        }
+
+        const previous = session.graphWorkflowExecution;
+        const next = await fn(structuredClone(previous));
+        const parsed = graphWorkflowExecutionSchema.parse(next);
+        const published = eventPublisher.publishExecutionUpdate({
+          projectPath,
+          sessionName,
+          previousExecution: previous,
+          nextExecution: parsed,
+        });
+        session.graphWorkflowExecution = published;
+        session.lastActivityAt = new Date().toISOString();
+        return published;
+      },
+    );
+  }
+
   async function archiveActive(
     projectPath: string,
     sessionName: string,
@@ -181,6 +215,7 @@ export function createGraphWorkflowExecutionRepository(
     getActive,
     create,
     update,
+    mutateActive,
     archiveActive,
   };
 }

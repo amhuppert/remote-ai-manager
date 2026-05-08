@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createLogger } from "@/lib/logging";
@@ -12,10 +13,16 @@ import {
   ResetExecutionContextError,
   resetExecutionContext,
 } from "@/lib/workflows/graph-workflow/reset-context";
+import {
+  validateContextId,
+  type ParallelWorktrees,
+  type ProvisionResult,
+} from "@/lib/workflow-graph/parallel-worktrees";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
   GraphWorkflowStatus,
+  SessionState,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/types";
@@ -38,18 +45,21 @@ interface GraphWorkflowExecutionRepository {
     sessionName: string,
     seed: GraphWorkflowExecutionSeed,
   ): Promise<GraphWorkflowExecution>;
-  update(
+  mutateActive(
     projectPath: string,
     sessionName: string,
-    execution: GraphWorkflowExecution,
-  ): Promise<void>;
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution>;
 }
 
 export type GraphWorkflowRecoveryMode =
   | "none"
   | "rehydrated"
   | "interrupted_task"
-  | "restart_normalized";
+  | "restart_normalized"
+  | "restart_drain_resumed";
 
 export interface GraphWorkflowLifecycleSnapshot {
   schemaVersion: 1;
@@ -89,6 +99,55 @@ export interface GraphWorkflowManagerDeps {
   >;
   /** Check if an execution loop is currently running for this session. When true, normalizeAfterRestart skips normalization. */
   isExecutionLoopActive?(projectPath: string, sessionName: string): boolean;
+  parallelWorktrees?: ParallelWorktrees;
+  getSession?(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<SessionState | null>;
+  createBatchId?(): string;
+}
+
+export interface ScheduleEligibleContextsInput {
+  projectPath: string;
+  sessionName: string;
+}
+
+export type ScheduleEligibleContextsOutcome =
+  | { kind: "none" }
+  | { kind: "solo"; contextId: string }
+  | { kind: "parallel"; batchId: string; contextIds: string[] };
+
+export interface ScheduleEligibleContextsResult {
+  execution: GraphWorkflowExecution;
+  scheduled: ScheduleEligibleContextsOutcome;
+}
+
+export interface RecordPendingHaltReasonInput {
+  projectPath: string;
+  sessionName: string;
+  reason: GraphWorkflowHaltReason;
+  /**
+   * Additional mutation applied to the execution within the same
+   * mutateActive transaction that records the pending halt reason.
+   *
+   * Runs unconditionally — even when first-failure-wins rejects the new
+   * `reason` — so callers can persist auxiliary state (e.g., a context's
+   * merge failure status) atomically with the pending halt write. This is
+   * what makes drain-then-halt restart-safe: a crash between the auxiliary
+   * write and the halt write would otherwise leave a failed fan-in without
+   * the persisted halt reason needed to resume cleanly.
+   */
+  applyAdditionalMutation?(execution: GraphWorkflowExecution): void;
+}
+
+export interface RecordPendingHaltReasonResult {
+  execution: GraphWorkflowExecution;
+  accepted: boolean;
+}
+
+export interface DrainAndHaltInput {
+  projectPath: string;
+  sessionName: string;
 }
 
 const logger = createLogger("graph-workflow-manager");
@@ -116,7 +175,7 @@ function buildMachineSnapshot(
   return {
     schemaVersion: 1,
     lifecycleStatus,
-    activeContextId: execution.activeContextId,
+    activeContextId: execution.activeContextIds[0] ?? null,
     recoveryMode,
     hasLiveIteration,
   };
@@ -133,17 +192,19 @@ function requireRunningExecution(
 }
 
 function markActiveContextReady(execution: GraphWorkflowExecution): void {
-  if (!execution.activeContextId) {
+  if (execution.activeContextIds.length === 0) {
     return;
   }
 
-  const activeContext = execution.contextStates[execution.activeContextId];
-  if (!activeContext) {
-    return;
-  }
+  for (const activeContextId of execution.activeContextIds) {
+    const activeContext = execution.contextStates[activeContextId];
+    if (!activeContext) {
+      continue;
+    }
 
-  if (activeContext.status === "running") {
-    activeContext.status = "ready";
+    if (activeContext.status === "running") {
+      activeContext.status = "ready";
+    }
   }
 }
 
@@ -179,29 +240,6 @@ function transitionToNonRunningState(
   return nextExecution;
 }
 
-async function requireActiveExecution(
-  repository: GraphWorkflowExecutionRepository,
-  projectPath: string,
-  sessionName: string,
-): Promise<GraphWorkflowExecution> {
-  const execution = await repository.getActive(projectPath, sessionName);
-  if (!execution) {
-    throw new Error("Session does not have an active graph workflow execution");
-  }
-
-  return execution;
-}
-
-async function updateExecution(
-  repository: GraphWorkflowExecutionRepository,
-  projectPath: string,
-  sessionName: string,
-  execution: GraphWorkflowExecution,
-): Promise<GraphWorkflowExecution> {
-  await repository.update(projectPath, sessionName, execution);
-  return execution;
-}
-
 export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   async function start(
     input: GraphWorkflowStartInput,
@@ -226,7 +264,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       );
     }
 
-    const created = await deps.executionRepository.create(
+    await deps.executionRepository.create(
       input.projectPath,
       input.sessionName,
       {
@@ -238,19 +276,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       },
     );
 
-    const nextExecution = cloneExecution(created);
-    nextExecution.status = "running";
-    nextExecution.machineSnapshot = buildMachineSnapshot(
-      nextExecution,
-      "running",
-      "none",
-      false,
-    );
-
-    await deps.executionRepository.update(
+    const nextExecution = await deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
-      nextExecution,
+      (execution) => {
+        execution.status = "running";
+        execution.machineSnapshot = buildMachineSnapshot(
+          execution,
+          "running",
+          "none",
+          false,
+        );
+        return execution;
+      },
     );
 
     // Initialize per-execution structured logger
@@ -279,99 +317,85 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     event: GraphWorkflowManagerEvent,
   ): Promise<GraphWorkflowExecution> {
-    const execution = await requireActiveExecution(
-      deps.executionRepository,
-      projectPath,
-      sessionName,
-    );
     const now = getNow(deps);
 
-    const execLogger = getExecutionLogger(execution.id);
-
     if (event.type === "pause") {
-      const nextExecution = transitionToNonRunningState(
-        execution,
-        "paused",
-        null,
-        null,
-      );
-      await deps.executionRepository.update(
+      const nextExecution = await deps.executionRepository.mutateActive(
         projectPath,
         sessionName,
-        nextExecution,
+        (execution) =>
+          transitionToNonRunningState(execution, "paused", null, null),
       );
+      const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("execution.paused");
       logger.info("graph-workflow.execution.paused", {
-        executionId: execution.id,
+        executionId: nextExecution.id,
       });
       return nextExecution;
     }
 
     if (event.type === "abort") {
-      const nextExecution = transitionToNonRunningState(
-        execution,
-        "aborted",
-        now,
-        { type: "aborted" },
-      );
-      await deps.executionRepository.update(
+      const nextExecution = await deps.executionRepository.mutateActive(
         projectPath,
         sessionName,
-        nextExecution,
+        (execution) =>
+          transitionToNonRunningState(execution, "aborted", now, {
+            type: "aborted",
+          }),
       );
+      const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("execution.aborted");
       execLogger?.writeManifest(nextExecution);
-      unregisterExecutionLogger(execution.id);
+      unregisterExecutionLogger(nextExecution.id);
       logger.info("graph-workflow.execution.aborted", {
-        executionId: execution.id,
+        executionId: nextExecution.id,
       });
       return nextExecution;
     }
 
     if (event.type === "complete") {
-      const nextExecution = cloneExecution(execution);
-      nextExecution.status = "completed";
-      nextExecution.completedAt = now;
-      nextExecution.haltReason = null;
-      nextExecution.machineSnapshot = buildMachineSnapshot(
-        nextExecution,
-        "completed",
-        "none",
-        false,
-      );
-      await deps.executionRepository.update(
+      const nextExecution = await deps.executionRepository.mutateActive(
         projectPath,
         sessionName,
-        nextExecution,
+        (execution) => {
+          execution.status = "completed";
+          execution.completedAt = now;
+          execution.haltReason = null;
+          execution.machineSnapshot = buildMachineSnapshot(
+            execution,
+            "completed",
+            "none",
+            false,
+          );
+          return execution;
+        },
       );
+      const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("execution.completed");
       execLogger?.writeManifest(nextExecution);
-      unregisterExecutionLogger(execution.id);
+      unregisterExecutionLogger(nextExecution.id);
       logger.info("graph-workflow.execution.completed", {
-        executionId: execution.id,
+        executionId: nextExecution.id,
       });
       return nextExecution;
     }
 
-    const nextExecution = transitionToNonRunningState(
-      execution,
-      "halted",
-      now,
-      event.reason,
-    );
-    await deps.executionRepository.update(
+    const haltReason = event.reason;
+    const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
-      nextExecution,
+      (execution) =>
+        transitionToNonRunningState(execution, "halted", now, haltReason),
     );
+    const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.lifecycle("execution.halted", {
-      haltReason: event.reason,
+      haltReason,
     });
     execLogger?.writeManifest(nextExecution);
-    unregisterExecutionLogger(execution.id);
+    unregisterExecutionLogger(nextExecution.id);
     logger.info("graph-workflow.execution.halted", {
-      executionId: execution.id,
-      haltReasonType: event.reason.type,
+      executionId: nextExecution.id,
+      haltReasonType: haltReason.type,
     });
     return nextExecution;
   }
@@ -380,51 +404,50 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution> {
-    const execution = await requireActiveExecution(
-      deps.executionRepository,
+    let previousStatus: GraphWorkflowStatus | null = null;
+    let hasInterrupted = false;
+
+    const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
-    );
-    const resumableStatuses: GraphWorkflowStatus[] = ["paused", "halted"];
-    if (!resumableStatuses.includes(execution.status)) {
-      throw new Error(
-        "Only paused or halted graph workflow executions can be resumed",
-      );
-    }
+      (execution) => {
+        const resumableStatuses: GraphWorkflowStatus[] = ["paused", "halted"];
+        if (!resumableStatuses.includes(execution.status)) {
+          throw new Error(
+            "Only paused or halted graph workflow executions can be resumed",
+          );
+        }
 
-    const nextExecution = cloneExecution(execution);
-    nextExecution.status = "running";
-    nextExecution.completedAt = null;
-    nextExecution.haltReason = null;
+        previousStatus = execution.status;
+        execution.status = "running";
+        execution.completedAt = null;
+        execution.haltReason = null;
 
-    for (const contextState of Object.values(nextExecution.contextStates)) {
-      if (contextState.status === "halted") {
-        contextState.status = "ready";
-        contextState.consecutiveFailureCount = 0;
-      }
-    }
+        for (const contextState of Object.values(execution.contextStates)) {
+          if (contextState.status === "halted") {
+            contextState.status = "ready";
+            contextState.consecutiveFailureCount = 0;
+          }
+        }
 
-    const hasInterrupted = Object.values(nextExecution.taskStates).some(
-      (ts) => ts.status === "interrupted",
-    );
-    nextExecution.machineSnapshot = buildMachineSnapshot(
-      nextExecution,
-      "running",
-      hasInterrupted ? "interrupted_task" : "none",
-      false,
-    );
-
-    await deps.executionRepository.update(
-      projectPath,
-      sessionName,
-      nextExecution,
+        hasInterrupted = Object.values(execution.taskStates).some(
+          (ts) => ts.status === "interrupted",
+        );
+        execution.machineSnapshot = buildMachineSnapshot(
+          execution,
+          "running",
+          hasInterrupted ? "interrupted_task" : "none",
+          false,
+        );
+        return execution;
+      },
     );
 
     // Re-register execution logger on resume
     const execLogger = createExecutionLogger(nextExecution.id);
     registerExecutionLogger(execLogger);
     execLogger.lifecycle("execution.resumed", {
-      previousStatus: execution.status,
+      previousStatus,
       hasInterruptedTasks: hasInterrupted,
       resetContextIds: Object.values(nextExecution.contextStates)
         .filter((cs) => cs.status === "ready")
@@ -432,7 +455,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     });
     logger.info("graph-workflow.execution.resumed", {
       executionId: nextExecution.id,
-      previousStatus: execution.status,
+      previousStatus,
     });
 
     return nextExecution;
@@ -460,85 +483,307 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       return execution;
     }
 
-    const nextExecution = transitionToNonRunningState(
-      execution,
-      "paused",
-      null,
-      null,
-    );
-    nextExecution.machineSnapshot = buildMachineSnapshot(
-      nextExecution,
-      "paused",
-      "restart_normalized",
-      false,
-    );
-    await deps.executionRepository.update(
+    const normalizedExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
-      nextExecution,
+      (current) => {
+        if (current.status !== "running") {
+          return current;
+        }
+
+        if (current.pendingHaltReason !== null) {
+          const haltReason = current.pendingHaltReason;
+          const transitioned = transitionToNonRunningState(
+            current,
+            "halted",
+            getNow(deps),
+            haltReason,
+          );
+          transitioned.pendingHaltReason = null;
+          transitioned.machineSnapshot = buildMachineSnapshot(
+            transitioned,
+            "halted",
+            "restart_drain_resumed",
+            false,
+          );
+          return transitioned;
+        }
+
+        const nextExecution = transitionToNonRunningState(
+          current,
+          "paused",
+          null,
+          null,
+        );
+        nextExecution.machineSnapshot = buildMachineSnapshot(
+          nextExecution,
+          "paused",
+          "restart_normalized",
+          false,
+        );
+        return nextExecution;
+      },
     );
-    return nextExecution;
+
+    if (
+      normalizedExecution.status === "halted" &&
+      normalizedExecution.haltReason !== null
+    ) {
+      const execLogger = getExecutionLogger(normalizedExecution.id);
+      execLogger?.lifecycle("execution.halted", {
+        haltReason: normalizedExecution.haltReason,
+        cause: "restart_drain_resumed",
+      });
+      execLogger?.writeManifest(normalizedExecution);
+      unregisterExecutionLogger(normalizedExecution.id);
+      logger.info("graph-workflow.execution.halted", {
+        executionId: normalizedExecution.id,
+        haltReasonType: normalizedExecution.haltReason.type,
+        cause: "restart_drain_resumed",
+      });
+    }
+
+    return normalizedExecution;
   }
 
   async function scheduleNextContext(
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution> {
-    const execution = requireRunningExecution(
-      await requireActiveExecution(
-        deps.executionRepository,
-        projectPath,
-        sessionName,
-      ),
+    let scheduledContextId: string | null = null;
+    let scheduledEligibleContextIds: string[] = [];
+    let scheduledClearedLanes: string[] = [];
+
+    const nextExecution = await deps.executionRepository.mutateActive(
+      projectPath,
+      sessionName,
+      (execution) => {
+        const running = requireRunningExecution(execution);
+        const eligibleContextIds = getEligibleContextIds(
+          running.workingDefinition,
+          running,
+        );
+
+        for (const contextId of eligibleContextIds) {
+          const contextState = running.contextStates[contextId];
+          if (!contextState) {
+            continue;
+          }
+
+          contextState.status = "ready";
+        }
+
+        const nextContextId = eligibleContextIds[0] ?? null;
+        running.activeContextIds = nextContextId ? [nextContextId] : [];
+        if (nextContextId) {
+          running.contextStates[nextContextId]!.status = "running";
+          const clearedLanes = Object.keys(running.laneStates);
+          running.laneStates = {};
+
+          scheduledContextId = nextContextId;
+          scheduledEligibleContextIds = eligibleContextIds;
+          scheduledClearedLanes = clearedLanes;
+        }
+
+        running.machineSnapshot = buildMachineSnapshot(
+          running,
+          "running",
+          "none",
+          false,
+        );
+        return running;
+      },
     );
-    const nextExecution = cloneExecution(execution);
-    const eligibleContextIds = getEligibleContextIds(
-      nextExecution.workingDefinition,
-      nextExecution,
-    );
 
-    for (const contextId of eligibleContextIds) {
-      const contextState = nextExecution.contextStates[contextId];
-      if (!contextState) {
-        continue;
-      }
-
-      contextState.status = "ready";
-    }
-
-    const nextContextId = eligibleContextIds[0] ?? null;
-    nextExecution.activeContextId = nextContextId;
-    if (nextContextId) {
-      nextExecution.contextStates[nextContextId]!.status = "running";
-      const clearedLanes = Object.keys(nextExecution.laneStates);
+    if (scheduledContextId) {
       logger.info("graph-workflow.context.scheduled", {
         executionId: nextExecution.id,
-        nextContextId,
-        eligibleContextIds,
-        clearedLanes,
+        nextContextId: scheduledContextId,
+        eligibleContextIds: scheduledEligibleContextIds,
+        clearedLanes: scheduledClearedLanes,
       });
       const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("context.scheduled", {
-        contextId: nextContextId,
-        eligibleContextIds,
-        clearedLanes,
+        contextId: scheduledContextId,
+        eligibleContextIds: scheduledEligibleContextIds,
+        clearedLanes: scheduledClearedLanes,
       });
-      nextExecution.laneStates = {};
     }
 
-    nextExecution.machineSnapshot = buildMachineSnapshot(
-      nextExecution,
-      "running",
-      "none",
-      false,
-    );
+    return nextExecution;
+  }
 
-    return updateExecution(
-      deps.executionRepository,
+  async function scheduleEligibleContexts(
+    input: ScheduleEligibleContextsInput,
+  ): Promise<ScheduleEligibleContextsResult> {
+    const { projectPath, sessionName } = input;
+    const outcome: { value: ScheduleEligibleContextsOutcome } = {
+      value: { kind: "none" },
+    };
+    let scheduledClearedLanes: string[] = [];
+
+    const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
-      nextExecution,
+      async (execution) => {
+        const running = requireRunningExecution(execution);
+        const eligibleContextIds = getEligibleContextIds(
+          running.workingDefinition,
+          running,
+        );
+
+        if (eligibleContextIds.length === 0) {
+          running.machineSnapshot = buildMachineSnapshot(
+            running,
+            "running",
+            "none",
+            false,
+          );
+          outcome.value = { kind: "none" };
+          return running;
+        }
+
+        for (const contextId of eligibleContextIds) {
+          const contextState = running.contextStates[contextId];
+          if (contextState) {
+            contextState.status = "ready";
+          }
+        }
+
+        if (eligibleContextIds.length === 1) {
+          const soloContextId = eligibleContextIds[0]!;
+          const contextState = running.contextStates[soloContextId]!;
+          contextState.status = "running";
+          contextState.isolation = "session";
+          contextState.worktreePath = null;
+          contextState.branchName = null;
+          contextState.batchId = null;
+          running.activeContextIds = [soloContextId];
+
+          const clearedLanes = Object.keys(running.laneStates);
+          running.laneStates = {};
+          scheduledClearedLanes = clearedLanes;
+
+          running.machineSnapshot = buildMachineSnapshot(
+            running,
+            "running",
+            "none",
+            false,
+          );
+          outcome.value = { kind: "solo", contextId: soloContextId };
+          return running;
+        }
+
+        if (!deps.parallelWorktrees) {
+          throw new Error(
+            "scheduleEligibleContexts requires `parallelWorktrees` dep when ≥2 contexts are eligible",
+          );
+        }
+        if (!deps.getSession) {
+          throw new Error(
+            "scheduleEligibleContexts requires `getSession` dep when ≥2 contexts are eligible",
+          );
+        }
+
+        for (const contextId of eligibleContextIds) {
+          validateContextId(contextId);
+        }
+
+        const session = await deps.getSession(projectPath, sessionName);
+        if (!session) {
+          throw new Error(
+            `Session "${sessionName}" was not found for parallel scheduling`,
+          );
+        }
+        const sessionDir = path.basename(session.worktreePath);
+        const sessionBranch = session.branchName;
+        const batchId = deps.createBatchId?.() ?? randomUUID();
+
+        const provisioned: Array<{
+          contextId: string;
+          result: ProvisionResult;
+        }> = [];
+        try {
+          for (const contextId of eligibleContextIds) {
+            const result = await deps.parallelWorktrees.provision({
+              projectPath,
+              sessionDir,
+              sessionBranch,
+              contextId,
+            });
+            provisioned.push({ contextId, result });
+          }
+        } catch (err) {
+          for (const { result } of provisioned) {
+            await deps.parallelWorktrees.dispose({
+              projectPath,
+              worktreePath: result.worktreePath,
+              branchName: result.branchName,
+            });
+          }
+          throw err;
+        }
+
+        for (const { contextId, result } of provisioned) {
+          const contextState = running.contextStates[contextId]!;
+          contextState.status = "running";
+          contextState.isolation = "worktree";
+          contextState.worktreePath = result.worktreePath;
+          contextState.branchName = result.branchName;
+          contextState.batchId = batchId;
+        }
+
+        running.activeContextIds = [...eligibleContextIds];
+        const clearedLanes = Object.keys(running.laneStates);
+        running.laneStates = {};
+        scheduledClearedLanes = clearedLanes;
+
+        running.machineSnapshot = buildMachineSnapshot(
+          running,
+          "running",
+          "none",
+          false,
+        );
+
+        outcome.value = {
+          kind: "parallel",
+          batchId,
+          contextIds: [...eligibleContextIds],
+        };
+        return running;
+      },
     );
+
+    const scheduled = outcome.value;
+    if (scheduled.kind === "solo") {
+      logger.info("graph-workflow.context.scheduled", {
+        executionId: nextExecution.id,
+        nextContextId: scheduled.contextId,
+        eligibleContextIds: [scheduled.contextId],
+        clearedLanes: scheduledClearedLanes,
+      });
+      const execLogger = getExecutionLogger(nextExecution.id);
+      execLogger?.lifecycle("context.scheduled", {
+        contextId: scheduled.contextId,
+        eligibleContextIds: [scheduled.contextId],
+        clearedLanes: scheduledClearedLanes,
+      });
+    } else if (scheduled.kind === "parallel") {
+      logger.info("graph-workflow.parallel.batch_scheduled", {
+        executionId: nextExecution.id,
+        batchId: scheduled.batchId,
+        contextIds: scheduled.contextIds,
+        clearedLanes: scheduledClearedLanes,
+      });
+      const execLogger = getExecutionLogger(nextExecution.id);
+      execLogger?.lifecycle("parallel.batch_scheduled", {
+        batchId: scheduled.batchId,
+        contextIds: scheduled.contextIds,
+        clearedLanes: scheduledClearedLanes,
+      });
+    }
+
+    return { execution: nextExecution, scheduled };
   }
 
   async function recoverRetryableIterationError(
@@ -546,42 +791,51 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     input: GraphWorkflowRetryableIterationErrorInput,
   ): Promise<GraphWorkflowExecution> {
-    const execution = requireRunningExecution(
-      await requireActiveExecution(
-        deps.executionRepository,
-        projectPath,
-        sessionName,
-      ),
-    );
     const now = getNow(deps);
-    const nextExecution = cloneExecution(execution);
-    const contextState = nextExecution.contextStates[input.contextId];
-    if (!contextState) {
-      throw new Error(
-        `Execution context "${input.contextId}" does not exist in runtime state`,
-      );
-    }
+    let rotationScheduled = false;
 
-    contextState.status = "ready";
-    nextExecution.activeContextId = input.contextId;
-    nextExecution.completedAt = null;
-    nextExecution.haltReason = null;
-    nextExecution.machineSnapshot = buildMachineSnapshot(
-      nextExecution,
-      "running",
-      "none",
-      false,
+    const nextExecution = await deps.executionRepository.mutateActive(
+      projectPath,
+      sessionName,
+      (execution) => {
+        const running = requireRunningExecution(execution);
+        const contextState = running.contextStates[input.contextId];
+        if (!contextState) {
+          throw new Error(
+            `Execution context "${input.contextId}" does not exist in runtime state`,
+          );
+        }
+
+        contextState.status = "ready";
+        if (!running.activeContextIds.includes(input.contextId)) {
+          running.activeContextIds = [
+            ...running.activeContextIds,
+            input.contextId,
+          ];
+        }
+        running.completedAt = null;
+        running.haltReason = null;
+        running.machineSnapshot = buildMachineSnapshot(
+          running,
+          "running",
+          "none",
+          false,
+        );
+
+        const implementerLane =
+          running.laneStates[input.contextId]?.["implementer"];
+        rotationScheduled =
+          implementerLane?.engine === "claude" &&
+          implementerLane.contextId === input.contextId;
+
+        if (rotationScheduled && implementerLane) {
+          implementerLane.rotateBeforeNextTurn = true;
+          implementerLane.lastUsedAt = now;
+        }
+
+        return running;
+      },
     );
-
-    const implementerLane = nextExecution.laneStates["implementer"];
-    const rotationScheduled =
-      implementerLane?.engine === "claude" &&
-      implementerLane.contextId === input.contextId;
-
-    if (rotationScheduled) {
-      implementerLane.rotateBeforeNextTurn = true;
-      implementerLane.lastUsedAt = now;
-    }
 
     const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.decision("iteration.retryable_error_recovery", {
@@ -596,12 +850,97 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       rotationScheduled,
     });
 
-    return updateExecution(
-      deps.executionRepository,
+    return nextExecution;
+  }
+
+  async function recordPendingHaltReason(
+    input: RecordPendingHaltReasonInput,
+  ): Promise<RecordPendingHaltReasonResult> {
+    const { projectPath, sessionName, reason, applyAdditionalMutation } = input;
+    let accepted = false;
+
+    const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
-      nextExecution,
+      (execution) => {
+        const next = cloneExecution(execution);
+        if (applyAdditionalMutation) {
+          applyAdditionalMutation(next);
+        }
+        if (execution.pendingHaltReason === null) {
+          next.pendingHaltReason = reason;
+          accepted = true;
+        }
+        return next;
+      },
     );
+
+    if (accepted) {
+      const execLogger = getExecutionLogger(nextExecution.id);
+      execLogger?.lifecycle("parallel.pending_halt_recorded", {
+        haltReason: reason,
+      });
+      logger.info("graph-workflow.parallel.pending_halt_recorded", {
+        executionId: nextExecution.id,
+        haltReasonType: reason.type,
+      });
+    } else {
+      const execLogger = getExecutionLogger(nextExecution.id);
+      execLogger?.lifecycle("parallel.secondary_failure", {
+        attemptedHaltReason: reason,
+        existingHaltReason: nextExecution.pendingHaltReason,
+      });
+      logger.info("graph-workflow.parallel.secondary_failure", {
+        executionId: nextExecution.id,
+        attemptedHaltReasonType: reason.type,
+        existingHaltReasonType: nextExecution.pendingHaltReason?.type ?? null,
+      });
+    }
+
+    return { execution: nextExecution, accepted };
+  }
+
+  async function drainAndHalt(
+    input: DrainAndHaltInput,
+  ): Promise<GraphWorkflowExecution> {
+    const { projectPath, sessionName } = input;
+    const now = getNow(deps);
+
+    const nextExecution = await deps.executionRepository.mutateActive(
+      projectPath,
+      sessionName,
+      (execution) => {
+        const haltReason = execution.pendingHaltReason;
+        if (haltReason === null) {
+          throw new Error(
+            "drainAndHalt requires pendingHaltReason to be set before invocation",
+          );
+        }
+        const transitioned = transitionToNonRunningState(
+          execution,
+          "halted",
+          now,
+          haltReason,
+        );
+        transitioned.pendingHaltReason = null;
+        return transitioned;
+      },
+    );
+
+    const execLogger = getExecutionLogger(nextExecution.id);
+    execLogger?.lifecycle("execution.halted", {
+      haltReason: nextExecution.haltReason,
+      cause: "drain_and_halt",
+    });
+    execLogger?.writeManifest(nextExecution);
+    unregisterExecutionLogger(nextExecution.id);
+    logger.info("graph-workflow.execution.halted", {
+      executionId: nextExecution.id,
+      haltReasonType: nextExecution.haltReason?.type,
+      cause: "drain_and_halt",
+    });
+
+    return nextExecution;
   }
 
   async function hasActive(
@@ -620,37 +959,33 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     contextId: string,
   ): Promise<GraphWorkflowExecution> {
-    const execution = await requireActiveExecution(
-      deps.executionRepository,
+    let previousStatus: GraphWorkflowStatus | null = null;
+
+    const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
-    );
-
-    logger.info("graph-workflow.context.reset_requested", {
-      executionId: execution.id,
-      contextId,
-      status: execution.status,
-    });
-
-    let nextExecution: GraphWorkflowExecution;
-    try {
-      nextExecution = resetExecutionContext(execution, contextId);
-    } catch (error) {
-      if (error instanceof ResetExecutionContextError) {
-        logger.warn("graph-workflow.context.reset_rejected", {
+      (execution) => {
+        previousStatus = execution.status;
+        logger.info("graph-workflow.context.reset_requested", {
           executionId: execution.id,
           contextId,
           status: execution.status,
-          reason: error.message,
         });
-      }
-      throw error;
-    }
 
-    await deps.executionRepository.update(
-      projectPath,
-      sessionName,
-      nextExecution,
+        try {
+          return resetExecutionContext(execution, contextId);
+        } catch (error) {
+          if (error instanceof ResetExecutionContextError) {
+            logger.warn("graph-workflow.context.reset_rejected", {
+              executionId: execution.id,
+              contextId,
+              status: execution.status,
+              reason: error.message,
+            });
+          }
+          throw error;
+        }
+      },
     );
 
     let execLogger = getExecutionLogger(nextExecution.id);
@@ -660,15 +995,32 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
     execLogger.lifecycle("context.reset", {
       contextId,
-      previousStatus: execution.status,
+      previousStatus,
     });
     logger.info("graph-workflow.context.reset_applied", {
       executionId: nextExecution.id,
       contextId,
-      previousStatus: execution.status,
+      previousStatus,
     });
 
     return nextExecution;
+  }
+
+  async function mutateActive(
+    projectPath: string,
+    sessionName: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution> {
+    return deps.executionRepository.mutateActive(projectPath, sessionName, fn);
+  }
+
+  async function getActive(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowExecution | null> {
+    return deps.executionRepository.getActive(projectPath, sessionName);
   }
 
   return {
@@ -677,8 +1029,13 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     resume,
     normalizeAfterRestart,
     scheduleNextContext,
+    scheduleEligibleContexts,
     recoverRetryableIterationError,
+    recordPendingHaltReason,
+    drainAndHalt,
     resetContext,
     hasActive,
+    mutateActive,
+    getActive,
   };
 }

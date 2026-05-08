@@ -16,6 +16,7 @@ import type {
 import type { CollaborationAutonomousResolutionThreshold } from "@/lib/schemas";
 import type { ConversationActorRef } from "./workflows/conversation/machine";
 import type { ConversationEvent } from "./workflows/conversation/types";
+import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import { createLogger } from "./logging";
 import {
   getConversation,
@@ -209,6 +210,7 @@ export interface PromptDeps {
     projectPath: string,
     sessionName: string,
     conversationId: string,
+    options?: { executionTarget?: ExecutionTarget },
   ): Promise<ConversationActorRef>;
   attachPromptStream(
     projectPath: string,
@@ -387,6 +389,13 @@ export interface PromptStreamOptions {
   // enforces their schema; everyone else gets unconstrained text.
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   collab?: CollabPromptConfig;
+  /**
+   * When supplied, the conversation actor input uses this resolved target's
+   * worktreePath instead of `session.worktreePath`. Solo-eligible graph
+   * workflow contexts leave this undefined so behavior matches the
+   * pre-parallelization session-worktree flow.
+   */
+  executionTarget?: ExecutionTarget;
 }
 
 export interface PromptStreamResult {
@@ -619,6 +628,9 @@ export async function executePromptStream(
     projectPath,
     session.sessionName,
     conversationId,
+    options?.executionTarget !== undefined
+      ? { executionTarget: options.executionTarget }
+      : undefined,
   );
 
   // Register per-invocation tooling overrides on the conversation runtime state

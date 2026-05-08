@@ -22,10 +22,15 @@ import {
   defaultGlobalOverrideStore,
   getDefaultGlobalMcpDefinitionPath,
 } from "./global-store";
+import { createResolvePortableForConversation } from "./resolve-portable-for-conversation";
 import {
   createMcpRuntimeApplyService,
   type McpRuntimeApplyService,
 } from "./runtime-apply";
+import {
+  conversationRuntimeKey,
+  getConversationRuntime,
+} from "@/lib/workflows/conversation/runtime-state";
 import {
   createMcpConfigMutationService,
   type McpConfigMutationService,
@@ -153,27 +158,32 @@ const composePortableForConversation = createComposePortableMcpForConversation({
   buildReservedGatewayIds: buildSessionToolsReservedIds,
 });
 
+const defaultResolvePortableForConversation =
+  createResolvePortableForConversation({
+    composePortableForConversation,
+    async getSessionWorktreePath(projectPath, sessionName) {
+      const session = await defaultStateManager.getSession(
+        projectPath,
+        sessionName,
+      );
+      return session?.worktreePath;
+    },
+    getProjectDisplayName,
+    getConversationTooling(input) {
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      return getConversationRuntime(key)?.tooling;
+    },
+  });
+
 export const defaultMcpRuntimeApplyService: McpRuntimeApplyService =
   createMcpRuntimeApplyService({
     stateManager: defaultStateManager,
     getRuntime,
-    async resolvePortableForConversation(input) {
-      const session = await defaultStateManager.getSession(
-        input.projectPath,
-        input.sessionName,
-      );
-      const worktreePath = session?.worktreePath ?? input.projectPath;
-      const projectName = getProjectDisplayName(input.projectPath);
-      const portable = await composePortableForConversation({
-        backend: input.backend,
-        projectPath: input.projectPath,
-        projectName,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        worktreePath,
-      });
-      return { portable };
-    },
+    resolvePortableForConversation: defaultResolvePortableForConversation,
   });
 
 export const defaultMcpConfigMutationService: McpConfigMutationService =

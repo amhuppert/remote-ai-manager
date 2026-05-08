@@ -15,6 +15,9 @@ import {
   workflowGeneratedDraftSchema,
   agentBackendSchema,
   globalConfigSchema,
+  graphWorkflowCleanupStatusValueSchema,
+  graphWorkflowHaltReasonSchema,
+  graphWorkflowMergeStatusValueSchema,
   rawGlobalConfigSchema,
   resolvedWorkflowSemanticDefinitionSchema,
 } from "@/lib/schemas";
@@ -111,6 +114,14 @@ export const activeConversationSchema = z.object({
   agentBackend: agentBackendSchema,
 });
 
+export const activeGraphWorkflowContextMergeProgressSchema = z.object({
+  contextId: z.string(),
+  branchName: z.string().nullable(),
+  mergeStatus: graphWorkflowMergeStatusValueSchema,
+  cleanupStatus: graphWorkflowCleanupStatusValueSchema,
+  lastMergeError: z.string().nullable(),
+});
+
 export const activeGraphWorkflowExecutionSchema = z.object({
   executionId: z.string(),
   status: z.enum([
@@ -124,7 +135,13 @@ export const activeGraphWorkflowExecutionSchema = z.object({
   projectName: z.string(),
   projectPath: z.string(),
   sessionName: z.string(),
-  activeContextTitle: z.string().nullable(),
+  activeContextIds: z.array(z.string()).default([]),
+  activeContextTitles: z.array(z.string()).default([]),
+  activeBatchIds: z.array(z.string()).default([]),
+  pendingHaltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
+  contextMergeProgress: z
+    .array(activeGraphWorkflowContextMergeProgressSchema)
+    .default([]),
   completedContexts: z.number(),
   totalContexts: z.number(),
   startedAt: z.string(),

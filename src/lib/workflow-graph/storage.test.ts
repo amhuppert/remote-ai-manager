@@ -141,12 +141,12 @@ describe("graph workflow execution repository", () => {
     expect(created.taskStates["task-plan-1"]?.status).toBe("pending");
 
     created.status = "running";
-    created.activeContextId = "context-plan";
+    created.activeContextIds = ["context-plan"];
     await repository.update("/repo", "session-1", created);
 
     const active = await repository.getActive("/repo", "session-1");
     expect(active?.status).toBe("running");
-    expect(active?.activeContextId).toBe("context-plan");
+    expect(active?.activeContextIds).toEqual(["context-plan"]);
 
     await repository.archiveActive("/repo", "session-1");
 

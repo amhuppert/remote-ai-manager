@@ -14,11 +14,13 @@ interface InMemoryExecutionRepository {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  update(
+  mutateActive(
     projectPath: string,
     sessionName: string,
-    execution: GraphWorkflowExecution,
-  ): Promise<void>;
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution>;
 }
 
 function createRepository(
@@ -28,13 +30,26 @@ function createRepository(
   write(execution: GraphWorkflowExecution): void;
 } {
   let activeExecution = initialExecution;
+  let lock: Promise<void> = Promise.resolve();
 
   return {
     async getActive() {
       return activeExecution;
     },
-    async update(_projectPath, _sessionName, execution) {
-      activeExecution = execution;
+    async mutateActive(_projectPath, _sessionName, fn) {
+      const previous = lock;
+      let release!: () => void;
+      lock = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      try {
+        await previous;
+        const next = await fn(structuredClone(activeExecution));
+        activeExecution = next;
+        return next;
+      } finally {
+        release();
+      }
     },
     read() {
       return activeExecution;
@@ -95,7 +110,7 @@ function createContextValidatorExecution(
 
   return createWorkflowExecution({
     status: "running",
-    activeContextId: "context-plan",
+    activeContextIds: ["context-plan"],
     workingDefinition: definition,
     contextStates: {
       ...createWorkflowExecution().contextStates,
