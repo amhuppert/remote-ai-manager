@@ -91,19 +91,23 @@ function createTestDeps(
 function makeRequest(
   search: string,
   body?: unknown,
-  init?: { invalidJson?: boolean },
+  init?: { invalidJson?: boolean; headers?: Record<string, string> },
 ): Request {
   const url = `http://localhost/api/debug-logs${search}`;
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    ...(init?.headers ?? {}),
+  };
   if (init?.invalidJson) {
     return new Request(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: "{not json",
     });
   }
   return new Request(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
@@ -138,6 +142,25 @@ describe("OPTIONS /api/debug-logs", () => {
 });
 
 describe("POST /api/debug-logs", () => {
+  it("drops with self_log reason when X-CC-Debug-Log header is present", async () => {
+    const response = await handlers.POST(
+      makeRequest(
+        "?conversationId=conv-1&projectName=test-proj&sessionName=test-session",
+        [VALID_ENTRY],
+        { headers: { "X-CC-Debug-Log": "1" } },
+      ),
+    );
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      accepted: 0,
+      dropped: 1,
+      reason: "self_log",
+    });
+    expect(deps.appendDebugLogEntry).not.toHaveBeenCalled();
+    expect(deps.readState).not.toHaveBeenCalled();
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
   it("drops with 202 + missing_conversation_id when no id is supplied", async () => {
     const response = await handlers.POST(makeRequest("", [VALID_ENTRY]));
     expect(response.status).toBe(202);

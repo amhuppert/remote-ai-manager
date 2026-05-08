@@ -25,10 +25,19 @@ import type { ConversationState, DebugLogEntry, SessionState } from "@/types";
 
 const logger = createLogger("debug-logs-ingest");
 
+/**
+ * Header that probe-generated POSTs MUST set so the receiver — and any
+ * fetch-instrumentation wrapper — can recognize "this request is a debug
+ * log being sent" and short-circuit. Without this guard, instrumenting
+ * the debug-log path itself produces an infinite POST loop when the
+ * agent self-debugs Command Center's debug mode.
+ */
+export const DEBUG_LOG_SELF_HEADER = "x-cc-debug-log";
+
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "content-type",
+  "Access-Control-Allow-Headers": `content-type, ${DEBUG_LOG_SELF_HEADER}`,
 };
 
 interface ConversationContext {
@@ -124,6 +133,14 @@ export function createDebugLogsIngestHandlers(
   }
 
   async function POST(request: Request): Promise<NextResponse> {
+    if (request.headers.get(DEBUG_LOG_SELF_HEADER)) {
+      logger.debug("debug_logs.dropped", {
+        action: "dropped",
+        dropReason: "self_log",
+      });
+      return corsJson({ accepted: 0, dropped: 1, reason: "self_log" }, 202);
+    }
+
     const url = new URL(request.url);
     const conversationId = url.searchParams.get("conversationId");
     const projectNameHint = url.searchParams.get("projectName");

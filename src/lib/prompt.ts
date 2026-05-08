@@ -83,6 +83,8 @@ Each log entry must be a JSON object with:
 - \`message\`: human-readable description
 - \`data\`: object with the runtime values needed to test the hypothesis
 
+Every probe fetch MUST send the header \`X-CC-Debug-Log: 1\`. Command Center's debug-log receiver short-circuits any incoming request that carries this header, which is what prevents an infinite POST loop when you instrument code that itself runs inside the debug-log path (e.g. self-debugging Command Center). If you wrap \`fetch\` for instrumentation, the wrapper must also skip requests carrying this header.
+
 Keep logs narrowly targeted to decision points, inputs, outputs, state transitions, and invariants that distinguish between hypotheses. Instrumentation must be fire-and-forget and must never break the app.
 
 ## Instrumentation Markers
@@ -110,7 +112,10 @@ Example instrumentation with markers:
 // @debug-probe:H1:token-validation START
 void fetch("{DEBUG_LOG_URL}", {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
+  headers: {
+    "Content-Type": "application/json",
+    "X-CC-Debug-Log": "1",
+  },
   body: JSON.stringify({
     timestamp: new Date().toISOString(),
     hypothesisId: "H1",

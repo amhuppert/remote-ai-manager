@@ -25,6 +25,7 @@ import {
   createPromptExecutor,
   BackendMismatchError,
   ModelEffortValidationError,
+  DEBUG_MODE_INSTRUCTIONS,
   hasCollabPrefix,
   stripCollabPrefix,
   type PromptDeps,
@@ -173,6 +174,12 @@ beforeEach(() => {
 // ===========================================================================
 // Tests
 // ===========================================================================
+
+describe("DEBUG_MODE_INSTRUCTIONS", () => {
+  it("instructs the agent to set X-CC-Debug-Log on probe fetches to break self-instrumentation loops", () => {
+    expect(DEBUG_MODE_INSTRUCTIONS).toContain("X-CC-Debug-Log");
+  });
+});
 
 describe("executePromptStream (facade)", () => {
   it("returns conversationId for existing conversation", async () => {

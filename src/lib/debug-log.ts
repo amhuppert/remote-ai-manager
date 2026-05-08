@@ -13,6 +13,12 @@ const MANIFEST_FILE = "instrumentation.json";
  * Honors `CC_PUBLIC_URL` when set (e.g. `https://my-host.tailscale.ts.net:3000`)
  * so remote/Tailscale clients can POST back. Falls back to
  * `http://${CC_HOST ?? localhost}:${PORT ?? 3000}` for local dev.
+ *
+ * The `bun run dev` script sets `PORT` explicitly (defaulting to 3000) and
+ * passes the same value to `next dev -p`, so this fallback always reports
+ * the port the server is actually listening on. When running a second CC
+ * (e.g. self-debugging), start it with `PORT=3001 bun run dev` so log POSTs
+ * land on the CC instance the user is operating, not the main one.
  */
 export function getDebugLogUrl(conversationId: string): string {
   const baseUrl = process.env.CC_PUBLIC_URL;
