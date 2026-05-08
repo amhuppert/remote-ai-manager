@@ -5,6 +5,7 @@ import type { MessageContentBlock, ToolResultMetrics } from "@/types";
 import MarkdownContent from "./MarkdownContent";
 import { formatToolUse } from "@/lib/format-tool-use";
 import ToolUseGroup from "./ToolUseGroup";
+import DebugStructuredCard from "./DebugStructuredCard";
 
 /** Minimum consecutive tool_use blocks required to form a collapsed group */
 const GROUP_THRESHOLD = 2;
@@ -138,6 +139,15 @@ export default memo(function MessageContent({
             <span key={i} className="message-image-caption">
               #{block.index}
             </span>
+          );
+        }
+        if (block.type === "debug_structured") {
+          return (
+            <DebugStructuredCard
+              key={i}
+              phase={block.phase}
+              payload={block.payload}
+            />
           );
         }
         if (block.type === "tool_use") {

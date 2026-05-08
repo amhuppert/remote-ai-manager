@@ -77,6 +77,22 @@ export interface DebugAdapter {
   exitDebugMode(target: DebugTarget): boolean;
   markReproduced(target: DebugTarget): boolean;
   markFixVerified(target: DebugTarget): boolean;
+  /**
+   * Inverse of `markReproduced` — used by Strategy B client-side rollback in
+   * `DebugActionCard.tsx` when a prompt send fails after the phase has
+   * already advanced. Transitions analyzingEvidence → awaitingReproduction.
+   */
+  revertToAwaitingReproduction(target: DebugTarget): boolean;
+  /**
+   * Inverse of `markFixVerified` — used by Strategy B client-side rollback.
+   * Transitions cleanupInstrumentation → awaitingVerification.
+   */
+  revertToAwaitingVerification(target: DebugTarget): boolean;
+  /**
+   * From the `debug.error` sub-state, re-runs the failed turn against the
+   * preserved phase + activeTurn (no UI input needed).
+   */
+  retryDebugTurn(target: DebugTarget): boolean;
   setRecording(target: DebugTarget, recording: boolean): boolean;
   clearDebugLogs(target: DebugTarget): boolean;
 }
@@ -123,11 +139,23 @@ export function createDebugAdapter(deps: DebugAdapterDeps = {}): DebugAdapter {
   const sendEvent = deps.sendConversationEvent ?? defaultSendConversationEvent;
   const publishSSE = deps.publishSSE ?? defaultPublishSSE;
 
+  // Per-phase wrapper cache. The downstream `shouldRecreateRuntime` check uses
+  // reference equality on `outputFormat`, so returning a fresh `{ type, schema }`
+  // object every call would churn the backend runtime even when the phase
+  // hadn't changed. Schemas are module-level constants, so caching by phase
+  // is safe.
+  const outputFormatCache = new Map<DebugModePhase, DebugOutputFormat>();
+
   return {
     resolveOutputFormat(phase) {
+      if (phase == null) return undefined;
+      const cached = outputFormatCache.get(phase);
+      if (cached) return cached;
       const schema = resolveSchema(phase);
       if (!schema) return undefined;
-      return { type: "json_schema", schema };
+      const wrapper: DebugOutputFormat = { type: "json_schema", schema };
+      outputFormatCache.set(phase, wrapper);
+      return wrapper;
     },
 
     publishDebugModeStatus(input) {
@@ -184,6 +212,33 @@ export function createDebugAdapter(deps: DebugAdapterDeps = {}): DebugAdapter {
         target.sessionName,
         target.conversationId,
         { type: "MARK_FIX_VERIFIED" },
+      );
+    },
+
+    revertToAwaitingReproduction(target) {
+      return sendEvent(
+        target.projectPath,
+        target.sessionName,
+        target.conversationId,
+        { type: "REVERT_TO_AWAITING_REPRODUCTION" },
+      );
+    },
+
+    revertToAwaitingVerification(target) {
+      return sendEvent(
+        target.projectPath,
+        target.sessionName,
+        target.conversationId,
+        { type: "REVERT_TO_AWAITING_VERIFICATION" },
+      );
+    },
+
+    retryDebugTurn(target) {
+      return sendEvent(
+        target.projectPath,
+        target.sessionName,
+        target.conversationId,
+        { type: "RETRY_DEBUG_TURN" },
       );
     },
 

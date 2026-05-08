@@ -44,9 +44,7 @@ export const POST = withTracing(async (request, { params }) => {
     );
   }
 
-  let body: {
-    action: "enter" | "exit" | "mark_reproduced" | "mark_fix_verified";
-  };
+  let body: ReturnType<typeof debugModeRequestSchema.parse>;
   try {
     body = debugModeRequestSchema.parse(await request.json());
   } catch {
@@ -61,6 +59,7 @@ export const POST = withTracing(async (request, { params }) => {
     const adapter = getDefaultDebugAdapter();
     const target = { projectPath, sessionName, conversationId };
 
+    let dispatched: boolean;
     switch (body.action) {
       case "enter": {
         if (conversation.debugMode?.active) {
@@ -69,20 +68,41 @@ export const POST = withTracing(async (request, { params }) => {
             { status: 409 },
           );
         }
-        ensureDebugDir(session.worktreePath);
-        const logFilePath = getDebugLogPath(session.worktreePath);
-        adapter.enterDebugMode(target, { logFilePath });
+        ensureDebugDir(session.worktreePath, conversationId);
+        const logFilePath = getDebugLogPath(
+          session.worktreePath,
+          conversationId,
+        );
+        dispatched = adapter.enterDebugMode(target, { logFilePath });
         break;
       }
       case "exit":
-        adapter.exitDebugMode(target);
+        dispatched = adapter.exitDebugMode(target);
         break;
       case "mark_reproduced":
-        adapter.markReproduced(target);
+        dispatched = adapter.markReproduced(target);
         break;
       case "mark_fix_verified":
-        adapter.markFixVerified(target);
+        dispatched = adapter.markFixVerified(target);
         break;
+      case "revert_to_awaiting_reproduction":
+        dispatched = adapter.revertToAwaitingReproduction(target);
+        break;
+      case "revert_to_awaiting_verification":
+        dispatched = adapter.revertToAwaitingVerification(target);
+        break;
+      case "retry_turn":
+        dispatched = adapter.retryDebugTurn(target);
+        break;
+    }
+
+    if (!dispatched) {
+      return NextResponse.json(
+        {
+          error: `Action '${body.action}' is not valid in the current debug phase`,
+        } satisfies ApiError,
+        { status: 409 },
+      );
     }
 
     return NextResponse.json({ ok: true });

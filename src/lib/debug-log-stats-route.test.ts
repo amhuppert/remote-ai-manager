@@ -37,6 +37,7 @@ const BASE_CONVERSATION: ConversationState = {
     hypotheses: [],
     instructionsDelivered: false,
     phase: "hypothesizing",
+    lastTurnFailed: false,
   },
   machineSnapshot: null,
   agentBackend: "claude" as const,

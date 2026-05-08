@@ -16,6 +16,7 @@ import {
   mcpConfigKeys,
   mcpToolsKeys,
   collaborationKeys,
+  debugLogKeys,
 } from "@/lib/query-keys";
 import { useAddOrUpdateJob } from "@/stores/notification.store";
 import {
@@ -1144,7 +1145,14 @@ export function useDebugPhaseMutation(
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (action: "mark_reproduced" | "mark_fix_verified") =>
+    mutationFn: (
+      action:
+        | "mark_reproduced"
+        | "mark_fix_verified"
+        | "revert_to_awaiting_reproduction"
+        | "revert_to_awaiting_verification"
+        | "retry_turn",
+    ) =>
       mutationFetch(
         debugModeUrl(projectName, sessionName, conversationId),
         "debug-phase-transition",
@@ -1225,6 +1233,9 @@ export function useClearDebugLogsMutation(
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: debugLogKeys.stats(projectName, sessionName, conversationId),
       });
     },
   });

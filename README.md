@@ -37,6 +37,14 @@ tailscale serve --bg 3000
 
 CC is now available at `https://<hostname>.tail<id>.ts.net` from any device on your tailnet. Tailscale provisions HTTPS certificates automatically.
 
+If you expose CC behind a custom hostname (e.g. via Tailscale Funnel), set `CC_PUBLIC_URL` to that origin so debug-mode probes from instrumented apps POST back to the right host:
+
+```bash
+CC_PUBLIC_URL="https://<hostname>.tail<id>.ts.net" bun run dev
+```
+
+When `CC_PUBLIC_URL` is unset, debug-mode falls back to `http://${CC_HOST:-localhost}:${PORT:-3000}`.
+
 To check the current serve config:
 
 ```bash

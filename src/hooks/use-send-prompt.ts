@@ -118,8 +118,13 @@ export function useSendPrompt(
         ? `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/prompt`
         : `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/prompt`;
 
+      // Phase 1: dispatch the POST. Transport-level failures and non-OK
+      // responses surface to callers via a rejected promise so atomic-flow
+      // callers (e.g. DebugActionCard Strategy B) can roll back state they
+      // advanced before invoking send.
+      let res: Response;
       try {
-        const res = await tracedFetch(promptUrl, "send-prompt", {
+        res = await tracedFetch(promptUrl, "send-prompt", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -131,16 +136,26 @@ export function useSendPrompt(
           }),
           signal: controller.signal,
         });
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        failPrompt("Failed to send prompt");
+        completePrompt();
+        throw e instanceof Error ? e : new Error("Failed to send prompt");
+      }
 
-        // 3. Handle non-streaming errors
-        if (!res.ok) {
-          const data = await res
-            .json()
-            .catch(() => ({ error: "Prompt failed" }));
-          failPrompt((data as { error?: string }).error ?? "Prompt failed");
-          return;
-        }
+      if (!res.ok) {
+        const data = (await res
+          .json()
+          .catch(() => ({ error: "Prompt failed" }))) as {
+          error?: string;
+        };
+        const message = data.error ?? "Prompt failed";
+        failPrompt(message);
+        completePrompt();
+        throw new Error(message);
+      }
 
+      try {
         // 4. Read SSE stream
         const reader = res.body?.getReader();
         if (!reader) {

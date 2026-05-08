@@ -50,6 +50,7 @@ const debugModeActive = {
   hypotheses: [],
   instructionsDelivered: true,
   phase: "hypothesizing" as const,
+  lastTurnFailed: false,
 };
 
 const debugModeRecordingPaused = {

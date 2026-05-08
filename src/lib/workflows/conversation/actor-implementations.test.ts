@@ -375,6 +375,7 @@ describe("buildEffectivePrompt", () => {
       [],
       null,
       "http://debug",
+      ".debug/conv/instrumentation.json",
     );
     expect(result).toBe("hello");
   });
@@ -390,6 +391,7 @@ describe("buildEffectivePrompt", () => {
       blocks,
       null,
       "http://debug",
+      ".debug/conv/instrumentation.json",
     );
     expect(result).toEqual(blocks);
   });
@@ -403,6 +405,7 @@ describe("buildEffectivePrompt", () => {
       hypotheses: [] as never[],
       instructionsDelivered: false,
       phase: "hypothesizing" as const,
+      lastTurnFailed: false,
     };
     const result = buildEffectivePrompt(
       "help debug",
@@ -410,6 +413,7 @@ describe("buildEffectivePrompt", () => {
       [],
       debugMode,
       "http://debug-url",
+      ".debug/conv/instrumentation.json",
     );
     expect(typeof result).toBe("string");
     expect(result as string).toContain("<debug-mode>");
@@ -427,6 +431,7 @@ describe("buildEffectivePrompt", () => {
       hypotheses: [] as never[],
       instructionsDelivered: true,
       phase: "hypothesizing" as const,
+      lastTurnFailed: false,
     };
     const result = buildEffectivePrompt(
       "help debug",
@@ -434,6 +439,7 @@ describe("buildEffectivePrompt", () => {
       [],
       debugMode,
       "http://debug-url",
+      ".debug/conv/instrumentation.json",
     );
     expect(typeof result).toBe("string");
     expect(result as string).toContain("<debug-phase>");
@@ -449,6 +455,7 @@ describe("buildEffectivePrompt", () => {
       [],
       null,
       "http://debug",
+      ".debug/conv/instrumentation.json",
     );
     expect(result).toBe("hello");
   });
@@ -466,6 +473,7 @@ describe("buildEffectivePrompt", () => {
       hypotheses: [] as never[],
       instructionsDelivered: false,
       phase: "hypothesizing" as const,
+      lastTurnFailed: false,
     };
     const result = buildEffectivePrompt(
       "check this",
@@ -473,6 +481,7 @@ describe("buildEffectivePrompt", () => {
       blocks,
       debugMode,
       "http://debug-url",
+      ".debug/conv/instrumentation.json",
     );
     expect(Array.isArray(result)).toBe(true);
     const arr = result as Array<{ type: string; text?: string }>;
@@ -1160,6 +1169,7 @@ describe("executePromptForMachine", () => {
         hypotheses: [],
         instructionsDelivered: false,
         phase: "hypothesizing",
+        lastTurnFailed: false,
       },
       outputFormat: {
         type: "json_schema",
@@ -1782,6 +1792,7 @@ describe("executePromptForMachine", () => {
         hypotheses: [],
         instructionsDelivered: false,
         phase: "hypothesizing",
+        lastTurnFailed: false,
       },
     });
     const key = conversationRuntimeKey(

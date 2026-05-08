@@ -47,15 +47,23 @@ describe("introspectMachine", () => {
       "debug.fixing",
       "debug.awaitingVerification",
       "debug.cleanupInstrumentation",
+      "debug.verifyingCleanup",
+      "debug.error",
     ]);
-    expect(result.actors).toEqual(["executePrompt", "prepareTurn"]);
+    expect(result.actors).toEqual([
+      "executePrompt",
+      "prepareTurn",
+      "verifyCleanup",
+    ]);
   });
 
   it("conversation: composite guard renders as 'a && b'", () => {
     const result = introspectMachine(conversationMachine);
     const finalizing = result.states.find((s) => s.id === "finalizingTurn");
     const composite = finalizing?.events.find(
-      (e) => e.guard === "isDebugAnalyzing && shouldLoopBackToHypothesizing",
+      (e) =>
+        e.guard ===
+        "isDebugAnalyzing && lastTurnProducedStructuredOutput && shouldLoopBackToHypothesizing",
     );
     expect(composite).toBeDefined();
     expect(composite?.target).toBe("debug.hypothesizing");

@@ -66,14 +66,7 @@ You are in Debug Mode. Debug with runtime evidence, not static guesswork.
 
 ## Workflow
 1. **Hypothesize + Instrument (same turn)**: Form 3-5 plausible root-cause hypotheses labeled H1, H2, etc., and immediately add the minimum instrumentation needed to test them in the same response. Explain what each hypothesis predicts and where you instrumented. Do not stop after listing hypotheses.
-2. **Wait for Reproduction**: Provide clear numbered reproduction steps using a blockquote. The UI renders blockquotes as a styled card when in debug mode. Format exactly like this:
-
-> **Reproduction Steps**
-> 1. First step the user should take
-> 2. Second step
-> 3. What to observe
-
-Do not continue until the user says reproduction is complete.
+2. **Wait for Reproduction**: Return clear ordered reproduction steps as the \`reproductionSteps\` array in your structured JSON output. The UI renders the steps deterministically from that field. Do not continue until the user says reproduction is complete.
 3. **Analyze Evidence**: Read \`{DEBUG_LOG_FILE_PATH}\` and determine which hypotheses are supported, refuted, or still inconclusive.
 4. **Fix**: Make the smallest change justified by the evidence.
 5. **Verify**: Ask the user to verify the fix.
@@ -130,7 +123,7 @@ void fetch("{DEBUG_LOG_URL}", {
 
 ## Instrumentation Manifest
 
-After adding instrumentation, write a manifest to \`.debug/instrumentation.json\` that tracks every probe. This manifest is the source of truth for cleanup.
+After adding instrumentation, write a manifest to \`{DEBUG_MANIFEST_PATH}\` that tracks every probe. This manifest is the source of truth for cleanup.
 
 \`\`\`json
 {
@@ -161,10 +154,10 @@ Update the manifest whenever you add or remove probes during additional instrume
 ## Cleanup Verification
 
 During cleanup, after removing all instrumentation:
-1. Read \`.debug/instrumentation.json\` to get the list of probed files
+1. Read \`{DEBUG_MANIFEST_PATH}\` to get the list of probed files
 2. Remove all \`@debug-probe\` markers from those files
 3. Run \`grep -r "@debug-probe" src/\` to verify zero results — if any remain, remove them
-4. Delete \`.debug/instrumentation.json\`
+4. Do NOT delete \`{DEBUG_MANIFEST_PATH}\` yourself; Command Center cross-checks your structured report against the manifest and removes the file only after the verification passes. Set \`acknowledgesManifestDeletionContract: true\` in your structured response to confirm you understand CC owns the deletion.
 5. Check each modified file for orphaned imports or variables that were only needed by removed probes
 
 ## Rules
@@ -172,7 +165,7 @@ During cleanup, after removing all instrumentation:
 - Prefer a few high-signal logs over broad tracing.
 - If the evidence is incomplete, add another targeted instrumentation pass instead of guessing.
 - NEVER remove instrumentation until the user clicks "Mark Fix". The user controls when cleanup happens, not you.
-- ALL instrumentation MUST use \`@debug-probe\` comment markers and be tracked in \`.debug/instrumentation.json\`.
+- ALL instrumentation MUST use \`@debug-probe\` comment markers and be tracked in \`{DEBUG_MANIFEST_PATH}\`.
 </debug-mode>`;
 
 /**
@@ -182,17 +175,17 @@ During cleanup, after removing all instrumentation:
  */
 export const DEBUG_PHASE_CONTEXT: Record<string, string> = {
   hypothesizing:
-    "<debug-phase>Phase: HYPOTHESIZING. Form hypotheses, add instrumentation, and provide reproduction steps. Return structured JSON output.</debug-phase>",
+    "<debug-phase>Phase: HYPOTHESIZING. Form hypotheses, add instrumentation, and provide reproduction steps. Return structured JSON with EVERY one of these fields:\n- `hypotheses` (array, 3\u20135 items): each item has `id` (\"H1\"\u2013\"H5\"), `description` (one sentence), and `instrumentationPlan` (concrete probes you will add).\n- `reproductionSteps` (string[], at least 2): only the user-facing actions to reproduce the bug, written as imperatives (\"Click X\", \"Send a request to Y\"). Do NOT include closing remarks directed at yourself or the user (e.g. \"tell me when done\") \u2014 those belong in the conversational text outside the structured output.</debug-phase>",
   awaiting_reproduction:
     "<debug-phase>Phase: AWAITING REPRODUCTION. The user has not yet confirmed reproduction. Answer follow-up questions but do NOT analyze evidence or propose fixes yet.</debug-phase>",
   analyzing_evidence:
-    "<debug-phase>Phase: ANALYZING EVIDENCE. Read the debug log file, classify hypotheses, and return structured JSON output. Do NOT implement fixes in this step.</debug-phase>",
+    "<debug-phase>Phase: ANALYZING EVIDENCE. Read the debug log file at {DEBUG_LOG_FILE_PATH}, classify hypotheses, and return structured JSON with EVERY one of these fields:\n- `supportedHypotheses` (string[]): hypothesis ids (\"H1\"\u2013\"H5\") the evidence supports.\n- `refutedHypotheses` (string[]): ids the evidence refutes.\n- `inconclusiveHypotheses` (string[]): ids that need more evidence.\n- `recommendedNextStep` (\"fix\" | \"more_instrumentation\"): pick \"fix\" only when at least one hypothesis is supported and the rest are refuted or inconclusive.\n- `evidenceSummary` (string): short prose summary tying log lines to hypotheses.\nDo NOT implement fixes in this step.</debug-phase>",
   fixing:
-    '<debug-phase>Phase: FIXING. Implement the minimal fix justified by the evidence. Return structured JSON with fixSummary and verificationSteps. Do NOT remove any instrumentation — cleanup only happens when the user clicks "Mark Fix".</debug-phase>',
+    '<debug-phase>Phase: FIXING. Implement the minimal fix justified by the evidence. Return structured JSON with EVERY one of these fields:\n- `fixSummary` (string): one or two sentences naming what changed and why.\n- `verificationSteps` (string[], at least 2): the concrete steps the user runs to verify the fix.\nDo NOT remove any instrumentation — cleanup only happens when the user clicks "Mark Fix".</debug-phase>',
   awaiting_verification:
     '<debug-phase>Phase: AWAITING VERIFICATION. The user is verifying the fix. Answer questions but do NOT remove instrumentation — cleanup only happens when the user clicks "Mark Fix".</debug-phase>',
   cleanup_instrumentation:
-    '<debug-phase>Phase: CLEANUP. Remove ALL debug instrumentation you added (logging statements, fetch calls to the debug log API, etc.). Follow the cleanup procedure: read .debug/instrumentation.json for the probe manifest, remove all @debug-probe markers from listed files, run `grep -r "@debug-probe" src/` to verify none remain, delete .debug/instrumentation.json, and check for orphaned imports. Return structured JSON confirming removal.</debug-phase>',
+    '<debug-phase>Phase: CLEANUP. Remove ALL debug instrumentation you added (logging statements, fetch calls to the debug log API, etc.). Follow the cleanup procedure: read {DEBUG_MANIFEST_PATH} for the probe manifest, remove all @debug-probe markers from every file listed there, run `grep -r "@debug-probe" src/` to verify none remain, and check for orphaned imports. Do NOT delete {DEBUG_MANIFEST_PATH} yourself — Command Center cross-checks your structured report against the manifest and removes the manifest after a passing verification.\n\nReturn structured JSON with EVERY one of these fields:\n- `removedInstrumentation` (boolean): true once every @debug-probe marker has been removed.\n- `filesModified` (string[]): every file path listed in the manifest must appear here. Use repository-relative paths.\n- `grepVerificationPassed` (boolean): true when `grep -r "@debug-probe" src/` returned zero results.\n- `acknowledgesManifestDeletionContract` (boolean): set to true to confirm you understand CC (not the agent) deletes the manifest.\n- `notes` (string): brief summary of the cleanup; "" if nothing notable.</debug-phase>',
 };
 
 /** Appended to every system prompt to orient the agent about its CC environment. */

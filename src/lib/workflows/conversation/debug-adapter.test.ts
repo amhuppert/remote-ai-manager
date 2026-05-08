@@ -42,6 +42,8 @@ import type {
   PrepareTurnInput,
   PrepareTurnOutput,
   PromptActorResult,
+  VerifyCleanupInput,
+  VerifyCleanupOutput,
 } from "./types";
 import type { SSEEvent } from "@/types";
 
@@ -104,16 +106,31 @@ function makeMockExecutePrompt(result?: Partial<PromptActorResult>) {
   });
 }
 
+function makeMockVerifyCleanup(output: Partial<VerifyCleanupOutput> = {}) {
+  return fromPromise<VerifyCleanupOutput, VerifyCleanupInput>(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+    return {
+      ok: true,
+      failedConditions: [],
+      missingFiles: [],
+      remediationPrompt: null,
+      ...output,
+    };
+  });
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function makeTestMachine(overrides?: {
   prepareTurn?: any;
   executePrompt?: any;
+  verifyCleanup?: any;
 }) {
   /* eslint-enable @typescript-eslint/no-explicit-any */
   return conversationMachine.provide({
     actors: {
       prepareTurn: overrides?.prepareTurn ?? makeMockPrepareTurn(),
       executePrompt: overrides?.executePrompt ?? makeMockExecutePrompt(),
+      verifyCleanup: overrides?.verifyCleanup ?? makeMockVerifyCleanup(),
     },
     actions: {
       persistSnapshot: () => {},
@@ -208,6 +225,22 @@ describe("debug adapter", () => {
     it("returns undefined when no debug phase is active", () => {
       expect(adapter.resolveOutputFormat(null)).toBeUndefined();
       expect(adapter.resolveOutputFormat(undefined)).toBeUndefined();
+    });
+
+    it("returns the same wrapper reference across calls for the same phase", () => {
+      // shouldRecreateRuntime compares outputFormat by reference; a new wrapper
+      // each call would churn the backend runtime even when the phase is
+      // unchanged.
+      const a = adapter.resolveOutputFormat("hypothesizing");
+      const b = adapter.resolveOutputFormat("hypothesizing");
+      expect(a).toBeDefined();
+      expect(b).toBe(a);
+    });
+
+    it("returns distinct wrappers for distinct phases", () => {
+      const hyp = adapter.resolveOutputFormat("hypothesizing");
+      const fix = adapter.resolveOutputFormat("fixing");
+      expect(hyp).not.toBe(fix);
     });
   });
 
@@ -393,7 +426,7 @@ describe("debug adapter", () => {
               removedInstrumentation: true,
               filesModified: ["src/index.ts"],
               grepVerificationPassed: true,
-              manifestDeleted: true,
+              acknowledgesManifestDeletionContract: true,
               notes: "Cleanup complete.",
             },
           });

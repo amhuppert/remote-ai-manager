@@ -14,6 +14,8 @@ import type {
   ExecutePromptInput,
   PromptActorResult,
   ConversationContext,
+  VerifyCleanupInput,
+  VerifyCleanupOutput,
 } from "./types";
 import type {
   MessageContentBlock,
@@ -445,6 +447,7 @@ export function buildEffectivePrompt(
   userContentBlocks: MessageContentBlock[],
   debugMode: ConversationContext["debugMode"],
   debugLogUrl: string,
+  debugManifestPath: string,
 ): string | MessageContentBlock[] {
   let effectivePrompt: string | MessageContentBlock[] = hasImages
     ? userContentBlocks
@@ -456,9 +459,20 @@ export function buildEffectivePrompt(
       prefix = DEBUG_MODE_INSTRUCTIONS.replaceAll(
         "{DEBUG_LOG_URL}",
         debugLogUrl,
-      ).replaceAll("{DEBUG_LOG_FILE_PATH}", debugMode.logFilePath);
+      )
+        .replaceAll("{DEBUG_LOG_FILE_PATH}", debugMode.logFilePath)
+        .replaceAll("{DEBUG_MANIFEST_PATH}", debugManifestPath);
     } else {
-      prefix = DEBUG_PHASE_CONTEXT[debugMode.phase] ?? "";
+      prefix = (DEBUG_PHASE_CONTEXT[debugMode.phase] ?? "").replaceAll(
+        "{DEBUG_MANIFEST_PATH}",
+        debugManifestPath,
+      );
+    }
+
+    if (!debugMode.recording) {
+      const pausedNotice =
+        "<debug-paused>Recording is paused. New runtime evidence will not be appended to the debug log until recording is re-enabled.</debug-paused>";
+      prefix = prefix ? `${pausedNotice}\n\n${prefix}` : pausedNotice;
     }
 
     if (prefix) {
@@ -1369,6 +1383,7 @@ export async function executePromptForMachine(
     [],
     input.debugMode,
     deps.getDebugLogUrl(input.conversationId),
+    `.debug/${input.conversationId}/instrumentation.json`,
   );
 
   const promptText =
@@ -1567,6 +1582,30 @@ export async function executePromptForMachine(
     }
   }
 
+  // Persist a typed `debug_structured` block when a debug-mode turn produced
+  // a structured output. Backend-agnostic — both Claude (SDK-validated) and
+  // Codex (parsed JSON) reach here with structuredOutput populated. The block
+  // merges with the preceding assistant text via readConversationMessages,
+  // letting the renderer dispatch on `phase`.
+  if (
+    input.debugMode?.active === true &&
+    turnResult?.structuredOutput != null &&
+    !turnResult.error
+  ) {
+    await deps.safeAppendTranscriptEntry(input.conversationId, {
+      timestamp: new Date().toISOString(),
+      type: "assistant",
+      role: "assistant",
+      content: [
+        {
+          type: "debug_structured",
+          phase: input.debugMode.phase,
+          payload: turnResult.structuredOutput,
+        },
+      ],
+    });
+  }
+
   // Build result
   const result: PromptActorResult = {
     backendRef: turnResult?.backendRef ?? null,
@@ -1591,4 +1630,39 @@ export async function executePromptForMachine(
   });
 
   return result;
+}
+
+/**
+ * Cross-checks the agent's cleanup result against the persisted manifest.
+ * On a passing verification the manifest is deleted; on failure the
+ * structured remediation prompt is returned so the machine can route to
+ * `debug.error` and let the user re-run cleanup.
+ */
+export async function verifyCleanupForMachine(
+  input: VerifyCleanupInput,
+): Promise<VerifyCleanupOutput> {
+  const [{ verifyCleanupAgainstManifest, deleteManifest }] = await Promise.all([
+    import("@/lib/debug-log"),
+  ]);
+
+  const verification = verifyCleanupAgainstManifest(
+    input.worktreePath,
+    input.conversationId,
+    input.cleanup,
+  );
+
+  if (verification.ok) {
+    deleteManifest(input.worktreePath, input.conversationId);
+    logger.info("debug.cleanup_verified", {
+      conversationId: input.conversationId,
+    });
+  } else {
+    logger.warn("debug.cleanup_verification_failed", {
+      conversationId: input.conversationId,
+      failedConditions: verification.failedConditions,
+      missingFiles: verification.missingFiles,
+    });
+  }
+
+  return verification;
 }
