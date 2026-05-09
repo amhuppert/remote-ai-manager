@@ -232,4 +232,142 @@ describe("migrateLegacyExecution", () => {
     expect("activeContextId" in result.upgradedRecord).toBe(false);
     expect(result.repairedFields).toContain("activeContextId");
   });
+
+  it("flat laneStates: groups entries by contextId into nested Record<contextId, Record<lane, LaneState>>", () => {
+    const claudeImplementer = {
+      contextId: "ctx-X",
+      engine: "claude",
+      lane: "implementer",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-1",
+      },
+      lastContextTokens: 100,
+      lastContextWindowMax: 200000,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "supported",
+      lastUsedAt: "2026-05-08T09:54:42.829Z",
+    };
+    const codexValidator = {
+      contextId: "ctx-X",
+      engine: "codex",
+      lane: "context_validator",
+      sessionRef: {
+        engine: "codex",
+        lane: "context_validator",
+        threadId: "thread-1",
+      },
+      lastTurnUsage: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: "2026-05-08T09:57:14.649Z",
+    };
+
+    const result = migrateLegacyExecution(
+      legacyRecord({
+        laneStates: {
+          implementer: claudeImplementer,
+          context_validator: codexValidator,
+        },
+      }),
+    );
+
+    expect(result.upgradedRecord.laneStates).toEqual({
+      "ctx-X": {
+        implementer: claudeImplementer,
+        context_validator: codexValidator,
+      },
+    });
+    expect(result.repairedFields).toContain("laneStates");
+  });
+
+  it("flat laneStates with multiple contextIds: groups each lane under its own contextId", () => {
+    const laneA = {
+      contextId: "ctx-A",
+      engine: "claude",
+      lane: "implementer",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-A",
+      },
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "supported",
+      lastUsedAt: "2026-05-08T00:00:00.000Z",
+    };
+    const laneB = {
+      contextId: "ctx-B",
+      engine: "claude",
+      lane: "implementer",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-B",
+      },
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "supported",
+      lastUsedAt: "2026-05-08T00:00:00.000Z",
+    };
+
+    const result = migrateLegacyExecution(
+      newSchemaRecord({
+        laneStates: { implementer: laneA, "implementer-2": laneB },
+      }),
+    );
+
+    expect(result.upgradedRecord.laneStates).toEqual({
+      "ctx-A": { implementer: laneA },
+      "ctx-B": { "implementer-2": laneB },
+    });
+    expect(result.repairedFields).toContain("laneStates");
+  });
+
+  it("nested laneStates: leaves already-migrated shape untouched", () => {
+    const nested = {
+      "ctx-A": {
+        implementer: {
+          contextId: "ctx-A",
+          engine: "claude",
+          lane: "implementer",
+          sessionRef: {
+            engine: "claude",
+            lane: "implementer",
+            conversationId: "conv-A",
+          },
+          rotateBeforeNextTurn: false,
+          limitEvaluation: "supported",
+          lastUsedAt: "2026-05-08T00:00:00.000Z",
+        },
+      },
+    };
+    const result = migrateLegacyExecution(
+      newSchemaRecord({ laneStates: nested }),
+    );
+
+    expect(result.upgradedRecord.laneStates).toEqual(nested);
+    expect(result.repairedFields).not.toContain("laneStates");
+  });
+
+  it("needsLegacyMigration: returns true for flat laneStates even without activeContextId", () => {
+    expect(
+      needsLegacyMigration(
+        newSchemaRecord({
+          laneStates: {
+            implementer: {
+              contextId: "ctx-A",
+              engine: "claude",
+              lane: "implementer",
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("needsLegacyMigration: returns false for empty laneStates", () => {
+    expect(needsLegacyMigration(newSchemaRecord({ laneStates: {} }))).toBe(
+      false,
+    );
+  });
 });

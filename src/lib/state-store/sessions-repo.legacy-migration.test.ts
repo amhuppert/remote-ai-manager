@@ -331,4 +331,96 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
       | undefined;
     expect(data?.repairedFields).toContain("activeContextId");
   });
+
+  it("flat laneStates record (pre-promotion shape) is reshaped to nested keying and re-persisted", () => {
+    const flatLanesJson = JSON.stringify({
+      id: "exec-flat-lanes-1",
+      seedDefinitionId: "seed-1",
+      seedDefinitionRevision: 1,
+      workingDefinition: {
+        schemaVersion: 1,
+        executionContexts: [],
+        tasks: [],
+        edges: [],
+      },
+      status: "paused",
+      activeContextIds: [],
+      contextStates: {},
+      taskStates: {},
+      sharedDocuments: [],
+      laneStates: {
+        context_validator: {
+          contextId: "execution-loop-fan-out-fan-in",
+          engine: "codex",
+          lane: "context_validator",
+          lastTurnUsage: null,
+          lastUsedAt: "2026-05-08T09:57:14.649Z",
+          limitEvaluation: "disabled",
+          rotateBeforeNextTurn: false,
+          sessionRef: {
+            engine: "codex",
+            lane: "context_validator",
+            threadId: "thread-1",
+          },
+        },
+        implementer: {
+          contextId: "execution-loop-fan-out-fan-in",
+          engine: "claude",
+          lane: "implementer",
+          lastContextTokens: 49341,
+          lastContextWindowMax: 200000,
+          lastUsedAt: "2026-05-08T09:54:42.829Z",
+          limitEvaluation: "disabled",
+          rotateBeforeNextTurn: false,
+          sessionRef: {
+            conversationId: "conv-1",
+            engine: "claude",
+            lane: "implementer",
+          },
+          workflowConversationId: "conv-1",
+        },
+      },
+      machineSnapshot: null,
+      history: [],
+      startedAt: "2026-05-08T00:00:00.000Z",
+      completedAt: null,
+      haltReason: null,
+      pendingHaltReason: null,
+    });
+    rawInsertSession(flatLanesJson);
+
+    const session = repo.findByKey(PROJECT_PATH, SESSION_NAME);
+    const exec = session?.graphWorkflowExecution;
+    expect(exec).not.toBeNull();
+    if (!exec) return;
+
+    expect(exec.laneStates).toEqual({
+      "execution-loop-fan-out-fan-in": {
+        context_validator: expect.objectContaining({
+          engine: "codex",
+          lane: "context_validator",
+        }),
+        implementer: expect.objectContaining({
+          engine: "claude",
+          lane: "implementer",
+        }),
+      },
+    });
+
+    const onDisk = readGraphWorkflowExecutionColumn();
+    expect(onDisk).not.toBeNull();
+    if (!onDisk) return;
+    const onDiskParsed = JSON.parse(onDisk) as Record<string, unknown>;
+    const onDiskLanes = onDiskParsed.laneStates as Record<string, unknown>;
+    expect(Object.keys(onDiskLanes)).toEqual(["execution-loop-fan-out-fan-in"]);
+
+    const migrationEvents = capturedLogs.filter(
+      (e) => e.message === "graph-workflow.parallel.legacy_migrated",
+    );
+    expect(migrationEvents).toHaveLength(1);
+    const data = migrationEvents[0]?.data as
+      | { repairedFields?: string[] }
+      | undefined;
+    expect(data?.repairedFields).toContain("laneStates");
+  });
 });

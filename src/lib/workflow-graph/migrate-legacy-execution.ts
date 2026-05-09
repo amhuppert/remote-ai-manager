@@ -27,9 +27,29 @@ function objectLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isFlatLaneStates(laneStates: Record<string, unknown>): boolean {
+  for (const value of Object.values(laneStates)) {
+    if (
+      objectLike(value) &&
+      typeof (value as Record<string, unknown>).engine === "string"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function needsLegacyMigration(raw: unknown): boolean {
   if (!objectLike(raw)) return false;
-  return "activeContextId" in raw;
+  if ("activeContextId" in raw) return true;
+  const laneStates = (raw as Record<string, unknown>).laneStates;
+  if (
+    objectLike(laneStates) &&
+    isFlatLaneStates(laneStates as Record<string, unknown>)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function migrateLegacyExecution(
@@ -78,6 +98,25 @@ export function migrateLegacyExecution(
       upgraded.contextStates = nextStates;
       repaired.push("contextStates.running");
     }
+  }
+
+  const laneStates = upgraded.laneStates;
+  if (
+    objectLike(laneStates) &&
+    isFlatLaneStates(laneStates as Record<string, unknown>)
+  ) {
+    const flat = laneStates as Record<string, unknown>;
+    const nested: Record<string, Record<string, unknown>> = {};
+    for (const [lane, value] of Object.entries(flat)) {
+      if (!objectLike(value)) continue;
+      const contextId = (value as Record<string, unknown>).contextId;
+      if (typeof contextId !== "string" || contextId.length === 0) continue;
+      const bucket = nested[contextId] ?? {};
+      bucket[lane] = value;
+      nested[contextId] = bucket;
+    }
+    upgraded.laneStates = nested;
+    repaired.push("laneStates");
   }
 
   const executionId =
