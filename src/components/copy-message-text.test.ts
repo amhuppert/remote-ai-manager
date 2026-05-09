@@ -37,16 +37,29 @@ describe("extractCopyText", () => {
 
   it("formats command blocks as slash commands with args", () => {
     const blocks: MessageContentBlock[] = [
-      { type: "command", name: "kiro:spec-status", args: "auth-flow" },
+      { type: "command", name: "/kiro:spec-status", args: "auth-flow" },
     ];
     expect(extractCopyText(blocks)).toBe("/kiro:spec-status auth-flow");
   });
 
   it("formats command blocks without args as just the slash name", () => {
     const blocks: MessageContentBlock[] = [
-      { type: "command", name: "compact", args: null },
+      { type: "command", name: "/compact", args: null },
     ];
     expect(extractCopyText(blocks)).toBe("/compact");
+  });
+
+  it("preserves multi-line args verbatim", () => {
+    const blocks: MessageContentBlock[] = [
+      {
+        type: "command",
+        name: "/collab",
+        args: "I want to change a couple of things.\n\n**Change 1:** do X.\n**Change 2:** do Y.",
+      },
+    ];
+    expect(extractCopyText(blocks)).toBe(
+      "/collab I want to change a couple of things.\n\n**Change 1:** do X.\n**Change 2:** do Y.",
+    );
   });
 
   it("returns an empty string when no copyable blocks are present", () => {

@@ -6885,6 +6885,48 @@ textarea {
   min-width: 0;
 }
 
+.command-indicator--expanded {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  min-height: 0;
+}
+
+.command-indicator--expanded .command-name {
+  align-self: flex-start;
+}
+
+.command-indicator__body {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.command-indicator__body > :first-child {
+  margin-top: 0;
+}
+
+.command-indicator__body > :last-child {
+  margin-bottom: 0;
+}
+
+.command-indicator__body p {
+  margin: var(--space-sm) 0;
+}
+
+.command-indicator__body ul,
+.command-indicator__body ol {
+  margin: var(--space-sm) 0;
+  padding-left: var(--space-lg);
+}
+
+.command-indicator__body li {
+  margin-bottom: var(--space-xs);
+}
+
 /* ============================================================
    Mobile Bottom Action Bar (hidden on desktop)
    ============================================================ */

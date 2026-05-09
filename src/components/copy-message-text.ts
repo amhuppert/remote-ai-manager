@@ -11,9 +11,7 @@ export function extractCopyText(content: MessageContentBlock[]): string {
     if (block.type === "text") {
       parts.push(block.text);
     } else if (block.type === "command") {
-      parts.push(
-        block.args ? `/${block.name} ${block.args}` : `/${block.name}`,
-      );
+      parts.push(block.args ? `${block.name} ${block.args}` : block.name);
     }
   }
   return parts.join("\n\n");

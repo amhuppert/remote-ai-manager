@@ -6,6 +6,7 @@ import MarkdownContent from "./MarkdownContent";
 import { formatToolUse } from "@/lib/format-tool-use";
 import ToolUseGroup from "./ToolUseGroup";
 import DebugStructuredCard from "./DebugStructuredCard";
+import CommandIndicator from "./CommandIndicator";
 
 /** Minimum consecutive tool_use blocks required to form a collapsed group */
 const GROUP_THRESHOLD = 2;
@@ -117,10 +118,7 @@ export default memo(function MessageContent({
         }
         if (block.type === "command") {
           return (
-            <div key={i} className="command-indicator">
-              <span className="command-name">{block.name}</span>
-              {block.args && <span className="command-args">{block.args}</span>}
-            </div>
+            <CommandIndicator key={i} name={block.name} args={block.args} />
           );
         }
         if (block.type === "image") {
