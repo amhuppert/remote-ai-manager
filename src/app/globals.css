@@ -7901,6 +7901,12 @@ textarea {
     display: none;
   }
 
+  /* Pin content area to grid row 2 — info-strip's display:none would
+     otherwise let it fall into the auto-sized row 1 and collapse panel-body. */
+  .session-detail-layout > .session-content-area {
+    grid-row: 2 / 3;
+  }
+
   /* Full-bleed conversation panel on mobile */
   .prompt-panel {
     border: none;
