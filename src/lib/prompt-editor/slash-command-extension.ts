@@ -6,8 +6,6 @@ import Suggestion, {
   type SuggestionKeyDownProps,
 } from "@tiptap/suggestion";
 
-const SLASH_COMMAND_PLUGIN_KEY = new PluginKey("slashCommandSuggestion");
-
 /**
  * Item shape provided by the host application's command catalog. The
  * extension is intentionally generic; the host decides what command items
@@ -22,60 +20,69 @@ export interface SlashCommandItem {
   data?: Record<string, unknown>;
 }
 
-export interface SlashCommandExtensionOptions {
-  /** Trigger character. Defaults to `/`; pass `$` for Codex-mode skills. */
-  char?: string;
+export interface SlashCommandTriggerHandlers {
+  onStart?: (props: SuggestionProps<SlashCommandItem>) => void;
+  onUpdate?: (props: SuggestionProps<SlashCommandItem>) => void;
+  onExit?: (props: SuggestionProps<SlashCommandItem>) => void;
+  onKeyDown?: (props: SuggestionKeyDownProps) => boolean;
+}
+
+export interface SlashCommandTrigger {
+  /** Trigger character, e.g. `/` for Claude commands or `$` for Codex skills. */
+  char: string;
   /** Returns the filtered command list for the current query. */
   items: (props: { query: string }) => SlashCommandItem[];
   /** Mount the suggestion popup. Receives the same props Tiptap forwards. */
-  render: () => {
-    onStart?: (props: SuggestionProps<SlashCommandItem>) => void;
-    onUpdate?: (props: SuggestionProps<SlashCommandItem>) => void;
-    onExit?: (props: SuggestionProps<SlashCommandItem>) => void;
-    onKeyDown?: (props: SuggestionKeyDownProps) => boolean;
-  };
+  render: () => SlashCommandTriggerHandlers;
+}
+
+export interface SlashCommandExtensionOptions {
+  /**
+   * One trigger per character; each registers an independent
+   * `@tiptap/suggestion` plugin with its own popup callbacks.
+   */
+  triggers: SlashCommandTrigger[];
 }
 
 /**
- * Tiptap extension wiring the `@tiptap/suggestion` plugin for slash-command
- * (or `$`-skill) triggers. Inserts the selected `insertText` plus a trailing
- * space at the trigger range. Item filtering and popup rendering are
- * provided by the caller via `options.items` and `options.render`.
+ * Tiptap extension wiring `@tiptap/suggestion` plugins for one or more
+ * trigger characters (e.g. `/` for Claude commands, `$` for Codex skills).
+ * Each trigger gets its own plugin key so multiple suggestions can coexist
+ * in the same editor. Inserts the selected `insertText` plus a trailing
+ * space at the trigger range.
  */
 export const SlashCommand = Extension.create<SlashCommandExtensionOptions>({
   name: "slashCommand",
 
   addOptions() {
     return {
-      char: "/",
-      items: () => [],
-      render: () => ({}),
+      triggers: [],
     };
   },
 
   addProseMirrorPlugins() {
-    const { char, items, render } = this.options;
-
-    const suggestionOptions: SuggestionOptions<
-      SlashCommandItem,
-      SlashCommandItem
-    > = {
-      editor: this.editor,
-      pluginKey: SLASH_COMMAND_PLUGIN_KEY,
-      char: char ?? "/",
-      startOfLine: true,
-      allowSpaces: false,
-      items: ({ query }) => items({ query }),
-      render,
-      command: ({ editor, range, props }) => {
-        editor
-          .chain()
-          .focus()
-          .insertContentAt(range, `${props.insertText} `)
-          .run();
-      },
-    };
-
-    return [Suggestion(suggestionOptions)];
+    return this.options.triggers.map((trigger) => {
+      const pluginKey = new PluginKey(`slashCommandSuggestion-${trigger.char}`);
+      const suggestionOptions: SuggestionOptions<
+        SlashCommandItem,
+        SlashCommandItem
+      > = {
+        editor: this.editor,
+        pluginKey,
+        char: trigger.char,
+        startOfLine: true,
+        allowSpaces: false,
+        items: ({ query }) => trigger.items({ query }),
+        render: trigger.render,
+        command: ({ editor, range, props }) => {
+          editor
+            .chain()
+            .focus()
+            .insertContentAt(range, `${props.insertText} `)
+            .run();
+        },
+      };
+      return Suggestion(suggestionOptions);
+    });
   },
 });

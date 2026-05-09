@@ -19,6 +19,7 @@ import {
   SlashCommand,
   TerminalHotkeys,
   type SerializedPromptDoc,
+  type SlashCommandTrigger,
 } from "@/lib/prompt-editor";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { AgentBackendId } from "@/types";
@@ -86,6 +87,40 @@ interface SlashSuggestionState {
 interface FileSuggestionState {
   query: string;
   command: (item: { path: string }) => void;
+}
+
+function buildSlashTriggers(args: {
+  backend: AgentBackendId | undefined;
+  setSlashState: (state: SlashSuggestionState | null) => void;
+  slashPopupRef: React.RefObject<SlashCommandPopupHandle | null>;
+}): SlashCommandTrigger[] {
+  const { backend, setSlashState, slashPopupRef } = args;
+  const chars: string[] = backend === "codex" ? ["/", "$"] : ["/"];
+  return chars.map((char) => ({
+    char,
+    items: () => [],
+    render: () => ({
+      onStart: (props) => {
+        setSlashState({
+          triggerChar: char,
+          query: props.query,
+          command: props.command as (item: { insertText: string }) => void,
+        });
+      },
+      onUpdate: (props) => {
+        setSlashState({
+          triggerChar: char,
+          query: props.query,
+          command: props.command as (item: { insertText: string }) => void,
+        });
+      },
+      onExit: () => {
+        setSlashState(null);
+      },
+      onKeyDown: ({ event }) =>
+        slashPopupRef.current?.handleKeyDown(event) ?? false,
+    }),
+  }));
 }
 
 /**
@@ -226,31 +261,10 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             ),
         }),
         SlashCommand.configure({
-          items: () => [],
-          render: () => ({
-            onStart: (props) => {
-              setSlashState({
-                triggerChar: "/",
-                query: props.query,
-                command: props.command as (item: {
-                  insertText: string;
-                }) => void,
-              });
-            },
-            onUpdate: (props) => {
-              setSlashState({
-                triggerChar: "/",
-                query: props.query,
-                command: props.command as (item: {
-                  insertText: string;
-                }) => void,
-              });
-            },
-            onExit: () => {
-              setSlashState(null);
-            },
-            onKeyDown: ({ event }) =>
-              slashPopupRef.current?.handleKeyDown(event) ?? false,
+          triggers: buildSlashTriggers({
+            backend,
+            setSlashState,
+            slashPopupRef,
           }),
         }),
         FileMention.configure({

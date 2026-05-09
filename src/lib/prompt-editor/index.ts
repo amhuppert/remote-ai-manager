@@ -11,6 +11,8 @@ export { SlashCommand } from "./slash-command-extension";
 export type {
   SlashCommandItem,
   SlashCommandExtensionOptions,
+  SlashCommandTrigger,
+  SlashCommandTriggerHandlers,
 } from "./slash-command-extension";
 export { FileMention } from "./file-mention-extension";
 export type {
