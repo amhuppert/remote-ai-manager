@@ -403,8 +403,13 @@ export default function ConversationList({
               isFinished={isFinished}
               commitDisabled={commitDisabled || isBusy}
               mergeDisabled={mergeDisabled || isBusy}
+              isRefreshing={diffQuery.isFetching || commitsQuery.isFetching}
               onCommit={() => setShowCommitDialog(true)}
               onMerge={() => setShowMergeDialog(true)}
+              onRefresh={() => {
+                void diffQuery.refetch();
+                void commitsQuery.refetch();
+              }}
             />
 
             {/* Conversation cards */}

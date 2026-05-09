@@ -152,11 +152,7 @@ export function useSessionQuery(projectName: string, sessionName: string) {
   });
 }
 
-export function useSessionDiffQuery(
-  projectName: string,
-  sessionName: string,
-  options?: { refetchInterval?: number | false },
-) {
+export function useSessionDiffQuery(projectName: string, sessionName: string) {
   return useQuery({
     queryKey: sessionKeys.diff(projectName, sessionName),
     queryFn: () =>
@@ -164,7 +160,6 @@ export function useSessionDiffQuery(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/diff`,
         sessionDiffSchema,
       ),
-    refetchInterval: options?.refetchInterval,
   });
 }
 

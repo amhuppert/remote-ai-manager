@@ -9,7 +9,6 @@ import {
   useCommitDiffQuery,
 } from "@/lib/queries";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
-import { deriveSessionStatus } from "@/lib/session-derived";
 import Topbar from "@/components/Topbar";
 
 type DiffTab = "uncommitted" | "commits";
@@ -410,14 +409,14 @@ export default function SessionDiffViewer({
   const session = sessionQuery.data;
 
   const targetBranch = session?.targetBranch ?? "main";
-  const sessionStatus = session ? deriveSessionStatus(session) : "idle";
-  const isBusy =
-    sessionStatus === "running" || sessionStatus === "waiting_for_input";
 
-  const diffQuery = useSessionDiffQuery(projectName, sessionName, {
-    refetchInterval: isBusy ? 3000 : false,
-  });
+  const diffQuery = useSessionDiffQuery(projectName, sessionName);
   const commitsQuery = useCommitsQuery(projectName, sessionName);
+  const isRefreshing = diffQuery.isFetching || commitsQuery.isFetching;
+  const handleRefresh = useCallback(() => {
+    void diffQuery.refetch();
+    void commitsQuery.refetch();
+  }, [diffQuery, commitsQuery]);
 
   const diff = diffQuery.data ?? {
     files: [],
@@ -502,6 +501,16 @@ export default function SessionDiffViewer({
                 &middot; {diff.files.length} file
                 {diff.files.length !== 1 ? "s" : ""}
               </span>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                aria-label="Refresh"
+                type="button"
+                style={{ marginLeft: "auto" }}
+              >
+                {isRefreshing ? "Refreshing..." : "Refresh"}
+              </button>
             </div>
 
             {/* Tab bar */}

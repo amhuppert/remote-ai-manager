@@ -14,8 +14,10 @@ interface SessionGitPanelProps {
   isFinished?: boolean;
   commitDisabled?: boolean;
   mergeDisabled?: boolean;
+  isRefreshing?: boolean;
   onCommit?: () => void;
   onMerge?: () => void;
+  onRefresh?: () => void;
 }
 
 function formatRelativeTime(isoDate: string): string {
@@ -69,8 +71,10 @@ export default function SessionGitPanel({
   isFinished = false,
   commitDisabled = false,
   mergeDisabled = false,
+  isRefreshing = false,
   onCommit,
   onMerge,
+  onRefresh,
 }: SessionGitPanelProps): React.JSX.Element {
   const diffHref = `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/diff`;
   const hasChanges = diff.files.length > 0;
@@ -123,6 +127,18 @@ export default function SessionGitPanel({
           className="cc-section-actions git-panel-header-actions"
           onClick={(e) => e.stopPropagation()}
         >
+          {onRefresh && (
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              data-tooltip="Refresh git status"
+              aria-label="Refresh"
+              type="button"
+            >
+              {isRefreshing ? "Refreshing..." : "Refresh"}
+            </button>
+          )}
           {(hasChanges || hasCommits) && (
             <Link href={diffHref} className="btn btn-sm btn-ghost">
               View Diff

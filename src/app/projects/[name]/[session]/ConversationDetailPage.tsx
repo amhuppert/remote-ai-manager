@@ -470,9 +470,7 @@ export default function ConversationDetailPage({
     conversationId,
     { refetchInterval: isBusy ? 3000 : false },
   );
-  const diffQuery = useSessionDiffQuery(projectName, sessionName, {
-    refetchInterval: isBusy ? 3000 : false,
-  });
+  const diffQuery = useSessionDiffQuery(projectName, sessionName);
   const commitsQuery = useCommitsQuery(projectName, sessionName);
 
   const rawMessages = useMemo(

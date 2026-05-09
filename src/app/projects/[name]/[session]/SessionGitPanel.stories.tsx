@@ -120,6 +120,7 @@ const meta = {
     mergeDisabled: false,
     onCommit: fn(),
     onMerge: fn(),
+    onRefresh: fn(),
   },
   decorators: [
     (Story) => (
