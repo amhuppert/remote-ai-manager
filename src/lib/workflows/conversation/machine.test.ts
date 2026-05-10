@@ -3,8 +3,7 @@ import { createActor, fromPromise, type AnyActorRef } from "xstate";
 import { conversationMachine } from "./machine";
 import {
   debugHypothesisOutputSchema,
-  debugEvidenceAnalysisSchema,
-  debugFixResultSchema,
+  debugEvidenceAnalysisOutputSchema,
   debugCleanupResultSchema,
 } from "./debug-schemas";
 import type {
@@ -84,6 +83,54 @@ function makeMockExecutePrompt(result?: Partial<PromptActorResult>) {
   return fromPromise<PromptActorResult, ExecutePromptInput>(async () => {
     await new Promise((r) => setTimeout(r, 0));
     return successResult(result);
+  });
+}
+
+/**
+ * executePrompt mock that drives the full debug flow:
+ *   hypothesizing → awaitingReproduction → analyzingEvidence → awaitingVerification
+ *   → cleanupInstrumentation → verifyingCleanup
+ *
+ * Call 1 returns a hypothesis payload, call 2 returns an
+ * outcome="fix_applied" evidence payload, calls 3+ return the configured
+ * cleanup payload.
+ */
+function makeDebugFlowExecutePrompt(cleanupResult: {
+  removedInstrumentation: boolean;
+  filesModified: string[];
+  grepVerificationPassed: boolean;
+  acknowledgesManifestDeletionContract: boolean;
+  notes: string;
+}) {
+  let callCount = 0;
+  return fromPromise<PromptActorResult, ExecutePromptInput>(async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      return successResult({
+        structuredOutput: {
+          hypotheses: [
+            { id: "H1", description: "A", instrumentationPlan: "Log" },
+            { id: "H2", description: "B", instrumentationPlan: "Log" },
+            { id: "H3", description: "C", instrumentationPlan: "Log" },
+          ],
+          reproductionSteps: ["Step 1", "Step 2"],
+        },
+      });
+    }
+    if (callCount === 2) {
+      return successResult({
+        structuredOutput: {
+          outcome: "fix_applied",
+          supportedHypotheses: ["H1"],
+          refutedHypotheses: [],
+          inconclusiveHypotheses: ["H2", "H3"],
+          evidenceSummary: "H1 confirmed.",
+          fixSummary: "Applied minimal fix.",
+          verificationSteps: ["Run failing test"],
+        },
+      });
+    }
+    return successResult({ structuredOutput: cleanupResult });
   });
 }
 
@@ -666,12 +713,43 @@ describe("conversationMachine", () => {
     });
 
     it("returns to awaitingVerification after a follow-up prompt completes", async () => {
-      const machine = makeTestMachine();
+      let callCount = 0;
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async () => {
+          callCount += 1;
+          if (callCount === 1) {
+            return successResult({
+              structuredOutput: {
+                hypotheses: [
+                  { id: "H1", description: "A", instrumentationPlan: "Log" },
+                  { id: "H2", description: "B", instrumentationPlan: "Log" },
+                  { id: "H3", description: "C", instrumentationPlan: "Log" },
+                ],
+                reproductionSteps: ["Step 1", "Step 2"],
+              },
+            });
+          }
+          if (callCount === 2) {
+            return successResult({
+              structuredOutput: {
+                outcome: "fix_applied",
+                supportedHypotheses: ["H1"],
+                refutedHypotheses: [],
+                inconclusiveHypotheses: ["H2", "H3"],
+                evidenceSummary: "H1 confirmed.",
+                fixSummary: "Applied minimal fix.",
+                verificationSteps: ["Run failing test"],
+              },
+            });
+          }
+          return successResult();
+        },
+      );
+      const machine = makeTestMachine({ executePrompt });
       const actor = createActor(machine, { input: defaultInput });
       activeActors.push(actor);
       actor.start();
 
-      // Enter debug → hypothesizing → submit → awaitingReproduction
       actor.send({
         type: "ENTER_DEBUG_MODE",
         logFilePath: "/tmp/.debug/logs.jsonl",
@@ -683,28 +761,18 @@ describe("conversationMachine", () => {
       });
       await waitForState(actor, "awaitingReproduction");
 
-      // Mark reproduced → analyzingEvidence → submit → fixing
       actor.send({ type: "MARK_REPRODUCED" });
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Analyze evidence",
         streamId: "s2",
       });
-      await waitForState(actor, "fixing");
-
-      // Submit fix prompt → awaitingVerification
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Apply fix",
-        streamId: "s3",
-      });
       await waitForState(actor, "awaitingVerification");
 
-      // Submit a follow-up from awaitingVerification
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "What about edge case?",
-        streamId: "s4",
+        streamId: "s3",
       });
       await waitForState(actor, "awaitingVerification");
 
@@ -717,12 +785,51 @@ describe("conversationMachine", () => {
     });
 
     it("exits to idle and clears debugMode after cleanup prompt completes", async () => {
-      const machine = makeTestMachine();
+      let callCount = 0;
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async () => {
+          callCount += 1;
+          if (callCount === 1) {
+            return successResult({
+              structuredOutput: {
+                hypotheses: [
+                  { id: "H1", description: "A", instrumentationPlan: "Log" },
+                  { id: "H2", description: "B", instrumentationPlan: "Log" },
+                  { id: "H3", description: "C", instrumentationPlan: "Log" },
+                ],
+                reproductionSteps: ["Step 1", "Step 2"],
+              },
+            });
+          }
+          if (callCount === 2) {
+            return successResult({
+              structuredOutput: {
+                outcome: "fix_applied",
+                supportedHypotheses: ["H1"],
+                refutedHypotheses: [],
+                inconclusiveHypotheses: ["H2", "H3"],
+                evidenceSummary: "H1 confirmed.",
+                fixSummary: "Applied minimal fix.",
+                verificationSteps: ["Run failing test"],
+              },
+            });
+          }
+          return successResult({
+            structuredOutput: {
+              removedInstrumentation: true,
+              filesModified: ["src/index.ts"],
+              grepVerificationPassed: true,
+              acknowledgesManifestDeletionContract: true,
+              notes: "Cleanup complete.",
+            },
+          });
+        },
+      );
+      const machine = makeTestMachine({ executePrompt });
       const actor = createActor(machine, { input: defaultInput });
       activeActors.push(actor);
       actor.start();
 
-      // Fast-track to awaitingVerification
       actor.send({
         type: "ENTER_DEBUG_MODE",
         logFilePath: "/tmp/.debug/logs.jsonl",
@@ -739,21 +846,17 @@ describe("conversationMachine", () => {
         promptText: "Analyze",
         streamId: "s2",
       });
-      await waitForState(actor, "fixing");
-      actor.send({ type: "SUBMIT_PROMPT", promptText: "Fix", streamId: "s3" });
       await waitForState(actor, "awaitingVerification");
 
-      // Mark fix verified → cleanupInstrumentation
       actor.send({ type: "MARK_FIX_VERIFIED" });
       expect(actor.getSnapshot().value).toEqual({
         debug: "cleanupInstrumentation",
       });
 
-      // Submit cleanup prompt → should exit to idle and clear debugMode
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Clean up instrumentation",
-        streamId: "s4",
+        streamId: "s3",
       });
       await waitForState(actor, "idle");
 
@@ -766,7 +869,6 @@ describe("conversationMachine", () => {
         "hypothesizing",
         "awaiting_reproduction",
         "analyzing_evidence",
-        "fixing",
         "awaiting_verification",
         "cleanup_instrumentation",
       ] as const;
@@ -782,8 +884,11 @@ describe("conversationMachine", () => {
               logFilePath: "/tmp/.debug/x.jsonl",
               enteredAt: "2024-01-02T00:00:00Z",
               hypotheses: [],
+              reproductionSteps: [],
               instructionsDelivered: true,
               phase,
+              fixSummary: null,
+              verificationSteps: [],
               lastTurnFailed: false,
             },
           },
@@ -910,8 +1015,11 @@ describe("conversationMachine", () => {
             logFilePath: "/tmp/.debug/logs.jsonl",
             enteredAt: "2024-01-02T03:04:05Z",
             hypotheses: persistedHypotheses,
+            reproductionSteps: [],
             instructionsDelivered: true,
             phase: "awaiting_reproduction",
+            fixSummary: null,
+            verificationSteps: [],
             lastTurnFailed: false,
           },
         },
@@ -925,14 +1033,12 @@ describe("conversationMachine", () => {
 
     it("routes cleanup turn to debug.error when verifyCleanup reports a failed gate", async () => {
       const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          structuredOutput: {
-            removedInstrumentation: true,
-            filesModified: ["src/a.ts"],
-            grepVerificationPassed: true,
-            acknowledgesManifestDeletionContract: true,
-            notes: "done",
-          },
+        executePrompt: makeDebugFlowExecutePrompt({
+          removedInstrumentation: true,
+          filesModified: ["src/a.ts"],
+          grepVerificationPassed: true,
+          acknowledgesManifestDeletionContract: true,
+          notes: "done",
         }),
         verifyCleanup: makeMockVerifyCleanup({
           ok: false,
@@ -946,7 +1052,6 @@ describe("conversationMachine", () => {
       activeActors.push(actor);
       actor.start();
 
-      // Fast-track to cleanup
       actor.send({
         type: "ENTER_DEBUG_MODE",
         logFilePath: "/tmp/.debug/logs.jsonl",
@@ -963,15 +1068,13 @@ describe("conversationMachine", () => {
         promptText: "Analyze",
         streamId: "s2",
       });
-      await waitForState(actor, "fixing");
-      actor.send({ type: "SUBMIT_PROMPT", promptText: "Fix", streamId: "s3" });
       await waitForState(actor, "awaitingVerification");
       actor.send({ type: "MARK_FIX_VERIFIED" });
       await waitForState(actor, "cleanupInstrumentation");
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Cleanup",
-        streamId: "s4",
+        streamId: "s3",
       });
 
       await waitForState(actor, "error");
@@ -1007,14 +1110,12 @@ describe("conversationMachine", () => {
       });
 
       const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          structuredOutput: {
-            removedInstrumentation: true,
-            filesModified: ["src/a.ts"],
-            grepVerificationPassed: true,
-            acknowledgesManifestDeletionContract: true,
-            notes: "done",
-          },
+        executePrompt: makeDebugFlowExecutePrompt({
+          removedInstrumentation: true,
+          filesModified: ["src/a.ts"],
+          grepVerificationPassed: true,
+          acknowledgesManifestDeletionContract: true,
+          notes: "done",
         }),
         verifyCleanup,
       });
@@ -1038,15 +1139,13 @@ describe("conversationMachine", () => {
         promptText: "Analyze",
         streamId: "s2",
       });
-      await waitForState(actor, "fixing");
-      actor.send({ type: "SUBMIT_PROMPT", promptText: "Fix", streamId: "s3" });
       await waitForState(actor, "awaitingVerification");
       actor.send({ type: "MARK_FIX_VERIFIED" });
       await waitForState(actor, "cleanupInstrumentation");
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Cleanup",
-        streamId: "s4",
+        streamId: "s3",
       });
 
       await waitForState(actor, "error");
@@ -1063,14 +1162,12 @@ describe("conversationMachine", () => {
 
     it("clears debugMode and exits to idle when verifyCleanup reports ok", async () => {
       const machine = makeTestMachine({
-        executePrompt: makeMockExecutePrompt({
-          structuredOutput: {
-            removedInstrumentation: true,
-            filesModified: ["src/a.ts"],
-            grepVerificationPassed: true,
-            acknowledgesManifestDeletionContract: true,
-            notes: "done",
-          },
+        executePrompt: makeDebugFlowExecutePrompt({
+          removedInstrumentation: true,
+          filesModified: ["src/a.ts"],
+          grepVerificationPassed: true,
+          acknowledgesManifestDeletionContract: true,
+          notes: "done",
         }),
         verifyCleanup: makeMockVerifyCleanup({ ok: true }),
       });
@@ -1094,15 +1191,13 @@ describe("conversationMachine", () => {
         promptText: "Analyze",
         streamId: "s2",
       });
-      await waitForState(actor, "fixing");
-      actor.send({ type: "SUBMIT_PROMPT", promptText: "Fix", streamId: "s3" });
       await waitForState(actor, "awaitingVerification");
       actor.send({ type: "MARK_FIX_VERIFIED" });
       await waitForState(actor, "cleanupInstrumentation");
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Cleanup",
-        streamId: "s4",
+        streamId: "s3",
       });
 
       await waitForState(actor, "idle");
@@ -1172,7 +1267,13 @@ describe("conversationMachine", () => {
       const machine = conversationMachine.provide({
         actors: {
           prepareTurn: makeMockPrepareTurn(),
-          executePrompt: makeMockExecutePrompt(),
+          executePrompt: makeDebugFlowExecutePrompt({
+            removedInstrumentation: true,
+            filesModified: [],
+            grepVerificationPassed: true,
+            acknowledgesManifestDeletionContract: true,
+            notes: "",
+          }),
         },
         actions: {
           persistSnapshot: spies.persistSnapshot,
@@ -1188,7 +1289,6 @@ describe("conversationMachine", () => {
       activeActors.push(actor);
       actor.start();
 
-      // Fast-track to awaitingVerification
       actor.send({
         type: "ENTER_DEBUG_MODE",
         logFilePath: "/tmp/.debug/logs.jsonl",
@@ -1205,8 +1305,6 @@ describe("conversationMachine", () => {
         promptText: "Analyze",
         streamId: "s2",
       });
-      await waitForState(actor, "fixing");
-      actor.send({ type: "SUBMIT_PROMPT", promptText: "Fix", streamId: "s3" });
       await waitForState(actor, "awaitingVerification");
 
       spies.syncDerivedFields.mockClear();
@@ -1218,14 +1316,13 @@ describe("conversationMachine", () => {
       expect(spies.persistSnapshot).toHaveBeenCalled();
     });
 
-    it("loops back to debug.hypothesizing when evidence analysis recommends more_instrumentation", async () => {
+    it("loops back to debug.awaitingReproduction when evidence analysis recommends more_instrumentation", async () => {
       let callCount = 0;
       const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
         async () => {
           await new Promise((r) => setTimeout(r, 0));
           callCount++;
           if (callCount === 1) {
-            // First call: hypothesizing phase
             return successResult({
               structuredOutput: {
                 hypotheses: [
@@ -1249,14 +1346,21 @@ describe("conversationMachine", () => {
               },
             });
           }
-          // Second call: evidence analysis → more_instrumentation
           return successResult({
             structuredOutput: {
+              outcome: "more_instrumentation",
               supportedHypotheses: [],
               refutedHypotheses: ["H1"],
               inconclusiveHypotheses: ["H2", "H3"],
-              recommendedNextStep: "more_instrumentation",
               evidenceSummary: "Insufficient data",
+              hypotheses: [
+                {
+                  id: "H4",
+                  description: "Fresh idea",
+                  instrumentationPlan: "Log K",
+                },
+              ],
+              reproductionSteps: ["Open app", "Click again"],
             },
           });
         },
@@ -1267,13 +1371,11 @@ describe("conversationMachine", () => {
       activeActors.push(actor);
       actor.start();
 
-      // Enter debug → hypothesizing
       actor.send({
         type: "ENTER_DEBUG_MODE",
         logFilePath: "/tmp/.debug/logs.jsonl",
       });
 
-      // Submit hypothesis prompt → awaitingReproduction
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Debug this",
@@ -1281,27 +1383,30 @@ describe("conversationMachine", () => {
       });
       await waitForState(actor, "awaitingReproduction");
 
-      // Mark reproduced → analyzingEvidence
       actor.send({ type: "MARK_REPRODUCED" });
       expect(actor.getSnapshot().value).toEqual({
         debug: "analyzingEvidence",
       });
 
-      // Submit analysis prompt → should loop back to hypothesizing
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Analyze logs",
         streamId: "s2",
       });
-      await waitForState(actor, "hypothesizing");
+      await waitForState(actor, "awaitingReproduction");
 
-      // Machine state should be debug.hypothesizing (not debug.fixing)
       expect(actor.getSnapshot().value).toEqual({
-        debug: "hypothesizing",
+        debug: "awaitingReproduction",
       });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
-        "hypothesizing",
-      );
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.debugMode?.phase).toBe("awaiting_reproduction");
+      expect(ctx.debugMode?.hypotheses).toEqual([
+        { id: "H4", description: "Fresh idea", instrumentationPlan: "Log K" },
+      ]);
+      expect(ctx.debugMode?.reproductionSteps).toEqual([
+        "Open app",
+        "Click again",
+      ]);
     });
 
     it("runs full debug lifecycle: hypothesize → reproduce → analyze → fix → verify → cleanup", async () => {
@@ -1382,17 +1487,11 @@ describe("conversationMachine", () => {
           if (callCount === 2) {
             return successResult({
               structuredOutput: {
+                outcome: "fix_applied",
                 supportedHypotheses: ["H1"],
                 refutedHypotheses: [],
                 inconclusiveHypotheses: ["H2", "H3"],
-                recommendedNextStep: "fix",
                 evidenceSummary: "H1 is the cause.",
-              },
-            });
-          }
-          if (callCount === 3) {
-            return successResult({
-              structuredOutput: {
                 fixSummary: "Fixed H1.",
                 verificationSteps: ["Run test", "Inspect logs"],
               },
@@ -1433,13 +1532,6 @@ describe("conversationMachine", () => {
         promptText: "Analyze evidence",
         streamId: "s2",
       });
-      await waitForState(actor, "fixing");
-
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Apply fix",
-        streamId: "s3",
-      });
       await waitForState(actor, "awaitingVerification");
 
       actor.send({ type: "MARK_FIX_VERIFIED" });
@@ -1447,15 +1539,14 @@ describe("conversationMachine", () => {
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Cleanup",
-        streamId: "s4",
+        streamId: "s3",
       });
       await waitForState(actor, "idle");
 
-      expect(capturedSchemas).toHaveLength(4);
+      expect(capturedSchemas).toHaveLength(3);
       expect(capturedSchemas[0]).toBe(debugHypothesisOutputSchema);
-      expect(capturedSchemas[1]).toBe(debugEvidenceAnalysisSchema);
-      expect(capturedSchemas[2]).toBe(debugFixResultSchema);
-      expect(capturedSchemas[3]).toBe(debugCleanupResultSchema);
+      expect(capturedSchemas[1]).toBe(debugEvidenceAnalysisOutputSchema);
+      expect(capturedSchemas[2]).toBe(debugCleanupResultSchema);
     });
 
     it("restores active debugMode from input into the matching debug substate", () => {
@@ -1471,8 +1562,11 @@ describe("conversationMachine", () => {
             hypotheses: [
               { id: "H1", description: "Hypothesis from prior session" },
             ],
+            reproductionSteps: [],
             instructionsDelivered: true,
             phase: "awaiting_reproduction",
+            fixSummary: null,
+            verificationSteps: [],
             lastTurnFailed: false,
           },
         },
@@ -1500,7 +1594,6 @@ describe("conversationMachine", () => {
           | "hypothesizing"
           | "awaiting_reproduction"
           | "analyzing_evidence"
-          | "fixing"
           | "awaiting_verification"
           | "cleanup_instrumentation";
         substate: string;
@@ -1508,7 +1601,6 @@ describe("conversationMachine", () => {
         { phase: "hypothesizing", substate: "hypothesizing" },
         { phase: "awaiting_reproduction", substate: "awaitingReproduction" },
         { phase: "analyzing_evidence", substate: "analyzingEvidence" },
-        { phase: "fixing", substate: "fixing" },
         { phase: "awaiting_verification", substate: "awaitingVerification" },
         {
           phase: "cleanup_instrumentation",
@@ -1527,8 +1619,11 @@ describe("conversationMachine", () => {
               logFilePath: "/tmp/.debug/x.jsonl",
               enteredAt: "2024-01-02T00:00:00Z",
               hypotheses: [],
+              reproductionSteps: [],
               instructionsDelivered: false,
               phase,
+              fixSummary: null,
+              verificationSteps: [],
               lastTurnFailed: false,
             },
           },
@@ -1575,7 +1670,15 @@ describe("conversationMachine", () => {
     });
 
     it("REVERT_TO_AWAITING_VERIFICATION rolls phase back from cleanupInstrumentation", async () => {
-      const machine = makeTestMachine();
+      const machine = makeTestMachine({
+        executePrompt: makeDebugFlowExecutePrompt({
+          removedInstrumentation: true,
+          filesModified: [],
+          grepVerificationPassed: true,
+          acknowledgesManifestDeletionContract: true,
+          notes: "",
+        }),
+      });
       const actor = createActor(machine, { input: defaultInput });
       activeActors.push(actor);
       actor.start();
@@ -1596,8 +1699,6 @@ describe("conversationMachine", () => {
         promptText: "Analyze",
         streamId: "s2",
       });
-      await waitForState(actor, "fixing");
-      actor.send({ type: "SUBMIT_PROMPT", promptText: "Fix", streamId: "s3" });
       await waitForState(actor, "awaitingVerification");
 
       actor.send({ type: "MARK_FIX_VERIFIED" });
@@ -1610,6 +1711,102 @@ describe("conversationMachine", () => {
 
       actor.send({ type: "REVERT_TO_AWAITING_VERIFICATION" });
 
+      expect(actor.getSnapshot().value).toEqual({
+        debug: "awaitingVerification",
+      });
+      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
+        "awaiting_verification",
+      );
+    });
+
+    it("MARK_FIX_FAILED transitions awaitingVerification → hypothesizing and preserves fixSummary", async () => {
+      const machine = makeTestMachine({
+        executePrompt: makeDebugFlowExecutePrompt({
+          removedInstrumentation: true,
+          filesModified: [],
+          grepVerificationPassed: true,
+          acknowledgesManifestDeletionContract: true,
+          notes: "",
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "ENTER_DEBUG_MODE",
+        logFilePath: "/tmp/.debug/x.jsonl",
+      });
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hypothesize",
+        streamId: "s1",
+      });
+      await waitForState(actor, "awaitingReproduction");
+      actor.send({ type: "MARK_REPRODUCED" });
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Analyze",
+        streamId: "s2",
+      });
+      await waitForState(actor, "awaitingVerification");
+
+      // The analyzingEvidence outcome=fix_applied turn must have set fixSummary.
+      expect(actor.getSnapshot().context.debugMode?.fixSummary).toBe(
+        "Applied minimal fix.",
+      );
+
+      actor.send({ type: "MARK_FIX_FAILED" });
+
+      const snap = actor.getSnapshot();
+      expect(snap.value).toEqual({ debug: "hypothesizing" });
+      expect(snap.context.debugMode?.phase).toBe("hypothesizing");
+      // fixSummary stays accessible for the agent's recap prompt.
+      expect(snap.context.debugMode?.fixSummary).toBe("Applied minimal fix.");
+    });
+
+    it("REVERT_TO_AWAITING_VERIFICATION rolls phase back from hypothesizing after MARK_FIX_FAILED (Strategy B rollback)", async () => {
+      const machine = makeTestMachine({
+        executePrompt: makeDebugFlowExecutePrompt({
+          removedInstrumentation: true,
+          filesModified: [],
+          grepVerificationPassed: true,
+          acknowledgesManifestDeletionContract: true,
+          notes: "",
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "ENTER_DEBUG_MODE",
+        logFilePath: "/tmp/.debug/x.jsonl",
+      });
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hypothesize",
+        streamId: "s1",
+      });
+      await waitForState(actor, "awaitingReproduction");
+      actor.send({ type: "MARK_REPRODUCED" });
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Analyze",
+        streamId: "s2",
+      });
+      await waitForState(actor, "awaitingVerification");
+
+      // User clicks "Fix Failed" — phase advances to hypothesizing.
+      actor.send({ type: "MARK_FIX_FAILED" });
+      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
+        "hypothesizing",
+      );
+
+      // Re-hypothesize prompt-send fails. Client rolls back.
+      actor.send({ type: "REVERT_TO_AWAITING_VERIFICATION" });
+
+      // Conversation MUST be back in awaiting_verification so the user can retry.
       expect(actor.getSnapshot().value).toEqual({
         debug: "awaitingVerification",
       });
@@ -1725,7 +1922,7 @@ describe("conversationMachine", () => {
       expect(snap.context.lastError).toContain("SDK exhausted");
     });
 
-    it("routes to debug.error when a fixing turn returns null structuredOutput (Codex parity case)", async () => {
+    it("routes to debug.error when an analyzing-evidence turn returns null structuredOutput (Codex parity case)", async () => {
       const machine = makeTestMachine({
         executePrompt: makeMockExecutePrompt({
           // Backend that supports outputFormat but produced no valid JSON —
@@ -1744,8 +1941,11 @@ describe("conversationMachine", () => {
             logFilePath: "/tmp/.debug/x.jsonl",
             enteredAt: "2024-01-02T00:00:00Z",
             hypotheses: [],
+            reproductionSteps: [],
             instructionsDelivered: true,
-            phase: "fixing",
+            phase: "analyzing_evidence",
+            fixSummary: null,
+            verificationSteps: [],
             lastTurnFailed: false,
           },
         },
@@ -1755,14 +1955,14 @@ describe("conversationMachine", () => {
 
       actor.send({
         type: "SUBMIT_PROMPT",
-        promptText: "Apply fix",
+        promptText: "Analyze evidence",
         streamId: "s1",
       });
       await waitForState(actor, "error");
 
       const snap = actor.getSnapshot();
       expect(snap.value).toEqual({ debug: "error" });
-      expect(snap.context.debugMode?.phase).toBe("fixing");
+      expect(snap.context.debugMode?.phase).toBe("analyzing_evidence");
     });
 
     it("RETRY_DEBUG_TURN from debug.error re-runs the failed prompt against the same phase", async () => {
@@ -1830,8 +2030,11 @@ describe("conversationMachine", () => {
             logFilePath: "/tmp/.debug/old.jsonl",
             enteredAt: "2024-01-02T00:00:00Z",
             hypotheses: [],
+            reproductionSteps: [],
             instructionsDelivered: true,
-            phase: "fixing",
+            phase: "analyzing_evidence",
+            fixSummary: null,
+            verificationSteps: [],
             lastTurnFailed: true,
           },
         },
@@ -1839,7 +2042,9 @@ describe("conversationMachine", () => {
       activeActors.push(actor);
       actor.start();
       expect(actor.getSnapshot().value).toEqual({ debug: "error" });
-      expect(actor.getSnapshot().context.debugMode?.phase).toBe("fixing");
+      expect(actor.getSnapshot().context.debugMode?.phase).toBe(
+        "analyzing_evidence",
+      );
     });
 
     it("ignores input.debugMode when active is false", () => {
@@ -1853,8 +2058,11 @@ describe("conversationMachine", () => {
             logFilePath: "/tmp/.debug/old.jsonl",
             enteredAt: "2024-01-02T00:00:00Z",
             hypotheses: [],
+            reproductionSteps: [],
             instructionsDelivered: false,
-            phase: "fixing",
+            phase: "hypothesizing",
+            fixSummary: null,
+            verificationSteps: [],
             lastTurnFailed: false,
           },
         },

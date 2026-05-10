@@ -1149,6 +1149,7 @@ export function useDebugPhaseMutation(
       action:
         | "mark_reproduced"
         | "mark_fix_verified"
+        | "mark_fix_failed"
         | "revert_to_awaiting_reproduction"
         | "revert_to_awaiting_verification"
         | "retry_turn",

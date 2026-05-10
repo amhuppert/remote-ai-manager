@@ -44,7 +44,6 @@ describe("introspectMachine", () => {
       "debug.hypothesizing",
       "debug.awaitingReproduction",
       "debug.analyzingEvidence",
-      "debug.fixing",
       "debug.awaitingVerification",
       "debug.cleanupInstrumentation",
       "debug.verifyingCleanup",
@@ -63,10 +62,10 @@ describe("introspectMachine", () => {
     const composite = finalizing?.events.find(
       (e) =>
         e.guard ===
-        "isDebugAnalyzing && lastTurnProducedStructuredOutput && shouldLoopBackToHypothesizing",
+        "isDebugAnalyzing && lastTurnProducedStructuredOutput && analysisOutcomeIsMoreInstrumentation",
     );
     expect(composite).toBeDefined();
-    expect(composite?.target).toBe("debug.hypothesizing");
+    expect(composite?.target).toBe("debug.awaitingReproduction");
   });
 
   it("conversation: parentId is set on nested states", () => {

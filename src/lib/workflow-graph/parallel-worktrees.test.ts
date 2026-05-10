@@ -1,10 +1,26 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { ExecFileGitClient, type GitClient } from "@/lib/git-client";
 import { createParallelWorktrees } from "./parallel-worktrees";
+
+// Hard sandbox: refuse to let git climb above the OS temp dir when looking
+// for a repository. Without this, a partially-initialized temp repo could
+// fall through to an ancestor .git and pollute the host worktree.
+const HOST_TMPDIR = tmpdir();
+const ORIGINAL_GIT_CEILING = process.env["GIT_CEILING_DIRECTORIES"];
+beforeAll(() => {
+  process.env["GIT_CEILING_DIRECTORIES"] = HOST_TMPDIR;
+});
+afterAll(() => {
+  if (ORIGINAL_GIT_CEILING === undefined) {
+    delete process.env["GIT_CEILING_DIRECTORIES"];
+  } else {
+    process.env["GIT_CEILING_DIRECTORIES"] = ORIGINAL_GIT_CEILING;
+  }
+});
 
 const tempDirs: string[] = [];
 
@@ -14,7 +30,12 @@ async function makeRepo(): Promise<{
   sessionBranch: string;
   gitClient: GitClient;
 }> {
-  const projectPath = await mkdtemp(path.join(tmpdir(), "cc-pwt-test-"));
+  const projectPath = await mkdtemp(path.join(HOST_TMPDIR, "cc-pwt-test-"));
+  if (!path.resolve(projectPath).startsWith(path.resolve(HOST_TMPDIR))) {
+    throw new Error(
+      `Refusing to run test: projectPath ${projectPath} is not under tmpdir ${HOST_TMPDIR}`,
+    );
+  }
   tempDirs.push(projectPath);
   const gitClient = new ExecFileGitClient();
 

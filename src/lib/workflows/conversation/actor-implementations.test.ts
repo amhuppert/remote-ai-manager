@@ -403,8 +403,11 @@ describe("buildEffectivePrompt", () => {
       logFilePath: "/tmp/debug.jsonl",
       enteredAt: "2024-01-01T00:00:00Z",
       hypotheses: [] as never[],
+      reproductionSteps: [] as string[],
       instructionsDelivered: false,
       phase: "hypothesizing" as const,
+      fixSummary: null,
+      verificationSteps: [] as string[],
       lastTurnFailed: false,
     };
     const result = buildEffectivePrompt(
@@ -429,8 +432,11 @@ describe("buildEffectivePrompt", () => {
       logFilePath: "/tmp/debug.jsonl",
       enteredAt: "2024-01-01T00:00:00Z",
       hypotheses: [] as never[],
+      reproductionSteps: [] as string[],
       instructionsDelivered: true,
       phase: "hypothesizing" as const,
+      fixSummary: null,
+      verificationSteps: [] as string[],
       lastTurnFailed: false,
     };
     const result = buildEffectivePrompt(
@@ -471,8 +477,11 @@ describe("buildEffectivePrompt", () => {
       logFilePath: "/tmp/debug.jsonl",
       enteredAt: "2024-01-01T00:00:00Z",
       hypotheses: [] as never[],
+      reproductionSteps: [] as string[],
       instructionsDelivered: false,
       phase: "hypothesizing" as const,
+      fixSummary: null,
+      verificationSteps: [] as string[],
       lastTurnFailed: false,
     };
     const result = buildEffectivePrompt(
@@ -1167,8 +1176,11 @@ describe("executePromptForMachine", () => {
         logFilePath: "/tmp/.debug/logs.jsonl",
         enteredAt: "2024-01-01T00:00:00Z",
         hypotheses: [],
+        reproductionSteps: [],
         instructionsDelivered: false,
         phase: "hypothesizing",
+        fixSummary: null,
+        verificationSteps: [],
         lastTurnFailed: false,
       },
       outputFormat: {
@@ -1790,8 +1802,11 @@ describe("executePromptForMachine", () => {
         logFilePath: "/tmp/.debug/logs.jsonl",
         enteredAt: "2024-01-01T00:00:00Z",
         hypotheses: [],
+        reproductionSteps: [],
         instructionsDelivered: false,
         phase: "hypothesizing",
+        fixSummary: null,
+        verificationSteps: [],
         lastTurnFailed: false,
       },
     });
@@ -1810,6 +1825,47 @@ describe("executePromptForMachine", () => {
     const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
     expect(turnInput.promptText).toContain("<debug-mode>");
     expect(turnInput.promptText).toContain("Help me debug this");
+  });
+
+  it("substitutes an absolute manifest path under the worktree into debug prompts", async () => {
+    const worktreePath = "/projects/repo/.worktrees/test-session";
+    const conversationId = "conv-abs-manifest";
+    const input = makeExecutePromptInput({
+      worktreePath,
+      conversationId,
+      promptText: "Help me debug this",
+      debugMode: {
+        active: true,
+        recording: false,
+        logFilePath: `${worktreePath}/.debug/${conversationId}/logs.jsonl`,
+        enteredAt: "2024-01-01T00:00:00Z",
+        hypotheses: [],
+        reproductionSteps: [],
+        instructionsDelivered: false,
+        phase: "hypothesizing",
+        fixSummary: null,
+        verificationSteps: [],
+        lastTurnFailed: false,
+      },
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const sendTurnCall = mockSendTurn.mock.calls[0]! as unknown[];
+    const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
+    const expectedAbsManifest = `${worktreePath}/.debug/${conversationId}/instrumentation.json`;
+    expect(turnInput.promptText).toContain(expectedAbsManifest);
+    expect(turnInput.promptText).not.toMatch(
+      /(?<![A-Za-z0-9/_.-])\.debug\/conv-abs-manifest\/instrumentation\.json/,
+    );
   });
 
   it("writes system, assistant, and result transcript entries for non-Claude backends", async () => {

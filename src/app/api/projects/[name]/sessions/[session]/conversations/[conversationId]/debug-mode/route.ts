@@ -85,6 +85,9 @@ export const POST = withTracing(async (request, { params }) => {
       case "mark_fix_verified":
         dispatched = adapter.markFixVerified(target);
         break;
+      case "mark_fix_failed":
+        dispatched = adapter.markFixFailed(target);
+        break;
       case "revert_to_awaiting_reproduction":
         dispatched = adapter.revertToAwaitingReproduction(target);
         break;

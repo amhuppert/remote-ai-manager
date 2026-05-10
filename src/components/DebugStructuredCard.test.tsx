@@ -59,13 +59,15 @@ describe("DebugStructuredCard — hypothesizing with optional fields", () => {
 });
 
 describe("DebugStructuredCard — analyzing_evidence", () => {
-  it("renders verdict groups, recommended next step, and summary", () => {
+  it("renders verdict groups, outcome, and summary", () => {
     const payload = {
+      outcome: "fix_applied" as const,
       supportedHypotheses: ["H1"],
       refutedHypotheses: ["H2", "H3"],
       inconclusiveHypotheses: [],
-      recommendedNextStep: "fix" as const,
       evidenceSummary: "H1 confirmed by log timing data.",
+      fixSummary: "Reordered cache writes to commit before signaling.",
+      verificationSteps: ["Re-run failing test"],
     };
 
     render(
@@ -77,34 +79,82 @@ describe("DebugStructuredCard — analyzing_evidence", () => {
     expect(screen.getByText("Inconclusive")).toBeInTheDocument();
     expect(screen.getByText("H1")).toBeInTheDocument();
     expect(screen.getByText("H2, H3")).toBeInTheDocument();
-    expect(screen.getByText("fix")).toBeInTheDocument();
+    expect(screen.getByText("fix_applied")).toBeInTheDocument();
     expect(
       screen.getByText("H1 confirmed by log timing data."),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText("Reordered cache writes to commit before signaling."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Re-run failing test")).toBeInTheDocument();
   });
 });
 
-describe("DebugStructuredCard — fixing", () => {
-  it("renders fix summary and verification steps", () => {
+describe("DebugStructuredCard — analyzing_evidence (more_instrumentation)", () => {
+  it("renders extended hypotheses with id, description, instrumentation plan, and reproduction steps", () => {
     const payload = {
-      fixSummary: "Added debounce to cache write.",
-      verificationSteps: [
-        "Run the app and click refresh twice",
-        "Confirm no duplicate cache entries",
+      outcome: "more_instrumentation" as const,
+      supportedHypotheses: [],
+      refutedHypotheses: ["H1"],
+      inconclusiveHypotheses: ["H2"],
+      evidenceSummary: "Initial probes refuted H1 but H2 remains unclear.",
+      hypotheses: [
+        {
+          id: "H3",
+          description: "Background job retries are clobbering state",
+          instrumentationPlan: "Log retry attempts with timestamps and ids",
+        },
+        {
+          id: "H4",
+          description: "WebSocket reconnect drops queued messages",
+          instrumentationPlan:
+            "Trace reconnect lifecycle with sequence numbers",
+        },
       ],
+      reproductionSteps: ["Trigger background job", "Force socket reconnect"],
     };
 
-    render(<DebugStructuredCard phase="fixing" payload={payload} />);
+    const { container } = render(
+      <DebugStructuredCard phase="analyzing_evidence" payload={payload} />,
+    );
+
+    expect(screen.getByText("more_instrumentation")).toBeInTheDocument();
+    expect(
+      screen.getByText("Initial probes refuted H1 but H2 remains unclear."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("H3")).toBeInTheDocument();
+    expect(
+      screen.getByText("Background job retries are clobbering state"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Log retry attempts with timestamps and ids"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("H4")).toBeInTheDocument();
+    expect(screen.getByText("Trigger background job")).toBeInTheDocument();
+    expect(screen.getByText("Force socket reconnect")).toBeInTheDocument();
+    expect(
+      container.querySelector(".debug-structured-card__fallback"),
+    ).toBeNull();
+  });
+
+  it("falls back when more_instrumentation hypothesis entries omit required fields", () => {
+    const payload = {
+      outcome: "more_instrumentation" as const,
+      supportedHypotheses: [],
+      refutedHypotheses: [],
+      inconclusiveHypotheses: [],
+      evidenceSummary: "summary",
+      hypotheses: [{ id: "H3" }],
+      reproductionSteps: ["Step 1"],
+    };
+
+    const { container } = render(
+      <DebugStructuredCard phase="analyzing_evidence" payload={payload} />,
+    );
 
     expect(
-      screen.getByText("Added debounce to cache write."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Run the app and click refresh twice"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Confirm no duplicate cache entries"),
-    ).toBeInTheDocument();
+      container.querySelector(".debug-structured-card__fallback"),
+    ).not.toBeNull();
   });
 });
 
@@ -176,9 +226,9 @@ describe("DebugStructuredCard — fallback rendering", () => {
 
   it("tags the rendered card with the phase via data attribute", () => {
     const { container } = render(
-      <DebugStructuredCard phase="fixing" payload={null} />,
+      <DebugStructuredCard phase="awaiting_verification" payload={null} />,
     );
     const card = container.querySelector(".debug-structured-card");
-    expect(card?.getAttribute("data-phase")).toBe("fixing");
+    expect(card?.getAttribute("data-phase")).toBe("awaiting_verification");
   });
 });

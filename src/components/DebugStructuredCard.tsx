@@ -1,11 +1,11 @@
 "use client";
 
 import type { DebugModePhase } from "@/types";
-import type {
-  DebugCleanupResultOutput,
-  DebugEvidenceAnalysisOutput,
-  DebugFixResultOutput,
-  DebugHypothesisOutput,
+import {
+  debugEvidenceAnalysisSchema,
+  type DebugCleanupResultOutput,
+  type DebugEvidenceAnalysisOutput,
+  type DebugHypothesisOutput,
 } from "@/lib/workflows/conversation/debug-schemas";
 
 interface Props {
@@ -17,7 +17,6 @@ const PHASE_LABELS: Record<DebugModePhase, string> = {
   hypothesizing: "Hypotheses",
   awaiting_reproduction: "Awaiting reproduction",
   analyzing_evidence: "Evidence analysis",
-  fixing: "Fix proposal",
   awaiting_verification: "Awaiting verification",
   cleanup_instrumentation: "Cleanup result",
 };
@@ -46,25 +45,11 @@ function isHypothesisOutput(value: unknown): value is DebugHypothesisOutput {
   );
 }
 
-function isEvidenceAnalysis(
+function parseEvidenceAnalysis(
   value: unknown,
-): value is DebugEvidenceAnalysisOutput {
-  if (!isRecord(value)) return false;
-  return (
-    isStringArray(value["supportedHypotheses"]) &&
-    isStringArray(value["refutedHypotheses"]) &&
-    isStringArray(value["inconclusiveHypotheses"]) &&
-    typeof value["recommendedNextStep"] === "string" &&
-    typeof value["evidenceSummary"] === "string"
-  );
-}
-
-function isFixResult(value: unknown): value is DebugFixResultOutput {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value["fixSummary"] === "string" &&
-    isStringArray(value["verificationSteps"])
-  );
+): DebugEvidenceAnalysisOutput | null {
+  const result = debugEvidenceAnalysisSchema.safeParse(value);
+  return result.success ? result.data : null;
 }
 
 function isCleanupResult(value: unknown): value is DebugCleanupResultOutput {
@@ -157,12 +142,8 @@ function EvidenceCard({
         </div>
       </div>
       <div className="debug-structured-card__section">
-        <span className="debug-structured-card__field-label">
-          Recommended next step:
-        </span>{" "}
-        <code className="debug-structured-card__code">
-          {payload.recommendedNextStep}
-        </code>
+        <span className="debug-structured-card__field-label">Outcome:</span>{" "}
+        <code className="debug-structured-card__code">{payload.outcome}</code>
       </div>
       <div className="debug-structured-card__section">
         <div className="debug-structured-card__field-label">Summary</div>
@@ -170,31 +151,65 @@ function EvidenceCard({
           {payload.evidenceSummary}
         </p>
       </div>
-    </>
-  );
-}
-
-function FixCard({
-  payload,
-}: {
-  payload: DebugFixResultOutput;
-}): React.JSX.Element {
-  return (
-    <>
-      <div className="debug-structured-card__section">
-        <div className="debug-structured-card__field-label">Fix summary</div>
-        <p className="debug-structured-card__summary">{payload.fixSummary}</p>
-      </div>
-      <div className="debug-structured-card__section">
-        <div className="debug-structured-card__field-label">
-          Verification steps
-        </div>
-        <ol className="debug-structured-card__steps">
-          {payload.verificationSteps.map((step, i) => (
-            <li key={i}>{step}</li>
-          ))}
-        </ol>
-      </div>
+      {payload.outcome === "fix_applied" && (
+        <>
+          <div className="debug-structured-card__section">
+            <div className="debug-structured-card__field-label">
+              Fix summary
+            </div>
+            <p className="debug-structured-card__summary">
+              {payload.fixSummary}
+            </p>
+          </div>
+          <div className="debug-structured-card__section">
+            <div className="debug-structured-card__field-label">
+              Verification steps
+            </div>
+            <ol className="debug-structured-card__steps">
+              {payload.verificationSteps.map((step, i) => (
+                <li key={i}>{step}</li>
+              ))}
+            </ol>
+          </div>
+        </>
+      )}
+      {payload.outcome === "more_instrumentation" && (
+        <>
+          <div className="debug-structured-card__section">
+            <div className="debug-structured-card__field-label">
+              Next hypotheses
+            </div>
+            <ul className="debug-structured-card__hypotheses">
+              {payload.hypotheses.map((h) => (
+                <li key={h.id} className="debug-structured-card__hypothesis">
+                  <span className="debug-structured-card__id">{h.id}</span>
+                  <div className="debug-structured-card__hypothesis-body">
+                    <div className="debug-structured-card__hypothesis-desc">
+                      {h.description}
+                    </div>
+                    <div className="debug-structured-card__hypothesis-plan">
+                      <span className="debug-structured-card__field-label">
+                        Instrument:
+                      </span>{" "}
+                      {h.instrumentationPlan}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="debug-structured-card__section">
+            <div className="debug-structured-card__field-label">
+              Reproduction steps
+            </div>
+            <ol className="debug-structured-card__steps">
+              {payload.reproductionSteps.map((step, i) => (
+                <li key={i}>{step}</li>
+              ))}
+            </ol>
+          </div>
+        </>
+      )}
     </>
   );
 }
@@ -286,10 +301,13 @@ export default function DebugStructuredCard({
 
   if (phase === "hypothesizing" && isHypothesisOutput(payload)) {
     body = <HypothesisCard payload={payload} />;
-  } else if (phase === "analyzing_evidence" && isEvidenceAnalysis(payload)) {
-    body = <EvidenceCard payload={payload} />;
-  } else if (phase === "fixing" && isFixResult(payload)) {
-    body = <FixCard payload={payload} />;
+  } else if (phase === "analyzing_evidence") {
+    const evidence = parseEvidenceAnalysis(payload);
+    body = evidence ? (
+      <EvidenceCard payload={evidence} />
+    ) : (
+      <FallbackCard payload={payload} />
+    );
   } else if (phase === "cleanup_instrumentation" && isCleanupResult(payload)) {
     body = <CleanupCard payload={payload} />;
   } else {

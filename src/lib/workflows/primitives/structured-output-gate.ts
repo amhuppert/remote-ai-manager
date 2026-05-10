@@ -81,6 +81,27 @@ function validateAgainstSchema(
   path: string,
   errors: string[],
 ): void {
+  if (Array.isArray(schema["oneOf"])) {
+    const branches = schema["oneOf"] as Array<Record<string, unknown>>;
+    const branchErrors: string[][] = [];
+    let matches = 0;
+    for (const branch of branches) {
+      const local: string[] = [];
+      validateAgainstSchema(branch, value, path, local);
+      if (local.length === 0) matches += 1;
+      branchErrors.push(local);
+    }
+    if (matches !== 1) {
+      errors.push(
+        `${path} must match exactly one schema in oneOf (matched ${matches})`,
+      );
+      // Surface the first branch's diagnostics so callers see actionable detail.
+      const first = branchErrors[0];
+      if (first) errors.push(...first);
+    }
+    return;
+  }
+
   if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
     errors.push(`${path} must be one of ${schema.enum.map(String).join(", ")}`);
     return;

@@ -205,7 +205,6 @@ const debugModePhaseLiterals = z.enum([
   "hypothesizing",
   "awaiting_reproduction",
   "analyzing_evidence",
-  "fixing",
   "awaiting_verification",
   "cleanup_instrumentation",
 ]);
@@ -306,7 +305,6 @@ export const debugModePhaseSchema = z.enum([
   "hypothesizing",
   "awaiting_reproduction",
   "analyzing_evidence",
-  "fixing",
   "awaiting_verification",
   "cleanup_instrumentation",
 ]);
@@ -318,6 +316,9 @@ export const debugModeStateSchema = z.object({
   logFilePath: z.string(),
   enteredAt: z.string(),
   hypotheses: z.array(debugHypothesisSchema).default([]),
+  reproductionSteps: z.array(z.string()).default([]),
+  fixSummary: z.string().nullable().default(null),
+  verificationSteps: z.array(z.string()).default([]),
   instructionsDelivered: z.boolean().default(false),
   phase: debugModePhaseSchema.default("hypothesizing"),
   lastTurnFailed: z.boolean().default(false),
@@ -1853,6 +1854,7 @@ export const debugModeRequestSchema = z.object({
     "exit",
     "mark_reproduced",
     "mark_fix_verified",
+    "mark_fix_failed",
     "revert_to_awaiting_reproduction",
     "revert_to_awaiting_verification",
     "retry_turn",

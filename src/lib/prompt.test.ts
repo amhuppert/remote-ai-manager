@@ -176,8 +176,37 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("DEBUG_MODE_INSTRUCTIONS", () => {
-  it("instructs the agent to set X-CC-Debug-Log on probe fetches to break self-instrumentation loops", () => {
-    expect(DEBUG_MODE_INSTRUCTIONS).toContain("X-CC-Debug-Log");
+  // The receiver drops any request carrying X-CC-Debug-Log: 1 as `self_log`.
+  // The header is ONLY useful when the project under debug is Command Center
+  // itself — it breaks recursion on the debug-log path. For every other
+  // project, sending the header silently discards every probe entry, which
+  // is what happened during the May 2026 end-to-end flow test.
+  it("does not instruct probes to set X-CC-Debug-Log unconditionally", () => {
+    expect(DEBUG_MODE_INSTRUCTIONS).not.toMatch(
+      /(?:MUST|must|should)\s+send[^.]*X-CC-Debug-Log/i,
+    );
+    expect(DEBUG_MODE_INSTRUCTIONS).not.toMatch(
+      /Every probe[^.]*X-CC-Debug-Log/i,
+    );
+  });
+
+  it("scopes the X-CC-Debug-Log header to the self-debug-CC case", () => {
+    if (!DEBUG_MODE_INSTRUCTIONS.includes("X-CC-Debug-Log")) return;
+    expect(DEBUG_MODE_INSTRUCTIONS).toMatch(
+      /Command Center itself|self-debug|debugging CC/i,
+    );
+  });
+
+  it("does not include the header in the default probe example fetch", () => {
+    const exampleStart = DEBUG_MODE_INSTRUCTIONS.indexOf(
+      "Example instrumentation",
+    );
+    if (exampleStart === -1) return;
+    const exampleBlock = DEBUG_MODE_INSTRUCTIONS.slice(
+      exampleStart,
+      exampleStart + 1200,
+    );
+    expect(exampleBlock).not.toContain("X-CC-Debug-Log");
   });
 });
 

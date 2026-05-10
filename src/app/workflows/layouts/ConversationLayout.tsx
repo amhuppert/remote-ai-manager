@@ -56,9 +56,8 @@ export default function ConversationLayout({
   const hyp = box(680, 140, DEBUG_W, NODE_H);
   const awRepro = box(680, 280, DEBUG_W, NODE_H);
   const analyzing = box(680, 420, DEBUG_W, NODE_H);
-  const fixing = box(680, 560, DEBUG_W, NODE_H);
-  const awVerify = box(680, 700, DEBUG_W, NODE_H);
-  const cleanup = box(680, 840, DEBUG_W, NODE_H);
+  const awVerify = box(680, 560, DEBUG_W, NODE_H);
+  const cleanup = box(680, 700, DEBUG_W, NODE_H);
 
   const edges: EdgeSpec[] = [
     // Initial entry
@@ -281,22 +280,7 @@ export default function ConversationLayout({
       labelOffset: { x: -20, y: 0 },
     },
 
-    // finalizingTurn → debug.fixing
-    {
-      id: "finalizing-fixing",
-      from: { x: finalizing.x + finalizing.width, y: finalizing.y + 40 },
-      to: leftAnchor(fixing),
-      routing: "curve",
-      bow: "v",
-      control: { x: (finalizing.x + finalizing.width + fixing.x) / 2, y: 660 },
-      label: "always",
-      guard: "isDebugAnalyzing",
-      dashed: true,
-      fromStateId: "finalizingTurn",
-      toStateId: "debug.fixing",
-    },
-
-    // finalizingTurn → debug.awaitingVerification
+    // finalizingTurn → debug.awaitingVerification (analysis applied a fix)
     {
       id: "finalizing-awVerify",
       from: { x: finalizing.x + finalizing.width, y: finalizing.y + 52 },
@@ -305,10 +289,10 @@ export default function ConversationLayout({
       bow: "v",
       control: {
         x: (finalizing.x + finalizing.width + awVerify.x) / 2,
-        y: 760,
+        y: 620,
       },
       label: "always",
-      guard: "isDebugFixing · awaitingVerify",
+      guard: "isDebugAnalyzing · fixApplied",
       dashed: true,
       fromStateId: "finalizingTurn",
       toStateId: "debug.awaitingVerification",
@@ -452,17 +436,6 @@ export default function ConversationLayout({
           width={analyzing.width}
           height={analyzing.height}
           selected={selectedStateId === "debug.analyzingEvidence"}
-          onClick={onSelectState}
-        />
-        <StateNode
-          id="debug.fixing"
-          label="fixing"
-          kind="atomic"
-          x={fixing.x}
-          y={fixing.y}
-          width={fixing.width}
-          height={fixing.height}
-          selected={selectedStateId === "debug.fixing"}
           onClick={onSelectState}
         />
         <StateNode

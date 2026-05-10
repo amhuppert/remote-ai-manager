@@ -15,9 +15,8 @@
  *  ├─ hypothesizing                 ├─ running ◄─── ANSWER ───┐
  *  ├─ awaitingReproduction          │    │                     │
  *  ├─ analyzingEvidence             │    │ ASK_QUESTION        │
- *  ├─ fixing                        │    v                     │
- *  ├─ awaitingVerification          └─ waitingForInput ────────┘
- *  └─ cleanupInstrumentation
+ *  ├─ awaitingVerification          │    v                     │
+ *  └─ cleanupInstrumentation        └─ waitingForInput ────────┘
  *                                 PROMPT_COMPLETED / PROMPT_FAILED / ABORT_TURN
  *                                             │
  *                                             v
@@ -44,7 +43,7 @@ import {
   verifyCleanupActor,
 } from "./actors";
 import {
-  debugEvidenceAnalysisZodSchema,
+  debugEvidenceAnalysisSchema,
   debugHypothesisOutputZodSchema,
   debugCleanupResultZodSchema,
 } from "./debug-schemas";
@@ -96,7 +95,6 @@ export const conversationMachine = setup({
       context.debugMode?.phase === "hypothesizing",
     isDebugAnalyzing: ({ context }) =>
       context.debugMode?.phase === "analyzing_evidence",
-    isDebugFixing: ({ context }) => context.debugMode?.phase === "fixing",
     isDebugAwaitingReproduction: ({ context }) =>
       context.debugMode?.phase === "awaiting_reproduction",
     isDebugAwaitingVerification: ({ context }) =>
@@ -114,14 +112,17 @@ export const conversationMachine = setup({
     lastTurnProducedStructuredOutput: ({ context }) =>
       context.lastResult?.error == null &&
       context.lastResult?.structuredOutput != null,
-    shouldLoopBackToHypothesizing: ({ context }) => {
-      const parsed = debugEvidenceAnalysisZodSchema.safeParse(
+    analysisOutcomeIsFixApplied: ({ context }) => {
+      const parsed = debugEvidenceAnalysisSchema.safeParse(
         context.lastResult?.structuredOutput,
       );
-      return (
-        parsed.success &&
-        parsed.data.recommendedNextStep === "more_instrumentation"
+      return parsed.success && parsed.data.outcome === "fix_applied";
+    },
+    analysisOutcomeIsMoreInstrumentation: ({ context }) => {
+      const parsed = debugEvidenceAnalysisSchema.safeParse(
+        context.lastResult?.structuredOutput,
       );
+      return parsed.success && parsed.data.outcome === "more_instrumentation";
     },
   },
 
@@ -164,6 +165,9 @@ export const conversationMachine = setup({
             logFilePath: input.debugMode.logFilePath,
             enteredAt: input.debugMode.enteredAt,
             hypotheses: input.debugMode.hypotheses,
+            reproductionSteps: input.debugMode.reproductionSteps,
+            fixSummary: input.debugMode.fixSummary,
+            verificationSteps: input.debugMode.verificationSteps,
             instructionsDelivered: input.debugMode.instructionsDelivered,
             phase: input.debugMode.phase,
             lastTurnFailed: input.debugMode.lastTurnFailed,
@@ -205,10 +209,6 @@ export const conversationMachine = setup({
           target: "debug.analyzingEvidence",
         },
         {
-          guard: and(["isDebugModeActive", "isDebugFixing"]),
-          target: "debug.fixing",
-        },
-        {
           guard: and(["isDebugModeActive", "isDebugAwaitingVerification"]),
           target: "debug.awaitingVerification",
         },
@@ -245,6 +245,9 @@ export const conversationMachine = setup({
                 logFilePath: event.logFilePath,
                 enteredAt: new Date().toISOString(),
                 hypotheses: [],
+                reproductionSteps: [],
+                fixSummary: null,
+                verificationSteps: [],
                 instructionsDelivered: false,
                 phase: "hypothesizing" as const,
                 lastTurnFailed: false,
@@ -494,6 +497,9 @@ export const conversationMachine = setup({
                       hypotheses:
                         hypothesisPayload?.hypotheses ??
                         context.debugMode.hypotheses,
+                      reproductionSteps:
+                        hypothesisPayload?.reproductionSteps ??
+                        context.debugMode.reproductionSteps,
                     }
                   : null,
               };
@@ -505,75 +511,27 @@ export const conversationMachine = setup({
             "persistSnapshot",
           ],
         },
-        // Evidence analysis success → loop back to hypothesizing if more
-        // instrumentation needed.
+        // Evidence analysis returned outcome="fix_applied" → agent already
+        // applied a fix in this same turn; advance to awaitingVerification
+        // and persist fixSummary + verificationSteps for deterministic
+        // rendering by the UI.
         {
           guard: and([
             "isDebugAnalyzing",
             "lastTurnProducedStructuredOutput",
-            "shouldLoopBackToHypothesizing",
+            "analysisOutcomeIsFixApplied",
           ]),
-          target: "debug.hypothesizing",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-                debugMode: context.debugMode
-                  ? {
-                      ...context.debugMode,
-                      phase: "hypothesizing" as const,
-                    }
-                  : null,
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "persistSnapshot",
-          ],
-        },
-        // Evidence analysis success → proceed to fixing (default path).
-        {
-          guard: and(["isDebugAnalyzing", "lastTurnProducedStructuredOutput"]),
-          target: "debug.fixing",
-          actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              return {
-                promptCount: context.promptCount + 1,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-                debugMode: context.debugMode
-                  ? {
-                      ...context.debugMode,
-                      phase: "fixing" as const,
-                    }
-                  : null,
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
-            "persistSnapshot",
-          ],
-        },
-        {
-          guard: and(["isDebugFixing", "lastTurnProducedStructuredOutput"]),
           target: "debug.awaitingVerification",
           actions: [
             assign(({ context }) => {
               const result = context.lastResult;
+              const parsed = debugEvidenceAnalysisSchema.safeParse(
+                result?.structuredOutput,
+              );
+              const fixApplied =
+                parsed.success && parsed.data.outcome === "fix_applied"
+                  ? parsed.data
+                  : null;
               return {
                 promptCount: context.promptCount + 1,
                 totals: result
@@ -586,6 +544,11 @@ export const conversationMachine = setup({
                   ? {
                       ...context.debugMode,
                       phase: "awaiting_verification" as const,
+                      fixSummary:
+                        fixApplied?.fixSummary ?? context.debugMode.fixSummary,
+                      verificationSteps:
+                        fixApplied?.verificationSteps ??
+                        context.debugMode.verificationSteps,
                     }
                   : null,
               };
@@ -593,6 +556,61 @@ export const conversationMachine = setup({
             "syncDerivedFields",
             "releaseResources",
             "broadcastConversationStatus",
+            "dispatchPushNotification",
+            "persistSnapshot",
+          ],
+        },
+        // Evidence analysis returned outcome="more_instrumentation" → agent
+        // proposes a fresh hypothesis set + reproduction steps; loop back
+        // to awaitingReproduction so the user can re-run the scenario.
+        {
+          guard: and([
+            "isDebugAnalyzing",
+            "lastTurnProducedStructuredOutput",
+            "analysisOutcomeIsMoreInstrumentation",
+          ]),
+          target: "debug.awaitingReproduction",
+          actions: [
+            assign(({ context }) => {
+              const result = context.lastResult;
+              const parsed = debugEvidenceAnalysisSchema.safeParse(
+                result?.structuredOutput,
+              );
+              const moreInstrumentation =
+                parsed.success && parsed.data.outcome === "more_instrumentation"
+                  ? parsed.data
+                  : null;
+              return {
+                promptCount: context.promptCount + 1,
+                totals: result
+                  ? accumulateTotals(context.totals, result)
+                  : context.totals,
+                activeTurn: null,
+                status: "awaiting" as const,
+                lastActivityAt: new Date().toISOString(),
+                debugMode: context.debugMode
+                  ? {
+                      ...context.debugMode,
+                      phase: "awaiting_reproduction" as const,
+                      hypotheses:
+                        moreInstrumentation?.hypotheses ??
+                        context.debugMode.hypotheses,
+                      reproductionSteps:
+                        moreInstrumentation?.reproductionSteps ??
+                        context.debugMode.reproductionSteps,
+                      // Returning to evidence-gathering invalidates any prior
+                      // fix attempt; clear it so stale data doesn't leak into
+                      // the next awaitingVerification cycle.
+                      fixSummary: null,
+                      verificationSteps: [],
+                    }
+                  : null,
+              };
+            }),
+            "syncDerivedFields",
+            "releaseResources",
+            "broadcastConversationStatus",
+            "dispatchPushNotification",
             "persistSnapshot",
           ],
         },
@@ -629,7 +647,6 @@ export const conversationMachine = setup({
             context.debugMode?.active === true &&
             (context.debugMode.phase === "hypothesizing" ||
               context.debugMode.phase === "analyzing_evidence" ||
-              context.debugMode.phase === "fixing" ||
               context.debugMode.phase === "cleanup_instrumentation"),
           target: "debug.error",
           actions: [
@@ -768,7 +785,7 @@ export const conversationMachine = setup({
         },
         // Lifted from each substate. The transition body is identical across
         // hypothesizing / awaiting_reproduction / analyzing_evidence /
-        // fixing / awaiting_verification / cleanup_instrumentation / error,
+        // awaiting_verification / cleanup_instrumentation / error,
         // so define it once at the parent and let the child substates inherit.
         SUBMIT_PROMPT: {
           target: "#conversation.acquiringResources",
@@ -790,7 +807,29 @@ export const conversationMachine = setup({
       },
 
       states: {
-        hypothesizing: {},
+        hypothesizing: {
+          on: {
+            // Strategy B rollback: when MARK_FIX_FAILED → re-hypothesize
+            // dispatch fails to send the follow-up prompt, the client undoes
+            // the phase advance by sending REVERT_TO_AWAITING_VERIFICATION.
+            REVERT_TO_AWAITING_VERIFICATION: {
+              target: "awaitingVerification",
+              actions: [
+                assign({
+                  debugMode: ({ context }) =>
+                    context.debugMode
+                      ? {
+                          ...context.debugMode,
+                          phase: "awaiting_verification" as const,
+                        }
+                      : null,
+                }),
+                "syncDerivedFields",
+                "persistSnapshot",
+              ],
+            },
+          },
+        },
 
         awaitingReproduction: {
           on: {
@@ -834,8 +873,6 @@ export const conversationMachine = setup({
           },
         },
 
-        fixing: {},
-
         awaitingVerification: {
           on: {
             MARK_FIX_VERIFIED: {
@@ -847,6 +884,29 @@ export const conversationMachine = setup({
                       ? {
                           ...context.debugMode,
                           phase: "cleanup_instrumentation" as const,
+                        }
+                      : null,
+                }),
+                "syncDerivedFields",
+                "persistSnapshot",
+              ],
+            },
+            // User has tested the agent's claimed fix and confirmed the bug
+            // still reproduces. Loop back to hypothesizing so the agent can
+            // form a fresh hypothesis set (treating the prior fix as
+            // refuted). fixSummary is preserved for the re-hypothesize
+            // prompt, which references the prior attempt; verificationSteps
+            // are cleared because they pertained to the failed fix.
+            MARK_FIX_FAILED: {
+              target: "hypothesizing",
+              actions: [
+                assign({
+                  debugMode: ({ context }) =>
+                    context.debugMode
+                      ? {
+                          ...context.debugMode,
+                          phase: "hypothesizing" as const,
+                          verificationSteps: [],
                         }
                       : null,
                 }),

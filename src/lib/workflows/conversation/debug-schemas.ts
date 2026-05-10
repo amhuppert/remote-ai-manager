@@ -14,7 +14,7 @@ import { z } from "zod";
 
 /**
  * Schema for the hypothesizing phase.
- * Agent must produce labeled hypotheses (H1–H5) with instrumentation plans
+ * Agent must produce labeled hypotheses (H1, H2, ...) with instrumentation plans
  * and numbered reproduction steps.
  */
 export const debugHypothesisOutputSchema = {
@@ -31,7 +31,7 @@ export const debugHypothesisOutputSchema = {
         additionalProperties: false,
         required: ["id", "description", "instrumentationPlan"],
         properties: {
-          id: { type: "string", pattern: "^H[1-5]$" },
+          id: { type: "string", pattern: "^H\\d+$" },
           description: { type: "string", minLength: 1 },
           instrumentationPlan: { type: "string", minLength: 1 },
         },
@@ -46,14 +46,17 @@ export const debugHypothesisOutputSchema = {
 } as const;
 
 export const debugHypothesisOutputZodSchema = z.object({
-  hypotheses: z.array(
-    z.object({
-      id: z.string(),
-      description: z.string(),
-      instrumentationPlan: z.string().optional(),
-    }),
-  ),
-  reproductionSteps: z.array(z.string()),
+  hypotheses: z
+    .array(
+      z.object({
+        id: z.string().regex(/^H\d+$/),
+        description: z.string().min(1),
+        instrumentationPlan: z.string().min(1),
+      }),
+    )
+    .min(3)
+    .max(5),
+  reproductionSteps: z.array(z.string().min(1)).min(2),
 });
 
 /** TypeScript type for the hypothesis output. */
@@ -61,81 +64,116 @@ export type DebugHypothesisOutput = z.infer<
   typeof debugHypothesisOutputZodSchema
 >;
 
+const debugHypothesisIdSchema = z.string().regex(/^H\d+$/);
+
+const debugHypothesisShapeSchema = z.object({
+  id: debugHypothesisIdSchema,
+  description: z.string().min(1),
+  instrumentationPlan: z.string().min(1),
+});
+
+const sharedEvidenceFields = {
+  supportedHypotheses: z.array(debugHypothesisIdSchema),
+  refutedHypotheses: z.array(debugHypothesisIdSchema),
+  inconclusiveHypotheses: z.array(debugHypothesisIdSchema),
+  evidenceSummary: z.string(),
+};
+
 /**
- * Schema for the evidence analysis phase.
- * Agent classifies hypotheses as supported, refuted, or inconclusive,
- * and recommends whether to fix or gather more instrumentation.
+ * JSON Schema for the evidence analysis phase, sent to the SDK as the
+ * structured output contract.
+ *
+ * Anthropic's tool input_schema rejects `oneOf`/`allOf`/`anyOf` at the root,
+ * so the discriminated union is expressed as a single flat object: the
+ * `outcome` enum acts as the discriminator, and per-branch fields appear as
+ * optional properties. The matching Zod schema (`debugEvidenceAnalysisSchema`)
+ * enforces the per-outcome required fields downstream at the trust boundary.
  */
-export const debugEvidenceAnalysisSchema = {
+export const debugEvidenceAnalysisOutputSchema = {
   type: "object",
   additionalProperties: false,
   required: [
+    "outcome",
     "supportedHypotheses",
     "refutedHypotheses",
     "inconclusiveHypotheses",
-    "recommendedNextStep",
     "evidenceSummary",
   ],
   properties: {
+    outcome: {
+      type: "string",
+      enum: ["fix_applied", "more_instrumentation"],
+    },
     supportedHypotheses: {
       type: "array",
-      items: { type: "string", pattern: "^H[1-5]$" },
+      items: { type: "string", pattern: "^H\\d+$" },
     },
     refutedHypotheses: {
       type: "array",
-      items: { type: "string", pattern: "^H[1-5]$" },
+      items: { type: "string", pattern: "^H\\d+$" },
     },
     inconclusiveHypotheses: {
       type: "array",
-      items: { type: "string", pattern: "^H[1-5]$" },
-    },
-    recommendedNextStep: {
-      type: "string",
-      enum: ["fix", "more_instrumentation"],
+      items: { type: "string", pattern: "^H\\d+$" },
     },
     evidenceSummary: { type: "string" },
-  },
-} as const;
-
-export const debugEvidenceAnalysisZodSchema = z.object({
-  supportedHypotheses: z.array(z.string()),
-  refutedHypotheses: z.array(z.string()),
-  inconclusiveHypotheses: z.array(z.string()),
-  recommendedNextStep: z.enum(["fix", "more_instrumentation"]),
-  evidenceSummary: z.string(),
-});
-
-/** TypeScript type for the evidence analysis output. */
-export type DebugEvidenceAnalysisOutput = z.infer<
-  typeof debugEvidenceAnalysisZodSchema
->;
-
-/**
- * Schema for the fixing phase.
- * Agent returns a summary of the fix and structured verification steps
- * so the UI can render them deterministically.
- */
-export const debugFixResultSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["fixSummary", "verificationSteps"],
-  properties: {
     fixSummary: { type: "string", minLength: 1 },
     verificationSteps: {
       type: "array",
-      minItems: 2,
+      minItems: 1,
+      items: { type: "string", minLength: 1 },
+    },
+    hypotheses: {
+      type: "array",
+      minItems: 1,
+      maxItems: 5,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "description", "instrumentationPlan"],
+        properties: {
+          id: { type: "string", pattern: "^H\\d+$" },
+          description: { type: "string", minLength: 1 },
+          instrumentationPlan: { type: "string", minLength: 1 },
+        },
+      },
+    },
+    reproductionSteps: {
+      type: "array",
+      minItems: 1,
       items: { type: "string", minLength: 1 },
     },
   },
 } as const;
 
-export const debugFixResultZodSchema = z.object({
-  fixSummary: z.string(),
-  verificationSteps: z.array(z.string()),
-});
+/**
+ * Zod schema for the evidence analysis phase.
+ * Agent classifies hypotheses as supported, refuted, or inconclusive, and
+ * commits to one of two outcomes:
+ *  - `fix_applied`: agent has already applied a fix; carries fix summary +
+ *    verification steps the UI renders deterministically.
+ *  - `more_instrumentation`: evidence is inconclusive; agent proposes a fresh
+ *    set of hypotheses to investigate next plus reproduction steps.
+ */
+export const debugEvidenceAnalysisSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.literal("fix_applied"),
+    ...sharedEvidenceFields,
+    fixSummary: z.string(),
+    verificationSteps: z.array(z.string()).min(1),
+  }),
+  z.object({
+    outcome: z.literal("more_instrumentation"),
+    ...sharedEvidenceFields,
+    hypotheses: z.array(debugHypothesisShapeSchema).min(1).max(5),
+    reproductionSteps: z.array(z.string()).min(1),
+  }),
+]);
 
-/** TypeScript type for the fix result output. */
-export type DebugFixResultOutput = z.infer<typeof debugFixResultZodSchema>;
+/** TypeScript type for the evidence analysis output. */
+export type DebugEvidenceAnalysisOutput = z.infer<
+  typeof debugEvidenceAnalysisSchema
+>;
 
 /**
  * Schema for the cleanup instrumentation phase.

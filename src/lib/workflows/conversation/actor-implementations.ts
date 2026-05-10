@@ -68,6 +68,7 @@ import type {
   ConversationRuntimeResolution,
 } from "@/lib/workflows/primitives/agent-call-facade";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
+import { getDebugManifestPath } from "@/lib/debug-log";
 import fs from "node:fs/promises";
 
 const logger = createLogger("conversation-actor");
@@ -1383,7 +1384,7 @@ export async function executePromptForMachine(
     [],
     input.debugMode,
     deps.getDebugLogUrl(input.conversationId),
-    `.debug/${input.conversationId}/instrumentation.json`,
+    getDebugManifestPath(input.worktreePath, input.conversationId),
   );
 
   const promptText =

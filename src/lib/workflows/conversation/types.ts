@@ -71,6 +71,9 @@ export interface ConversationContext {
     logFilePath: string;
     enteredAt: string;
     hypotheses: DebugHypothesis[];
+    reproductionSteps: string[];
+    fixSummary: string | null;
+    verificationSteps: string[];
     instructionsDelivered: boolean;
     phase: DebugModePhase;
     lastTurnFailed: boolean;
@@ -119,6 +122,7 @@ export type ConversationEvent =
   | { type: "SET_DEBUG_RECORDING"; recording: boolean }
   | { type: "MARK_REPRODUCED" }
   | { type: "MARK_FIX_VERIFIED" }
+  | { type: "MARK_FIX_FAILED" }
   | { type: "REVERT_TO_AWAITING_REPRODUCTION" }
   | { type: "REVERT_TO_AWAITING_VERIFICATION" }
   | { type: "RETRY_DEBUG_TURN" }

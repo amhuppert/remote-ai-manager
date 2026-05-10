@@ -68,10 +68,11 @@ You are in Debug Mode. Debug with runtime evidence, not static guesswork.
 ## Workflow
 1. **Hypothesize + Instrument (same turn)**: Form 3-5 plausible root-cause hypotheses labeled H1, H2, etc., and immediately add the minimum instrumentation needed to test them in the same response. Explain what each hypothesis predicts and where you instrumented. Do not stop after listing hypotheses.
 2. **Wait for Reproduction**: Return clear ordered reproduction steps as the \`reproductionSteps\` array in your structured JSON output. The UI renders the steps deterministically from that field. Do not continue until the user says reproduction is complete.
-3. **Analyze Evidence**: Read \`{DEBUG_LOG_FILE_PATH}\` and determine which hypotheses are supported, refuted, or still inconclusive.
-4. **Fix**: Make the smallest change justified by the evidence.
-5. **Verify**: Ask the user to verify the fix.
-6. **Clean Up**: After the user confirms the fix, remove all instrumentation you added.
+3. **Analyze Evidence (same turn fix or re-instrument)**: Read \`{DEBUG_LOG_FILE_PATH}\` and classify each hypothesis as supported, refuted, or inconclusive. Then choose ONE outcome based on whether the evidence is sufficient to justify a fix:
+   - **\`fix_applied\`**: when at least one hypothesis is well-supported and the rest are refuted or inconclusive, implement the minimal fix in this same turn and return verification steps.
+   - **\`more_instrumentation\`**: when evidence is inconclusive or insufficient, extend the hypothesis set, add fresh targeted instrumentation in the same turn, and return reproduction steps the user should re-execute.
+4. **Verify**: Ask the user to verify the applied fix.
+5. **Clean Up**: After the user clicks "Mark Fixed", remove all instrumentation you added.
 
 ## Debug Log API
 POST logs to: {DEBUG_LOG_URL}
@@ -83,7 +84,7 @@ Each log entry must be a JSON object with:
 - \`message\`: human-readable description
 - \`data\`: object with the runtime values needed to test the hypothesis
 
-Every probe fetch MUST send the header \`X-CC-Debug-Log: 1\`. Command Center's debug-log receiver short-circuits any incoming request that carries this header, which is what prevents an infinite POST loop when you instrument code that itself runs inside the debug-log path (e.g. self-debugging Command Center). If you wrap \`fetch\` for instrumentation, the wrapper must also skip requests carrying this header.
+Probes must NOT set the \`X-CC-Debug-Log: 1\` header. The receiver drops every request carrying that header as a self-instrumentation signal, so adding it from a normal probe silently discards every entry. The header is reserved for one narrow case: when the project being debugged is Command Center itself and your probe sits inside CC's own debug-log code path. In that scenario only, set the header (and have any \`fetch\` wrapper skip requests carrying it) so the receiver short-circuits the recursive POST. If you are not debugging CC, omit the header entirely.
 
 Keep logs narrowly targeted to decision points, inputs, outputs, state transitions, and invariants that distinguish between hypotheses. Instrumentation must be fire-and-forget and must never break the app.
 
@@ -112,10 +113,7 @@ Example instrumentation with markers:
 // @debug-probe:H1:token-validation START
 void fetch("{DEBUG_LOG_URL}", {
   method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "X-CC-Debug-Log": "1",
-  },
+  headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     timestamp: new Date().toISOString(),
     hypothesisId: "H1",
@@ -170,7 +168,8 @@ During cleanup, after removing all instrumentation:
 - Never propose or implement a fix before reviewing runtime evidence from \`{DEBUG_LOG_FILE_PATH}\`.
 - Prefer a few high-signal logs over broad tracing.
 - If the evidence is incomplete, add another targeted instrumentation pass instead of guessing.
-- NEVER remove instrumentation until the user clicks "Mark Fix". The user controls when cleanup happens, not you.
+- During the analyze-evidence phase you ARE permitted (and expected, when the runtime evidence is sufficient) to implement the minimal fix in the same turn. Cleanup of debug instrumentation is still deferred until the user clicks "Mark Fixed".
+- NEVER remove instrumentation until the user clicks "Mark Fixed". The user controls when cleanup happens, not you.
 - ALL instrumentation MUST use \`@debug-probe\` comment markers and be tracked in \`{DEBUG_MANIFEST_PATH}\`.
 </debug-mode>`;
 
@@ -181,15 +180,13 @@ During cleanup, after removing all instrumentation:
  */
 export const DEBUG_PHASE_CONTEXT: Record<string, string> = {
   hypothesizing:
-    '<debug-phase>Phase: HYPOTHESIZING. Form hypotheses, add instrumentation, and provide reproduction steps. Return structured JSON with EVERY one of these fields:\n- `hypotheses` (array, 3\u20135 items): each item has `id` ("H1"\u2013"H5"), `description` (one sentence), and `instrumentationPlan` (concrete probes you will add).\n- `reproductionSteps` (string[], at least 2): only the user-facing actions to reproduce the bug, written as imperatives ("Click X", "Send a request to Y"). Do NOT include closing remarks directed at yourself or the user (e.g. "tell me when done") \u2014 those belong in the conversational text outside the structured output.</debug-phase>',
+    '<debug-phase>Phase: HYPOTHESIZING. Form hypotheses, add instrumentation, and provide reproduction steps. Return structured JSON with EVERY one of these fields:\n- `hypotheses` (array, 3\u20135 items): each item has `id` (sequential labels "H1", "H2", \u2026 \u2014 use higher numbers when extending an earlier set), `description` (one sentence), and `instrumentationPlan` (concrete probes you will add).\n- `reproductionSteps` (string[], at least 2): only the user-facing actions to reproduce the bug, written as imperatives ("Click X", "Send a request to Y"). Do NOT include closing remarks directed at yourself or the user (e.g. "tell me when done") \u2014 those belong in the conversational text outside the structured output.</debug-phase>',
   awaiting_reproduction:
     "<debug-phase>Phase: AWAITING REPRODUCTION. The user has not yet confirmed reproduction. Answer follow-up questions but do NOT analyze evidence or propose fixes yet.</debug-phase>",
   analyzing_evidence:
-    '<debug-phase>Phase: ANALYZING EVIDENCE. Read the debug log file at {DEBUG_LOG_FILE_PATH}, classify hypotheses, and return structured JSON with EVERY one of these fields:\n- `supportedHypotheses` (string[]): hypothesis ids ("H1"\u2013"H5") the evidence supports.\n- `refutedHypotheses` (string[]): ids the evidence refutes.\n- `inconclusiveHypotheses` (string[]): ids that need more evidence.\n- `recommendedNextStep` ("fix" | "more_instrumentation"): pick "fix" only when at least one hypothesis is supported and the rest are refuted or inconclusive.\n- `evidenceSummary` (string): short prose summary tying log lines to hypotheses.\nDo NOT implement fixes in this step.</debug-phase>',
-  fixing:
-    '<debug-phase>Phase: FIXING. Implement the minimal fix justified by the evidence. Return structured JSON with EVERY one of these fields:\n- `fixSummary` (string): one or two sentences naming what changed and why.\n- `verificationSteps` (string[], at least 2): the concrete steps the user runs to verify the fix.\nDo NOT remove any instrumentation — cleanup only happens when the user clicks "Mark Fix".</debug-phase>',
+    '<debug-phase>Phase: ANALYZING EVIDENCE. Read the debug log file at {DEBUG_LOG_FILE_PATH} and classify each hypothesis as supported, refuted, or inconclusive based strictly on what the logs show. Then choose ONE of two outcomes based on whether the evidence is sufficient to justify a fix:\n\n(a) FIX_APPLIED \u2014 If at least one hypothesis is well-supported and the rest are refuted or inconclusive AND the evidence is sufficient to commit to a minimal fix, IMPLEMENT THE FIX IN THIS SAME TURN. Return structured JSON with EVERY one of these fields:\n- `outcome`: "fix_applied"\n- `supportedHypotheses` (string[]): hypothesis ids ("H1", "H2", \u2026) the evidence supports.\n- `refutedHypotheses` (string[]): ids the evidence refutes.\n- `inconclusiveHypotheses` (string[]): ids that need more evidence.\n- `evidenceSummary` (string): short prose summary tying log lines to hypotheses.\n- `fixSummary` (string): one or two sentences naming what changed and why.\n- `verificationSteps` (string[], at least 1): the concrete steps the user runs to verify the fix.\nDo NOT remove any instrumentation in this turn \u2014 cleanup only happens when the user clicks "Mark Fixed".\n\n(b) MORE_INSTRUMENTATION \u2014 If the existing evidence is inconclusive or insufficient, EXTEND THE HYPOTHESIS SET and add fresh debug instrumentation in this same turn (using @debug-probe markers and updating {DEBUG_MANIFEST_PATH}). Return structured JSON with EVERY one of these fields:\n- `outcome`: "more_instrumentation"\n- `supportedHypotheses`, `refutedHypotheses`, `inconclusiveHypotheses` (string[]): classification of the existing hypotheses.\n- `evidenceSummary` (string): short prose summary tying log lines to hypotheses.\n- `hypotheses` (array, 1\u20135 items): the extended hypothesis set, each with `id` (sequential labels "H1", "H2", \u2026 \u2014 continue numbering past the prior round; do NOT reuse earlier ids), `description`, and `instrumentationPlan`.\n- `reproductionSteps` (string[], at least 1): imperative steps the user should re-execute so the new probes capture evidence.\n\nThe choice between (a) and (b) depends on whether the existing evidence is sufficient to justify a fix.</debug-phase>',
   awaiting_verification:
-    '<debug-phase>Phase: AWAITING VERIFICATION. The user is verifying the fix. Answer questions but do NOT remove instrumentation — cleanup only happens when the user clicks "Mark Fix".</debug-phase>',
+    '<debug-phase>Phase: AWAITING VERIFICATION. The user is verifying the fix. Answer questions but do NOT remove instrumentation — cleanup only happens when the user clicks "Mark Fixed".</debug-phase>',
   cleanup_instrumentation:
     '<debug-phase>Phase: CLEANUP. Remove ALL debug instrumentation you added (logging statements, fetch calls to the debug log API, etc.). Follow the cleanup procedure: read {DEBUG_MANIFEST_PATH} for the probe manifest, remove all @debug-probe markers from every file listed there, run `grep -r "@debug-probe" src/` to verify none remain, and check for orphaned imports. Do NOT delete {DEBUG_MANIFEST_PATH} yourself — Command Center cross-checks your structured report against the manifest and removes the manifest after a passing verification.\n\nReturn structured JSON with EVERY one of these fields:\n- `removedInstrumentation` (boolean): true once every @debug-probe marker has been removed.\n- `filesModified` (string[]): every file path listed in the manifest must appear here. Use repository-relative paths.\n- `grepVerificationPassed` (boolean): true when `grep -r "@debug-probe" src/` returned zero results.\n- `acknowledgesManifestDeletionContract` (boolean): set to true to confirm you understand CC (not the agent) deletes the manifest.\n- `notes` (string): brief summary of the cleanup; "" if nothing notable.</debug-phase>',
 };

@@ -48,8 +48,11 @@ const debugModeActive = {
   logFilePath: "/tmp/.debug/logs.jsonl",
   enteredAt: new Date().toISOString(),
   hypotheses: [],
+  reproductionSteps: [],
   instructionsDelivered: true,
   phase: "hypothesizing" as const,
+  fixSummary: null,
+  verificationSteps: [],
   lastTurnFailed: false,
 };
 
@@ -174,14 +177,54 @@ export const StatusStripPaused: ToggleStory = {
 // DebugActionCard stories
 // ---------------------------------------------------------------------------
 
-export const ActionCardAwaiting: ToggleStory = {
+const debugModeAwaitingReproduction = {
+  ...debugModeActive,
+  phase: "awaiting_reproduction" as const,
+};
+
+const debugModeAwaitingVerification = {
+  ...debugModeActive,
+  phase: "awaiting_verification" as const,
+  fixSummary:
+    "Patched the scroll handler to ignore wheel events during render.",
+};
+
+export const ActionCardAwaitingReproduction: ToggleStory = {
   render: () => (
     <div style={{ maxWidth: 700, margin: "0 auto" }}>
       <DebugActionCard
         projectName="my-project"
         sessionName="debug-session"
         conversation={makeConversation({
-          debugMode: debugModeActive,
+          debugMode: debugModeAwaitingReproduction,
+          status: "awaiting",
+        })}
+        onSendPrompt={fn()}
+        isBusy={false}
+      />
+    </div>
+  ),
+};
+
+export const ActionCardAwaitingVerification: ToggleStory = {
+  render: () => (
+    <div style={{ maxWidth: 700, margin: "0 auto" }}>
+      <p
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "0.72rem",
+          color: "var(--text-tertiary)",
+          marginBottom: 8,
+        }}
+      >
+        After analyze_evidence applies a fix, the user must adjudicate: Mark
+        Fixed (success) or Mark Fix Failed (re-hypothesize).
+      </p>
+      <DebugActionCard
+        projectName="my-project"
+        sessionName="debug-session"
+        conversation={makeConversation({
+          debugMode: debugModeAwaitingVerification,
           status: "awaiting",
         })}
         onSendPrompt={fn()}
@@ -202,14 +245,14 @@ export const ActionCardBusy: ToggleStory = {
           marginBottom: 8,
         }}
       >
-        When agent is busy: Mark Reproduced and Mark Fix are disabled, Exit
+        When agent is busy: Mark Fixed and Mark Fix Failed are disabled, Exit
         Debug stays enabled:
       </p>
       <DebugActionCard
         projectName="my-project"
         sessionName="debug-session"
         conversation={makeConversation({
-          debugMode: debugModeActive,
+          debugMode: debugModeAwaitingVerification,
           status: "awaiting",
         })}
         onSendPrompt={fn()}
@@ -357,7 +400,7 @@ export const ReproductionStepsStyling: ToggleStory = {
           projectName="my-project"
           sessionName="debug-session"
           conversation={makeConversation({
-            debugMode: debugModeActive,
+            debugMode: debugModeAwaitingReproduction,
             status: "awaiting",
           })}
           onSendPrompt={fn()}

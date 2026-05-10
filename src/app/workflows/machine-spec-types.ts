@@ -35,7 +35,7 @@ export interface EventInfo {
   event: string;
   /** Dot-qualified target state id, or undefined for internal/self events. */
   target?: string;
-  /** Guard expression label, e.g. "isDebugFixing" or "hasRetriesLeft". */
+  /** Guard expression label, e.g. "isDebugAnalyzing" or "hasRetriesLeft". */
   guard?: string;
   /** Short description of when this event fires. */
   description?: string;

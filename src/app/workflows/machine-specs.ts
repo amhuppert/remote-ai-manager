@@ -169,7 +169,7 @@ const conversationMetadata: MachineMetadata = {
     },
     finalizingTurn: {
       description:
-        "Always-state with 8 guarded transitions. Routes back to idle, to a specific debug phase, or loops the debug workflow based on context flags. Releases resources and persists the snapshot.",
+        "Always-state with guarded transitions. Routes back to idle, to a specific debug phase, or loops the debug workflow based on context flags. Releases resources and persists the snapshot.",
       events: [
         {
           event: "always",
@@ -179,23 +179,19 @@ const conversationMetadata: MachineMetadata = {
         },
         {
           event: "always",
-          target: "debug.hypothesizing",
-          guard:
-            "isDebugAnalyzing && lastTurnProducedStructuredOutput && shouldLoopBackToHypothesizing",
-          description:
-            "Evidence analysis recommended more instrumentation — loop.",
-        },
-        {
-          event: "always",
-          target: "debug.fixing",
-          guard: "isDebugAnalyzing && lastTurnProducedStructuredOutput",
-          description: "Evidence analyzed → proceed to fix.",
-        },
-        {
-          event: "always",
           target: "debug.awaitingVerification",
-          guard: "isDebugFixing && lastTurnProducedStructuredOutput",
-          description: "Fix delivered → wait for verification.",
+          guard:
+            "isDebugAnalyzing && lastTurnProducedStructuredOutput && analysisOutcomeIsFixApplied",
+          description:
+            "Evidence analysis applied a fix → wait for verification.",
+        },
+        {
+          event: "always",
+          target: "debug.awaitingReproduction",
+          guard:
+            "isDebugAnalyzing && lastTurnProducedStructuredOutput && analysisOutcomeIsMoreInstrumentation",
+          description:
+            "Evidence analysis recommended more instrumentation — re-arm reproduction.",
         },
         {
           event: "always",
@@ -279,12 +275,6 @@ const conversationMetadata: MachineMetadata = {
         { event: "SUBMIT_PROMPT", description: "Trigger the analysis turn." },
       ],
     },
-    "debug.fixing": {
-      description: "Producing the fix and verification plan.",
-      events: [
-        { event: "SUBMIT_PROMPT", description: "Trigger the fix turn." },
-      ],
-    },
     "debug.awaitingVerification": {
       status: "warning",
       description:
@@ -338,7 +328,6 @@ const conversationMetadata: MachineMetadata = {
     isDebugModeActive: "True if debugMode is non-null and active.",
     isDebugHypothesizing: 'True when debugMode.phase === "hypothesizing".',
     isDebugAnalyzing: 'True when debugMode.phase === "analyzing_evidence".',
-    isDebugFixing: 'True when debugMode.phase === "fixing".',
     isDebugAwaitingReproduction:
       'True when debugMode.phase === "awaiting_reproduction".',
     isDebugAwaitingVerification:
@@ -348,8 +337,10 @@ const conversationMetadata: MachineMetadata = {
       "True when debugMode.lastTurnFailed === true. Routes idle.always restoration into debug.error rather than the bare phase substate so that on actor rehydration (server restart) the error UX is preserved.",
     lastTurnProducedStructuredOutput:
       "True when the last turn finished without an error and produced a non-null structuredOutput. Phase advancement is gated on this so a missing structured response routes to debug.error instead of clobbering activeTurn.",
-    shouldLoopBackToHypothesizing:
-      "True if the analyzer's structured output recommends gathering more instrumentation.",
+    analysisOutcomeIsFixApplied:
+      'True when the analyzer\'s structured output parses and outcome === "fix_applied" (a fix was applied in the same turn).',
+    analysisOutcomeIsMoreInstrumentation:
+      'True when the analyzer\'s structured output parses and outcome === "more_instrumentation" (agent proposes additional hypotheses to chase).',
   },
   actions: {
     persistSnapshot: "Writes the conversation snapshot to disk (atomic).",

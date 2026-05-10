@@ -26,8 +26,7 @@ import {
 } from "./debug-adapter";
 import {
   debugHypothesisOutputSchema,
-  debugEvidenceAnalysisSchema,
-  debugFixResultSchema,
+  debugEvidenceAnalysisOutputSchema,
   debugCleanupResultSchema,
 } from "./debug-schemas";
 import {
@@ -195,14 +194,7 @@ describe("debug adapter", () => {
     it("returns the evidence-analysis schema during the analyzing_evidence phase", () => {
       expect(adapter.resolveOutputFormat("analyzing_evidence")).toEqual({
         type: "json_schema",
-        schema: debugEvidenceAnalysisSchema,
-      });
-    });
-
-    it("returns the fix-result schema during the fixing phase", () => {
-      expect(adapter.resolveOutputFormat("fixing")).toEqual({
-        type: "json_schema",
-        schema: debugFixResultSchema,
+        schema: debugEvidenceAnalysisOutputSchema,
       });
     });
 
@@ -239,8 +231,8 @@ describe("debug adapter", () => {
 
     it("returns distinct wrappers for distinct phases", () => {
       const hyp = adapter.resolveOutputFormat("hypothesizing");
-      const fix = adapter.resolveOutputFormat("fixing");
-      expect(hyp).not.toBe(fix);
+      const cleanup = adapter.resolveOutputFormat("cleanup_instrumentation");
+      expect(hyp).not.toBe(cleanup);
     });
   });
 
@@ -383,7 +375,7 @@ describe("debug adapter", () => {
   });
 
   describe("full debug session lifecycle drives the conversation actor with same observable behavior as direct event sends", () => {
-    it("drives ENTER_DEBUG_MODE → submit → MARK_REPRODUCED → submit → submit fix → MARK_FIX_VERIFIED → submit cleanup → idle, and the captured outputFormat schemas match the adapter's resolveOutputFormat for each phase", async () => {
+    it("drives ENTER_DEBUG_MODE → submit → MARK_REPRODUCED → submit (fix_applied) → MARK_FIX_VERIFIED → submit cleanup → idle, and the captured outputFormat schemas match the adapter's resolveOutputFormat for each phase", async () => {
       const capturedSchemas: Array<unknown> = [];
       let callCount = 0;
       const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
@@ -405,17 +397,11 @@ describe("debug adapter", () => {
           if (callCount === 2) {
             return successResult({
               structuredOutput: {
+                outcome: "fix_applied",
                 supportedHypotheses: ["H1"],
                 refutedHypotheses: [],
                 inconclusiveHypotheses: ["H2", "H3"],
-                recommendedNextStep: "fix",
                 evidenceSummary: "H1 is the cause.",
-              },
-            });
-          }
-          if (callCount === 3) {
-            return successResult({
-              structuredOutput: {
                 fixSummary: "Fixed H1.",
                 verificationSteps: ["Run test", "Inspect logs"],
               },
@@ -474,13 +460,6 @@ describe("debug adapter", () => {
         promptText: "Analyze evidence",
         streamId: "s2",
       });
-      await waitForState(actor, "fixing");
-
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Apply fix",
-        streamId: "s3",
-      });
       await waitForState(actor, "awaitingVerification");
 
       adapter.markFixVerified(target);
@@ -491,12 +470,12 @@ describe("debug adapter", () => {
       actor.send({
         type: "SUBMIT_PROMPT",
         promptText: "Cleanup",
-        streamId: "s4",
+        streamId: "s3",
       });
       await waitForState(actor, "idle");
       expect(actor.getSnapshot().context.debugMode).toBeNull();
 
-      expect(capturedSchemas).toHaveLength(4);
+      expect(capturedSchemas).toHaveLength(3);
       expect(capturedSchemas[0]).toBe(
         adapter.resolveOutputFormat("hypothesizing")!.schema,
       );
@@ -504,9 +483,6 @@ describe("debug adapter", () => {
         adapter.resolveOutputFormat("analyzing_evidence")!.schema,
       );
       expect(capturedSchemas[2]).toBe(
-        adapter.resolveOutputFormat("fixing")!.schema,
-      );
-      expect(capturedSchemas[3]).toBe(
         adapter.resolveOutputFormat("cleanup_instrumentation")!.schema,
       );
 
@@ -514,6 +490,43 @@ describe("debug adapter", () => {
         { type: "ENTER_DEBUG_MODE", logFilePath: "/tmp/.debug/logs.jsonl" },
         { type: "MARK_REPRODUCED" },
         { type: "MARK_FIX_VERIFIED" },
+      ]);
+    });
+  });
+
+  describe("markFixFailed", () => {
+    it("dispatches a MARK_FIX_FAILED event to the conversation actor", () => {
+      const sent: Array<{
+        projectPath: string;
+        sessionName: string;
+        conversationId: string;
+        event: unknown;
+      }> = [];
+      const adapter = createDebugAdapter({
+        sendConversationEvent: (
+          projectPath,
+          sessionName,
+          conversationId,
+          event,
+        ) => {
+          sent.push({ projectPath, sessionName, conversationId, event });
+          return true;
+        },
+      });
+      const target = {
+        projectPath: "/repo",
+        sessionName: "sess",
+        conversationId: "conv-1",
+      };
+      const dispatched = adapter.markFixFailed(target);
+      expect(dispatched).toBe(true);
+      expect(sent).toEqual([
+        {
+          projectPath: "/repo",
+          sessionName: "sess",
+          conversationId: "conv-1",
+          event: { type: "MARK_FIX_FAILED" },
+        },
       ]);
     });
   });

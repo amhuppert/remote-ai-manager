@@ -17,8 +17,7 @@ import type { ConversationEvent } from "./types";
 import type { DebugModePhase } from "@/lib/schemas";
 import {
   debugCleanupResultSchema,
-  debugEvidenceAnalysisSchema,
-  debugFixResultSchema,
+  debugEvidenceAnalysisOutputSchema,
   debugHypothesisOutputSchema,
 } from "./debug-schemas";
 import type { SSEEvent } from "@/types";
@@ -78,6 +77,12 @@ export interface DebugAdapter {
   markReproduced(target: DebugTarget): boolean;
   markFixVerified(target: DebugTarget): boolean;
   /**
+   * User has tested the agent's claimed fix and confirmed the bug still
+   * reproduces. Loops the conversation back to `hypothesizing` so the agent
+   * can form a fresh hypothesis set treating the prior attempt as refuted.
+   */
+  markFixFailed(target: DebugTarget): boolean;
+  /**
    * Inverse of `markReproduced` — used by Strategy B client-side rollback in
    * `DebugActionCard.tsx` when a prompt send fails after the phase has
    * already advanced. Transitions analyzingEvidence → awaitingReproduction.
@@ -104,9 +109,10 @@ function resolveSchema(
     case "hypothesizing":
       return debugHypothesisOutputSchema as unknown as Record<string, unknown>;
     case "analyzing_evidence":
-      return debugEvidenceAnalysisSchema as unknown as Record<string, unknown>;
-    case "fixing":
-      return debugFixResultSchema as unknown as Record<string, unknown>;
+      return debugEvidenceAnalysisOutputSchema as unknown as Record<
+        string,
+        unknown
+      >;
     case "cleanup_instrumentation":
       return debugCleanupResultSchema as unknown as Record<string, unknown>;
     default:
@@ -212,6 +218,15 @@ export function createDebugAdapter(deps: DebugAdapterDeps = {}): DebugAdapter {
         target.sessionName,
         target.conversationId,
         { type: "MARK_FIX_VERIFIED" },
+      );
+    },
+
+    markFixFailed(target) {
+      return sendEvent(
+        target.projectPath,
+        target.sessionName,
+        target.conversationId,
+        { type: "MARK_FIX_FAILED" },
       );
     },
 

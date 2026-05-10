@@ -1,0 +1,136 @@
+# Pre-merge validation failure
+timestamp: 2026-05-09T05:22:53.394Z
+execution: a96fe413-bc35-44bb-a9b0-896e113a35cd
+context: machine-and-plumbing
+session: Debug mode flow improvements
+branch: cc/debug-mode-flow-improvements-1be774
+
+DEPRECATED  The `test.workspace` option is deprecated and will be removed in the next major. To hide this warning, rename `test.workspace` option to `test.projects`.
+{"timestamp":"2026-05-09T05:22:22.877Z","level":"warn","module":"mcp.source-discovery","message":"cc.source.malformed","filePath":"/tmp/mcp-discover-cc-2jLhzJ/cc-config/.mcp.json","scope":"global"}
+{"timestamp":"2026-05-09T05:22:26.887Z","level":"error","module":"tracing","message":"request.error","traceId":"t","projectName":"p","sessionName":"s","error":"boom"}
+{"timestamp":"2026-05-09T05:22:31.418Z","level":"warn","module":"test","message":"should pass"}
+{"timestamp":"2026-05-09T05:22:31.420Z","level":"error","module":"test","message":"should pass"}
+{"timestamp":"2026-05-09T05:22:31.436Z","level":"error","module":"test","message":"operation failed","error":"test failure","stack":"Error: test failure\n    at /home/alex/github/remote-ai-manager/.worktrees/debug-mode-flow-improvements-1be774/src/lib/logging/logger.test.ts:176:17\n    at file:///home/alex/github/remote-ai-manager/.worktrees/debug-mode-flow-improvements-1be774/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11\n    at file:///home/alex/github/remote-ai-manager/.worktrees/debug-mode-flow-improvements-1be774/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26\n    at file:///home/alex/github/remote-ai-manager/.worktrees/debug-mode-flow-improvements-1be774/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///home/alex/github/remote-ai-manager/.worktrees/debug-mode-flow-improvements-1be774/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runTest (file:///home/alex/github/remote-ai-manager/.worktrees/debug-mode-flow-improvements-1be774/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at runSuite (file:///home/alex/github/remote-ai-manager/.worktrees/debug-mode-flow-improvements-1be774/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)\n    at runSuite (file:///home/alex/github/remote-ai-manager/.worktrees/debug-mode-flow-improvements-1be774/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)"}
+{"timestamp":"2026-05-09T05:22:31.447Z","level":"error","module":"test","message":"test"}
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/components/DebugStructuredCard.test.tsx > DebugStructuredCard — analyzing_evidence > renders verdict groups, recommended next step, and summary
+TestingLibraryElementError: Unable to find an element with the text: Supported. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"debug-structured-card debug-structured-card--analyzing_evidence"[39m
+      [33mdata-phase[39m=[32m"analyzing_evidence"[39m
+      [33mdata-testid[39m=[32m"debug-structured-card"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"debug-structured-card__header"[39m
+      [36m>[39m
+        [0mEvidence analysis[0m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"debug-structured-card__body"[39m
+      [36m>[39m
+        [36m<pre[39m
+          [33mclass[39m=[32m"debug-structured-card__fallback"[39m
+        [36m>[39m
+          [0m{
+  "supportedHypotheses": [
+    "H1"
+  ],
+  "refutedHypotheses": [
+    "H2",
+    "H3"
+  ],
+  "inconclusiveHypotheses": [],
+  "recommendedNextStep": "fix",
+  "evidenceSummary": "H1 confirmed by log timing data."
+}[0m
+        [36m</pre>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ src/components/DebugStructuredCard.test.tsx:75:19
+     73|     );
+     74| 
+     75|     expect(screen.getByText("Supported")).toBeInTheDocument();
+       |                   ^
+     76|     expect(screen.getByText("Refuted")).toBeInTheDocument();
+     77|     expect(screen.getByText("Inconclusive")).toBeInTheDocument();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  |unit| src/app/workflows/machine-introspection.test.ts > introspectMachine > conversation: state ids are dot-qualified and ordered as authored
+AssertionError: expected [ 'idle', 'externalExecuting', …(13) ] to deeply equal [ 'idle', 'externalExecuting', …(14) ]
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[33m@@ -8,11 +8,10 @@[39m
+[2m    "finalizingTurn",[22m
+[2m    "debug",[22m
+[2m    "debug.hypothesizing",[22m
+[2m    "debug.awaitingReproduction",[22m
+[2m    "debug.analyzingEvidence",[22m
+[32m-   "debug.fixing",[39m
+[2m    "debug.awaitingVerification",[22m
+[2m    "debug.cleanupInstrumentation",[22m
+[2m    "debug.verifyingCleanup",[22m
+[2m    "debug.error",[22m
+[2m  ][22m
+
+ ❯ src/app/workflows/machine-introspection.test.ts:35:44
+     33|     expect(result.machineId).toBe("conversation");
+     34|     expect(result.initialState).toBe("idle");
+     35|     expect(result.states.map((s) => s.id)).toEqual([
+       |                                            ^
+     36|       "idle",
+     37|       "externalExecuting",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  |unit| src/app/workflows/machine-introspection.test.ts > introspectMachine > conversation: composite guard renders as 'a && b'
+AssertionError: expected undefined to be defined
+ ❯ src/app/workflows/machine-introspection.test.ts:68:23
+     66|         "isDebugAnalyzing && lastTurnProducedStructuredOutput && shoul…
+     67|     );
+     68|     expect(composite).toBeDefined();
+       |                       ^
+     69|     expect(composite?.target).toBe("debug.hypothesizing");
+     70|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  |unit| src/app/workflows/machine-introspection.test.ts > machine-specs metadata coverage > conversation > registers a description for every introspected guard
+AssertionError: expected [ 'analysisOutcomeIsFixApplied', …(1) ] to deeply equal []
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   "analysisOutcomeIsFixApplied",[39m
+[31m+   "analysisOutcomeIsMoreInstrumentation",[39m
+[31m+ ][39m
+
+ ❯ src/app/workflows/machine-introspection.test.ts:170:29
+    168|           .filter((g) => g.description === "")
+    169|           .map((g) => g.name);
+    170|         expect(undescribed).toEqual([]);
+       |                             ^
+    171|       });
+    172| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+RUN  v3.2.4 /home/alex/github/remote-ai-manager/.worktrees/debug-mode-flow-improvements-1be774
+
+·····································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································xx········x···································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································x······················································································
+
+ Test Files  2 failed | 285 passed | 5 skipped (339)
+      Tests  4 failed | 4102 passed (4168)
+   Start at  01:22:16
+   Duration  36.27s (transform 22.91s, setup 53.97s, collect 162.55s, tests 118.47s, environment 40.02s, prepare 54.85s)

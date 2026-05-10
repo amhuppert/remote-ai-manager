@@ -20,8 +20,8 @@
 import { describe, expect, it } from "vitest";
 import {
   debugCleanupResultSchema,
+  debugEvidenceAnalysisOutputSchema,
   debugEvidenceAnalysisSchema,
-  debugFixResultSchema,
   debugHypothesisOutputSchema,
 } from "./debug-schemas";
 import {
@@ -36,19 +36,6 @@ const validHypothesis = {
     { id: "H3", description: "stale cache", instrumentationPlan: "Log key" },
   ],
   reproductionSteps: ["Open page", "Click button"],
-};
-
-const validEvidenceAnalysis = {
-  supportedHypotheses: ["H1"],
-  refutedHypotheses: ["H2"],
-  inconclusiveHypotheses: ["H3"],
-  recommendedNextStep: "fix",
-  evidenceSummary: "H1 confirmed by trace.",
-};
-
-const validFixResult = {
-  fixSummary: "Adjusted index calculation.",
-  verificationSteps: ["Run test", "Inspect logs"],
 };
 
 const validCleanupResult = {
@@ -88,30 +75,45 @@ function parseStructuredOutputText(
   }
 }
 
+describe("Anthropic tool input_schema contract", () => {
+  // Anthropic's API rejects tool input_schemas that lack a top-level
+  // `type: "object"`. A raw `{ oneOf: [...] }` at the root produces:
+  //   400 invalid_request_error: tools.N.custom.input_schema.type: Field required
+  // Every exported *OutputSchema is sent verbatim as a tool input_schema, so
+  // each one must declare `type: "object"` at root.
+  it.each([
+    ["debugHypothesisOutputSchema", debugHypothesisOutputSchema],
+    ["debugEvidenceAnalysisOutputSchema", debugEvidenceAnalysisOutputSchema],
+    ["debugCleanupResultSchema", debugCleanupResultSchema],
+  ])("%s declares type:object at root", (_name, schema) => {
+    expect((schema as { type?: string }).type).toBe("object");
+  });
+
+  // Anthropic also rejects `oneOf`/`allOf`/`anyOf` at the top level of a
+  // tool input_schema:
+  //   400 invalid_request_error: tools.N.custom.input_schema:
+  //     input_schema does not support oneOf, allOf, or anyOf at the top level
+  // Discriminated unions must be expressed as a single flat object whose
+  // discriminator is an enum field; per-branch required fields are enforced
+  // downstream by the matching Zod schema.
+  it.each([
+    ["debugHypothesisOutputSchema", debugHypothesisOutputSchema],
+    ["debugEvidenceAnalysisOutputSchema", debugEvidenceAnalysisOutputSchema],
+    ["debugCleanupResultSchema", debugCleanupResultSchema],
+  ])("%s does not use oneOf/allOf/anyOf at the root", (_name, schema) => {
+    const root = schema as Record<string, unknown>;
+    expect(root["oneOf"]).toBeUndefined();
+    expect(root["allOf"]).toBeUndefined();
+    expect(root["anyOf"]).toBeUndefined();
+  });
+});
+
 describe("debug schemas through structured-output gate", () => {
   describe("round-trip on valid payloads", () => {
     it("hypothesis schema accepts a well-formed payload", () => {
       const gate = runStructuredOutputGate(
         asSchema(debugHypothesisOutputSchema),
         validHypothesis,
-        validateJsonSchemaSubset,
-      );
-      expect(gate.status).toBe("pass");
-    });
-
-    it("evidence-analysis schema accepts a well-formed payload", () => {
-      const gate = runStructuredOutputGate(
-        asSchema(debugEvidenceAnalysisSchema),
-        validEvidenceAnalysis,
-        validateJsonSchemaSubset,
-      );
-      expect(gate.status).toBe("pass");
-    });
-
-    it("fix-result schema accepts a well-formed payload", () => {
-      const gate = runStructuredOutputGate(
-        asSchema(debugFixResultSchema),
-        validFixResult,
         validateJsonSchemaSubset,
       );
       expect(gate.status).toBe("pass");
@@ -155,30 +157,6 @@ describe("debug schemas through structured-output gate", () => {
             ...validHypothesis.hypotheses.slice(1),
           ],
         },
-        validateJsonSchemaSubset,
-      );
-      expect(gate.status).toBe("fail");
-    });
-
-    it("evidence-analysis schema rejects an unknown recommendedNextStep", () => {
-      const gate = runStructuredOutputGate(
-        asSchema(debugEvidenceAnalysisSchema),
-        {
-          ...validEvidenceAnalysis,
-          recommendedNextStep: "abandon",
-        },
-        validateJsonSchemaSubset,
-      );
-      expect(gate.status).toBe("fail");
-      if (gate.status === "fail") {
-        expect(gate.kind).toBe("structured_output");
-      }
-    });
-
-    it("fix-result schema rejects fewer than 2 verification steps", () => {
-      const gate = runStructuredOutputGate(
-        asSchema(debugFixResultSchema),
-        { fixSummary: "fix", verificationSteps: ["only one"] },
         validateJsonSchemaSubset,
       );
       expect(gate.status).toBe("fail");
@@ -230,12 +208,20 @@ describe("debug schemas through structured-output gate", () => {
     });
 
     it("surfaces validation errors when the parsed text doesn't match the schema", () => {
-      const raw = JSON.stringify({ fixSummary: "ok", verificationSteps: [] });
+      const raw = JSON.stringify({
+        outcome: "fix_applied",
+        supportedHypotheses: [],
+        refutedHypotheses: [],
+        inconclusiveHypotheses: [],
+        evidenceSummary: "ok",
+        fixSummary: "ok",
+        verificationSteps: [],
+      });
       const parsed = parseStructuredOutputText(raw);
       expect(parsed.found).toBe(true);
       if (!parsed.found) return;
       const gate = runStructuredOutputGate(
-        asSchema(debugFixResultSchema),
+        asSchema(debugEvidenceAnalysisOutputSchema),
         parsed.value,
         validateJsonSchemaSubset,
       );
@@ -244,5 +230,82 @@ describe("debug schemas through structured-output gate", () => {
         expect(gate.kind).toBe("structured_output");
       }
     });
+  });
+});
+
+describe("debugEvidenceAnalysisSchema (Zod discriminated union)", () => {
+  const sharedEvidence = {
+    supportedHypotheses: ["H1"],
+    refutedHypotheses: ["H2"],
+    inconclusiveHypotheses: ["H3"],
+    evidenceSummary: "H1 confirmed by trace.",
+  };
+
+  const validFixApplied = {
+    outcome: "fix_applied",
+    ...sharedEvidence,
+    fixSummary: "Adjusted index calculation.",
+    verificationSteps: ["Run failing test", "Inspect logs"],
+  };
+
+  const validMoreInstrumentation = {
+    outcome: "more_instrumentation",
+    ...sharedEvidence,
+    hypotheses: [
+      {
+        id: "H4",
+        description: "Possible cache invalidation race",
+        instrumentationPlan: "Log cache key writes",
+      },
+    ],
+    reproductionSteps: ["Open page", "Click button"],
+  };
+
+  it("parses a valid fix_applied payload", () => {
+    const parsed = debugEvidenceAnalysisSchema.safeParse(validFixApplied);
+    expect(parsed.success).toBe(true);
+  });
+
+  it("parses a valid more_instrumentation payload", () => {
+    const parsed = debugEvidenceAnalysisSchema.safeParse(
+      validMoreInstrumentation,
+    );
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects an invalid outcome value", () => {
+    const parsed = debugEvidenceAnalysisSchema.safeParse({
+      ...validFixApplied,
+      outcome: "abandon",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects a fix_applied payload missing fixSummary", () => {
+    const incomplete: Record<string, unknown> = { ...validFixApplied };
+    delete incomplete["fixSummary"];
+    const parsed = debugEvidenceAnalysisSchema.safeParse(incomplete);
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects a more_instrumentation payload missing reproductionSteps", () => {
+    const incomplete: Record<string, unknown> = { ...validMoreInstrumentation };
+    delete incomplete["reproductionSteps"];
+    const parsed = debugEvidenceAnalysisSchema.safeParse(incomplete);
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts hypothesis ids beyond H5 (loosened pattern)", () => {
+    const parsed = debugEvidenceAnalysisSchema.safeParse({
+      ...validMoreInstrumentation,
+      hypotheses: [
+        {
+          id: "H10",
+          description: "Tenth hypothesis",
+          instrumentationPlan: "Log it",
+        },
+      ],
+    });
+    expect(parsed.success).toBe(true);
   });
 });

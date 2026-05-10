@@ -35,8 +35,11 @@ function makeConversation(
       logFilePath: "/tmp/.debug/x.jsonl",
       enteredAt: "2024-01-01T00:00:00Z",
       hypotheses: [],
+      reproductionSteps: [],
       instructionsDelivered: true,
       phase,
+      fixSummary: null,
+      verificationSteps: [],
       lastTurnFailed: false,
     },
     machineSnapshot: null,
@@ -62,30 +65,13 @@ describe("DebugActionCard button visibility", () => {
     expect(
       screen.getByRole("button", { name: "Mark Reproduced" }),
     ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Apply Fix" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Mark Fix" })).toBeNull();
-  });
-
-  it("shows only 'Apply Fix' (and Exit) in fixing", () => {
-    renderWithQuery(
-      <DebugActionCard
-        projectName="p"
-        sessionName="s"
-        conversation={makeConversation("fixing")}
-        onSendPrompt={vi.fn().mockResolvedValue(undefined)}
-        isBusy={false}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "Exit Debug" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Apply Fix" })).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: "Mark Reproduced" }),
+      screen.queryByRole("button", { name: "Mark Fix Failed" }),
     ).toBeNull();
-    expect(screen.queryByRole("button", { name: "Mark Fix" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark Fixed" })).toBeNull();
   });
 
-  it("shows only 'Mark Fix' (and Exit) in awaiting_verification — not 'Mark Reproduced'", () => {
+  it("shows 'Mark Fixed' and 'Mark Fix Failed' (and Exit) in awaiting_verification — not 'Mark Reproduced'", () => {
     renderWithQuery(
       <DebugActionCard
         projectName="p"
@@ -97,8 +83,10 @@ describe("DebugActionCard button visibility", () => {
     );
 
     expect(screen.getByRole("button", { name: "Exit Debug" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Mark Fix" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Apply Fix" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Mark Fixed" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Mark Fix Failed" }),
+    ).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: "Mark Reproduced" }),
     ).toBeNull();
@@ -119,46 +107,117 @@ describe("DebugActionCard button visibility", () => {
     expect(
       screen.queryByRole("button", { name: "Mark Reproduced" }),
     ).toBeNull();
-    expect(screen.queryByRole("button", { name: "Apply Fix" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Mark Fix" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Mark Fix Failed" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark Fixed" })).toBeNull();
   });
 });
 
-describe("DebugActionCard Apply Fix dispatch", () => {
+describe("DebugActionCard Mark Fix Failed dispatch", () => {
+  let phaseCalls: string[];
+
   beforeEach(() => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    ) as unknown as typeof fetch;
+    phaseCalls = [];
+    globalThis.fetch = vi.fn().mockImplementation((_input, init) => {
+      const body = JSON.parse(String((init as RequestInit).body));
+      phaseCalls.push(body.action);
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }) as unknown as typeof fetch;
   });
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("invokes onSendPrompt with the apply-fix prompt and does not call the phase mutation", async () => {
+  it("dispatches mark_fix_failed and sends the re-hypothesize prompt with the prior fixSummary recapped", async () => {
     const onSendPrompt = vi.fn().mockResolvedValue(undefined);
+    const conversation = makeConversation("awaiting_verification", {
+      debugMode: {
+        active: true,
+        recording: true,
+        logFilePath: "/tmp/.debug/x.jsonl",
+        enteredAt: "2024-01-01T00:00:00Z",
+        hypotheses: [],
+        reproductionSteps: [],
+        instructionsDelivered: true,
+        phase: "awaiting_verification",
+        fixSummary:
+          "Replaced the off-by-one in pageOffset with a clamp at zero.",
+        verificationSteps: ["Reload the page", "Scroll to bottom"],
+        lastTurnFailed: false,
+      },
+    });
     renderWithQuery(
       <DebugActionCard
         projectName="p"
         sessionName="s"
-        conversation={makeConversation("fixing")}
+        conversation={conversation}
         onSendPrompt={onSendPrompt}
         isBusy={false}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Apply Fix" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark Fix Failed" }));
+
+    await waitFor(() => expect(phaseCalls).toEqual(["mark_fix_failed"]));
+    await waitFor(() => expect(onSendPrompt).toHaveBeenCalledTimes(1));
+    const sent = (onSendPrompt.mock.calls[0]?.[0] ?? "") as string;
+    expect(sent).toMatch(/did NOT actually resolve/i);
+    expect(sent).toMatch(/hypotheses/);
+    expect(sent).toContain(
+      "Replaced the off-by-one in pageOffset with a clamp at zero.",
+    );
+  });
+
+  it("omits the fix recap when no prior fixSummary is recorded", async () => {
+    const onSendPrompt = vi.fn().mockResolvedValue(undefined);
+    renderWithQuery(
+      <DebugActionCard
+        projectName="p"
+        sessionName="s"
+        conversation={makeConversation("awaiting_verification")}
+        onSendPrompt={onSendPrompt}
+        isBusy={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Fix Failed" }));
 
     await waitFor(() => expect(onSendPrompt).toHaveBeenCalledTimes(1));
     const sent = (onSendPrompt.mock.calls[0]?.[0] ?? "") as string;
-    expect(sent).toMatch(/minimal fix/i);
-    expect(sent).toMatch(/fixSummary/);
-    expect(sent).toMatch(/verificationSteps/);
-    // Apply Fix must not advance the phase — the machine handles that on
-    // successful turn completion.
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(sent).not.toMatch(/The fix you previously applied was:/);
+    expect(sent).toMatch(/did NOT actually resolve/i);
+  });
+
+  it("rolls back to awaiting_verification when the prompt send fails after Mark Fix Failed", async () => {
+    const onSendPrompt = vi
+      .fn()
+      .mockRejectedValue(new Error("prompt send failed"));
+
+    renderWithQuery(
+      <DebugActionCard
+        projectName="p"
+        sessionName="s"
+        conversation={makeConversation("awaiting_verification")}
+        onSendPrompt={onSendPrompt}
+        isBusy={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Fix Failed" }));
+
+    await waitFor(() =>
+      expect(phaseCalls).toEqual([
+        "mark_fix_failed",
+        "revert_to_awaiting_verification",
+      ]),
+    );
+    expect(onSendPrompt).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -208,7 +267,7 @@ describe("DebugActionCard Strategy B rollback", () => {
     expect(onSendPrompt).toHaveBeenCalledTimes(1);
   });
 
-  it("rolls back to awaiting_verification when the prompt send fails after Mark Fix", async () => {
+  it("rolls back to awaiting_verification when the prompt send fails after Mark Fixed", async () => {
     const onSendPrompt = vi
       .fn()
       .mockRejectedValue(new Error("prompt send failed"));
@@ -223,7 +282,7 @@ describe("DebugActionCard Strategy B rollback", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Mark Fix" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark Fixed" }));
 
     await waitFor(() =>
       expect(phaseCalls).toEqual([
@@ -296,8 +355,11 @@ describe("DebugActionCard Retry CTA", () => {
         logFilePath: "/tmp/.debug/x.jsonl",
         enteredAt: "2024-01-01T00:00:00Z",
         hypotheses: [],
+        reproductionSteps: [],
         instructionsDelivered: true,
         phase: "hypothesizing",
+        fixSummary: null,
+        verificationSteps: [],
         lastTurnFailed: true,
       },
     });
@@ -316,15 +378,18 @@ describe("DebugActionCard Retry CTA", () => {
   });
 
   it("dispatches retry_turn when Retry is clicked", async () => {
-    const conversation = makeConversation("fixing", {
+    const conversation = makeConversation("analyzing_evidence", {
       debugMode: {
         active: true,
         recording: true,
         logFilePath: "/tmp/.debug/x.jsonl",
         enteredAt: "2024-01-01T00:00:00Z",
         hypotheses: [],
+        reproductionSteps: [],
         instructionsDelivered: true,
-        phase: "fixing",
+        phase: "analyzing_evidence",
+        fixSummary: null,
+        verificationSteps: [],
         lastTurnFailed: true,
       },
     });
@@ -354,8 +419,11 @@ describe("DebugActionCard Retry CTA", () => {
         logFilePath: "/tmp/.debug/x.jsonl",
         enteredAt: "2024-01-01T00:00:00Z",
         hypotheses: [],
+        reproductionSteps: [],
         instructionsDelivered: true,
         phase: "awaiting_reproduction",
+        fixSummary: null,
+        verificationSteps: [],
         lastTurnFailed: true,
       },
     });
