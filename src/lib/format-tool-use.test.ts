@@ -6,6 +6,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("Read")).toEqual({
       name: "Read",
       context: null,
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -15,6 +16,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("Read", { file_path: "src/lib/auth.ts" })).toEqual({
       name: "Read",
       context: "src/lib/auth.ts",
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -24,6 +26,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("Write", { file_path: "src/new.ts" })).toEqual({
       name: "Write",
       context: "src/new.ts",
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -33,6 +36,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("Edit", { file_path: "src/lib/config.ts" })).toEqual({
       name: "Edit",
       context: "src/lib/config.ts",
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -44,12 +48,13 @@ describe("formatToolUse", () => {
     ).toEqual({
       name: "Edit",
       context: "src/lib/config.ts",
+      command: null,
       metricsLabel: null,
       isError: false,
     });
   });
 
-  it("formats Bash with description", () => {
+  it("formats Bash with description and command", () => {
     expect(
       formatToolUse("Bash", {
         description: "Run tests",
@@ -58,25 +63,28 @@ describe("formatToolUse", () => {
     ).toEqual({
       name: "Bash",
       context: "Run tests",
+      command: "npm test",
       metricsLabel: null,
       isError: false,
     });
   });
 
-  it("formats Bash with command when no description", () => {
+  it("formats Bash with command and no description", () => {
     expect(formatToolUse("Bash", { command: "npm test" })).toEqual({
       name: "Bash",
-      context: "npm test",
+      context: null,
+      command: "npm test",
       metricsLabel: null,
       isError: false,
     });
   });
 
-  it("truncates long Bash commands", () => {
+  it("preserves long Bash commands in full without truncation", () => {
     const longCmd = "a".repeat(100);
     expect(formatToolUse("Bash", { command: longCmd })).toEqual({
       name: "Bash",
-      context: `${"a".repeat(50)}...`,
+      context: null,
+      command: longCmd,
       metricsLabel: null,
       isError: false,
     });
@@ -86,6 +94,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("Grep", { pattern: "TODO" })).toEqual({
       name: "Search",
       context: '"TODO"',
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -95,6 +104,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("Glob", { pattern: "**/*.ts" })).toEqual({
       name: "Find files",
       context: '"**/*.ts"',
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -104,6 +114,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("Task", { description: "Explore codebase" })).toEqual({
       name: "Task",
       context: "Explore codebase",
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -114,6 +125,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("Task", { description: longDesc })).toEqual({
       name: "Task",
       context: `${"b".repeat(50)}...`,
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -123,6 +135,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("CustomTool", { foo: "bar" })).toEqual({
       name: "CustomTool",
       context: null,
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -140,6 +153,7 @@ describe("formatToolUse", () => {
     ).toEqual({
       name: "TodoWrite",
       context: "3 tasks",
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -153,6 +167,7 @@ describe("formatToolUse", () => {
     ).toEqual({
       name: "TodoWrite",
       context: "1 task",
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -162,6 +177,7 @@ describe("formatToolUse", () => {
     expect(formatToolUse("TodoWrite", {})).toEqual({
       name: "TodoWrite",
       context: null,
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -172,6 +188,7 @@ describe("formatToolUse", () => {
       {
         name: "WebSearch",
         context: "next.js app router",
+        command: null,
         metricsLabel: null,
         isError: false,
       },
@@ -184,6 +201,7 @@ describe("formatToolUse", () => {
     ).toEqual({
       name: "WebFetch",
       context: "https://example.com/docs",
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -195,6 +213,7 @@ describe("formatToolUse", () => {
     ).toEqual({
       name: "TaskCreate",
       context: "Implement auth flow",
+      command: null,
       metricsLabel: null,
       isError: false,
     });
@@ -206,6 +225,7 @@ describe("formatToolUse", () => {
     ).toEqual({
       name: "TaskUpdate",
       context: "→ completed",
+      command: null,
       metricsLabel: null,
       isError: false,
     });

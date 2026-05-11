@@ -6696,6 +6696,7 @@ textarea {
 
 .tool-use-indicator {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 6px var(--space-sm);
@@ -6706,6 +6707,20 @@ textarea {
   font-size: 0.78rem;
   border-left: 2px solid var(--cyan-dim);
   min-height: 30px;
+}
+
+.tool-use-command {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-xs, 3px);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
 }
 
 .tool-use-icon {

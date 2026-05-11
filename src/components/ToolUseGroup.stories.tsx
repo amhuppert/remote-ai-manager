@@ -78,7 +78,10 @@ export const WithErrors = {
         type: "tool_use",
         id: "tool_1",
         name: "Bash",
-        input: { command: "git push origin main" },
+        input: {
+          command: "git push origin main",
+          description: "Push branch to origin",
+        },
       },
       {
         type: "tool_result",

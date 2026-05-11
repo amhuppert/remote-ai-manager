@@ -101,6 +101,9 @@ export default memo(function ToolUseGroup({
                     {formatted.metricsLabel}
                   </span>
                 )}
+                {formatted.command && (
+                  <pre className="tool-use-command">{formatted.command}</pre>
+                )}
               </div>
             );
           })}

@@ -9,6 +9,8 @@ export interface FormattedToolUse {
   name: string;
   /** Brief context string, or null if none available */
   context: string | null;
+  /** Full command text rendered as a code block (Bash tool), or null */
+  command: string | null;
   /** Result-derived metric label (e.g. "234 lines", "12 matches"), or null */
   metricsLabel: string | null;
   /** Whether the tool errored */
@@ -107,12 +109,13 @@ export function formatToolUse(
   const metricsLabel = buildMetricsLabel(name, input, result?.metrics);
 
   if (!input) {
-    return { name, context: null, metricsLabel, isError };
+    return { name, context: null, command: null, metricsLabel, isError };
   }
 
-  const base: Pick<FormattedToolUse, "metricsLabel" | "isError"> = {
+  const base: Pick<FormattedToolUse, "metricsLabel" | "isError" | "command"> = {
     metricsLabel,
     isError,
+    command: null,
   };
 
   switch (name) {
@@ -128,15 +131,16 @@ export function formatToolUse(
         ...base,
       };
     case "Bash": {
-      if (input["description"])
-        return { name, context: String(input["description"]), ...base };
-      if (input["command"])
-        return {
-          name,
-          context: truncate(String(input["command"]), 50),
-          ...base,
-        };
-      return { name, context: null, ...base };
+      const command =
+        typeof input["command"] === "string" ? input["command"] : null;
+      const description =
+        typeof input["description"] === "string" ? input["description"] : null;
+      return {
+        name,
+        context: description,
+        ...base,
+        command,
+      };
     }
     case "Grep":
       return {
