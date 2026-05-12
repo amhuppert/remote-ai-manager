@@ -60,6 +60,9 @@ describe("graph workflow execution route handlers", () => {
   const normalizeExecutionAfterRestart = vi.fn();
   const kickOffExecutionLoop = vi.fn();
   const resetExecutionContext = vi.fn();
+  const getActiveExecution = vi.fn();
+  const recordPendingHaltReason = vi.fn();
+  const drainAndHalt = vi.fn();
 
   const handlers = createGraphWorkflowExecutionRouteHandlers({
     resolveProjectPath,
@@ -72,6 +75,9 @@ describe("graph workflow execution route handlers", () => {
     normalizeExecutionAfterRestart,
     kickOffExecutionLoop,
     resetExecutionContext,
+    getActiveExecution,
+    recordPendingHaltReason,
+    drainAndHalt,
   });
 
   beforeEach(() => {
@@ -126,6 +132,85 @@ describe("graph workflow execution route handlers", () => {
         archived: false,
       },
     });
+  });
+
+  it("records an execution_loop_failed halt reason when the kickoff promise rejects", async () => {
+    const startedExecution = createWorkflowExecution({
+      id: "execution-loop-crash",
+      status: "running",
+    });
+
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockResolvedValue(startedExecution);
+    kickOffExecutionLoop.mockRejectedValue(new Error("loop boom"));
+    getActiveExecution.mockResolvedValue(startedExecution);
+    recordPendingHaltReason.mockResolvedValue({
+      execution: startedExecution,
+      accepted: true,
+    });
+    drainAndHalt.mockResolvedValue({
+      ...startedExecution,
+      status: "halted",
+    });
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(response.status).toBe(202);
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(getActiveExecution).toHaveBeenCalledWith("/repo", "session-1");
+    expect(recordPendingHaltReason).toHaveBeenCalledTimes(1);
+    const haltCall = recordPendingHaltReason.mock.calls[0]?.[0] as {
+      projectPath: string;
+      sessionName: string;
+      reason: { type: string; cause?: string; message?: string };
+    };
+    expect(haltCall.projectPath).toBe("/repo");
+    expect(haltCall.sessionName).toBe("session-1");
+    expect(haltCall.reason.type).toBe("execution_loop_failed");
+    expect(haltCall.reason.cause).toBe("unknown");
+    expect(haltCall.reason.message).toBe("loop boom");
+    expect(drainAndHalt).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+    });
+  });
+
+  it("skips halt recording on kickoff failure when no active execution exists", async () => {
+    const startedExecution = createWorkflowExecution({
+      id: "execution-ghost",
+      status: "running",
+    });
+
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockResolvedValue(startedExecution);
+    kickOffExecutionLoop.mockRejectedValue(new Error("loop boom"));
+    getActiveExecution.mockResolvedValue(null);
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(response.status).toBe(202);
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(getActiveExecution).toHaveBeenCalledWith("/repo", "session-1");
+    expect(recordPendingHaltReason).not.toHaveBeenCalled();
+    expect(drainAndHalt).not.toHaveBeenCalled();
   });
 
   it("returns active status with interrupted task details and archived history summaries", async () => {

@@ -12,6 +12,11 @@ import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { MessageContentBlock, SessionState } from "@/types";
+import { AgentTurnFailedError } from "@/lib/workflows/graph-workflow/errors";
+
+function toAgentTurnEngine(backend: AgentBackendId): "claude" | "codex" {
+  return backend === "codex" ? "codex" : "claude";
+}
 
 const logger = createLogger("graph-workflow-implementer-runner");
 
@@ -152,7 +157,13 @@ export function createGraphWorkflowImplementerRunner(
         backend: input.backend,
         error: result.error,
       });
-      throw new Error(`SDK error: ${result.error}`);
+      const message = `SDK error: ${result.error}`;
+      throw new AgentTurnFailedError(message, {
+        contextId: input.contextId,
+        engine: toAgentTurnEngine(input.backend),
+        cause: "sdk_error",
+        originalMessage: result.error,
+      });
     }
 
     if (result.aborted) {
@@ -162,7 +173,12 @@ export function createGraphWorkflowImplementerRunner(
         contextId: input.contextId,
         backend: input.backend,
       });
-      throw new Error("Prompt execution was aborted");
+      throw new AgentTurnFailedError("Prompt execution was aborted", {
+        contextId: input.contextId,
+        engine: toAgentTurnEngine(input.backend),
+        cause: "abort",
+        originalMessage: "Prompt execution was aborted",
+      });
     }
 
     logger.info("graph-workflow.implementer.turn_completed", {

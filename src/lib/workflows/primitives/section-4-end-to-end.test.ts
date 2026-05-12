@@ -116,6 +116,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
         activeBatchIds: [],
         haltReason: null,
         pendingHaltReason: null,
+        secondaryHaltReasons: [],
       },
       {
         type: "graph-workflow-task-status",
@@ -209,6 +210,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
       activeBatchIds: [],
       haltReason: null,
       pendingHaltReason: null,
+      secondaryHaltReasons: [],
     };
     const outcome = publishSessionStatus(event);
     expect(outcome.delivered).toBe(false);

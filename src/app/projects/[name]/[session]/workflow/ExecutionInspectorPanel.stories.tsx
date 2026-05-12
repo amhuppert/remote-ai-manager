@@ -335,6 +335,8 @@ const createUserSchema = z.object({
     completedAt: null,
     haltReason: null,
     pendingHaltReason: null,
+    secondaryHaltReasons: [],
+    pendingMergeRetry: [],
     ...overrides,
   };
 }

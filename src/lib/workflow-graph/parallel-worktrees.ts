@@ -4,14 +4,16 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { buildChildEnv as defaultBuildChildEnv } from "@/lib/child-env";
 import { defaultGitClient, type GitClient } from "@/lib/git-client";
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/errors";
 import { readRepoConfig as defaultReadRepoConfig } from "@/lib/repo-config";
 import type { PerRepoConfig } from "@/lib/schemas";
+import { parseDirtyPaths } from "@/lib/git-operations";
+import type { DirtyPath } from "@/lib/workflows/graph-workflow/errors";
 
 const defaultExecFileAsync = promisify(execFile);
 
-const logger = createLogger("graph-workflow-parallel-worktrees");
+const defaultLogger = createLogger("graph-workflow-parallel-worktrees");
 
 const CONTEXT_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
@@ -50,6 +52,7 @@ export interface ParallelWorktreesDeps {
   readRepoConfig?(repoRoot: string): Promise<PerRepoConfig | null>;
   execFileAsync?: typeof defaultExecFileAsync;
   buildChildEnv?(): NodeJS.ProcessEnv;
+  logger?: Logger;
 }
 
 export function validateContextId(contextId: string): void {
@@ -98,6 +101,7 @@ export function createParallelWorktrees(
   const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
   const execFileAsync = deps.execFileAsync ?? defaultExecFileAsync;
   const buildChildEnv = deps.buildChildEnv ?? defaultBuildChildEnv;
+  const logger = deps.logger ?? defaultLogger;
 
   async function getBranchForWorktree(
     projectPath: string,
@@ -170,6 +174,8 @@ export function createParallelWorktrees(
       input.projectPath,
     );
 
+    await reportDirtyOnCreate(input, targets);
+
     try {
       await runInitScript(input, targets);
     } catch (err) {
@@ -238,6 +244,44 @@ export function createParallelWorktrees(
       sessionName: input.sessionName,
       contextId: input.contextId,
       scriptPath,
+    });
+  }
+
+  /**
+   * Detect-only post-create cleanliness probe. A freshly-provisioned worktree
+   * should always start clean; on APFS we have evidence that `clonefile()` can
+   * leave residual modified-time on tracked files which `git status` then
+   * reports as modified. We log but do not throw — gathering production
+   * evidence before shipping repair logic.
+   */
+  async function reportDirtyOnCreate(
+    input: ProvisionInput,
+    targets: ProvisionResult,
+  ): Promise<void> {
+    let dirtyPaths: DirtyPath[];
+    try {
+      const { stdout } = await gitClient.git(
+        ["status", "--porcelain"],
+        targets.worktreePath,
+      );
+      dirtyPaths = parseDirtyPaths(stdout);
+    } catch (err) {
+      logger.warn("provision_dirty_check_failed", {
+        worktreePath: targets.worktreePath,
+        branchName: targets.branchName,
+        contextId: input.contextId,
+        error: getErrorMessage(err),
+      });
+      return;
+    }
+    if (dirtyPaths.length === 0) return;
+    logger.warn("provision_dirty_after_create", {
+      projectPath: input.projectPath,
+      worktreePath: targets.worktreePath,
+      branchName: targets.branchName,
+      contextId: input.contextId,
+      dirtyCount: dirtyPaths.length,
+      dirtyPaths: dirtyPaths.slice(0, 5),
     });
   }
 

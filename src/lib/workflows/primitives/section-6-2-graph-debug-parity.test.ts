@@ -70,6 +70,7 @@ import { runStructuredOutputGate } from "./structured-output-gate";
 import { workflowAgentValidatorResultSchema } from "@/lib/schemas";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
   GraphWorkflowSSEEvent,
   GraphWorkflowStatus,
   GraphWorkflowTaskStatus,
@@ -161,6 +162,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           activeBatchIds: [],
           haltReason: null,
           pendingHaltReason: null,
+          secondaryHaltReasons: [],
         });
 
         const envelope = envelopes.find(
@@ -704,6 +706,8 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       completedAt: null,
       haltReason: null,
       pendingHaltReason: null,
+      secondaryHaltReasons: [],
+      pendingMergeRetry: [],
     } as unknown as GraphWorkflowExecution;
 
     let currentExecution = initialExecution;
@@ -718,14 +722,14 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       async (input: {
         projectPath: string;
         sessionName: string;
-        reason: { type: string; contextId?: string; failureCount?: number };
+        reason: GraphWorkflowHaltReason;
       }) => {
         if (currentExecution.pendingHaltReason !== null) {
           return { execution: currentExecution, accepted: false };
         }
         currentExecution = {
           ...currentExecution,
-          pendingHaltReason: input.reason as never,
+          pendingHaltReason: input.reason,
         };
         return { execution: currentExecution, accepted: true };
       },

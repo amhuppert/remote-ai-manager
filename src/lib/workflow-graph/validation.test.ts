@@ -8,6 +8,7 @@ import {
   getEligibleContextIds,
   getEntryContextIds,
   getTerminalContextIds,
+  isContextLanded,
   validateResolvedWorkflow,
   validateWorkflowDefinition,
   validateWorkflowRuntimeEdit,
@@ -190,6 +191,71 @@ describe("workflow-graph validation", () => {
     expect(getEligibleContextIds(definition, execution)).toEqual([
       "context-implement",
     ]);
+  });
+
+  it("requires worktree-isolation upstream to be merged before unlocking downstream", () => {
+    const definition = createWorkflowDefinition();
+    const baseExecution = createWorkflowExecution();
+    const execution = createWorkflowExecution({
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...baseExecution.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+          isolation: "worktree",
+          mergeStatus: "pending",
+        },
+      },
+    });
+
+    expect(getEligibleContextIds(definition, execution)).toEqual([]);
+  });
+
+  it("unlocks downstream once worktree-isolation upstream reports merged-success", () => {
+    const definition = createWorkflowDefinition();
+    const baseExecution = createWorkflowExecution();
+    const execution = createWorkflowExecution({
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...baseExecution.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+          isolation: "worktree",
+          mergeStatus: "merged-success",
+        },
+      },
+    });
+
+    expect(getEligibleContextIds(definition, execution)).toEqual([
+      "context-implement",
+    ]);
+  });
+
+  it("isContextLanded treats session isolation as landed when completed", () => {
+    const baseExecution = createWorkflowExecution();
+    const state = {
+      ...baseExecution.contextStates["context-plan"]!,
+      status: "completed" as const,
+      isolation: "session" as const,
+      mergeStatus: "not-applicable" as const,
+    };
+    expect(isContextLanded(state)).toBe(true);
+  });
+
+  it("isContextLanded requires merged-success for worktree isolation", () => {
+    const baseExecution = createWorkflowExecution();
+    const state = {
+      ...baseExecution.contextStates["context-plan"]!,
+      status: "completed" as const,
+      isolation: "worktree" as const,
+      mergeStatus: "pending" as const,
+    };
+    expect(isContextLanded(state)).toBe(false);
+    expect(
+      isContextLanded({ ...state, mergeStatus: "merged-success" as const }),
+    ).toBe(true);
   });
 });
 

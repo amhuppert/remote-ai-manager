@@ -210,6 +210,8 @@ function makeGraphWorkflowExecution(
     completedAt: null,
     haltReason: null,
     pendingHaltReason: null,
+    secondaryHaltReasons: [],
+    pendingMergeRetry: [],
     ...overrides,
   } as GraphWorkflowExecution;
 }

@@ -1072,6 +1072,128 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("resume preserves merged-failed contexts and populates pendingMergeRetry", async () => {
+    const baseExecution = createWorkflowExecution();
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        completedAt: "2026-03-27T15:30:00.000Z",
+        haltReason: {
+          type: "merge_precondition_failed",
+          contextId: "context-plan",
+          targetBranch: "csm/session-1",
+          dirtyPaths: [],
+          totalDirtyCount: 1,
+          message: "Target branch dirty",
+        },
+        secondaryHaltReasons: [
+          {
+            type: "merge_precondition_failed",
+            contextId: "context-implement",
+            targetBranch: "csm/session-1",
+            dirtyPaths: [],
+            totalDirtyCount: 1,
+            message: "Target branch dirty",
+          },
+        ],
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...baseExecution.contextStates["context-plan"]!,
+            status: "completed",
+            isolation: "worktree",
+            worktreePath: "/repo/.worktrees/session-1.context-plan",
+            branchName: "csm/session-1-context-plan",
+            mergeStatus: "merged-failed",
+            cleanupStatus: "pending",
+            lastMergeError: "Target branch dirty",
+          },
+          "context-implement": {
+            ...baseExecution.contextStates["context-implement"]!,
+            status: "halted",
+            consecutiveFailureCount: 2,
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    expect(execution.status).toBe("running");
+    expect(execution.haltReason).toBeNull();
+    expect(execution.secondaryHaltReasons).toEqual([]);
+    expect(execution.pendingMergeRetry).toEqual(["context-plan"]);
+    expect(execution.contextStates["context-plan"]).toMatchObject({
+      status: "completed",
+      mergeStatus: "pending",
+      lastMergeError: null,
+    });
+    expect(execution.contextStates["context-implement"]).toMatchObject({
+      status: "ready",
+      consecutiveFailureCount: 0,
+    });
+  });
+
+  it("recordPendingHaltReason appends to secondaryHaltReasons after the first failure (cap 10)", async () => {
+    const baseExecution = createWorkflowExecution();
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "running",
+        activeContextIds: ["context-plan"],
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const firstReason: import("@/types").GraphWorkflowHaltReason = {
+      type: "recovery_error",
+      message: "first",
+    };
+    const firstResult = await manager.recordPendingHaltReason({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      reason: firstReason,
+    });
+    expect(firstResult.accepted).toBe(true);
+    expect(firstResult.execution.pendingHaltReason).toEqual(firstReason);
+    expect(firstResult.execution.secondaryHaltReasons).toEqual([]);
+
+    for (let i = 0; i < 12; i++) {
+      await manager.recordPendingHaltReason({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        reason: { type: "recovery_error", message: `secondary-${i}` },
+      });
+    }
+
+    const finalState = repository.read();
+    expect(finalState?.pendingHaltReason).toEqual(firstReason);
+    expect(finalState?.secondaryHaltReasons).toHaveLength(10);
+    expect(finalState?.secondaryHaltReasons[0]).toEqual({
+      type: "recovery_error",
+      message: "secondary-0",
+    });
+    expect(finalState?.secondaryHaltReasons[9]).toEqual({
+      type: "recovery_error",
+      message: "secondary-9",
+    });
+  });
+
   it("rejects resuming an aborted execution", async () => {
     const repository = createRepository(
       createWorkflowExecution({

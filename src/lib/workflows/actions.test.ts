@@ -42,6 +42,7 @@ describe("broadcastWorkflowEvent", () => {
       activeBatchIds: [],
       haltReason: null,
       pendingHaltReason: null,
+      secondaryHaltReasons: [],
     };
 
     broadcastWorkflowEvent({}, { event });

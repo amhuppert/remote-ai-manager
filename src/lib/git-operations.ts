@@ -2,6 +2,10 @@ import { defaultGitClient, type GitClient } from "./git-client";
 import { parseDiff } from "./diff";
 import { createLogger } from "./logging";
 import { getErrorMessage } from "@/lib/errors";
+import {
+  MergePreconditionFailed,
+  type DirtyPath,
+} from "@/lib/workflows/graph-workflow/errors";
 import type { SessionDiff } from "@/types";
 import type { CommitLogEntry } from "./schemas";
 
@@ -14,6 +18,30 @@ const MAX_BUFFER = 10 * 1024 * 1024;
 // ============================================================
 
 const LOG_FORMAT = "%h%x00%H%x00%s%x00%aI%x00";
+
+/**
+ * Parse output of `git status --porcelain` into structured dirty-path entries.
+ * The first two bytes of each line are the status code (e.g. ` M`, `M `, `??`,
+ * `R `); the path starts at byte 3. Renames use the form `R  old -> new`; we
+ * record the destination path.
+ */
+export function parseDirtyPaths(porcelain: string): DirtyPath[] {
+  const out: DirtyPath[] = [];
+  for (const rawLine of porcelain.split("\n")) {
+    if (rawLine.length === 0) continue;
+    const statusCode = rawLine.slice(0, 2);
+    const rest = rawLine.slice(3);
+    if (rest.length === 0) continue;
+    const arrowIdx = rest.indexOf(" -> ");
+    const path = arrowIdx >= 0 ? rest.slice(arrowIdx + " -> ".length) : rest;
+    out.push({
+      path,
+      statusCode,
+      tracked: !statusCode.startsWith("??"),
+    });
+  }
+  return out;
+}
 
 /** Parse a single git log entry line into a CommitLogEntry */
 function parseLogEntry(line: string): CommitLogEntry | null {
@@ -383,12 +411,15 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
       "status",
       "--porcelain",
     ]);
-    const hasTrackedChanges = rootStatus
-      .split("\n")
-      .some((line) => line.length > 0 && !line.startsWith("??"));
-    if (hasTrackedChanges) {
-      throw new Error(
-        `Target branch '${targetBranch}' has uncommitted changes`,
+    const trackedDirty = parseDirtyPaths(rootStatus).filter((p) => p.tracked);
+    if (trackedDirty.length > 0) {
+      throw new MergePreconditionFailed(
+        `Target branch '${targetBranch}' has ${trackedDirty.length} uncommitted change(s)`,
+        {
+          targetBranch,
+          dirtyPaths: trackedDirty,
+          dirtyCount: trackedDirty.length,
+        },
       );
     }
 

@@ -341,3 +341,15 @@ bun scripts/clean-graph-workflow-state.ts
 ```
 
 Clears `graphWorkflowExecution` / `graphWorkflowExecutionHistory` from every session in `state.json` and deletes `workflows/` directory. Idempotent. Recreate workflows via UI or MCP.
+
+## Land-gate invariant
+
+Scheduler eligibility for a worktree-isolation context's dependents requires the upstream's `mergeStatus === "merged-success"`. A completed-but-unmerged side branch does not satisfy a downstream context's dependency, because the downstream may fan out from a base that does not yet include the upstream's work.
+
+The canonical check is `isContextLanded` in `src/lib/workflow-graph/validation.ts`:
+
+- `status !== "completed"` → not landed.
+- `isolation === "session"` → landed when completed (no fan-in merge needed — work is visible in the session branch directly).
+- `isolation === "worktree"` → landed only when `mergeStatus === "merged-success"`.
+
+`getEligibleContextIds` uses `isContextLanded` for every upstream of every candidate context. A failed fan-in halts with `merge_precondition_failed` (or `merge_failure`) and persists `mergeStatus === "merged-failed"` on the side-branch context, which `resume()` queues for retry via `pendingMergeRetry` (loop-owned, manager-persisted intent).

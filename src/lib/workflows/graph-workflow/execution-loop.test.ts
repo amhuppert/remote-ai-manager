@@ -115,6 +115,8 @@ function createRunningExecution(
     completedAt: null,
     haltReason: null,
     pendingHaltReason: null,
+    secondaryHaltReasons: [],
+    pendingMergeRetry: [],
     ...overrides,
   };
 }
@@ -838,8 +840,10 @@ describe("execution loop", () => {
       projectPath: "/repo",
       sessionName: "session-1",
       reason: {
-        type: "recovery_error",
+        type: "execution_loop_failed",
+        contextId: "ctx-1",
         message: "SDK error: MCP error -32000: Stream closed",
+        cause: "sdk_error",
       },
     });
     expect(harness.drainAndHaltSpy).toHaveBeenCalled();
@@ -1203,6 +1207,146 @@ describe("execution loop", () => {
     expect(runCircuitBreakerGate).toHaveBeenCalled();
     expect(result.status).toBe("completed");
     expect(result.haltReason).toBeNull();
+  });
+
+  it("halts with merge_precondition_failed via preflight when session worktree is dirty", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "worktree",
+          batchId: null,
+          mergeStatus: "pending",
+          cleanupStatus: "pending",
+          lastMergeError: null,
+        },
+      },
+    });
+
+    const runIterationSpy = vi.fn();
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: { runIteration: runIterationSpy },
+    });
+
+    harness.deps.getSessionWorktreeDirtyPaths = vi.fn(async () => [
+      { path: "src/app.ts", statusCode: " M", tracked: true },
+    ]);
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(runIterationSpy).not.toHaveBeenCalled();
+    expect(harness.scheduleEligibleContextsSpy).not.toHaveBeenCalled();
+    expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledTimes(1);
+    const recordedReason =
+      harness.recordPendingHaltReasonSpy.mock.calls[0]?.[0].reason;
+    expect(recordedReason).toMatchObject({
+      type: "merge_precondition_failed",
+      contextId: "ctx-1",
+      targetBranch: "csm/session-1",
+      totalDirtyCount: 1,
+    });
+    expect(harness.drainAndHaltSpy).toHaveBeenCalled();
+    expect(result.status).toBe("halted");
+    expect(result.haltReason?.type).toBe("merge_precondition_failed");
+  });
+
+  it("processes pendingMergeRetry, clears the entry on success, and completes", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "completed",
+          totalTaskCount: 1,
+          completedTaskCount: 1,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: "/repo/.worktrees/session-1.ctx-1",
+          branchName: "csm/session-1-ctx-1",
+          isolation: "worktree",
+          batchId: null,
+          mergeStatus: "pending",
+          cleanupStatus: "pending",
+          lastMergeError: null,
+        },
+      },
+      taskStates: {
+        "task-1": {
+          taskId: "task-1",
+          contextId: "ctx-1",
+          order: 1,
+          status: "completed",
+          summary: null,
+          startedAt: null,
+          completedAt: "2026-03-27T12:03:00.000Z",
+          lastConversationId: "conv-1",
+          failureMessage: null,
+          failureHistory: [],
+        },
+      },
+      pendingMergeRetry: ["ctx-1"],
+    });
+
+    const mergeRunner: GraphMergeRunner = {
+      run: vi.fn(async () => ({
+        status: "completed" as const,
+        mergeHash: "merge-hash",
+        commitHash: "commit-hash",
+        error: null,
+        conflictFiles: [],
+        conflictAnalysis: null,
+      })),
+    };
+
+    const parallelWorktrees: ParallelWorktrees = {
+      provision: vi.fn(),
+      provisionBatch: vi.fn(),
+      dispose: vi.fn(async () => ({ status: "removed" as const })),
+    };
+
+    const runIterationSpy = vi.fn();
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: { runIteration: runIterationSpy },
+      mergeRunner,
+      parallelWorktrees,
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(mergeRunner.run).toHaveBeenCalledTimes(1);
+    expect(runIterationSpy).not.toHaveBeenCalled();
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
+    expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+    expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+      type: "complete",
+    });
+    expect(result.status).toBe("completed");
+    expect(result.contextStates["ctx-1"]?.mergeStatus).toBe("merged-success");
+    expect(result.pendingMergeRetry).toEqual([]);
   });
 
   it("emits done with the haltReason when iteration returns a pre-halted execution", async () => {

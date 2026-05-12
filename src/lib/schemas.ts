@@ -1014,6 +1014,53 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     message: z.string(),
     conflictFiles: z.array(z.string()).default([]),
   }),
+  z.object({
+    type: z.literal("merge_precondition_failed"),
+    contextId: z.string().trim().min(1),
+    targetBranch: z.string().trim().min(1),
+    dirtyPaths: z
+      .array(
+        z.object({
+          path: z.string(),
+          statusCode: z.string(),
+          tracked: z.boolean(),
+        }),
+      )
+      .max(5)
+      .default([]),
+    totalDirtyCount: z.number().int().min(0),
+    message: z.string(),
+  }),
+  z.object({
+    type: z.literal("agent_turn_failed"),
+    contextId: z.string().trim().min(1),
+    engine: z.enum(["claude", "codex"]),
+    cause: z.enum(["sdk_error", "abort", "unknown"]),
+    message: z.string(),
+  }),
+  z.object({
+    type: z.literal("worktree_creation_dirty"),
+    contextId: z.string().trim().min(1).nullable().default(null),
+    worktreePath: z.string().trim().min(1),
+    branchName: z.string().trim().min(1),
+    dirtyPaths: z
+      .array(
+        z.object({
+          path: z.string(),
+          statusCode: z.string(),
+          tracked: z.boolean(),
+        }),
+      )
+      .max(5)
+      .default([]),
+    totalDirtyCount: z.number().int().min(0),
+  }),
+  z.object({
+    type: z.literal("execution_loop_failed"),
+    contextId: z.string().trim().min(1).nullable().default(null),
+    message: z.string(),
+    cause: z.enum(["sdk_error", "validation", "io", "unknown"]),
+  }),
 ]);
 export type GraphWorkflowHaltReason = z.infer<
   typeof graphWorkflowHaltReasonSchema
@@ -1088,6 +1135,7 @@ export const graphWorkflowStatusEventSchema = z.object({
   activeBatchIds: z.array(z.string()).default([]),
   haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
   pendingHaltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
+  secondaryHaltReasons: z.array(graphWorkflowHaltReasonSchema).default([]),
 });
 export type GraphWorkflowStatusEvent = z.infer<
   typeof graphWorkflowStatusEventSchema
@@ -1376,6 +1424,8 @@ export const graphWorkflowExecutionSchema = z.object({
   completedAt: z.string().nullable().default(null),
   haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
   pendingHaltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
+  secondaryHaltReasons: z.array(graphWorkflowHaltReasonSchema).default([]),
+  pendingMergeRetry: z.array(z.string().trim().min(1)).default([]),
 });
 export type GraphWorkflowExecution = z.infer<
   typeof graphWorkflowExecutionSchema

@@ -94,6 +94,7 @@ describe("default session status bus", () => {
         activeBatchIds: [],
         haltReason: null,
         pendingHaltReason: null,
+        secondaryHaltReasons: [],
       },
       {
         type: "job-status",
@@ -212,6 +213,7 @@ describe("publishScopedStatusEvent", () => {
       activeBatchIds: [],
       haltReason: null,
       pendingHaltReason: null,
+      secondaryHaltReasons: [],
     });
     publishSessionStatus({
       type: "job-status",

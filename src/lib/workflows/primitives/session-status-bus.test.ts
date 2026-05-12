@@ -276,6 +276,7 @@ describe("publishScopedStatus", () => {
         activeBatchIds: [],
         haltReason: null,
         pendingHaltReason: null,
+        secondaryHaltReasons: [],
       },
       {
         type: "graph-workflow-task-status",

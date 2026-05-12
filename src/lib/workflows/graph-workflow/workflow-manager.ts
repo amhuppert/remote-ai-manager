@@ -406,6 +406,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   ): Promise<GraphWorkflowExecution> {
     let previousStatus: GraphWorkflowStatus | null = null;
     let hasInterrupted = false;
+    let mergeRetryContextIds: string[] = [];
 
     const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
@@ -422,13 +423,23 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         execution.status = "running";
         execution.completedAt = null;
         execution.haltReason = null;
+        execution.secondaryHaltReasons = [];
 
+        const retryIds: string[] = [];
         for (const contextState of Object.values(execution.contextStates)) {
+          if (contextState.mergeStatus === "merged-failed") {
+            contextState.mergeStatus = "pending";
+            contextState.lastMergeError = null;
+            retryIds.push(contextState.contextId);
+            continue;
+          }
           if (contextState.status === "halted") {
             contextState.status = "ready";
             contextState.consecutiveFailureCount = 0;
           }
         }
+        mergeRetryContextIds = retryIds;
+        execution.pendingMergeRetry = retryIds;
 
         hasInterrupted = Object.values(execution.taskStates).some(
           (ts) => ts.status === "interrupted",
@@ -453,6 +464,15 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         .filter((cs) => cs.status === "ready")
         .map((cs) => cs.contextId),
     });
+    if (mergeRetryContextIds.length > 0) {
+      execLogger.lifecycle("resume.merge_retry_scheduled", {
+        retryContextIds: mergeRetryContextIds,
+      });
+      logger.info("graph-workflow.resume.merge_retry_scheduled", {
+        executionId: nextExecution.id,
+        retryContextIds: mergeRetryContextIds,
+      });
+    }
     logger.info("graph-workflow.execution.resumed", {
       executionId: nextExecution.id,
       previousStatus,
@@ -871,6 +891,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         if (execution.pendingHaltReason === null) {
           next.pendingHaltReason = reason;
           accepted = true;
+        } else if (next.secondaryHaltReasons.length < 10) {
+          next.secondaryHaltReasons = [...next.secondaryHaltReasons, reason];
         }
         return next;
       },

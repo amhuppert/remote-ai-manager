@@ -278,7 +278,9 @@ export function createGraphWorkflowExecutionEventPublisher(
       JSON.stringify(previousExecution.haltReason) !==
         JSON.stringify(nextExecution.haltReason) ||
       JSON.stringify(previousExecution.pendingHaltReason) !==
-        JSON.stringify(nextExecution.pendingHaltReason)
+        JSON.stringify(nextExecution.pendingHaltReason) ||
+      JSON.stringify(previousExecution.secondaryHaltReasons) !==
+        JSON.stringify(nextExecution.secondaryHaltReasons)
     ) {
       events.push({
         type: "graph-workflow-status",
@@ -290,6 +292,7 @@ export function createGraphWorkflowExecutionEventPublisher(
         activeBatchIds: nextActiveBatchIds,
         haltReason: nextExecution.haltReason,
         pendingHaltReason: nextExecution.pendingHaltReason,
+        secondaryHaltReasons: [...nextExecution.secondaryHaltReasons],
       } satisfies GraphWorkflowStatusEvent);
     }
 

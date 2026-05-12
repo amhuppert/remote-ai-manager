@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { GitClient } from "./git-client";
-import { createGitOperations } from "./git-operations";
+import { createGitOperations, parseDirtyPaths } from "./git-operations";
+import { MergePreconditionFailed } from "./workflows/graph-workflow/errors";
 
 // ---------------------------------------------------------------------------
 // Test GitClient — replaces vi.mock("./git-client")
@@ -407,7 +408,25 @@ describe("squashMerge", () => {
     mockGitSuccess(" M dirty-file.ts\n");
     await expect(
       ops.squashMerge("/project", "csm/branch", "Merge"),
-    ).rejects.toThrow("Target branch 'main' has uncommitted changes");
+    ).rejects.toThrow("Target branch 'main' has");
+  });
+
+  it("throws MergePreconditionFailed with structured payload for tracked dirty files", async () => {
+    mockGitSuccess(" M dirty-one.ts\nM  dirty-two.ts\n?? new.ts\n");
+    try {
+      await ops.squashMerge("/project", "csm/branch", "Merge");
+      throw new Error("expected MergePreconditionFailed");
+    } catch (err) {
+      expect(err).toBeInstanceOf(MergePreconditionFailed);
+      const typed = err as MergePreconditionFailed;
+      expect(typed.targetBranch).toBe("main");
+      expect(typed.dirtyCount).toBe(2);
+      expect(typed.dirtyPaths.map((p) => p.path)).toEqual([
+        "dirty-one.ts",
+        "dirty-two.ts",
+      ]);
+      expect(typed.dirtyPaths.every((p) => p.tracked)).toBe(true);
+    }
   });
 
   it("ignores untracked files in merge path cleanliness check", async () => {
@@ -427,7 +446,7 @@ describe("squashMerge", () => {
     mockGitSequence([{ stdout: "?? untracked.html\n M dirty-file.ts\n" }]);
     await expect(
       ops.squashMerge("/project", "csm/branch", "Merge"),
-    ).rejects.toThrow("Target branch 'main' has uncommitted changes");
+    ).rejects.toThrow("Target branch 'main' has");
   });
 
   it("returns empty hash when commit output format is unexpected", async () => {
@@ -809,6 +828,50 @@ describe("targetBranch parameter", () => {
 
     await expect(
       ops.squashMerge("/parent-worktree", "csm/child", "Merge", "csm/parent"),
-    ).rejects.toThrow("Target branch 'csm/parent' has uncommitted changes");
+    ).rejects.toThrow("Target branch 'csm/parent' has");
+  });
+});
+
+// ===========================================================================
+// parseDirtyPaths
+// ===========================================================================
+
+describe("parseDirtyPaths", () => {
+  it("returns empty array for empty input", () => {
+    expect(parseDirtyPaths("")).toEqual([]);
+    expect(parseDirtyPaths("\n\n")).toEqual([]);
+  });
+
+  it("parses modified tracked file", () => {
+    expect(parseDirtyPaths(" M src/index.ts\n")).toEqual([
+      { path: "src/index.ts", statusCode: " M", tracked: true },
+    ]);
+  });
+
+  it("parses staged modified file", () => {
+    expect(parseDirtyPaths("M  src/index.ts\n")).toEqual([
+      { path: "src/index.ts", statusCode: "M ", tracked: true },
+    ]);
+  });
+
+  it("flags untracked files with tracked=false", () => {
+    expect(parseDirtyPaths("?? new-file.ts\n")).toEqual([
+      { path: "new-file.ts", statusCode: "??", tracked: false },
+    ]);
+  });
+
+  it("parses rename and records destination path", () => {
+    expect(parseDirtyPaths("R  old-name.ts -> new-name.ts\n")).toEqual([
+      { path: "new-name.ts", statusCode: "R ", tracked: true },
+    ]);
+  });
+
+  it("ignores blank lines and handles mixed entries", () => {
+    const input = " M a.ts\n\n?? b.ts\nM  c.ts\n";
+    expect(parseDirtyPaths(input)).toEqual([
+      { path: "a.ts", statusCode: " M", tracked: true },
+      { path: "b.ts", statusCode: "??", tracked: false },
+      { path: "c.ts", statusCode: "M ", tracked: true },
+    ]);
   });
 });

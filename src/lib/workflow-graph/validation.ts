@@ -1,6 +1,7 @@
 import { getEffortLevelsForBackend } from "@/lib/schemas";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionContextState,
   ResolvedWorkflowSemanticDefinition,
   WorkflowGraphValidationError,
   WorkflowRuntimeEditRequest,
@@ -225,6 +226,21 @@ export function getTerminalContextIds(
     .filter((contextId) => !sources.has(contextId));
 }
 
+/**
+ * A context is "landed" when its work is visible to downstream consumers.
+ * Session-isolation contexts publish work directly to the session worktree, so
+ * `status === "completed"` is sufficient. Worktree-isolation contexts only
+ * publish work after the fan-in squash merge succeeds, which is signaled by
+ * `mergeStatus === "merged-success"`.
+ */
+export function isContextLanded(
+  state: GraphWorkflowExecutionContextState,
+): boolean {
+  if (state.status !== "completed") return false;
+  if (state.isolation === "session") return true;
+  return state.mergeStatus === "merged-success";
+}
+
 export function getEligibleContextIds(
   definition: ValidatableDefinition,
   execution: GraphWorkflowExecution,
@@ -246,7 +262,8 @@ export function getEligibleContextIds(
 
       return (prerequisites.get(contextId) ?? []).every((upstreamId) => {
         const upstream = execution.contextStates[upstreamId];
-        return upstream?.status === "completed";
+        if (!upstream) return false;
+        return isContextLanded(upstream);
       });
     });
 }

@@ -51,6 +51,7 @@ function makeHistoryEvent(
         activeBatchIds: [],
         haltReason: null,
         pendingHaltReason: null,
+        secondaryHaltReasons: [],
       },
     };
   }
@@ -403,6 +404,7 @@ describe("resetExecutionContext", () => {
             activeBatchIds: [],
             haltReason: null,
             pendingHaltReason: null,
+            secondaryHaltReasons: [],
           },
         },
         {
@@ -422,6 +424,7 @@ describe("resetExecutionContext", () => {
               iterationCount: 3,
             },
             pendingHaltReason: null,
+            secondaryHaltReasons: [],
           },
         },
         {
@@ -437,6 +440,7 @@ describe("resetExecutionContext", () => {
             activeBatchIds: [],
             haltReason: null,
             pendingHaltReason: null,
+            secondaryHaltReasons: [],
           },
         },
       ],

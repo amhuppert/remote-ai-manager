@@ -3,6 +3,11 @@ import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
+  MergePreconditionFailed,
+  toHaltReason,
+  type DirtyPath,
+} from "./errors";
+import {
   emit as defaultEmitStreamFrame,
   type GraphWorkflowStreamFrame,
 } from "@/lib/workflow-graph/stream-registry";
@@ -116,6 +121,15 @@ export interface GraphWorkflowExecutionLoopDeps {
     input: RunCircuitBreakerGateInput,
   ) => CircuitBreakerGateResult;
   createJobId?: () => string;
+  /**
+   * Read tracked dirty paths from the session worktree. Used by the pre-batch
+   * preflight to halt before scheduling worktree-isolation contexts whose
+   * fan-in merge would inevitably fail. Default returns [] (clean), keeping
+   * existing tests unchanged.
+   */
+  getSessionWorktreeDirtyPaths?: (input: {
+    sessionWorktreePath: string;
+  }) => Promise<DirtyPath[]>;
 }
 
 function emitDone(
@@ -195,6 +209,144 @@ export function createGraphWorkflowExecutionLoop(
         reason,
       });
       execution = result.execution;
+    }
+
+    async function readSessionWorktreeDirtyPaths(
+      sessionWorktreePath: string,
+    ): Promise<DirtyPath[]> {
+      if (!deps.getSessionWorktreeDirtyPaths) return [];
+      try {
+        return await deps.getSessionWorktreeDirtyPaths({ sessionWorktreePath });
+      } catch (err) {
+        logger.warn("graph-workflow.preflight.dirty_read_failed", {
+          executionId: execution.id,
+          sessionWorktreePath,
+          error: getErrorMessage(err),
+        });
+        return [];
+      }
+    }
+
+    async function preflightSessionWorktreeForNextBatch(): Promise<boolean> {
+      const session = await deps.getSession(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (!session) return false;
+
+      const needsWorktreeBatch =
+        execution.workingDefinition.executionContexts.some((ctx) => {
+          const state = execution.contextStates[ctx.id];
+          if (!state) return false;
+          if (state.status !== "pending" && state.status !== "ready")
+            return false;
+          return state.isolation === "worktree";
+        });
+      if (!needsWorktreeBatch) return false;
+
+      const dirty = await readSessionWorktreeDirtyPaths(session.worktreePath);
+      const trackedDirty = dirty.filter((p) => p.tracked);
+      if (trackedDirty.length === 0) return false;
+
+      const firstEligibleContextId =
+        execution.workingDefinition.executionContexts.find((ctx) => {
+          const state = execution.contextStates[ctx.id];
+          if (!state) return false;
+          if (state.status !== "pending" && state.status !== "ready")
+            return false;
+          return state.isolation === "worktree";
+        })?.id ?? "";
+
+      const haltReason = toHaltReason(
+        new MergePreconditionFailed(
+          `Target branch '${session.branchName}' has ${trackedDirty.length} uncommitted change(s)`,
+          {
+            targetBranch: session.branchName,
+            dirtyPaths: trackedDirty,
+            dirtyCount: trackedDirty.length,
+          },
+        ),
+        { contextId: firstEligibleContextId, cause: "io" },
+      );
+
+      execLogger?.lifecycle("preflight.session_branch_dirty", {
+        targetBranch: session.branchName,
+        dirtyCount: trackedDirty.length,
+        dirtyPaths: trackedDirty.slice(0, 5),
+      });
+      logger.info("graph-workflow.preflight.session_branch_dirty", {
+        executionId: execution.id,
+        targetBranch: session.branchName,
+        dirtyCount: trackedDirty.length,
+      });
+      await recordHalt(haltReason);
+      return true;
+    }
+
+    async function processPendingMergeRetry(): Promise<void> {
+      while (execution.pendingMergeRetry.length > 0) {
+        const contextId = execution.pendingMergeRetry[0];
+        if (!contextId) break;
+        const state = execution.contextStates[contextId];
+        if (
+          !state ||
+          state.worktreePath === null ||
+          state.branchName === null
+        ) {
+          await deps.workflowManager.mutateActive(
+            input.projectPath,
+            input.sessionName,
+            (e) => {
+              const next = structuredClone(e);
+              next.pendingMergeRetry = next.pendingMergeRetry.filter(
+                (id) => id !== contextId,
+              );
+              return next;
+            },
+          );
+          const refreshed = await deps.workflowManager.getActive(
+            input.projectPath,
+            input.sessionName,
+          );
+          if (refreshed) execution = refreshed;
+          continue;
+        }
+        execLogger?.lifecycle("merge.retry_attempted", { contextId });
+        logger.info("graph-workflow.merge.retry_attempted", {
+          executionId: execution.id,
+          contextId,
+        });
+        await runFanInMerge(contextId, state.worktreePath, state.branchName);
+
+        const refreshed = await deps.workflowManager.getActive(
+          input.projectPath,
+          input.sessionName,
+        );
+        if (refreshed) execution = refreshed;
+
+        const refreshedState = execution.contextStates[contextId];
+        if (refreshedState?.mergeStatus === "merged-success") {
+          await deps.workflowManager.mutateActive(
+            input.projectPath,
+            input.sessionName,
+            (e) => {
+              const next = structuredClone(e);
+              next.pendingMergeRetry = next.pendingMergeRetry.filter(
+                (id) => id !== contextId,
+              );
+              return next;
+            },
+          );
+          const post = await deps.workflowManager.getActive(
+            input.projectPath,
+            input.sessionName,
+          );
+          if (post) execution = post;
+          continue;
+        }
+        // Merge failed again — halt path is already recorded by runFanInMerge.
+        return;
+      }
     }
 
     async function runFanInMerge(
@@ -300,6 +452,33 @@ export function createGraphWorkflowExecutionLoop(
             mergeError = output.error;
             mergeConflictFiles = output.conflictFiles;
           } catch (error) {
+            if (error instanceof MergePreconditionFailed) {
+              const haltReason = toHaltReason(error, {
+                contextId,
+                cause: "io",
+              });
+              const haltResult =
+                await deps.workflowManager.recordPendingHaltReason({
+                  projectPath: input.projectPath,
+                  sessionName: input.sessionName,
+                  reason: haltReason,
+                  applyAdditionalMutation: (next) => {
+                    const cs = next.contextStates[contextId];
+                    if (cs) {
+                      cs.mergeStatus = "merged-failed";
+                      cs.lastMergeError = error.message;
+                    }
+                  },
+                });
+              execution = haltResult.execution;
+              logger.error("graph-workflow.merge.precondition_failed", {
+                executionId: execution.id,
+                contextId,
+                targetBranch: error.targetBranch,
+                dirtyCount: error.dirtyCount,
+              });
+              return;
+            }
             mergeStatus = "failed";
             mergeError = getErrorMessage(error);
             mergeConflictFiles = [];
@@ -449,10 +628,9 @@ export function createGraphWorkflowExecutionLoop(
               recoverRetryableIterationError;
 
             if (!canRecover) {
-              await recordHalt({
-                type: "recovery_error",
-                message: getErrorMessage(error),
-              });
+              await recordHalt(
+                toHaltReason(error, { contextId, cause: "sdk_error" }),
+              );
               return;
             }
 
@@ -677,6 +855,29 @@ export function createGraphWorkflowExecutionLoop(
             sessionName: input.sessionName,
           });
           break;
+        }
+
+        if (execution.pendingMergeRetry.length > 0 && inFlight.size === 0) {
+          await processPendingMergeRetry();
+          if (execution.pendingHaltReason !== null) {
+            execution = await deps.workflowManager.drainAndHalt({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            });
+            break;
+          }
+          continue;
+        }
+
+        if (inFlight.size === 0) {
+          const halted = await preflightSessionWorktreeForNextBatch();
+          if (halted) {
+            execution = await deps.workflowManager.drainAndHalt({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            });
+            break;
+          }
         }
 
         const scheduleResult =

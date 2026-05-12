@@ -38,7 +38,13 @@ import {
   createGraphWorkflowIterationOrchestrator,
   type IterationOrchestratorScriptValidatorInput,
 } from "@/lib/workflows/graph-workflow/iteration-orchestrator";
-import { createGraphWorkflowManager } from "@/lib/workflows/graph-workflow/workflow-manager";
+import {
+  createGraphWorkflowManager,
+  type RecordPendingHaltReasonInput,
+  type RecordPendingHaltReasonResult,
+  type DrainAndHaltInput,
+} from "@/lib/workflows/graph-workflow/workflow-manager";
+import { toHaltReason } from "@/lib/workflows/graph-workflow/errors";
 import { createWorkflowContinuityService } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { createParallelWorktrees } from "./parallel-worktrees";
@@ -292,6 +298,14 @@ export interface GraphWorkflowExecutionRouteDeps {
     sessionName: string;
     execution: GraphWorkflowExecution;
   }): Promise<void>;
+  getActiveExecution(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowExecution | null>;
+  recordPendingHaltReason(
+    input: RecordPendingHaltReasonInput,
+  ): Promise<RecordPendingHaltReasonResult>;
+  drainAndHalt(input: DrainAndHaltInput): Promise<GraphWorkflowExecution>;
 }
 
 const defaultDeps: GraphWorkflowExecutionRouteDeps = {
@@ -313,6 +327,11 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   async kickOffExecutionLoop(input) {
     await executionLoop.run(input);
   },
+  getActiveExecution: (projectPath, sessionName) =>
+    workflowManager.getActive(projectPath, sessionName),
+  recordPendingHaltReason: (input) =>
+    workflowManager.recordPendingHaltReason(input),
+  drainAndHalt: (input) => workflowManager.drainAndHalt(input),
 };
 
 function isTerminalStatus(status: GraphWorkflowStatus): boolean {
@@ -510,6 +529,73 @@ function respondToManagerError(error: unknown): Response {
 export function createGraphWorkflowExecutionRouteHandlers(
   deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
 ) {
+  async function reportExecutionLoopFailure(input: {
+    projectPath: string;
+    sessionName: string;
+    error: unknown;
+    phase: "start" | "resume";
+  }): Promise<void> {
+    const reason = toHaltReason(input.error, { cause: "unknown" });
+    let active: GraphWorkflowExecution | null = null;
+    try {
+      active = await deps.getActiveExecution(
+        input.projectPath,
+        input.sessionName,
+      );
+    } catch (lookupError) {
+      logger.error("graph-workflow.execution_loop_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        phase: input.phase,
+        haltReasonType: reason.type,
+        lookupError:
+          lookupError instanceof Error
+            ? lookupError.message
+            : String(lookupError),
+      });
+      return;
+    }
+    if (!active || isTerminalStatus(active.status)) {
+      logger.error("graph-workflow.execution_loop_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        phase: input.phase,
+        haltReasonType: reason.type,
+        hasActiveExecution: active !== null,
+        executionStatus: active?.status ?? null,
+      });
+      return;
+    }
+    try {
+      await deps.recordPendingHaltReason({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason,
+      });
+      await deps.drainAndHalt({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+      });
+      logger.error("graph-workflow.execution_loop_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        phase: input.phase,
+        haltReasonType: reason.type,
+        hasActiveExecution: true,
+      });
+    } catch (haltError) {
+      logger.error("graph-workflow.execution_loop_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        phase: input.phase,
+        haltReasonType: reason.type,
+        hasActiveExecution: true,
+        haltError:
+          haltError instanceof Error ? haltError.message : String(haltError),
+      });
+    }
+  }
+
   async function START(
     request: Request,
     context: RouteContext,
@@ -557,11 +643,17 @@ export function createGraphWorkflowExecutionRouteHandlers(
           sessionName,
           execution,
         }),
-      ).catch((error) => {
+      ).catch(async (error) => {
         logger.warn("graph-workflow.execution_loop_start_failed", {
           projectPath,
           sessionName,
           error: error instanceof Error ? error.message : String(error),
+        });
+        await reportExecutionLoopFailure({
+          projectPath,
+          sessionName,
+          error,
+          phase: "start",
         });
       });
       return NextResponse.json(
@@ -569,6 +661,12 @@ export function createGraphWorkflowExecutionRouteHandlers(
         { status: 202 },
       );
     } catch (error) {
+      await reportExecutionLoopFailure({
+        projectPath,
+        sessionName,
+        error,
+        phase: "start",
+      });
       return respondToManagerError(error);
     }
   }
@@ -658,17 +756,29 @@ export function createGraphWorkflowExecutionRouteHandlers(
           sessionName: resolved.sessionName,
           execution,
         }),
-      ).catch((error) => {
+      ).catch(async (error) => {
         logger.warn("graph-workflow.execution_loop_resume_failed", {
           projectPath: resolved.projectPath,
           sessionName: resolved.sessionName,
           error: error instanceof Error ? error.message : String(error),
+        });
+        await reportExecutionLoopFailure({
+          projectPath: resolved.projectPath,
+          sessionName: resolved.sessionName,
+          error,
+          phase: "resume",
         });
       });
       return NextResponse.json({
         execution: summarizeExecution(execution, false),
       });
     } catch (error) {
+      await reportExecutionLoopFailure({
+        projectPath: resolved.projectPath,
+        sessionName: resolved.sessionName,
+        error,
+        phase: "resume",
+      });
       return respondToManagerError(error);
     }
   }

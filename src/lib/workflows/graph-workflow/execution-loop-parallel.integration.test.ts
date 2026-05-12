@@ -26,6 +26,7 @@ import {
 import { createGraphWorkflowSignalHaltHandler } from "@/lib/workflow-graph/graph-workflow-signal-halt";
 import { createGraphWorkflowManager } from "./workflow-manager";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
+import { MergePreconditionFailed } from "./errors";
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -250,6 +251,8 @@ function createInitialExecution(
     completedAt: null,
     haltReason: null,
     pendingHaltReason: null,
+    secondaryHaltReasons: [],
+    pendingMergeRetry: [],
   };
 }
 
@@ -1176,5 +1179,123 @@ describe("execution loop — parallel integration", () => {
     // Both fan-ins succeeded.
     expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("merged-success");
     expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("merged-success");
+  });
+
+  it("scenario 9: incident reproduction — A's merge succeeds, B's squash blocked by dirty target, halts with merge_precondition_failed", async () => {
+    _resetActiveLoopsForTesting();
+
+    const definition = createParallelDefinition(["ctx-a", "ctx-b"]);
+    const initial = createInitialExecution(definition);
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const completionGates = new Map<string, Deferred<void>>([
+      ["ctx-a", deferred()],
+      ["ctx-b", deferred()],
+    ]);
+
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        await completionGates.get(input.contextId)!.promise;
+        const next = await manager.mutateActive("/repo", "session-1", (e) => {
+          const updated = structuredClone(e);
+          const cs = updated.contextStates[input.contextId];
+          if (cs) {
+            cs.status = "completed";
+            cs.completedTaskCount = 1;
+          }
+          const ts = updated.taskStates[`task-${input.contextId}`];
+          if (ts) ts.status = "completed";
+          return updated;
+        });
+        return {
+          conversationId: `conv-${input.contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    };
+
+    const mergeRunner: GraphMergeRunner = {
+      async run(input) {
+        if (input.contextId === "ctx-b") {
+          throw new MergePreconditionFailed(
+            "Target branch 'csm/session-1' has 2 uncommitted change(s)",
+            {
+              targetBranch: "csm/session-1",
+              dirtyPaths: [
+                { path: "src/dirty-a.ts", statusCode: " M", tracked: true },
+                { path: "src/dirty-b.ts", statusCode: " M", tracked: true },
+              ],
+              dirtyCount: 2,
+            },
+          );
+        }
+        return buildSuccessMergeOutput();
+      },
+    };
+
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex: createPerSessionMergeMutex(),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeRunner,
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      async getSession() {
+        return createSession();
+      },
+      emitStreamFrame: vi.fn(),
+    });
+
+    completionGates.get("ctx-a")!.resolve();
+    setTimeout(() => completionGates.get("ctx-b")!.resolve(), 5);
+
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(result.status).toBe("halted");
+    expect(result.haltReason?.type).toBe("merge_precondition_failed");
+    if (result.haltReason?.type === "merge_precondition_failed") {
+      expect(result.haltReason.contextId).toBe("ctx-b");
+      expect(result.haltReason.targetBranch).toBe("csm/session-1");
+      expect(result.haltReason.totalDirtyCount).toBe(2);
+      expect(result.haltReason.dirtyPaths).toHaveLength(2);
+    }
+    expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("merged-success");
+    expect(result.contextStates["ctx-a"]?.cleanupStatus).toBe("removed");
+    expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("merged-failed");
+    expect(result.contextStates["ctx-b"]?.lastMergeError).toContain(
+      "Target branch 'csm/session-1' has",
+    );
+
+    const disposeBranches = parallelWorktrees.disposeCalls.map(
+      (c) => c.branchName,
+    );
+    expect(disposeBranches).toContain("csm/session-1-ctx-a");
+    expect(disposeBranches).not.toContain("csm/session-1-ctx-b");
   });
 });

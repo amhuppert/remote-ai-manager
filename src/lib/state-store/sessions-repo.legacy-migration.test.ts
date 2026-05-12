@@ -106,6 +106,8 @@ function buildCleanExecutionJson(): string {
     completedAt: null,
     haltReason: null,
     pendingHaltReason: null,
+    secondaryHaltReasons: [],
+    pendingMergeRetry: [],
   };
   return JSON.stringify(exec);
 }
