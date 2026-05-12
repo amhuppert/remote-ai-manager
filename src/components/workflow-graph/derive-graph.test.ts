@@ -349,6 +349,50 @@ describe("getContextDisplayPhase", () => {
       ),
     ).toBe("running");
   });
+
+  it("returns 'merging' when mergeStatus is in-progress, regardless of status", () => {
+    expect(
+      getContextDisplayPhase(
+        makeState({
+          status: "running",
+          completedTaskCount: 3,
+          totalTaskCount: 3,
+          mergeStatus: "in-progress",
+        }),
+      ),
+    ).toBe("merging");
+    expect(
+      getContextDisplayPhase(
+        makeState({
+          status: "completed",
+          completedTaskCount: 3,
+          totalTaskCount: 3,
+          mergeStatus: "in-progress",
+        }),
+      ),
+    ).toBe("merging");
+  });
+
+  it("does not return 'merging' for terminal merge statuses (merged-success / merged-failed / conflicts)", () => {
+    expect(
+      getContextDisplayPhase(
+        makeState({
+          status: "completed",
+          completedTaskCount: 3,
+          totalTaskCount: 3,
+          mergeStatus: "merged-success",
+        }),
+      ),
+    ).toBe("completed");
+    expect(
+      getContextDisplayPhase(
+        makeState({
+          status: "halted",
+          mergeStatus: "merged-failed",
+        }),
+      ),
+    ).toBe("halted");
+  });
 });
 
 describe("deriveEdges", () => {

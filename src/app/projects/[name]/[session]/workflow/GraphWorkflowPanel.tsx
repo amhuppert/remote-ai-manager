@@ -165,6 +165,7 @@ export default function GraphWorkflowPanel({
               <ExecutionInspectorPanel
                 execution={execution}
                 selectedContextId={selectedContextId}
+                onSelectContext={(id) => handleSelectContext(id)}
                 onDeselectContext={() => handleSelectContext(null)}
                 onAddTask={onAddTask}
                 onUpdateTask={onUpdateTask}
@@ -238,6 +239,7 @@ export default function GraphWorkflowPanel({
               <ExecutionInspectorPanel
                 execution={execution}
                 selectedContextId={selectedContextId}
+                onSelectContext={(id) => handleSelectContext(id)}
                 onDeselectContext={() => handleSelectContext(null)}
                 onAddTask={onAddTask}
                 onUpdateTask={onUpdateTask}

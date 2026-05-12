@@ -291,3 +291,125 @@ export const SelectedRunning: Story = {
     selected: true,
   },
 };
+
+export const Merging: Story = {
+  args: {
+    data: {
+      context: makeContext(),
+      tasks: makeTasks(5),
+      mode: "execution",
+      contextState: {
+        contextId: "ctx-1",
+        status: "running",
+        totalTaskCount: 5,
+        completedTaskCount: 5,
+        iterationCount: 1,
+        consecutiveFailureCount: 0,
+        worktreePath: "/tmp/wt-ctx-1",
+        branchName: "feature/api-integration",
+        isolation: "worktree",
+        batchId: "batch-1",
+        mergeStatus: "in-progress",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
+      },
+    },
+  },
+};
+
+export const ValidatorsScriptOnly: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        scriptValidator: { enabled: true },
+      }),
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};
+
+export const ValidatorsClaudeAgent: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        contextValidator: {
+          kind: "use",
+          value: {
+            enabled: true,
+            type: "claude",
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
+          },
+        },
+      }),
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};
+
+export const ValidatorsCodexAgent: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        contextValidator: {
+          kind: "use",
+          value: {
+            enabled: true,
+            type: "codex",
+            codex: { model: "gpt-5.5", reasoningEffort: "medium" },
+            continuity: { enabled: true },
+          },
+        },
+      }),
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};
+
+export const ValidatorsScriptPlusClaude: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        scriptValidator: { enabled: true },
+        contextValidator: {
+          kind: "use",
+          value: {
+            enabled: true,
+            type: "claude",
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
+          },
+        },
+      }),
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};
+
+export const ImplementerCodex: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        implementer: {
+          backend: "codex",
+          model: "gpt-5.5",
+          reasoningEffort: "medium",
+        },
+      }),
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};

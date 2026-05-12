@@ -4,17 +4,21 @@ import { useMemo, useState } from "react";
 import MarkdownContent from "@/components/MarkdownContent";
 import CollapsibleText from "@/components/CollapsibleText";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
+import WorkflowEventLog from "@/components/workflow-graph/WorkflowEventLog";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationResultEvent,
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowLaneKind,
+  GraphWorkflowHaltReason,
 } from "@/types";
 import { isTaskConversationLive, isTaskEditable } from "./task-runtime-state";
 
 interface ExecutionInspectorPanelProps {
   execution: GraphWorkflowExecution;
   selectedContextId: string | null;
+  onSelectContext?: (contextId: string) => void;
   onDeselectContext: () => void;
   onAddTask: (contextId: string, title: string, instructions: string) => void;
   onUpdateTask: (
@@ -32,6 +36,35 @@ interface ExecutionInspectorPanelProps {
     lane: GraphWorkflowLaneKind,
     contextId: string,
   ) => void;
+}
+
+function findContextHaltReason(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): GraphWorkflowHaltReason | null {
+  const all = [execution.haltReason, ...execution.secondaryHaltReasons].filter(
+    (r): r is GraphWorkflowHaltReason => r != null,
+  );
+  for (const reason of all) {
+    if ("contextId" in reason && reason.contextId === contextId) {
+      return reason;
+    }
+  }
+  return null;
+}
+
+function countMerges(execution: GraphWorkflowExecution): {
+  merged: number;
+  total: number;
+} {
+  let merged = 0;
+  let total = 0;
+  for (const state of Object.values(execution.contextStates)) {
+    if (state.mergeStatus === "not-applicable") continue;
+    total++;
+    if (state.mergeStatus === "merged-success") merged++;
+  }
+  return { merged, total };
 }
 
 type DetailTab = "tasks" | "history";
@@ -153,14 +186,6 @@ function getTaskStatusDotClass(status?: string): string {
     default:
       return "pending";
   }
-}
-
-function countEnabledValidators(execution: GraphWorkflowExecution): number {
-  return execution.workingDefinition.executionContexts.reduce(
-    (count, ctx) =>
-      count + [ctx.contextValidator?.enabled].filter(Boolean).length,
-    0,
-  );
 }
 
 function computeReusedSessions(
@@ -404,9 +429,11 @@ function ValidationCard({
 
 function OverviewView({
   execution,
+  onSelectContext,
   onViewConversation,
 }: {
   execution: GraphWorkflowExecution;
+  onSelectContext?: (contextId: string) => void;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
 }) {
   const totalContexts = execution.workingDefinition.executionContexts.length;
@@ -418,7 +445,7 @@ function OverviewView({
     (ts) => ts.status === "completed",
   ).length;
   const edgeCount = execution.workingDefinition.edges.length;
-  const validatorCount = countEnabledValidators(execution);
+  const mergeCounts = countMerges(execution);
 
   const history = useMemo(() => getHistoryEntries(execution), [execution]);
 
@@ -428,6 +455,14 @@ function OverviewView({
         <span className="wb-inspector-title">Overview</span>
       </header>
       <div className="wb-inspector-body">
+        {execution.haltReason && (
+          <ContextHaltCard
+            primary={execution.haltReason}
+            secondary={execution.secondaryHaltReasons}
+            variant="card"
+          />
+        )}
+
         <div className="wb-overview-stat-grid">
           <div className="wb-overview-stat">
             <div className="wb-overview-stat-value">
@@ -446,10 +481,20 @@ function OverviewView({
             <div className="wb-overview-stat-label">Edges</div>
           </div>
           <div className="wb-overview-stat">
-            <div className="wb-overview-stat-value">{validatorCount}</div>
-            <div className="wb-overview-stat-label">Validators</div>
+            <div className="wb-overview-stat-value">
+              {mergeCounts.merged}/{mergeCounts.total}
+            </div>
+            <div className="wb-overview-stat-label">Merges</div>
           </div>
         </div>
+
+        <section className="wb-overview-section">
+          <div className="wb-overview-section-title">Events</div>
+          <WorkflowEventLog
+            execution={execution}
+            onSelectContext={onSelectContext}
+          />
+        </section>
 
         {history.validationEvents.length > 0 && (
           <section className="wb-overview-section">
@@ -519,6 +564,7 @@ function OverviewView({
 function DetailView({
   execution,
   contextId,
+  onSelectContext,
   onDeselectContext,
   onAddTask,
   onUpdateTask,
@@ -532,6 +578,7 @@ function DetailView({
 }: {
   execution: GraphWorkflowExecution;
   contextId: string;
+  onSelectContext?: (contextId: string) => void;
   onDeselectContext: () => void;
   onAddTask: (contextId: string, title: string, instructions: string) => void;
   onUpdateTask: (
@@ -564,6 +611,10 @@ function DetailView({
   );
   const history = useMemo(
     () => getHistoryEntries(execution, contextId),
+    [execution, contextId],
+  );
+  const contextHaltReason = useMemo(
+    () => findContextHaltReason(execution, contextId),
     [execution, contextId],
   );
 
@@ -666,6 +717,9 @@ function DetailView({
       </div>
 
       <div className="wb-inspector-body">
+        {contextHaltReason && (
+          <ContextHaltCard primary={contextHaltReason} variant="card" />
+        )}
         {context.description && (
           <div className="wb-exec-description">
             <CollapsibleText maxCollapsedHeight={100}>
@@ -889,6 +943,14 @@ function DetailView({
         {activeTab === "history" && (
           <>
             <section className="wb-overview-section">
+              <div className="wb-overview-section-title">Events</div>
+              <WorkflowEventLog
+                execution={execution}
+                contextId={contextId}
+                onSelectContext={onSelectContext}
+              />
+            </section>
+            <section className="wb-overview-section">
               <div className="wb-overview-section-title">Validations</div>
               {history.validationEvents.length > 0 ? (
                 (() => {
@@ -960,6 +1022,7 @@ function DetailView({
 export default function ExecutionInspectorPanel({
   execution,
   selectedContextId,
+  onSelectContext,
   onDeselectContext,
   onAddTask,
   onUpdateTask,
@@ -981,6 +1044,7 @@ export default function ExecutionInspectorPanel({
     return (
       <OverviewView
         execution={execution}
+        onSelectContext={onSelectContext}
         onViewConversation={onViewConversation}
       />
     );
@@ -990,6 +1054,7 @@ export default function ExecutionInspectorPanel({
     <DetailView
       execution={execution}
       contextId={selectedContextId}
+      onSelectContext={onSelectContext}
       onDeselectContext={onDeselectContext}
       onAddTask={onAddTask}
       onUpdateTask={onUpdateTask}

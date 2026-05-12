@@ -13,6 +13,8 @@ type ExecutionContextNodeType = Node<
   "executionContext"
 >;
 
+type AgentBackend = "claude" | "codex";
+
 function getStatusBadge(
   mode: "builder" | "execution",
   phase?: ContextDisplayPhase,
@@ -25,6 +27,8 @@ function getStatusBadge(
       return { label: "Running", className: "running" };
     case "validating":
       return { label: "Validating", className: "validating" };
+    case "merging":
+      return { label: "Merging", className: "merging" };
     case "completed":
       return { label: "Completed", className: "completed" };
     case "halted":
@@ -42,6 +46,7 @@ function getFooterText(
   phase?: ContextDisplayPhase,
   completedCount?: number,
   totalCount?: number,
+  targetBranch?: string | null,
 ): string {
   if (mode === "builder") {
     return `${taskCount} tasks`;
@@ -55,6 +60,8 @@ function getFooterText(
       return `Running task ${(completedCount ?? 0) + 1}/${totalCount ?? taskCount}`;
     case "validating":
       return "Validating context";
+    case "merging":
+      return targetBranch ? `Merging → ${targetBranch}` : "Merging";
     case "completed":
       return "Completed";
     case "halted":
@@ -68,9 +75,98 @@ function getProgressPercent(
   mode: "builder" | "execution",
   completedCount?: number,
   totalCount?: number,
+  phase?: ContextDisplayPhase,
 ): number {
   if (mode === "builder" || !totalCount) return 0;
+  if (phase === "merging" || phase === "completed") return 100;
   return Math.round(((completedCount ?? 0) / totalCount) * 100);
+}
+
+type ValidatorInfo =
+  | { kind: "agent"; backend: AgentBackend }
+  | { kind: "script" };
+
+function getValidatorInfo(context: ExecutionContextNodeData["context"]): {
+  script: boolean;
+  agent: AgentBackend | null;
+} {
+  const script =
+    "scriptValidator" in context && context.scriptValidator?.enabled === true;
+
+  const contextValidator =
+    "contextValidator" in context ? context.contextValidator : undefined;
+  let agent: AgentBackend | null = null;
+
+  if (contextValidator && typeof contextValidator === "object") {
+    if ("enabled" in contextValidator && "type" in contextValidator) {
+      if (contextValidator.enabled) agent = contextValidator.type;
+    } else if (
+      "kind" in contextValidator &&
+      contextValidator.kind === "use" &&
+      contextValidator.value.enabled
+    ) {
+      agent = contextValidator.value.type;
+    }
+  }
+
+  return { script, agent };
+}
+
+function ValidatorPills({
+  validators,
+}: {
+  validators: ReturnType<typeof getValidatorInfo>;
+}) {
+  const pills: ValidatorInfo[] = [];
+  if (validators.script) pills.push({ kind: "script" });
+  if (validators.agent)
+    pills.push({ kind: "agent", backend: validators.agent });
+
+  if (pills.length === 0) {
+    return (
+      <div className="graph-node-validators">
+        <div className="graph-node-validators-label">Validators</div>
+        <div className="graph-node-validator-pills">
+          <span className="graph-node-validator-pill graph-node-validator-pill--empty">
+            none
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="graph-node-validators">
+      <div className="graph-node-validators-label">Validators</div>
+      <div className="graph-node-validator-pills">
+        {pills.map((pill, idx) =>
+          pill.kind === "script" ? (
+            <span
+              key={`script-${idx}`}
+              className="graph-node-validator-pill graph-node-validator-pill--script"
+              title="Script validator enabled"
+            >
+              <span className="graph-node-validator-glyph" aria-hidden="true">
+                ▣
+              </span>
+              Script
+            </span>
+          ) : (
+            <span
+              key={`agent-${idx}`}
+              className={`graph-node-validator-pill graph-node-validator-pill--${pill.backend}`}
+              title={`Agent validator: ${pill.backend === "codex" ? "Codex" : "Claude"}`}
+            >
+              <span className="graph-node-validator-glyph" aria-hidden="true">
+                ◆
+              </span>
+              {pill.backend === "codex" ? "Codex" : "Claude"}
+            </span>
+          ),
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function ExecutionContextNode({
@@ -82,6 +178,7 @@ export default function ExecutionContextNode({
   const badge = getStatusBadge(mode, phase);
   const totalCount = contextState?.totalTaskCount ?? tasks.length;
   const completedCount = contextState?.completedTaskCount ?? 0;
+  const targetBranch = contextState?.branchName ?? null;
 
   const footerText = getFooterText(
     mode,
@@ -89,24 +186,21 @@ export default function ExecutionContextNode({
     phase,
     completedCount,
     totalCount,
+    targetBranch,
   );
-  const progressPercent = getProgressPercent(mode, completedCount, totalCount);
+  const progressPercent = getProgressPercent(
+    mode,
+    completedCount,
+    totalCount,
+    phase,
+  );
   const progressStatus = phase ?? "pending";
-
-  const contextValidator =
-    "contextValidator" in context ? context.contextValidator : undefined;
-  const validatorEnabled =
-    contextValidator &&
-    (typeof contextValidator === "object" && contextValidator !== null
-      ? "enabled" in contextValidator
-        ? contextValidator.enabled
-        : contextValidator.kind === "use"
-      : false);
-  const validatorCount = validatorEnabled ? 1 : 0;
 
   const implementer =
     "implementer" in context ? context.implementer : undefined;
-  const implementerBackend = implementer?.backend ?? "claude";
+  const implementerBackend: AgentBackend = implementer?.backend ?? "claude";
+
+  const validators = getValidatorInfo(context);
 
   const nodeClassName = [
     "graph-node",
@@ -128,10 +222,6 @@ export default function ExecutionContextNode({
         </span>
       </div>
 
-      <span className={`graph-node-backend-badge ${implementerBackend}`}>
-        {implementerBackend === "codex" ? "Codex" : "Claude"}
-      </span>
-
       {context.description && (
         <div className="graph-node-desc">{context.description}</div>
       )}
@@ -146,10 +236,19 @@ export default function ExecutionContextNode({
           </div>
         </div>
         <div className="graph-node-stat">
-          <div className="graph-node-stat-label">Validators</div>
-          <div className="graph-node-stat-value">{validatorCount}</div>
+          <div className="graph-node-stat-label">Implementer</div>
+          <div
+            className={`graph-node-stat-value graph-node-stat-value--agent graph-node-stat-value--${implementerBackend}`}
+          >
+            <span className="graph-node-validator-glyph" aria-hidden="true">
+              ◆
+            </span>
+            {implementerBackend === "codex" ? "Codex" : "Claude"}
+          </div>
         </div>
       </div>
+
+      <ValidatorPills validators={validators} />
 
       <div className="graph-node-progress">
         <div

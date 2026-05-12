@@ -31,12 +31,18 @@ export type ContextEdgeData = {
   targetStatus?: GraphWorkflowContextStatus;
 };
 
-export type ContextDisplayPhase = GraphWorkflowContextStatus | "validating";
+export type ContextDisplayPhase =
+  | GraphWorkflowContextStatus
+  | "validating"
+  | "merging";
 
 export function getContextDisplayPhase(
   contextState: GraphWorkflowExecutionContextState | undefined,
 ): ContextDisplayPhase | undefined {
   if (!contextState) return undefined;
+  if (contextState.mergeStatus === "in-progress") {
+    return "merging";
+  }
   if (
     contextState.status === "running" &&
     contextState.totalTaskCount > 0 &&

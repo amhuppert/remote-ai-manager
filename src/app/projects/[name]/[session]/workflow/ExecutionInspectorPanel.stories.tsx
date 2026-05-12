@@ -542,6 +542,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
 }
 
 const sharedHandlers = {
+  onSelectContext: fn(),
   onDeselectContext: fn(),
   onAddTask: fn(),
   onUpdateTask: fn(),
