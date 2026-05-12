@@ -707,6 +707,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           for (const contextId of eligibleContextIds) {
             const result = await deps.parallelWorktrees.provision({
               projectPath,
+              sessionName,
               sessionDir,
               sessionBranch,
               contextId,

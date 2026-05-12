@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { ExecFileGitClient, type GitClient } from "@/lib/git-client";
-import { createParallelWorktrees } from "./parallel-worktrees";
+import {
+  createParallelWorktrees,
+  type ParallelWorktreesDeps,
+} from "./parallel-worktrees";
 
 // Hard sandbox: refuse to let git climb above the OS temp dir when looking
 // for a repository. Without this, a partially-initialized temp repo could
@@ -26,6 +29,7 @@ const tempDirs: string[] = [];
 
 async function makeRepo(): Promise<{
   projectPath: string;
+  sessionName: string;
   sessionDir: string;
   sessionBranch: string;
   gitClient: GitClient;
@@ -49,12 +53,13 @@ async function makeRepo(): Promise<{
   await gitClient.git(["add", "README.md"], projectPath);
   await gitClient.git(["commit", "-m", "init"], projectPath);
 
+  const sessionName = "Feature ABC 123";
   const sessionDir = "feature-abc123";
   const sessionBranch = `csm/${sessionDir}`;
   await gitClient.git(["checkout", "-b", sessionBranch], projectPath);
   await gitClient.git(["checkout", "main"], projectPath);
 
-  return { projectPath, sessionDir, sessionBranch, gitClient };
+  return { projectPath, sessionName, sessionDir, sessionBranch, gitClient };
 }
 
 afterEach(async () => {
@@ -65,12 +70,13 @@ afterEach(async () => {
 
 describe("createParallelWorktrees.provision", () => {
   it("provisions a worktree on a new branch from the session branch", async () => {
-    const { projectPath, sessionDir, sessionBranch, gitClient } =
+    const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
       await makeRepo();
     const pwt = createParallelWorktrees({ gitClient });
 
     const result = await pwt.provision({
       projectPath,
+      sessionName,
       sessionDir,
       sessionBranch,
       contextId: "ctx1",
@@ -90,18 +96,20 @@ describe("createParallelWorktrees.provision", () => {
   });
 
   it("is idempotent: returns same result if worktree already exists with matching branch", async () => {
-    const { projectPath, sessionDir, sessionBranch, gitClient } =
+    const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
       await makeRepo();
     const pwt = createParallelWorktrees({ gitClient });
 
     const first = await pwt.provision({
       projectPath,
+      sessionName,
       sessionDir,
       sessionBranch,
       contextId: "ctx1",
     });
     const second = await pwt.provision({
       projectPath,
+      sessionName,
       sessionDir,
       sessionBranch,
       contextId: "ctx1",
@@ -111,7 +119,7 @@ describe("createParallelWorktrees.provision", () => {
   });
 
   it("fails idempotency check if worktree exists with mismatched branch", async () => {
-    const { projectPath, sessionDir, sessionBranch, gitClient } =
+    const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
       await makeRepo();
     const pwt = createParallelWorktrees({ gitClient });
 
@@ -128,6 +136,7 @@ describe("createParallelWorktrees.provision", () => {
     await expect(
       pwt.provision({
         projectPath,
+        sessionName,
         sessionDir,
         sessionBranch,
         contextId: "ctx1",
@@ -154,13 +163,14 @@ describe("createParallelWorktrees.provision", () => {
       ["trailing dash", "ctx-"],
       ["trailing .lock", "ctx.lock"],
     ])("rejects contextId %s", async (_label, badId) => {
-      const { projectPath, sessionDir, sessionBranch, gitClient } =
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
         await makeRepo();
       const pwt = createParallelWorktrees({ gitClient });
 
       await expect(
         pwt.provision({
           projectPath,
+          sessionName,
           sessionDir,
           sessionBranch,
           contextId: badId,
@@ -176,12 +186,13 @@ describe("createParallelWorktrees.provision", () => {
       ["dash inside", "ctx-one"],
       ["dot inside", "ctx.one"],
     ])("accepts contextId %s", async (_label, goodId) => {
-      const { projectPath, sessionDir, sessionBranch, gitClient } =
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
         await makeRepo();
       const pwt = createParallelWorktrees({ gitClient });
 
       const result = await pwt.provision({
         projectPath,
+        sessionName,
         sessionDir,
         sessionBranch,
         contextId: goodId,
@@ -192,13 +203,13 @@ describe("createParallelWorktrees.provision", () => {
 
   describe("provisionBatch", () => {
     it("provisions all contexts in a batch", async () => {
-      const { projectPath, sessionDir, sessionBranch, gitClient } =
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
         await makeRepo();
       const pwt = createParallelWorktrees({ gitClient });
 
       const results = await pwt.provisionBatch([
-        { projectPath, sessionDir, sessionBranch, contextId: "a" },
-        { projectPath, sessionDir, sessionBranch, contextId: "b" },
+        { projectPath, sessionName, sessionDir, sessionBranch, contextId: "a" },
+        { projectPath, sessionName, sessionDir, sessionBranch, contextId: "b" },
       ]);
 
       expect(results).toHaveLength(2);
@@ -207,7 +218,8 @@ describe("createParallelWorktrees.provision", () => {
     });
 
     it("rejects an invalid contextId before any git worktree command runs", async () => {
-      const { projectPath, sessionDir, sessionBranch } = await makeRepo();
+      const { projectPath, sessionName, sessionDir, sessionBranch } =
+        await makeRepo();
       const calls: string[][] = [];
       const trackingClient: GitClient = {
         async git(args, cwd) {
@@ -219,9 +231,16 @@ describe("createParallelWorktrees.provision", () => {
 
       await expect(
         pwt.provisionBatch([
-          { projectPath, sessionDir, sessionBranch, contextId: "a" },
           {
             projectPath,
+            sessionName,
+            sessionDir,
+            sessionBranch,
+            contextId: "a",
+          },
+          {
+            projectPath,
+            sessionName,
             sessionDir,
             sessionBranch,
             contextId: "../bad",
@@ -241,7 +260,8 @@ describe("createParallelWorktrees.provision", () => {
     });
 
     it("rolls back already-created worktrees when a later git operation fails", async () => {
-      const { projectPath, sessionDir, sessionBranch } = await makeRepo();
+      const { projectPath, sessionName, sessionDir, sessionBranch } =
+        await makeRepo();
       const realClient = new ExecFileGitClient();
       let addCalls = 0;
       const flakyClient: GitClient = {
@@ -259,8 +279,20 @@ describe("createParallelWorktrees.provision", () => {
 
       await expect(
         pwt.provisionBatch([
-          { projectPath, sessionDir, sessionBranch, contextId: "a" },
-          { projectPath, sessionDir, sessionBranch, contextId: "b" },
+          {
+            projectPath,
+            sessionName,
+            sessionDir,
+            sessionBranch,
+            contextId: "a",
+          },
+          {
+            projectPath,
+            sessionName,
+            sessionDir,
+            sessionBranch,
+            contextId: "b",
+          },
         ]),
       ).rejects.toThrow(/simulated worktree add failure/);
 
@@ -277,16 +309,268 @@ describe("createParallelWorktrees.provision", () => {
       expect(branches.trim()).toBe("");
     });
   });
+
+  describe("init script", () => {
+    it("does not invoke execFileAsync when readRepoConfig returns null", async () => {
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
+        await makeRepo();
+      const execCalls: Array<{ file: string }> = [];
+      const pwt = createParallelWorktrees({
+        gitClient,
+        readRepoConfig: async () => null,
+        execFileAsync: (async (file: string) => {
+          execCalls.push({ file });
+          return { stdout: "", stderr: "" };
+        }) as unknown as ParallelWorktreesDeps["execFileAsync"],
+        buildChildEnv: () => process.env,
+      });
+
+      await pwt.provision({
+        projectPath,
+        sessionName,
+        sessionDir,
+        sessionBranch,
+        contextId: "ctx1",
+      });
+
+      expect(execCalls).toEqual([]);
+    });
+
+    it("does not invoke execFileAsync when initScriptPath is unset", async () => {
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
+        await makeRepo();
+      const execCalls: Array<{ file: string }> = [];
+      const pwt = createParallelWorktrees({
+        gitClient,
+        readRepoConfig: async () => ({ initScriptPath: null }),
+        execFileAsync: (async (file: string) => {
+          execCalls.push({ file });
+          return { stdout: "", stderr: "" };
+        }) as unknown as ParallelWorktreesDeps["execFileAsync"],
+        buildChildEnv: () => process.env,
+      });
+
+      await pwt.provision({
+        projectPath,
+        sessionName,
+        sessionDir,
+        sessionBranch,
+        contextId: "ctx1",
+      });
+
+      expect(execCalls).toEqual([]);
+    });
+
+    it("runs the init script with the documented env after worktree creation", async () => {
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
+        await makeRepo();
+      await writeFile(
+        path.join(projectPath, "init.sh"),
+        "#!/bin/sh\nexit 0\n",
+        {
+          mode: 0o755,
+        },
+      );
+      const calls: Array<{
+        file: string;
+        cwd: string | undefined;
+        env: NodeJS.ProcessEnv | undefined;
+      }> = [];
+      const pwt = createParallelWorktrees({
+        gitClient,
+        readRepoConfig: async () => ({ initScriptPath: "init.sh" }),
+        execFileAsync: (async (
+          file: string,
+          _args: readonly string[] | null | undefined,
+          opts: { cwd?: string; env?: NodeJS.ProcessEnv } | undefined,
+        ) => {
+          calls.push({
+            file,
+            cwd: opts?.cwd,
+            env: opts?.env,
+          });
+          return { stdout: "", stderr: "" };
+        }) as unknown as ParallelWorktreesDeps["execFileAsync"],
+        buildChildEnv: () =>
+          ({ ...process.env, BASE_ENV: "set" }) as NodeJS.ProcessEnv,
+      });
+
+      const result = await pwt.provision({
+        projectPath,
+        sessionName,
+        sessionDir,
+        sessionBranch,
+        contextId: "ctx1",
+      });
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.file).toBe(path.join(projectPath, "init.sh"));
+      expect(calls[0]!.cwd).toBe(result.worktreePath);
+      expect(calls[0]!.env).toMatchObject({
+        BASE_ENV: "set",
+        PROJECT_ROOT: projectPath,
+        CLAUDE_PROJECT_DIR: projectPath,
+        WORKTREE_PATH: result.worktreePath,
+        SESSION_NAME: sessionName,
+        BRANCH_NAME: result.branchName,
+        CONTEXT_ID: "ctx1",
+      });
+    });
+
+    it("resolves an absolute initScriptPath without prepending projectPath", async () => {
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
+        await makeRepo();
+      const absScript = path.join(projectPath, "abs-init.sh");
+      await writeFile(absScript, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const calls: Array<{ file: string }> = [];
+      const pwt = createParallelWorktrees({
+        gitClient,
+        readRepoConfig: async () => ({ initScriptPath: absScript }),
+        execFileAsync: (async (file: string) => {
+          calls.push({ file });
+          return { stdout: "", stderr: "" };
+        }) as unknown as ParallelWorktreesDeps["execFileAsync"],
+        buildChildEnv: () => process.env,
+      });
+
+      await pwt.provision({
+        projectPath,
+        sessionName,
+        sessionDir,
+        sessionBranch,
+        contextId: "ctx1",
+      });
+
+      expect(calls[0]!.file).toBe(absScript);
+    });
+
+    it("throws and disposes the worktree if the init script is missing on disk", async () => {
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
+        await makeRepo();
+      const pwt = createParallelWorktrees({
+        gitClient,
+        readRepoConfig: async () => ({ initScriptPath: "missing-init.sh" }),
+        execFileAsync: (async () => {
+          throw new Error("execFileAsync should not be called");
+        }) as unknown as ParallelWorktreesDeps["execFileAsync"],
+        buildChildEnv: () => process.env,
+      });
+
+      await expect(
+        pwt.provision({
+          projectPath,
+          sessionName,
+          sessionDir,
+          sessionBranch,
+          contextId: "ctx1",
+        }),
+      ).rejects.toThrow(/init script not found/i);
+
+      const worktreePath = path.join(
+        projectPath,
+        ".worktrees",
+        `${sessionDir}.ctx1`,
+      );
+      expect(existsSync(worktreePath)).toBe(false);
+      const { stdout: branches } = await gitClient.git(
+        ["branch", "--list", `csm/${sessionDir}-ctx1`],
+        projectPath,
+      );
+      expect(branches.trim()).toBe("");
+    });
+
+    it("throws and disposes the worktree if the init script exits non-zero", async () => {
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
+        await makeRepo();
+      await writeFile(
+        path.join(projectPath, "init.sh"),
+        "#!/bin/sh\nexit 7\n",
+        {
+          mode: 0o755,
+        },
+      );
+      const pwt = createParallelWorktrees({
+        gitClient,
+        readRepoConfig: async () => ({ initScriptPath: "init.sh" }),
+        execFileAsync: (async () => {
+          throw new Error("init script failed: exit 7");
+        }) as unknown as ParallelWorktreesDeps["execFileAsync"],
+        buildChildEnv: () => process.env,
+      });
+
+      await expect(
+        pwt.provision({
+          projectPath,
+          sessionName,
+          sessionDir,
+          sessionBranch,
+          contextId: "ctx1",
+        }),
+      ).rejects.toThrow(/init script failed: exit 7/);
+
+      const worktreePath = path.join(
+        projectPath,
+        ".worktrees",
+        `${sessionDir}.ctx1`,
+      );
+      expect(existsSync(worktreePath)).toBe(false);
+      const { stdout: branches } = await gitClient.git(
+        ["branch", "--list", `csm/${sessionDir}-ctx1`],
+        projectPath,
+      );
+      expect(branches.trim()).toBe("");
+    });
+
+    it("does not re-run the init script on idempotent re-provision", async () => {
+      const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
+        await makeRepo();
+      await writeFile(
+        path.join(projectPath, "init.sh"),
+        "#!/bin/sh\nexit 0\n",
+        {
+          mode: 0o755,
+        },
+      );
+      let execCount = 0;
+      const pwt = createParallelWorktrees({
+        gitClient,
+        readRepoConfig: async () => ({ initScriptPath: "init.sh" }),
+        execFileAsync: (async () => {
+          execCount += 1;
+          return { stdout: "", stderr: "" };
+        }) as unknown as ParallelWorktreesDeps["execFileAsync"],
+        buildChildEnv: () => process.env,
+      });
+
+      await pwt.provision({
+        projectPath,
+        sessionName,
+        sessionDir,
+        sessionBranch,
+        contextId: "ctx1",
+      });
+      await pwt.provision({
+        projectPath,
+        sessionName,
+        sessionDir,
+        sessionBranch,
+        contextId: "ctx1",
+      });
+
+      expect(execCount).toBe(1);
+    });
+  });
 });
 
 describe("createParallelWorktrees.dispose", () => {
   it("removes the worktree and deletes the branch", async () => {
-    const { projectPath, sessionDir, sessionBranch, gitClient } =
+    const { projectPath, sessionName, sessionDir, sessionBranch, gitClient } =
       await makeRepo();
     const pwt = createParallelWorktrees({ gitClient });
 
     const { worktreePath, branchName } = await pwt.provision({
       projectPath,
+      sessionName,
       sessionDir,
       sessionBranch,
       contextId: "ctx1",

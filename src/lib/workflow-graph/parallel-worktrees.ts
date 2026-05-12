@@ -1,8 +1,15 @@
+import { execFile } from "node:child_process";
 import { existsSync as defaultExistsSync } from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
+import { buildChildEnv as defaultBuildChildEnv } from "@/lib/child-env";
 import { defaultGitClient, type GitClient } from "@/lib/git-client";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/errors";
+import { readRepoConfig as defaultReadRepoConfig } from "@/lib/repo-config";
+import type { PerRepoConfig } from "@/lib/schemas";
+
+const defaultExecFileAsync = promisify(execFile);
 
 const logger = createLogger("graph-workflow-parallel-worktrees");
 
@@ -10,6 +17,7 @@ const CONTEXT_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
 export interface ProvisionInput {
   projectPath: string;
+  sessionName: string;
   sessionDir: string;
   sessionBranch: string;
   contextId: string;
@@ -39,6 +47,9 @@ export interface ParallelWorktrees {
 export interface ParallelWorktreesDeps {
   gitClient?: GitClient;
   existsSync?: (p: string) => boolean;
+  readRepoConfig?(repoRoot: string): Promise<PerRepoConfig | null>;
+  execFileAsync?: typeof defaultExecFileAsync;
+  buildChildEnv?(): NodeJS.ProcessEnv;
 }
 
 export function validateContextId(contextId: string): void {
@@ -84,6 +95,9 @@ export function createParallelWorktrees(
 ): ParallelWorktrees {
   const gitClient = deps.gitClient ?? defaultGitClient;
   const existsSync = deps.existsSync ?? defaultExistsSync;
+  const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
+  const execFileAsync = deps.execFileAsync ?? defaultExecFileAsync;
+  const buildChildEnv = deps.buildChildEnv ?? defaultBuildChildEnv;
 
   async function getBranchForWorktree(
     projectPath: string,
@@ -156,7 +170,75 @@ export function createParallelWorktrees(
       input.projectPath,
     );
 
+    try {
+      await runInitScript(input, targets);
+    } catch (err) {
+      await dispose({
+        projectPath: input.projectPath,
+        worktreePath: targets.worktreePath,
+        branchName: targets.branchName,
+      });
+      throw err;
+    }
+
     return targets;
+  }
+
+  async function runInitScript(
+    input: ProvisionInput,
+    targets: ProvisionResult,
+  ): Promise<void> {
+    const repoConfig = await readRepoConfig(input.projectPath);
+    if (!repoConfig?.initScriptPath) {
+      return;
+    }
+
+    const scriptPath = path.isAbsolute(repoConfig.initScriptPath)
+      ? repoConfig.initScriptPath
+      : path.join(input.projectPath, repoConfig.initScriptPath);
+
+    if (!existsSync(scriptPath)) {
+      throw new Error(`Init script not found: ${scriptPath}`);
+    }
+
+    logger.info("init_script_start", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      contextId: input.contextId,
+      worktreePath: targets.worktreePath,
+      scriptPath,
+    });
+
+    try {
+      await execFileAsync(scriptPath, [], {
+        cwd: targets.worktreePath,
+        env: {
+          ...buildChildEnv(),
+          PROJECT_ROOT: input.projectPath,
+          CLAUDE_PROJECT_DIR: input.projectPath,
+          WORKTREE_PATH: targets.worktreePath,
+          SESSION_NAME: input.sessionName,
+          BRANCH_NAME: targets.branchName,
+          CONTEXT_ID: input.contextId,
+        } as NodeJS.ProcessEnv,
+      });
+    } catch (err) {
+      logger.warn("init_script_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        contextId: input.contextId,
+        scriptPath,
+        reason: getErrorMessage(err),
+      });
+      throw err;
+    }
+
+    logger.info("init_script_complete", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      contextId: input.contextId,
+      scriptPath,
+    });
   }
 
   async function provisionBatch(

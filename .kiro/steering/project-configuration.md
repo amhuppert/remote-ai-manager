@@ -7,6 +7,7 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 - `src/lib/schemas.ts` — `perRepoConfigSchema` (Zod): `initScriptPath`, `preMergeCommand`, `devServers`
 - `src/lib/repo-config.ts` — `readRepoConfig()`, `runPreMergeValidation()`
 - `src/lib/sessions.ts` — init script execution lives **in `createSession()`**, not in `repo-config.ts`
+- `src/lib/workflow-graph/parallel-worktrees.ts` — `provision()` runs the same init script after each graph-workflow parallel-context worktree is created
 - `src/lib/dev-server-registry.ts` — spawn/stop/liveness, `CC_PORT` protocol
 - `src/lib/dev-server-presets.ts` — script generation, `installPreset()`
 - `src/lib/dev-server-liveness.ts` — liveness polling
@@ -17,10 +18,12 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 
 ### `initScriptPath` — Worktree init
 
-- Runs after worktree creation in `createSession()`
+- Runs after worktree creation in `createSession()` **and** after each graph-workflow parallel-context worktree is created in `parallel-worktrees.ts:provision()`
 - Direct exec (`execFile`, **shebang required**)
-- cwd = worktree, timeout = 60s (hardcoded in `sessions.ts`)
-- Failure → full rollback (worktree removed, session deleted)
+- cwd = worktree, no timeout (relies on script's own bounding)
+- Failure → rollback: session path removes worktree and deletes session state; parallel-context path disposes the worktree (and branch) so the next iteration can retry
+- Idempotent re-provision of an existing parallel-context worktree on the matching branch **skips** the init script (it ran on the first provision)
+- Parallel-context invocations set an additional `CONTEXT_ID` env var; presence of `CONTEXT_ID` distinguishes parallel-context init from regular session init
 
 ### `preMergeCommand` — Pre-merge validation
 
@@ -44,19 +47,20 @@ Shared:
 
 ## Env var differences
 
-| Variable | Init | Pre-merge |
-|---|---|---|
-| `PROJECT_ROOT` | Original repo root | **Worktree path** |
-| `CLAUDE_PROJECT_DIR` | Original repo root | Original repo root |
-| `WORKTREE_PATH` | Worktree | Worktree |
-| `SESSION_NAME` | Session name | Session name |
-| `BRANCH_NAME` | `csm/<name>` | `csm/<name>` |
+| Variable | Init (session) | Init (parallel context) | Pre-merge |
+|---|---|---|---|
+| `PROJECT_ROOT` | Original repo root | Original repo root | **Worktree path** |
+| `CLAUDE_PROJECT_DIR` | Original repo root | Original repo root | Original repo root |
+| `WORKTREE_PATH` | Worktree | Parallel-context worktree | Worktree |
+| `SESSION_NAME` | Session name | Parent session name | Session name |
+| `BRANCH_NAME` | `csm/<name>` | `csm/<sessionDir>-<contextId>` | `csm/<name>` |
+| `CONTEXT_ID` | — | Parallel context id | — |
 
-`PROJECT_ROOT` differs intentionally: pre-merge validates merged code in the worktree.
+`PROJECT_ROOT` differs intentionally for pre-merge: it validates merged code in the worktree.
 
 ## Navigation
 
-- Init logic: search `initScriptPath` in `sessions.ts` (not `repo-config.ts`)
+- Init logic: search `initScriptPath` in `sessions.ts` and `workflow-graph/parallel-worktrees.ts` (not `repo-config.ts`)
 - Pre-merge logic: `repo-config.ts` is the single module
 - Dev server lifecycle: `dev-server-registry.ts` (core), `dev-server-presets.ts` (install), `dev-server-liveness.ts` (polling)
-- Timeouts: init = 60s in `sessions.ts`, pre-merge = `config.ts` (`preMergeTimeoutMs`), dev server = `STARTUP_TIMEOUT_MS` in `dev-server-registry.ts`
+- Timeouts: init = none (script self-bounds), pre-merge = `config.ts` (`preMergeTimeoutMs`), dev server = `STARTUP_TIMEOUT_MS` in `dev-server-registry.ts`
