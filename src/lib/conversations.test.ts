@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
 import type { ConversationState, SessionState } from "@/types";
@@ -17,6 +18,7 @@ import {
   deriveSessionLastActivity,
 } from "./session-derived";
 import { conversationStatusSchema, conversationStateSchema } from "./schemas";
+import type { TranscriptEntry } from "./transcript";
 
 // ============================================================
 // Test helpers
@@ -24,18 +26,93 @@ import { conversationStatusSchema, conversationStateSchema } from "./schemas";
 
 let TEST_DIR: string;
 
-function createTestServices() {
+interface FakeForkSessionCall {
+  sourceSessionId: string;
+  options: { dir?: string; upToMessageId?: string } | undefined;
+}
+
+function makeFakeForkSession(
+  result: { sessionId: string } | (() => Promise<{ sessionId: string }>) = {
+    sessionId: "fake-forked-session-id",
+  },
+) {
+  const calls: FakeForkSessionCall[] = [];
+  const fn = async (
+    sourceSessionId: string,
+    options?: { dir?: string; upToMessageId?: string },
+  ): Promise<{ sessionId: string }> => {
+    calls.push({ sourceSessionId, options });
+    if (typeof result === "function") {
+      return result();
+    }
+    return result;
+  };
+  return { fn, calls };
+}
+
+function createTestServices(
+  overrides: {
+    forkSession?: ReturnType<typeof makeFakeForkSession>["fn"];
+  } = {},
+) {
   const configReader = createConfigReader(TEST_DIR);
   const state = createStateManager({
     readConfig: () => configReader.readConfig(),
   });
+  const fakeFork = overrides.forkSession ?? makeFakeForkSession().fn;
   const conversations = createConversationService({
     mutateSession: state.mutateSession,
     getSession: state.getSession,
     getConversation: state.getConversation,
     getSessionConversations: state.getSessionConversations,
+    configDir: TEST_DIR,
+    forkSession: fakeFork,
   });
   return { state, conversations };
+}
+
+async function writeSourceTranscript(
+  filePath: string,
+  entries: TranscriptEntry[],
+): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+  await writeFile(filePath, content, "utf-8");
+}
+
+function userEntry(text: string, timestamp: string): TranscriptEntry {
+  return {
+    timestamp,
+    type: "user",
+    role: "user",
+    content: [{ type: "text", text }],
+  };
+}
+
+function assistantEntry(
+  text: string,
+  uuid: string,
+  timestamp: string,
+): TranscriptEntry {
+  return {
+    timestamp,
+    type: "assistant",
+    role: "assistant",
+    content: [{ type: "text", text }],
+    uuid,
+  };
+}
+
+function assistantEntryNoUuid(
+  text: string,
+  timestamp: string,
+): TranscriptEntry {
+  return {
+    timestamp,
+    type: "assistant",
+    role: "assistant",
+    content: [{ type: "text", text }],
+  };
 }
 
 function makeConvo(
@@ -57,6 +134,7 @@ function makeConvo(
     totalTurns: null,
     pendingQuestionId: null,
     pendingQuestions: null,
+    pendingPromptText: null,
     forkedFrom: null,
     role: null,
     contextTokens: null,
@@ -368,6 +446,84 @@ describe("setConversationArchived", () => {
         true,
       ),
     ).rejects.toThrow('Session "test" not found');
+  });
+});
+
+describe("setConversationPendingPromptText", () => {
+  it("persists a non-empty string", async () => {
+    const convoId = crypto.randomUUID();
+    const { state, conversations } = createTestServices();
+    await seedSession(state, {
+      conversations: [makeConvo({ id: convoId })],
+    });
+
+    await conversations.setConversationPendingPromptText(
+      "/proj",
+      "test",
+      convoId,
+      "draft prompt",
+    );
+
+    const session = await state.getSession("/proj", "test");
+    expect(session!.conversations[0]!.pendingPromptText).toBe("draft prompt");
+  });
+
+  it("clears the field when text is null", async () => {
+    const convoId = crypto.randomUUID();
+    const { state, conversations } = createTestServices();
+    await seedSession(state, {
+      conversations: [
+        makeConvo({ id: convoId, pendingPromptText: "previous draft" }),
+      ],
+    });
+
+    await conversations.setConversationPendingPromptText(
+      "/proj",
+      "test",
+      convoId,
+      null,
+    );
+
+    const session = await state.getSession("/proj", "test");
+    expect(session!.conversations[0]!.pendingPromptText).toBeNull();
+  });
+
+  it("overwrites a previous value", async () => {
+    const convoId = crypto.randomUUID();
+    const { state, conversations } = createTestServices();
+    await seedSession(state, {
+      conversations: [
+        makeConvo({ id: convoId, pendingPromptText: "previous" }),
+      ],
+    });
+
+    await conversations.setConversationPendingPromptText(
+      "/proj",
+      "test",
+      convoId,
+      "next",
+    );
+
+    const session = await state.getSession("/proj", "test");
+    expect(session!.conversations[0]!.pendingPromptText).toBe("next");
+  });
+
+  it("throws for non-existent conversation ID", async () => {
+    const { state, conversations } = createTestServices();
+    await seedSession(state, {
+      conversations: [makeConvo()],
+    });
+
+    await expect(
+      conversations.setConversationPendingPromptText(
+        "/proj",
+        "test",
+        "nonexistent-id",
+        "x",
+      ),
+    ).rejects.toThrow(
+      'Conversation "nonexistent-id" not found in session "test"',
+    );
   });
 });
 
@@ -774,5 +930,444 @@ describe("conversationStatusSchema migration", () => {
 
     const parsed = conversationStateSchema.parse(legacyConvo);
     expect(parsed.status).toBe("new");
+  });
+});
+
+// ============================================================
+// forkConversation — role-aware semantics
+// ============================================================
+
+describe("forkConversation", () => {
+  async function seedWithSourceTranscript(
+    state: ReturnType<typeof createStateManager>,
+    sourceId: string,
+    transcriptPath: string,
+    entries: TranscriptEntry[],
+    sourceOverrides: Partial<ConversationState> = {},
+  ) {
+    await writeSourceTranscript(transcriptPath, entries);
+    await seedSession(state, {
+      conversations: [
+        makeConvo({
+          id: sourceId,
+          name: "Source convo",
+          transcriptPath,
+          status: "awaiting",
+          promptCount: 2,
+          backendRef: { backend: "claude", sessionId: "src-session-abc" },
+          ...sourceOverrides,
+        }),
+      ],
+    });
+  }
+
+  /** Read the forked conversation's transcript and parse merged messages. */
+  async function readForkedTranscript(transcriptPath: string) {
+    const raw = await readFile(transcriptPath, "utf-8");
+    return raw
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as TranscriptEntry);
+  }
+
+  it("case 1: fork at assistant message — inclusive copy, anchor on assistant UUID, eager native fork", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const fake = makeFakeForkSession({ sessionId: "forked-1" });
+    const { state, conversations } = createTestServices({
+      forkSession: fake.fn,
+    });
+
+    // u0, a1, u2, a3
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("hello", "2024-01-01T00:00:00Z"),
+      assistantEntry("hi there", "uuid-a1", "2024-01-01T00:00:01Z"),
+      userEntry("more please", "2024-01-01T00:00:02Z"),
+      assistantEntry("sure", "uuid-a3", "2024-01-01T00:00:03Z"),
+    ]);
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 1, // assistant a1
+    });
+
+    const session = await state.getSession("/proj", "test");
+    const fork = session!.conversations.find(
+      (c) => c.id === result.conversationId,
+    );
+    expect(fork).toBeTruthy();
+    expect(fork!.pendingPromptText).toBeNull();
+    expect(fork!.forkedFrom).toEqual({
+      sourceConversationId: sourceId,
+      messageIndex: 1,
+      sourceBackend: "claude",
+      sourceBackendRef: { backend: "claude", sessionId: "src-session-abc" },
+      forkLocator: "uuid-a1",
+      forkMode: "native",
+    });
+    expect(fork!.backendRef).toEqual({
+      backend: "claude",
+      sessionId: "forked-1",
+    });
+    expect(fork!.transcriptPath).toBeTruthy();
+
+    const copied = await readForkedTranscript(fork!.transcriptPath!);
+    // Inclusive copy through index 1 → keeps u0, a1
+    expect(copied).toHaveLength(2);
+    expect(copied[0]!.role).toBe("user");
+    expect(copied[1]!.role).toBe("assistant");
+    expect(copied[1]!.uuid).toBe("uuid-a1");
+
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]).toEqual({
+      sourceSessionId: "src-session-abc",
+      options: { dir: "/proj", upToMessageId: "uuid-a1" },
+    });
+  });
+
+  it("case 2: fork at user message N>0 — exclusive copy, anchor on prior assistant UUID, eager native fork, pendingPromptText set", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const fake = makeFakeForkSession({ sessionId: "forked-2" });
+    const { state, conversations } = createTestServices({
+      forkSession: fake.fn,
+    });
+
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("hello", "2024-01-01T00:00:00Z"),
+      assistantEntry("hi there", "uuid-a1", "2024-01-01T00:00:01Z"),
+      userEntry("rewrite this", "2024-01-01T00:00:02Z"),
+      assistantEntry("ok", "uuid-a3", "2024-01-01T00:00:03Z"),
+    ]);
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 2, // user "rewrite this"
+    });
+
+    const session = await state.getSession("/proj", "test");
+    const fork = session!.conversations.find(
+      (c) => c.id === result.conversationId,
+    );
+    expect(fork).toBeTruthy();
+    expect(fork!.pendingPromptText).toBe("rewrite this");
+    expect(fork!.forkedFrom!.forkLocator).toBe("uuid-a1");
+    expect(fork!.forkedFrom!.forkMode).toBe("native");
+    expect(fork!.forkedFrom!.sourceBackendRef).toEqual({
+      backend: "claude",
+      sessionId: "src-session-abc",
+    });
+    expect(fork!.forkedFrom!.sourceBackend).toBe("claude");
+    expect(fork!.backendRef).toEqual({
+      backend: "claude",
+      sessionId: "forked-2",
+    });
+
+    const copied = await readForkedTranscript(fork!.transcriptPath!);
+    // Exclusive copy at index 2 → keeps u0, a1; excludes the user at index 2
+    expect(copied).toHaveLength(2);
+    expect(copied[0]!.role).toBe("user");
+    expect(copied[0]!.content?.[0]).toMatchObject({ text: "hello" });
+    expect(copied[1]!.role).toBe("assistant");
+    expect(copied[1]!.uuid).toBe("uuid-a1");
+
+    expect(fake.calls[0]).toEqual({
+      sourceSessionId: "src-session-abc",
+      options: { dir: "/proj", upToMessageId: "uuid-a1" },
+    });
+  });
+
+  it("case 3: fork at user message index 0 — empty transcript, no source backend ref, no SDK fork call, pendingPromptText set", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const fake = makeFakeForkSession({ sessionId: "should-not-be-used" });
+    const { state, conversations } = createTestServices({
+      forkSession: fake.fn,
+    });
+
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("first prompt", "2024-01-01T00:00:00Z"),
+      assistantEntry("response", "uuid-a1", "2024-01-01T00:00:01Z"),
+    ]);
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 0,
+    });
+
+    const session = await state.getSession("/proj", "test");
+    const fork = session!.conversations.find(
+      (c) => c.id === result.conversationId,
+    );
+    expect(fork).toBeTruthy();
+    expect(fork!.pendingPromptText).toBe("first prompt");
+    expect(fork!.transcriptPath).toBeNull();
+    expect(fork!.forkedFrom).toEqual({
+      sourceConversationId: sourceId,
+      messageIndex: 0,
+      sourceBackend: null,
+      sourceBackendRef: null,
+      forkLocator: null,
+      forkMode: null,
+    });
+    expect(fork!.backendRef).toBeNull();
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("case 3: works even when the source has no backend session", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const { state, conversations } = createTestServices();
+
+    await seedWithSourceTranscript(
+      state,
+      sourceId,
+      transcriptPath,
+      [userEntry("solo prompt", "2024-01-01T00:00:00Z")],
+      { backendRef: null }, // source never engaged the SDK
+    );
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 0,
+    });
+
+    const session = await state.getSession("/proj", "test");
+    const fork = session!.conversations.find(
+      (c) => c.id === result.conversationId,
+    );
+    expect(fork!.pendingPromptText).toBe("solo prompt");
+    expect(fork!.transcriptPath).toBeNull();
+  });
+
+  it("rejects fork when the source has no backend session and target is not index-0 user", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const { state, conversations } = createTestServices();
+
+    await seedWithSourceTranscript(
+      state,
+      sourceId,
+      transcriptPath,
+      [
+        userEntry("hello", "2024-01-01T00:00:00Z"),
+        assistantEntry("hi", "uuid-a1", "2024-01-01T00:00:01Z"),
+      ],
+      { backendRef: null },
+    );
+
+    await expect(
+      conversations.forkConversation({
+        projectPath: "/proj",
+        sessionName: "test",
+        sourceConversationId: sourceId,
+        messageIndex: 1, // assistant
+      }),
+    ).rejects.toThrow("no backend session");
+  });
+
+  it("rejects invalid messageIndex", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const { state, conversations } = createTestServices();
+
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("hello", "2024-01-01T00:00:00Z"),
+      assistantEntry("hi", "uuid-a1", "2024-01-01T00:00:01Z"),
+    ]);
+
+    await expect(
+      conversations.forkConversation({
+        projectPath: "/proj",
+        sessionName: "test",
+        sourceConversationId: sourceId,
+        messageIndex: 99,
+      }),
+    ).rejects.toThrow("Invalid messageIndex");
+  });
+
+  it("case 4 (assistant fork): synthetic fallback when SDK forkSession throws — backendRef null, forkMode synthetic, pendingPromptText holds the seed", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const throwingFork = makeFakeForkSession(async () => {
+      throw new Error("anchor not found in compacted session");
+    });
+    const { state, conversations } = createTestServices({
+      forkSession: throwingFork.fn,
+    });
+
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("hello there", "2024-01-01T00:00:00Z"),
+      assistantEntry("hi back", "uuid-a1", "2024-01-01T00:00:01Z"),
+    ]);
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 1, // assistant fork
+    });
+
+    const session = await state.getSession("/proj", "test");
+    const fork = session!.conversations.find(
+      (c) => c.id === result.conversationId,
+    );
+    expect(fork).toBeTruthy();
+    expect(fork!.backendRef).toBeNull();
+    expect(fork!.forkedFrom!.forkMode).toBe("synthetic");
+    // For assistant forks pendingPromptText was null; the seed becomes its value.
+    expect(fork!.pendingPromptText).not.toBeNull();
+    expect(fork!.pendingPromptText).toContain("hello there");
+    expect(fork!.pendingPromptText).toContain("hi back");
+    expect(throwingFork.calls).toHaveLength(1);
+  });
+
+  it("case 4 (user fork): synthetic fallback prepends the seed in front of the user's edited prompt", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const throwingFork = makeFakeForkSession(async () => {
+      throw new Error("compacted away");
+    });
+    const { state, conversations } = createTestServices({
+      forkSession: throwingFork.fn,
+    });
+
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("first question", "2024-01-01T00:00:00Z"),
+      assistantEntry("first answer", "uuid-a1", "2024-01-01T00:00:01Z"),
+      userEntry("rewritten turn", "2024-01-01T00:00:02Z"),
+    ]);
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 2, // user fork N>0
+    });
+
+    const session = await state.getSession("/proj", "test");
+    const fork = session!.conversations.find(
+      (c) => c.id === result.conversationId,
+    );
+    expect(fork).toBeTruthy();
+    expect(fork!.backendRef).toBeNull();
+    expect(fork!.forkedFrom!.forkMode).toBe("synthetic");
+    expect(fork!.pendingPromptText).not.toBeNull();
+    // Seed should appear, ending with a separator before the user's edited text.
+    expect(fork!.pendingPromptText).toContain("first question");
+    expect(fork!.pendingPromptText).toContain("first answer");
+    expect(fork!.pendingPromptText).toContain("---");
+    expect(fork!.pendingPromptText!.endsWith("rewritten turn")).toBe(true);
+  });
+
+  it("case 4: typed ForkCreationError when SDK fork AND synthetic seed both fail (transcript deleted between validation and fallback)", async () => {
+    const { ForkCreationError } = await import("./conversations");
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+
+    // Initial validation read at the top of forkConversation() succeeds.
+    // The injected forkSession deletes the transcript file before throwing,
+    // so the synthetic-seed re-read fails and buildSyntheticForkSeed returns
+    // null — exercising the typed-error path.
+    const failingFork = makeFakeForkSession(async () => {
+      await rm(transcriptPath, { force: true });
+      throw new Error("upstream fork failed");
+    });
+    const { state, conversations } = createTestServices({
+      forkSession: failingFork.fn,
+    });
+
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("u0", "2024-01-01T00:00:00Z"),
+      assistantEntry("a1", "uuid-a1", "2024-01-01T00:00:01Z"),
+    ]);
+
+    await expect(
+      conversations.forkConversation({
+        projectPath: "/proj",
+        sessionName: "test",
+        sourceConversationId: sourceId,
+        messageIndex: 1,
+      }),
+    ).rejects.toBeInstanceOf(ForkCreationError);
+
+    // The conversation must not have been added to state.
+    const session = await state.getSession("/proj", "test");
+    expect(session!.conversations).toHaveLength(1); // only the source
+    expect(failingFork.calls).toHaveLength(1);
+  });
+
+  it("legacy transcript without assistant UUID: falls back to synthetic without calling the SDK (avoid silent divergence)", async () => {
+    // When the transcript predates UUID storage (or the assistant entry lacks
+    // a uuid), findForkAnchorUuid returns null. Calling the SDK without
+    // upToMessageId would silently fork from the latest source state and
+    // diverge from the visible truncated transcript. The implementation must
+    // skip the SDK call entirely and use the synthetic seed instead.
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const fake = makeFakeForkSession({ sessionId: "must-not-be-used" });
+    const { state, conversations } = createTestServices({
+      forkSession: fake.fn,
+    });
+
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("hello there", "2024-01-01T00:00:00Z"),
+      assistantEntryNoUuid("hi back", "2024-01-01T00:00:01Z"),
+    ]);
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 1, // assistant fork — anchor would be uuid, but it's missing
+    });
+
+    const session = await state.getSession("/proj", "test");
+    const fork = session!.conversations.find(
+      (c) => c.id === result.conversationId,
+    );
+    expect(fork).toBeTruthy();
+    // SDK must NOT have been called — avoids the silent-divergence bug where
+    // forkSession would fork from the latest source state.
+    expect(fake.calls).toHaveLength(0);
+    expect(fork!.backendRef).toBeNull();
+    expect(fork!.forkedFrom!.forkMode).toBe("synthetic");
+    expect(fork!.forkedFrom!.forkLocator).toBeNull();
+    expect(fork!.pendingPromptText).not.toBeNull();
+    expect(fork!.pendingPromptText).toContain("hello there");
+    expect(fork!.pendingPromptText).toContain("hi back");
+  });
+
+  it("writes the forked transcript under the injected configDir", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const { state, conversations } = createTestServices();
+
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("hello", "2024-01-01T00:00:00Z"),
+      assistantEntry("hi", "uuid-a1", "2024-01-01T00:00:01Z"),
+    ]);
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 1,
+    });
+
+    const expectedPath = path.join(
+      TEST_DIR,
+      "transcripts",
+      `${result.conversationId}.jsonl`,
+    );
+    expect(existsSync(expectedPath)).toBe(true);
   });
 });

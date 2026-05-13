@@ -43,6 +43,7 @@ import {
   mapErrorSubtype,
   resolveBackendTurnSettings,
   resolveBackendTimeoutMs,
+  shouldBuildRuntimeSyntheticSeed,
 } from "./actor-implementations";
 import type { ActorConfig } from "./actor-implementations";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
@@ -675,6 +676,97 @@ describe("resolveBackendTimeoutMs", () => {
 
   it("returns 600s default when codex config is undefined", () => {
     expect(resolveBackendTimeoutMs("codex", baseConfig)).toBe(600_000);
+  });
+});
+
+// ===========================================================================
+// Unit tests: shouldBuildRuntimeSyntheticSeed
+// ===========================================================================
+
+describe("shouldBuildRuntimeSyntheticSeed", () => {
+  const forkedFromBase = {
+    sourceConversationId: "src",
+    messageIndex: 1,
+    sourceBackend: "claude",
+    sourceBackendRef: null,
+    forkLocator: null,
+    forkMode: null,
+  };
+
+  it("returns false for a new (non-forked) conversation", () => {
+    expect(
+      shouldBuildRuntimeSyntheticSeed({
+        forkedFrom: null,
+        backendRef: null,
+        agentBackend: "codex",
+        transcriptPath: "/p.jsonl",
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false for Claude native fork (backendRef populated)", () => {
+    expect(
+      shouldBuildRuntimeSyntheticSeed({
+        forkedFrom: { ...forkedFromBase, forkMode: "native" },
+        backendRef: { backend: "claude", sessionId: "s" },
+        agentBackend: "claude",
+        transcriptPath: "/p.jsonl",
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false for Claude synthetic fallback — seed already in pendingPromptText", () => {
+    expect(
+      shouldBuildRuntimeSyntheticSeed({
+        forkedFrom: { ...forkedFromBase, forkMode: "synthetic" },
+        backendRef: null,
+        agentBackend: "claude",
+        transcriptPath: "/p.jsonl",
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false for Claude case 3 (user fork at index 0)", () => {
+    expect(
+      shouldBuildRuntimeSyntheticSeed({
+        forkedFrom: {
+          ...forkedFromBase,
+          messageIndex: 0,
+          sourceBackend: null,
+          sourceBackendRef: null,
+        },
+        backendRef: null,
+        agentBackend: "claude",
+        transcriptPath: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true for non-Claude fork with a transcript and no backendRef", () => {
+    expect(
+      shouldBuildRuntimeSyntheticSeed({
+        forkedFrom: { ...forkedFromBase, sourceBackend: "codex" },
+        backendRef: null,
+        agentBackend: "codex",
+        transcriptPath: "/p.jsonl",
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false for non-Claude case 3 (no transcript)", () => {
+    expect(
+      shouldBuildRuntimeSyntheticSeed({
+        forkedFrom: {
+          ...forkedFromBase,
+          messageIndex: 0,
+          sourceBackend: null,
+          sourceBackendRef: null,
+        },
+        backendRef: null,
+        agentBackend: "codex",
+        transcriptPath: null,
+      }),
+    ).toBe(false);
   });
 });
 

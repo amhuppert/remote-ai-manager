@@ -30,6 +30,7 @@ function makeConversation(
     archived: false,
     pendingQuestionId: null,
     pendingQuestions: null,
+    pendingPromptText: null,
     forkedFrom: null,
     role: null,
     contextTokens: null,

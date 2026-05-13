@@ -49,7 +49,6 @@ export interface DispatchConversationTurnDeps {
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
   /** Pre-known artifact references the caller wants attached to the result. */
   artifacts?: readonly ArtifactRef[];
-  nativeFork?: ConversationBackendTurnInput["nativeFork"];
   syntheticForkSeed?: ConversationBackendTurnInput["syntheticForkSeed"];
   /** Optional logger override; defaults to the module logger. */
   logger?: Logger;
@@ -114,7 +113,6 @@ export async function dispatchConversationTurn(
       : undefined,
     signal,
     onEvent: deps.onEvent ?? (() => {}),
-    nativeFork: deps.nativeFork ?? null,
     syntheticForkSeed: deps.syntheticForkSeed ?? null,
   };
 

@@ -3976,6 +3976,14 @@ textarea {
   color: var(--text-secondary);
 }
 
+.synthetic-fork-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: lowercase;
+  cursor: help;
+}
+
 .panel-body {
   flex: 1;
   display: flex;

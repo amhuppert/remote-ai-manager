@@ -2,35 +2,36 @@
 
 ## Overview
 
-**Purpose**: Conversation forking enables developers to branch from any previous user message in a conversation, creating a new conversation that inherits the history up to that point. Edit-and-fork extends this by allowing the user to modify the message before branching.
+**Purpose**: Conversation forking enables developers to branch from any previous message in a conversation, creating a new conversation that inherits the relevant history for re-prompting. Branching can happen from either an assistant message (keep the assistant's response, continue from there) or a user message (drop the user's text into the new conversation's prompt input so the developer can revise and re-send).
 
 **Users**: Developers using CC to manage Claude Code sessions. They use this when a conversation took a wrong turn and they want to retry from an earlier point, or when they want to explore multiple approaches from the same starting context.
 
-**Impact**: Extends the existing conversation system with fork provenance tracking (`forkedFrom` field on `ConversationState`), a new fork API endpoint, transcript copying logic, and SDK fork parameter injection. All changes are additive — existing conversations are unaffected.
+**Impact**: Extends the existing conversation system with fork provenance tracking (`forkedFrom` field on `ConversationState`), a new fork API endpoint, transcript copying logic, an eager Claude SDK fork at fork-creation time, a synthetic fallback for compaction resilience, and server-persisted pending prompt text on each conversation.
 
 ### Goals
-- Fork from any user message with full conversation history preserved for Claude
-- Edit-and-fork as a single user flow (edit → save → navigate → auto-prompt)
-- Leverage SDK-native `forkSession` for conversation context rather than manual history replay
-- Zero impact on existing conversations and prompting flows
+- Fork from any user or assistant message
+- Re-prompt a user message by prepopulating the new conversation's prompt input with the user's original text — the developer revises the prompt and sends from the new conversation
+- Eagerly create the new conversation's Claude SDK session at fork time so the fork is decoupled from later mutations of the source (auto-compaction, deletion)
+- Survive compaction or missing SDK session files via a synthetic fork seed built from the local CC transcript
+- Persist the user's in-progress prompt text on the conversation itself so it survives navigation and reloads
 
 ### Non-Goals
-- Tree visualization of fork relationships (future enhancement)
-- Forking from assistant messages
-- `resumeSessionAt` optimization (requires storing SDK message UUIDs — deferred)
+- Inline message editing within the source conversation (forking is the only branch primitive)
+- Tree visualization of fork relationships
 - Merging forked conversations back together
+- `resumeSessionAt` optimization on every prompt (fork uses the SDK's native `forkSession()` helper once, then the new conversation owns its own session)
 
 ## Architecture
 
 ### Existing Architecture Analysis
 
 The conversation system follows a layered pattern:
-- **Schema layer** (`schemas.ts`): Zod schemas define `ConversationState` with fields for ID, status, transcript path, `claudeSessionId`
-- **State layer** (`conversations.ts`): CRUD operations on conversations within session state (filesystem-backed JSON)
-- **Transcript layer** (`transcript.ts`): JSONL append-only files, one per conversation
-- **Prompt layer** (`prompt.ts`): SDK `query()` execution with SSE streaming; uses `resume: claudeSessionId` for session continuity
+- **Schema layer** (`schemas.ts`): Zod schemas define `ConversationState` including `forkedFrom`, `pendingPromptText`, and `backendRef`
+- **State layer** (`conversations.ts`): CRUD operations on conversations within session state (SQLite-backed via `state-store`)
+- **Transcript layer** (`transcript.ts`): JSONL append-only files, one per conversation; helpers for copying and anchor lookup
+- **Prompt layer** (`prompt.ts`) + **agent-backend layer** (`agent-backends/`): SDK `query()` execution with SSE streaming
 - **API layer**: REST routes at `/api/projects/[name]/sessions/[session]/conversations/[conversationId]/...`
-- **UI layer**: `SessionDetailPage` with virtualized message list, `ConversationSidebar` for navigation
+- **UI layer**: `ConversationDetailPage` with virtualized message list, persistent prompt input, fork action per message
 
 Forking integrates at every layer but introduces no new patterns — it extends existing ones.
 
@@ -39,159 +40,160 @@ Forking integrates at every layer but introduces no new patterns — it extends 
 ```mermaid
 graph TB
     subgraph Client
-        SDP[SessionDetailPage]
+        CDP[ConversationDetailPage]
         MA[MessageActions]
-        ME[MessageEditor]
         CS[ConversationSidebar]
     end
 
     subgraph API
         ForkRoute[POST fork route]
+        PendingPromptRoute[PUT pending-prompt route]
         PromptRoute[POST prompt route]
     end
 
     subgraph Domain
         Conv[conversations.ts]
         Trans[transcript.ts]
-        Prompt[prompt.ts]
+        AgentBackend[agent-backends/*]
     end
 
     subgraph External
         SDK[Claude Agent SDK]
-        FS[Filesystem - JSON state]
+        DB[(SQLite state)]
         JSONL[Filesystem - JSONL transcripts]
     end
 
-    SDP --> MA
-    SDP --> ME
-    SDP --> CS
+    CDP --> MA
+    CDP --> CS
     MA -->|fork request| ForkRoute
-    ME -->|edit and fork| ForkRoute
-    SDP -->|send prompt| PromptRoute
+    CDP -->|debounced + sendBeacon| PendingPromptRoute
+    CDP -->|send prompt| PromptRoute
 
     ForkRoute --> Conv
-    ForkRoute --> Trans
-    PromptRoute --> Prompt
+    Conv --> Trans
+    Conv --> SDK
+    PromptRoute --> AgentBackend
 
-    Conv --> FS
+    Conv --> DB
     Trans --> JSONL
-    Prompt --> SDK
-    Prompt --> Trans
+    AgentBackend --> SDK
+    AgentBackend --> Trans
 ```
 
 **Architecture Integration**:
 - **Selected pattern**: Extension of existing layered architecture
-- **Domain boundaries**: Fork logic lives in `conversations.ts` (state creation) and `transcript.ts` (file copying). No new domain modules.
-- **Existing patterns preserved**: State mutation via `mutateConversation()`, JSONL append-only transcripts, SSE streaming for prompts
-- **New components**: One API route (`fork/route.ts`), schema extension, two UI components (already created)
-- **Steering compliance**: Filesystem-backed state, no new dependencies, REST API mirrors resource hierarchy
+- **Domain boundaries**: Fork logic lives in `conversations.ts` (state creation + eager SDK fork) and `transcript.ts` (file copying, anchor lookup). No new domain modules.
+- **Existing patterns preserved**: State mutation via `mutateSession()`, JSONL append-only transcripts, SSE streaming for prompts
+- **New components**: Fork API route, pending-prompt API route, schema extensions, MessageActions wired into the message render loop, persistent prompt input wiring in `ConversationDetailPage`
+- **Steering compliance**: Schema-first, REST API mirrors resource hierarchy, agent-backend abstraction reused for both Claude and Codex
 
 ### Technology Stack
 
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
-| Frontend | React 19, TanStack Virtual, Zustand | Message rendering with fork/edit actions, edit state management | Existing |
-| Backend | Next.js 15 API Routes | Fork API endpoint, prompt execution | Existing |
-| SDK | `@anthropic-ai/claude-agent-sdk` | `resume` + `forkSession: true` for forked conversation context | Existing, new options used |
-| Storage | Filesystem JSON + JSONL | Session state with `forkedFrom` field, copied transcript files | Existing, schema extended |
+| Frontend | React 19, TanStack Virtual, Zustand | Message rendering with fork action, persistent prompt input | Existing |
+| Backend | Next.js 16 API Routes | Fork API, pending-prompt API, prompt execution | Existing |
+| SDK | `@anthropic-ai/claude-agent-sdk` | `forkSession()` helper invoked eagerly at fork time | Existing, new helper used |
+| Storage | SQLite (WAL) + JSONL | Session state with `forkedFrom` and `pendingPromptText`; copied transcript files | Existing, schema extended |
 
 ## System Flows
 
-### Direct Fork Flow
+### Fork Cases
+
+Forking dispatches on the target message's role and index:
+
+| Case | Trigger | Transcript copy | Pending prompt | Backend session |
+|------|---------|-----------------|----------------|-----------------|
+| (a) Assistant message | Click Fork on an assistant turn | Inclusive — through the assistant turn | None | Eager SDK fork via `forkSession()` |
+| (b) User message, index > 0 | Click Fork on a non-first user turn | Exclusive — up to but not including the user turn | The user's text | Eager SDK fork via `forkSession()` |
+| (c) User message, index 0 | Click Fork on the first user turn | None | The user's text | None (brand-new session on first prompt) |
+| (d) Synthetic fallback | `forkSession()` throws on case (a) or (b) (e.g., the anchor UUID has been compacted away) | As cases (a) or (b) | Source contents serialized as a `<<<SYNTHETIC_FORK_SEED ...>>>` block, optionally followed by the user's text | None — created on next prompt, primed by the synthetic seed |
+
+### Fork Flow
 
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant UI as SessionDetailPage
+    participant UI as ConversationDetailPage
     participant API as Fork API
     participant Conv as conversations.ts
     participant Trans as transcript.ts
+    participant SDK as Claude Agent SDK
     participant Nav as Router
 
     U->>UI: Click Fork on message N
-    UI->>UI: Show confirmation
-    U->>UI: Confirm fork
     UI->>API: POST /fork { messageIndex: N }
-    API->>Trans: copyTranscriptUpTo(sourceId, targetId, N)
-    Trans->>Trans: Read source JSONL, write subset to new file
-    API->>Conv: Create conversation with forkedFrom metadata
-    Conv->>Conv: Write state with new conversation
-    API-->>UI: { conversationId: newId }
+    API->>Conv: forkConversation(...)
+    alt case (a) assistant
+        Conv->>Trans: findForkAnchorUuid(mode: "inclusive")
+        Conv->>Trans: copyTranscriptUpTo({mode: "inclusive"})
+        Conv->>SDK: forkSession(sourceSessionId, {upToMessageId})
+    else case (b) user idx > 0
+        Conv->>Trans: findForkAnchorUuid(mode: "exclusive")
+        Conv->>Trans: copyTranscriptUpTo({mode: "exclusive"})
+        Conv->>SDK: forkSession(sourceSessionId, {upToMessageId})
+    else case (c) user idx 0
+        Note over Conv: no transcript copy, no SDK fork
+    end
+    alt SDK fork throws (case d)
+        Conv->>Trans: buildSyntheticForkSeed(...)
+        Conv->>Conv: prepend seed to pendingPromptText
+    end
+    Conv->>Conv: write new conversation with forkedFrom + pendingPromptText
+    API-->>UI: { conversationId: newId, forkMode }
     UI->>Nav: router.push to new conversation URL
 ```
 
-### Edit-and-Fork Flow
+**Pending prompt restoration**: When `ConversationDetailPage` mounts for the forked conversation, the prompt input is initialized from `conversation.pendingPromptText` (server-persisted). The developer revises and sends from the new conversation — no auto-send.
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant UI as SessionDetailPage
-    participant Store as Zustand Store
-    participant API as Fork API
-    participant Prompt as Prompt API
-    participant Nav as Router
+### Persistent Prompt Input Flow
 
-    U->>UI: Click Edit on message N
-    UI->>UI: Show inline editor (editingIndex = N)
-    U->>UI: Modify text, click Save
-    UI->>API: POST /fork { messageIndex: N, editedText: "..." }
-    API->>API: Copy transcript up to N-1, append edited message
-    API->>API: Create conversation with forkedFrom
-    API-->>UI: { conversationId: newId }
-    UI->>Store: setPendingForkPrompt({ conversationId: newId, text: editedText })
-    UI->>Nav: router.push to new conversation
-    Note over UI: New page loads with forked conversation
-    UI->>Store: Read and clear pendingForkPrompt
-    UI->>Prompt: POST /prompt { prompt: editedText }
-    Prompt->>Prompt: query() with resume + forkSession
-```
+The prompt input on any conversation is server-persisted to its `pendingPromptText` field:
+- Typing into the input debounces (~500ms) a PUT to `/pending-prompt` that updates the field.
+- On unload (`beforeunload`), a synchronous `navigator.sendBeacon` flush captures any unflushed edit.
+- On mount, the input is hydrated from `conversation.pendingPromptText`.
+- On successful prompt submit, the input is cleared client-side and server-side (`pendingPromptText = null`).
+- Manually clearing the input persists `null`.
 
-**Auto-Prompt Delivery Mechanism**: The edited text is passed to the new conversation page via a Zustand store field (`pendingForkPrompt`). The source page sets it before navigation; the target page reads and clears it on mount. This avoids URL length limits and is consistent with the existing store-based state management pattern. See SessionDetailStore extension below for the field definition.
+This is feature-uniform: every conversation persists its prompt input the same way. Forks land into this same mechanism — the fork code just pre-seeds `pendingPromptText` for cases (b), (c), and (d).
 
 ## Requirements Traceability
 
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
-| 1.1 | Fork creates conversation with messages up to fork point | ForkConversation, TranscriptCopy | Fork API | Direct Fork |
-| 1.2 | New ID, null claudeSessionId, new JSONL | ForkConversation, TranscriptCopy | Fork API | Direct Fork |
-| 1.3 | Navigate to new conversation | SessionDetailPage | Fork API response | Direct Fork |
-| 1.4 | Disable while running | MessageActions | disabled prop | — |
-| 1.5 | Only on user messages | MessageActions | — | — |
-| 2.1 | Inline editor display | MessageEditor, SessionDetailStore | editingIndex state | Edit-and-Fork |
-| 2.2 | Edit creates fork with modified message | ForkConversation, TranscriptCopy | Fork API editedText param | Edit-and-Fork |
-| 2.3 | Auto-send edited prompt | SessionDetailPage, SessionDetailStore (pendingForkPrompt) | Prompt API | Edit-and-Fork |
-| 2.4 | Cancel restores display | MessageEditor, SessionDetailStore | editingIndex reset | — |
-| 2.5 | Unchanged save = direct fork | SessionDetailPage | Fork API | Edit-and-Fork |
-| 3.1 | forkedFrom field | ConversationStateSchema | — | — |
-| 3.2 | Independent JSONL transcript | TranscriptCopy | — | Both flows |
+| 1.1 | Fork creates conversation with messages up to fork point | ForkConversation, TranscriptCopy | Fork API | Fork |
+| 1.2 | New ID, own SDK session (cases a/b) or none (case c/d), new JSONL | ForkConversation, TranscriptCopy | Fork API | Fork |
+| 1.3 | Navigate to new conversation | ConversationDetailPage | Fork API response | Fork |
+| 1.4 | Disable while running | MessageActions | `disabled` prop | — |
+| 1.5 | Fork available on user and assistant messages | MessageActions | — | — |
+| 3.1 | `forkedFrom` field | ConversationStateSchema | — | — |
+| 3.2 | Independent JSONL transcript per fork | TranscriptCopy | — | Fork |
 | 3.3 | promptCount starts at 0 | ForkConversation | — | — |
 | 3.4 | Delete doesn't affect original | Existing delete logic | — | — |
 | 3.5 | Default fork name | ForkConversation | — | — |
-| 4.1 | Pass history on first prompt | PromptExecution | SDK resume + forkSession | Both flows |
-| 4.2 | Subsequent prompts use claudeSessionId | Existing prompt flow | — | — |
+| 4.1 | Eager SDK fork at fork time (cases a/b) | ForkConversation | SDK `forkSession()` | Fork |
+| 4.2 | Subsequent prompts use the forked session's own id | Existing prompt flow | — | — |
 | 4.3 | History from own transcript | Existing readConversationMessages | — | — |
-| 5.1 | Hover action bar on desktop | MessageActions, CSS | — | — |
-| 5.2 | Hide on mouse leave | MessageActions, CSS | — | — |
-| 5.3 | Mobile: below content, 44px targets | MessageActions, CSS | — | — |
-| 5.4 | Hide actions during edit | CSS `.editing` class | — | — |
-| 5.5 | Fork confirmation step | MessageActions | confirmFork state | — |
-| 6.1 | Fork indicator in sidebar | ConversationSidebar | forkedFrom field | — |
-| 6.2 | Fork tooltip | ConversationSidebar | forkedFrom field | — |
-| 6.3 | Same list, sorted by time | Existing sidebar logic | — | — |
+| 4.4 | Compaction-resilient synthetic fallback | ForkConversation, SyntheticForkSeed | — | Fork (case d) |
+| 5.1 | Persistent prompt input across navigation | ConversationDetailPage, PendingPromptRoute | Pending-prompt API | Persistent prompt input |
+| 5.2 | Persistent prompt input across reload | Same as 5.1 | — | Persistent prompt input |
+| 5.3 | Submit clears pending prompt | Existing prompt flow | — | — |
+| 6.1 | Fork indicator in sidebar | ConversationSidebar | `forkedFrom` field | — |
+| 6.2 | Fork tooltip | ConversationSidebar | `forkedFrom` field | — |
+| 6.3 | Synthetic-fallback indicator on the conversation header | ConversationDetailPage | `forkedFrom.forkMode` | — |
 
 ## Components and Interfaces
 
 | Component | Domain | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|--------|--------|--------------|------------------|-----------|
-| ConversationStateSchema | Schema | Extended schema with forkedFrom field | 3.1 | Zod (P0) | State |
-| ForkConversation | Domain | Create forked conversation in session state | 1.1, 1.2, 3.1-3.5 | ConversationStateSchema (P0), TranscriptCopy (P0) | Service |
-| TranscriptCopy | Domain | Copy JSONL transcript up to fork point | 1.1, 3.2 | transcript.ts (P0), filesystem (P0) | Service |
-| ForkAPIRoute | API | REST endpoint for fork creation | 1.1-1.3, 2.2 | ForkConversation (P0), TranscriptCopy (P0) | API |
-| PromptExecution | Domain | SDK fork parameter injection on first prompt | 4.1 | prompt.ts (P0), Claude Agent SDK (P0) | Service |
-| SessionDetailStore | UI State | Add editingIndex and pendingForkPrompt state | 2.1, 2.3, 2.4 | Zustand (P0) | State |
-| MessageActions | UI | Hover action bar with Fork/Edit buttons | 5.1-5.5 | — | — |
-| MessageEditor | UI | Inline message editor | 2.1, 2.4 | — | — |
-| SessionDetailPage | UI | Wire components into message render loop | 1.3, 2.3, 2.5 | All UI components (P0) | — |
+| ConversationStateSchema | Schema | Extended schema with `forkedFrom` and `pendingPromptText` | 3.1, 5.1 | Zod (P0) | State |
+| ForkConversation | Domain | Create forked conversation with eager SDK fork or synthetic fallback | 1.1, 1.2, 3.1-3.5, 4.1, 4.4 | ConversationStateSchema (P0), TranscriptCopy (P0), Claude SDK (P0) | Service |
+| TranscriptCopy | Domain | Copy JSONL transcript up to fork point with mode-driven boundary | 1.1, 3.2 | transcript.ts (P0), filesystem (P0) | Service |
+| SyntheticForkSeed | Domain | Serialize local transcript into a single-shot prompt seed when SDK fork is unavailable | 4.4 | transcript.ts (P0) | Service |
+| ForkAPIRoute | API | REST endpoint for fork creation | 1.1-1.3 | ForkConversation (P0) | API |
+| PendingPromptRoute | API | REST endpoint to persist `pendingPromptText` | 5.1, 5.2 | Conv (P0) | API |
+| MessageActions | UI | Action buttons (Copy, Fork) per message | 1.4, 1.5 | — | — |
+| ConversationDetailPage | UI | Wire MessageActions, persistent prompt input | 1.3, 5.1, 5.2 | All UI components (P0) | — |
 | ConversationSidebar | UI | Fork indicator and tooltip | 6.1-6.3 | ConversationStateSchema (P0) | — |
 
 ### Schema Layer
@@ -200,33 +202,42 @@ sequenceDiagram
 
 | Field | Detail |
 |-------|--------|
-| Intent | Extend ConversationState with fork provenance tracking |
-| Requirements | 3.1 |
+| Intent | Extend ConversationState with fork provenance and persistent prompt text |
+| Requirements | 3.1, 5.1 |
 
 **Responsibilities & Constraints**
-- Add optional `forkedFrom` field to `conversationStateSchema`
-- Must be backward-compatible (existing conversations without the field parse cleanly via `.default(null)`)
-- Store source conversation ID, message index, and source `claudeSessionId` for SDK resume
+- Add nullable `forkedFrom` object capturing source conversation id, message index, fork mode, fork locator, source backend, and source backend ref
+- Add nullable `pendingPromptText` string field, defaulting to null
+- Must be backward-compatible — existing rows without the new fields parse cleanly via `.default(null)` / `.nullable()`
 
 **Contracts**: State [x]
 
 ##### State Management
 
 ```typescript
-// Addition to conversationStateSchema
-const forkedFromSchema = z.object({
-  sourceConversationId: z.string(),
-  sourceClaudeSessionId: z.string(),
-  messageIndex: z.number(),
-}).nullable().default(null);
+// forkedFrom — present on every fork, but several inner fields are nullable for case (c) and (d):
+const forkedFromSchema = z
+  .object({
+    sourceConversationId: z.string(),
+    messageIndex: z.number().int().min(0),
+    sourceBackend: agentBackendSchema.nullable().optional(),
+    // Null when the fork is not derived from the source SDK session
+    // (e.g., user fork at index 0 — "edit and start over").
+    sourceBackendRef: agentSessionRefSchema.nullable().optional(),
+    forkLocator: z.string().nullable().optional(),
+    forkMode: z.enum(["native", "synthetic"]).nullable().default(null),
+  })
+  .nullable()
+  .default(null);
 
-// Extended field on conversationStateSchema:
-// forkedFrom: forkedFromSchema
+// pendingPromptText — extended field on conversationStateSchema:
+// pendingPromptText: z.string().nullable().default(null)
 ```
 
 **Implementation Notes**
-- `sourceClaudeSessionId` is captured at fork time from the source conversation, resolved as `source.claudeSessionId ?? source.forkedFrom?.sourceClaudeSessionId` — this supports both forking from original conversations and fork-from-fork scenarios, and decouples the fork from the source conversation's continued existence
-- `messageIndex` refers to the 0-based index within the filtered message list (user + assistant messages only, matching UI indices)
+- `sourceBackendRef` is captured at fork time from the source conversation's `backendRef`. It is null for case (c) (brand-new fork) and is preserved for the audit trail in case (d) as well.
+- `forkLocator` is the UUID of the SDK message used as the fork anchor (returned by `findForkAnchorUuid`). Null for case (c) and case (d).
+- `forkMode` is `"native"` when SDK `forkSession()` succeeded, `"synthetic"` when the fallback path ran, `null` for case (c).
 
 ### Domain Layer
 
@@ -234,19 +245,21 @@ const forkedFromSchema = z.object({
 
 | Field | Detail |
 |-------|--------|
-| Intent | Create a new conversation that inherits history from an existing one up to a specified message |
-| Requirements | 1.1, 1.2, 3.1, 3.2, 3.3, 3.5 |
+| Intent | Create a new conversation that inherits history from an existing one up to a specified message, with an eager Claude SDK session created where applicable |
+| Requirements | 1.1, 1.2, 3.1-3.5, 4.1, 4.4 |
 
 **Responsibilities & Constraints**
-- Create new `ConversationState` with `forkedFrom` metadata
-- Coordinate transcript copying via TranscriptCopy
-- Generate fork-descriptive default name
-- Persist to session state atomically
+- Decide the fork case (a/b/c) from the target message's role and index
+- Coordinate transcript copying via `copyTranscriptUpTo({mode})`
+- For cases (a) and (b), call `forkSession()` eagerly; on failure, fall back to a synthetic seed
+- Persist the new `ConversationState` to session state atomically with `forkedFrom`, `pendingPromptText`, `backendRef`, and the chosen `forkMode`
 
 **Dependencies**
 - Inbound: ForkAPIRoute — triggers fork creation (P0)
 - Outbound: TranscriptCopy — copies JSONL lines (P0)
-- Outbound: State persistence — `readState`/`writeState` (P0)
+- Outbound: Claude Agent SDK — `forkSession()` (P0)
+- Outbound: SyntheticForkSeed — fallback prompt seed (P0)
+- Outbound: State persistence — `mutateSession()` (P0)
 
 **Contracts**: Service [x]
 
@@ -258,40 +271,36 @@ interface ForkConversationInput {
   sessionName: string;
   sourceConversationId: string;
   messageIndex: number;
-  editedText?: string;
 }
 
 interface ForkConversationResult {
   conversationId: string;
   name: string;
+  forkMode: "native" | "synthetic" | null;
 }
-
-// forkConversation(input: ForkConversationInput): Promise<ForkConversationResult>
 ```
 
-- Preconditions: Source conversation exists, has a resolvable Claude session ID (see below), `messageIndex` is within range of source messages
-- Postconditions: New conversation persisted in state, transcript file created
-- Invariants: Source conversation unchanged
+- Preconditions: Source conversation exists; `messageIndex` is within range of source messages.
+- Postconditions: New conversation persisted in state, transcript file created (cases a/b/d), `pendingPromptText` populated for cases (b)/(c)/(d).
+- Invariants: Source conversation unchanged.
 
 **Implementation Notes**
-- Validation: source must have a resolvable Claude session ID — either its own `claudeSessionId` or `forkedFrom.sourceClaudeSessionId` (for fork-from-fork where the source fork hasn't been prompted yet). This allows forking from a fork that has transcript history but no own session. A conversation with neither is unforkable (never prompted, no inherited context).
-- For edit-and-fork: copy messages up to `messageIndex - 1`, then append edited text as user message
-- For direct fork: copy messages up to `messageIndex` and the subsequent assistant response (if present)
-- Name format: `"Fork of {sourceName} @ turn {turnNumber}"` where turnNumber is computed from user message indices
+- Fork-from-fork is handled transparently: `sourceBackendRef` is read from the source row's `backendRef`, which is the source's own SDK session (whether the source itself was forked or original).
+- A conversation with no `backendRef` (never prompted) can still be the source of a case-(c) fork because no SDK fork is attempted. Cases (a)/(b) from such a source fall through to the synthetic fallback.
 
 #### TranscriptCopy
 
 | Field | Detail |
 |-------|--------|
-| Intent | Copy JSONL transcript entries from source to target up to a specified message index |
+| Intent | Copy JSONL transcript entries from source to target up to a specified message index, with mode-driven inclusion of the boundary message |
 | Requirements | 3.2 |
 
 **Responsibilities & Constraints**
-- Read source JSONL file line by line
-- Filter to user/assistant messages to count to the fork point
-- Copy all raw JSONL lines (including system/tool_result entries between messages) up to and including the fork point
-- Write to target conversation's transcript file
-- Optionally append an edited user message as the final entry
+- Read source JSONL file
+- Locate the message at `upToMessageIndex`
+- Copy up to and including that message when `mode = "inclusive"`, or up to but not including it when `mode = "exclusive"`
+- Preserve all interleaved non-message lines (system entries, tool_result entries, etc.)
+- Write the copied lines to the target conversation's transcript file
 
 **Dependencies**
 - Inbound: ForkConversation — triggers copy (P0)
@@ -302,69 +311,38 @@ interface ForkConversationResult {
 ##### Service Interface
 
 ```typescript
+type CopyTranscriptMode = "inclusive" | "exclusive";
+
 interface CopyTranscriptInput {
-  sourceConversationId: string;
+  sourceTranscriptPath: string;
   targetConversationId: string;
   upToMessageIndex: number;
-  appendEditedMessage?: {
-    text: string;
-    timestamp: string;
-  };
+  mode: CopyTranscriptMode;
+  configDir?: string;
 }
 
 // copyTranscriptUpTo(input: CopyTranscriptInput): Promise<void>
 ```
 
-- Preconditions: Source transcript file exists
-- Postconditions: Target transcript file created with copied entries
-- Invariants: Source file unchanged
+- Preconditions: Source transcript file exists.
+- Postconditions: Target transcript file created with copied entries.
+- Invariants: Source file unchanged.
 
-**Implementation Notes**
-- Read full source file, split by newlines, parse each to count visible messages (those with `role` = user/assistant and non-empty `content`)
-- Track the raw line index of the target message index
-- Write all raw lines up to (and including) that raw line index to the target file
-- For edit-and-fork: write lines up to `messageIndex - 1`, then append a new JSONL entry with the edited text
-
-#### PromptExecution (Extension)
+#### SyntheticForkSeed
 
 | Field | Detail |
 |-------|--------|
-| Intent | Inject SDK `forkSession` + `resume` parameters when executing the first prompt in a forked conversation |
-| Requirements | 4.1, 4.2 |
+| Intent | Build a single-shot prompt-prefix string that recreates the relevant prior context from the local CC transcript when the SDK session cannot be forked |
+| Requirements | 4.4 |
 
 **Responsibilities & Constraints**
-- Detect when a conversation has `forkedFrom` metadata and no `claudeSessionId` (first prompt)
-- Pass `resume: forkedFrom.sourceClaudeSessionId` and `forkSession: true` to SDK `query()` options
-- After first prompt completes, `claudeSessionId` is set from SDK response — subsequent prompts resume normally
-
-**Dependencies**
-- Inbound: Prompt API route — triggers execution (P0)
-- Outbound: Claude Agent SDK — `query()` with fork options (P0)
-
-**Contracts**: Service [x]
-
-##### Service Interface
-
-Extension to existing `executePromptStream()` — no new function. The change is in the `query()` options construction:
-
-```typescript
-// Current (line 172 of prompt.ts):
-resume: conversation.claudeSessionId ?? undefined,
-
-// Extended:
-resume: conversation.claudeSessionId
-  ?? conversation.forkedFrom?.sourceClaudeSessionId
-  ?? undefined,
-forkSession: conversation.forkedFrom != null
-  && conversation.claudeSessionId == null
-  ? true
-  : undefined,
-```
+- Read the local CC transcript up to the fork point
+- Serialize messages into a fenced `<<<SYNTHETIC_FORK_SEED ...>>>` block
+- Return null if the transcript cannot be read or is empty (caller then throws a typed `ForkCreationError`)
 
 **Implementation Notes**
-- `forkSession: true` only on the first prompt (when `claudeSessionId` is still null)
-- After the first prompt, `claudeSessionId` is set from the SDK's response and `resume` uses it directly — standard flow
-- No changes to SSE streaming, transcript writing, or status broadcasting
+- The returned seed is prepended to `pendingPromptText`; the next prompt sent from the forked conversation primes the new SDK session with the seed.
+- Both the Claude and Codex agent-backends consume this seed via the `syntheticForkSeed` field on `ConversationBackendTurnInput` when the turn's runtime context indicates a fork-bootstrap turn.
 
 ### API Layer
 
@@ -373,21 +351,9 @@ forkSession: conversation.forkedFrom != null
 | Field | Detail |
 |-------|--------|
 | Intent | REST endpoint for creating a conversation fork |
-| Requirements | 1.1, 1.2, 2.2 |
+| Requirements | 1.1-1.3 |
 
-**Responsibilities & Constraints**
-- Validate request body (messageIndex required, editedText optional)
-- Resolve project and session
-- Call ForkConversation service
-- Return new conversation ID and name
-
-**Dependencies**
-- Inbound: Client fetch — POST request (P0)
-- Outbound: ForkConversation — creates the fork (P0)
-
-**Contracts**: API [x]
-
-##### API Contract
+**API Contract**
 
 | Method | Endpoint | Request | Response | Errors |
 |--------|----------|---------|----------|--------|
@@ -397,54 +363,36 @@ forkSession: conversation.forkedFrom != null
 // Request
 interface ForkRequest {
   messageIndex: number;
-  editedText?: string;
 }
 
 // Response (200)
 interface ForkResponse {
   conversationId: string;
   name: string;
+  forkMode: "native" | "synthetic" | null;
 }
 ```
 
 **Error Responses**:
-- `400`: Invalid messageIndex or empty editedText
-- `404`: Project, session, or conversation not found
-- `409`: Conversation is currently running (cannot fork while busy)
-- `500`: Filesystem or SDK error
+- `400`: Invalid messageIndex.
+- `404`: Project, session, or conversation not found.
+- `409`: Source conversation is currently running (cannot fork while busy).
+- `500`: Filesystem, SDK, or synthetic-seed failure (`ForkCreationError`).
 
-### UI State Layer
-
-#### SessionDetailStore (Extension)
+#### PendingPromptRoute
 
 | Field | Detail |
 |-------|--------|
-| Intent | Add editing state and auto-prompt delivery for fork flows |
-| Requirements | 2.1, 2.3, 2.4 |
+| Intent | REST endpoint to persist a conversation's `pendingPromptText` |
+| Requirements | 5.1, 5.2 |
 
-**Contracts**: State [x]
+**API Contract**
 
-##### State Management
+| Method | Endpoint | Request | Response | Errors |
+|--------|----------|---------|----------|--------|
+| PUT | `/api/projects/[name]/sessions/[session]/conversations/[conversationId]/pending-prompt` | `{ text: string | null }` | `204` | 400, 404 |
 
-```typescript
-// New state fields
-editingIndex: number | null;  // Which message is being edited (null = none)
-pendingForkPrompt: { conversationId: string; text: string } | null;  // Auto-prompt for edit-and-fork
-
-// New actions
-startEditing: (messageIndex: number) => void;
-cancelEditing: () => void;
-setPendingForkPrompt: (pending: { conversationId: string; text: string }) => void;
-consumePendingForkPrompt: () => { conversationId: string; text: string } | null;  // Read and clear atomically
-```
-
-**Implementation Notes**
-- `startEditing(idx)` sets `editingIndex = idx`
-- `cancelEditing()` sets `editingIndex = null`
-- On conversation change (`clearConversationMessages`), also reset `editingIndex` to null
-- `setPendingForkPrompt(pending)` stores the edited text and target conversation ID before navigation
-- `consumePendingForkPrompt()` returns the pending prompt and clears it atomically — called once on `SessionDetailPage` mount when the current conversation ID matches `pendingForkPrompt.conversationId`
-- If the page loads and `pendingForkPrompt.conversationId` doesn't match the current conversation, the pending prompt is silently discarded (stale navigation)
+The client debounces writes (~500ms) and uses `navigator.sendBeacon` on unload for a best-effort flush.
 
 ### UI Layer
 
@@ -452,55 +400,32 @@ consumePendingForkPrompt: () => { conversationId: string; text: string } | null;
 
 | Field | Detail |
 |-------|--------|
-| Intent | Hover action bar with Fork and Edit buttons on user messages |
-| Requirements | 5.1, 5.2, 5.3, 5.4, 5.5 |
+| Intent | Per-message action bar with Copy and Fork buttons |
+| Requirements | 1.4, 1.5 |
 
 **Implementation Notes**
-- Already created at `src/components/MessageActions.tsx` with CSS in `globals.css`
-- Props: `messageIndex`, `onFork`, `onEdit`, `disabled`
-- Fork has built-in two-click confirmation
-- CSS: absolute positioning on desktop (hover reveal), static positioning on mobile (always visible, 44px targets)
+- Rendered for every message (user or assistant).
+- `disabled` when the session is busy (running) or the conversation is read-only.
 
-#### MessageEditor
+#### ConversationDetailPage
 
 | Field | Detail |
 |-------|--------|
-| Intent | Inline textarea editor replacing message content during edit mode |
-| Requirements | 2.1, 2.4 |
+| Intent | Wire fork, persistent prompt input, and synthetic-fallback indicators |
+| Requirements | 1.3, 5.1, 5.2, 6.3 |
 
 **Implementation Notes**
-- Already created at `src/components/MessageEditor.tsx`
-- Props: `originalText`, `messageIndex`, `onSave`, `onCancel`, `saving`
-- Auto-focus, auto-resize, keyboard shortcuts (Escape, Ctrl+Enter)
-- Save button shows "Fork" / "Save & Fork" / "Forking..." based on state
-
-#### SessionDetailPage (Extension)
-
-| Field | Detail |
-|-------|--------|
-| Intent | Wire MessageActions and MessageEditor into the virtualized message render loop |
-| Requirements | 1.3, 1.4, 2.3, 2.5, 5.4 |
-
-**Implementation Notes**
-- In the virtualizer `.map()`: for user messages, render `<MessageActions>` inside the `.message.user` div
-- When `editingIndex === virtualRow.index`, render `<MessageEditor>` instead of `<MessageContent>`, add `.editing` CSS class
-- `handleFork(messageIndex)`: call fork API → `router.push()` to new conversation
-- `handleEditSave(messageIndex, newText)`: call fork API with `editedText` → `setPendingForkPrompt({ conversationId: newId, text: newText })` → `router.push()` to new conversation
-- On mount: call `consumePendingForkPrompt()` — if it returns a prompt matching the current conversation ID, auto-send it via the existing `sendPrompt()` hook
-- Extract text from `MessageContentBlock[]` by finding the first `type: "text"` block
+- Initialize the prompt input from `conversation.pendingPromptText` on mount.
+- Debounce changes (~500ms) into a PUT against the pending-prompt route; flush via `navigator.sendBeacon` on `beforeunload`.
+- On submit, clear the input client-side and let the prompt handler clear the server field.
+- Show a small synthetic-fallback indicator on the conversation header when `forkedFrom?.forkMode === "synthetic"`.
+- `handleFork(messageIndex)`: POST `/fork`, then `router.push()` to the returned conversation.
 
 #### ConversationSidebar (Extension)
 
-| Field | Detail |
-|-------|--------|
-| Intent | Display fork indicator icon and tooltip on forked conversations |
-| Requirements | 6.1, 6.2, 6.3 |
-
-**Implementation Notes**
-- In the conversation list item rendering: check `convo.forkedFrom != null`
-- If forked, render a small fork icon (same SVG as MessageActions) next to the conversation name
-- Add `title` attribute or `data-tooltip` with "Forked from {sourceName} at turn {N}" (source name resolved from conversations list)
-- No changes to sort order — existing `createdAt` sort handles fork ordering naturally
+- For conversations with `forkedFrom != null`, render a small fork icon next to the conversation name.
+- Tooltip: `"Forked from {sourceName} at turn {N}"` resolved from the conversations list.
+- No changes to sort order.
 
 ## Data Models
 
@@ -521,17 +446,21 @@ erDiagram
     Conversation {
         string id
         string name
-        string claudeSessionId
         string transcriptPath
         string status
         number promptCount
+        string pendingPromptText
         ForkedFrom forkedFrom
+        AgentSessionRef backendRef
     }
 
     ForkedFrom {
         string sourceConversationId
-        string sourceClaudeSessionId
         number messageIndex
+        string sourceBackend
+        AgentSessionRef sourceBackendRef
+        string forkLocator
+        string forkMode
     }
 
     Transcript {
@@ -541,33 +470,17 @@ erDiagram
 ```
 
 **Invariants**:
-- `forkedFrom.sourceClaudeSessionId` is immutable once set (captured at fork creation time)
-- A conversation with `forkedFrom != null` is a fork; `forkedFrom == null` is an original
-- Deleting a source conversation does not cascade to forks (forks are self-contained)
+- `forkedFrom` is immutable once set (captured at fork creation time).
+- `forkMode` is one of `"native" | "synthetic" | null`; `null` is used for case (c).
+- Deleting a source conversation does not cascade to forks (forks are self-contained — they have their own SDK session and transcript).
 
 ### Data Contracts & Integration
-
-**Fork API Request/Response** (defined in API Contract above)
-
-**Zod Schema Extension**:
-
-```typescript
-const forkedFromSchema = z.object({
-  sourceConversationId: z.string(),
-  sourceClaudeSessionId: z.string(),
-  messageIndex: z.number().int().nonneg(),
-}).nullable().default(null);
-
-// Add to conversationStateSchema:
-// forkedFrom: forkedFromSchema
-```
 
 **Fork Request Schema**:
 
 ```typescript
 const forkRequestSchema = z.object({
   messageIndex: z.number().int().nonneg(),
-  editedText: z.string().trim().min(1).optional(),
 });
 ```
 
@@ -576,36 +489,36 @@ const forkRequestSchema = z.object({
 ### Error Categories and Responses
 
 **User Errors (4xx)**:
-- Invalid messageIndex (out of range) → `400` with descriptive message
-- Empty editedText → `400` with validation error
-- Source conversation has no resolvable Claude session ID (no `claudeSessionId` and no `forkedFrom.sourceClaudeSessionId`) → `400` with "Cannot fork: conversation has no history with Claude"
-- Fork while running → `409` with "Cannot fork while conversation is running"
+- Invalid `messageIndex` (out of range) → `400`.
+- Fork while running → `409` with "Cannot fork while conversation is running".
 
 **System Errors (5xx)**:
-- Transcript file read/write failure → `500` with generic error, logged server-side
-- State persistence failure → `500`, existing atomic write pattern handles crash safety
+- `ForkCreationError("fork_failed", …)` — SDK fork threw and the synthetic seed could not be built → `500`.
+- Transcript file read/write failure → `500`, logged server-side.
+- State persistence failure → `500`, existing atomic write pattern handles crash safety.
 
 **Business Logic**:
-- Source conversation not found → `404`
-- Conversation has no messages up to messageIndex → `400`
+- Source conversation not found → `404`.
+- Source has no messages up to `messageIndex` → `400`.
 
 ## Testing Strategy
 
 ### Unit Tests
-- `forkConversation()` — creates conversation with correct `forkedFrom` metadata, name, promptCount
-- `copyTranscriptUpTo()` — copies correct JSONL lines, handles edit append, preserves system entries
-- Fork request schema validation — valid/invalid messageIndex, optional editedText
-- SDK fork parameter injection — `forkSession: true` on first prompt, absent on subsequent
+- `forkConversation()` — exercises all four cases (a/b/c/d) with mocked SDK; verifies `forkedFrom`, `pendingPromptText`, `backendRef`, `forkMode`.
+- `copyTranscriptUpTo()` — copies correct JSONL subsets for `mode: "inclusive"` and `mode: "exclusive"`; preserves interleaved system entries.
+- `findForkAnchorUuid()` — returns the right UUID for each mode at boundary indices.
+- `buildSyntheticForkSeed()` — serialization round-trips; returns null on empty transcripts.
+- Fork request schema validation — valid/invalid `messageIndex`.
 
 ### Integration Tests
-- Full fork flow: create conversation → send prompt → fork → verify new conversation state and transcript
-- Edit-and-fork flow: fork with editedText → verify transcript contains edited message
-- Fork then prompt: verify SDK receives `resume` + `forkSession: true` → new `claudeSessionId` established
+- Full fork flow per case: create conversation → send prompt → fork → verify new conversation state and transcript.
+- Synthetic fallback path: corrupt the SDK session file, fork, verify `forkMode === "synthetic"` and the seed is in `pendingPromptText`.
+- Pending-prompt round trip: PUT, reload, GET, verify value persists.
 
 ### E2E/UI Tests
-- Hover over user message → action bar appears with Fork/Edit buttons
-- Click Fork → confirmation → navigation to new conversation
-- Click Edit → inline editor appears → modify text → Save → navigation
-- Cancel edit → editor dismissed, original content restored
-- Fork disabled while session is running
-- Fork indicator visible in sidebar for forked conversations
+- Fork action visible per message; disabled while busy.
+- Fork from assistant message → new conversation includes that turn.
+- Fork from user message > 0 → new conversation's input prepopulated with the user's text.
+- Fork from user message at index 0 → new conversation has no transcript; input prepopulated; sending starts a brand-new SDK session.
+- Persistent prompt input survives navigation and reload; clears on submit.
+- Synthetic-fallback indicator visible in the header when `forkMode === "synthetic"`.

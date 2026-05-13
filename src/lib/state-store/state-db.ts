@@ -92,6 +92,7 @@ const SCHEMA_DDL = `
     total_turns           INTEGER,
     pending_question_id   TEXT,
     pending_questions     TEXT,
+    pending_prompt_text   TEXT,
     forked_from           TEXT,
     role                  TEXT,
     context_tokens        INTEGER,
@@ -217,8 +218,33 @@ function enforceForwardOnlyVersion(db: Db, dbPath: string): void {
   }
 }
 
+/**
+ * Idempotent column additions for tables that already existed before a column
+ * was added to the DDL. `CREATE TABLE IF NOT EXISTS` is a no-op when the table
+ * is already present, so new columns must be added explicitly. Each entry
+ * encodes the table, column name, and full column type spec; `PRAGMA
+ * table_info` decides whether the column already exists. Safe to run on a
+ * freshly-created DB — it just finds the column and skips.
+ */
+const ADDITIVE_COLUMNS: ReadonlyArray<{
+  table: string;
+  column: string;
+  type: string;
+}> = [{ table: "conversations", column: "pending_prompt_text", type: "TEXT" }];
+
+function ensureAdditiveColumns(db: Db): void {
+  for (const { table, column, type } of ADDITIVE_COLUMNS) {
+    const cols = db.pragma(`table_info(${table})`) as { name: string }[];
+    const exists = cols.some((c) => c.name === column);
+    if (!exists) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    }
+  }
+}
+
 function initializeSchema(db: Db, dbPath: string): void {
   db.exec(SCHEMA_DDL);
+  ensureAdditiveColumns(db);
   enforceForwardOnlyVersion(db, dbPath);
 }
 

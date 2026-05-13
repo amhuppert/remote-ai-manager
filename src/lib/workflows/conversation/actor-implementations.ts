@@ -56,6 +56,7 @@ import {
   TDD_INSTRUCTIONS,
 } from "@/lib/prompt";
 import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
+import { buildSyntheticForkSeed } from "@/lib/synthetic-fork-seed";
 import { createExternalTurnHandler } from "./external-turn-handler";
 import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
@@ -509,6 +510,33 @@ export function shouldRetryUndeliveredPrompt(
   );
 }
 
+/**
+ * Decide whether the first turn should build a synthetic-fork seed from the
+ * local transcript copy. Only fires for non-Claude forks that have a
+ * transcript and no backend continuity yet.
+ *
+ * Claude forks never need a runtime seed:
+ *  - "native": arrive with `backendRef` populated (eager SDK fork).
+ *  - "synthetic" fallback: `pendingPromptText` already carries the seed;
+ *    re-seeding here would duplicate context on the first prompt.
+ *  - case 3 (user fork at index 0): no source continuity, behaves like a
+ *    brand-new conversation.
+ */
+export function shouldBuildRuntimeSyntheticSeed(input: {
+  forkedFrom: unknown;
+  backendRef: unknown;
+  agentBackend: string;
+  transcriptPath: string | null;
+}): boolean {
+  return (
+    input.forkedFrom !== null &&
+    input.forkedFrom !== undefined &&
+    !input.backendRef &&
+    input.agentBackend !== "claude" &&
+    input.transcriptPath !== null
+  );
+}
+
 // ============================================================
 // Backend-aware settings resolution
 // ============================================================
@@ -741,60 +769,6 @@ export function mapErrorSubtype(error: SDKResultError): string {
 }
 
 // ============================================================
-// Synthetic fork seed
-// ============================================================
-
-/**
- * Build a text seed from the transcript up to the fork point so backends
- * without native fork support can receive prior conversation context.
- */
-const SYNTHETIC_FORK_MAX_CHARS = 24_000;
-const SYNTHETIC_FORK_TRUNCATION_PREFIX = "[truncated historical context]\n\n";
-
-async function buildSyntheticForkSeed(
-  deps: ActorImplementationDeps,
-  transcriptPath: string,
-  messageIndex: number,
-): Promise<string | null> {
-  try {
-    const messages = await deps.readConversationMessages(transcriptPath);
-    const forkSlice = messages.slice(0, messageIndex + 1);
-    if (forkSlice.length === 0) return null;
-
-    const blocks: string[] = [];
-    for (const msg of forkSlice) {
-      const role = msg.role === "user" ? "User" : "Assistant";
-      const textParts = msg.content
-        .filter((b): b is { type: "text"; text: string } => b.type === "text")
-        .map((b) => b.text);
-      if (textParts.length > 0) {
-        blocks.push(`${role}: ${textParts.join("\n")}`);
-      }
-    }
-
-    const header =
-      "The following is the conversation history up to the fork point. Continue from here:\n";
-    let body = blocks.join("\n\n");
-
-    if (header.length + body.length > SYNTHETIC_FORK_MAX_CHARS) {
-      const budget =
-        SYNTHETIC_FORK_MAX_CHARS -
-        header.length -
-        SYNTHETIC_FORK_TRUNCATION_PREFIX.length;
-      body = SYNTHETIC_FORK_TRUNCATION_PREFIX + body.slice(-budget);
-    }
-
-    return header + "\n" + body;
-  } catch (err) {
-    logger.warn("prompt.synthetic_fork_failed", {
-      transcriptPath,
-      error: getErrorMessage(err),
-    });
-    return null;
-  }
-}
-
-// ============================================================
 // Backend runtime creation
 // ============================================================
 
@@ -817,7 +791,6 @@ interface DispatchTurnViaAgentCallInput {
   autonomous: boolean;
   outputFormat: ConversationBackendTurnInput["outputFormat"];
   onEvent: ConversationBackendTurnInput["onEvent"];
-  nativeFork: ConversationBackendTurnInput["nativeFork"];
   syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"];
 }
 
@@ -919,9 +892,6 @@ async function dispatchTurnViaAgentCall(
           ? { imageRefs: input.imageRefs }
           : {}),
         onEvent: input.onEvent,
-        ...(input.nativeFork !== undefined
-          ? { nativeFork: input.nativeFork }
-          : {}),
         ...(input.syntheticForkSeed !== undefined
           ? { syntheticForkSeed: input.syntheticForkSeed }
           : {}),
@@ -1395,37 +1365,22 @@ export async function executePromptForMachine(
           .map((b) => b.text)
           .join("\n\n");
 
-  // Determine fork params
-  let nativeFork: ConversationBackendTurnInput["nativeFork"] = undefined;
   let syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"] =
     undefined;
 
-  if (input.forkedFrom && !input.backendRef) {
-    // First turn of a forked conversation
-    const sourceRef = input.forkedFrom.sourceBackendRef ?? undefined;
-    const locator = input.forkedFrom.forkLocator ?? null;
-
-    if (backendRuntime!.capabilities.preciseFork && sourceRef) {
-      logger.info("prompt.native_fork", {
+  if (shouldBuildRuntimeSyntheticSeed(input)) {
+    syntheticForkSeed = await buildSyntheticForkSeed(
+      input.transcriptPath!,
+      input.forkedFrom!.messageIndex,
+      { readConversationMessages: deps.readConversationMessages },
+    );
+    if (syntheticForkSeed) {
+      logger.info("prompt.synthetic_fork", {
         sessionName: input.sessionName,
-        sourceRef,
-        forkLocator: locator,
+        backend: input.agentBackend,
+        seedLength: syntheticForkSeed.length,
+        messageIndex: input.forkedFrom!.messageIndex,
       });
-      nativeFork = { sourceRef, forkLocator: locator };
-    } else {
-      // Backend doesn't support precise fork — synthesize context from transcript
-      syntheticForkSeed = await buildSyntheticForkSeed(
-        deps,
-        input.transcriptPath,
-        input.forkedFrom.messageIndex,
-      );
-      if (syntheticForkSeed) {
-        logger.info("prompt.synthetic_fork", {
-          sessionName: input.sessionName,
-          seedLength: syntheticForkSeed.length,
-          messageIndex: input.forkedFrom.messageIndex,
-        });
-      }
     }
   }
 
@@ -1502,7 +1457,6 @@ export async function executePromptForMachine(
       autonomous: input.autonomous ?? false,
       outputFormat: input.outputFormat,
       onEvent,
-      nativeFork,
       syntheticForkSeed,
     });
     turnResult = turnDispatch.turnResult;

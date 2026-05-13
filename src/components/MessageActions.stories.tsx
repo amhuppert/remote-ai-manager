@@ -14,7 +14,6 @@ const meta = {
       },
     ],
     onFork: fn(),
-    onEdit: fn(),
   },
   decorators: [
     (Story) => (

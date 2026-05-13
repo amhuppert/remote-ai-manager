@@ -276,9 +276,12 @@ export const forkedFromSchema = z
   .object({
     sourceConversationId: z.string(),
     messageIndex: z.number().int().min(0),
-    sourceBackend: agentBackendSchema.optional(),
-    sourceBackendRef: agentSessionRefSchema.optional(),
+    sourceBackend: agentBackendSchema.nullable().optional(),
+    // Null when the fork is not derived from the source SDK session
+    // (e.g., user fork at index 0 — "edit and start over").
+    sourceBackendRef: agentSessionRefSchema.nullable().optional(),
     forkLocator: z.string().nullable().optional(),
+    forkMode: z.enum(["native", "synthetic"]).nullable().default(null),
   })
   .nullable()
   .default(null);
@@ -615,6 +618,7 @@ export const conversationStateSchema = z.object({
   totalTurns: z.number().nullable().default(null),
   pendingQuestionId: z.string().nullable().default(null),
   pendingQuestions: z.array(askQuestionItemSchema).nullable().default(null),
+  pendingPromptText: z.string().nullable().default(null),
   forkedFrom: forkedFromSchema,
   role: conversationRoleSchema,
   contextTokens: z.number().nullable().default(null),
@@ -1894,9 +1898,20 @@ export type RenameConversationRequest = z.infer<
 
 export const forkRequestSchema = z.object({
   messageIndex: z.number().int().min(0),
-  editedText: z.string().trim().min(1).optional(),
 });
 export type ForkRequest = z.infer<typeof forkRequestSchema>;
+
+export const forkResponseSchema = z.object({
+  conversationId: z.string(),
+  name: z.string(),
+  forkMode: z.enum(["native", "synthetic"]).nullable(),
+});
+export type ForkResponse = z.infer<typeof forkResponseSchema>;
+
+export const pendingPromptRequestSchema = z.object({
+  text: z.string().nullable(),
+});
+export type PendingPromptRequest = z.infer<typeof pendingPromptRequestSchema>;
 
 export const debugModeRequestSchema = z.object({
   action: z.enum([

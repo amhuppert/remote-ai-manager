@@ -70,6 +70,7 @@ const conversationsTableRowSchema = z.object({
   total_turns: z.number().int().nullable(),
   pending_question_id: z.string().nullable(),
   pending_questions: z.string().nullable(),
+  pending_prompt_text: z.string().nullable(),
   forked_from: z.string().nullable(),
   role: z.string().nullable(),
   context_tokens: z.number().int().nullable(),
@@ -101,6 +102,7 @@ interface SqlBindRow {
   total_turns: number | null;
   pending_question_id: string | null;
   pending_questions: string | null;
+  pending_prompt_text: string | null;
   forked_from: string | null;
   role: string | null;
   context_tokens: number | null;
@@ -165,6 +167,7 @@ function conversationToSqlBind(
     total_turns: conversation.totalTurns,
     pending_question_id: conversation.pendingQuestionId,
     pending_questions: jsonOrNull(conversation.pendingQuestions),
+    pending_prompt_text: conversation.pendingPromptText,
     forked_from: jsonOrNull(conversation.forkedFrom),
     role: conversation.role,
     context_tokens: conversation.contextTokens,
@@ -386,6 +389,7 @@ function rowToDomain(rawRow: unknown): {
     totalTurns: row.total_turns,
     pendingQuestionId: row.pending_question_id,
     pendingQuestions: pendingQuestions.value ?? null,
+    pendingPromptText: row.pending_prompt_text,
     forkedFrom: forkedFrom.value ?? null,
     role: roleResult.data,
     contextTokens: row.context_tokens,
@@ -461,14 +465,14 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        id, project_path, session_name, name, transcript_path, status,
        prompt_count, created_at, last_activity_at, source, summary, archived,
        total_cost_usd, total_duration_ms, total_turns, pending_question_id,
-       pending_questions, forked_from, role, context_tokens, context_window_max,
+       pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
        debug_mode, machine_snapshot, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime
      ) VALUES (
        @id, @project_path, @session_name, @name, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
        @total_cost_usd, @total_duration_ms, @total_turns, @pending_question_id,
-       @pending_questions, @forked_from, @role, @context_tokens, @context_window_max,
+       @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
        @debug_mode, @machine_snapshot, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime
      )
@@ -489,6 +493,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        total_turns         = excluded.total_turns,
        pending_question_id = excluded.pending_question_id,
        pending_questions   = excluded.pending_questions,
+       pending_prompt_text = excluded.pending_prompt_text,
        forked_from         = excluded.forked_from,
        role                = excluded.role,
        context_tokens      = excluded.context_tokens,

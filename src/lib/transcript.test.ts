@@ -7,7 +7,7 @@ import {
   getTranscriptPath,
   parseCommandContent,
   copyTranscriptUpTo,
-  findLastAssistantUuid,
+  findForkAnchorUuid,
   type TranscriptEntry,
 } from "./transcript";
 
@@ -688,6 +688,7 @@ describe("copyTranscriptUpTo", () => {
       sourceTranscriptPath: sourcePath,
       targetConversationId: "fork-merge-target",
       upToMessageIndex: 2,
+      mode: "exclusive",
       configDir: TEST_DIR,
     });
 
@@ -744,6 +745,7 @@ describe("copyTranscriptUpTo", () => {
       sourceTranscriptPath: sourcePath,
       targetConversationId: "fork-noresp-target",
       upToMessageIndex: 2,
+      mode: "exclusive",
       configDir: TEST_DIR,
     });
 
@@ -754,62 +756,6 @@ describe("copyTranscriptUpTo", () => {
     expect(target[target.length - 1]!.content![0]).toEqual({
       type: "text",
       text: "Part 3",
-    });
-  });
-
-  it("uses merged message indices for edit-and-fork", async () => {
-    const entries: TranscriptEntry[] = [
-      {
-        timestamp: "t0",
-        type: "user",
-        role: "user",
-        content: [{ type: "text", text: "Hello" }],
-      },
-      {
-        timestamp: "t1",
-        type: "assistant",
-        role: "assistant",
-        content: [{ type: "text", text: "Part 1" }],
-      },
-      {
-        timestamp: "t2",
-        type: "assistant",
-        role: "assistant",
-        content: [{ type: "text", text: "Part 2" }],
-      },
-      {
-        timestamp: "t3",
-        type: "user",
-        role: "user",
-        content: [{ type: "text", text: "Follow-up" }],
-      },
-      {
-        timestamp: "t4",
-        type: "assistant",
-        role: "assistant",
-        content: [{ type: "text", text: "Response" }],
-      },
-    ];
-
-    const sourcePath = await writeTranscript("fork-edit-source", entries);
-
-    // Edit-and-fork at merged index 2 (the "Follow-up" user message)
-    // Should copy everything BEFORE that message, then append edited text
-    await copyTranscriptUpTo({
-      sourceTranscriptPath: sourcePath,
-      targetConversationId: "fork-edit-target",
-      upToMessageIndex: 2,
-      appendEditedMessage: { text: "Edited follow-up", timestamp: "t-edit" },
-      configDir: TEST_DIR,
-    });
-
-    const target = await readTarget("fork-edit-target");
-
-    // Should have 3 original lines (user + 2 assistant) + 1 edited message = 4
-    expect(target).toHaveLength(4);
-    expect(target[target.length - 1]!.content![0]).toEqual({
-      type: "text",
-      text: "Edited follow-up",
     });
   });
 
@@ -859,6 +805,7 @@ describe("copyTranscriptUpTo", () => {
       sourceTranscriptPath: sourcePath,
       targetConversationId: "fork-nonvisible-target",
       upToMessageIndex: 2,
+      mode: "exclusive",
       configDir: TEST_DIR,
     });
 
@@ -907,6 +854,7 @@ describe("copyTranscriptUpTo", () => {
       sourceTranscriptPath: sourcePath,
       targetConversationId: "fork-exclude-target",
       upToMessageIndex: 2,
+      mode: "exclusive",
       configDir: TEST_DIR,
     });
 
@@ -919,10 +867,10 @@ describe("copyTranscriptUpTo", () => {
 });
 
 // ==========================================================================
-// findLastAssistantUuid
+// findForkAnchorUuid — exclusive mode
 // ==========================================================================
 
-describe("findLastAssistantUuid", () => {
+describe("findForkAnchorUuid (exclusive)", () => {
   async function writeTranscript(
     name: string,
     entries: TranscriptEntry[],
@@ -965,8 +913,10 @@ describe("findLastAssistantUuid", () => {
 
     const sourcePath = await writeTranscript("uuid-basic", entries);
 
-    // Fork at message 2 (second user message) → last assistant before it is uuid-asst-1
-    const uuid = await findLastAssistantUuid(sourcePath, 2);
+    const uuid = await findForkAnchorUuid(sourcePath, {
+      atMessageIndex: 2,
+      mode: "exclusive",
+    });
     expect(uuid).toBe("uuid-asst-1");
   });
 
@@ -1009,8 +959,10 @@ describe("findLastAssistantUuid", () => {
 
     const sourcePath = await writeTranscript("uuid-merged", entries);
 
-    // Fork at message 2 (Follow-up) → last assistant UUID is uuid-part-3
-    const uuid = await findLastAssistantUuid(sourcePath, 2);
+    const uuid = await findForkAnchorUuid(sourcePath, {
+      atMessageIndex: 2,
+      mode: "exclusive",
+    });
     expect(uuid).toBe("uuid-part-3");
   });
 
@@ -1038,7 +990,10 @@ describe("findLastAssistantUuid", () => {
 
     const sourcePath = await writeTranscript("uuid-legacy", entries);
 
-    const uuid = await findLastAssistantUuid(sourcePath, 2);
+    const uuid = await findForkAnchorUuid(sourcePath, {
+      atMessageIndex: 2,
+      mode: "exclusive",
+    });
     expect(uuid).toBeNull();
   });
 
@@ -1061,8 +1016,10 @@ describe("findLastAssistantUuid", () => {
 
     const sourcePath = await writeTranscript("uuid-first", entries);
 
-    // Fork at message 0 → no assistant before it
-    const uuid = await findLastAssistantUuid(sourcePath, 0);
+    const uuid = await findForkAnchorUuid(sourcePath, {
+      atMessageIndex: 0,
+      mode: "exclusive",
+    });
     expect(uuid).toBeNull();
   });
 
@@ -1101,8 +1058,234 @@ describe("findLastAssistantUuid", () => {
 
     const sourcePath = await writeTranscript("uuid-nonvisible", entries);
 
-    // Fork at message 2 (second user) → last assistant is uuid-1
-    const uuid = await findLastAssistantUuid(sourcePath, 2);
+    const uuid = await findForkAnchorUuid(sourcePath, {
+      atMessageIndex: 2,
+      mode: "exclusive",
+    });
     expect(uuid).toBe("uuid-1");
+  });
+});
+
+// ==========================================================================
+// findForkAnchorUuid — inclusive mode
+// ==========================================================================
+
+describe("findForkAnchorUuid (inclusive)", () => {
+  async function writeTranscript(
+    name: string,
+    entries: TranscriptEntry[],
+  ): Promise<string> {
+    const filePath = path.join(TEST_DIR, "transcripts", `${name}.jsonl`);
+    const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    await writeFile(filePath, content, "utf-8");
+    return filePath;
+  }
+
+  it("returns the target assistant's own uuid when anchoring inclusively at an assistant message", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi there" }],
+        uuid: "uuid-asst-1",
+      },
+    ];
+
+    const sourcePath = await writeTranscript("inc-asst", entries);
+
+    const uuid = await findForkAnchorUuid(sourcePath, {
+      atMessageIndex: 1,
+      mode: "inclusive",
+    });
+    expect(uuid).toBe("uuid-asst-1");
+  });
+
+  it("returns the last JSONL uuid in the target merged assistant message", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 1" }],
+        uuid: "uuid-part-1",
+      },
+      {
+        timestamp: "t2",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 2" }],
+        uuid: "uuid-part-2",
+      },
+      {
+        timestamp: "t3",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Follow-up" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("inc-merged", entries);
+
+    const uuid = await findForkAnchorUuid(sourcePath, {
+      atMessageIndex: 1,
+      mode: "inclusive",
+    });
+    expect(uuid).toBe("uuid-part-2");
+  });
+
+  it("returns null when the inclusive target is a user message", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi" }],
+        uuid: "uuid-asst-1",
+      },
+      {
+        timestamp: "t2",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Question" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("inc-user-target", entries);
+
+    const uuid = await findForkAnchorUuid(sourcePath, {
+      atMessageIndex: 2,
+      mode: "inclusive",
+    });
+    expect(uuid).toBeNull();
+  });
+});
+
+// ==========================================================================
+// copyTranscriptUpTo — inclusive mode
+// ==========================================================================
+
+describe("copyTranscriptUpTo (inclusive)", () => {
+  async function writeTranscript(
+    name: string,
+    entries: TranscriptEntry[],
+  ): Promise<string> {
+    const filePath = path.join(TEST_DIR, "transcripts", `${name}.jsonl`);
+    const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    await writeFile(filePath, content, "utf-8");
+    return filePath;
+  }
+
+  async function readTarget(
+    conversationId: string,
+  ): Promise<TranscriptEntry[]> {
+    const targetPath = path.join(
+      TEST_DIR,
+      "transcripts",
+      `${conversationId}.jsonl`,
+    );
+    const raw = await readFile(targetPath, "utf-8");
+    return raw
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as TranscriptEntry);
+  }
+
+  it("includes the target assistant message at the cutoff", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 1" }],
+        uuid: "uuid-part-1",
+      },
+      {
+        timestamp: "t2",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Part 2" }],
+        uuid: "uuid-part-2",
+      },
+      {
+        timestamp: "t3",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Follow-up" }],
+      },
+    ];
+
+    const sourcePath = await writeTranscript("inc-copy-source", entries);
+
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "inc-copy-target",
+      upToMessageIndex: 1,
+      mode: "inclusive",
+      configDir: TEST_DIR,
+    });
+
+    const target = await readTarget("inc-copy-target");
+    // user "Hello" + assistant "Part 1" + assistant "Part 2"
+    expect(target).toHaveLength(3);
+    expect(target[target.length - 1]!.content![0]).toEqual({
+      type: "text",
+      text: "Part 2",
+    });
+  });
+
+  it("copies the full transcript when target is the last merged message", async () => {
+    const entries: TranscriptEntry[] = [
+      {
+        timestamp: "t0",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      {
+        timestamp: "t1",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Hi" }],
+        uuid: "uuid-asst",
+      },
+    ];
+
+    const sourcePath = await writeTranscript("inc-full", entries);
+
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "inc-full-target",
+      upToMessageIndex: 1,
+      mode: "inclusive",
+      configDir: TEST_DIR,
+    });
+
+    const target = await readTarget("inc-full-target");
+    expect(target).toHaveLength(2);
   });
 });

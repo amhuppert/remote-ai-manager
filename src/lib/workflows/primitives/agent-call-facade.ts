@@ -50,7 +50,6 @@ export interface ConversationRuntimeResolution {
   imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
   artifacts?: readonly ArtifactRef[];
-  nativeFork?: ConversationBackendTurnInput["nativeFork"];
   syntheticForkSeed?: ConversationBackendTurnInput["syntheticForkSeed"];
 }
 
@@ -160,9 +159,6 @@ async function executeConversationTurn(
       : {}),
     ...(resolution.artifacts !== undefined
       ? { artifacts: resolution.artifacts }
-      : {}),
-    ...(resolution.nativeFork !== undefined
-      ? { nativeFork: resolution.nativeFork }
       : {}),
     ...(resolution.syntheticForkSeed !== undefined
       ? { syntheticForkSeed: resolution.syntheticForkSeed }

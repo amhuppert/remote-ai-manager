@@ -92,6 +92,7 @@ const testConversation = {
   source: "cc",
   pendingQuestionId: null,
   pendingQuestions: null,
+  pendingPromptText: null,
   forkedFrom: null,
   contextTokens: null,
   contextWindowMax: null,

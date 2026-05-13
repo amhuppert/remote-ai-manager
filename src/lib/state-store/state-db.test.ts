@@ -96,6 +96,74 @@ describe("state-db schema initialization", () => {
   });
 });
 
+describe("state-db additive column migrations", () => {
+  it("adds pending_prompt_text to a pre-existing conversations table that lacks it", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE conversations (
+        id                    TEXT PRIMARY KEY,
+        project_path          TEXT NOT NULL,
+        session_name          TEXT NOT NULL,
+        name                  TEXT,
+        transcript_path       TEXT,
+        status                TEXT NOT NULL,
+        prompt_count          INTEGER NOT NULL DEFAULT 0,
+        created_at            TEXT NOT NULL,
+        last_activity_at      TEXT NOT NULL,
+        source                TEXT NOT NULL DEFAULT 'cc',
+        summary               TEXT,
+        archived              INTEGER NOT NULL DEFAULT 0,
+        total_cost_usd        REAL,
+        total_duration_ms     INTEGER,
+        total_turns           INTEGER,
+        pending_question_id   TEXT,
+        pending_questions     TEXT,
+        forked_from           TEXT,
+        role                  TEXT,
+        context_tokens        INTEGER,
+        context_window_max    INTEGER,
+        debug_mode            TEXT,
+        machine_snapshot      TEXT,
+        agent_backend         TEXT NOT NULL DEFAULT 'claude',
+        backend_ref           TEXT,
+        mcp_overrides         TEXT,
+        mcp_runtime           TEXT
+      )
+    `);
+    const preCols = legacy.pragma("table_info(conversations)") as {
+      name: string;
+    }[];
+    expect(preCols.some((c) => c.name === "pending_prompt_text")).toBe(false);
+    legacy.close();
+
+    const reopened = _createTestDbAtPath(dbPath);
+    try {
+      const postCols = reopened.pragma("table_info(conversations)") as {
+        name: string;
+      }[];
+      expect(postCols.some((c) => c.name === "pending_prompt_text")).toBe(true);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it("is a no-op when pending_prompt_text already exists (idempotent)", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+
+    const first = _createTestDbAtPath(dbPath);
+    first.close();
+
+    expect(() => {
+      const second = _createTestDbAtPath(dbPath);
+      second.close();
+    }).not.toThrow();
+  });
+});
+
 describe("state-db forward-only schema_migrations conflict policy", () => {
   it("refuses to open when schema_migrations records a version greater than KNOWN_SCHEMA_VERSION", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));

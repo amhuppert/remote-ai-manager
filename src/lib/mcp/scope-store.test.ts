@@ -56,6 +56,7 @@ function stateWithAllScopes(): ManagerState {
                 totalTurns: null,
                 pendingQuestionId: null,
                 pendingQuestions: null,
+                pendingPromptText: null,
                 forkedFrom: null,
                 role: "iteration",
                 contextTokens: null,

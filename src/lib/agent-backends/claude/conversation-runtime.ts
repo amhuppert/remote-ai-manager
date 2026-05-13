@@ -83,16 +83,13 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
 
   private _status: "alive" | "dead" = "alive";
   private querySession: QuerySession;
-  private readonly baseSessionOptions: QuerySessionOptions;
   private readonly onPortableMcpApplied: (
     config: PortableMcpConfig | null,
   ) => void;
   private readonly sessionToolsInstance: McpServer;
-  private currentTranslatedServers: Record<string, McpServerConfig> = {};
 
   constructor(
     querySession: QuerySession,
-    baseSessionOptions: QuerySessionOptions,
     opts: {
       modelId?: string;
       reasoningEffort?: string;
@@ -102,7 +99,6 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     },
   ) {
     this.querySession = querySession;
-    this.baseSessionOptions = baseSessionOptions;
     this.modelId = opts.modelId;
     this.reasoningEffort = opts.reasoningEffort;
     this.outputFormat = opts.outputFormat;
@@ -129,13 +125,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   }
 
   async init(translated: Record<string, McpServerConfig>): Promise<void> {
-    this.currentTranslatedServers = translated;
     const merged = this.mergeSessionToolsServer(translated);
-    await this.querySession.query.setMcpServers(merged);
-  }
-
-  private async ensureMcpServersAfterQuerySessionRecreate(): Promise<void> {
-    const merged = this.mergeSessionToolsServer(this.currentTranslatedServers);
     await this.querySession.query.setMcpServers(merged);
   }
 
@@ -152,38 +142,9 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     logger.info("claude-runtime.turn_start", {
       conversationId: this.querySession.conversationId,
       autonomous: input.autonomous,
-      hasFork: !!input.nativeFork,
     });
 
     const startTime = Date.now();
-
-    // Handle native fork: create a new QuerySession forking from the source
-    if (input.nativeFork) {
-      const sourceSessionId =
-        input.nativeFork.sourceRef.backend === "claude"
-          ? input.nativeFork.sourceRef.sessionId
-          : undefined;
-
-      if (sourceSessionId) {
-        logger.info("claude-runtime.fork", {
-          conversationId: this.querySession.conversationId,
-          sourceSessionId,
-          forkLocator: input.nativeFork.forkLocator,
-        });
-
-        // Close existing session before creating fork
-        this.querySession.close();
-
-        this.querySession = createQuerySession({
-          ...this.baseSessionOptions,
-          resume: sourceSessionId,
-          forkSession: true,
-          resumeSessionAt: input.nativeFork.forkLocator ?? undefined,
-        });
-
-        await this.ensureMcpServersAfterQuerySessionRecreate();
-      }
-    }
 
     const promptBlocks: MessageContentBlock[] = buildClaudePromptBlocks({
       promptText: input.promptText,
@@ -327,7 +288,6 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     }
 
     try {
-      this.currentTranslatedServers = servers;
       const result = await this.querySession.query.setMcpServers(
         this.mergeSessionToolsServer(servers),
       );
@@ -582,19 +542,15 @@ const claudeConversationBackendFactory = {
 
     const querySession = createQuerySession(sessionOptions);
 
-    const runtime = new ClaudeConversationRuntime(
-      querySession,
-      sessionOptions,
-      {
-        modelId: input.modelId,
-        reasoningEffort: input.reasoningEffort,
-        outputFormat: input.outputFormat,
-        onPortableMcpApplied: (config) => {
-          currentPortableConfig = config;
-        },
-        sessionToolsInstance,
+    const runtime = new ClaudeConversationRuntime(querySession, {
+      modelId: input.modelId,
+      reasoningEffort: input.reasoningEffort,
+      outputFormat: input.outputFormat,
+      onPortableMcpApplied: (config) => {
+        currentPortableConfig = config;
       },
-    );
+      sessionToolsInstance,
+    });
 
     try {
       await runtime.init(translatedServers);

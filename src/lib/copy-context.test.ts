@@ -23,6 +23,7 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     totalTurns: 5,
     pendingQuestionId: null,
     pendingQuestions: null,
+    pendingPromptText: null,
     forkedFrom: null,
     role: null,
     contextTokens: 80000,

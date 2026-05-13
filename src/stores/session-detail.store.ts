@@ -40,8 +40,6 @@ interface SessionDetailState {
   pendingQuestions: AskQuestionItem[] | null;
   pendingQuestionId: string | null;
   currentQuestionIndex: number;
-  editingIndex: number | null;
-  pendingForkPrompt: { conversationId: string; text: string } | null;
   specBrowserSelection: SpecBrowserSelection | null;
   selectedDocId: string | null;
 }
@@ -82,16 +80,6 @@ interface SessionDetailActions {
   showQuestions: (questionId: string, questions: AskQuestionItem[]) => void;
   navigateQuestion: (index: number) => void;
   clearQuestions: () => void;
-  startEditing: (messageIndex: number) => void;
-  cancelEditing: () => void;
-  setPendingForkPrompt: (pending: {
-    conversationId: string;
-    text: string;
-  }) => void;
-  consumePendingForkPrompt: () => {
-    conversationId: string;
-    text: string;
-  } | null;
   selectSpecCategory: (category: string) => void;
   selectSpecFile: (category: string, file: string) => void;
   clearSpecSelection: () => void;
@@ -131,8 +119,6 @@ const initialState: SessionDetailState = {
   pendingQuestions: null,
   pendingQuestionId: null,
   currentQuestionIndex: 0,
-  editingIndex: null,
-  pendingForkPrompt: null,
   specBrowserSelection: null,
   selectedDocId: null,
 };
@@ -380,32 +366,6 @@ const useSessionDetailStore = create<SessionDetailStore>()(
         state.currentQuestionIndex = 0;
       }),
 
-    // -- Fork / Edit --
-
-    startEditing: (messageIndex) =>
-      set((state) => {
-        state.editingIndex = messageIndex;
-      }),
-
-    cancelEditing: () =>
-      set((state) => {
-        state.editingIndex = null;
-      }),
-
-    setPendingForkPrompt: (pending) =>
-      set((state) => {
-        state.pendingForkPrompt = pending;
-      }),
-
-    consumePendingForkPrompt: () => {
-      const { pendingForkPrompt } = get();
-      if (!pendingForkPrompt) return null;
-      set((state) => {
-        state.pendingForkPrompt = null;
-      });
-      return pendingForkPrompt;
-    },
-
     // -- Spec Browser --
 
     selectSpecCategory: (category) =>
@@ -443,7 +403,6 @@ const useSessionDetailStore = create<SessionDetailStore>()(
       set((state) => {
         state.optimisticMessages = [];
         state.messageCountBeforeSubmit = 0;
-        state.editingIndex = null;
       }),
 
     resetStore: () => set(() => ({ ...initialState })),
@@ -478,10 +437,6 @@ export const useInfoExpanded = () =>
   useSessionDetailStore((s) => s.infoExpanded);
 export const useSidebarCollapsed = () =>
   useSessionDetailStore((s) => s.sidebarCollapsed);
-export const useEditingIndex = () =>
-  useSessionDetailStore((s) => s.editingIndex);
-export const usePendingForkPrompt = () =>
-  useSessionDetailStore((s) => s.pendingForkPrompt);
 export const useRightPaneTab = () =>
   useSessionDetailStore((s) => s.rightPaneTab);
 export const useSpecBrowserSelection = () =>
@@ -555,14 +510,6 @@ export const usePendingQuestionId = () =>
   useSessionDetailStore((s) => s.pendingQuestionId);
 export const useCurrentQuestionIndex = () =>
   useSessionDetailStore((s) => s.currentQuestionIndex);
-export const useStartEditing = () =>
-  useSessionDetailStore((s) => s.startEditing);
-export const useCancelEditing = () =>
-  useSessionDetailStore((s) => s.cancelEditing);
-export const useSetPendingForkPrompt = () =>
-  useSessionDetailStore((s) => s.setPendingForkPrompt);
-export const useConsumePendingForkPrompt = () =>
-  useSessionDetailStore((s) => s.consumePendingForkPrompt);
 export const useSelectSpecCategory = () =>
   useSessionDetailStore((s) => s.selectSpecCategory);
 export const useSelectSpecFile = () =>

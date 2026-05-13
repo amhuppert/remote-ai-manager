@@ -46,10 +46,6 @@ export interface ConversationBackendTurnInput {
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   signal: AbortSignal;
   onEvent(event: ConversationBackendEvent): Promise<void> | void;
-  nativeFork?: {
-    sourceRef: AgentSessionRef;
-    forkLocator?: string | null;
-  } | null;
   syntheticForkSeed?: string | null;
 }
 

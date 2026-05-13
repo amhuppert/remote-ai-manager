@@ -323,6 +323,16 @@ vi.mock("@/lib/mutations", () => ({
   useToggleMcpToolMutation: () => ({ mutate: vi.fn() }),
   useResetMcpToolMutation: () => ({ mutate: vi.fn() }),
   useRefreshMcpToolsMutation: () => ({ mutate: vi.fn() }),
+  useUpdatePendingPromptTextMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  useForkConversationMutation: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
+  sendPendingPromptBeacon: vi.fn(() => true),
 }));
 
 // ---------------------------------------------------------------------------
@@ -356,6 +366,7 @@ const baseSession: SessionState = {
       totalTurns: null,
       pendingQuestionId: null,
       pendingQuestions: null,
+      pendingPromptText: null,
       forkedFrom: null,
       role: null,
       contextTokens: null,

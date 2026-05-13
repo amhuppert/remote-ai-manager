@@ -25,6 +25,7 @@ const BASE_CONVERSATION: ConversationState = {
   summary: null,
   pendingQuestionId: null,
   pendingQuestions: null,
+  pendingPromptText: null,
   forkedFrom: null,
   role: null,
   contextTokens: null,

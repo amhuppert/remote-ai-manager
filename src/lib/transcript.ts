@@ -80,19 +80,23 @@ export async function appendTranscriptEntry(
 // Fork / Copy Operations
 // ============================================================
 
+/** How the cutoff at `upToMessageIndex` is interpreted. */
+export type CopyTranscriptMode = "exclusive" | "inclusive";
+
 export interface CopyTranscriptInput {
   sourceTranscriptPath: string;
   targetConversationId: string;
   /**
-   * 0-based index into visible messages (user/assistant with content).
-   * All messages BEFORE this index are copied (exclusive upper bound).
+   * 0-based index into visible (merged) messages — user/assistant entries
+   * with content; consecutive entries with the same role count as one.
+   *
+   * `mode` determines whether the target message is itself copied:
+   * - `exclusive`: copy everything BEFORE the target merged message.
+   * - `inclusive`: copy everything THROUGH the target merged message
+   *   (i.e., its last JSONL line is the last line in the output).
    */
   upToMessageIndex: number;
-  /** If provided, appends a new user message with edited text after the copied messages */
-  appendEditedMessage?: {
-    text: string;
-    timestamp: string;
-  };
+  mode: CopyTranscriptMode;
   /** Optional config directory for transcript path resolution */
   configDir?: string;
 }
@@ -111,7 +115,7 @@ export async function copyTranscriptUpTo(
     sourceTranscriptPath,
     targetConversationId,
     upToMessageIndex,
-    appendEditedMessage,
+    mode,
     configDir,
   } = input;
 
@@ -122,8 +126,6 @@ export async function copyTranscriptUpTo(
   // Consecutive JSONL entries with the same role are merged into a single logical
   // message (matching readConversationMessages), so we only increment the merged
   // index on role transitions.
-  //
-  // Copy all JSONL lines BEFORE the target message (exclusive upper bound).
   let mergedIndex = -1;
   let lastVisibleRole: string | null = null;
   let cutoffLineIndex = -1;
@@ -142,21 +144,23 @@ export async function copyTranscriptUpTo(
       entry.content.length > 0;
 
     if (isVisible) {
-      // Only increment on role transitions (merged message boundary)
-      if (entry.role !== lastVisibleRole) {
-        mergedIndex++;
-        lastVisibleRole = entry.role ?? null;
-      }
+      const wouldBeMergedIndex =
+        entry.role !== lastVisibleRole ? mergedIndex + 1 : mergedIndex;
 
-      // Copy up to (but NOT including) the target message
-      if (mergedIndex >= upToMessageIndex) {
-        cutoffLineIndex = i - 1;
+      const stop =
+        mode === "exclusive"
+          ? wouldBeMergedIndex >= upToMessageIndex
+          : wouldBeMergedIndex > upToMessageIndex;
+      if (stop) {
         break;
       }
 
+      mergedIndex = wouldBeMergedIndex;
+      lastVisibleRole = entry.role ?? null;
       cutoffLineIndex = i;
     } else if (mergedIndex >= 0 && cutoffLineIndex >= 0) {
-      // Non-visible lines after the cutoff — include them if they come before the next visible message
+      // Non-visible lines (system, tool_result, etc.) get included if they
+      // come within the already-included range.
       cutoffLineIndex = i;
     }
   }
@@ -164,17 +168,6 @@ export async function copyTranscriptUpTo(
   // Build the copied content
   const copiedLines =
     cutoffLineIndex >= 0 ? lines.slice(0, cutoffLineIndex + 1) : [];
-
-  // Append edited message if provided
-  if (appendEditedMessage) {
-    const editedEntry: TranscriptEntry = {
-      timestamp: appendEditedMessage.timestamp,
-      type: "user",
-      role: "user",
-      content: [{ type: "text", text: appendEditedMessage.text }],
-    };
-    copiedLines.push(JSON.stringify(editedEntry));
-  }
 
   // Write to target file
   const targetPath = await getTranscriptPath(targetConversationId, configDir);
@@ -187,23 +180,41 @@ export async function copyTranscriptUpTo(
 // ============================================================
 
 /**
- * Find the UUID of the last assistant transcript entry before a given
- * merged message index. Uses the same merged-message counting as
- * copyTranscriptUpTo (role transitions define message boundaries).
+ * Returns the Claude SDK message UUID a fork should anchor on for the given
+ * merged-message index and mode. Mirrors the merged-message counting used by
+ * copyTranscriptUpTo.
  *
- * Returns null if no assistant UUID exists before the fork point
- * (e.g., legacy transcripts without UUID fields, or fork at index 0).
+ * - `mode: "exclusive"` returns the UUID of the most recent assistant entry
+ *   STRICTLY BEFORE the target merged index. The SDK's `upToMessageId` is
+ *   inclusive, so anchoring on the prior assistant gives the SDK a copy
+ *   whose last message is that assistant turn — i.e., the source state right
+ *   before the user message at the target index.
+ *
+ * - `mode: "inclusive"` returns the UUID of the LAST assistant entry AT the
+ *   target merged index. Intended for assistant-message forks where the new
+ *   conversation should keep the target assistant's turn. Returns null if
+ *   the target merged message is not an assistant turn (caller should
+ *   guard against this).
+ *
+ * Returns null when the target cannot be addressed by UUID — e.g., legacy
+ * transcripts without UUID fields, or no assistant exists in the relevant
+ * range.
  */
-export async function findLastAssistantUuid(
+export async function findForkAnchorUuid(
   transcriptPath: string,
-  upToMessageIndex: number,
+  opts: {
+    atMessageIndex: number;
+    mode: CopyTranscriptMode;
+  },
 ): Promise<string | null> {
   const raw = await readFile(transcriptPath, "utf-8");
   const lines = raw.split("\n").filter((line) => line.trim().length > 0);
 
   let mergedIndex = -1;
   let lastVisibleRole: string | null = null;
-  let lastAssistantUuid: string | null = null;
+  let lastAssistantUuidBefore: string | null = null;
+  let targetMergedRole: "user" | "assistant" | null = null;
+  let inclusiveAnchorUuid: string | null = null;
 
   for (const line of lines) {
     let entry: TranscriptEntry;
@@ -225,16 +236,26 @@ export async function findLastAssistantUuid(
       lastVisibleRole = entry.role ?? null;
     }
 
-    // Stop before the fork point (exclusive upper bound)
-    if (mergedIndex >= upToMessageIndex) break;
-
-    // Track the most recent assistant UUID within the included range
-    if (entry.role === "assistant" && entry.uuid) {
-      lastAssistantUuid = entry.uuid;
+    if (opts.mode === "exclusive") {
+      if (mergedIndex >= opts.atMessageIndex) break;
+      if (entry.role === "assistant" && entry.uuid) {
+        lastAssistantUuidBefore = entry.uuid;
+      }
+    } else {
+      if (mergedIndex > opts.atMessageIndex) break;
+      if (mergedIndex === opts.atMessageIndex) {
+        targetMergedRole = entry.role ?? null;
+        if (entry.role === "assistant" && entry.uuid) {
+          inclusiveAnchorUuid = entry.uuid;
+        }
+      }
     }
   }
 
-  return lastAssistantUuid;
+  if (opts.mode === "exclusive") {
+    return lastAssistantUuidBefore;
+  }
+  return targetMergedRole === "assistant" ? inclusiveAnchorUuid : null;
 }
 
 // ============================================================

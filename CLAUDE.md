@@ -68,13 +68,15 @@ Additional steering (read on demand, not auto-loaded):
 - `.kiro/steering/workflows.md` — XState workflow orchestration patterns and conventions
 - `.kiro/steering/project-configuration.md` — `CommandCenter.json` per-project config (init scripts, pre-merge validation, dev servers)
 
-## Next.js MCP Tools
+## Browser Automation & Diagnostics
 
-This project uses Next.js 16 with two MCP servers configured in `.mcp.json`:
-- **next-devtools**: Application-layer diagnostics (errors, routes, server actions, logs) via the `/_next/mcp` endpoint
-- **chrome-devtools**: Browser-layer control (screenshots, console, network, automation) via Chrome DevTools Protocol
+For any browser-driven verification, debugging, or UI flow, consult the `ai-resources:browser-automation` skill **before** picking a tool. Default to the Playwright CLI (via the `playwright-cli` skill) — MCP-based browser tools waste context for multi-step sessions and should only be used for the narrow cases the routing skill calls out.
 
-Use MCP tools when: diagnosing build/runtime errors, verifying UI after changes, inspecting network requests, debugging client-side issues, or profiling performance. The dev server (`bun run dev`) must be running. See the `nextjs-mcp` skill for detailed tool reference and workflows.
+This project also has two Next.js MCP servers configured in `.mcp.json`, reserved for what Playwright doesn't cover cleanly:
+- **next-devtools**: Application-layer diagnostics (build/runtime errors, routes, server actions, server logs) via `/_next/mcp`.
+- **chrome-devtools**: CDP-specific work — `performance_*` traces/insights, `take_memory_snapshot`, `lighthouse_audit`, and other DevTools Protocol features Playwright doesn't expose directly.
+
+Generic browser automation (navigation, clicks, snapshots, UI verification, network inspection) goes through Playwright per the browser-automation skill — not chrome-devtools MCP. The dev server (`bun run dev`) must be running for any of these. See the `nextjs-mcp` skill for the application-layer tool reference.
 
 ## UI Design Rules
 

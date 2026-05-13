@@ -149,6 +149,7 @@ const makeSessions = (count: number): SessionState[] =>
         totalTurns: null,
         pendingQuestionId: null,
         pendingQuestions: null,
+        pendingPromptText: null,
         forkedFrom: null,
         role: null,
         contextTokens: null,

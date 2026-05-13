@@ -38,7 +38,10 @@ import {
   useDebugModeToggleMutation,
   useDeleteSessionMutation,
   useFinalizeInitializationMutation,
+  useForkConversationMutation,
   useTddToggleMutation,
+  useUpdatePendingPromptTextMutation,
+  sendPendingPromptBeacon,
 } from "@/lib/mutations";
 import TddToggle from "@/components/TddToggle";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
@@ -58,7 +61,6 @@ import {
   useShowCommitDialog,
   useShowMergeDialog,
   useInfoExpanded,
-  useEditingIndex,
   useSwitchLayout,
   useHydrateLayout,
   useSwitchMobilePanel,
@@ -85,10 +87,6 @@ import {
   useNavigateQuestion,
   useClearQuestions,
   useFailPrompt,
-  useStartEditing,
-  useCancelEditing,
-  useSetPendingForkPrompt,
-  useConsumePendingForkPrompt,
   useSwitchRightPaneTab,
   useSidebarCollapsed,
   useToggleSidebar,
@@ -103,11 +101,10 @@ import RightPane from "./RightPane";
 import CommitDialog from "./CommitDialog";
 import SmartMergeDialog from "./SmartMergeDialog";
 import ConversationSidebar from "./ConversationSidebar";
+import SyntheticForkBadge from "./SyntheticForkBadge";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MessageContent from "@/components/MessageContent";
 import MessageActions from "@/components/MessageActions";
-import AssistantMessageActions from "@/components/AssistantMessageActions";
-import MessageEditor from "@/components/MessageEditor";
 import ConversationNav from "@/components/ConversationNav";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import type { PromptEditorHandle } from "./PromptEditor";
@@ -364,7 +361,6 @@ export default function ConversationDetailPage({
   const showCommitDialog = useShowCommitDialog();
   const showMergeDialog = useShowMergeDialog();
   const infoExpanded = useInfoExpanded();
-  const editingIndex = useEditingIndex();
 
   // --- Zustand: actions ---
   const switchLayout = useSwitchLayout();
@@ -403,10 +399,6 @@ export default function ConversationDetailPage({
   const showQuestions = useShowQuestions();
   const navigateQuestion = useNavigateQuestion();
   const clearQuestions = useClearQuestions();
-  const startEditing = useStartEditing();
-  const cancelEditing = useCancelEditing();
-  const setPendingForkPrompt = useSetPendingForkPrompt();
-  const consumePendingForkPrompt = useConsumePendingForkPrompt();
   const openDocById = useOpenDocById();
 
   // --- Dev server ---
@@ -692,6 +684,63 @@ export default function ConversationDetailPage({
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // --- Persistent pending prompt text ---
+  // Restore typed-but-unsent prompt text from `conversation.pendingPromptText`
+  // when the conversation mounts (or the user switches into it), and debounce
+  // typing back to the server. Submit clears both local state and the server
+  // value before the agent is invoked.
+  const updatePendingPromptMutation = useUpdatePendingPromptTextMutation(
+    projectName,
+    sessionName,
+  );
+  const updatePendingPromptMutate = updatePendingPromptMutation.mutate;
+  const hydratedConversationIdRef = useRef<string | null>(null);
+  const lastPersistedPendingPromptRef = useRef<string | null>(null);
+  const pendingPromptSaveTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+
+  const persistPendingPromptText = useCallback(
+    (text: string | null) => {
+      if (lastPersistedPendingPromptRef.current === text) return;
+      lastPersistedPendingPromptRef.current = text;
+      updatePendingPromptMutate({ conversationId, text });
+    },
+    [updatePendingPromptMutate, conversationId],
+  );
+
+  const cancelPendingPromptDebounce = useCallback(() => {
+    if (pendingPromptSaveTimerRef.current !== null) {
+      clearTimeout(pendingPromptSaveTimerRef.current);
+      pendingPromptSaveTimerRef.current = null;
+    }
+  }, []);
+
+  // Fire the pending debounced save immediately for the given conversationId.
+  // Used on conversation switch and unmount so drafts survive fast navigation
+  // before the 500ms debounce fires.
+  const flushPendingPromptText = useCallback(
+    (capturedConversationId: string) => {
+      if (pendingPromptSaveTimerRef.current === null) return;
+      clearTimeout(pendingPromptSaveTimerRef.current);
+      pendingPromptSaveTimerRef.current = null;
+      const current = promptTextRef.current;
+      const normalized = current === "" ? null : current;
+      if (normalized === lastPersistedPendingPromptRef.current) return;
+      lastPersistedPendingPromptRef.current = normalized;
+      updatePendingPromptMutate({
+        conversationId: capturedConversationId,
+        text: normalized,
+      });
+    },
+    [updatePendingPromptMutate],
+  );
+
+  const clearPersistedPendingPromptOnSubmit = useCallback(() => {
+    cancelPendingPromptDebounce();
+    persistPendingPromptText(null);
+  }, [cancelPendingPromptDebounce, persistPendingPromptText]);
+
   // --- Image attachments ---
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
     useImageAttachments();
@@ -782,12 +831,120 @@ export default function ConversationDetailPage({
   // --- Reset conversation-specific state when switching conversations ---
   useEffect(() => {
     clearConversationMessages();
+    // Reset the persistent-prompt hydration gate so the input is re-prefilled
+    // from the new conversation's pendingPromptText on the next data fetch.
+    hydratedConversationIdRef.current = null;
+    lastPersistedPendingPromptRef.current = null;
+    cancelPendingPromptDebounce();
 
     // Reset any accidental scroll on ancestors (overflow:clip prevents new
     // occurrences; this cleans up any pre-existing scroll offset).
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
-  }, [conversationId, clearConversationMessages]);
+  }, [conversationId, clearConversationMessages, cancelPendingPromptDebounce]);
+
+  // --- Hydrate prompt input from conversation.pendingPromptText (once per
+  // conversation switch) ---
+  // The Tiptap editor inside <PromptEditor> only consumes `value` as its
+  // initial content, so we also push into the editor instance imperatively
+  // for the case where the editor mounts before the conversation data
+  // arrives.
+  useEffect(() => {
+    if (!activeConversation) return;
+    if (hydratedConversationIdRef.current === conversationId) return;
+
+    const initial = activeConversation.pendingPromptText ?? "";
+    hydratedConversationIdRef.current = conversationId;
+    lastPersistedPendingPromptRef.current =
+      activeConversation.pendingPromptText;
+    setPromptText(initial);
+    // Always reset the editor — when switching from a conversation with a
+    // draft to one with no pending text, the Tiptap instance must be cleared
+    // because <PromptEditor> consumes `value` only as initial content and is
+    // not keyed on conversationId.
+    const editorInstance = editorRef.current?.editor;
+    if (editorInstance) {
+      if (initial.length > 0) {
+        editorInstance.commands.setContent(initial);
+      } else {
+        editorInstance.commands.clearContent(true);
+      }
+    }
+  }, [conversationId, activeConversation]);
+
+  // If the user starts typing before activeConversation has loaded, mark
+  // hydration as complete so the hydration effect above doesn't later
+  // overwrite their input when data arrives. The user's text is the source
+  // of truth; whatever was persisted will be overwritten by the next
+  // debounced save.
+  const handlePromptTextChange = useCallback(
+    (next: string) => {
+      if (hydratedConversationIdRef.current !== conversationId) {
+        hydratedConversationIdRef.current = conversationId;
+      }
+      setPromptText(next);
+    },
+    [conversationId],
+  );
+
+  // --- Flush pending debounced save on conversation switch / unmount ---
+  // The cleanup function captures the previous conversationId, so when the
+  // user navigates away or switches conversations before the 500ms debounce
+  // timer fires, the in-flight draft is still POSTed to the server and will
+  // be restored on next mount.
+  useEffect(() => {
+    const capturedConversationId = conversationId;
+    return () => {
+      flushPendingPromptText(capturedConversationId);
+    };
+  }, [conversationId, flushPendingPromptText]);
+
+  // --- Flush pending debounced save on full page reload via sendBeacon ---
+  // The regular fetch from useMutation may be aborted when the page unloads,
+  // so we use navigator.sendBeacon (which is delivery-guaranteed on unload)
+  // to flush any pending draft. The URL and payload format are shared with
+  // the mutation hook via `sendPendingPromptBeacon`.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleBeforeUnload = () => {
+      if (pendingPromptSaveTimerRef.current === null) return;
+      const current = promptTextRef.current;
+      const normalized = current === "" ? null : current;
+      if (normalized === lastPersistedPendingPromptRef.current) return;
+      const queued = sendPendingPromptBeacon(
+        projectName,
+        sessionName,
+        conversationId,
+        normalized,
+      );
+      if (queued) {
+        lastPersistedPendingPromptRef.current = normalized;
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [projectName, sessionName, conversationId]);
+
+  // --- Debounced save of typed prompt text ---
+  useEffect(() => {
+    if (hydratedConversationIdRef.current !== conversationId) return;
+
+    const normalized = promptText === "" ? null : promptText;
+    if (normalized === lastPersistedPendingPromptRef.current) return;
+
+    cancelPendingPromptDebounce();
+    pendingPromptSaveTimerRef.current = setTimeout(() => {
+      pendingPromptSaveTimerRef.current = null;
+      persistPendingPromptText(normalized);
+    }, 500);
+
+    return cancelPendingPromptDebounce;
+  }, [
+    promptText,
+    conversationId,
+    persistPendingPromptText,
+    cancelPendingPromptDebounce,
+  ]);
 
   // --- Recover persisted question state on page load / navigation ---
   useEffect(() => {
@@ -1087,6 +1244,9 @@ export default function ConversationDetailPage({
 
   const dispatchPrompt = useCallback(
     async (text: string, images: ImagePayload[]) => {
+      // Clear the persisted pendingPromptText BEFORE invoking the agent so a
+      // slow agent response can't resurrect stale input on reload.
+      clearPersistedPendingPromptOnSubmit();
       editorRef.current?.clear();
       setPromptText("");
       clearImages();
@@ -1107,6 +1267,7 @@ export default function ConversationDetailPage({
       selectedEffort,
       selectedBackend,
       clearImages,
+      clearPersistedPendingPromptOnSubmit,
     ],
   );
 
@@ -1122,6 +1283,7 @@ export default function ConversationDetailPage({
     if (hasCollabPrefix(trimmedPrompt)) {
       const brief = stripCollabPrefix(trimmedPrompt).trim();
       if (!brief) return;
+      clearPersistedPendingPromptOnSubmit();
       editorRef.current?.clear();
       setPromptText("");
       collaborationStartMutation.mutate({
@@ -1137,6 +1299,7 @@ export default function ConversationDetailPage({
 
     // Queue into running conversation instead of starting a new prompt
     if (sending && conversationId) {
+      clearPersistedPendingPromptOnSubmit();
       editorRef.current?.clear();
       setPromptText("");
       await queueMessage(trimmedPrompt);
@@ -1177,6 +1340,7 @@ export default function ConversationDetailPage({
     sessionName,
     conversations,
     dispatchPrompt,
+    clearPersistedPendingPromptOnSubmit,
   ]);
 
   const confirmConcurrentSubmission = useCallback(async () => {
@@ -1300,134 +1464,35 @@ export default function ConversationDetailPage({
     failPrompt,
   ]);
 
-  // --- Fork / Edit handlers ---
+  // --- Fork handler ---
 
-  const [forkingIndex, setForkingIndex] = useState<number | null>(null);
+  const forkConversationMutation = useForkConversationMutation(
+    projectName,
+    sessionName,
+  );
+  const forkMutateAsync = forkConversationMutation.mutateAsync;
 
   const handleFork = useCallback(
     async (messageIndex: number) => {
-      setForkingIndex(messageIndex);
       try {
-        const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/fork`;
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messageIndex }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({ error: "Fork failed" }));
-          failPrompt((data as { error?: string }).error ?? "Fork failed");
-          return;
-        }
-        const result = (await res.json()) as {
-          conversationId: string;
-          name: string;
-        };
+        const result = await forkMutateAsync({ conversationId, messageIndex });
         router.push(
           `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${result.conversationId}`,
         );
-      } catch {
-        failPrompt("Fork failed");
-      } finally {
-        setForkingIndex(null);
-      }
-    },
-    [projectName, sessionName, conversationId, router, failPrompt],
-  );
-
-  const handleEditSave = useCallback(
-    async (messageIndex: number, newText: string) => {
-      setForkingIndex(messageIndex);
-      try {
-        // Extract original text to detect unchanged saves
-        const msg = displayMessages[messageIndex];
-        const originalText = msg?.content.find(
-          (b) => b.type === "text" && "text" in b,
-        )
-          ? (
-              msg.content.find((b) => b.type === "text" && "text" in b) as {
-                text: string;
-              }
-            ).text
-          : "";
-
-        const isUnchanged = newText.trim() === originalText.trim();
-
-        const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/fork`;
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messageIndex,
-            editedText: isUnchanged ? undefined : newText,
-          }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({ error: "Fork failed" }));
-          failPrompt((data as { error?: string }).error ?? "Fork failed");
-          return;
-        }
-        const result = (await res.json()) as {
-          conversationId: string;
-          name: string;
-        };
-
-        cancelEditing();
-
-        // If text was edited, set pending fork prompt for auto-send
-        if (!isUnchanged) {
-          setPendingForkPrompt({
-            conversationId: result.conversationId,
-            text: newText,
-          });
-        }
-
-        router.push(
-          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${result.conversationId}`,
-        );
-      } catch {
-        failPrompt("Fork failed");
-      } finally {
-        setForkingIndex(null);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Fork failed";
+        failPrompt(message);
       }
     },
     [
+      forkMutateAsync,
       projectName,
       sessionName,
       conversationId,
-      displayMessages,
       router,
       failPrompt,
-      cancelEditing,
-      setPendingForkPrompt,
     ],
   );
-
-  // Auto-prompt delivery for edit-and-fork
-  const autoPromptFired = useRef(false);
-  useEffect(() => {
-    if (autoPromptFired.current) return;
-    const pending = consumePendingForkPrompt();
-    if (!pending) return;
-    if (pending.conversationId !== conversationId) return;
-    autoPromptFired.current = true;
-    void sendPrompt(
-      pending.text,
-      0,
-      selectedModel,
-      undefined,
-      effortSupported ? selectedEffort : undefined,
-      selectedBackend,
-    );
-  }, [
-    conversationId,
-    consumePendingForkPrompt,
-    sendPrompt,
-    selectedModel,
-    selectedEffort,
-    effortSupported,
-    selectedBackend,
-  ]);
 
   const handleVoiceResult = useCallback(
     (text: string) => {
@@ -1543,13 +1608,9 @@ export default function ConversationDetailPage({
   >(
     ({ row }) => {
       const { messageIndex, msg } = row;
-      const isEditing = editingIndex === messageIndex;
       const isUserMsg = msg.role === "user";
       return (
-        <div
-          className={`message ${msg.role}${isEditing ? " editing" : ""}`}
-          data-msg-index={messageIndex}
-        >
+        <div className={`message ${msg.role}`} data-msg-index={messageIndex}>
           <div className="message-role">
             {isUserMsg
               ? "You"
@@ -1575,28 +1636,12 @@ export default function ConversationDetailPage({
               </span>
             )}
           </div>
-          {isEditing ? (
-            <MessageEditor
-              originalText={
-                (
-                  msg.content.find((b) => b.type === "text" && "text" in b) as
-                    | { text: string }
-                    | undefined
-                )?.text ?? ""
-              }
-              messageIndex={messageIndex}
-              onSave={handleEditSave}
-              onCancel={cancelEditing}
-              saving={forkingIndex === messageIndex}
+          <div className="message-content">
+            <MessageContent
+              content={msg.content}
+              worktreePath={session?.worktreePath}
             />
-          ) : (
-            <div className="message-content">
-              <MessageContent
-                content={msg.content}
-                worktreePath={session?.worktreePath}
-              />
-            </div>
-          )}
+          </div>
           {!isUserMsg &&
             messageIndex === displayMessages.length - 1 &&
             activeConversation && (
@@ -1608,27 +1653,19 @@ export default function ConversationDetailPage({
                 isBusy={isBusy}
               />
             )}
-          {isUserMsg && !isEditing && (
-            <MessageActions
-              messageIndex={messageIndex}
-              content={msg.content}
-              onFork={handleFork}
-              onEdit={startEditing}
-              disabled={isBusy || isReadOnly}
-            />
-          )}
-          {!isUserMsg && <AssistantMessageActions content={msg.content} />}
+          <MessageActions
+            messageIndex={messageIndex}
+            content={msg.content}
+            onFork={handleFork}
+            disabled={isBusy || isReadOnly}
+          />
         </div>
       );
     },
     [
       activeConversation,
-      cancelEditing,
       displayMessages.length,
-      editingIndex,
-      forkingIndex,
       handleDebugPrompt,
-      handleEditSave,
       handleFork,
       isBusy,
       isReadOnly,
@@ -1636,7 +1673,6 @@ export default function ConversationDetailPage({
       selectedBackend,
       session?.worktreePath,
       sessionName,
-      startEditing,
     ],
   );
 
@@ -1995,6 +2031,9 @@ export default function ConversationDetailPage({
                   </button>
                 )}
                 <span className="panel-title">Conversation</span>
+                {activeConversation?.forkedFrom?.forkMode === "synthetic" && (
+                  <SyntheticForkBadge />
+                )}
                 <ConversationNav
                   currentIndex={currentMessageIndex}
                   totalCount={displayMessages.length}
@@ -2110,7 +2149,7 @@ export default function ConversationDetailPage({
                         ref={editorRef}
                         conversationId={conversationId}
                         value={promptText}
-                        onChange={setPromptText}
+                        onChange={handlePromptTextChange}
                         onSubmit={() => {
                           if (isRecording) {
                             toggleRecording();

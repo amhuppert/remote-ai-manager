@@ -24,6 +24,7 @@ function makeConversation(
     backendRef: null,
     pendingQuestionId: null,
     pendingQuestions: null,
+    pendingPromptText: null,
     forkedFrom: null,
     contextTokens: null,
     contextWindowMax: null,
