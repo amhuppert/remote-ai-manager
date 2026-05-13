@@ -14,6 +14,8 @@ import { commitMachine } from "./workflows/commit/machine";
 import type {
   CheckUncommittedInput,
   CheckUncommittedOutput,
+  GetCurrentBranchInput,
+  GetCurrentBranchOutput,
   CommitChangesInput,
   CommitChangesOutput,
   MergeMainInput,
@@ -42,6 +44,7 @@ vi.mock("./notification-db");
 // ============================================================
 
 const mockCheckUncommitted = vi.fn();
+const mockGetCurrentBranch = vi.fn();
 const mockCommitChangesActor = vi.fn();
 const mockMergeMain = vi.fn();
 const mockResolveConflictsActor = vi.fn();
@@ -57,6 +60,10 @@ const testMachine = mergeMachine.provide({
       CheckUncommittedOutput,
       CheckUncommittedInput
     >(async ({ input }) => mockCheckUncommitted(input)),
+    getCurrentBranch: fromPromise<
+      GetCurrentBranchOutput,
+      GetCurrentBranchInput
+    >(async ({ input }) => mockGetCurrentBranch(input)),
     commitChanges: fromPromise<CommitChangesOutput, CommitChangesInput>(
       async ({ input }) => mockCommitChangesActor(input),
     ),
@@ -185,6 +192,8 @@ describe("background-jobs", () => {
     mockAcquireSessionLock.mockReturnValue(releaseSession);
     // Default: no uncommitted changes
     mockCheckUncommitted.mockResolvedValue({ hasChanges: false });
+    // Default: worktree is on the expected branch
+    mockGetCurrentBranch.mockResolvedValue({ branch: "csm/my-session" });
     // Default: analyze conflicts returns empty analysis
     mockAnalyzeConflictsActor.mockResolvedValue({
       status: "analyzed" as const,

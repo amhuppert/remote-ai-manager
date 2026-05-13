@@ -7,6 +7,8 @@ import type {
   CheckUncommittedOutput,
   CommitChangesInput,
   CommitChangesOutput,
+  GetCurrentBranchInput,
+  GetCurrentBranchOutput,
   MergeMainInput,
   MergeMainOutput,
   ResolveConflictsInput,
@@ -29,6 +31,14 @@ function mockCheckUncommitted(
   fn: (input: CheckUncommittedInput) => Promise<CheckUncommittedOutput>,
 ) {
   return fromPromise<CheckUncommittedOutput, CheckUncommittedInput>(
+    async ({ input }) => fn(input),
+  );
+}
+
+function mockGetCurrentBranch(
+  fn: (input: GetCurrentBranchInput) => Promise<GetCurrentBranchOutput>,
+) {
+  return fromPromise<GetCurrentBranchOutput, GetCurrentBranchInput>(
     async ({ input }) => fn(input),
   );
 }
@@ -107,6 +117,7 @@ const defaultInput: MergeInput = {
 type ActorOverrides = {
   checkUncommitted?: ReturnType<typeof mockCheckUncommitted>;
   commitChanges?: ReturnType<typeof mockCommitChanges>;
+  getCurrentBranch?: ReturnType<typeof mockGetCurrentBranch>;
   mergeMain?: ReturnType<typeof mockMergeMain>;
   resolveConflicts?: ReturnType<typeof mockResolveConflicts>;
   analyzeConflicts?: ReturnType<typeof mockAnalyzeConflicts>;
@@ -125,6 +136,11 @@ function createTestMachine(overrides: ActorOverrides = {}) {
       commitChanges:
         overrides.commitChanges ??
         mockCommitChanges(async () => ({ hash: "abc123" })),
+      getCurrentBranch:
+        overrides.getCurrentBranch ??
+        mockGetCurrentBranch(async () => ({
+          branch: defaultInput.branchName,
+        })),
       mergeMain:
         overrides.mergeMain ??
         mockMergeMain(async () => ({ status: "clean", conflictFiles: [] })),
@@ -699,6 +715,97 @@ describe("mergeMachine", () => {
     });
   });
 
+  describe("branch verification", () => {
+    it("halts in failed state when worktree is on a different branch", async () => {
+      const machine = createTestMachine({
+        getCurrentBranch: mockGetCurrentBranch(async () => ({
+          branch: "main",
+        })),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      const states: string[] = [];
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toMatch(/csm\/test-session/);
+      expect(output.error).toMatch(/main/);
+      expect(states).toContain("verifyingBranch");
+      expect(states).not.toContain("committingUncommitted");
+      expect(states).not.toContain("mergingMain");
+      expect(states).not.toContain("squashMerging");
+    });
+
+    it("halts in failed state when worktree HEAD is detached", async () => {
+      const machine = createTestMachine({
+        getCurrentBranch: mockGetCurrentBranch(async () => ({
+          branch: null,
+        })),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toMatch(/detached/i);
+    });
+
+    it("propagates getCurrentBranch errors as failed state", async () => {
+      const machine = createTestMachine({
+        getCurrentBranch: mockGetCurrentBranch(async () => {
+          throw new Error("git command failed");
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toBe("git command failed");
+    });
+
+    it("invokes getCurrentBranch with the feature worktreePath", async () => {
+      let capturedInput: GetCurrentBranchInput | null = null;
+      const machine = createTestMachine({
+        getCurrentBranch: mockGetCurrentBranch(async (input) => {
+          capturedInput = input;
+          return { branch: defaultInput.branchName };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.worktreePath).toBe(defaultInput.worktreePath);
+    });
+
+    it("verifies branch even for resolve-conflicts jobs", async () => {
+      const machine = createTestMachine({
+        getCurrentBranch: mockGetCurrentBranch(async () => ({
+          branch: "main",
+        })),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, jobType: "resolve-conflicts" },
+      });
+      const states: string[] = [];
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(states).toContain("verifyingBranch");
+      expect(states).not.toContain("resolvingConflicts");
+    });
+  });
+
   describe("phase tracking", () => {
     it("updates phase through merge lifecycle", async () => {
       const phases: (string | null)[] = [];
@@ -715,6 +822,20 @@ describe("mergeMachine", () => {
       expect(phases).toContain("merging-main");
       expect(phases).toContain("validating");
       expect(phases).toContain("squash-merging");
+    });
+
+    it("transitions through verifyingBranch on happy path", async () => {
+      const states: string[] = [];
+      const machine = createTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(states[0]).toBe("verifyingBranch");
+      expect(states).toContain("squashMerging");
     });
 
     it("includes analyzing-conflicts phase when autoResolve is false", async () => {

@@ -374,8 +374,12 @@ const smartMergeMetadata: MachineMetadata = {
     "The merge pipeline. Commits any in-flight changes, merges the target branch, optionally auto-resolves conflicts, runs pre-merge validation, and either fixes-and-retries failures or fails out. The same machine handles plain merge jobs and bare resolve-conflicts jobs (routing state).",
   filePath: "src/lib/workflows/merge/machine.ts",
   states: {
-    routing: {
+    verifyingBranch: {
       status: "initial",
+      description:
+        "Reads the worktree's HEAD branch and fails fast if it does not match the expected feature branch (or is detached). Guards against operating on the wrong branch.",
+    },
+    routing: {
       description:
         "Resolve-conflicts jobs jump straight to resolvingConflicts; merge jobs fall through to checkingUncommitted.",
     },
@@ -446,6 +450,8 @@ const smartMergeMetadata: MachineMetadata = {
   },
   actors: {
     checkUncommitted: "git status — returns whether the worktree has changes.",
+    getCurrentBranch:
+      "git symbolic-ref --short HEAD — returns the worktree's branch name, or null when HEAD is detached.",
     commitChanges: "git add + git commit with a fixed message; skips hooks.",
     mergeMain:
       "git merge of the target branch into the session worktree. Returns conflict file list on failure.",
@@ -463,6 +469,8 @@ const smartMergeMetadata: MachineMetadata = {
   guards: {
     isResolveConflictsJob:
       "Job was dispatched as a bare resolve-conflicts job.",
+    branchMatchesExpected:
+      "Worktree's current branch matches context.branchName (not detached, not a different branch).",
     hasUncommittedChanges: "checkUncommitted returned hasChanges: true.",
     mergeHadConflicts: "git merge produced conflicts.",
     shouldAutoResolve: "context.autoResolve is true (set by the caller).",

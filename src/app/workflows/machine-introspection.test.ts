@@ -90,8 +90,9 @@ describe("introspectMachine", () => {
   it("smart-merge: kind classification (transient vs atomic vs final)", () => {
     const result = introspectMachine(mergeMachine);
     expect(result.machineId).toBe("smartMerge");
-    expect(result.initialState).toBe("routing");
+    expect(result.initialState).toBe("verifyingBranch");
     const byId = new Map(result.states.map((s) => [s.id, s]));
+    expect(byId.get("verifyingBranch")?.kind).toBe("atomic");
     expect(byId.get("routing")?.kind).toBe("transient");
     expect(byId.get("conflictsDetected")?.kind).toBe("transient");
     expect(byId.get("checkingUncommitted")?.kind).toBe("atomic");

@@ -54,6 +54,8 @@ import { mergeMachine } from "@/lib/workflows/merge/machine";
 import type {
   CheckUncommittedInput,
   CheckUncommittedOutput,
+  GetCurrentBranchInput,
+  GetCurrentBranchOutput,
   MergeMainInput,
   MergeMainOutput,
   CommitChangesInput,
@@ -274,6 +276,10 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
           CheckUncommittedOutput,
           CheckUncommittedInput
         >(async () => ({ hasChanges: false })),
+        getCurrentBranch: fromPromise<
+          GetCurrentBranchOutput,
+          GetCurrentBranchInput
+        >(async () => ({ branch: "csm/session-1" })),
         commitChanges: fromPromise<CommitChangesOutput, CommitChangesInput>(
           async () => ({ hash: "commit-abc" }),
         ),

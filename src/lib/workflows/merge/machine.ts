@@ -29,6 +29,8 @@ import type {
   CheckUncommittedOutput,
   CommitChangesInput,
   CommitChangesOutput,
+  GetCurrentBranchInput,
+  GetCurrentBranchOutput,
   MergeMainInput,
   MergeMainOutput,
   ResolveConflictsInput,
@@ -45,6 +47,7 @@ import type {
 import {
   checkUncommitted,
   commitChangesActor,
+  getCurrentBranchActor,
   mergeMain,
   resolveConflictsActor,
   analyzeConflictsActor,
@@ -80,6 +83,9 @@ export const mergeMachine = setup({
     commitChanges: commitChangesActor as ReturnType<
       typeof fromPromise<CommitChangesOutput, CommitChangesInput>
     >,
+    getCurrentBranch: getCurrentBranchActor as ReturnType<
+      typeof fromPromise<GetCurrentBranchOutput, GetCurrentBranchInput>
+    >,
     mergeMain: mergeMain as ReturnType<
       typeof fromPromise<MergeMainOutput, MergeMainInput>
     >,
@@ -102,6 +108,10 @@ export const mergeMachine = setup({
   guards: {
     isResolveConflictsJob: ({ context }) =>
       context.jobType === "resolve-conflicts",
+    branchMatchesExpected: ({ context, event }) => {
+      const e = event as unknown as { output: GetCurrentBranchOutput };
+      return e.output.branch === context.branchName;
+    },
     hasUncommittedChanges: ({ event }) => {
       const e = event as unknown as { output: CheckUncommittedOutput };
       return e.output.hasChanges;
@@ -162,8 +172,42 @@ export const mergeMachine = setup({
     targetBranch: input.targetBranch ?? "main",
     targetWorktreePath: input.targetWorktreePath ?? null,
   }),
-  initial: "routing",
+  initial: "verifyingBranch",
   states: {
+    /**
+     * Verify the feature worktree is still on the expected feature branch.
+     * Prevents the entire pipeline from running on `main` (or any other
+     * unintended branch) if something checked out a different ref in the
+     * worktree between provisioning and merge.
+     */
+    verifyingBranch: {
+      invoke: {
+        src: "getCurrentBranch",
+        input: ({ context }) => ({ worktreePath: context.worktreePath }),
+        onDone: [
+          { guard: "branchMatchesExpected", target: "routing" },
+          {
+            target: "failed",
+            actions: assign({
+              error: ({ context, event }) => {
+                const actual = event.output.branch;
+                const expected = context.branchName;
+                if (actual === null) {
+                  return `Feature worktree ${context.worktreePath} is in detached HEAD state; expected branch ${expected}`;
+                }
+                return `Feature worktree ${context.worktreePath} is on branch ${actual}; expected ${expected}`;
+              },
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+        ],
+        onError: {
+          target: "failed",
+          actions: errorAssign(),
+        },
+      },
+    },
+
     /**
      * Routing state: resolve-conflicts jobs skip directly to resolvingConflicts.
      * Merge jobs start with the full pipeline.

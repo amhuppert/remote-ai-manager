@@ -91,6 +91,39 @@ describe("hasUncommittedChanges", () => {
 });
 
 // ===========================================================================
+// getCurrentBranch
+// ===========================================================================
+
+describe("getCurrentBranch", () => {
+  it("returns the branch name from git symbolic-ref output", async () => {
+    mockGitSuccess("csm/my-feature\n");
+    const result = await ops.getCurrentBranch("/worktree");
+    expect(result).toBe("csm/my-feature");
+    expect(gitMock).toHaveBeenCalledWith(
+      ["symbolic-ref", "--short", "HEAD"],
+      "/worktree",
+      expect.anything(),
+    );
+  });
+
+  it("returns null when HEAD is detached (symbolic-ref fails)", async () => {
+    mockGitFailure(
+      Object.assign(new Error("fatal: ref HEAD is not a symbolic ref"), {
+        stderr: "fatal: ref HEAD is not a symbolic ref\n",
+      }),
+    );
+    const result = await ops.getCurrentBranch("/worktree");
+    expect(result).toBeNull();
+  });
+
+  it("trims trailing whitespace from output", async () => {
+    mockGitSuccess("main\n\n");
+    const result = await ops.getCurrentBranch("/worktree");
+    expect(result).toBe("main");
+  });
+});
+
+// ===========================================================================
 // commitChanges
 // ===========================================================================
 

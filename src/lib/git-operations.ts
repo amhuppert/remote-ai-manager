@@ -104,6 +104,23 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
     return stdout.trim().length > 0;
   }
 
+  /** Read the worktree's currently checked-out branch.
+   *  Returns null when HEAD is detached (symbolic-ref fails). */
+  async function getCurrentBranch(
+    worktreePath: string,
+  ): Promise<string | null> {
+    try {
+      const { stdout } = await git(worktreePath, [
+        "symbolic-ref",
+        "--short",
+        "HEAD",
+      ]);
+      return stdout.trim();
+    } catch {
+      return null;
+    }
+  }
+
   /** Stage all changes and commit with the given message.
    *  When `skipHooks` is true, passes `--no-verify` to skip pre-commit hooks. */
   async function commitChanges(
@@ -500,6 +517,7 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
 
   return {
     hasUncommittedChanges,
+    getCurrentBranch,
     commitChanges,
     getCommitLog,
     getCommitDiff,
@@ -517,6 +535,7 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
 const defaultOps = createGitOperations();
 
 export const hasUncommittedChanges = defaultOps.hasUncommittedChanges;
+export const getCurrentBranch = defaultOps.getCurrentBranch;
 export const commitChanges = defaultOps.commitChanges;
 export const getCommitLog = defaultOps.getCommitLog;
 export const getCommitDiff = defaultOps.getCommitDiff;

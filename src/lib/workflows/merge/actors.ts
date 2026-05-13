@@ -20,6 +20,13 @@ export interface CheckUncommittedOutput {
   hasChanges: boolean;
 }
 
+export interface GetCurrentBranchInput {
+  worktreePath: string;
+}
+export interface GetCurrentBranchOutput {
+  branch: string | null;
+}
+
 export interface CommitChangesInput {
   worktreePath: string;
   message: string;
@@ -103,6 +110,16 @@ export const checkUncommitted = fromPromise<
   const { hasUncommittedChanges } = await import("@/lib/git-operations");
   const hasChanges = await hasUncommittedChanges(input.worktreePath);
   return { hasChanges };
+});
+
+/** Read the worktree's currently checked-out branch (null = detached HEAD). */
+export const getCurrentBranchActor = fromPromise<
+  GetCurrentBranchOutput,
+  GetCurrentBranchInput
+>(async ({ input }) => {
+  const { getCurrentBranch } = await import("@/lib/git-operations");
+  const branch = await getCurrentBranch(input.worktreePath);
+  return { branch };
 });
 
 /** Commit changes in a worktree. */
