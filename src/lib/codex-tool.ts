@@ -13,6 +13,7 @@ import { codexReasoningEffortSchema } from "./schemas";
 import type { CodexReasoningEffort } from "@/types";
 import { createLogger } from "./logging";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
+import type { ArtifactRegistry } from "./workflows/primitives/artifact-registry";
 
 const logger = createLogger("codex-tool");
 
@@ -48,6 +49,14 @@ export interface CodexToolDeps {
     outputSchema: Record<string, unknown>;
     timeoutMs: number;
   }): Promise<CodexRunResult>;
+  /**
+   * Optional artifact registry. When provided, each entry in the structured
+   * `referenceDocuments` array is registered as a `reference_document` so
+   * Codex outputs show up in CC's session-wide discoverability index.
+   * Registration failures are logged but do not fail the tool call — the
+   * Codex run itself already succeeded.
+   */
+  artifactRegistry?: ArtifactRegistry;
 }
 
 // ============================================================
@@ -276,17 +285,12 @@ function createRunCodexHandler(context: CodexToolContext, deps: CodexToolDeps) {
       parseCodexStructuredResponse(result.structuredOutput) ??
       parseCodexStructuredResponse(result.response);
     if (structured) {
-      // TODO(artifact-registry): The files Codex writes under memory-bank/codex/
-      // (and anywhere else its `danger-full-access` sandbox lets it touch) are
-      // surfaced here as `referenceDocuments[]` metadata but never registered
-      // through `ArtifactRegistry`. That bypasses canonical-path validation
-      // and reference-document discoverability. The right migration is for
-      // the upstream caller (the conversation machine / workflow lane that
-      // invokes `run_codex`) to iterate `structured.referenceDocuments` and
-      // call `registry.register({ kind: "codex_output", ... })` for entries
-      // inside memory-bank/codex/, plus `kind: "reference_document"` for any
-      // file the caller chooses to surface to CC's broader discoverability
-      // index. See `memory-bank/artifact-registry-audit.md` (Codex section).
+      await registerCodexReferenceDocuments({
+        registry: deps.artifactRegistry,
+        worktreePath: context.worktreePath,
+        sessionName: context.sessionName,
+        documents: structured.referenceDocuments,
+      });
       return {
         content: [
           {
@@ -327,4 +331,32 @@ function errorResult(message: string) {
     content: [{ type: "text" as const, text: message }],
     isError: true,
   };
+}
+
+async function registerCodexReferenceDocuments(input: {
+  registry: ArtifactRegistry | undefined;
+  worktreePath: string;
+  sessionName: string;
+  documents: CodexStructuredResponse["referenceDocuments"];
+}): Promise<void> {
+  const { registry, worktreePath, sessionName, documents } = input;
+  if (!registry || documents.length === 0) return;
+
+  for (const doc of documents) {
+    try {
+      await registry.register({
+        kind: "reference_document",
+        worktreePath,
+        relativePath: doc.filePath,
+        description: doc.description,
+        source: {},
+      });
+    } catch (err) {
+      logger.warn("codex.register_reference_document_failed", {
+        sessionName,
+        filePath: doc.filePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 }

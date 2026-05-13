@@ -100,6 +100,13 @@ describe("mcp-gateway/session-server", () => {
 
     expect(deps.registerNotificationTool).toHaveBeenCalledOnce();
     expect(deps.registerCodexTool).toHaveBeenCalledOnce();
+    const codexCall = (deps.registerCodexTool as ReturnType<typeof vi.fn>).mock
+      .calls[0]!;
+    expect(codexCall[1]).toMatchObject({
+      projectPath: "/projects/test",
+      worktreePath: "/projects/test/.worktrees/test-session",
+      sessionName: "test session",
+    });
   });
 
   it("does not register optional tools when disabled", async () => {

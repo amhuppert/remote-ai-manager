@@ -17,6 +17,10 @@ import {
   registerCodexTool,
   wrapCodexPrompt,
 } from "./codex-tool";
+import type {
+  ArtifactRegistry,
+  ArtifactRegisterRequest,
+} from "./workflows/primitives/artifact-registry";
 
 type ToolHandler = (args: unknown) => Promise<unknown>;
 
@@ -348,6 +352,161 @@ describe("codex-tool", () => {
     });
   });
 
+  describe("reference document registration", () => {
+    it("registers each structured reference document with the artifact registry", async () => {
+      const structured = JSON.stringify({
+        summary: "Did the thing",
+        referenceDocuments: [
+          {
+            filePath: "memory-bank/codex/report.md",
+            description: "Detailed report",
+          },
+          {
+            filePath: "memory-bank/codex/notes.md",
+            description: "Investigation notes",
+          },
+        ],
+      });
+      const mockDeps = createMockDeps({ response: structured });
+      registerTool(mockDeps, { worktreePath: "/wt" });
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "investigate" });
+
+      expect(mockDeps.mockRegister).toHaveBeenCalledTimes(2);
+      const first = mockDeps.mockRegister.mock
+        .calls[0]![0] as ArtifactRegisterRequest;
+      expect(first).toMatchObject({
+        kind: "reference_document",
+        worktreePath: "/wt",
+        relativePath: "memory-bank/codex/report.md",
+        description: "Detailed report",
+      });
+      const second = mockDeps.mockRegister.mock
+        .calls[1]![0] as ArtifactRegisterRequest;
+      expect(second).toMatchObject({
+        kind: "reference_document",
+        worktreePath: "/wt",
+        relativePath: "memory-bank/codex/notes.md",
+        description: "Investigation notes",
+      });
+    });
+
+    it("prefers SDK structuredOutput when registering reference documents", async () => {
+      const structuredOutput = {
+        summary: "ok",
+        referenceDocuments: [
+          {
+            filePath: "memory-bank/codex/sdk.md",
+            description: "from sdk",
+          },
+        ],
+      };
+      const mockDeps = createMockDeps({
+        response: "not json",
+        structuredOutput,
+      });
+      registerTool(mockDeps);
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "x" });
+
+      expect(mockDeps.mockRegister).toHaveBeenCalledTimes(1);
+      const req = mockDeps.mockRegister.mock
+        .calls[0]![0] as ArtifactRegisterRequest;
+      expect(req.relativePath).toBe("memory-bank/codex/sdk.md");
+    });
+
+    it("does not register when no structured response is parsed", async () => {
+      const mockDeps = createMockDeps({ response: "plain text result" });
+      registerTool(mockDeps);
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "x" });
+
+      expect(mockDeps.mockRegister).not.toHaveBeenCalled();
+    });
+
+    it("does not register when referenceDocuments is empty", async () => {
+      const structured = JSON.stringify({
+        summary: "nothing to file",
+        referenceDocuments: [],
+      });
+      const mockDeps = createMockDeps({ response: structured });
+      registerTool(mockDeps);
+
+      const handler = getHandler("run_codex");
+      await handler({ prompt: "x" });
+
+      expect(mockDeps.mockRegister).not.toHaveBeenCalled();
+    });
+
+    it("continues registering remaining docs and returns structured response when one registration fails", async () => {
+      const structured = JSON.stringify({
+        summary: "two docs, one bad path",
+        referenceDocuments: [
+          { filePath: "/absolute/bad.md", description: "outside worktree" },
+          {
+            filePath: "memory-bank/codex/good.md",
+            description: "good doc",
+          },
+        ],
+      });
+      const mockDeps = createMockDeps(
+        { response: structured },
+        {
+          registerImpl: async (req) => {
+            if (req.relativePath === "/absolute/bad.md") {
+              throw new Error("absolute paths not permitted");
+            }
+            return {
+              artifactId: "art",
+              kind: req.kind,
+              relativePath: req.relativePath,
+              audience: "user_facing" as const,
+              source: { createdAt: "2025-01-01T00:00:00.000Z" },
+            };
+          },
+        },
+      );
+      registerTool(mockDeps);
+
+      const handler = getHandler("run_codex");
+      const result = (await handler({ prompt: "x" })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+
+      expect(mockDeps.mockRegister).toHaveBeenCalledTimes(2);
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0]!.text);
+      expect(parsed.summary).toBe("two docs, one bad path");
+    });
+
+    it("does not call the registry when artifactRegistry dep is not provided", async () => {
+      const structured = JSON.stringify({
+        summary: "ok",
+        referenceDocuments: [
+          { filePath: "memory-bank/codex/x.md", description: "x" },
+        ],
+      });
+      const mockDeps = createMockDeps(
+        { response: structured },
+        { artifactRegistry: null },
+      );
+      registerTool(mockDeps);
+
+      const handler = getHandler("run_codex");
+      const result = (await handler({ prompt: "x" })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+
+      expect(mockDeps.mockRegister).not.toHaveBeenCalled();
+      expect(result.isError).toBeUndefined();
+    });
+  });
+
   describe("wrapCodexPrompt", () => {
     it("prepends instructions and preserves the original prompt", () => {
       const wrapped = wrapCodexPrompt("Fix the login bug");
@@ -441,14 +600,21 @@ describe("codex-tool", () => {
   });
 });
 
-function createMockDeps(runResult?: {
-  response?: string | null;
-  error?: string | null;
-  timedOut?: boolean;
-  structuredOutput?: unknown;
-}): CodexToolDeps & {
+function createMockDeps(
+  runResult?: {
+    response?: string | null;
+    error?: string | null;
+    timedOut?: boolean;
+    structuredOutput?: unknown;
+  },
+  opts?: {
+    artifactRegistry?: ArtifactRegistry | null;
+    registerImpl?: (req: ArtifactRegisterRequest) => Promise<unknown>;
+  },
+): CodexToolDeps & {
   mockRunCodex: ReturnType<typeof vi.fn>;
   mockEnsureDir: ReturnType<typeof vi.fn>;
+  mockRegister: ReturnType<typeof vi.fn>;
 } {
   const mockRunCodex = vi.fn().mockResolvedValue({
     response: "response" in (runResult ?? {}) ? runResult!.response : "ok",
@@ -457,11 +623,39 @@ function createMockDeps(runResult?: {
     structuredOutput: runResult?.structuredOutput,
   });
   const mockEnsureDir = vi.fn().mockResolvedValue(undefined);
+  const mockRegister = vi
+    .fn<(req: ArtifactRegisterRequest) => Promise<unknown>>()
+    .mockImplementation(
+      opts?.registerImpl ??
+        (async (req) => ({
+          artifactId: "art-1",
+          kind: req.kind,
+          relativePath: req.relativePath,
+          audience: "user_facing" as const,
+          source: { createdAt: "2025-01-01T00:00:00.000Z" },
+        })),
+    );
 
-  return {
+  const artifactRegistry: ArtifactRegistry | undefined =
+    opts?.artifactRegistry === null
+      ? undefined
+      : (opts?.artifactRegistry ??
+        ({
+          write: vi.fn(),
+          writeOptional: vi.fn(),
+          register: mockRegister,
+        } as unknown as ArtifactRegistry));
+
+  const deps: CodexToolDeps = {
     ensureDir: mockEnsureDir,
     runCodex: mockRunCodex,
+    ...(artifactRegistry ? { artifactRegistry } : {}),
+  };
+
+  return {
+    ...deps,
     mockRunCodex,
     mockEnsureDir,
+    mockRegister,
   };
 }

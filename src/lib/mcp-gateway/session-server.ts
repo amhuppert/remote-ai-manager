@@ -5,8 +5,9 @@ import { resolveProjectPath } from "@/lib/project-resolver";
 import { getSession, mutateConversation } from "@/lib/state";
 import { registerNotificationTool } from "@/lib/agent-notification-tool";
 import { registerAskUserQuestionTool } from "@/lib/ask-user-question-tool";
-import { registerCodexTool } from "@/lib/codex-tool";
+import { defaultCodexToolDeps, registerCodexTool } from "@/lib/codex-tool";
 import { registerReferenceDocumentTools } from "@/lib/reference-document-tools";
+import { createSessionArtifactRegistryForProduction } from "@/lib/workflows/primitives/default-session-artifact-registry";
 import { registerRoadmapTools } from "@/lib/roadmap-tools";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { registerPlannerTools } from "@/lib/workflow-graph/planner-tools";
@@ -56,7 +57,11 @@ export interface SessionMcpServerDeps {
   ): void;
   registerCodexTool(
     server: McpServer,
-    context: { worktreePath: string; sessionName: string },
+    context: {
+      projectPath: string;
+      worktreePath: string;
+      sessionName: string;
+    },
     config: NonNullable<GlobalConfig["codex"]>,
   ): void;
   registerAskUserQuestionTool(
@@ -118,12 +123,22 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
       timeoutMs = config.timeout * 1000;
     }
 
-    registerCodexTool(server, {
-      ...context,
-      defaultModel: config.model,
-      defaultReasoningEffort: config.reasoningEffort,
-      timeoutMs,
+    const artifactRegistry = createSessionArtifactRegistryForProduction({
+      projectPath: context.projectPath,
+      sessionName: context.sessionName,
     });
+
+    registerCodexTool(
+      server,
+      {
+        worktreePath: context.worktreePath,
+        sessionName: context.sessionName,
+        defaultModel: config.model,
+        defaultReasoningEffort: config.reasoningEffort,
+        timeoutMs,
+      },
+      { ...defaultCodexToolDeps, artifactRegistry },
+    );
   },
   registerAskUserQuestionTool(server, context) {
     registerAskUserQuestionTool(server, context, {
@@ -189,6 +204,7 @@ export async function createSessionMcpServer(
     deps.registerCodexTool(
       server,
       {
+        projectPath,
         worktreePath: session.worktreePath,
         sessionName: session.sessionName,
       },
