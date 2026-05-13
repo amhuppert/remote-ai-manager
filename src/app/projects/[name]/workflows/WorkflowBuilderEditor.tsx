@@ -201,7 +201,10 @@ function WorkflowBuilderEditorInner({
       />
       {saveError && <div className="wb-save-error-banner">{saveError}</div>}
       <div className="wb-editor-body">
-        <WorkflowBuilderCanvas onSelectContext={handleSelectContext} />
+        <WorkflowBuilderCanvas
+          onSelectContext={handleSelectContext}
+          globalDefaults={globalDefaults}
+        />
         <WorkflowInspectorPanel
           onSave={handleSave}
           onDelete={handleDeleteContext}

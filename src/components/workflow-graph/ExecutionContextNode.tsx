@@ -4,9 +4,10 @@ import { Handle, Position } from "@xyflow/react";
 import type { NodeProps, Node } from "@xyflow/react";
 import type {
   ContextDisplayPhase,
+  DisplayValidators,
   ExecutionContextNodeData,
 } from "./derive-graph";
-import { getContextDisplayPhase } from "./derive-graph";
+import { getContextDisplayPhase, getDisplayValidators } from "./derive-graph";
 
 type ExecutionContextNodeType = Node<
   ExecutionContextNodeData,
@@ -86,37 +87,7 @@ type ValidatorInfo =
   | { kind: "agent"; backend: AgentBackend }
   | { kind: "script" };
 
-function getValidatorInfo(context: ExecutionContextNodeData["context"]): {
-  script: boolean;
-  agent: AgentBackend | null;
-} {
-  const script =
-    "scriptValidator" in context && context.scriptValidator?.enabled === true;
-
-  const contextValidator =
-    "contextValidator" in context ? context.contextValidator : undefined;
-  let agent: AgentBackend | null = null;
-
-  if (contextValidator && typeof contextValidator === "object") {
-    if ("enabled" in contextValidator && "type" in contextValidator) {
-      if (contextValidator.enabled) agent = contextValidator.type;
-    } else if (
-      "kind" in contextValidator &&
-      contextValidator.kind === "use" &&
-      contextValidator.value.enabled
-    ) {
-      agent = contextValidator.value.type;
-    }
-  }
-
-  return { script, agent };
-}
-
-function ValidatorPills({
-  validators,
-}: {
-  validators: ReturnType<typeof getValidatorInfo>;
-}) {
+function ValidatorPills({ validators }: { validators: DisplayValidators }) {
   const pills: ValidatorInfo[] = [];
   if (validators.script) pills.push({ kind: "script" });
   if (validators.agent)
@@ -200,7 +171,7 @@ export default function ExecutionContextNode({
     "implementer" in context ? context.implementer : undefined;
   const implementerBackend: AgentBackend = implementer?.backend ?? "claude";
 
-  const validators = getValidatorInfo(context);
+  const validators = getDisplayValidators(context);
 
   const nodeClassName = [
     "graph-node",

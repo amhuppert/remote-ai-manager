@@ -3,6 +3,7 @@ import type {
   GraphWorkflowContextStatus,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
+  GraphWorkflowResolvedContext,
   GraphWorkflowTaskState,
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
@@ -12,6 +13,7 @@ import {
   deriveEdges,
   deriveNodes,
   getContextDisplayPhase,
+  getDisplayValidators,
 } from "./derive-graph";
 
 function makeDefinition(
@@ -392,6 +394,114 @@ describe("getContextDisplayPhase", () => {
         }),
       ),
     ).toBe("halted");
+  });
+});
+
+describe("getDisplayValidators", () => {
+  function makeResolved(
+    overrides: Partial<GraphWorkflowResolvedContext> = {},
+  ): GraphWorkflowResolvedContext {
+    return {
+      id: "ctx-1",
+      title: "Ctx",
+      acceptanceCriteria: "AC",
+      implementer: {
+        backend: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
+      contextValidator: null,
+      scriptValidator: { enabled: false },
+      mutability: { allowAgentTaskAdd: false },
+      circuitBreaker: { consecutiveFailureThreshold: 3 },
+      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      ...overrides,
+    };
+  }
+
+  it("returns no validators when both script is disabled and context validator is null", () => {
+    expect(getDisplayValidators(makeResolved())).toEqual({
+      script: false,
+      agent: null,
+    });
+  });
+
+  it("surfaces an inherited script validator as enabled", () => {
+    const ctx = makeResolved({ scriptValidator: { enabled: true } });
+    expect(getDisplayValidators(ctx)).toEqual({ script: true, agent: null });
+  });
+
+  it("surfaces an inherited claude agent validator", () => {
+    const ctx = makeResolved({
+      contextValidator: {
+        type: "claude",
+        enabled: true,
+        continuity: { enabled: true },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+      },
+    });
+    expect(getDisplayValidators(ctx)).toEqual({
+      script: false,
+      agent: "claude",
+    });
+  });
+
+  it("surfaces an inherited codex agent validator", () => {
+    const ctx = makeResolved({
+      contextValidator: {
+        type: "codex",
+        enabled: true,
+        continuity: { enabled: true },
+        codex: { model: "gpt-5.4", reasoningEffort: "high" },
+      },
+    });
+    expect(getDisplayValidators(ctx)).toEqual({
+      script: false,
+      agent: "codex",
+    });
+  });
+
+  it("hides the agent validator when its config is present but disabled", () => {
+    const ctx = makeResolved({
+      contextValidator: {
+        type: "claude",
+        enabled: false,
+        continuity: { enabled: true },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+      },
+    });
+    expect(getDisplayValidators(ctx)).toEqual({
+      script: false,
+      agent: null,
+    });
+  });
+
+  it("surfaces both validators together when both are enabled", () => {
+    const ctx = makeResolved({
+      scriptValidator: { enabled: true },
+      contextValidator: {
+        type: "claude",
+        enabled: true,
+        continuity: { enabled: true },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+      },
+    });
+    expect(getDisplayValidators(ctx)).toEqual({
+      script: true,
+      agent: "claude",
+    });
   });
 });
 

@@ -398,6 +398,74 @@ export const ValidatorsScriptPlusClaude: Story = {
   },
 };
 
+export const ValidatorsInheritedClaude: Story = {
+  args: {
+    data: {
+      context: {
+        id: "ctx-1",
+        title: "API Integration",
+        description:
+          "Inherits the workflow-level Claude validator — no node override.",
+        acceptanceCriteria:
+          "All REST endpoints exist and pass integration tests.",
+        implementer: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        contextValidator: {
+          type: "claude",
+          enabled: true,
+          continuity: { enabled: true },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+        },
+        scriptValidator: { enabled: false },
+        mutability: { allowAgentTaskAdd: false },
+        circuitBreaker: { consecutiveFailureThreshold: 3 },
+        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      },
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};
+
+export const ValidatorsInheritedScriptAndCodex: Story = {
+  args: {
+    data: {
+      context: {
+        id: "ctx-1",
+        title: "API Integration",
+        description:
+          "Both validators inherited from global/workflow — no node override.",
+        acceptanceCriteria:
+          "All REST endpoints exist and pass integration tests.",
+        implementer: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        contextValidator: {
+          type: "codex",
+          enabled: true,
+          continuity: { enabled: true },
+          codex: { model: "gpt-5.5", reasoningEffort: "medium" },
+        },
+        scriptValidator: { enabled: true },
+        mutability: { allowAgentTaskAdd: false },
+        circuitBreaker: { consecutiveFailureThreshold: 3 },
+        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      },
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};
+
 export const ImplementerCodex: Story = {
   args: {
     data: {

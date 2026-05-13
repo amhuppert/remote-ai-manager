@@ -31,7 +31,9 @@ import {
   deleteExecutionContext,
   updateContextPosition,
 } from "@/lib/workflow-graph/builder-draft";
+import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
+import type { GlobalConfig, WorkflowDefaults } from "@/types";
 
 const nodeTypes = {
   executionContext: ExecutionContextNode,
@@ -40,10 +42,12 @@ const edgeTypes = { contextEdge: ContextEdge } as unknown as EdgeTypes;
 
 interface WorkflowBuilderCanvasProps {
   onSelectContext?: (contextId: string | null) => void;
+  globalDefaults?: WorkflowDefaults;
 }
 
 export default function WorkflowBuilderCanvas({
   onSelectContext,
+  globalDefaults,
 }: WorkflowBuilderCanvasProps) {
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (s) => s.draftDefinition,
@@ -71,8 +75,12 @@ export default function WorkflowBuilderCanvas({
 
   const derivedNodes = useMemo(() => {
     if (!draftDefinition || !draftLayout) return [];
-    return deriveNodes(draftDefinition, draftLayout);
-  }, [draftDefinition, draftLayout]);
+    const resolved = resolveWorkflowDefinition(
+      { workflowDefaults: globalDefaults } as GlobalConfig,
+      draftDefinition,
+    );
+    return deriveNodes(resolved, draftLayout);
+  }, [draftDefinition, draftLayout, globalDefaults]);
 
   const derivedEdges = useMemo(() => {
     if (!draftDefinition) return [];

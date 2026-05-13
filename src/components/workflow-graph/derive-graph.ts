@@ -36,6 +36,27 @@ export type ContextDisplayPhase =
   | "validating"
   | "merging";
 
+export type DisplayValidators = {
+  script: boolean;
+  agent: "claude" | "codex" | null;
+};
+
+export function getDisplayValidators(
+  context: ExecutionContextNodeData["context"],
+): DisplayValidators {
+  const script = context.scriptValidator?.enabled === true;
+  const validator = context.contextValidator;
+  if (
+    validator &&
+    "enabled" in validator &&
+    "type" in validator &&
+    validator.enabled === true
+  ) {
+    return { script, agent: validator.type };
+  }
+  return { script, agent: null };
+}
+
 export function getContextDisplayPhase(
   contextState: GraphWorkflowExecutionContextState | undefined,
 ): ContextDisplayPhase | undefined {
