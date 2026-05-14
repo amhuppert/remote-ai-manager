@@ -34,6 +34,7 @@ function createTestDeps(): QueueRouteDeps {
     getConversation: vi.fn().mockResolvedValue(testConversation),
     getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
     queueMessage: vi.fn().mockResolvedValue(undefined),
+    setConversationPendingPromptText: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -157,5 +158,34 @@ describe("POST .../conversations/[conversationId]/queue", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.queued).toBe(true);
+  });
+
+  it("clears conversation pendingPromptText before queueing", async () => {
+    const response = await handlers.POST(
+      makeRequest({ text: "queued draft" }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.setConversationPendingPromptText).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "test-session",
+      "conv-123",
+      null,
+    );
+  });
+
+  it("does not clear pendingPromptText when conversation is not running", async () => {
+    vi.mocked(deps.getConversation).mockResolvedValue({
+      ...testConversation,
+      status: "awaiting",
+    } as ConversationState);
+    const response = await handlers.POST(
+      makeRequest({ text: "hello" }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(409);
+    expect(deps.setConversationPendingPromptText).not.toHaveBeenCalled();
   });
 });

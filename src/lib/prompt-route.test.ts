@@ -19,6 +19,7 @@ function createTestDeps(): PromptRouteDeps {
     isConversationBusy: vi.fn().mockReturnValue(false),
     executePromptStream: vi.fn().mockResolvedValue(undefined),
     getCollaborationManager: vi.fn().mockReturnValue(makeMockManager()),
+    setConversationPendingPromptText: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -393,6 +394,68 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+  });
+
+  // Submission is the user committing pendingPromptText into the conversation
+  // history; if the server doesn't clear it atomically, SSE-driven session
+  // refetches (triggered by the status→running transition) can re-hydrate
+  // stale draft text into the input on the next navigation.
+  it("clears conversation pendingPromptText before dispatching to executePromptStream", async () => {
+    vi.mocked(deps.getConversation).mockResolvedValue({
+      ...testConversation,
+      pendingPromptText: "draft about to be submitted",
+    } as ConversationState);
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "draft about to be submitted" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.setConversationPendingPromptText).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "test-session",
+      "conv-1",
+      null,
+    );
+  });
+
+  it("clears conversation pendingPromptText before dispatching a /collab brief", async () => {
+    const startMock = vi
+      .fn()
+      .mockResolvedValue({ workflowId: "wf-clear", status: "started" });
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(
+      makeMockManager({ start: startMock }),
+    );
+    vi.mocked(deps.getConversation).mockResolvedValue({
+      ...testConversation,
+      pendingPromptText: "/collab investigate the regression",
+    } as ConversationState);
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "/collab investigate the regression" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(202);
+    expect(deps.setConversationPendingPromptText).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "test-session",
+      "conv-1",
+      null,
+    );
+  });
+
+  it("does not clear pendingPromptText when the conversation is busy", async () => {
+    vi.mocked(deps.isConversationBusy).mockReturnValue(true);
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "Hello" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(409);
+    expect(deps.setConversationPendingPromptText).not.toHaveBeenCalled();
   });
 });
 

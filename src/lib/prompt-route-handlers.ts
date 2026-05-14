@@ -8,7 +8,10 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
 import { getSession as defaultGetSession } from "@/lib/state";
-import { getConversation as defaultGetConversation } from "@/lib/conversations";
+import {
+  getConversation as defaultGetConversation,
+  setConversationPendingPromptText as defaultSetConversationPendingPromptText,
+} from "@/lib/conversations";
 import {
   executePromptStream as defaultExecutePromptStream,
   BackendMismatchError,
@@ -58,6 +61,12 @@ export interface PromptRouteDeps {
   ) => boolean;
   executePromptStream: typeof defaultExecutePromptStream;
   getCollaborationManager: () => CollaborationManager;
+  setConversationPendingPromptText(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    text: string | null,
+  ): Promise<void>;
 }
 
 const defaultDeps: PromptRouteDeps = {
@@ -67,6 +76,7 @@ const defaultDeps: PromptRouteDeps = {
   isConversationBusy: defaultIsConversationBusy,
   executePromptStream: defaultExecutePromptStream,
   getCollaborationManager: getDefaultCollaborationManager,
+  setConversationPendingPromptText: defaultSetConversationPendingPromptText,
 };
 
 // ---------------------------------------------------------------------------
@@ -318,6 +328,17 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
           { status: 400 },
         );
       }
+      // The user is submitting their draft — clear the persisted pending
+      // prompt text atomically with the dispatch. Without this, the
+      // status→running SSE event triggers a session refetch that can race
+      // the client's fire-and-forget clear and resurrect the old draft on
+      // the next remount of the conversation page.
+      await deps.setConversationPendingPromptText(
+        projectPath,
+        sessionName,
+        conversationId,
+        null,
+      );
       try {
         const manager = deps.getCollaborationManager();
         const result = await manager.start({
@@ -351,6 +372,18 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
         });
       }
     }
+
+    // The user is submitting their draft — clear the persisted pending
+    // prompt text atomically with the dispatch. Without this, the
+    // status→running SSE event triggers a session refetch that can race
+    // the client's fire-and-forget clear and resurrect the old draft on
+    // the next remount of the conversation page.
+    await deps.setConversationPendingPromptText(
+      projectPath,
+      sessionName,
+      conversationId,
+      null,
+    );
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({

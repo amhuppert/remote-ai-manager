@@ -9,7 +9,10 @@ import { NextResponse } from "next/server";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/project-resolver";
 import { getSession as defaultGetSession } from "@/lib/state";
-import { getConversation as defaultGetConversation } from "@/lib/conversations";
+import {
+  getConversation as defaultGetConversation,
+  setConversationPendingPromptText as defaultSetConversationPendingPromptText,
+} from "@/lib/conversations";
 import { queueMessage as defaultQueueMessage } from "@/lib/queue-message";
 import type { ConversationState, SessionState, ApiError } from "@/types";
 
@@ -35,6 +38,12 @@ export interface QueueRouteDeps {
     sessionName: string;
     text: string;
   }) => Promise<void>;
+  setConversationPendingPromptText(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    text: string | null,
+  ): Promise<void>;
 }
 
 const defaultDeps: QueueRouteDeps = {
@@ -43,6 +52,7 @@ const defaultDeps: QueueRouteDeps = {
   getConversation: defaultGetConversation,
   getProjectDisplayName: defaultGetProjectDisplayName,
   queueMessage: defaultQueueMessage,
+  setConversationPendingPromptText: defaultSetConversationPendingPromptText,
 };
 
 // ---------------------------------------------------------------------------
@@ -125,6 +135,15 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
+
+    // The user is submitting their draft via the queue path — clear the
+    // persisted pending prompt text so it isn't resurrected on remount.
+    await deps.setConversationPendingPromptText(
+      projectPath,
+      sessionName,
+      conversationId,
+      null,
+    );
 
     await deps.queueMessage({
       conversationId,
