@@ -168,14 +168,6 @@ function dumpProject(
        ORDER BY created_at ASC, id ASC`,
     )
     .all(projectPath) as Record<string, unknown>[];
-  const roadmapItems = deps.db
-    .prepare(
-      `SELECT * FROM roadmap_items
-       WHERE project_path = ?
-       ORDER BY sort_order ASC, created_at ASC, id ASC`,
-    )
-    .all(projectPath) as Record<string, unknown>[];
-
   if (json) {
     deps.out(
       JSON.stringify(
@@ -184,7 +176,6 @@ function dumpProject(
           sessions,
           conversations,
           referenceDocuments,
-          roadmapItems,
         },
         null,
         2,
@@ -223,14 +214,6 @@ function dumpProject(
   for (const r of referenceDocuments) {
     deps.out(
       `  ${asString(r["id"])}  session=${asString(r["session_name"])}  path=${asString(r["file_path"])}`,
-    );
-  }
-  deps.out("");
-
-  deps.out(`Roadmap items (${roadmapItems.length}):`);
-  for (const r of roadmapItems) {
-    deps.out(
-      `  ${asString(r["id"])}  type=${asString(r["type"])}  status=${asString(r["status"])}  title=${asString(r["title"])}`,
     );
   }
 }

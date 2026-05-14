@@ -99,7 +99,7 @@ describe("adaptServerViewsForLevel", () => {
 
   it("hides reserved gateway servers", () => {
     const view = apiView("conversation", [
-      apiServer({ serverKey: "cc-roadmap", reserved: true }),
+      apiServer({ serverKey: "cc-session-tools", reserved: true }),
       apiServer({ serverKey: "playwright", reserved: false }),
     ]);
     const servers = adaptServerViewsForLevel(view, "conversation");

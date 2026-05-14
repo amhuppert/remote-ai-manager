@@ -603,7 +603,7 @@ describe("resolveView — inheritance status at session/conversation views", () 
 
 describe("resolveView — reserved gateway servers", () => {
   const gateway = mkDefinition({
-    serverKey: "cc-roadmap",
+    serverKey: "cc-session-tools",
     reserved: true,
     sourceRefs: [],
   });
@@ -615,11 +615,11 @@ describe("resolveView — reserved gateway servers", () => {
       discovered: [gateway],
       discoveryDiagnostics: [],
       toolInventories: {},
-      gatewayServerKeys: ["cc-roadmap"],
-      reservedGatewayServerKeys: ["cc-roadmap"],
+      gatewayServerKeys: ["cc-session-tools"],
+      reservedGatewayServerKeys: ["cc-session-tools"],
       pendingServerKeys: [],
     });
-    const row = view.servers.find((s) => s.serverKey === "cc-roadmap");
+    const row = view.servers.find((s) => s.serverKey === "cc-session-tools");
     expect(row?.reserved).toBe(true);
   });
 

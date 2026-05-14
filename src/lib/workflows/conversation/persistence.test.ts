@@ -66,7 +66,6 @@ function makeState(conversation: ConversationState): ManagerState {
             referenceDocuments: [],
           },
         },
-        roadmapItems: [],
       },
     },
     archivedProjects: [],

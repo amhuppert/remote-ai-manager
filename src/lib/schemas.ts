@@ -1532,28 +1532,6 @@ export type WorkflowGeneratedDraft = z.infer<
 >;
 
 // ============================================================
-// Roadmap Item Schemas
-// ============================================================
-
-export const roadmapItemTypeSchema = z.enum(["bug", "feature", "idea"]);
-export type RoadmapItemType = z.infer<typeof roadmapItemTypeSchema>;
-
-export const roadmapItemStatusSchema = z.enum(["incomplete", "done"]);
-export type RoadmapItemStatus = z.infer<typeof roadmapItemStatusSchema>;
-
-export const roadmapItemSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  description: z.string().nullable().default(null),
-  type: roadmapItemTypeSchema,
-  status: roadmapItemStatusSchema.default("incomplete"),
-  archived: z.boolean().default(false),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-export type RoadmapItem = z.infer<typeof roadmapItemSchema>;
-
-// ============================================================
 // Reference Documents
 // ============================================================
 
@@ -1693,7 +1671,6 @@ export type SessionState = z.infer<typeof sessionStateSchema>;
 export const projectStateSchema = z.object({
   rootPath: z.string(),
   sessions: z.record(z.string(), sessionStateSchema),
-  roadmapItems: z.array(roadmapItemSchema).default([]),
   mcpOverrides: mcpOverridesSchema.optional(),
 });
 export type ProjectState = z.infer<typeof projectStateSchema>;
@@ -1781,37 +1758,6 @@ export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 // ============================================================
 // API Request Schemas
 // ============================================================
-
-export const createRoadmapItemRequestSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().nullable().optional(),
-  type: roadmapItemTypeSchema,
-});
-export type CreateRoadmapItemRequest = z.infer<
-  typeof createRoadmapItemRequestSchema
->;
-
-export const updateRoadmapItemRequestSchema = z
-  .object({
-    title: z.string().min(1).optional(),
-    description: z.string().nullable().optional(),
-    status: roadmapItemStatusSchema.optional(),
-    archived: z.boolean().optional(),
-  })
-  .refine(
-    (d) =>
-      d.title !== undefined ||
-      d.description !== undefined ||
-      d.status !== undefined ||
-      d.archived !== undefined,
-    {
-      message:
-        "At least one of title, description, status, or archived is required",
-    },
-  );
-export type UpdateRoadmapItemRequest = z.infer<
-  typeof updateRoadmapItemRequestSchema
->;
 
 export const imageMediaTypeSchema = z.enum([
   "image/jpeg",

@@ -38,7 +38,6 @@ function createDeps(overrides: Record<string, unknown> = {}) {
       conversations: [{ id: "conv-1" }],
     })),
     readConfig: vi.fn(async () => makeConfig()),
-    registerRoadmapTools: vi.fn(),
     registerReferenceDocumentTools: vi.fn(),
     registerPlannerTools: vi.fn(),
     registerNotificationTool: vi.fn(),
@@ -62,7 +61,6 @@ describe("mcp-gateway/session-server", () => {
       deps,
     );
 
-    expect(deps.registerRoadmapTools).toHaveBeenCalledOnce();
     expect(deps.registerReferenceDocumentTools).toHaveBeenCalledOnce();
     expect(deps.registerPlannerTools).toHaveBeenCalledOnce();
   });

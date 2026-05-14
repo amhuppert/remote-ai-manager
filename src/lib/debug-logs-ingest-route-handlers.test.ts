@@ -69,7 +69,6 @@ const BASE_STATE: ManagerState = {
     "test-proj": {
       rootPath: "/home/projects/test-proj",
       sessions: { "test-session": BASE_SESSION },
-      roadmapItems: [],
     },
   },
   archivedProjects: [],

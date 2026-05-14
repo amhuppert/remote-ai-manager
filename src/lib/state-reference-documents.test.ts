@@ -27,7 +27,6 @@ function stateWithSession(): ManagerState {
     projects: {
       [PROJECT_PATH]: {
         rootPath: PROJECT_PATH,
-        roadmapItems: [],
         sessions: {
           [SESSION_NAME]: {
             sessionName: SESSION_NAME,
@@ -129,7 +128,6 @@ describe("createReferenceDocument", () => {
       projects: {
         [PROJECT_PATH]: {
           rootPath: PROJECT_PATH,
-          roadmapItems: [],
           sessions: {},
         },
       },

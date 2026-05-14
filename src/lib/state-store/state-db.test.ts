@@ -19,7 +19,6 @@ const EXPECTED_TABLES = [
   "projects",
   "sessions",
   "conversations",
-  "roadmap_items",
   "reference_documents",
   "notifications",
   "job_records",

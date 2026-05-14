@@ -1586,7 +1586,6 @@ describe("retargetOrphanedChildren", () => {
         "/projects/repo": {
           rootPath: "/projects/repo",
           sessions,
-          roadmapItems: [],
         },
       },
       archivedProjects: [] as string[],
@@ -1721,7 +1720,6 @@ describe("deleteSession — orphan retargeting", () => {
               parentSessionName: "Parent",
             },
           },
-          roadmapItems: [],
         },
       },
       archivedProjects: [] as string[],

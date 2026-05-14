@@ -181,7 +181,6 @@ async function seedSession(
     projects: {
       "/proj": {
         rootPath: "/proj",
-        roadmapItems: [],
         sessions: {
           test: {
             sessionName: "test",

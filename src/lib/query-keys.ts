@@ -98,12 +98,6 @@ export const presetKeys = {
     [...presetKeys.all, "list", projectName] as const,
 };
 
-export const roadmapItemKeys = {
-  all: ["roadmap-items"] as const,
-  list: (projectName: string) =>
-    [...roadmapItemKeys.all, "list", projectName] as const,
-};
-
 export const debugLogKeys = {
   all: ["debug-logs"] as const,
   stats: (projectName: string, sessionName: string, conversationId: string) =>

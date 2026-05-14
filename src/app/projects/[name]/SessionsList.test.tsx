@@ -46,18 +46,12 @@ vi.mock("@/lib/queries", () => ({
     isLoading: false,
     error: null,
   }),
-  useRoadmapItemsQuery: () => ({ data: [] }),
   useProjectMcpConfigQuery: () => ({
     data: undefined,
     isPending: true,
     isError: false,
     error: null,
   }),
-}));
-
-vi.mock("@/stores/roadmap-items.store", () => ({
-  useShowArchivedRoadmapItems: () => false,
-  useToggleArchivedRoadmapItems: () => vi.fn(),
 }));
 
 vi.mock("@/stores/unified-panel.store", () => ({
@@ -74,10 +68,6 @@ vi.mock("@/lib/mutations", () => ({
   }),
   useArchiveSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useInstallPresetMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useCreateRoadmapItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useUpdateRoadmapItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useDeleteRoadmapItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useStartRoadmapFocusMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useToggleMcpServerMutation: () => ({ mutate: vi.fn() }),
   useResetMcpServerMutation: () => ({ mutate: vi.fn() }),

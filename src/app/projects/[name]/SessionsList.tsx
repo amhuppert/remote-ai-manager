@@ -20,7 +20,6 @@ import CreateSessionModal from "./CreateSessionModal";
 import OptimisticDialog from "./OptimisticDialog";
 import PresetInstallDialog from "./PresetInstallDialog";
 import ProjectActionsBar from "./ProjectActionsBar";
-import RoadmapItemsPanel from "./RoadmapItemsPanel";
 import SessionsTable from "./SessionsTable";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Topbar from "@/components/Topbar";
@@ -116,8 +115,6 @@ export default function SessionsList({
         ) : (
           <>
             <div className="stagger-in">
-              <RoadmapItemsPanel projectName={projectName} />
-
               <ProjectActionsBar
                 projectName={projectName}
                 archivedCount={archivedCount}

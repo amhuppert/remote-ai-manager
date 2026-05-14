@@ -72,7 +72,6 @@ function stateWith(convOverrides: Record<string, unknown> = {}): ManagerState {
     projects: {
       [PROJECT_PATH]: {
         rootPath: PROJECT_PATH,
-        roadmapItems: [],
         sessions: {
           [SESSION_NAME]: {
             sessionName: SESSION_NAME,
@@ -264,7 +263,7 @@ describe("computeEffectiveConfigHash", () => {
 
   it("changes when a server is added (gateway/user distinction irrelevant — hash covers the full emitted set)", () => {
     const a = portableWith([{ id: "s1" }]);
-    const b = portableWith([{ id: "s1" }, { id: "gateway-roadmap" }]);
+    const b = portableWith([{ id: "s1" }, { id: "gateway-extra" }]);
     expect(computeEffectiveConfigHash(a)).not.toBe(
       computeEffectiveConfigHash(b),
     );

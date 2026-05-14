@@ -6,7 +6,6 @@ import {
   type ManagerState,
   type ProjectState,
   type ReferenceDocument,
-  type RoadmapItem,
   type SessionState,
 } from "../schemas";
 import { PersistenceError } from "../errors";
@@ -16,10 +15,6 @@ import {
   type ConversationsRepo,
   canonicalConversationRow,
 } from "./conversations-repo";
-import {
-  type RoadmapItemsRepo,
-  canonicalRoadmapItemRow,
-} from "./roadmap-items-repo";
 import {
   type ReferenceDocumentsRepo,
   canonicalReferenceDocumentRow,
@@ -34,7 +29,6 @@ export interface AllRepos {
   projects: ProjectsRepo;
   sessions: SessionsRepo;
   conversations: ConversationsRepo;
-  roadmapItems: RoadmapItemsRepo;
   referenceDocuments: ReferenceDocumentsRepo;
 }
 
@@ -79,11 +73,6 @@ interface ReferenceDocEntry {
   sessionName: string;
   doc: ReferenceDocument;
 }
-interface RoadmapEntry {
-  projectPath: string;
-  item: RoadmapItem;
-  sortOrder: number;
-}
 
 function indexSessions(state: ManagerState): Map<string, SessionEntry> {
   const out = new Map<string, SessionEntry>();
@@ -123,16 +112,6 @@ function indexReferenceDocs(
   return out;
 }
 
-function indexRoadmap(state: ManagerState): Map<string, RoadmapEntry> {
-  const out = new Map<string, RoadmapEntry>();
-  for (const [pp, ps] of Object.entries(state.projects)) {
-    ps.roadmapItems.forEach((item, idx) => {
-      out.set(item.id, { projectPath: pp, item, sortOrder: idx });
-    });
-  }
-  return out;
-}
-
 export function createStateAggregate(repos: AllRepos): StateAggregate {
   const db = repos.db;
   function readAll(): ManagerState {
@@ -142,7 +121,6 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
     const sessionRows = repos.sessions.findAll();
     const conversationRows = repos.conversations.findAll();
     const refDocRows = repos.referenceDocuments.findAll();
-    const roadmapRows = repos.roadmapItems.findAll();
 
     const sessionsByProject = new Map<string, Map<string, SessionState>>();
     for (const { projectPath, session } of sessionRows) {
@@ -168,13 +146,6 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
       const arr = refDocsBySession.get(key);
       if (arr) arr.push(doc);
       else refDocsBySession.set(key, [doc]);
-    }
-
-    const roadmapByProject = new Map<string, RoadmapItem[]>();
-    for (const { projectPath, item } of roadmapRows) {
-      const arr = roadmapByProject.get(projectPath);
-      if (arr) arr.push(item);
-      else roadmapByProject.set(projectPath, [item]);
     }
 
     const projects: Record<string, ProjectState> = {};
@@ -208,7 +179,6 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
       const project: Record<string, unknown> = {
         rootPath: row.rootPath,
         sessions: sessionsRecord,
-        roadmapItems: roadmapByProject.get(row.rootPath) ?? [],
       };
       if (row.mcpOverrides !== undefined) {
         project.mcpOverrides = row.mcpOverrides;
@@ -417,31 +387,6 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
       dirtyEntityCount += 1;
     }
 
-    const snapRoadmap = indexRoadmap(snapshot);
-    const mutRoadmap = indexRoadmap(mutated);
-    for (const [id, val] of snapRoadmap) {
-      if (mutRoadmap.has(id)) continue;
-      if (removedProjectSet.has(val.projectPath)) continue;
-      ops.push(() => repos.roadmapItems.delete(id));
-      dirtyEntityCount += 1;
-    }
-    for (const [id, val] of mutRoadmap) {
-      const snap = snapRoadmap.get(id);
-      const mutCanon = canonicalRoadmapItemRow(
-        val.projectPath,
-        val.item,
-        val.sortOrder,
-      );
-      const snapCanon = snap
-        ? canonicalRoadmapItemRow(snap.projectPath, snap.item, snap.sortOrder)
-        : undefined;
-      if (snapCanon === mutCanon) continue;
-      ops.push(() =>
-        repos.roadmapItems.upsert(val.projectPath, val.item, val.sortOrder),
-      );
-      dirtyEntityCount += 1;
-    }
-
     if (ops.length > 0) {
       const txn = db.transaction(() => {
         for (const op of ops) op();
@@ -453,7 +398,6 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
     const sessionCount = mutSessions.size;
     const conversationCount = mutConvs.size;
     const referenceDocumentCount = mutRefs.size;
-    const roadmapItemCount = mutRoadmap.size;
     const archivedProjectionMemberCount = mutated.archivedProjects.length;
     const pinnedProjectionMemberCount = mutated.pinnedProjects.length;
     const durationMs = +(performance.now() - start).toFixed(3);
@@ -465,7 +409,6 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
       sessionCount,
       conversationCount,
       referenceDocumentCount,
-      roadmapItemCount,
       archivedProjectionMemberCount,
       pinnedProjectionMemberCount,
     });

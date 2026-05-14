@@ -87,7 +87,6 @@ function makeState(
       "/home/user/my-project": {
         rootPath: "/home/user/my-project",
         sessions,
-        roadmapItems: [],
       },
     },
     archivedProjects: overrides.archivedProjects ?? [],

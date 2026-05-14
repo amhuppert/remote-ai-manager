@@ -29,7 +29,6 @@ function stateWithAllScopes(): ManagerState {
     projects: {
       [PROJECT_PATH]: {
         rootPath: PROJECT_PATH,
-        roadmapItems: [],
         sessions: {
           [SESSION_NAME]: {
             sessionName: SESSION_NAME,

@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   useMutation,
   useQueryClient,
@@ -11,7 +10,6 @@ import {
   conversationKeys,
   workflowDefinitionKeys,
   presetKeys,
-  roadmapItemKeys,
   notificationKeys,
   mcpConfigKeys,
   mcpToolsKeys,
@@ -33,7 +31,6 @@ import {
   finalizeInitResponseSchema,
   fullConfigResponseSchema,
   installPresetResponseSchema,
-  roadmapItemMutationResponseSchema,
   workflowDefinitionMutationResponseSchema,
   workflowGeneratedDraftResponseSchema,
   collaborationStartResponseSchema,
@@ -43,8 +40,6 @@ import {
 import type {
   GlobalConfig,
   ImagePayload,
-  RoadmapItemType,
-  RoadmapItemStatus,
   SessionState,
   WorkflowPlanRequest,
   WorkflowDefinitionRecord,
@@ -966,112 +961,6 @@ export function useInstallPresetMutation(projectName: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: presetKeys.list(projectName),
-      });
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Roadmap Item Mutations
-// ---------------------------------------------------------------------------
-
-function roadmapUrl(projectName: string, path = "") {
-  return `/api/projects/${encodeURIComponent(projectName)}/roadmap-items${path}`;
-}
-
-export function useCreateRoadmapItemMutation(projectName: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (params: {
-      title: string;
-      description?: string | null;
-      type: RoadmapItemType;
-    }) =>
-      mutationFetch(
-        roadmapUrl(projectName),
-        "create-roadmap-item",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(params),
-        },
-        roadmapItemMutationResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: roadmapItemKeys.list(projectName),
-      });
-    },
-  });
-}
-
-export function useUpdateRoadmapItemMutation(projectName: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({
-      itemId,
-      ...data
-    }: {
-      itemId: string;
-      title?: string;
-      description?: string | null;
-      status?: RoadmapItemStatus;
-      archived?: boolean;
-    }) =>
-      mutationFetch(
-        roadmapUrl(projectName, `/${encodeURIComponent(itemId)}`),
-        "update-roadmap-item",
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        },
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: roadmapItemKeys.list(projectName),
-      });
-    },
-  });
-}
-
-export function useDeleteRoadmapItemMutation(projectName: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (itemId: string) =>
-      mutationFetch(
-        roadmapUrl(projectName, `/${encodeURIComponent(itemId)}`),
-        "delete-roadmap-item",
-        { method: "DELETE" },
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: roadmapItemKeys.list(projectName),
-      });
-    },
-  });
-}
-
-export function useStartRoadmapFocusMutation(projectName: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (itemId: string) =>
-      mutationFetch(
-        roadmapUrl(projectName, `/${encodeURIComponent(itemId)}/focus`),
-        "start-roadmap-focus",
-        { method: "POST" },
-        z.object({ session: sessionStateSchema }),
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: roadmapItemKeys.list(projectName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.list(projectName),
       });
     },
   });

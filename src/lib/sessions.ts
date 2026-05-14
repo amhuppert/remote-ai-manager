@@ -286,7 +286,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
         state.projects[projectPath] = {
           rootPath: projectPath,
           sessions: {},
-          roadmapItems: [],
         };
       }
       state.projects[projectPath]!.sessions[sessionName] = session;

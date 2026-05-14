@@ -13,7 +13,6 @@ import {
   mcpToolsKeys,
   notificationKeys,
   presetKeys,
-  roadmapItemKeys,
   debugLogKeys,
   referenceDocumentKeys,
   collaborationKeys,
@@ -35,7 +34,6 @@ import {
   presetsResponseSchema,
   workflowDefinitionsResponseSchema,
   workflowDefinitionGetResponseSchema,
-  roadmapItemsResponseSchema,
   debugLogStatsResponseSchema,
   collaborationListResponseSchema,
 } from "@/lib/api-client";
@@ -436,22 +434,6 @@ export function usePresetsQuery(projectName: string) {
         `/api/projects/${encodeURIComponent(projectName)}/dev-servers/presets`,
         presetsResponseSchema,
       ).then((r) => r.presets),
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Roadmap Item Queries
-// ---------------------------------------------------------------------------
-
-export function useRoadmapItemsQuery(projectName: string) {
-  return useQuery({
-    queryKey: roadmapItemKeys.list(projectName),
-    queryFn: () =>
-      apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/roadmap-items`,
-        roadmapItemsResponseSchema,
-      ).then((r) => r.items),
-    refetchInterval: 30_000,
   });
 }
 

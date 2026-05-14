@@ -54,7 +54,6 @@ function makeState(
     projects: {
       [projectPath]: {
         rootPath: projectPath,
-        roadmapItems: [],
         sessions: sessionEntries,
       },
     },
@@ -319,7 +318,6 @@ describe("checkAllSessionsForMerge", () => {
       projects: {
         "/projects/alpha": {
           rootPath: "/projects/alpha",
-          roadmapItems: [],
           sessions: {
             s1: {
               sessionName: "s1",
@@ -344,7 +342,6 @@ describe("checkAllSessionsForMerge", () => {
         },
         "/projects/beta": {
           rootPath: "/projects/beta",
-          roadmapItems: [],
           sessions: {
             s2: {
               sessionName: "s2",

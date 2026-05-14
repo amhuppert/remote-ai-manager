@@ -112,22 +112,6 @@ const SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_conversations_last_activity
     ON conversations(last_activity_at);
 
-  CREATE TABLE IF NOT EXISTS roadmap_items (
-    id            TEXT PRIMARY KEY,
-    project_path  TEXT NOT NULL,
-    title         TEXT NOT NULL,
-    description   TEXT,
-    type          TEXT NOT NULL,
-    status        TEXT NOT NULL,
-    archived      INTEGER NOT NULL DEFAULT 0,
-    sort_order    INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL,
-    FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_roadmap_items_project ON roadmap_items(project_path);
-
   CREATE TABLE IF NOT EXISTS reference_documents (
     id            TEXT PRIMARY KEY,
     project_path  TEXT NOT NULL,
@@ -182,6 +166,9 @@ const SCHEMA_DDL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
+
+  DROP INDEX IF EXISTS idx_roadmap_items_project;
+  DROP TABLE IF EXISTS roadmap_items;
 `;
 
 export class SchemaVersionConflictError extends Error {

@@ -5,7 +5,7 @@ description: >-
   to understand the CC-specific context of its environment. Use when the agent
   asks "what is Command Center", "how does CC work", "what MCP tools do I
   have", "what's my worktree", "how is this project configured", "what dev
-  servers are available", "how do I use the roadmap tools", or needs
+  servers are available", or needs
   orientation about the CC environment it is running in.
 ---
 
@@ -45,18 +45,6 @@ If the session was created in **Focus mode**, your system prompt includes an `<o
 ## MCP Tools
 
 CC injects custom MCP tools into your session. These are in-process servers — no network calls.
-
-### Roadmap Tools (Always Available)
-
-Track work items discovered during your session. These persist in CC's project state and are visible in the UI.
-
-| Tool | Purpose |
-|---|---|
-| `list_roadmap_items` | List all active (non-archived) roadmap items for this project. Call this first to see what already exists. |
-| `add_roadmap_item` | Add a bug, feature, or idea. Requires `title` (string) and `type` ("bug", "feature", or "idea"). Optional `description`. |
-| `remove_roadmap_item` | Remove an item by its `item_id` (string). |
-
-Use roadmap tools when you discover work that is out of scope for the current task but worth tracking — bugs you notice, feature ideas, or technical debt.
 
 ## Project Configuration
 
@@ -115,13 +103,11 @@ These happen automatically — no action needed from you:
 | Working directory | User's chosen directory | Isolated git worktree |
 | Permissions | User-configured | `bypassPermissions` (full access) |
 | Session persistence | Local `~/.claude/` | CC manages its own transcripts |
-| MCP tools | User-configured | CC injects roadmap tools |
 | Dev servers | User starts manually | CC manages lifecycle, port allocation |
 | Merge to main | User runs git commands | CC's merge workflow with validation |
 
 ## Tips
 
 - **Check `CommandCenter.json`** in the repo root to understand what's configured for this project.
-- **Use roadmap tools** to track out-of-scope discoveries rather than losing them.
 - **Don't worry about ports** — if a dev server is running, CC handles the port assignment.
 - **Your branch is `csm/<session-name>`** — commits go here. CC handles merging to `main` when the user requests it.

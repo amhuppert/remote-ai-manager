@@ -8,7 +8,6 @@ import { registerAskUserQuestionTool } from "@/lib/ask-user-question-tool";
 import { defaultCodexToolDeps, registerCodexTool } from "@/lib/codex-tool";
 import { registerReferenceDocumentTools } from "@/lib/reference-document-tools";
 import { createSessionArtifactRegistryForProduction } from "@/lib/workflows/primitives/default-session-artifact-registry";
-import { registerRoadmapTools } from "@/lib/roadmap-tools";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { registerPlannerTools } from "@/lib/workflow-graph/planner-tools";
 import { getConversationRuntime } from "@/lib/workflows/conversation/runtime-state";
@@ -35,10 +34,6 @@ export interface SessionMcpServerDeps {
     sessionName: string,
   ): Promise<SessionWithConversations | null>;
   readConfig(): Promise<GlobalConfig>;
-  registerRoadmapTools(
-    server: McpServer,
-    context: { projectPath: string },
-  ): void;
   registerReferenceDocumentTools(
     server: McpServer,
     context: {
@@ -78,7 +73,6 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
   resolveProjectPath,
   getSession,
   readConfig,
-  registerRoadmapTools,
   registerReferenceDocumentTools,
   registerPlannerTools(server, context) {
     const storage = createWorkflowStorageService();
@@ -182,7 +176,6 @@ export async function createSessionMcpServer(
     version: "1.0.0",
   });
 
-  deps.registerRoadmapTools(server, { projectPath });
   deps.registerReferenceDocumentTools(server, {
     projectPath,
     sessionName: session.sessionName,

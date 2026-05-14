@@ -37,7 +37,6 @@ function baseState(): ManagerState {
         sessions: {
           sess: mkSession(),
         },
-        roadmapItems: [],
       },
     },
     archivedProjects: [],

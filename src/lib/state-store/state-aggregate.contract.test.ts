@@ -18,10 +18,6 @@ import {
   canonicalConversationRow,
 } from "./conversations-repo";
 import {
-  createRoadmapItemsRepo,
-  canonicalRoadmapItemRow,
-} from "./roadmap-items-repo";
-import {
   createReferenceDocumentsRepo,
   canonicalReferenceDocumentRow,
 } from "./reference-documents-repo";
@@ -35,7 +31,6 @@ import {
   managerStateSchema,
   projectRowSchema,
   referenceDocumentSchema,
-  roadmapItemSchema,
   sessionStateSchema,
 } from "../schemas";
 import type {
@@ -43,7 +38,6 @@ import type {
   ManagerState,
   ProjectRow,
   ReferenceDocument,
-  RoadmapItem,
   SessionState,
 } from "@/types";
 import { PersistenceError } from "../errors";
@@ -94,7 +88,6 @@ beforeEach(() => {
     projects: createProjectsRepo(db),
     sessions: createSessionsRepo(db),
     conversations: createConversationsRepo(db),
-    roadmapItems: createRoadmapItemsRepo(db),
     referenceDocuments: createReferenceDocumentsRepo(db),
   };
   aggregate = createStateAggregate(repos);
@@ -125,20 +118,6 @@ function makeConversation(
     promptCount: 0,
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
-    ...overrides,
-  });
-}
-
-function makeRoadmap(overrides: Partial<RoadmapItem> = {}): RoadmapItem {
-  return roadmapItemSchema.parse({
-    id: "rm1",
-    title: "do x",
-    description: null,
-    type: "feature",
-    status: "incomplete",
-    archived: false,
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
   });
 }
@@ -178,9 +157,6 @@ function seedFixture(state: ManagerState): void {
         repos.referenceDocuments.upsert(rootPath, session.sessionName, doc);
       }
     }
-    ps.roadmapItems.forEach((item, idx) => {
-      repos.roadmapItems.upsert(rootPath, item, idx);
-    });
   }
   if (state.pinnedProjects.length > 0) {
     repos.projects.reorderPinned([...state.pinnedProjects]);
@@ -219,20 +195,15 @@ function buildFixture(): ManagerState {
     archived: true,
     finished: true,
   });
-  const roadmap1 = makeRoadmap({ id: "rm-1", title: "first" });
-  const roadmap2 = makeRoadmap({ id: "rm-2", title: "second", type: "bug" });
-
   return managerStateSchema.parse({
     projects: {
       "/proj-a": {
         rootPath: "/proj-a",
         sessions: { alpha: session1, beta: session2 },
-        roadmapItems: [roadmap1, roadmap2],
       },
       "/proj-b": {
         rootPath: "/proj-b",
         sessions: {},
-        roadmapItems: [],
       },
     },
     archivedProjects: ["/proj-b"],
@@ -294,13 +265,6 @@ describe("state-aggregate.readAll", () => {
         upsert: () => {},
         delete: () => {},
         upsertWithSessionTouch: () => {},
-      },
-      roadmapItems: {
-        findByProject: () => [],
-        findById: () => null,
-        findAll: () => [],
-        upsert: () => {},
-        delete: () => {},
       },
       referenceDocuments: {
         findBySession: () => [],
@@ -381,7 +345,7 @@ describe("state-aggregate.diffAndCommit", () => {
     expect(writeRuns.length).toBe(0);
   });
 
-  it("commits multi-entity changes (session + conversation + roadmap) and reads them back", () => {
+  it("commits multi-entity changes (session + conversation) and reads them back", () => {
     const fixture = buildFixture();
     seedFixture(fixture);
     const snapshot = aggregate.readAll();
@@ -397,12 +361,6 @@ describe("state-aggregate.diffAndCommit", () => {
     const conv = alpha.conversations[0];
     if (!conv) throw new Error("missing conv");
     conv.promptCount = 99;
-    const firstItem = projA.roadmapItems[0];
-    if (!firstItem) throw new Error("missing roadmap[0]");
-    projA.roadmapItems[0] = roadmapItemSchema.parse({
-      ...firstItem,
-      title: "renamed",
-    });
 
     aggregate.diffAndCommit(snapshot, mutated);
 
@@ -410,7 +368,6 @@ describe("state-aggregate.diffAndCommit", () => {
     const rereadAlpha = reread.projects["/proj-a"]?.sessions["alpha"];
     expect(rereadAlpha?.lastActivityAt).toBe("2026-02-01T00:00:00Z");
     expect(rereadAlpha?.conversations[0]?.promptCount).toBe(99);
-    expect(reread.projects["/proj-a"]?.roadmapItems[0]?.title).toBe("renamed");
   });
 
   it("validates the mutated side and rejects schema-failing input without committing", () => {
@@ -478,17 +435,6 @@ describe("canonicalRow equivalence pinning", () => {
     const diff = makeConversation({ id: "z", summary: "different" });
     expect(canonicalConversationRow("/p", "s", a)).not.toBe(
       canonicalConversationRow("/p", "s", diff),
-    );
-  });
-
-  it("roadmap: deep-equal pairs share canonical strings; sortOrder participates", () => {
-    const a = makeRoadmap({ id: "r", title: "t" });
-    const b = makeRoadmap({ id: "r", title: "t" });
-    expect(canonicalRoadmapItemRow("/p", a, 0)).toBe(
-      canonicalRoadmapItemRow("/p", b, 0),
-    );
-    expect(canonicalRoadmapItemRow("/p", a, 0)).not.toBe(
-      canonicalRoadmapItemRow("/p", a, 1),
     );
   });
 

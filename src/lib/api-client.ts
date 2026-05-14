@@ -9,7 +9,6 @@ import { z } from "zod";
 import {
   sessionStateSchema,
   commitLogEntrySchema,
-  roadmapItemSchema,
   messageContentBlockSchema,
   workflowDefinitionRecordSchema,
   workflowGeneratedDraftSchema,
@@ -205,15 +204,6 @@ export const presetsResponseSchema = z.object({
 
 export const statusResponseSchema = z.object({
   status: z.string(),
-});
-
-// -- Roadmap items --
-export const roadmapItemsResponseSchema = z.object({
-  items: z.array(roadmapItemSchema),
-});
-
-export const roadmapItemMutationResponseSchema = z.object({
-  item: roadmapItemSchema,
 });
 
 // -- Graph workflow definitions --

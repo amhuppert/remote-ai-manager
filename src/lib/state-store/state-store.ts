@@ -5,9 +5,6 @@ import type {
   ManagerState,
   ProjectState,
   ReferenceDocument,
-  RoadmapItem,
-  RoadmapItemStatus,
-  RoadmapItemType,
   SessionState,
 } from "@/types";
 import { managerStateSchema } from "../schemas";
@@ -32,10 +29,6 @@ import {
   type ConversationsRepo,
 } from "./conversations-repo";
 import {
-  createRoadmapItemsRepo,
-  type RoadmapItemsRepo,
-} from "./roadmap-items-repo";
-import {
   canonicalReferenceDocumentRow,
   createReferenceDocumentsRepo,
   type ReferenceDocumentsRepo,
@@ -50,7 +43,6 @@ export interface AllRepos {
   projects: ProjectsRepo;
   sessions: SessionsRepo;
   conversations: ConversationsRepo;
-  roadmapItems: RoadmapItemsRepo;
   referenceDocuments: ReferenceDocumentsRepo;
 }
 
@@ -123,7 +115,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     projects: deps.repos?.projects ?? createProjectsRepo(db),
     sessions: deps.repos?.sessions ?? createSessionsRepo(db),
     conversations: deps.repos?.conversations ?? createConversationsRepo(db),
-    roadmapItems: deps.repos?.roadmapItems ?? createRoadmapItemsRepo(db),
     referenceDocuments:
       deps.repos?.referenceDocuments ?? createReferenceDocumentsRepo(db),
   };
@@ -383,15 +374,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     }
   }
 
-  async function getRoadmapItems(projectPath: string): Promise<RoadmapItem[]> {
-    const start = performance.now();
-    try {
-      return repos.roadmapItems.findByProject(projectPath);
-    } finally {
-      emitReadTiming(start, { accessor: "getRoadmapItems", projectPath });
-    }
-  }
-
   async function getArchivedProjects(): Promise<Set<string>> {
     const start = performance.now();
     try {
@@ -423,7 +405,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       const project: ProjectState = {
         rootPath: projectPath,
         sessions: {},
-        roadmapItems: [],
       };
       state.projects[projectPath] = project;
       return project;
@@ -444,7 +425,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
         state.projects[projectPath] = {
           rootPath: projectPath,
           sessions: {},
-          roadmapItems: [],
         };
       }
       state.projects[projectPath]!.sessions[session.sessionName] = session;
@@ -554,88 +534,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
   }
 
   // ------------------------------------------------------------------
-  // Roadmap-item mutations (signatures preserved verbatim)
-  // ------------------------------------------------------------------
-
-  async function createRoadmapItem(
-    projectPath: string,
-    data: {
-      title: string;
-      description?: string | null;
-      type: RoadmapItemType;
-    },
-  ): Promise<RoadmapItem> {
-    const now = new Date().toISOString();
-    const item: RoadmapItem = {
-      id: randomUUID(),
-      title: data.title,
-      description: data.description ?? null,
-      type: data.type,
-      status: "incomplete",
-      archived: false,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await mutateState("createRoadmapItem", (state) => {
-      if (!state.projects[projectPath]) {
-        state.projects[projectPath] = {
-          rootPath: projectPath,
-          sessions: {},
-          roadmapItems: [],
-        };
-      }
-      state.projects[projectPath]!.roadmapItems.push(item);
-    });
-
-    return item;
-  }
-
-  async function updateRoadmapItem(
-    projectPath: string,
-    itemId: string,
-    data: {
-      title?: string;
-      description?: string | null;
-      status?: RoadmapItemStatus;
-      archived?: boolean;
-    },
-  ): Promise<void> {
-    await mutateState("updateRoadmapItem", (state) => {
-      const project = state.projects[projectPath];
-      if (!project) {
-        throw new Error(`Project "${projectPath}" not found`);
-      }
-      const item = project.roadmapItems.find((i) => i.id === itemId);
-      if (!item) {
-        throw new Error(`Roadmap item "${itemId}" not found`);
-      }
-      if (data.title !== undefined) item.title = data.title;
-      if (data.description !== undefined) item.description = data.description;
-      if (data.status !== undefined) item.status = data.status;
-      if (data.archived !== undefined) item.archived = data.archived;
-      item.updatedAt = new Date().toISOString();
-    });
-  }
-
-  async function deleteRoadmapItem(
-    projectPath: string,
-    itemId: string,
-  ): Promise<void> {
-    await mutateState("deleteRoadmapItem", (state) => {
-      const project = state.projects[projectPath];
-      if (!project) {
-        throw new Error(`Project "${projectPath}" not found`);
-      }
-      const index = project.roadmapItems.findIndex((i) => i.id === itemId);
-      if (index === -1) {
-        throw new Error(`Roadmap item "${itemId}" not found`);
-      }
-      project.roadmapItems.splice(index, 1);
-    });
-  }
-
-  // ------------------------------------------------------------------
   // Reference-document mutations (signatures preserved verbatim)
   // ------------------------------------------------------------------
 
@@ -710,10 +608,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     setSessionFinished,
     setProjectArchived,
     setProjectPinned,
-    getRoadmapItems,
-    createRoadmapItem,
-    updateRoadmapItem,
-    deleteRoadmapItem,
     createReferenceDocument,
     deleteReferenceDocument,
   };
