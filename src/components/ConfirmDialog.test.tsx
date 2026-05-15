@@ -85,4 +85,30 @@ describe("ConfirmDialog", () => {
     expect(screen.getByText("Yes, delete")).toBeInTheDocument();
     expect(screen.getByText("No, keep")).toBeInTheDocument();
   });
+
+  it("focuses the confirm button when opened", () => {
+    render(<ConfirmDialog {...defaultProps} confirmLabel="Send anyway" />);
+    expect(document.activeElement).toBe(screen.getByText("Send anyway"));
+  });
+
+  it("calls onConfirm when Enter key is pressed", () => {
+    const onConfirm = vi.fn();
+    render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} />);
+    fireEvent.keyDown(screen.getByText("Confirm"), { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("prevents Enter from reaching handlers outside the modal", () => {
+    const onConfirm = vi.fn();
+    const outerHandler = vi.fn();
+    document.addEventListener("keydown", outerHandler);
+    try {
+      render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} />);
+      fireEvent.keyDown(screen.getByText("Confirm"), { key: "Enter" });
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+      expect(outerHandler).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("keydown", outerHandler);
+    }
+  });
 });
