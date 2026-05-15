@@ -100,7 +100,6 @@ function createTestDeps() {
           return result;
         },
       ),
-    ensureUniqueName: vi.fn().mockImplementation((name: string) => name),
     readConfig: vi.fn().mockResolvedValue({}),
     readRepoConfig: vi.fn().mockResolvedValue(null),
     stopAllForSession: vi.fn().mockResolvedValue(undefined),
@@ -606,11 +605,10 @@ describe("createSessionFocus", () => {
   // Session uniqueness via ensureUniqueName
   // =========================================================================
 
-  it("uses ensureUniqueName to avoid conflicts", async () => {
+  it("appends a numeric suffix when the generated name collides", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "Existing"),
     );
-    (deps.ensureUniqueName as Mock).mockReturnValue("Existing 2");
     queryMock.mockReturnValue(mockQueryResponse("Existing"));
     mockGitSuccess();
 
@@ -619,11 +617,7 @@ describe("createSessionFocus", () => {
       "Another feature",
     );
 
-    expect(deps.ensureUniqueName).toHaveBeenCalledWith(
-      "Existing",
-      new Set(["Existing"]),
-    );
-    expect(session.sessionName).toBe("Existing 2");
+    expect(session.sessionName).toBe("Existing-2");
   });
 
   it("allows same generated name in different projects", async () => {
@@ -1278,7 +1272,6 @@ describe("createSessionOptimistic", () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "Duplicate"),
     );
-    (deps.ensureUniqueName as Mock).mockReturnValue("Duplicate 2");
     queryMock.mockReturnValue(mockQueryResponse("Duplicate"));
     mockGitSuccess();
 
@@ -1287,11 +1280,7 @@ describe("createSessionOptimistic", () => {
       "Something duplicated",
     );
 
-    expect(deps.ensureUniqueName).toHaveBeenCalledWith(
-      "Duplicate",
-      new Set(["Duplicate"]),
-    );
-    expect(session.sessionName).toBe("Duplicate 2");
+    expect(session.sessionName).toBe("Duplicate-2");
   });
 
   it("launches orchestrator as fire-and-forget and returns session immediately", async () => {

@@ -16,7 +16,6 @@ import type {
 } from "@/types";
 import { readState, mutateState } from "./state";
 import { createLogger } from "./logging";
-import { ensureUniqueName } from "./worktrees";
 import { readRepoConfig } from "./repo-config";
 import { readConfig, resolveBranchPrefix } from "./config";
 import { stopAllForSession } from "./dev-server-registry";
@@ -43,6 +42,23 @@ export function sanitizeBranchName(sessionName: string): string {
 /** Generate a 6-character random hex suffix for branch/worktree uniqueness */
 export function generateRandomSuffix(): string {
   return crypto.randomBytes(3).toString("hex");
+}
+
+/**
+ * Ensure a session name is unique within a project's existing sessions.
+ * Appends numeric suffix (e.g., `name-2`, `name-3`) if needed.
+ */
+export function ensureUniqueName(
+  baseName: string,
+  existingNames: Set<string>,
+): string {
+  if (!existingNames.has(baseName)) return baseName;
+
+  let suffix = 2;
+  while (existingNames.has(`${baseName}-${suffix}`)) {
+    suffix++;
+  }
+  return `${baseName}-${suffix}`;
 }
 
 /** Validate session name: non-empty, reasonable length, must produce a valid branch suffix */
@@ -76,7 +92,6 @@ export interface SessionDeps {
   gitClient: GitClient;
   readState: typeof readState;
   mutateState: typeof mutateState;
-  ensureUniqueName: typeof ensureUniqueName;
   readConfig: typeof readConfig;
   readRepoConfig: typeof readRepoConfig;
   stopAllForSession: typeof stopAllForSession;
@@ -97,7 +112,6 @@ export const defaultSessionDeps: SessionDeps = {
   gitClient: defaultGitClient,
   readState,
   mutateState,
-  ensureUniqueName,
   readConfig,
   readRepoConfig,
   stopAllForSession,
@@ -124,7 +138,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     gitClient,
     readState,
     mutateState,
-    ensureUniqueName,
     readConfig,
     readRepoConfig,
     stopAllForSession,

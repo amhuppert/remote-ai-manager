@@ -7,19 +7,16 @@ import {
   createSessionOptimistic,
   deleteSession,
 } from "@/lib/sessions";
-import { discoverAndImportWorktrees } from "@/lib/worktrees";
 import {
   createSessionRequestSchema,
   type CreateSessionRequest,
 } from "@/lib/schemas";
 import { withTracing } from "@/lib/logging";
-import { readConfig, resolveBranchPrefix } from "@/lib/config";
-import { readRepoConfig } from "@/lib/repo-config";
 import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-/** GET /api/projects/[name]/sessions — list all sessions with worktree reconciliation */
+/** GET /api/projects/[name]/sessions — list all sessions for a project */
 export const GET = withTracing(async (_request, { params }) => {
   const name = (await params)["name"] ?? "";
   const projectPath = await resolveProjectPath(name);
@@ -30,29 +27,8 @@ export const GET = withTracing(async (_request, { params }) => {
     );
   }
 
-  const existingSessions = await getProjectSessions(projectPath);
-
-  // Reconcile worktrees: discover and import untracked ones
-  const globalConfig = await readConfig();
-  const repoConfig = await readRepoConfig(projectPath);
-  const branchPrefix = resolveBranchPrefix(globalConfig, repoConfig);
-  const reconciliation = await discoverAndImportWorktrees(
-    projectPath,
-    existingSessions,
-    {},
-    branchPrefix,
-  );
-
-  // Re-read sessions after reconciliation to include newly imported ones
-  const sessions =
-    reconciliation.imported.length > 0
-      ? await getProjectSessions(projectPath)
-      : existingSessions;
-
-  return NextResponse.json({
-    sessions,
-    orphanedSessionNames: reconciliation.orphanedSessionNames,
-  });
+  const sessions = await getProjectSessions(projectPath);
+  return NextResponse.json({ sessions });
 });
 
 /** POST /api/projects/[name]/sessions — create a new session */
