@@ -266,6 +266,16 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // Start the background message pump
   void runPump();
 
+  // Start MCP keepalive immediately. The ping itself counts as transport
+  // activity, so it prevents the SDK's idle timeout from closing the stream
+  // even during long-running turns (e.g. while the agent is busy with Bash).
+  if (mcpKeepaliveMs > 0) {
+    mcpKeepaliveTimer = setInterval(() => {
+      if (status !== "alive") return;
+      void mcpKeepaliveTick();
+    }, mcpKeepaliveMs);
+  }
+
   return session;
 
   // ------------------------------------------------------------------
@@ -281,14 +291,11 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       throw new Error("QuerySession is dead — cannot send prompt");
     }
 
-    // Clear idle timer and MCP keepalive — a new prompt has arrived
+    // Clear idle timer — a new prompt has arrived. Keepalive keeps ticking
+    // through the turn to prevent transport idle timeouts during long turns.
     if (idleTimer) {
       clearTimeout(idleTimer);
       idleTimer = null;
-    }
-    if (mcpKeepaliveTimer) {
-      clearInterval(mcpKeepaliveTimer);
-      mcpKeepaliveTimer = null;
     }
 
     currentTurnOptions = turnOptions ?? null;
@@ -472,9 +479,23 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // MCP health & recovery
   // ------------------------------------------------------------------
 
+  function findFailedServers(
+    statuses: Awaited<ReturnType<typeof q.mcpServerStatus>>,
+  ): string[] {
+    return statuses.filter((s) => s.status === "failed").map((s) => s.name);
+  }
+
   async function mcpKeepaliveTick(): Promise<void> {
     try {
-      await q.mcpServerStatus();
+      const statuses = await q.mcpServerStatus();
+      const failed = findFailedServers(statuses);
+      if (failed.length > 0) {
+        logger.warn("query-session.mcp_keepalive_failed", {
+          conversationId: options.conversationId,
+          failedServers: failed,
+        });
+        await attemptMcpRecovery("keepalive");
+      }
     } catch {
       logger.warn("query-session.mcp_keepalive_failed", {
         conversationId: options.conversationId,
@@ -486,7 +507,16 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   async function ensureMcpHealthy(trigger: string): Promise<void> {
     if (!hasMcpServers) return;
     try {
-      await q.mcpServerStatus();
+      const statuses = await q.mcpServerStatus();
+      const failed = findFailedServers(statuses);
+      if (failed.length > 0) {
+        logger.warn("query-session.mcp_unhealthy", {
+          conversationId: options.conversationId,
+          trigger,
+          failedServers: failed,
+        });
+        await attemptMcpRecovery(trigger);
+      }
     } catch {
       logger.warn("query-session.mcp_unhealthy", {
         conversationId: options.conversationId,
@@ -524,13 +554,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           type: message.type,
         });
         return;
-      }
-
-      // Stop MCP keepalive — a virtual turn is starting (it will restart when
-      // the virtual turn's result arrives, same as for caller-initiated turns).
-      if (mcpKeepaliveTimer) {
-        clearInterval(mcpKeepaliveTimer);
-        mcpKeepaliveTimer = null;
       }
 
       const handler = options.externalTurnHandler;
@@ -691,16 +714,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
               close();
             }
           }, idleTtlMs);
-        }
-
-        // Start MCP keepalive — ping MCP servers periodically to prevent
-        // the SDK's transport inactivity timeout from closing the stream.
-        // On failure, attempt to re-establish connections via setMcpServers.
-        if (mcpKeepaliveMs > 0 && status === "alive") {
-          mcpKeepaliveTimer = setInterval(() => {
-            if (status !== "alive" || pendingTurn) return;
-            void mcpKeepaliveTick();
-          }, mcpKeepaliveMs);
         }
 
         break;
