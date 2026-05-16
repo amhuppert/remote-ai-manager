@@ -888,6 +888,42 @@ describe("runAsymmetricCollaborationSlice — agent failures", () => {
     expect(result.agent).toBe("agent_one");
   });
 
+  it("marks the originating conversation awaiting when a structured-output parse failure fails the run", async () => {
+    const programmed = makeProgrammedCallAgent({
+      claude: [
+        makeBackendResult("claude", {
+          kind: "initial_draft",
+          agent: "agent_one",
+        } as unknown as CollaborationInitialDraftOutput),
+      ],
+      codex: [makeBackendResult("codex", makeAgentTwoInitialDraft())],
+    });
+    const metadataCalls: Array<{
+      conversationId: string;
+      workflowId: string;
+      timestamp: string;
+    }> = [];
+    const built = await buildDeps(programmed, {
+      markConversationAwaiting: async (conversationId, input) => {
+        metadataCalls.push({ conversationId, ...input });
+      },
+    });
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput({ conversationId: "conv-1" }),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("failed");
+    expect(metadataCalls).toEqual([
+      {
+        conversationId: "conv-1",
+        workflowId: "wf-asym",
+        timestamp: "2026-04-28T10:00:00.000Z",
+      },
+    ]);
+  });
+
   it("fails the workflow when Agent Two's counter-proposal call fails", async () => {
     const programmed = makeProgrammedCallAgent({
       claude: [

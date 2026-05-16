@@ -206,9 +206,9 @@ export interface AsymmetricCollaborationSliceDeps {
     },
   ): Promise<unknown>;
   /**
-   * Marks the originating conversation ready for the next prompt after a
-   * terminal final answer has been written. Metadata sync failures are logged
-   * and do not invalidate the completed collaboration result.
+   * Marks the originating conversation ready for the next prompt after the
+   * collaboration reaches a terminal state. Metadata sync failures are logged
+   * and do not invalidate the collaboration result.
    */
   markConversationAwaiting?(
     conversationId: string,
@@ -1142,6 +1142,7 @@ async function failRun(
   ctx: FailRunContext,
 ): Promise<Extract<AsymmetricCollaborationSliceResult, { kind: "failed" }>> {
   const { input, deps, now, flowAgent, errorSummary, tracker } = ctx;
+  const timestamp = now();
   await updateEnvelope(input, deps, now, (existing) => {
     const previous = (existing.featureSnapshot ?? {}) as Record<
       string,
@@ -1160,8 +1161,12 @@ async function failRun(
       phase: `failed_${flowAgent}`,
       errorSummary,
       featureSnapshot,
-      updatedAt: now(),
+      updatedAt: timestamp,
     };
+  });
+  await markOriginatingConversationAwaiting(input, deps, timestamp, {
+    reason: "failed",
+    errorSummary,
   });
   publishStatus(deps, input.workflowId, "failed", {
     kind: "asymmetric_failed",
@@ -1386,6 +1391,35 @@ async function finalizeFinal(
   };
 }
 
+async function markOriginatingConversationAwaiting(
+  input: Pick<
+    AsymmetricCollaborationSliceInput,
+    "conversationId" | "workflowId"
+  >,
+  deps: Pick<AsymmetricCollaborationSliceDeps, "markConversationAwaiting">,
+  timestamp: string,
+  logContext: { reason: "failed" | "user_stopped"; errorSummary?: string },
+): Promise<void> {
+  if (!input.conversationId || !deps.markConversationAwaiting) return;
+
+  try {
+    await deps.markConversationAwaiting(input.conversationId, {
+      workflowId: input.workflowId,
+      timestamp,
+    });
+  } catch (err) {
+    logger.warn("collaboration.asymmetric.conversation_metadata_sync_failed", {
+      workflowId: input.workflowId,
+      conversationId: input.conversationId,
+      reason: logContext.reason,
+      ...(logContext.errorSummary
+        ? { errorSummary: logContext.errorSummary }
+        : {}),
+      error: getErrorMessage(err),
+    });
+  }
+}
+
 interface FinalizeUserStoppedContext {
   input: AsymmetricCollaborationSliceInput;
   deps: AsymmetricCollaborationSliceDeps;
@@ -1400,6 +1434,7 @@ async function finalizeUserStopped(
   Extract<AsymmetricCollaborationSliceResult, { kind: "completed_unresolved" }>
 > {
   const { input, deps, now, negotiationRoundsCompleted, tracker } = ctx;
+  const timestamp = now();
   await updateEnvelope(input, deps, now, (existing) => {
     const previous = (existing.featureSnapshot ?? {}) as Record<
       string,
@@ -1414,9 +1449,12 @@ async function finalizeUserStopped(
         artifacts: [...tracker.artifacts],
         negotiationRoundsCompleted: tracker.negotiationRoundsCompleted,
       },
-      completedAt: now(),
-      updatedAt: now(),
+      completedAt: timestamp,
+      updatedAt: timestamp,
     };
+  });
+  await markOriginatingConversationAwaiting(input, deps, timestamp, {
+    reason: "user_stopped",
   });
   publishStatus(deps, input.workflowId, "completed", {
     kind: "asymmetric_user_stopped",

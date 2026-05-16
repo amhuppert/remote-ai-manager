@@ -175,7 +175,7 @@ export function createCollaborationDeps(
         input.projectPath,
         input.sessionName,
         conversationId,
-        "collab.final_metadata",
+        "collab.conversation_awaiting",
         (conversation) => {
           conversation.status = "awaiting";
           conversation.pendingQuestionId = null;

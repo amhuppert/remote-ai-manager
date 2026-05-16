@@ -75,6 +75,78 @@ function extractCompletedRounds(snapshot: Record<string, unknown>): number {
     : 0;
 }
 
+async function markConversationAwaitingAfterSliceThrow(input: {
+  sliceDeps: AsymmetricCollaborationSliceDeps;
+  projectPath: string;
+  sessionName: string;
+  workflowId: string;
+  conversationId: string;
+  timestamp: string;
+  error: unknown;
+}): Promise<void> {
+  if (!input.sliceDeps.markConversationAwaiting) return;
+
+  try {
+    await input.sliceDeps.markConversationAwaiting(input.conversationId, {
+      workflowId: input.workflowId,
+      timestamp: input.timestamp,
+    });
+  } catch (err) {
+    logger.warn("collaboration.manager.slice_throw_metadata_sync_failed", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      workflowId: input.workflowId,
+      conversationId: input.conversationId,
+      sliceError: getErrorMessage(input.error),
+      error: getErrorMessage(err),
+    });
+  }
+}
+
+async function markEnvelopeFailedAfterSliceThrow(input: {
+  deps: Pick<
+    CollaborationManagerDeps,
+    "createEnvelopeRepository" | "publishStatus" | "now"
+  >;
+  projectPath: string;
+  sessionName: string;
+  workflowId: string;
+  error: unknown;
+}): Promise<void> {
+  const errorSummary = getErrorMessage(input.error);
+  try {
+    const repo = input.deps.createEnvelopeRepository({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+    });
+    await repo.update(input.workflowId, {
+      status: "failed",
+      phase: "failed_unhandled",
+      errorSummary,
+    });
+    input.deps.publishStatus({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      workflowId: input.workflowId,
+      status: "failed",
+      timestamp: input.deps.now(),
+      payload: {
+        kind: "asymmetric_failed",
+        flowAgent: "unknown",
+        errorSummary,
+      },
+    });
+  } catch (err) {
+    logger.warn("collaboration.manager.slice_throw_envelope_failed", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      workflowId: input.workflowId,
+      sliceError: errorSummary,
+      error: getErrorMessage(err),
+    });
+  }
+}
+
 const logger = createLogger("workflows.collaboration.manager");
 
 export const collaborationStartRequestSchema = z.object({
@@ -593,12 +665,28 @@ export function createCollaborationManager(
             kind: result.kind,
           });
         })
-        .catch((err) => {
+        .catch(async (err) => {
           logger.error("collaboration.manager.slice_threw", {
             projectPath: input.projectPath,
             sessionName: input.sessionName,
             workflowId,
             error: getErrorMessage(err),
+          });
+          await markEnvelopeFailedAfterSliceThrow({
+            deps,
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            workflowId,
+            error: err,
+          });
+          await markConversationAwaitingAfterSliceThrow({
+            sliceDeps,
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            workflowId,
+            conversationId: parsed.conversationId,
+            timestamp: deps.now(),
+            error: err,
           });
         })
         .finally(() => {
@@ -763,12 +851,28 @@ export function createCollaborationManager(
             kind: result.kind,
           });
         })
-        .catch((err) => {
+        .catch(async (err) => {
           logger.error("collaboration.manager.resume_slice_threw", {
             projectPath: input.projectPath,
             sessionName: input.sessionName,
             workflowId: input.workflowId,
             error: getErrorMessage(err),
+          });
+          await markEnvelopeFailedAfterSliceThrow({
+            deps,
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            workflowId: input.workflowId,
+            error: err,
+          });
+          await markConversationAwaitingAfterSliceThrow({
+            sliceDeps,
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            workflowId: input.workflowId,
+            conversationId,
+            timestamp: deps.now(),
+            error: err,
           });
         })
         .finally(() => {

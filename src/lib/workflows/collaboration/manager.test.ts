@@ -76,6 +76,7 @@ interface ScriptedDepsOptions {
     typeof createInMemoryWorkflowEnvelopeStore
   >;
   stopRegistryOverride?: CollaborationStopRegistry;
+  sliceDepsOverride?: AsymmetricCollaborationSliceDeps;
 }
 
 function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
@@ -162,7 +163,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
       );
     },
     stopRegistry,
-    createDeps: () => makeStubSliceDeps(),
+    createDeps: () => options.sliceDepsOverride ?? makeStubSliceDeps(),
     buildLaneService: () =>
       createLaneService({ store: createInMemoryLaneStore() }),
     buildCallAgent: (input) => {
@@ -504,6 +505,79 @@ describe("createCollaborationManager.start", () => {
     // The background promise rejection should be swallowed by the manager's
     // own .catch handler, so awaiting completion should resolve cleanly.
     await expect(runSliceCompletion).resolves.toBeUndefined();
+  });
+
+  it("marks the originating conversation awaiting when the background slice throws", async () => {
+    const metadataCalls: Array<{
+      conversationId: string;
+      workflowId: string;
+      timestamp: string;
+    }> = [];
+    let resolveMetadataSynced: () => void = () => undefined;
+    const metadataSynced = new Promise<void>((resolve) => {
+      resolveMetadataSynced = resolve;
+    });
+    const { deps, runSliceCompletion, envelopeStore, publishedStatuses } =
+      buildScriptedDeps({
+        runSliceError: new Error("synthetic slice failure"),
+        sliceDepsOverride: {
+          ...makeStubSliceDeps(),
+          markConversationAwaiting: async (conversationId, input) => {
+            metadataCalls.push({ conversationId, ...input });
+            resolveMetadataSynced();
+          },
+        },
+      });
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-1",
+        status: "running",
+        featureSnapshot: { brief: "design X", conversationId: "conv-1" },
+      }),
+    );
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 2,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+    await runSliceCompletion;
+    await Promise.race([
+      metadataSynced,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("timed out waiting for metadata sync")),
+          100,
+        ),
+      ),
+    ]);
+
+    expect(metadataCalls).toEqual([
+      {
+        conversationId: "conv-1",
+        workflowId: "wf-1",
+        timestamp: "2026-04-28T10:00:00.000Z",
+      },
+    ]);
+    const reread = await repo.get("wf-1");
+    expect(reread?.status).toBe("failed");
+    expect(reread?.phase).toBe("failed_unhandled");
+    expect(reread?.errorSummary).toBe("synthetic slice failure");
+    expect(publishedStatuses).toContainEqual(
+      expect.objectContaining({
+        workflowId: "wf-1",
+        status: "failed",
+        payload: expect.objectContaining({
+          kind: "asymmetric_failed",
+          errorSummary: "synthetic slice failure",
+        }),
+      }),
+    );
   });
 });
 
