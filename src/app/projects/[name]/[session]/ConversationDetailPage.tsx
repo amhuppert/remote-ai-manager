@@ -2010,7 +2010,6 @@ export default function ConversationDetailPage({
                 sessionName={session.sessionName}
                 conversations={conversations}
                 activeConversationId={conversationId}
-                isFinished={isReadOnly}
                 mobileOpen={mobileSidebarOpen}
                 onMobileClose={() => setMobileSidebarOpen(false)}
               />

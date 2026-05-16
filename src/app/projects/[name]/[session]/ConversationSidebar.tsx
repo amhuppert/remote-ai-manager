@@ -124,7 +124,6 @@ interface Props {
   sessionName: string;
   conversations: ConversationState[];
   activeConversationId: string;
-  isFinished: boolean;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
 }
@@ -133,7 +132,6 @@ export default function ConversationSidebar({
   projectName,
   sessionName,
   activeConversationId,
-  isFinished,
   mobileOpen,
   onMobileClose,
 }: Props): React.JSX.Element {
@@ -230,7 +228,7 @@ export default function ConversationSidebar({
   }, [editingId]);
 
   const handleNewConversation = useCallback(() => {
-    if (createConvoMutation.isPending || isFinished) return;
+    if (createConvoMutation.isPending) return;
     createConvoMutation.mutate(undefined, {
       onSuccess: (convo) => {
         router.push(
@@ -238,7 +236,7 @@ export default function ConversationSidebar({
         );
       },
     });
-  }, [createConvoMutation, isFinished, projectName, sessionName, router]);
+  }, [createConvoMutation, projectName, sessionName, router]);
 
   const handleRenameStart = useCallback(
     (
@@ -598,7 +596,7 @@ export default function ConversationSidebar({
             <button
               className="btn-icon-only convo-sidebar-header-new"
               onClick={handleNewConversation}
-              disabled={createConvoMutation.isPending || isFinished}
+              disabled={createConvoMutation.isPending}
               data-tooltip="New conversation"
             >
               +

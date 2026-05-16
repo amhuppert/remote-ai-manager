@@ -206,7 +206,6 @@ function SidebarHarness({
           sessionName="conversation-ui-overhaul"
           conversations={sessionConversations}
           activeConversationId={activeConversationId}
-          isFinished={false}
           mobileOpen={mobileOpen}
           onMobileClose={() => {}}
         />
