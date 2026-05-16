@@ -102,6 +102,15 @@ export const commitsResponseSchema = z.object({
 });
 
 // -- Conversations --
+export const activeConversationForkedFromSchema = z.object({
+  conversationId: z.string(),
+  messageIndex: z.number().int().min(0),
+  mode: z.enum(["synthetic", "native"]),
+});
+export type ActiveConversationForkedFrom = z.infer<
+  typeof activeConversationForkedFromSchema
+>;
+
 export const activeConversationSchema = z.object({
   id: z.string(),
   name: z.string().nullable(),
@@ -111,7 +120,15 @@ export const activeConversationSchema = z.object({
   projectPath: z.string(),
   sessionName: z.string(),
   agentBackend: agentBackendSchema,
+  summary: z.string().nullable(),
+  pendingQuestion: z.string().nullable(),
+  forkedFrom: activeConversationForkedFromSchema.nullable(),
+  debugActive: z.boolean(),
+  role: z.enum(["initialization", "iteration", "validator"]).nullable(),
+  branchName: z.string().nullable(),
+  lastActivitySummary: z.string().nullable(),
 });
+export type ActiveConversation = z.infer<typeof activeConversationSchema>;
 
 export const activeGraphWorkflowContextMergeProgressSchema = z.object({
   contextId: z.string(),

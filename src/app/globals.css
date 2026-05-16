@@ -8844,19 +8844,12 @@ textarea {
   border-style: solid;
 }
 
-/* Mobile sidebar toggle — hidden on desktop */
-.convo-sidebar-mobile-toggle {
-  display: none;
-}
-
-/* Backdrop — hidden on desktop */
-.convo-sidebar-backdrop {
-  display: none;
-}
-
-/* Close button — hidden on desktop */
+/* Mobile-only controls — base styles. Visibility is gated below by media
+   queries: `@media (min-width: 769px)` hides them on desktop, and the
+   `@media (max-width: 768px)` block earlier in this file shows them on mobile.
+   Keeping `display` out of the unconditional rule prevents source-order
+   cascade from clobbering the mobile rule. */
 .convo-sidebar-close {
-  display: none;
   align-items: center;
   justify-content: center;
   width: 30px;
@@ -8869,6 +8862,14 @@ textarea {
   font-size: 0.85rem;
   cursor: pointer;
   flex-shrink: 0;
+}
+
+@media (min-width: 769px) {
+  .convo-sidebar-mobile-toggle,
+  .convo-sidebar-backdrop,
+  .convo-sidebar-close {
+    display: none;
+  }
 }
 
 /* ---- Active conversation items (within sidebar) ---- */
@@ -8954,6 +8955,200 @@ textarea {
   margin-top: var(--space-xs);
 }
 
+/* ============================================================
+   Conversation Sidebar Row
+   ============================================================ */
+
+.conversation-sidebar-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: transparent;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.conversation-sidebar-row:hover {
+  background: var(--bg-elevated);
+}
+
+.conversation-sidebar-row.is-active {
+  background: var(--cyan-glow);
+  border-left-color: var(--cyan);
+}
+
+.conversation-sidebar-row.is-first-in-session {
+  border-top-color: var(--border-subtle);
+}
+
+.conversation-sidebar-row.is-last-in-session {
+  border-bottom-color: var(--border-subtle);
+}
+
+.conversation-sidebar-row__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+  background: var(--text-tertiary);
+}
+
+.conversation-sidebar-row__dot[data-status="new"] {
+  background: var(--blue);
+  box-shadow: 0 0 6px var(--blue-glow);
+}
+
+.conversation-sidebar-row__dot[data-status="running"] {
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan-glow-strong);
+}
+
+.conversation-sidebar-row__dot[data-status="waiting_for_input"] {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber-glow);
+}
+
+.conversation-sidebar-row__dot[data-status="awaiting"] {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green-glow);
+}
+
+.conversation-sidebar-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.conversation-sidebar-row__title-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.conversation-sidebar-row__title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-sidebar-row__badges {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.conversation-sidebar-row__badge {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  gap: 3px;
+}
+
+.conversation-sidebar-row__badge[data-type="fork"] {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+
+.conversation-sidebar-row__badge[data-type="debug-active"] {
+  background: var(--violet-glow);
+  color: var(--violet);
+  box-shadow: 0 0 6px var(--violet-glow);
+}
+
+.conversation-sidebar-row__badge[data-type="role"] {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Branch names can be long enough to push the title to 0px. Clamp the chip
+   and ellipsize its contents so the title always wins for primary space. */
+.conversation-sidebar-row__badge[data-type="branch"] {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 1.4;
+}
+
+.conversation-sidebar-row__subtitle {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-sidebar-row__breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  min-width: 0;
+}
+
+.conversation-sidebar-row__crumb {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Project crumb keeps its full width; session crumb absorbs all shrinking
+   because the user is usually already in a session context. Without this,
+   both default to flex-shrink: 1 and the longer (project) crumb truncates
+   visibly while the session crumb stays whole. */
+.conversation-sidebar-row__crumb:first-child {
+  flex-shrink: 0;
+}
+.conversation-sidebar-row__crumb:last-child {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.conversation-sidebar-row__crumb-sep {
+  color: var(--border-strong);
+  flex-shrink: 0;
+}
+
+.conversation-sidebar-row__pending-question {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--amber);
+  background: var(--amber-glow);
+  border-left: 2px solid var(--amber);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Floating expand button when sidebar is fully collapsed — flush with screen edge */
 .convo-sidebar-expand-float {
   position: fixed;
@@ -9024,9 +9219,19 @@ textarea {
   cursor: pointer;
   user-select: none;
   transition: background 0.1s ease;
+  min-width: 0;
 }
 .convo-sidebar-group-header:hover {
   background: var(--bg-elevated);
+}
+
+/* Long session/project names must ellipsize, not wrap multi-line. */
+.convo-sidebar-group-header > .cc-section-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .convo-sidebar-group-chevron {
@@ -9054,20 +9259,21 @@ textarea {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.convo-sidebar-group-dot.running {
-  background: var(--cyan);
-  box-shadow: 0 0 4px var(--cyan);
-}
-.convo-sidebar-group-dot.awaiting {
-  background: var(--green);
-}
 .convo-sidebar-group-dot.new {
   background: var(--blue);
   box-shadow: 0 0 4px var(--blue);
 }
+.convo-sidebar-group-dot.running {
+  background: var(--cyan);
+  box-shadow: 0 0 4px var(--cyan-glow-strong);
+}
+.convo-sidebar-group-dot.awaiting {
+  background: var(--green);
+  box-shadow: 0 0 4px var(--green);
+}
 .convo-sidebar-group-dot.waiting_for_input {
   background: var(--amber);
-  box-shadow: 0 0 4px var(--amber);
+  box-shadow: 0 0 4px var(--amber-glow);
 }
 
 .convo-sidebar-session-label {
@@ -9637,6 +9843,78 @@ textarea {
   /* Close button in sidebar header for mobile */
   .convo-sidebar-close {
     display: flex;
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Touch targets ≥44×44px for controls inside the sidebar */
+  .convo-sidebar .cc-tab {
+    min-height: 44px;
+  }
+
+  /* Top-level Session/Active tabs stretch to fill the sidebar width on mobile;
+     density and group-by clusters keep their natural width so 4-button rows
+     don't get crushed. */
+  .convo-sidebar > .cc-tabs {
+    width: 100%;
+  }
+  .convo-sidebar > .cc-tabs > .cc-tab {
+    flex: 1;
+    justify-content: center;
+  }
+
+  /* Mobile filters toggle: visible only on mobile; collapses the secondary
+     control row + group-by/session-filter strip behind a single tap. */
+  .convo-sidebar-mobile-filters-toggle {
+    display: flex;
+  }
+  .convo-sidebar-controls-wrapper:not(.filters-open)
+    .convo-sidebar-secondary-controls,
+  .convo-sidebar-controls-wrapper:not(.filters-open)
+    .convo-sidebar-collapsible-filters {
+    display: none;
+  }
+}
+
+/* Secondary controls row (Needs you + density). Class-based display so the
+   mobile `:not(.filters-open)` rule can win over inline styles. */
+.convo-sidebar-secondary-controls {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Mobile filters toggle: shown only on mobile (via .convo-sidebar > .cc-tabs
+   media query block above). Defines the look here so it inherits regardless
+   of viewport, but hides via @media (min-width: 769px) to avoid overriding
+   the mobile @media block by source order. */
+.convo-sidebar-mobile-filters-toggle {
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-height: var(--touch-target-min);
+  margin-top: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.convo-sidebar-mobile-filters-toggle:hover {
+  background: var(--bg-elevated);
+}
+.convo-sidebar-mobile-filters-toggle.active {
+  background: var(--bg-elevated);
+  border-color: var(--cyan);
+}
+@media (min-width: 769px) {
+  .convo-sidebar-mobile-filters-toggle {
+    display: none;
   }
 }
 
@@ -15622,4 +15900,607 @@ html[data-dev-tools-enabled] nextjs-portal {
   border-radius: 50%;
   background: var(--cyan);
   box-shadow: 0 0 12px var(--cyan-glow-strong);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Right-click / long-press context menu (sidebar rows)                      */
+/* ------------------------------------------------------------------------- */
+
+.ctx-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 240px;
+  max-width: 320px;
+  padding: var(--space-xs);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.ctx-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.ctx-menu__item:hover:not(:disabled),
+.ctx-menu__item:focus-visible:not(:disabled) {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.05));
+  color: var(--text-primary, #e6ecf5);
+  outline: none;
+}
+
+.ctx-menu__item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ctx-menu__item.danger {
+  color: var(--red-text);
+}
+
+.ctx-menu__item.danger:hover:not(:disabled),
+.ctx-menu__item.danger:focus-visible:not(:disabled) {
+  background: var(--red-glow);
+  color: var(--red);
+}
+
+.ctx-menu__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-menu__kbd {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: var(--bg-surface);
+  color: var(--text-tertiary, #5d6b82);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ctx-menu__div {
+  height: 1px;
+  margin: var(--space-xs) 0;
+  background: var(--border-subtle);
+}
+
+@media (max-width: 768px) {
+  .ctx-menu__item {
+    min-height: 44px;
+    font-size: 13px;
+  }
+}
+
+/* Session-filter chip (sidebar filters row) */
+.convo-sidebar-session-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  align-self: flex-start;
+  padding: 2px var(--space-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  max-width: 100%;
+}
+
+.convo-sidebar-session-filter-chip:hover,
+.convo-sidebar-session-filter-chip:focus-visible {
+  border-color: var(--cyan-dim, var(--border-subtle));
+  color: var(--text-primary, #e6ecf5);
+  outline: none;
+}
+
+.convo-sidebar-session-filter-chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.convo-sidebar-session-filter-chip__close {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* ============================================================
+   Enriched Active Conversations Sidebar
+   ============================================================ */
+
+.convo-sidebar {
+  width: 308px;
+  min-width: 308px;
+  background: var(--bg-base);
+  border-right: 1px solid var(--border-default);
+  border-radius: 0;
+}
+
+.convo-sidebar-header {
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.convo-sidebar-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.convo-sidebar-title-count {
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.convo-sidebar-controls-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.convo-sidebar-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.convo-sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  height: 30px;
+  padding: 0 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
+
+.convo-sidebar-search:focus-within {
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 0 1px var(--cyan-glow);
+}
+
+.convo-sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.convo-sidebar-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.convo-sidebar-search-clear {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.convo-sidebar-search-clear {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.convo-sidebar-search-clear:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.convo-sidebar-filter-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+.convo-sidebar-filter-tab {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.convo-sidebar-filter-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.convo-sidebar-filter-tab.active {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.convo-sidebar-filter-count {
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.convo-sidebar-filter-tab.active .convo-sidebar-filter-count {
+  color: var(--cyan);
+}
+
+.convo-sidebar-group-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.convo-sidebar-group-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.convo-sidebar-group-label {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.convo-sidebar-group-switch {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+.convo-sidebar-group-option {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.convo-sidebar-group-option:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.convo-sidebar-group-option.active {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.convo-sidebar-group-option.active svg {
+  color: var(--cyan);
+}
+
+.convo-sidebar-list {
+  gap: 0;
+  padding: 8px 0 16px;
+  background: var(--bg-base);
+}
+
+.convo-sidebar-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.convo-sidebar-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: 12px 12px 4px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.convo-sidebar-section-header::after {
+  content: "";
+  order: 2;
+  flex: 1;
+  height: 1px;
+  min-width: 16px;
+  background: linear-gradient(to right, var(--border-default), transparent);
+}
+
+.convo-sidebar-section-header--needs {
+  color: var(--amber);
+  padding-top: 10px;
+}
+
+.convo-sidebar-section-header--needs::after {
+  display: none;
+}
+
+.convo-sidebar-section-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.convo-sidebar-section-label--session {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.convo-sidebar-section-label-project {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-tertiary);
+}
+
+.convo-sidebar-section-label-separator {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.convo-sidebar-section-label-session {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.convo-sidebar-section-count {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  order: 1;
+}
+
+.convo-sidebar-section-header--needs .convo-sidebar-section-count {
+  color: var(--amber-dim);
+}
+
+.conversation-sidebar-row-wrapper {
+  margin: 1px 8px;
+}
+
+.conversation-sidebar-row {
+  position: relative;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.conversation-sidebar-row:hover {
+  background: var(--bg-surface);
+}
+
+.conversation-sidebar-row.is-active {
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
+}
+
+.conversation-sidebar-row.is-active::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan);
+}
+
+.conversation-sidebar-row.has-pending-question::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--amber-glow), transparent 60%);
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.conversation-sidebar-row.is-first-in-session,
+.conversation-sidebar-row.is-last-in-session {
+  border-top-color: var(--border-dim);
+  border-bottom-color: var(--border-dim);
+}
+
+.conversation-sidebar-row__main,
+.conversation-sidebar-row__title-line,
+.conversation-sidebar-row__meta-line,
+.conversation-sidebar-row__activity {
+  position: relative;
+  z-index: 1;
+}
+
+.conversation-sidebar-row__main {
+  width: 100%;
+  gap: 5px;
+}
+
+.conversation-sidebar-row__title-line {
+  width: 100%;
+  gap: 6px;
+  padding-right: 28px;
+}
+
+.conversation-sidebar-row__dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 0;
+}
+
+.conversation-sidebar-row__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.conversation-sidebar-row__time {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.conversation-sidebar-row__meta-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conversation-sidebar-row__badges {
+  flex-shrink: 0;
+}
+
+.conversation-sidebar-row__badge {
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+
+.conversation-sidebar-row__breadcrumb {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.7rem;
+}
+
+.conversation-sidebar-row__breadcrumb
+  .conversation-sidebar-row__crumb:first-child {
+  flex-shrink: 1;
+}
+
+.conversation-sidebar-row__activity {
+  display: block;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.conversation-sidebar-row__activity-prefix {
+  color: var(--text-tertiary);
+  margin-right: 4px;
+}
+
+.conversation-sidebar-row[data-status="waiting_for_input"]
+  .conversation-sidebar-row__activity {
+  color: var(--amber);
+}
+
+@media (max-width: 768px) {
+  .convo-sidebar {
+    width: 308px;
+    min-width: 308px;
+  }
+
+  .convo-sidebar-controls-wrapper {
+    padding: 8px 12px;
+  }
+
+  .convo-sidebar-filter-tab,
+  .convo-sidebar-group-option {
+    min-height: var(--touch-target-min);
+  }
 }

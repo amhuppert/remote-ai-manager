@@ -1,380 +1,217 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { fn } from "storybook/test";
-import { useState, useEffect, useRef } from "react";
-import Link from "next/link";
+import { useLayoutEffect, useMemo } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { z } from "zod";
+import type { ConversationState } from "@/types";
+import {
+  activeConversationsResponseSchema,
+  type ActiveConversation,
+} from "@/lib/api-client";
+import { conversationKeys } from "@/lib/query-keys";
+import {
+  useSessionDetailStore,
+  type SidebarGroupBy,
+} from "@/stores/session-detail.store";
+import ConversationSidebar from "./ConversationSidebar";
+
+type ActiveConversationsResponse = z.infer<
+  typeof activeConversationsResponseSchema
+>;
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Sample data
 // ---------------------------------------------------------------------------
 
-function formatRelativeTime(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
+const now = new Date();
+const minutesAgo = (m: number) =>
+  new Date(now.getTime() - m * 60_000).toISOString();
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface SessionConversation {
-  id: string;
-  name: string | null;
-  summary: string | null;
-  status: string;
-  promptCount: number;
-  archived: boolean;
-  source?: string;
-  lastActivityAt: string;
-}
-
-interface ActiveConversation {
-  id: string;
-  name: string | null;
-  status: "running" | "awaiting";
-  lastActivityAt: string;
-  projectName: string;
-  sessionName: string;
-}
-
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
-
-interface SidebarShellProps {
-  conversations: SessionConversation[];
-  activeConversations: ActiveConversation[];
-  activeConversationId: string;
-  projectName: string;
-  sessionName: string;
-  initialTab?: "session" | "active";
-  onRename: (id: string) => void;
-  onArchive: (id: string, archived: boolean) => void;
-  onNewConversation: () => void;
-  onToggleCollapse: () => void;
-}
-
-// ---------------------------------------------------------------------------
-// Presentational Shell
-// ---------------------------------------------------------------------------
-
-function SidebarShell({
-  conversations,
-  activeConversations,
-  activeConversationId,
-  projectName,
-  sessionName,
-  initialTab = "session",
-  onRename,
-  onArchive,
-  onNewConversation,
-  onToggleCollapse,
-}: SidebarShellProps) {
-  const [activeTab, setActiveTab] = useState<"session" | "active">(initialTab);
-  const [showArchived, setShowArchived] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    new Set(),
-  );
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const editInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (editingId && editInputRef.current) {
-      editInputRef.current.focus();
-      editInputRef.current.select();
-    }
-  }, [editingId]);
-
-  const archivedCount = conversations.filter((c) => c.archived).length;
-  const filteredConversations = showArchived
-    ? conversations
-    : conversations.filter((c) => !c.archived);
-
-  const handleRenameStart = (id: string, name: string) => {
-    setEditingId(id);
-    setEditValue(name);
+function makeActive(
+  overrides: Partial<ActiveConversation> & Pick<ActiveConversation, "id">,
+): ActiveConversation {
+  return {
+    id: overrides.id,
+    name: overrides.name ?? "Untitled conversation",
+    status: overrides.status ?? "running",
+    lastActivityAt: overrides.lastActivityAt ?? minutesAgo(5),
+    projectName: overrides.projectName ?? "remote-ai-manager",
+    projectPath: overrides.projectPath ?? "/home/alex/github/remote-ai-manager",
+    sessionName: overrides.sessionName ?? "conversation-ui-overhaul",
+    agentBackend: overrides.agentBackend ?? "claude",
+    summary: overrides.summary ?? null,
+    pendingQuestion: overrides.pendingQuestion ?? null,
+    forkedFrom: overrides.forkedFrom ?? null,
+    debugActive: overrides.debugActive ?? false,
+    role: overrides.role ?? null,
+    branchName:
+      overrides.branchName ?? "csm/conversation-ui-overhaul-multi-task",
+    lastActivitySummary: overrides.lastActivitySummary ?? null,
   };
+}
 
-  const handleRenameSubmit = (id: string) => {
-    if (editValue.trim()) {
-      onRename(id);
-    }
-    setEditingId(null);
-  };
+const mixedActive: ActiveConversation[] = [
+  makeActive({
+    id: "conv-new",
+    name: "Draft outline for spec",
+    status: "new",
+    lastActivityAt: minutesAgo(1),
+    sessionName: "conversation-ui-overhaul",
+    lastActivitySummary: "No prompts yet.",
+  }),
+  makeActive({
+    id: "conv-running",
+    name: "Implement sidebar pipeline",
+    status: "running",
+    lastActivityAt: minutesAgo(3),
+    sessionName: "conversation-ui-overhaul",
+    lastActivitySummary: "Iterating on annotateSessionPos.",
+    debugActive: true,
+  }),
+  makeActive({
+    id: "conv-awaiting",
+    name: "Validate impl",
+    status: "awaiting",
+    lastActivityAt: minutesAgo(7),
+    projectName: "remote-ai-manager",
+    sessionName: "validator-sweep",
+    role: "validator",
+    lastActivitySummary: "Validator awaiting next instruction.",
+  }),
+  makeActive({
+    id: "conv-wfi",
+    name: "Plan refactor",
+    status: "waiting_for_input",
+    lastActivityAt: minutesAgo(12),
+    sessionName: "validator-sweep",
+    pendingQuestion: "Should we collapse the prompt panel by default?",
+    lastActivitySummary: "Agent asked a clarifying question.",
+  }),
+  makeActive({
+    id: "conv-codex",
+    name: "Codex investigation",
+    status: "running",
+    lastActivityAt: minutesAgo(18),
+    projectName: "creative-ai",
+    projectPath: "/home/alex/github/creative-ai",
+    sessionName: "diff-explainer",
+    agentBackend: "codex",
+    role: "iteration",
+    forkedFrom: {
+      conversationId: "conv-source-xyz",
+      messageIndex: 14,
+      mode: "synthetic",
+    },
+    lastActivitySummary: "Synthetic fork from earlier conversation.",
+  }),
+  makeActive({
+    id: "conv-init",
+    name: "Graph init scaffolding",
+    status: "running",
+    lastActivityAt: minutesAgo(22),
+    projectName: "creative-ai",
+    projectPath: "/home/alex/github/creative-ai",
+    sessionName: "graph-init",
+    role: "initialization",
+    lastActivitySummary: "Wiring initial context tasks.",
+  }),
+];
 
-  const toggleGroup = (project: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(project)) {
-        next.delete(project);
-      } else {
-        next.add(project);
-      }
-      return next;
+const emptyResponse: ActiveConversationsResponse = {
+  conversations: [],
+  graphWorkflowExecutions: [],
+  activeCollaborationExecutions: [],
+};
+
+const mixedResponse: ActiveConversationsResponse = {
+  conversations: mixedActive,
+  graphWorkflowExecutions: [],
+  activeCollaborationExecutions: [],
+};
+
+const sessionConversations: ConversationState[] = [];
+
+// ---------------------------------------------------------------------------
+// Story harness
+// ---------------------------------------------------------------------------
+
+interface HarnessProps {
+  active: ActiveConversationsResponse;
+  initialFilter?: string;
+  initialGroupBy?: SidebarGroupBy;
+  initialSidebarCollapsed?: boolean;
+  mobileOpen?: boolean;
+  activeConversationId?: string;
+}
+
+function SidebarHarness({
+  active,
+  initialFilter = "",
+  initialGroupBy = "project",
+  initialSidebarCollapsed = false,
+  mobileOpen = false,
+  activeConversationId = "conv-running",
+}: HarnessProps) {
+  const queryClient = useMemo(() => {
+    const qc = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Infinity, gcTime: Infinity },
+      },
     });
-  };
+    qc.setQueryData(conversationKeys.active, active);
+    return qc;
+  }, [active]);
 
-  const statusPriority = ["running", "waiting_for_input", "new", "awaiting"];
-  const getUniqueStatuses = (convos: ActiveConversation[]): string[] => {
-    const present: Set<string> = new Set(convos.map((c) => c.status));
-    return statusPriority.filter((s) => present.has(s));
-  };
+  useLayoutEffect(() => {
+    useSessionDetailStore.setState({
+      sidebarFilter: initialFilter,
+      sidebarGroupBy: initialGroupBy,
+      sidebarCollapsed: initialSidebarCollapsed,
+    });
+  }, [initialFilter, initialGroupBy, initialSidebarCollapsed]);
 
-  // Group active conversations by project
-  const groupedByProject = new Map<string, ActiveConversation[]>();
-  for (const convo of activeConversations) {
-    const existing = groupedByProject.get(convo.projectName);
-    if (existing) {
-      existing.push(convo);
-    } else {
-      groupedByProject.set(convo.projectName, [convo]);
-    }
-  }
+  useLayoutEffect(() => {
+    const originalFetch = window.fetch;
+    window.fetch = (input, init) => {
+      const rawUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof Request
+            ? input.url
+            : input.toString();
+      const path = new URL(rawUrl, window.location.origin).pathname;
+      if (path === "/api/conversations/active") {
+        return Promise.resolve(
+          new Response(JSON.stringify(active), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+      return originalFetch(input, init);
+    };
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, [active]);
 
   return (
-    <div className="convo-sidebar" style={{ height: "100%" }}>
-      <div className="cc-section-header convo-sidebar-header">
-        <span className="cc-section-label">Conversations</span>
-        <div className="cc-section-actions">
-          <button
-            className="btn-icon-only convo-sidebar-header-new"
-            onClick={onNewConversation}
-            data-tooltip="New conversation"
-          >
-            +
-          </button>
-          <button
-            className="btn-icon-only convo-sidebar-toggle"
-            onClick={onToggleCollapse}
-            data-tooltip="Collapse"
-          >
-            &#9664;
-          </button>
-        </div>
+    <QueryClientProvider client={queryClient}>
+      <div
+        className="app"
+        data-page="detail"
+        data-mobile-panel={mobileOpen ? "chat" : "chat"}
+        style={{ height: "100%", width: "100%" }}
+      >
+        <ConversationSidebar
+          projectName="remote-ai-manager"
+          sessionName="conversation-ui-overhaul"
+          conversations={sessionConversations}
+          activeConversationId={activeConversationId}
+          isFinished={false}
+          mobileOpen={mobileOpen}
+          onMobileClose={() => {}}
+        />
       </div>
-
-      <div className="cc-tabs">
-        <button
-          className={`cc-tab${activeTab === "session" ? " active" : ""}`}
-          onClick={() => setActiveTab("session")}
-        >
-          Session
-        </button>
-        <button
-          className={`cc-tab${activeTab === "active" ? " active" : ""}`}
-          onClick={() => setActiveTab("active")}
-        >
-          Active
-          {activeConversations.length > 0 && (
-            <span className="cc-tab-count">{activeConversations.length}</span>
-          )}
-        </button>
-      </div>
-
-      {activeTab === "session" ? (
-        <>
-          <div className="convo-sidebar-list">
-            {filteredConversations.map((convo) => (
-              <Link
-                key={convo.id}
-                href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`}
-                className={`convo-sidebar-item${convo.id === activeConversationId ? " active" : ""}${convo.archived ? " archived" : ""}`}
-              >
-                <span className={`sidebar-dot ${convo.status}`} />
-                <div className="convo-sidebar-item-body">
-                  {editingId === convo.id ? (
-                    <input
-                      ref={editInputRef}
-                      className="convo-rename-input"
-                      value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          handleRenameSubmit(convo.id);
-                        } else if (e.key === "Escape") {
-                          setEditingId(null);
-                        }
-                      }}
-                      onBlur={() => handleRenameSubmit(convo.id)}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      maxLength={200}
-                    />
-                  ) : (
-                    <div className="convo-sidebar-item-summary">
-                      {convo.name ?? convo.summary ?? "New conversation"}
-                    </div>
-                  )}
-                  <div className="convo-sidebar-item-meta">
-                    {convo.promptCount} prompt
-                    {convo.promptCount !== 1 ? "s" : ""}
-                    {convo.source === "imported" && " \u00B7 imported"}
-                  </div>
-                </div>
-                <button
-                  className="btn-icon-only convo-sidebar-item-action"
-                  data-tooltip="Rename"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleRenameStart(
-                      convo.id,
-                      convo.name ?? convo.summary ?? "",
-                    );
-                  }}
-                >
-                  &#9998;
-                </button>
-                <button
-                  className="btn-icon-only convo-sidebar-item-action"
-                  data-tooltip={convo.archived ? "Unarchive" : "Archive"}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onArchive(convo.id, !convo.archived);
-                  }}
-                >
-                  {convo.archived ? "\u21A9" : "\u2913"}
-                </button>
-              </Link>
-            ))}
-          </div>
-          {archivedCount > 0 && (
-            <div className="convo-sidebar-footer">
-              <button
-                className={`convo-sidebar-archive-toggle${showArchived ? " active" : ""}`}
-                onClick={() => setShowArchived((v) => !v)}
-                type="button"
-              >
-                Archived ({archivedCount})
-              </button>
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="convo-sidebar-list">
-          {activeConversations.length === 0 ? (
-            <div className="convo-sidebar-empty">
-              No active conversations.
-              <span className="convo-sidebar-empty-hint">
-                Running or awaiting conversations will appear here.
-              </span>
-            </div>
-          ) : (
-            Array.from(groupedByProject.entries()).map(([project, convos]) => {
-              const isGroupCollapsed = collapsedGroups.has(project);
-              const statuses = getUniqueStatuses(convos);
-              return (
-                <div key={project} className="convo-sidebar-project-group">
-                  <div
-                    className="cc-section-header convo-sidebar-group-header"
-                    onClick={() => toggleGroup(project)}
-                  >
-                    <span
-                      className={`convo-sidebar-group-chevron${isGroupCollapsed ? " collapsed" : ""}`}
-                    >
-                      &#9660;
-                    </span>
-                    <span className="cc-section-label">{project}</span>
-                    <div className="convo-sidebar-group-status">
-                      {statuses.map((s) => (
-                        <span
-                          key={s}
-                          className={`convo-sidebar-group-dot ${s}`}
-                        />
-                      ))}
-                    </div>
-                    <span className="cc-section-count">{convos.length}</span>
-                  </div>
-                  {!isGroupCollapsed &&
-                    convos.map((convo) => (
-                      <Link
-                        key={convo.id}
-                        href={`/projects/${encodeURIComponent(convo.projectName)}/${encodeURIComponent(convo.sessionName)}/${convo.id}`}
-                        className="convo-sidebar-item"
-                      >
-                        <span className={`sidebar-dot ${convo.status}`} />
-                        <div className="convo-sidebar-item-body">
-                          <div className="convo-sidebar-item-name-row">
-                            {editingId === convo.id ? (
-                              <input
-                                ref={editInputRef}
-                                className="convo-rename-input"
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    handleRenameSubmit(convo.id);
-                                  } else if (e.key === "Escape") {
-                                    setEditingId(null);
-                                  }
-                                }}
-                                onBlur={() => handleRenameSubmit(convo.id)}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                                maxLength={200}
-                                style={{ flex: 1 }}
-                              />
-                            ) : (
-                              <>
-                                <div className="convo-sidebar-item-summary">
-                                  {convo.name ?? "Unnamed conversation"}
-                                </div>
-                                <span className="convo-sidebar-active-time">
-                                  {formatRelativeTime(convo.lastActivityAt)}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                          {editingId !== convo.id && (
-                            <span className="convo-sidebar-session-label">
-                              {convo.sessionName}
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          className="btn-icon-only convo-sidebar-item-action"
-                          data-tooltip="Rename"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleRenameStart(convo.id, convo.name ?? "");
-                          }}
-                        >
-                          &#9998;
-                        </button>
-                        <button
-                          className="btn-icon-only convo-sidebar-item-action"
-                          data-tooltip="Archive"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            onArchive(convo.id, true);
-                          }}
-                        >
-                          {"\u2913"}
-                        </button>
-                      </Link>
-                    ))}
-                </div>
-              );
-            })
-          )}
-        </div>
-      )}
-    </div>
+    </QueryClientProvider>
   );
 }
 
@@ -384,162 +221,88 @@ function SidebarShell({
 
 const meta = {
   title: "Session/ConversationSidebar",
-  component: SidebarShell,
-  args: {
-    onRename: fn(),
-    onArchive: fn(),
-    onNewConversation: fn(),
-    onToggleCollapse: fn(),
-    projectName: "remote-ai-manager",
-    sessionName: "unified-view",
-  },
+  component: SidebarHarness,
   decorators: [
     (Story) => (
       <div
         style={{
-          height: 600,
-          width: 320,
+          height: 720,
+          width: 308,
           position: "relative",
           background: "var(--bg-void)",
+          border: "1px solid var(--border-subtle)",
         }}
       >
         <Story />
       </div>
     ),
   ],
-} satisfies Meta<typeof SidebarShell>;
+  args: {
+    active: mixedResponse,
+  },
+  parameters: {
+    layout: "centered",
+  },
+} satisfies Meta<typeof SidebarHarness>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
 // ---------------------------------------------------------------------------
-// Test Data
-// ---------------------------------------------------------------------------
-
-const now = new Date().toISOString();
-const twoMinAgo = new Date(Date.now() - 2 * 60_000).toISOString();
-const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
-const twentyMinAgo = new Date(Date.now() - 21 * 60_000).toISOString();
-const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
-const tenHoursAgo = new Date(Date.now() - 600 * 60_000).toISOString();
-
-const sessionConversations: SessionConversation[] = [
-  {
-    id: "conv-1",
-    name: "Validate impl",
-    summary: "Validate implementation",
-    status: "awaiting",
-    promptCount: 1,
-    archived: false,
-    lastActivityAt: tenMinAgo,
-  },
-  {
-    id: "conv-2",
-    name: "Impl",
-    summary: "Implementation work",
-    status: "running",
-    promptCount: 3,
-    archived: false,
-    lastActivityAt: twoMinAgo,
-  },
-  {
-    id: "conv-3",
-    name: "Plan",
-    summary: "Planning session",
-    status: "idle",
-    promptCount: 7,
-    archived: false,
-    lastActivityAt: oneHourAgo,
-  },
-  {
-    id: "conv-4",
-    name: "Research spike",
-    summary: "Initial research",
-    status: "idle",
-    promptCount: 2,
-    archived: true,
-    lastActivityAt: tenHoursAgo,
-  },
-];
-
-const activeConversations: ActiveConversation[] = [
-  {
-    id: "ac-1",
-    name: "test container",
-    status: "running",
-    lastActivityAt: now,
-    projectName: "remote-ai-manager",
-    sessionName: "Dev containers",
-  },
-  {
-    id: "ac-2",
-    name: "Unnamed conversation",
-    status: "awaiting",
-    lastActivityAt: twoMinAgo,
-    projectName: "creative-ai",
-    sessionName: "container-test",
-  },
-  {
-    id: "ac-3",
-    name: "Auth with subscription",
-    status: "running",
-    lastActivityAt: twentyMinAgo,
-    projectName: "remote-ai-manager",
-    sessionName: "Dev containers",
-  },
-  {
-    id: "ac-4",
-    name: "Validate impl",
-    status: "awaiting",
-    lastActivityAt: oneHourAgo,
-    projectName: "remote-ai-manager",
-    sessionName: "Unified view",
-  },
-  {
-    id: "ac-5",
-    name: "Impl",
-    status: "running",
-    lastActivityAt: oneHourAgo,
-    projectName: "remote-ai-manager",
-    sessionName: "Unified view",
-  },
-  {
-    id: "ac-6",
-    name: "Plan",
-    status: "awaiting",
-    lastActivityAt: tenHoursAgo,
-    projectName: "remote-ai-manager",
-    sessionName: "Unified view",
-  },
-];
-
-// ---------------------------------------------------------------------------
 // Stories
 // ---------------------------------------------------------------------------
 
-export const SessionTab: Story = {
+export const Empty = {
   args: {
-    conversations: sessionConversations,
-    activeConversations,
-    activeConversationId: "conv-2",
-    initialTab: "session",
+    active: emptyResponse,
   },
-};
+} satisfies Story;
 
-export const ActiveTab: Story = {
+export const MixedStatuses = {
   args: {
-    conversations: sessionConversations,
-    activeConversations,
-    activeConversationId: "conv-2",
-    initialTab: "active",
+    active: mixedResponse,
   },
-};
+} satisfies Story;
 
-export const ActiveTabEmpty: Story = {
+export const GroupBySession = {
   args: {
-    conversations: sessionConversations,
-    activeConversations: [],
-    activeConversationId: "conv-1",
-    initialTab: "active",
+    active: mixedResponse,
+    initialGroupBy: "session",
   },
-};
+} satisfies Story;
+
+export const GroupByProject = {
+  args: {
+    active: mixedResponse,
+    initialGroupBy: "project",
+  },
+} satisfies Story;
+
+export const SearchFiltered = {
+  args: {
+    active: mixedResponse,
+    initialFilter: "valid",
+  },
+} satisfies Story;
+
+export const MobileDrawerOpen = {
+  args: {
+    active: mixedResponse,
+    mobileOpen: true,
+  },
+  decorators: [
+    (Story) => (
+      <div
+        style={{
+          height: 720,
+          width: 420,
+          position: "relative",
+          background: "var(--bg-void)",
+          border: "1px solid var(--border-subtle)",
+        }}
+      >
+        <Story />
+      </div>
+    ),
+  ],
+} satisfies Story;

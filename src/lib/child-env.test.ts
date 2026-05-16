@@ -14,28 +14,36 @@ describe("buildChildEnv", () => {
     process.env = originalEnv;
   });
 
-  it("strips NODE_ENV", () => {
+  it("overrides NODE_ENV to development so it survives a merge over process.env", () => {
     (process.env as Record<string, string | undefined>).NODE_ENV = "production";
     const env = buildChildEnv();
-    expect(env.NODE_ENV).toBeUndefined();
+    expect(env.NODE_ENV).toBe("development");
   });
 
-  it("strips __NEXT_ prefixed vars", () => {
+  it("clobbers __NEXT_ prefixed vars to empty string", () => {
     process.env.__NEXT_FOO = "bar";
     const env = buildChildEnv();
-    expect(env.__NEXT_FOO).toBeUndefined();
+    expect(env.__NEXT_FOO).toBe("");
   });
 
-  it("strips __TURBOPACK_ prefixed vars", () => {
+  it("clobbers __TURBOPACK_ prefixed vars to empty string", () => {
     process.env.__TURBOPACK_FOO = "bar";
     const env = buildChildEnv();
-    expect(env.__TURBOPACK_FOO).toBeUndefined();
+    expect(env.__TURBOPACK_FOO).toBe("");
   });
 
-  it("strips NODE_CHANNEL_ prefixed vars", () => {
+  it("clobbers NODE_CHANNEL_ prefixed vars to empty string", () => {
     process.env.NODE_CHANNEL_FD = "3";
     const env = buildChildEnv();
-    expect(env.NODE_CHANNEL_FD).toBeUndefined();
+    expect(env.NODE_CHANNEL_FD).toBe("");
+  });
+
+  it("survives an SDK-style merge over process.env (parent NODE_ENV does not leak through)", () => {
+    (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+    process.env.__NEXT_PRIVATE_ORIGIN = "http://localhost:3000";
+    const merged = { ...process.env, ...buildChildEnv() };
+    expect(merged.NODE_ENV).toBe("development");
+    expect(merged.__NEXT_PRIVATE_ORIGIN).toBe("");
   });
 });
 

@@ -28,6 +28,8 @@ import {
   sessionDiffSchema,
   commitsResponseSchema,
   activeConversationsResponseSchema,
+  type ActiveConversation,
+  type ActiveConversationForkedFrom,
   transcriptMessageSchema,
   contentResponseSchema,
   kiroDocTreeSchema,
@@ -239,16 +241,7 @@ export function useCommitDiffQuery(
 // Conversation Queries
 // ---------------------------------------------------------------------------
 
-export interface ActiveConversation {
-  id: string;
-  name: string | null;
-  status: "new" | "running" | "awaiting" | "waiting_for_input";
-  lastActivityAt: string;
-  projectName: string;
-  projectPath: string;
-  sessionName: string;
-  agentBackend: "claude" | "codex";
-}
+export type { ActiveConversation, ActiveConversationForkedFrom };
 
 export function useActiveConversationsQuery() {
   return useQuery({

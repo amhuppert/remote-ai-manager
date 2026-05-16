@@ -4,10 +4,8 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ConversationState } from "@/types";
-import {
-  useActiveConversationsQuery,
-  type ActiveConversation,
-} from "@/lib/queries";
+import type { ActiveConversation } from "@/lib/api-client";
+import { useActiveConversationsQuery } from "@/lib/queries";
 import {
   useCreateConversationMutation,
   useArchiveConversationMutation,
@@ -19,8 +17,28 @@ import {
   useSidebarCollapsed,
   useToggleSidebar,
   useHydrateSidebar,
+  useSidebarFilter,
+  useSidebarGroupBy,
+  useSidebarSessionFilter,
+  useSetSidebarSessionFilter,
 } from "@/stores/session-detail.store";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { useLongPress } from "@/hooks/use-long-press";
+import ConversationSidebarHeader from "./ConversationSidebarHeader";
+import ConversationSidebarFilters from "./ConversationSidebarFilters";
+import ConversationSidebarRow from "./ConversationSidebarRow";
+import ConversationSidebarRowContextMenu, {
+  type ContextMenuItem,
+} from "./ConversationSidebarRowContextMenu";
+import {
+  filterConversations,
+  splitNeedsYou,
+  buildConversationSidebarSections,
+  type SidebarConversation,
+  type SidebarListFilter,
+  type AnnotatedSidebarConversation,
+  type SidebarSection,
+} from "./ConversationSidebar.helpers";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,17 +55,64 @@ function formatRelativeTime(isoDate: string): string {
   return `${days}d ago`;
 }
 
-/** Priority order for status dots — higher priority statuses appear first */
-const STATUS_PRIORITY = [
-  "running",
-  "waiting_for_input",
-  "new",
-  "awaiting",
-] as const;
+// ---------------------------------------------------------------------------
+// Row item (handles per-row long-press)
+// ---------------------------------------------------------------------------
 
-function getUniqueStatuses(convos: { status: string }[]): string[] {
-  const present = new Set(convos.map((c) => c.status));
-  return STATUS_PRIORITY.filter((s) => present.has(s));
+interface SidebarRowItemProps {
+  row: AnnotatedSidebarConversation<
+    SidebarConversation & Partial<{ archived: boolean }>
+  >;
+  conversation: ActiveConversation;
+  href: string;
+  isActive: boolean;
+  archived: boolean;
+  onOpenMenu: (point: { x: number; y: number }) => void;
+  onNavigate: () => void;
+}
+
+function SidebarRowItem({
+  row,
+  conversation,
+  href,
+  isActive,
+  archived,
+  onOpenMenu,
+  onNavigate,
+}: SidebarRowItemProps): React.JSX.Element {
+  const { handlers, didLongPressRef } = useLongPress({
+    onLongPress: onOpenMenu,
+  });
+
+  return (
+    <div
+      className={`conversation-sidebar-row-wrapper${archived ? " is-archived" : ""}`}
+      style={{ position: "relative" }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onOpenMenu({ x: event.clientX, y: event.clientY });
+      }}
+      {...handlers}
+    >
+      <Link
+        href={href}
+        onClick={(event) => {
+          event.preventDefault();
+          if (didLongPressRef.current) return;
+          onNavigate();
+        }}
+        style={{ display: "block", textDecoration: "none" }}
+        aria-label={`Open ${conversation.name ?? "conversation"}`}
+      >
+        <ConversationSidebarRow
+          conversation={conversation}
+          isActive={isActive}
+          isFirstInSession={row.isFirstInSession}
+          isLastInSession={row.isLastInSession}
+        />
+      </Link>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -67,7 +132,6 @@ interface Props {
 export default function ConversationSidebar({
   projectName,
   sessionName,
-  conversations,
   activeConversationId,
   isFinished,
   mobileOpen,
@@ -79,6 +143,10 @@ export default function ConversationSidebar({
   const collapsed = useSidebarCollapsed();
   const toggleCollapsed = useToggleSidebar();
   const hydrateSidebar = useHydrateSidebar();
+  const sidebarFilter = useSidebarFilter();
+  const sidebarGroupBy = useSidebarGroupBy();
+  const sidebarSessionFilter = useSidebarSessionFilter();
+  const setSidebarSessionFilter = useSetSidebarSessionFilter();
 
   // --- Active conversations query ---
   const { data: activeData } = useActiveConversationsQuery();
@@ -95,7 +163,7 @@ export default function ConversationSidebar({
     [activeData],
   );
 
-  // --- Session mutations ---
+  // --- Mutations ---
   const createConvoMutation = useCreateConversationMutation(
     projectName,
     sessionName,
@@ -108,47 +176,58 @@ export default function ConversationSidebar({
     projectName,
     sessionName,
   );
-
-  // --- Generic mutations (for active tab — different projects/sessions) ---
   const genericArchiveMutation = useGenericArchiveConversationMutation();
   const genericRenameMutation = useGenericRenameConversationMutation();
 
-  // --- Local state ---
-  const [activeTab, setActiveTab] = useState<"session" | "active">("active");
-  const [showArchived, setShowArchived] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    new Set(),
-  );
-
-  const toggleGroup = useCallback((project: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(project)) {
-        next.delete(project);
-      } else {
-        next.add(project);
-      }
-      return next;
-    });
-  }, []);
-
-  const archivedCount = useMemo(
-    () => conversations.filter((c) => c.archived).length,
-    [conversations],
-  );
-
-  const filteredConversations = useMemo(() => {
-    if (showArchived) return conversations;
-    return conversations.filter((c) => !c.archived);
-  }, [conversations, showArchived]);
+  // --- Local UI state ---
+  const [activeListFilter, setActiveListFilter] =
+    useState<SidebarListFilter>("all");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const editInputRef = useRef<HTMLInputElement>(null);
+  const [ctxMenu, setCtxMenu] = useState<{
+    row: SidebarConversation & { archived?: boolean };
+    scope: { projectName: string; sessionName: string };
+    x: number;
+    y: number;
+  } | null>(null);
+  const editScopeRef = useRef<{
+    projectName: string;
+    sessionName: string;
+  } | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Restore collapsed state from localStorage on mount
   useEffect(() => {
     hydrateSidebar();
   }, [hydrateSidebar]);
 
-  // Sidebar toggle hotkey
+  // Hotkeys
   useAppHotkey("toggleSidebar", toggleCollapsed);
+  useAppHotkey("focusSidebarSearch", () => {
+    // Don't steal focus from the prompt composer or other editable element.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) {
+      const tag = active.tagName;
+      const isEditable =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        active.isContentEditable;
+      // If editable and not our own search input, leave focus alone.
+      if (isEditable && active !== searchInputRef.current) return;
+    }
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  });
+
+  // Focus the rename input when editing begins
+  useEffect(() => {
+    if (editingId && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingId]);
 
   const handleNewConversation = useCallback(() => {
     if (createConvoMutation.isPending || isFinished) return;
@@ -161,113 +240,342 @@ export default function ConversationSidebar({
     });
   }, [createConvoMutation, isFinished, projectName, sessionName, router]);
 
-  const handleArchive = useCallback(
-    (conversationId: string, archived: boolean) => {
-      archiveConvoMutation.mutate({ conversationId, archived });
+  const handleRenameStart = useCallback(
+    (
+      id: string,
+      name: string,
+      scope: { projectName: string; sessionName: string },
+    ) => {
+      setEditingId(id);
+      setEditValue(name);
+      editScopeRef.current = scope;
     },
-    [archiveConvoMutation],
+    [],
   );
-
-  const handleActiveArchive = useCallback(
-    (convo: ActiveConversation, archived: boolean) => {
-      genericArchiveMutation.mutate({
-        projectName: convo.projectName,
-        sessionName: convo.sessionName,
-        conversationId: convo.id,
-        archived,
-      });
-    },
-    [genericArchiveMutation],
-  );
-
-  // --- Rename conversation (session tab) ---
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const editInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (editingId && editInputRef.current) {
-      editInputRef.current.focus();
-      editInputRef.current.select();
-    }
-  }, [editingId]);
-
-  const handleRenameStart = useCallback((id: string, name: string) => {
-    setEditingId(id);
-    setEditValue(name);
-  }, []);
 
   const handleRenameSubmit = useCallback(
-    (conversationId: string) => {
+    (id: string) => {
       const trimmed = editValue.trim();
-      if (!trimmed) {
+      const scope = editScopeRef.current;
+      if (!trimmed || !scope) {
         setEditingId(null);
         return;
       }
-      renameConvoMutation.mutate(
-        { conversationId, name: trimmed },
-        { onSettled: () => setEditingId(null) },
-      );
-    },
-    [editValue, renameConvoMutation],
-  );
-
-  // --- Rename for active tab conversations ---
-  const [activeEditingId, setActiveEditingId] = useState<string | null>(null);
-  const [activeEditValue, setActiveEditValue] = useState("");
-  const activeEditInputRef = useRef<HTMLInputElement>(null);
-  const activeEditConvoRef = useRef<ActiveConversation | null>(null);
-
-  useEffect(() => {
-    if (activeEditingId && activeEditInputRef.current) {
-      activeEditInputRef.current.focus();
-      activeEditInputRef.current.select();
-    }
-  }, [activeEditingId]);
-
-  const handleActiveRenameStart = useCallback((convo: ActiveConversation) => {
-    setActiveEditingId(convo.id);
-    setActiveEditValue(convo.name ?? "");
-    activeEditConvoRef.current = convo;
-  }, []);
-
-  const handleActiveRenameSubmit = useCallback(
-    (conversationId: string) => {
-      const trimmed = activeEditValue.trim();
-      if (!trimmed || !activeEditConvoRef.current) {
-        setActiveEditingId(null);
-        return;
-      }
-      genericRenameMutation.mutate(
-        {
-          projectName: activeEditConvoRef.current.projectName,
-          sessionName: activeEditConvoRef.current.sessionName,
-          conversationId,
-          name: trimmed,
-        },
-        { onSettled: () => setActiveEditingId(null) },
-      );
-    },
-    [activeEditValue, genericRenameMutation],
-  );
-
-  // Group active conversations by project for the Active tab
-  const groupedByProject = useMemo(() => {
-    const groups = new Map<string, ActiveConversation[]>();
-    for (const convo of activeConvoList) {
-      const existing = groups.get(convo.projectName);
-      if (existing) {
-        existing.push(convo);
+      const isCurrentSession =
+        scope.projectName === projectName && scope.sessionName === sessionName;
+      const onSettled = () => setEditingId(null);
+      if (isCurrentSession) {
+        renameConvoMutation.mutate(
+          { conversationId: id, name: trimmed },
+          { onSettled },
+        );
       } else {
-        groups.set(convo.projectName, [convo]);
+        genericRenameMutation.mutate(
+          {
+            projectName: scope.projectName,
+            sessionName: scope.sessionName,
+            conversationId: id,
+            name: trimmed,
+          },
+          { onSettled },
+        );
       }
-    }
-    return groups;
-  }, [activeConvoList]);
+    },
+    [
+      editValue,
+      genericRenameMutation,
+      projectName,
+      renameConvoMutation,
+      sessionName,
+    ],
+  );
 
-  const statusDot = (status: string) => {
-    return <span className={`sidebar-dot ${status}`} />;
-  };
+  const handleArchive = useCallback(
+    (
+      id: string,
+      archived: boolean,
+      scope: { projectName: string; sessionName: string },
+    ) => {
+      const isCurrentSession =
+        scope.projectName === projectName && scope.sessionName === sessionName;
+      if (isCurrentSession) {
+        archiveConvoMutation.mutate({ conversationId: id, archived });
+      } else {
+        genericArchiveMutation.mutate({
+          projectName: scope.projectName,
+          sessionName: scope.sessionName,
+          conversationId: id,
+          archived,
+        });
+      }
+    },
+    [archiveConvoMutation, genericArchiveMutation, projectName, sessionName],
+  );
+
+  const activeRows: SidebarConversation[] = activeConvoList;
+
+  const sessionScope = useMemo(
+    () => sidebarSessionFilter ?? { projectName, sessionName },
+    [projectName, sessionName, sidebarSessionFilter],
+  );
+
+  const filterCounts = useMemo(() => {
+    const { needsYou } = splitNeedsYou(activeRows);
+    return {
+      all: activeRows.length,
+      needs: needsYou.length,
+      running: activeRows.filter((row) => row.status === "running").length,
+      session: activeRows.filter(
+        (row) =>
+          row.projectName === sessionScope.projectName &&
+          row.sessionName === sessionScope.sessionName,
+      ).length,
+    } satisfies Record<SidebarListFilter, number>;
+  }, [activeRows, sessionScope]);
+
+  const sidebarSections = useMemo(
+    () =>
+      buildConversationSidebarSections(
+        filterConversations(activeRows, sidebarFilter),
+        {
+          filter: activeListFilter,
+          groupBy: sidebarGroupBy,
+          sessionScope,
+        },
+      ),
+    [activeListFilter, activeRows, sessionScope, sidebarFilter, sidebarGroupBy],
+  );
+
+  const hasConversationResults = sidebarSections.some(
+    (section) => section.items.length > 0,
+  );
+
+  const renderRow = useCallback(
+    <T extends SidebarConversation & Partial<{ archived: boolean }>>(
+      row: AnnotatedSidebarConversation<T>,
+    ) => {
+      const isEditing = editingId === row.id;
+      const isActive = row.id === activeConversationId;
+      const archived = row.archived === true;
+      const conversation: ActiveConversation = {
+        id: row.id,
+        name: row.name,
+        status: row.status,
+        lastActivityAt: row.lastActivityAt,
+        projectName: row.projectName,
+        projectPath: row.projectPath,
+        sessionName: row.sessionName,
+        agentBackend: row.agentBackend,
+        summary: row.summary,
+        pendingQuestion: row.pendingQuestion,
+        forkedFrom: row.forkedFrom,
+        debugActive: row.debugActive,
+        role: row.role,
+        branchName: row.branchName,
+        lastActivitySummary: row.lastActivitySummary,
+      };
+      const scope = {
+        projectName: row.projectName,
+        sessionName: row.sessionName,
+      };
+      const href = `/projects/${encodeURIComponent(row.projectName)}/${encodeURIComponent(row.sessionName)}/${row.id}`;
+
+      if (isEditing) {
+        return (
+          <div
+            key={row.id}
+            className={`conversation-sidebar-row-wrapper${archived ? " is-archived" : ""}`}
+            style={{ position: "relative" }}
+          >
+            <div
+              className="conversation-sidebar-row"
+              data-status={row.status}
+              style={{ padding: "var(--space-sm) var(--space-md)" }}
+            >
+              <input
+                ref={editInputRef}
+                className="convo-rename-input"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleRenameSubmit(row.id);
+                  } else if (e.key === "Escape") {
+                    e.stopPropagation();
+                    setEditingId(null);
+                  }
+                }}
+                onBlur={() => handleRenameSubmit(row.id)}
+                maxLength={200}
+                style={{ flex: 1, minWidth: 0 }}
+              />
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <SidebarRowItem
+          key={row.id}
+          row={row}
+          conversation={conversation}
+          href={href}
+          isActive={isActive}
+          archived={archived}
+          onNavigate={() => {
+            router.push(href);
+            if (onMobileClose) onMobileClose();
+          }}
+          onOpenMenu={(point) => {
+            setCtxMenu({ row, scope, x: point.x, y: point.y });
+          }}
+        />
+      );
+    },
+    [
+      activeConversationId,
+      editValue,
+      editingId,
+      handleRenameSubmit,
+      onMobileClose,
+      router,
+    ],
+  );
+
+  const renderSections = useCallback(
+    <T extends SidebarConversation & Partial<{ archived: boolean }>>(
+      sections: SidebarSection<T>[],
+    ) => {
+      return sections.map((section) => {
+        if (section.items.length === 0) return null;
+        return (
+          <section
+            key={section.groupKey}
+            className="convo-sidebar-section"
+            data-section-kind={section.kind}
+          >
+            <div
+              className={`convo-sidebar-section-header${
+                section.kind === "needs"
+                  ? " convo-sidebar-section-header--needs"
+                  : ""
+              }`}
+            >
+              {section.kind === "session" &&
+              section.projectLabel !== undefined &&
+              section.sessionLabel !== undefined ? (
+                <span className="convo-sidebar-section-label convo-sidebar-section-label--session">
+                  <span className="convo-sidebar-section-label-project">
+                    {section.projectLabel}
+                  </span>
+                  <span className="convo-sidebar-section-label-separator">
+                    /
+                  </span>
+                  <span className="convo-sidebar-section-label-session">
+                    {section.sessionLabel}
+                  </span>
+                </span>
+              ) : (
+                <span className="convo-sidebar-section-label">
+                  {section.label}
+                </span>
+              )}
+              <span className="convo-sidebar-section-count">
+                {section.kind === "needs"
+                  ? `(${section.items.length})`
+                  : section.items.length}
+              </span>
+            </div>
+            <div className="convo-sidebar-section-rows">
+              {section.items.map((row) => renderRow(row))}
+            </div>
+          </section>
+        );
+      });
+    },
+    [renderRow],
+  );
+
+  const ctxMenuItems: ContextMenuItem[] = useMemo(() => {
+    if (ctxMenu === null) return [];
+    const { row, scope } = ctxMenu;
+    const archived = row.archived === true;
+    const href = `/projects/${encodeURIComponent(row.projectName)}/${encodeURIComponent(row.sessionName)}/${row.id}`;
+    const projectHref = `/projects/${encodeURIComponent(row.projectName)}`;
+    const filterAlreadyApplied =
+      activeListFilter === "session" &&
+      sessionScope.projectName === row.projectName &&
+      sessionScope.sessionName === row.sessionName;
+    const items: ContextMenuItem[] = [
+      {
+        kind: "item",
+        label: "Open conversation",
+        hotkey: "Enter",
+        onSelect: () => {
+          router.push(href);
+          if (onMobileClose) onMobileClose();
+        },
+      },
+      { kind: "divider" },
+      {
+        kind: "item",
+        label: filterAlreadyApplied
+          ? `Filtered to ${row.sessionName}`
+          : `Filter sidebar to session: ${row.sessionName}`,
+        disabled: filterAlreadyApplied,
+        onSelect: () => {
+          setSidebarSessionFilter({
+            projectName: row.projectName,
+            sessionName: row.sessionName,
+          });
+          setActiveListFilter("session");
+        },
+      },
+      {
+        kind: "item",
+        label: "Open project page",
+        onSelect: () => {
+          router.push(projectHref);
+          if (onMobileClose) onMobileClose();
+        },
+      },
+      {
+        kind: "item",
+        label: "Copy branch name",
+        disabled: row.branchName === null,
+        onSelect: () => {
+          if (row.branchName === null) return;
+          void navigator.clipboard.writeText(row.branchName);
+        },
+      },
+      { kind: "divider" },
+      {
+        kind: "item",
+        label: "Rename\u2026",
+        onSelect: () => {
+          handleRenameStart(row.id, row.name ?? row.summary ?? "", scope);
+        },
+      },
+      {
+        kind: "item",
+        label: archived ? "Unarchive" : "Archive",
+        onSelect: () => {
+          handleArchive(row.id, !archived, scope);
+        },
+      },
+    ];
+    return items;
+  }, [
+    ctxMenu,
+    activeListFilter,
+    handleArchive,
+    handleRenameStart,
+    onMobileClose,
+    router,
+    setSidebarSessionFilter,
+    sessionScope,
+  ]);
 
   return (
     <>
@@ -280,7 +588,12 @@ export default function ConversationSidebar({
         className={`convo-sidebar${collapsed ? " collapsed" : ""}${mobileOpen ? " mobile-open" : ""}`}
       >
         <div className="cc-section-header convo-sidebar-header">
-          <span className="cc-section-label">Conversations</span>
+          <span className="convo-sidebar-title">
+            Active Conversations{" "}
+            <span className="convo-sidebar-title-count">
+              ({filterCounts.all})
+            </span>
+          </span>
           <div className="cc-section-actions">
             <button
               className="btn-icon-only convo-sidebar-header-new"
@@ -308,393 +621,122 @@ export default function ConversationSidebar({
         </div>
         {(!collapsed || mobileOpen) && (
           <>
-            <div className="cc-tabs">
-              <button
-                className={`cc-tab${activeTab === "session" ? " active" : ""}`}
-                onClick={() => setActiveTab("session")}
-              >
-                Session
-              </button>
-              <button
-                className={`cc-tab${activeTab === "active" ? " active" : ""}`}
-                onClick={() => setActiveTab("active")}
-              >
-                Active
-                {(activeConvoList.length > 0 ||
-                  activeGraphWorkflows.length > 0 ||
-                  activeCollaborations.length > 0) && (
-                  <span className="cc-tab-count">
-                    {activeConvoList.length +
-                      activeGraphWorkflows.length +
-                      activeCollaborations.length}
-                  </span>
-                )}
-              </button>
+            <div className="convo-sidebar-controls-wrapper">
+              <ConversationSidebarHeader
+                counts={filterCounts}
+                activeFilter={activeListFilter}
+                onFilterChange={(value) => {
+                  if (value !== "session") setSidebarSessionFilter(null);
+                  setActiveListFilter(value);
+                }}
+                searchInputRef={searchInputRef}
+              />
+              <ConversationSidebarFilters />
             </div>
 
-            {activeTab === "session" ? (
-              <>
-                <div className="convo-sidebar-list">
-                  {filteredConversations.map((convo) => (
+            <div className="convo-sidebar-list">
+              {activeGraphWorkflows.length > 0 && (
+                <div className="convo-sidebar-section">
+                  <div className="convo-sidebar-section-header">
+                    <span className="convo-sidebar-section-label">
+                      Graph Workflows
+                    </span>
+                    <span className="convo-sidebar-section-count">
+                      {activeGraphWorkflows.length}
+                    </span>
+                  </div>
+                  {activeGraphWorkflows.map((gw) => (
                     <Link
-                      key={convo.id}
-                      href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`}
-                      className={`convo-sidebar-item${convo.id === activeConversationId ? " active" : ""}${convo.archived ? " archived" : ""}`}
+                      key={gw.executionId}
+                      href={`/projects/${encodeURIComponent(gw.projectName)}/${encodeURIComponent(gw.sessionName)}/workflow`}
+                      className="convo-sidebar-item"
                     >
-                      {statusDot(convo.status)}
+                      <span className={`sidebar-dot ${gw.status}`} />
                       <div className="convo-sidebar-item-body">
-                        {editingId === convo.id ? (
-                          <input
-                            ref={editInputRef}
-                            className="convo-rename-input"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                void handleRenameSubmit(convo.id);
-                              } else if (e.key === "Escape") {
-                                e.stopPropagation();
-                                setEditingId(null);
-                              }
-                            }}
-                            onBlur={() => void handleRenameSubmit(convo.id)}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                            }}
-                            maxLength={200}
-                          />
-                        ) : (
+                        <div className="convo-sidebar-item-name-row">
                           <div className="convo-sidebar-item-summary">
-                            {convo.forkedFrom && (
-                              <span
-                                className="convo-sidebar-fork-icon"
-                                data-tooltip={(() => {
-                                  const source = conversations.find(
-                                    (c) =>
-                                      c.id ===
-                                      convo.forkedFrom?.sourceConversationId,
-                                  );
-                                  const sourceName =
-                                    source?.name ?? "deleted conversation";
-                                  const turn =
-                                    Math.floor(
-                                      convo.forkedFrom.messageIndex / 2,
-                                    ) + 1;
-                                  return `Forked from ${sourceName} at turn ${turn}`;
-                                })()}
-                              >
-                                <svg
-                                  width="10"
-                                  height="10"
-                                  viewBox="0 0 12 12"
-                                  fill="none"
-                                  aria-hidden="true"
-                                >
-                                  <circle
-                                    cx="3"
-                                    cy="2.5"
-                                    r="1.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.2"
-                                  />
-                                  <circle
-                                    cx="3"
-                                    cy="9.5"
-                                    r="1.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.2"
-                                  />
-                                  <circle
-                                    cx="9"
-                                    cy="4.5"
-                                    r="1.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.2"
-                                  />
-                                  <path
-                                    d="M3 4V8M3 5.5C3 5.5 3 4.5 5.5 4.5H7.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.2"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                              </span>
-                            )}
-                            {convo.name ?? convo.summary ?? "New conversation"}
+                            {gw.activeContextTitles.length > 0
+                              ? gw.activeContextTitles.join(" + ")
+                              : "Graph Workflow"}
                           </div>
-                        )}
-                        <div className="convo-sidebar-item-meta">
-                          {convo.promptCount} prompt
-                          {convo.promptCount !== 1 ? "s" : ""}
-                          {convo.source === "imported" && " \u00B7 imported"}
-                          {" \u00B7 "}
-                          {convo.agentBackend}
-                          {" \u00B7 "}
-                          <span
-                            className="convo-sidebar-id"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              void navigator.clipboard.writeText(convo.id);
-                            }}
-                            title={convo.id}
-                          >
-                            {convo.id.slice(0, 8)}
+                          <span className="convo-sidebar-active-time">
+                            {gw.completedContexts}/{gw.totalContexts}
                           </span>
                         </div>
+                        <span className="convo-sidebar-session-label">
+                          {gw.projectName} / {gw.sessionName}
+                        </span>
                       </div>
-                      <button
-                        className="btn-icon-only convo-sidebar-item-action"
-                        data-tooltip="Rename"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleRenameStart(
-                            convo.id,
-                            convo.name ?? convo.summary ?? "",
-                          );
-                        }}
-                      >
-                        &#9998;
-                      </button>
-                      <button
-                        className="btn-icon-only convo-sidebar-item-action"
-                        data-tooltip={convo.archived ? "Unarchive" : "Archive"}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleArchive(convo.id, !convo.archived);
-                        }}
-                      >
-                        {convo.archived ? "\u21A9" : "\u2913"}
-                      </button>
                     </Link>
                   ))}
                 </div>
-                {archivedCount > 0 && (
-                  <div className="convo-sidebar-footer">
-                    <button
-                      className={`convo-sidebar-archive-toggle${showArchived ? " active" : ""}`}
-                      onClick={() => setShowArchived((v) => !v)}
-                      type="button"
-                    >
-                      Archived ({archivedCount})
-                    </button>
+              )}
+              {activeCollaborations.length > 0 && (
+                <div className="convo-sidebar-section">
+                  <div className="convo-sidebar-section-header">
+                    <span className="convo-sidebar-section-label">
+                      Collaborations
+                    </span>
+                    <span className="convo-sidebar-section-count">
+                      {activeCollaborations.length}
+                    </span>
                   </div>
-                )}
-              </>
-            ) : (
-              <div className="convo-sidebar-list">
-                {activeGraphWorkflows.length > 0 && (
-                  <div className="convo-sidebar-project-group">
-                    <div className="cc-section-header convo-sidebar-group-header">
-                      <span className="cc-section-label">Graph Workflows</span>
-                      <span className="cc-section-count">
-                        {activeGraphWorkflows.length}
-                      </span>
-                    </div>
-                    {activeGraphWorkflows.map((gw) => (
+                  {activeCollaborations.map((collab) => {
+                    const href = collab.conversationId
+                      ? `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}/${collab.conversationId}`
+                      : `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}`;
+                    return (
                       <Link
-                        key={gw.executionId}
-                        href={`/projects/${encodeURIComponent(gw.projectName)}/${encodeURIComponent(gw.sessionName)}/workflow`}
+                        key={collab.workflowId}
+                        href={href}
                         className="convo-sidebar-item"
                       >
-                        {statusDot(gw.status)}
+                        <span className={`sidebar-dot ${collab.status}`} />
                         <div className="convo-sidebar-item-body">
                           <div className="convo-sidebar-item-name-row">
                             <div className="convo-sidebar-item-summary">
-                              {gw.activeContextTitles.length > 0
-                                ? gw.activeContextTitles.join(" + ")
-                                : "Graph Workflow"}
+                              Collaboration ({collab.status})
                             </div>
                             <span className="convo-sidebar-active-time">
-                              {gw.completedContexts}/{gw.totalContexts}
+                              {formatRelativeTime(collab.updatedAt)}
                             </span>
                           </div>
                           <span className="convo-sidebar-session-label">
-                            {gw.projectName} / {gw.sessionName}
+                            {collab.projectName} / {collab.sessionName}
                           </span>
                         </div>
                       </Link>
-                    ))}
-                  </div>
-                )}
-                {activeCollaborations.length > 0 && (
-                  <div className="convo-sidebar-project-group">
-                    <div className="cc-section-header convo-sidebar-group-header">
-                      <span className="cc-section-label">Collaborations</span>
-                      <span className="cc-section-count">
-                        {activeCollaborations.length}
+                    );
+                  })}
+                </div>
+              )}
+              {hasConversationResults
+                ? renderSections(sidebarSections)
+                : activeGraphWorkflows.length === 0 &&
+                  activeCollaborations.length === 0 && (
+                    <div className="convo-sidebar-empty">
+                      {sidebarFilter
+                        ? "No matches."
+                        : "No active conversations."}
+                      <span className="convo-sidebar-empty-hint">
+                        {sidebarFilter
+                          ? "Try clearing the search."
+                          : "New, running, or awaiting conversations will appear here."}
                       </span>
                     </div>
-                    {activeCollaborations.map((collab) => {
-                      const href = collab.conversationId
-                        ? `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}/${collab.conversationId}`
-                        : `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}`;
-                      return (
-                        <Link
-                          key={collab.workflowId}
-                          href={href}
-                          className="convo-sidebar-item"
-                        >
-                          {statusDot(collab.status)}
-                          <div className="convo-sidebar-item-body">
-                            <div className="convo-sidebar-item-name-row">
-                              <div className="convo-sidebar-item-summary">
-                                Collaboration ({collab.status})
-                              </div>
-                              <span className="convo-sidebar-active-time">
-                                {formatRelativeTime(collab.updatedAt)}
-                              </span>
-                            </div>
-                            <span className="convo-sidebar-session-label">
-                              {collab.projectName} / {collab.sessionName}
-                            </span>
-                          </div>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                )}
-                {activeConvoList.length === 0 &&
-                activeGraphWorkflows.length === 0 &&
-                activeCollaborations.length === 0 ? (
-                  <div className="convo-sidebar-empty">
-                    No active conversations.
-                    <span className="convo-sidebar-empty-hint">
-                      New, running, or awaiting conversations will appear here.
-                    </span>
-                  </div>
-                ) : (
-                  Array.from(groupedByProject.entries()).map(
-                    ([project, convos]) => {
-                      const isGroupCollapsed = collapsedGroups.has(project);
-                      const statuses = getUniqueStatuses(convos);
-                      return (
-                        <div
-                          key={project}
-                          className="convo-sidebar-project-group"
-                        >
-                          <div
-                            className="cc-section-header convo-sidebar-group-header"
-                            onClick={() => toggleGroup(project)}
-                          >
-                            <span
-                              className={`convo-sidebar-group-chevron${isGroupCollapsed ? " collapsed" : ""}`}
-                            >
-                              &#9660;
-                            </span>
-                            <span className="cc-section-label">{project}</span>
-                            <div className="convo-sidebar-group-status">
-                              {statuses.map((s) => (
-                                <span
-                                  key={s}
-                                  className={`convo-sidebar-group-dot ${s}`}
-                                />
-                              ))}
-                            </div>
-                            <span className="cc-section-count">
-                              {convos.length}
-                            </span>
-                          </div>
-                          {!isGroupCollapsed &&
-                            convos.map((convo) => (
-                              <Link
-                                key={convo.id}
-                                href={`/projects/${encodeURIComponent(convo.projectName)}/${encodeURIComponent(convo.sessionName)}/${convo.id}`}
-                                className={`convo-sidebar-item${convo.id === activeConversationId ? " active" : ""}`}
-                              >
-                                {statusDot(convo.status)}
-                                <div className="convo-sidebar-item-body">
-                                  <div className="convo-sidebar-item-name-row">
-                                    {activeEditingId === convo.id ? (
-                                      <input
-                                        ref={activeEditInputRef}
-                                        className="convo-rename-input"
-                                        value={activeEditValue}
-                                        onChange={(e) =>
-                                          setActiveEditValue(e.target.value)
-                                        }
-                                        onKeyDown={(e) => {
-                                          if (e.key === "Enter") {
-                                            e.preventDefault();
-                                            void handleActiveRenameSubmit(
-                                              convo.id,
-                                            );
-                                          } else if (e.key === "Escape") {
-                                            e.stopPropagation();
-                                            setActiveEditingId(null);
-                                          }
-                                        }}
-                                        onBlur={() =>
-                                          void handleActiveRenameSubmit(
-                                            convo.id,
-                                          )
-                                        }
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                        }}
-                                        maxLength={200}
-                                        style={{ flex: 1 }}
-                                      />
-                                    ) : (
-                                      <>
-                                        <div className="convo-sidebar-item-summary">
-                                          {convo.name ?? "Unnamed conversation"}
-                                        </div>
-                                        <span className="convo-sidebar-active-time">
-                                          {formatRelativeTime(
-                                            convo.lastActivityAt,
-                                          )}
-                                        </span>
-                                      </>
-                                    )}
-                                  </div>
-                                  {activeEditingId !== convo.id && (
-                                    <span className="convo-sidebar-session-label">
-                                      {convo.sessionName}
-                                      {" \u00B7 "}
-                                      {convo.agentBackend}
-                                    </span>
-                                  )}
-                                </div>
-                                <button
-                                  className="btn-icon-only convo-sidebar-item-action"
-                                  data-tooltip="Rename"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleActiveRenameStart(convo);
-                                  }}
-                                >
-                                  &#9998;
-                                </button>
-                                <button
-                                  className="btn-icon-only convo-sidebar-item-action"
-                                  data-tooltip="Archive"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleActiveArchive(convo, true);
-                                  }}
-                                >
-                                  {"\u2913"}
-                                </button>
-                              </Link>
-                            ))}
-                        </div>
-                      );
-                    },
-                  )
-                )}
-              </div>
-            )}
+                  )}
+            </div>
           </>
         )}
       </div>
+      {ctxMenu !== null && (
+        <ConversationSidebarRowContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={ctxMenuItems}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
     </>
   );
 }

@@ -18,12 +18,20 @@ function makeConversation(
     summary?: string | null;
     role?: string | null;
     agentBackend?: "claude" | "codex";
+    transcriptPath?: string | null;
+    pendingQuestions?: { question: string }[] | null;
+    forkedFrom?: {
+      sourceConversationId: string;
+      messageIndex: number;
+      forkMode: "native" | "synthetic" | null;
+    } | null;
+    debugMode?: { active: boolean } | null;
   } = {},
 ) {
   return {
     id: overrides.id ?? "conv-1",
     name: overrides.name ?? null,
-    transcriptPath: null,
+    transcriptPath: overrides.transcriptPath ?? null,
     status: overrides.status ?? "new",
     promptCount: 0,
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -35,12 +43,13 @@ function makeConversation(
     totalDurationMs: null,
     totalTurns: null,
     pendingQuestionId: null,
-    pendingQuestions: null,
+    pendingQuestions: overrides.pendingQuestions ?? null,
     pendingPromptText: null,
-    forkedFrom: null,
+    forkedFrom: overrides.forkedFrom ?? null,
     role: overrides.role ?? null,
     contextTokens: null,
     contextWindowMax: null,
+    debugMode: overrides.debugMode ?? null,
     agentBackend: overrides.agentBackend ?? ("claude" as const),
   };
 }
@@ -102,6 +111,7 @@ function createTestDeps(): ActiveConversationsRouteDeps {
   return {
     readState: vi.fn().mockResolvedValue(makeState()),
     getProjectDisplayName: vi.fn().mockReturnValue("my-project"),
+    readConversationMessages: vi.fn().mockResolvedValue([]),
   };
 }
 
@@ -748,6 +758,250 @@ describe("GET /api/conversations/active", () => {
     const body = await response.json();
 
     expect(body.activeCollaborationExecutions).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Per-field round-trip tests for the enriched conversation shape
+  // ---------------------------------------------------------------------------
+
+  it("returns lastActivitySummary derived from the latest assistant tool_use for a running conversation, and pendingQuestion null", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({
+                id: "running-conv",
+                status: "running",
+                transcriptPath: "/tmp/transcripts/running-conv.jsonl",
+              }),
+            ],
+          },
+        },
+      }),
+    );
+    vi.mocked(deps.readConversationMessages).mockResolvedValue([
+      {
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "go" }],
+        timestamp: null,
+      },
+      {
+        role: "assistant" as const,
+        content: [
+          {
+            type: "tool_use" as const,
+            name: "Edit",
+            input: { file_path: "src/foo.ts" },
+          },
+        ],
+        timestamp: null,
+      },
+    ]);
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations).toHaveLength(1);
+    const c = body.conversations[0];
+    expect(c.status).toBe("running");
+    expect(c.lastActivitySummary).toBe("Editing src/foo.ts");
+    expect(c.pendingQuestion).toBeNull();
+  });
+
+  it("returns pendingQuestion populated and lastActivitySummary derived for an awaiting conversation", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({
+                id: "awaiting-conv",
+                status: "awaiting",
+                pendingQuestions: [{ question: "Do you want to deploy now?" }],
+              }),
+            ],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations).toHaveLength(1);
+    const c = body.conversations[0];
+    expect(c.pendingQuestion).toBe("Do you want to deploy now?");
+    expect(c.lastActivitySummary).toBe("Do you want to deploy now?");
+  });
+
+  it("surfaces forkedFrom with mode 'synthetic' for a synthetic-forked conversation", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({
+                id: "fork-syn",
+                status: "running",
+                forkedFrom: {
+                  sourceConversationId: "parent-id",
+                  messageIndex: 7,
+                  forkMode: "synthetic",
+                },
+              }),
+            ],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations[0].forkedFrom).toEqual({
+      conversationId: "parent-id",
+      messageIndex: 7,
+      mode: "synthetic",
+    });
+  });
+
+  it("surfaces forkedFrom with mode 'native' for a native-forked conversation", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({
+                id: "fork-nat",
+                status: "running",
+                forkedFrom: {
+                  sourceConversationId: "parent-id",
+                  messageIndex: 3,
+                  forkMode: "native",
+                },
+              }),
+            ],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations[0].forkedFrom).toEqual({
+      conversationId: "parent-id",
+      messageIndex: 3,
+      mode: "native",
+    });
+  });
+
+  it("exposes debugActive=true for a conversation in debug mode", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({
+                id: "dbg",
+                status: "running",
+                debugMode: { active: true },
+              }),
+            ],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations[0].debugActive).toBe(true);
+  });
+
+  it("returns role=null and branchName from the session for a normal (no-role) conversation", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({ id: "plain", status: "running" }),
+            ],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations[0].role).toBeNull();
+    expect(body.conversations[0].branchName).toBe("csm/my-session");
+  });
+
+  it("returns lastActivitySummary=null when no excerpt is derivable (running, empty transcript)", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({
+                id: "no-derivable",
+                status: "running",
+                transcriptPath: "/tmp/transcripts/empty.jsonl",
+              }),
+            ],
+          },
+        },
+      }),
+    );
+    vi.mocked(deps.readConversationMessages).mockResolvedValue([]);
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations[0].lastActivitySummary).toBeNull();
+  });
+
+  it("preserves the iteration/validator role filter — those conversations do not appear in the response", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({ id: "keep", status: "running" }),
+              makeConversation({
+                id: "skip-iter",
+                status: "running",
+                role: "iteration",
+              }),
+              makeConversation({
+                id: "skip-validator",
+                status: "awaiting",
+                role: "validator",
+              }),
+            ],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    const ids = body.conversations.map((c: { id: string }) => c.id);
+    expect(ids).toEqual(["keep"]);
+    expect(ids).not.toContain("skip-iter");
+    expect(ids).not.toContain("skip-validator");
   });
 
   it("returns 500 when readState fails", async () => {

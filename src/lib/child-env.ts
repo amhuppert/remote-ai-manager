@@ -10,8 +10,13 @@
  *   child Next.js processes
  * - `NODE_CHANNEL_*` — Node IPC channel vars from the parent process
  *
- * By removing `NODE_ENV`, each child tool uses its own default:
- * Jest → "test", Next.js dev → "development", etc.
+ * Overrides (not deletions) are used because some consumers — notably the
+ * Claude Agent SDK — *merge* this object on top of `process.env`. A deleted
+ * key disappears from the merge and the parent value survives. Setting an
+ * explicit override (`NODE_ENV=development`, empty string for Next/Turbo
+ * internals) makes the override win regardless of merge vs. replace
+ * semantics, so the same return value is safe to pass to
+ * `child_process.spawn({ env })` (replace) and `query({ env })` (merge).
  *
  * Additionally ensures `node` is on PATH. Child tools (vitest, eslint, etc.)
  * use `#!/usr/bin/env node` shebangs. When CC runs in a restricted environment
@@ -30,7 +35,7 @@ const logger = createLogger("child-env");
 export function buildChildEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
 
-  delete (env as Record<string, string | undefined>).NODE_ENV;
+  env.NODE_ENV = "development";
 
   for (const key of Object.keys(env)) {
     if (
@@ -38,7 +43,7 @@ export function buildChildEnv(): NodeJS.ProcessEnv {
       key.startsWith("NODE_CHANNEL_") ||
       key.startsWith("__TURBOPACK_")
     ) {
-      delete env[key];
+      env[key] = "";
     }
   }
 

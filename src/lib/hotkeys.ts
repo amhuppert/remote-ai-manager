@@ -23,6 +23,7 @@ export type HotkeyId =
   | "toggleSidebar"
   | "toggleActivePanel"
   | "toggleDevTools"
+  | "focusSidebarSearch"
   | "nextFile"
   | "prevFile"
   | "nextChange"
@@ -87,6 +88,15 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     description:
       "Show or hide dev tool buttons (Next.js panel, TanStack Query)",
     category: "general",
+  },
+  focusSidebarSearch: {
+    id: "focusSidebarSearch",
+    keys: "mod+k",
+    label: "Focus sidebar search",
+    description: "Focus the search input in the conversations sidebar",
+    category: "general",
+    enableOnFormTags: true,
+    enableOnContentEditable: true,
   },
   nextMessage: {
     id: "nextMessage",

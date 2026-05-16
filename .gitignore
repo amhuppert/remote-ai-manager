@@ -49,4 +49,5 @@ next-env.d.ts
 .vscode/explorer-hide-presets.json
 .vscode/settings.json
 .playwright-mcp
+.playwright-cli
 ROADMAP.md

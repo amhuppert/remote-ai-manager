@@ -14,6 +14,13 @@ import type {
 type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
 type RightPaneTab = "diff" | "docs" | "specs";
 
+export type SidebarGroupBy = "session" | "project";
+
+export interface SidebarSessionFilter {
+  projectName: string;
+  sessionName: string;
+}
+
 interface SpecBrowserSelection {
   /** "steering" or a feature name like "browser-notifications" */
   category: string;
@@ -37,6 +44,9 @@ interface SessionDetailState {
   showMergeDialog: boolean;
   infoExpanded: boolean;
   sidebarCollapsed: boolean;
+  sidebarFilter: string;
+  sidebarGroupBy: SidebarGroupBy;
+  sidebarSessionFilter: SidebarSessionFilter | null;
   pendingQuestions: AskQuestionItem[] | null;
   pendingQuestionId: string | null;
   currentQuestionIndex: number;
@@ -77,6 +87,9 @@ interface SessionDetailActions {
   toggleInfoStrip: () => void;
   toggleSidebar: () => void;
   hydrateSidebar: () => void;
+  setSidebarFilter: (value: string) => void;
+  setSidebarGroupBy: (value: SidebarGroupBy) => void;
+  setSidebarSessionFilter: (value: SidebarSessionFilter | null) => void;
   showQuestions: (questionId: string, questions: AskQuestionItem[]) => void;
   navigateQuestion: (index: number) => void;
   clearQuestions: () => void;
@@ -116,6 +129,9 @@ const initialState: SessionDetailState = {
   showMergeDialog: false,
   infoExpanded: false,
   sidebarCollapsed: false,
+  sidebarFilter: "",
+  sidebarGroupBy: "project",
+  sidebarSessionFilter: null,
   pendingQuestions: null,
   pendingQuestionId: null,
   currentQuestionIndex: 0,
@@ -124,10 +140,10 @@ const initialState: SessionDetailState = {
 };
 
 // ---------------------------------------------------------------------------
-// Store (private)
+// Store
 // ---------------------------------------------------------------------------
 
-const useSessionDetailStore = create<SessionDetailStore>()(
+export const useSessionDetailStore = create<SessionDetailStore>()(
   immer((set, get) => ({
     ...initialState,
 
@@ -345,6 +361,21 @@ const useSessionDetailStore = create<SessionDetailStore>()(
       }
     },
 
+    setSidebarFilter: (value) =>
+      set((state) => {
+        state.sidebarFilter = value;
+      }),
+
+    setSidebarGroupBy: (value) =>
+      set((state) => {
+        state.sidebarGroupBy = value;
+      }),
+
+    setSidebarSessionFilter: (value) =>
+      set((state) => {
+        state.sidebarSessionFilter = value;
+      }),
+
     // -- AskUserQuestion --
 
     showQuestions: (questionId, questions) =>
@@ -437,6 +468,12 @@ export const useInfoExpanded = () =>
   useSessionDetailStore((s) => s.infoExpanded);
 export const useSidebarCollapsed = () =>
   useSessionDetailStore((s) => s.sidebarCollapsed);
+export const useSidebarFilter = () =>
+  useSessionDetailStore((s) => s.sidebarFilter);
+export const useSidebarGroupBy = () =>
+  useSessionDetailStore((s) => s.sidebarGroupBy);
+export const useSidebarSessionFilter = () =>
+  useSessionDetailStore((s) => s.sidebarSessionFilter);
 export const useRightPaneTab = () =>
   useSessionDetailStore((s) => s.rightPaneTab);
 export const useSpecBrowserSelection = () =>
@@ -498,6 +535,12 @@ export const useToggleSidebar = () =>
   useSessionDetailStore((s) => s.toggleSidebar);
 export const useHydrateSidebar = () =>
   useSessionDetailStore((s) => s.hydrateSidebar);
+export const useSetSidebarFilter = () =>
+  useSessionDetailStore((s) => s.setSidebarFilter);
+export const useSetSidebarGroupBy = () =>
+  useSessionDetailStore((s) => s.setSidebarGroupBy);
+export const useSetSidebarSessionFilter = () =>
+  useSessionDetailStore((s) => s.setSidebarSessionFilter);
 export const useShowQuestions = () =>
   useSessionDetailStore((s) => s.showQuestions);
 export const useNavigateQuestion = () =>

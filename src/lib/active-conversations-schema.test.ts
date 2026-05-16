@@ -12,6 +12,13 @@ const BASE_CONVERSATION = {
   projectPath: "/home/user/my-project",
   sessionName: "my-session",
   agentBackend: "claude" as const,
+  summary: null,
+  pendingQuestion: null,
+  forkedFrom: null,
+  debugActive: false,
+  role: null,
+  branchName: null,
+  lastActivitySummary: null,
 };
 
 describe("activeConversationSchema", () => {
@@ -53,6 +60,173 @@ describe("activeConversationSchema", () => {
       status: "unknown",
     });
     expect(result.success).toBe(false);
+  });
+
+  describe("new fields", () => {
+    it("accepts a populated summary string", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        summary: "Implementing the sidebar",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts pendingQuestion as a string", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "awaiting",
+        pendingQuestion: "Do you want to proceed?",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects pendingQuestion as a non-string value", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "awaiting",
+        pendingQuestion: 42,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts a forkedFrom object with mode 'synthetic'", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        forkedFrom: {
+          conversationId: "parent-conv",
+          messageIndex: 4,
+          mode: "synthetic",
+        },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts a forkedFrom object with mode 'native'", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        forkedFrom: {
+          conversationId: "parent-conv",
+          messageIndex: 4,
+          mode: "native",
+        },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects forkedFrom with an unknown mode", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        forkedFrom: {
+          conversationId: "parent-conv",
+          messageIndex: 4,
+          mode: "bogus",
+        },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects forkedFrom missing required fields", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        forkedFrom: { conversationId: "parent-conv" },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts debugActive=true", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        debugActive: true,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects debugActive as a non-boolean", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        debugActive: "yes",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts role 'initialization'", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        role: "initialization",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts role 'iteration' (schema-permitted; runtime filter excludes)", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        role: "iteration",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts role 'validator' (schema-permitted; runtime filter excludes)", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        role: "validator",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects an unknown role", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        role: "owner",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts branchName as a string", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        branchName: "csm/my-session",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects branchName as a non-string non-null value", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        branchName: 7,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts lastActivitySummary as a string", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        lastActivitySummary: "Editing src/foo.ts",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects lastActivitySummary as a non-string non-null value", () => {
+      const result = activeConversationSchema.safeParse({
+        ...BASE_CONVERSATION,
+        status: "running",
+        lastActivitySummary: { text: "Editing" },
+      });
+      expect(result.success).toBe(false);
+    });
   });
 });
 

@@ -1,0 +1,494 @@
+import { describe, it, expect } from "vitest";
+import {
+  filterConversations,
+  filterBySession,
+  splitNeedsYou,
+  clusterBySession,
+  annotateSessionPos,
+  groupByKey,
+  buildConversationSidebarSections,
+  type SidebarConversation,
+} from "./ConversationSidebar.helpers";
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+function makeRow(
+  overrides: Partial<SidebarConversation> = {},
+): SidebarConversation {
+  return {
+    id: "id-1",
+    name: "Conversation One",
+    summary: null,
+    status: "running",
+    lastActivityAt: "2025-01-01T00:00:00.000Z",
+    projectName: "proj-a",
+    projectPath: "/repos/proj-a",
+    sessionName: "session-a",
+    branchName: "csm/session-a",
+    agentBackend: "claude",
+    pendingQuestion: null,
+    forkedFrom: null,
+    debugActive: false,
+    role: null,
+    lastActivitySummary: null,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// filterConversations
+// ---------------------------------------------------------------------------
+
+describe("filterConversations", () => {
+  it("returns rows unchanged when query is empty", () => {
+    const rows = [makeRow({ id: "a" }), makeRow({ id: "b" })];
+    expect(filterConversations(rows, "")).toEqual(rows);
+  });
+
+  it("returns rows unchanged when query is whitespace", () => {
+    const rows = [makeRow({ id: "a" }), makeRow({ id: "b" })];
+    expect(filterConversations(rows, "   \t\n  ")).toEqual(rows);
+  });
+
+  it("matches against name case-insensitively", () => {
+    const rows = [
+      makeRow({ id: "a", name: "Refactor Auth Module" }),
+      makeRow({ id: "b", name: "Fix dev server bug" }),
+    ];
+    expect(filterConversations(rows, "auth").map((r) => r.id)).toEqual(["a"]);
+    expect(filterConversations(rows, "AUTH").map((r) => r.id)).toEqual(["a"]);
+  });
+
+  it("matches against summary", () => {
+    const rows = [
+      makeRow({ id: "a", summary: "Investigating SSE drops" }),
+      makeRow({ id: "b", summary: null }),
+    ];
+    expect(filterConversations(rows, "sse").map((r) => r.id)).toEqual(["a"]);
+  });
+
+  it("matches against projectName and sessionName, but not branchName", () => {
+    const rows = [
+      makeRow({
+        id: "a",
+        projectName: "alpha",
+        sessionName: "x",
+        branchName: "csm/x",
+      }),
+      makeRow({
+        id: "b",
+        projectName: "beta",
+        sessionName: "y",
+        branchName: "csm/y",
+      }),
+      makeRow({
+        id: "c",
+        projectName: "gamma",
+        sessionName: "alpha-z",
+        branchName: "csm/alpha-z",
+      }),
+    ];
+    expect(
+      filterConversations(rows, "alpha")
+        .map((r) => r.id)
+        .sort(),
+    ).toEqual(["a", "c"]);
+    expect(filterConversations(rows, "csm/y").map((r) => r.id)).toEqual([]);
+  });
+
+  it("returns empty array when no matches", () => {
+    const rows = [makeRow({ id: "a", name: "foo" })];
+    expect(filterConversations(rows, "zzz")).toEqual([]);
+  });
+
+  it("treats null name/summary/branchName as no-match (not throw)", () => {
+    const rows = [
+      makeRow({ id: "a", name: null, summary: null, branchName: null }),
+      makeRow({ id: "b", name: "match me" }),
+    ];
+    expect(filterConversations(rows, "match").map((r) => r.id)).toEqual(["b"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// filterBySession
+// ---------------------------------------------------------------------------
+
+describe("filterBySession", () => {
+  it("returns rows unchanged when scope is null", () => {
+    const rows = [
+      makeRow({ id: "a", projectName: "p1", sessionName: "s1" }),
+      makeRow({ id: "b", projectName: "p2", sessionName: "s2" }),
+    ];
+    expect(filterBySession(rows, null)).toEqual(rows);
+  });
+
+  it("keeps only rows whose projectName + sessionName match the scope", () => {
+    const rows = [
+      makeRow({ id: "a", projectName: "p1", sessionName: "s1" }),
+      makeRow({ id: "b", projectName: "p1", sessionName: "s2" }),
+      makeRow({ id: "c", projectName: "p2", sessionName: "s1" }),
+      makeRow({ id: "d", projectName: "p1", sessionName: "s1" }),
+    ];
+    expect(
+      filterBySession(rows, { projectName: "p1", sessionName: "s1" }).map(
+        (r) => r.id,
+      ),
+    ).toEqual(["a", "d"]);
+  });
+
+  it("returns empty array when nothing matches", () => {
+    const rows = [makeRow({ projectName: "p1", sessionName: "s1" })];
+    expect(
+      filterBySession(rows, { projectName: "px", sessionName: "sx" }),
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// splitNeedsYou
+// ---------------------------------------------------------------------------
+
+describe("splitNeedsYou", () => {
+  it("splits only waiting_for_input into needsYou, others into others", () => {
+    const rows = [
+      makeRow({ id: "a", status: "running" }),
+      makeRow({ id: "b", status: "awaiting" }),
+      makeRow({ id: "c", status: "waiting_for_input" }),
+      makeRow({ id: "d", status: "new" }),
+    ];
+    const { needsYou, others } = splitNeedsYou(rows);
+    expect(needsYou.map((r) => r.id)).toEqual(["c"]);
+    expect(others.map((r) => r.id)).toEqual(["a", "b", "d"]);
+  });
+
+  it("preserves input order in each bucket", () => {
+    const rows = [
+      makeRow({ id: "c", status: "waiting_for_input" }),
+      makeRow({ id: "a", status: "waiting_for_input" }),
+      makeRow({ id: "b", status: "running" }),
+    ];
+    const { needsYou, others } = splitNeedsYou(rows);
+    expect(needsYou.map((r) => r.id)).toEqual(["c", "a"]);
+    expect(others.map((r) => r.id)).toEqual(["b"]);
+  });
+
+  it("returns empty arrays for empty input", () => {
+    const { needsYou, others } = splitNeedsYou([]);
+    expect(needsYou).toEqual([]);
+    expect(others).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// clusterBySession
+// ---------------------------------------------------------------------------
+
+describe("clusterBySession", () => {
+  it("groups rows sharing the same projectPath::sessionName together", () => {
+    const rows = [
+      makeRow({
+        id: "a1",
+        projectPath: "/p/a",
+        sessionName: "s1",
+        lastActivityAt: "2025-01-01T00:00:00Z",
+      }),
+      makeRow({
+        id: "b1",
+        projectPath: "/p/b",
+        sessionName: "s2",
+        lastActivityAt: "2025-01-02T00:00:00Z",
+      }),
+      makeRow({
+        id: "a2",
+        projectPath: "/p/a",
+        sessionName: "s1",
+        lastActivityAt: "2025-01-03T00:00:00Z",
+      }),
+    ];
+    const result = clusterBySession(rows);
+    const idxA1 = result.findIndex((r) => r.id === "a1");
+    const idxA2 = result.findIndex((r) => r.id === "a2");
+    expect(Math.abs(idxA1 - idxA2)).toBe(1);
+  });
+
+  it("orders clusters by the most-recent lastActivityAt in each cluster (descending)", () => {
+    const rows = [
+      makeRow({
+        id: "a1",
+        projectPath: "/p/a",
+        sessionName: "s1",
+        lastActivityAt: "2025-01-05T00:00:00Z",
+      }),
+      makeRow({
+        id: "b1",
+        projectPath: "/p/b",
+        sessionName: "s2",
+        lastActivityAt: "2025-01-10T00:00:00Z",
+      }),
+      makeRow({
+        id: "a2",
+        projectPath: "/p/a",
+        sessionName: "s1",
+        lastActivityAt: "2025-01-01T00:00:00Z",
+      }),
+    ];
+    const result = clusterBySession(rows);
+    // Cluster b (max 01-10) should come before cluster a (max 01-05)
+    expect(result.map((r) => r.id)).toEqual(["b1", "a1", "a2"]);
+  });
+
+  it("preserves intra-cluster input order", () => {
+    const rows = [
+      makeRow({
+        id: "a1",
+        projectPath: "/p/a",
+        sessionName: "s1",
+        lastActivityAt: "2025-01-01T00:00:00Z",
+      }),
+      makeRow({
+        id: "a2",
+        projectPath: "/p/a",
+        sessionName: "s1",
+        lastActivityAt: "2025-01-03T00:00:00Z",
+      }),
+      makeRow({
+        id: "a3",
+        projectPath: "/p/a",
+        sessionName: "s1",
+        lastActivityAt: "2025-01-02T00:00:00Z",
+      }),
+    ];
+    expect(clusterBySession(rows).map((r) => r.id)).toEqual(["a1", "a2", "a3"]);
+  });
+
+  it("distinguishes same sessionName under different projectPath", () => {
+    const rows = [
+      makeRow({
+        id: "a",
+        projectPath: "/p/a",
+        sessionName: "shared",
+        lastActivityAt: "2025-01-02T00:00:00Z",
+      }),
+      makeRow({
+        id: "b",
+        projectPath: "/p/b",
+        sessionName: "shared",
+        lastActivityAt: "2025-01-01T00:00:00Z",
+      }),
+    ];
+    const result = clusterBySession(rows);
+    expect(result.map((r) => r.id)).toEqual(["a", "b"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// annotateSessionPos
+// ---------------------------------------------------------------------------
+
+describe("annotateSessionPos", () => {
+  it("marks a single row in its session as 'only'", () => {
+    const rows = [makeRow({ id: "a", projectPath: "/p", sessionName: "s" })];
+    const annotated = annotateSessionPos(rows);
+    expect(annotated[0]).toMatchObject({
+      isFirstInSession: true,
+      isLastInSession: true,
+      sessionPosition: "only",
+    });
+  });
+
+  it("marks first, middle, and last rows in a session cluster", () => {
+    const rows = [
+      makeRow({ id: "a1", projectPath: "/p", sessionName: "s" }),
+      makeRow({ id: "a2", projectPath: "/p", sessionName: "s" }),
+      makeRow({ id: "a3", projectPath: "/p", sessionName: "s" }),
+    ];
+    const annotated = annotateSessionPos(rows);
+    expect(annotated[0]).toMatchObject({
+      isFirstInSession: true,
+      isLastInSession: false,
+      sessionPosition: "first",
+    });
+    expect(annotated[1]).toMatchObject({
+      isFirstInSession: false,
+      isLastInSession: false,
+      sessionPosition: "middle",
+    });
+    expect(annotated[2]).toMatchObject({
+      isFirstInSession: false,
+      isLastInSession: true,
+      sessionPosition: "last",
+    });
+  });
+
+  it("does not re-cluster — operates on input order as-is", () => {
+    const rows = [
+      makeRow({ id: "a", projectPath: "/p", sessionName: "s1" }),
+      makeRow({ id: "b", projectPath: "/p", sessionName: "s2" }),
+      makeRow({ id: "c", projectPath: "/p", sessionName: "s1" }),
+    ];
+    const annotated = annotateSessionPos(rows);
+    // a and c are both "only" because they're not adjacent
+    expect(annotated[0]?.sessionPosition).toBe("only");
+    expect(annotated[1]?.sessionPosition).toBe("only");
+    expect(annotated[2]?.sessionPosition).toBe("only");
+  });
+
+  it("treats two adjacent rows as first/last", () => {
+    const rows = [
+      makeRow({ id: "a", projectPath: "/p", sessionName: "s" }),
+      makeRow({ id: "b", projectPath: "/p", sessionName: "s" }),
+    ];
+    const annotated = annotateSessionPos(rows);
+    expect(annotated[0]?.sessionPosition).toBe("first");
+    expect(annotated[1]?.sessionPosition).toBe("last");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// groupByKey
+// ---------------------------------------------------------------------------
+
+describe("groupByKey", () => {
+  it("groups by session using projectPath::sessionName", () => {
+    const rows = [
+      makeRow({ id: "a", projectPath: "/p/a", sessionName: "s1" }),
+      makeRow({ id: "b", projectPath: "/p/b", sessionName: "s2" }),
+      makeRow({ id: "c", projectPath: "/p/a", sessionName: "s1" }),
+    ];
+    const groups = groupByKey(rows, "session");
+    const keys = groups.map((g) => g.groupKey).sort();
+    expect(keys).toEqual(["/p/a::s1", "/p/b::s2"]);
+    const sessionA = groups.find((g) => g.groupKey === "/p/a::s1");
+    expect(sessionA?.items.map((r) => r.id)).toEqual(["a", "c"]);
+    expect(sessionA).toMatchObject({
+      projectLabel: "proj-a",
+      sessionLabel: "s1",
+    });
+  });
+
+  it("groups by project using projectName", () => {
+    const rows = [
+      makeRow({ id: "a", projectName: "alpha" }),
+      makeRow({ id: "b", projectName: "beta" }),
+      makeRow({ id: "c", projectName: "alpha" }),
+    ];
+    const groups = groupByKey(rows, "project");
+    const alpha = groups.find((g) => g.groupKey === "alpha");
+    expect(alpha?.items.map((r) => r.id)).toEqual(["a", "c"]);
+    expect(alpha?.label).toBe("alpha");
+  });
+
+  it("preserves group order by first appearance", () => {
+    const rows = [
+      makeRow({ id: "a", projectName: "beta" }),
+      makeRow({ id: "b", projectName: "alpha" }),
+      makeRow({ id: "c", projectName: "beta" }),
+    ];
+    const groups = groupByKey(rows, "project");
+    expect(groups.map((g) => g.groupKey)).toEqual(["beta", "alpha"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildConversationSidebarSections
+// ---------------------------------------------------------------------------
+
+describe("buildConversationSidebarSections", () => {
+  it("pins Needs You above the grouped non-needs conversations", () => {
+    const rows = [
+      makeRow({
+        id: "running",
+        status: "running",
+        projectName: "ground-control-ui",
+      }),
+      makeRow({
+        id: "awaiting",
+        status: "waiting_for_input",
+        projectName: "ground-control-ui",
+      }),
+      makeRow({
+        id: "awaiting-ready",
+        status: "awaiting",
+        projectName: "creative-ai",
+      }),
+      makeRow({ id: "new", status: "new", projectName: "creative-ai" }),
+    ];
+
+    const sections = buildConversationSidebarSections(rows, {
+      filter: "all",
+      groupBy: "project",
+      sessionScope: null,
+    });
+
+    expect(sections.map((section) => section.kind)).toEqual([
+      "needs",
+      "project",
+      "project",
+    ]);
+    expect(sections[0]?.label).toBe("Needs You");
+    expect(sections[0]?.items.map((row) => row.id)).toEqual(["awaiting"]);
+    expect(
+      sections
+        .slice(1)
+        .flatMap((section) => section.items.map((row) => row.id)),
+    ).toEqual(["running", "awaiting-ready", "new"]);
+  });
+
+  it("keeps the pinned Needs You section inside the current-session filter", () => {
+    const rows = [
+      makeRow({
+        id: "current-need",
+        status: "waiting_for_input",
+        projectName: "remote-ai-manager",
+        sessionName: "current",
+      }),
+      makeRow({
+        id: "other-need",
+        status: "waiting_for_input",
+        projectName: "remote-ai-manager",
+        sessionName: "other",
+      }),
+      makeRow({
+        id: "current-running",
+        status: "running",
+        projectName: "remote-ai-manager",
+        sessionName: "current",
+      }),
+    ];
+
+    const sections = buildConversationSidebarSections(rows, {
+      filter: "session",
+      groupBy: "project",
+      sessionScope: {
+        projectName: "remote-ai-manager",
+        sessionName: "current",
+      },
+    });
+
+    expect(sections[0]?.kind).toBe("needs");
+    expect(sections[0]?.items.map((row) => row.id)).toEqual(["current-need"]);
+    expect(
+      sections.flatMap((section) => section.items.map((row) => row.id)),
+    ).toEqual(["current-need", "current-running"]);
+  });
+
+  it("renders only the Needs You section when the needs filter is active", () => {
+    const rows = [
+      makeRow({ id: "need", status: "waiting_for_input" }),
+      makeRow({ id: "running", status: "running" }),
+    ];
+
+    const sections = buildConversationSidebarSections(rows, {
+      filter: "needs",
+      groupBy: "project",
+      sessionScope: null,
+    });
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]?.kind).toBe("needs");
+    expect(sections[0]?.items.map((row) => row.id)).toEqual(["need"]);
+  });
+});

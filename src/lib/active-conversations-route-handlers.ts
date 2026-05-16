@@ -8,6 +8,11 @@
 import { NextResponse } from "next/server";
 import { readState as defaultReadState } from "@/lib/state";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/project-resolver";
+import { readConversationMessages as defaultReadConversationMessages } from "@/lib/transcript";
+import type {
+  ActiveConversation,
+  ActiveConversationForkedFrom,
+} from "@/lib/api-client";
 import type {
   ManagerState,
   ConversationStatus,
@@ -15,6 +20,8 @@ import type {
   GraphWorkflowHaltReason,
   GraphWorkflowMergeStatusValue,
   GraphWorkflowStatus,
+  MessageContentBlock,
+  TranscriptMessage,
 } from "@/types";
 import type { ApiError } from "@/types";
 
@@ -23,29 +30,22 @@ import type { ApiError } from "@/types";
 // ---------------------------------------------------------------------------
 
 export interface ActiveConversationsRouteDeps {
-  readState: () => Promise<ManagerState>;
-  getProjectDisplayName: (projectPath: string) => string;
+  readState(): Promise<ManagerState>;
+  getProjectDisplayName(projectPath: string): string;
+  readConversationMessages(
+    transcriptPath: string | null,
+  ): Promise<TranscriptMessage[]>;
 }
 
 const defaultDeps: ActiveConversationsRouteDeps = {
   readState: defaultReadState,
   getProjectDisplayName: defaultGetProjectDisplayName,
+  readConversationMessages: defaultReadConversationMessages,
 };
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-interface ActiveConversation {
-  id: string;
-  name: string | null;
-  status: ConversationStatus;
-  lastActivityAt: string;
-  projectName: string;
-  projectPath: string;
-  sessionName: string;
-  agentBackend: "claude" | "codex";
-}
 
 export interface ActiveGraphWorkflowContextMergeProgress {
   contextId: string;
@@ -155,6 +155,149 @@ const ACTIVE_GW_STATUSES: ReadonlySet<GraphWorkflowStatus> = new Set([
   "paused",
 ]);
 
+/**
+ * Pull the first pending question's text out of the conversation, if any.
+ * Returns null when the conversation has no structured pending question.
+ */
+function derivePendingQuestion(convo: {
+  status: ConversationStatus;
+  pendingQuestions: { question: string }[] | null;
+}): string | null {
+  if (convo.status !== "awaiting" && convo.status !== "waiting_for_input") {
+    return null;
+  }
+  const first = convo.pendingQuestions?.[0];
+  return first ? first.question : null;
+}
+
+const LAST_ACTIVITY_MAX = 80;
+
+function collapseWhitespace(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
+}
+
+function summarizeToolUse(block: {
+  name: string;
+  input?: Record<string, unknown>;
+}): string | null {
+  const input = block.input ?? {};
+  const filePath = typeof input.file_path === "string" ? input.file_path : null;
+  switch (block.name) {
+    case "Edit":
+    case "Write":
+    case "MultiEdit":
+    case "NotebookEdit":
+      return filePath ? `Editing ${filePath}` : "Editing files";
+    case "Read":
+      return filePath ? `Reading ${filePath}` : "Reading file";
+    case "Bash": {
+      const cmd = typeof input.command === "string" ? input.command : null;
+      return cmd ? `Running: ${cmd}` : "Running command";
+    }
+    case "Glob":
+    case "Grep": {
+      const pat = typeof input.pattern === "string" ? input.pattern : null;
+      return pat ? `Searching ${pat}` : "Searching";
+    }
+    default:
+      return `Using ${block.name}`;
+  }
+}
+
+/**
+ * Derive a single-line human-readable summary of what the conversation is doing.
+ * Pure function — exported so it can be unit-tested without the full route handler.
+ */
+export function deriveLastActivitySummary(
+  convo: {
+    status: ConversationStatus;
+    pendingQuestions: { question: string }[] | null;
+  },
+  lastAssistantMessage: { content: MessageContentBlock[] } | null,
+): string | null {
+  if (convo.status === "new") return null;
+
+  if (convo.status === "awaiting" || convo.status === "waiting_for_input") {
+    const q = convo.pendingQuestions?.[0]?.question;
+    if (!q) return null;
+    return truncate(collapseWhitespace(q), LAST_ACTIVITY_MAX);
+  }
+
+  // status === "running"
+  if (!lastAssistantMessage) return null;
+  const blocks = lastAssistantMessage.content;
+
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block?.type === "tool_use") {
+      const summary = summarizeToolUse(block);
+      if (summary)
+        return truncate(collapseWhitespace(summary), LAST_ACTIVITY_MAX);
+    }
+  }
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block?.type === "text") {
+      const text = collapseWhitespace(block.text);
+      if (text.length === 0) continue;
+      return truncate(text, LAST_ACTIVITY_MAX);
+    }
+  }
+  return null;
+}
+
+/**
+ * Map the persisted forkedFrom shape (sourceConversationId + forkMode) onto the
+ * sidebar API shape ({ conversationId, messageIndex, mode }). Conversations whose
+ * forkMode is null are treated as "fork mode unknown" and not surfaced.
+ */
+function deriveForkedFrom(
+  forkedFrom: {
+    sourceConversationId: string;
+    messageIndex: number;
+    forkMode: "native" | "synthetic" | null | undefined;
+  } | null,
+): ActiveConversationForkedFrom | null {
+  if (!forkedFrom) return null;
+  const mode = forkedFrom.forkMode;
+  if (mode !== "native" && mode !== "synthetic") return null;
+  return {
+    conversationId: forkedFrom.sourceConversationId,
+    messageIndex: forkedFrom.messageIndex,
+    mode,
+  };
+}
+
+/**
+ * Read the most recent assistant transcript message for a conversation.
+ * Returns null on missing transcript or any read failure — lastActivitySummary
+ * is a best-effort field and must never break the response.
+ */
+async function readLastAssistantMessage(
+  readConversationMessages: (
+    transcriptPath: string | null,
+  ) => Promise<TranscriptMessage[]>,
+  transcriptPath: string | null,
+): Promise<TranscriptMessage | null> {
+  if (!transcriptPath) return null;
+  let messages: TranscriptMessage[];
+  try {
+    messages = await readConversationMessages(transcriptPath);
+  } catch {
+    return null;
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg?.role === "assistant") return msg;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -197,6 +340,14 @@ export function createActiveConversationsRouteHandlers(
             if (convo.role === "iteration" || convo.role === "validator")
               continue;
 
+            const lastAssistantMessage =
+              convo.status === "running"
+                ? await readLastAssistantMessage(
+                    deps.readConversationMessages,
+                    convo.transcriptPath,
+                  )
+                : null;
+
             conversations.push({
               id: convo.id,
               name: convo.name ?? convo.summary ?? null,
@@ -206,6 +357,16 @@ export function createActiveConversationsRouteHandlers(
               projectPath,
               sessionName: session.sessionName,
               agentBackend: convo.agentBackend,
+              summary: convo.summary,
+              pendingQuestion: derivePendingQuestion(convo),
+              forkedFrom: deriveForkedFrom(convo.forkedFrom),
+              debugActive: convo.debugMode?.active === true,
+              role: convo.role,
+              branchName: session.branchName,
+              lastActivitySummary: deriveLastActivitySummary(
+                convo,
+                lastAssistantMessage,
+              ),
             });
           }
 
