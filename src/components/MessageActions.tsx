@@ -11,8 +11,6 @@ interface MessageActionsProps {
   content: MessageContentBlock[];
   /** Called when user clicks Fork — forks conversation from this message */
   onFork: (messageIndex: number) => void;
-  /** Whether the session is busy (running/sending) */
-  disabled?: boolean;
 }
 
 /**
@@ -25,19 +23,17 @@ export default function MessageActions({
   messageIndex,
   content,
   onFork,
-  disabled = false,
 }: MessageActionsProps) {
   const handleFork = useCallback(() => {
     onFork(messageIndex);
   }, [messageIndex, onFork]);
 
   return (
-    <div className={`msg-actions${disabled ? " msg-actions--disabled" : ""}`}>
+    <div className="msg-actions">
       <CopyMessageButton content={content} />
       <button
         className="msg-action-btn"
         onClick={handleFork}
-        disabled={disabled}
         data-tooltip="Fork"
         title="Fork conversation from this message"
       >

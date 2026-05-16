@@ -1657,7 +1657,6 @@ export default function ConversationDetailPage({
             messageIndex={messageIndex}
             content={msg.content}
             onFork={handleFork}
-            disabled={isBusy || isReadOnly}
           />
         </div>
       );
@@ -1668,7 +1667,6 @@ export default function ConversationDetailPage({
       handleDebugPrompt,
       handleFork,
       isBusy,
-      isReadOnly,
       projectName,
       selectedBackend,
       session?.worktreePath,

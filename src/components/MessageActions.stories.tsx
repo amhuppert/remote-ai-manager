@@ -48,12 +48,6 @@ export const Default = {
   args: {},
 } satisfies Story;
 
-export const Disabled = {
-  args: {
-    disabled: true,
-  },
-} satisfies Story;
-
 export const MobileWidth = {
   args: {},
   parameters: {

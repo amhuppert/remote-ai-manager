@@ -3942,11 +3942,6 @@ textarea {
   width: fit-content;
 }
 
-.msg-actions--disabled {
-  pointer-events: none;
-  opacity: 0.3;
-}
-
 .msg-action-btn {
   display: flex;
   align-items: center;
